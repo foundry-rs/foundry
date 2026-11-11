@@ -1,3 +1,6 @@
+use serde::{Deserialize, Deserializer};
+use std::{fs, path::Path};
+
 #[forgetest]
 fn runs(prj: _, cmd: _) {
     prj.add_test(
@@ -142,9 +145,6 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 
 #[forgetest_init]
 fn config_inline_isolate(prj: _, cmd: _) {
-    use serde::{Deserialize, Deserializer};
-    use std::{fs, path::Path};
-
     prj.add_test(
         "inline.sol",
         r#"
@@ -456,6 +456,50 @@ Ran 1 test for test/inline.sol:InlineHardfork
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
+// A contract-level inline hardfork must see network state seeded at that hardfork. Tempo's genesis
+// stores a TIP-20 token's transfer policy in the TIP-403 registry from T9 and in the token's
+// legacy slot before, so a T2 contract under a T13 run must still read PathUSD's allow-all policy.
+#[forgetest_init]
+fn config_inline_hardfork_seeds_tempo_genesis(prj: _, cmd: _) {
+    prj.write_config(foundry_config::Config {
+        hardfork: Some("tempo:T13".parse::<foundry_config::FoundryHardfork>().unwrap()),
+        ..foundry_config::Config::default()
+    });
+    prj.add_test(
+        "inline.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        interface ITIP20 {
+            function transferPolicyId() external view returns (uint64);
+            function mint(address to, uint256 amount) external;
+            function balanceOf(address account) external view returns (uint256);
+        }
+
+        ITIP20 constant PATH_USD = ITIP20(0x20C0000000000000000000000000000000000000);
+
+        abstract contract PathUsdGenesis is Test {
+            function test_pathusd_allows_all() public {
+                assertEq(PATH_USD.transferPolicyId(), 1);
+                PATH_USD.mint(address(0xBEEF), 1);
+                assertEq(PATH_USD.balanceOf(address(0xBEEF)), 1);
+            }
+        }
+
+        contract GlobalHardfork is PathUsdGenesis {}
+
+        /// forge-config: default.hardfork = "tempo:T2"
+        contract PinnedOlderHardfork is PathUsdGenesis {}
+    "#,
+    );
+
+    cmd.args(["test", "--mt", "test_pathusd_allows_all"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 }

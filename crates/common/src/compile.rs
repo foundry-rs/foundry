@@ -13,6 +13,12 @@ use comfy_table::{
     Cell, Color, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
+use evm2::{
+    SpecId,
+    constants::{
+        MAX_CODE_SIZE, MAX_CODE_SIZE_AMSTERDAM, MAX_INITCODE_SIZE, MAX_INITCODE_SIZE_AMSTERDAM,
+    },
+};
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
@@ -33,7 +39,6 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use num_format::{Locale, ToFormattedString};
-use revm::primitives::{eip170, eip3860, hardfork::SpecId};
 use solar::{
     ast::{Arena, ContractKind, ItemKind},
     interface::{Session, source_map::FileName},
@@ -95,6 +100,9 @@ pub struct ProjectCompiler {
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
 
+    /// Whether compiled contracts may depend on externally linked Solidity libraries.
+    allow_linked_libraries: bool,
+
     /// Whether ABI acquisition may consult the compiler-owned ABI cache.
     abi_cache: bool,
 
@@ -130,6 +138,7 @@ impl ProjectCompiler {
             source_order_fallback: Vec::new(),
             selected_paths: Vec::new(),
             dynamic_test_linking: false,
+            allow_linked_libraries: true,
             abi_cache: false,
             external_compilers: None,
             external_writes: true,
@@ -245,6 +254,15 @@ impl ProjectCompiler {
         self
     }
 
+    /// Sets whether compiled contracts may depend on externally linked Solidity libraries.
+    ///
+    /// This does not disable dynamic test linking. With `bail(false)`, violations are reported as
+    /// compiler errors in the returned output.
+    pub const fn allow_linked_libraries(mut self, allow: bool) -> Self {
+        self.allow_linked_libraries = allow;
+        self
+    }
+
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
@@ -330,6 +348,13 @@ impl ProjectCompiler {
                 // reuse DTL artifacts. Return only this attempt, including any compiler errors.
                 output = compile(false)?;
             }
+            // Drop deferred DTL-disable warnings on failure; solc's error already explains it.
+            let disable_warnings = preprocessor.take_disable_warnings();
+            if !output.has_compiler_errors() {
+                for warning in disable_warnings {
+                    sh_warn!("{warning}")?;
+                }
+            }
             if !output.has_compiler_errors()
                 && let Some(external) = external
             {
@@ -350,7 +375,7 @@ impl ProjectCompiler {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
 
-        let output = with_compilation_reporter_and_settings(
+        let mut output = with_compilation_reporter_and_settings(
             quiet,
             Some(self.project_root.clone()),
             self.print_compiler_settings,
@@ -370,6 +395,13 @@ impl ProjectCompiler {
             eyre::bail!("{output}");
         }
 
+        let mut linking_error = (!self.allow_linked_libraries && !output.has_compiler_errors())
+            .then(|| linked_libraries_error(&output, &self.project_root))
+            .flatten();
+        if !bail && let Some(message) = linking_error.take() {
+            push_linked_libraries_error(&mut output, message);
+        }
+
         if !quiet && !shell::is_json() {
             if output.is_unchanged() {
                 sh_println!("No files changed, compilation skipped")?;
@@ -377,6 +409,11 @@ impl ProjectCompiler {
                 // print the compiler output / warnings
                 sh_println!("{output}")?;
             }
+        }
+
+        // Report compiler warnings before the policy failure.
+        if let Some(message) = linking_error {
+            eyre::bail!("{message}");
         }
 
         // Quiet mode suppresses reports, but size limits still apply.
@@ -530,14 +567,14 @@ impl ProjectCompiler {
 }
 
 // https://eips.ethereum.org/EIPS/eip-170
-const CONTRACT_RUNTIME_SIZE_LIMIT: usize = eip170::MAX_CODE_SIZE;
+const CONTRACT_RUNTIME_SIZE_LIMIT: usize = MAX_CODE_SIZE;
 
 // https://eips.ethereum.org/EIPS/eip-3860
-const CONTRACT_INITCODE_SIZE_LIMIT: usize = eip3860::MAX_INITCODE_SIZE;
+const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
 
 // https://eips.ethereum.org/EIPS/eip-7954
-const AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT: usize = 65_536;
-const AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT: usize = 131_072;
+const AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT: usize = MAX_CODE_SIZE_AMSTERDAM;
+const AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE_AMSTERDAM;
 
 const CONTRACT_RUNTIME_SIZE_WARN_THRESHOLD: usize = 18_000;
 const CONTRACT_INITCODE_SIZE_WARN_THRESHOLD: usize = 36_000;
@@ -564,7 +601,7 @@ impl ContractSizeLimits {
 
     /// Returns the protocol limits active for an EVM specification.
     pub const fn for_spec_id(spec_id: SpecId) -> Self {
-        if spec_id.is_enabled_in(SpecId::AMSTERDAM) {
+        if spec_id.enables(SpecId::AMSTERDAM) {
             Self::new(AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT, AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT)
         } else {
             Self::new(CONTRACT_RUNTIME_SIZE_LIMIT, CONTRACT_INITCODE_SIZE_LIMIT)
@@ -1059,6 +1096,57 @@ impl std::fmt::Debug for PathOrContractInfo {
                 write!(f, "ContractInfo({info})")
             }
         }
+    }
+}
+
+/// Describes the Solidity library dependencies in creation or runtime bytecode, if any.
+///
+/// Includes cached artifacts and permits internal libraries and dynamic test linking helpers.
+fn linked_libraries_error<C: Compiler<CompilerContract = Contract>>(
+    output: &ProjectCompileOutput<C>,
+    root: &Path,
+) -> Option<String> {
+    let violations = output
+        .artifact_ids()
+        .flat_map(|(id, artifact)| {
+            let contract = id.with_stripped_file_prefixes(root).identifier();
+            artifact.all_link_references().into_iter().flat_map(move |(file, libs)| {
+                let contract = contract.clone();
+                libs.into_keys().map(move |lib| format!("{contract} links {file}:{lib}"))
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    (!violations.is_empty()).then(|| {
+        format!(
+            "Linked libraries are not allowed (`allow_linked_libraries = false`):\n  {}\n\
+             help: make the library functions `internal` to inline them, or set \
+             `allow_linked_libraries = true`",
+            violations.into_iter().collect::<Vec<_>>().join("\n  ")
+        )
+    })
+}
+
+/// Appends a linked-library policy error to solc or multi-compiler diagnostics.
+fn push_linked_libraries_error<C: Compiler<CompilerContract = Contract>>(
+    output: &mut ProjectCompileOutput<C>,
+    message: String,
+) {
+    let error = SolcError {
+        source_location: None,
+        secondary_source_locations: Vec::new(),
+        r#type: "LinkedLibraryError".to_string(),
+        component: "foundry".to_string(),
+        severity: Severity::Error,
+        error_code: None,
+        message,
+        formatted_message: None,
+    };
+    // CompilationError has no constructor; downcast to the concrete diagnostics instead.
+    let errors = &mut output.output_mut().errors as &mut dyn Any;
+    if let Some(errors) = errors.downcast_mut::<Vec<SolcError>>() {
+        errors.push(error);
+    } else if let Some(errors) = errors.downcast_mut::<Vec<MultiCompilerError>>() {
+        errors.push(MultiCompilerError::Solc(error));
     }
 }
 

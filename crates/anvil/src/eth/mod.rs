@@ -13,6 +13,7 @@ pub mod miner;
 pub mod otterscan;
 pub mod pool;
 pub mod sign;
+pub mod tempo_consensus;
 pub mod util;
 
 pub use api::EthApi;

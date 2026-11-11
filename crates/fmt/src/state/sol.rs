@@ -14,7 +14,7 @@ use solar::{
     ast::BoxSlice,
     interface::SpannedOption,
     parse::{
-        ast::{self, Span},
+        ast::{self, ImportItems, Span},
         interface::BytePos,
     },
 };
@@ -86,6 +86,14 @@ impl<'ast> State<'_, 'ast> {
     /// Prints a hardbreak if the item needs an isolated line break.
     fn separate_items(&mut self, next_item: &'ast ast::Item<'ast>, advance: bool) {
         if !item_needs_iso(&next_item.kind) {
+            return;
+        }
+        // A trailing directive can begin a doc group that continues before the next item.
+        if self
+            .directive_doc_groups
+            .iter()
+            .any(|group| group.lo() < self.cursor.pos && self.cursor.pos < group.hi())
+        {
             return;
         }
         // Never isolate items within a `disable-start`/`disable-end` region, where the source
@@ -216,7 +224,6 @@ impl<'ast> State<'_, 'ast> {
         let ast::ImportDirective { path, items } = import;
         self.word("import ");
 
-        use ast::ImportItems;
         use config::NamespaceImportStyle as NIStyle;
 
         match (items, self.config.namespace_import_style) {

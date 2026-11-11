@@ -308,7 +308,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 None => Exits::fallthrough(entry),
             },
             // Inline assembly can call out and log; conservatively taint.
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
+            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) | StmtKind::Err(_) => {
                 Exits::fallthrough(true)
             }
         }
@@ -491,7 +491,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                             .any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
                     })
             }
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) => true,
+            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) => true,
             StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {
                 false
             }

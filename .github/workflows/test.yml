@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
       - name: Generate matrices
@@ -115,16 +115,20 @@ jobs:
           version: 11.8.0
           run_install: false
       - name: Setup Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.14"
+          # Vyper's `immutables` dependency has no 3.14 wheels, and source builds pull the newest
+          # setuptools, which Aegis blocks while recently published.
+          python-version: "3.13"
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip==26.2.2
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
       - name: Install Z3
         # Pinned so the `forge test --symbolic` snapshot tests stay stable across solver versions.
         if: runner.os == 'Linux'
-        run: pip install z3-solver==5.1.0.0 && z3 --version
+        run: pip install z3-solver==5.3.2.0 && z3 --version
 
       - name: Foundry test cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -138,6 +142,14 @@ jobs:
           key: ${{ runner.os }}-foundry-${{ matrix.name }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-foundry-${{ matrix.name }}-
+      - name: External compiler cache
+        if: contains(matrix.name, 'external')
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/foundry-external-tests
+          key: v1-${{ runner.os }}-external-build-${{ matrix.target }}-${{ matrix.partition }}-${{ github.run_id }}
+          restore-keys: |
+            v1-${{ runner.os }}-external-build-${{ matrix.target }}-${{ matrix.partition }}-
       - name: Seed signatures used by trace snapshots
         shell: bash
         run: |
@@ -154,10 +166,10 @@ jobs:
           path.write_text(json.dumps(cache))
           PYTHON
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-bin: false
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
         with:
           tool: nextest
       - name: Setup Git config
@@ -175,6 +187,7 @@ jobs:
           TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           NEXTEST_FILTER: ${{ matrix.filter }}
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
+          FOUNDRY_EXTERNAL_TEST_CACHE: ${{ runner.temp }}/foundry-external-tests
         shell: bash
         run: |
           args=(-E "$NEXTEST_FILTER")
@@ -182,4 +195,4 @@ jobs:
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          cargo nextest run --locked --features base,monad "${args[@]}"
+          cargo nextest run --locked --features base,monad --profile ci "${args[@]}"

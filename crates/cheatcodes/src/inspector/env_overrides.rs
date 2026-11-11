@@ -1,39 +1,23 @@
-//! Cheatcode overrides of the `BASEFEE`, `GASPRICE` and `BLOBHASH` opcode values.
+//! Cheatcode overrides of the `BASEFEE`, `GASPRICE`, `BLOBHASH` and `CHAINID` opcode values.
 
 use alloy_primitives::{B256, U256, map::HashMap};
 use foundry_evm_core::backend::LocalForkId;
+use std::mem;
 
 /// Env overrides keyed by fork ID (`None` is the local, non-forked state).
 type EnvOverridesByFork = HashMap<Option<LocalForkId>, EnvOverrides>;
 
 /// Environment overrides applied at the opcode level.
 ///
-/// In isolation mode (and inside the synthetic transactions used by
-/// `--gas-report` / `--isolate`) the transaction environment is zeroed for
-/// fee-accounting purposes, so cheatcodes that mutate the env (e.g.
-/// `vm.fee`, `vm.txGasPrice`, `vm.blobhashes`) cannot rely on those
-/// mutations being visible to contracts via the `BASEFEE`, `GASPRICE` and
-/// `BLOBHASH` opcodes. These overrides are applied in `step_end` to fix
-/// the value that was just pushed onto the stack.
+/// evm2 borrows the transaction environment for the whole transaction, and isolated calls run as
+/// nested transactions whose fee fields are zeroed for fee accounting, so cheatcodes that change
+/// the environment (`vm.fee`, `vm.txGasPrice`, `vm.blobhashes`, `vm.chainId`) cannot rely on the
+/// environment for the `BASEFEE`, `GASPRICE`, `BLOBHASH` and `CHAINID` opcodes. These overrides
+/// are applied in `step_end` to fix the value that was just pushed onto the stack, and
+/// `vm.getBlobhashes()` consults them too.
 ///
-/// # Semantics when invoked from inside the synthetic isolation transaction
-///
-/// `vm.fee` / `vm.txGasPrice` / `vm.blobhashes` consult
-/// [`Cheatcodes::in_isolation_context`](crate::Cheatcodes::in_isolation_context); when set, they
-/// only update these overrides (so `tx.gas_price = 0` continues to apply to fee accounting and
-/// EIP-4844 inner-tx validation does not reject the synthetic call) and
-/// leave the real env untouched. After the inner transaction returns, the
-/// outer env is restored from the cached snapshot taken before
-/// `transact_inner`, which means:
-///
-/// - the override **does** persist for subsequent `BASEFEE`, `GASPRICE` and `BLOBHASH` reads (this
-///   hook fires in `step_end` regardless of isolation),
-/// - `vm.getBlobhashes()` also consults these overrides, so it returns the correct value.
-/// - but the real `block.basefee` / `tx.gas_price` / `tx.blob_hashes` do **not** reflect the
-///   cheatcode value, so other non-opcode env consumers will not see it.
-///
-/// Calling these cheatcodes outside isolation behaves as before (real env
-/// is also mutated and the override mirrors it).
+/// Transaction fee accounting and the chain ID used for transaction validation still follow the
+/// transaction environment.
 #[derive(Clone, Debug, Default)]
 pub struct EnvOverrides {
     /// Override for the `BASEFEE` opcode (set via `vm.fee`).
@@ -44,17 +28,9 @@ pub struct EnvOverrides {
     pub gas_price: Option<u128>,
     /// Override for the `BLOBHASH` opcode (set via `vm.blobhashes`).
     pub blob_hashes: Option<Vec<B256>>,
-    /// `tx.gas_price` captured at snapshot time when no gas_price override was
-    /// active. `sync_tx_after_env_override_restore` uses this to restore the
-    /// real pre-override value (not hardcoded 0) on revert.
-    pub pre_override_gas_price: Option<u128>,
-    /// `tx.tx_type` captured at snapshot time when no blob_hashes override was
-    /// active. Prevents tx_type being stuck at EIP4844 after reverting from a
-    /// blobhashes-set state.
-    pub pre_override_tx_type: Option<u8>,
-    /// `tx.blob_hashes` captured at snapshot time when no blob_hashes override
-    /// was active.
-    pub pre_override_blob_hashes: Option<Vec<B256>>,
+    /// Override for the `CHAINID` opcode (set via `vm.chainId`) until the next transaction, which
+    /// executes with the new chain ID.
+    pub chain_id: Option<u64>,
     /// The opcode about to run (captured in `step`, consumed in `step_end`),
     /// used to know what was just executed when `step_end` fires — at that
     /// point `interpreter.bytecode.opcode()` already points at the *next*
@@ -74,6 +50,7 @@ impl EnvOverrides {
             || self.implicit_basefee.is_some()
             || self.gas_price.is_some()
             || self.blob_hashes.is_some()
+            || self.chain_id.is_some()
     }
 
     /// Returns the value the `BASEFEE` opcode reads, if overridden.
@@ -105,6 +82,9 @@ impl EnvOverrides {
 pub struct EnvOverrideState {
     by_fork: EnvOverridesByFork,
     snapshots: HashMap<U256, EnvOverridesByFork>,
+    /// Whether any fork has an override set, refreshed whenever `by_fork` changes, since the
+    /// per-instruction hooks read it.
+    any_set: bool,
 }
 
 impl EnvOverrideState {
@@ -116,8 +96,12 @@ impl EnvOverrideState {
 
     /// Returns whether any fork, not only the active one, has an override set.
     #[inline]
-    pub fn is_any_set(&self) -> bool {
-        self.by_fork.values().any(EnvOverrides::is_any_set)
+    pub const fn is_any_set(&self) -> bool {
+        self.any_set
+    }
+
+    fn refresh_any_set(&mut self) {
+        self.any_set = self.by_fork.values().any(EnvOverrides::is_any_set);
     }
 
     /// Returns the overrides entry for `fork_id`, even if no override is set.
@@ -139,6 +123,7 @@ impl EnvOverrideState {
         f: impl FnOnce(&mut EnvOverrides),
     ) {
         f(self.by_fork.entry(fork_id).or_default());
+        self.refresh_any_set();
     }
 
     /// Clears the base fee restored for isolation on `fork_id`, without inserting an entry.
@@ -146,34 +131,12 @@ impl EnvOverrideState {
         if let Some(overrides) = self.by_fork.get_mut(&fork_id) {
             overrides.implicit_basefee = None;
         }
+        self.refresh_any_set();
     }
 
-    /// Removes the entry for `fork_id` if no override is set on it.
-    pub(crate) fn remove_if_unset(&mut self, fork_id: Option<LocalForkId>) {
-        if self.by_fork.get(&fork_id).is_some_and(|overrides| !overrides.is_any_set()) {
-            self.by_fork.remove(&fork_id);
-        }
-    }
-
-    /// Saves all overrides, recording the active fork's non-overridden transaction values.
-    pub(crate) fn save_snapshot(
-        &mut self,
-        snapshot_id: U256,
-        active_fork_id: Option<LocalForkId>,
-        tx_gas_price: u128,
-        tx_type: u8,
-        tx_blob_hashes: &[B256],
-    ) {
-        let mut snapshot = self.by_fork.clone();
-        let active = snapshot.entry(active_fork_id).or_default();
-        if active.gas_price.is_none() {
-            active.pre_override_gas_price = Some(tx_gas_price);
-        }
-        if active.blob_hashes.is_none() {
-            active.pre_override_tx_type = Some(tx_type);
-            active.pre_override_blob_hashes = Some(tx_blob_hashes.to_vec());
-        }
-        self.snapshots.insert(snapshot_id, snapshot);
+    /// Saves all overrides under `snapshot_id`.
+    pub(crate) fn save_snapshot(&mut self, snapshot_id: U256) {
+        self.snapshots.insert(snapshot_id, self.by_fork.clone());
     }
 
     /// Restores the overrides saved under `snapshot_id`, deleting the copy if `delete` is set.
@@ -187,6 +150,7 @@ impl EnvOverrideState {
         };
         if let Some(snapshot) = snapshot {
             self.by_fork = snapshot;
+            self.refresh_any_set();
         }
     }
 
@@ -198,6 +162,25 @@ impl EnvOverrideState {
     /// Deletes all saved copies.
     pub(crate) fn clear_snapshots(&mut self) {
         self.snapshots.clear();
+    }
+
+    /// Swaps transaction-specific opcode overrides without changing block overrides or snapshots.
+    pub fn swap_transaction_overrides(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        gas_price: &mut Option<u128>,
+        blob_hashes: &mut Option<Vec<B256>>,
+    ) {
+        let overrides = self.by_fork.entry(fork_id).or_default();
+        mem::swap(&mut overrides.gas_price, gas_price);
+        mem::swap(&mut overrides.blob_hashes, blob_hashes);
+        self.refresh_any_set();
+    }
+
+    /// Swaps a fork's current overrides without changing other forks or snapshot copies.
+    pub fn swap(&mut self, fork_id: Option<LocalForkId>, overrides: &mut EnvOverrides) {
+        mem::swap(self.by_fork.entry(fork_id).or_default(), overrides);
+        self.refresh_any_set();
     }
 }
 
@@ -236,58 +219,27 @@ mod tests {
         assert!(state.is_empty());
         assert!(!state.is_any_set());
 
-        state.update(None, |_| {});
-        assert!(!state.is_empty());
-        assert!(!state.is_any_set());
-
         state.update(FORK, |o| o.gas_price = Some(1));
+        assert!(!state.is_empty());
         assert!(state.is_any_set());
-
-        state.remove_if_unset(None);
-        state.remove_if_unset(FORK);
-        assert!(state.get(None).is_none());
         assert_eq!(state.get(FORK).and_then(EnvOverrides::gas_price_override), Some(1));
 
-        state.clear_implicit_basefee(None);
-        assert!(state.get(None).is_none(), "clearing must not insert an entry");
+        state.update(None, |o| o.chain_id = Some(3));
+        assert!(state.get(None).is_some_and(EnvOverrides::is_any_set), "a chain ID is an override");
+        state.update(None, |o| o.chain_id = None);
+
+        state.clear_implicit_basefee(Some(U256::from(2)));
+        assert!(state.get(Some(U256::from(2))).is_none(), "clearing must not insert an entry");
         state.update(FORK, |o| o.implicit_basefee = Some(2));
         state.clear_implicit_basefee(FORK);
         assert_eq!(state.get(FORK).and_then(EnvOverrides::basefee_override), None);
     }
 
     #[test]
-    fn save_snapshot_records_tx_values_that_are_not_overridden() {
-        let mut state = EnvOverrideState::default();
-        let tx_hashes = [B256::repeat_byte(1)];
-
-        state.save_snapshot(SNAPSHOT, None, 10, 3, &tx_hashes);
-        let snapshot = &state.snapshots[&SNAPSHOT];
-        let active = &snapshot[&None];
-        assert!(!active.is_any_set());
-        assert_eq!(active.pre_override_gas_price, Some(10));
-        assert_eq!(active.pre_override_tx_type, Some(3));
-        assert_eq!(active.pre_override_blob_hashes.as_deref(), Some(&tx_hashes[..]));
-        assert!(state.is_empty(), "saving a snapshot must not change the live overrides");
-
-        state.update(None, |o| {
-            o.gas_price = Some(1);
-            o.blob_hashes = Some(vec![]);
-        });
-        state.update(FORK, |o| o.basefee = Some(2));
-        state.save_snapshot(SNAPSHOT, None, 10, 3, &tx_hashes);
-        let snapshot = &state.snapshots[&SNAPSHOT];
-        let active = &snapshot[&None];
-        assert_eq!(active.pre_override_gas_price, None);
-        assert_eq!(active.pre_override_tx_type, None);
-        assert_eq!(active.pre_override_blob_hashes, None);
-        assert_eq!(snapshot[&FORK].pre_override_gas_price, None, "only the active fork");
-    }
-
-    #[test]
     fn restores_snapshots() {
         let mut state = EnvOverrideState::default();
         state.update(None, |o| o.basefee = Some(1));
-        state.save_snapshot(SNAPSHOT, None, 0, 0, &[]);
+        state.save_snapshot(SNAPSHOT);
 
         state.update(None, |o| o.basefee = Some(2));
         state.restore_snapshot(SNAPSHOT, false);
@@ -307,8 +259,8 @@ mod tests {
     #[test]
     fn deletes_snapshots() {
         let mut state = EnvOverrideState::default();
-        state.save_snapshot(SNAPSHOT, None, 0, 0, &[]);
-        state.save_snapshot(SNAPSHOT + U256::from(1), None, 0, 0, &[]);
+        state.save_snapshot(SNAPSHOT);
+        state.save_snapshot(SNAPSHOT + U256::from(1));
         state.update(None, |o| o.basefee = Some(1));
 
         state.delete_snapshot(SNAPSHOT);

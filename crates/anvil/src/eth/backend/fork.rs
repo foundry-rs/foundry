@@ -1,9 +1,15 @@
 //! Support for forking off another client
 
-use crate::eth::{backend::db::Db, error::BlockchainError};
+use crate::eth::{
+    backend::{
+        db::{BlockchainDb, Db},
+        env::{BlobExcessGasAndPrice, SpecId},
+    },
+    error::BlockchainError,
+};
 use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount};
-use alloy_eips::eip2930::AccessListResult;
+use alloy_eips::{eip2930::AccessListResult, eip7840::BlobParams};
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, BlockResponse, Network, TransactionResponse,
     primitives::HeaderResponse,
@@ -36,19 +42,19 @@ use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{RetryProvider, is_rpc_method_not_found};
-use foundry_evm::{
-    backend::{AccountFetchPolicy, BlockchainDb, account_fetch_policy_for_source},
+use foundry_evm_core::{
+    backend::account_fetch_policy_for_source,
     fork::{cache_bal, validate_bal},
-    hardfork::FoundryHardfork,
 };
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
-use foundry_primitives::FoundryTxReceipt;
+use foundry_fork_db::AccountFetchPolicy;
+use foundry_primitives::{FoundryHeader, FoundryTxReceipt};
 use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
-use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroU64, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +64,8 @@ pub(crate) struct ForkEndpointIdentity {
     pub(crate) network: Option<NetworkVariant>,
     pub(crate) network_profile: Option<NetworkConfigs>,
     pub(crate) hardfork: Option<FoundryHardfork>,
+    /// Blob params an Anvil endpoint prices blobs with, which can differ from its hardfork's.
+    pub(crate) blob_params: Option<BlobParams>,
     pub(crate) instance_id: Option<B256>,
     pub(crate) source_fork_block_number: Option<u64>,
     pub(crate) source_fork_block_hash: Option<B256>,
@@ -76,6 +84,7 @@ impl ForkEndpointIdentity {
             && self.network == other.network
             && self.network_profile == other.network_profile
             && self.hardfork == other.hardfork
+            && self.blob_params == other.blob_params
             && self.source_fork_block_number == other.source_fork_block_number
             && self.source_fork_block_hash == other.source_fork_block_hash
     }
@@ -115,11 +124,6 @@ impl<N: Network> ClientFork<N> {
     /// Creates a new instance of the fork
     pub fn new(config: ClientForkConfig<N>, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
         Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
-    }
-
-    /// Removes all data cached from previous responses
-    pub fn clear_cached_storage(&self) {
-        self.storage.write().clear()
     }
 
     /// Returns true whether the block predates the fork
@@ -190,7 +194,7 @@ impl<N: Network> ClientFork<N> {
         account_fetch_policy_for_source(
             config.chain_id,
             config.endpoint_identity.network_profile.unwrap_or_default(),
-        ) == AccountFetchPolicy::RequireAccountInfo
+        ) != AccountFetchPolicy::Auto
     }
 
     /// Returns the execution chain ID exposed by the forked node.
@@ -697,7 +701,10 @@ impl<N: Network> ClientFork<N> {
         &self,
         hash: B256,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(block) = self.storage_read().blocks.get(&hash).cloned()
+        // Release the read guard before `convert_to_full_block` reacquires it. A writer queued
+        // between the two acquisitions would otherwise deadlock this thread.
+        let block = self.storage_read().blocks.get(&hash).cloned();
+        if let Some(block) = block
             && let Some(block) = self.convert_to_full_block(block)
         {
             return Ok(Some(block));
@@ -709,12 +716,13 @@ impl<N: Network> ClientFork<N> {
         &self,
         block_number: u64,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(mut block) = self
-            .storage_read()
-            .hashes
-            .get(&block_number)
-            .and_then(|hash| self.storage_read().blocks.get(hash).cloned())
-        {
+        // Read both maps through one guard. Reacquiring the read lock while holding it deadlocks
+        // when a writer queues in between.
+        let block = {
+            let storage = self.storage_read();
+            storage.hashes.get(&block_number).and_then(|hash| storage.blocks.get(hash).cloned())
+        };
+        if let Some(mut block) = block {
             block.transactions_mut().convert_to_hashes();
             return Ok(Some(block));
         }
@@ -730,12 +738,13 @@ impl<N: Network> ClientFork<N> {
         &self,
         block_number: u64,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(block) = self
-            .storage_read()
-            .hashes
-            .get(&block_number)
-            .copied()
-            .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
+        // See `block_by_number`. The guard must also be released before `convert_to_full_block`
+        // reacquires it.
+        let block = {
+            let storage = self.storage_read();
+            storage.hashes.get(&block_number).and_then(|hash| storage.blocks.get(hash).cloned())
+        };
+        if let Some(block) = block
             && let Some(block) = self.convert_to_full_block(block)
         {
             return Ok(Some(block));
@@ -757,17 +766,7 @@ impl<N: Network> ClientFork<N> {
         block_id: impl Into<BlockId>,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
         if let Some(block) = self.provider().get_block(block_id.into()).full().await? {
-            let hash = block.header().hash();
-            let block_number = block.header().number();
-            let mut storage = self.storage_write();
-            // also insert all transactions
-            let block_txs = match block.transactions() {
-                BlockTransactions::Full(txs) => txs.to_owned(),
-                _ => vec![],
-            };
-            storage.transactions.extend(block_txs.iter().map(|tx| (tx.tx_hash(), tx.clone())));
-            storage.hashes.insert(block_number, hash);
-            storage.blocks.insert(hash, block.clone());
+            self.cache_block(&block);
             return Ok(Some(block));
         }
 
@@ -784,6 +783,18 @@ impl<N: Network> ClientFork<N> {
             .collect::<Option<Vec<_>>>()?;
         *block.transactions_mut() = BlockTransactions::Full(transactions);
         Some(block)
+    }
+
+    /// Caches a block and its full transactions, if present.
+    fn cache_block(&self, block: &N::BlockResponse) {
+        let hash = block.header().hash();
+        let block_number = block.header().number();
+        let mut storage = self.storage_write();
+        if let BlockTransactions::Full(txs) = block.transactions() {
+            storage.transactions.extend(txs.iter().map(|tx| (tx.tx_hash(), tx.clone())));
+        }
+        storage.hashes.insert(block_number, hash);
+        storage.blocks.insert(hash, block.clone());
     }
 }
 
@@ -887,6 +898,40 @@ impl ClientFork {
         self.storage_write().uncles.insert(block_hash, uncles.clone());
         Ok(uncles.get(index).cloned())
     }
+
+    /// Returns the pinned fork root's native header, validating it before caching fetched data.
+    pub(crate) async fn root_header(&self) -> Result<Option<FoundryHeader>, BlockchainError> {
+        let (number, hash, provider) = {
+            let config = self.config.read();
+            (config.block_number, config.block_hash, config.provider.clone())
+        };
+        let cached = self.storage_read().blocks.get(&hash).cloned();
+        let was_cached = cached.is_some();
+        let block = if let Some(block) = cached {
+            block
+        } else {
+            // Do not expose an unverified root through the shared block or transaction caches.
+            let Some(block) = provider.get_block(BlockId::hash(hash)).full().await? else {
+                return Ok(None);
+            };
+            block
+        };
+
+        // Native header fields can live at the RPC block level, outside its Ethereum header.
+        let header = serde_json::to_value(&block)
+            .and_then(serde_json::from_value::<FoundryHeader>)
+            .map_err(|error| BlockchainError::Internal(error.to_string()))?;
+        if block.header.hash != hash || header.number() != number || header.hash_slow() != hash {
+            return Err(BlockchainError::Internal(
+                "Fork root header does not match its pinned hash".into(),
+            ));
+        }
+
+        if !was_cached {
+            self.cache_block(&block);
+        }
+        Ok(Some(header))
+    }
 }
 
 /// Contains all fork metadata
@@ -919,6 +964,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub(crate) endpoint_identity: ForkEndpointIdentity,
     /// Discovery identified a local node or could not rule out mutable source state.
     pub(crate) state_is_mutable: bool,
+    /// Tempo consensus epoch length reported by the fork source, if it exposes one.
+    pub(crate) tempo_epoch_length: Option<NonZeroU64>,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block

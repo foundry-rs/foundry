@@ -16,10 +16,13 @@ mod smt;
 
 use fallback::{checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first};
 use normalize::{
-    constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
+    NormalizationCache, constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
     sorted_bool_exprs_are_subset,
 };
-use reasoning::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
+use reasoning::{
+    CheckedXorResult, checked_xor_result, product_monotonic_unsat_normalized,
+    remove_implied_monotonic_constraints,
+};
 use smt::write_smt_assertions;
 
 pub(crate) use fallback::{
@@ -123,7 +126,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     portfolio_scheduler: PortfolioScheduler,
     heuristic_witnesses: usize,
     replayable_storage: SymbolicVars,
-    normalization_cache: HashMap<SymBoolExpr, SymBoolExpr>,
+    normalization_cache: NormalizationCache,
     sat_cache: HashMap<Vec<SymBoolExpr>, bool>,
     model_cache: HashMap<Vec<SymBoolExpr>, SymbolicModel>,
     sat_queries: usize,
@@ -151,7 +154,7 @@ impl SmtLibSubprocessSolver {
             portfolio_scheduler: PortfolioScheduler::default(),
             heuristic_witnesses: 0,
             replayable_storage: SymbolicVars::default(),
-            normalization_cache: HashMap::default(),
+            normalization_cache: NormalizationCache::default(),
             sat_cache: HashMap::default(),
             model_cache: HashMap::default(),
             sat_queries: 0,
@@ -202,18 +205,32 @@ impl SmtLibSubprocessSolver {
     pub(crate) fn check_available(&self) -> Result<(), SymbolicError> {
         let commands = self.commands()?;
         let mut errors = Vec::new();
+        // Availability must not strand a joined live worker before exploration can check its
+        // deadline. Share one budget across the portfolio and discard unneeded version output.
+        let seconds = self.timeout.filter(|seconds| *seconds > 0).unwrap_or(30);
+        let deadline = Instant::now() + Duration::from_secs(seconds.into());
         for command in commands {
-            let output = match Command::new(&command.program).arg("--version").output() {
-                Ok(output) => output,
+            let mut child = match Command::new(&command.program)
+                .arg("--version")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(child) => SolverChild::new(child),
                 Err(err) => {
                     errors.push(format!("failed to execute `{}`: {err}", command.program));
                     continue;
                 }
             };
-            if output.status.success() {
-                return Ok(());
+            match child.child_mut().wait_timeout(deadline.saturating_duration_since(Instant::now()))
+            {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(_)) => errors
+                    .push(format!("`{}` is not a usable SMT solver executable", command.program)),
+                Ok(None) => return Err(SymbolicError::Timeout(seconds)),
+                Err(err) => errors.push(format!("failed to wait for `{}`: {err}", command.program)),
             }
-            errors.push(format!("`{}` is not a usable SMT solver executable", command.program));
         }
         Err(SymbolicError::Solver(errors.join("; ")))
     }
@@ -315,6 +332,21 @@ impl SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver model");
+        if let Some(result) = checked_xor_result(constraints) {
+            match result {
+                CheckedXorResult::Unsat => {
+                    self.cache_sat_result(cache_key, false);
+                    return Err(SymbolicError::Solver(
+                        "counterexample path became unsat".to_string(),
+                    ));
+                }
+                CheckedXorResult::Model(model) => {
+                    self.cache_sat_result(cache_key.clone(), true);
+                    self.cache_model_result(cache_key, model.clone());
+                    return Ok(model);
+                }
+            }
+        }
         if let Some(model) = fallback_single_var_model(&smt_constraints)
             && eval_model_constraints(constraints, &model)
         {
@@ -456,6 +488,15 @@ impl SmtLibSubprocessSolver {
             trace!("is_sat: monotonic product contradiction");
             self.cache_sat_result(cache_key, false);
             return Ok(BranchFeasibility::Unsat);
+        }
+        if let Some(result) = checked_xor_result(constraints) {
+            let sat = matches!(result, CheckedXorResult::Model(_));
+            trace!(sat, "is_sat: checked XOR specialist");
+            self.cache_sat_result(cache_key.clone(), sat);
+            if let CheckedXorResult::Model(model) = result {
+                self.cache_model_result(cache_key, model);
+            }
+            return Ok(if sat { BranchFeasibility::Sat } else { BranchFeasibility::Unsat });
         }
         if !constraints.is_empty()
             && eval_model_constraints(constraints, &SymbolicModel::default())
@@ -685,7 +726,7 @@ where
 fn normalize_sat_constraints(
     cx: &mut SymCx,
     constraints: &[SymBoolExpr],
-    normalization_cache: &mut HashMap<SymBoolExpr, SymBoolExpr>,
+    normalization_cache: &mut NormalizationCache,
 ) -> Vec<SymBoolExpr> {
     let constraints = remove_implied_monotonic_constraints(
         normalize_constraints_for_solver_cached(cx, constraints, normalization_cache),
@@ -1678,14 +1719,81 @@ fn parse_model_values(
     output: &str,
     mut insert_value: impl FnMut(&str, U256),
 ) -> Result<(), SymbolicError> {
-    let mut tokens = output
-        .split(|c: char| c.is_whitespace() || matches!(c, '(' | ')'))
-        .filter(|token| !token.is_empty());
-    while let Some(token) = tokens.next() {
-        if token == "define-fun" {
-            let Some(name) = tokens.next() else { continue };
-            while let Some(value) = tokens.next() {
-                if let Some(hex) = value.strip_prefix("#x") {
+    let mut tokens = Vec::new();
+    let mut atom_start = None;
+    for (idx, c) in output.char_indices() {
+        if c.is_whitespace() || matches!(c, '(' | ')') {
+            if let Some(start) = atom_start.take() {
+                tokens.push(&output[start..idx]);
+            }
+            if !c.is_whitespace() {
+                tokens.push(&output[idx..idx + c.len_utf8()]);
+            }
+        } else if atom_start.is_none() {
+            atom_start = Some(idx);
+        }
+    }
+    if let Some(start) = atom_start {
+        tokens.push(&output[start..]);
+    }
+    let mut tokens = tokens.into_iter();
+    while let Some(sexp) = ModelSexp::parse(&mut tokens) {
+        sexp.visit_definitions(&mut insert_value)?;
+    }
+    Ok(())
+}
+
+/// A model S-expression: solvers print each value as `(define-fun <name> () <sort> <term>)`.
+enum ModelSexp<'a> {
+    Atom(&'a str),
+    List(Vec<Self>),
+}
+
+impl<'a> ModelSexp<'a> {
+    /// Parses one S-expression; returns `None` at the end of the tokens or at a closing paren.
+    fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Option<Self> {
+        match tokens.next()? {
+            "(" => {
+                let mut items = Vec::new();
+                while let Some(item) = Self::parse(tokens) {
+                    items.push(item);
+                }
+                Some(Self::List(items))
+            }
+            ")" => None,
+            atom => Some(Self::Atom(atom)),
+        }
+    }
+
+    /// Inserts the value of each constant definition whose term evaluates to a literal.
+    ///
+    /// Solvers echo the query's helper definitions, whose terms are not literals, and share
+    /// subterms through `let`; neither may take the value of the next definition.
+    fn visit_definitions(
+        &self,
+        insert_value: &mut impl FnMut(&str, U256),
+    ) -> Result<(), SymbolicError> {
+        let Self::List(items) = self else { return Ok(()) };
+        if let [Self::Atom("define-fun"), Self::Atom(name), Self::List(args), _sort, term] =
+            items.as_slice()
+            && args.is_empty()
+        {
+            if let Some(value) = term.value(&mut HashMap::default())? {
+                insert_value(name, value);
+            }
+            return Ok(());
+        }
+        for item in items {
+            item.visit_definitions(insert_value)?;
+        }
+        Ok(())
+    }
+
+    /// Evaluates a literal, a `let`-bound name, or a `let` over such terms.
+    fn value(&self, bindings: &mut HashMap<&'a str, U256>) -> Result<Option<U256>, SymbolicError> {
+        match self {
+            Self::Atom(atom) => {
+                if let Some(hex) = atom.strip_prefix("#x") {
                     if hex.len() > 64 {
                         return Err(SymbolicError::Solver(
                             "solver hex model value exceeds 256 bits".to_string(),
@@ -1697,10 +1805,9 @@ fn parse_model_values(
                     })?;
                     let start = 32usize.saturating_sub(decoded.len());
                     bytes[start..start + decoded.len()].copy_from_slice(&decoded);
-                    insert_value(name, U256::from_be_bytes(bytes));
-                    break;
+                    return Ok(Some(U256::from_be_bytes(bytes)));
                 }
-                if let Some(binary) = value.strip_prefix("#b") {
+                if let Some(binary) = atom.strip_prefix("#b") {
                     if binary.len() > 256 {
                         return Err(SymbolicError::Solver(
                             "solver binary model value exceeds 256 bits".to_string(),
@@ -1709,22 +1816,32 @@ fn parse_model_values(
                     let parsed = U256::from_str_radix(binary, 2).map_err(|err| {
                         SymbolicError::Solver(format!("invalid solver binary model value: {err}"))
                     })?;
-                    insert_value(name, parsed);
-                    break;
+                    return Ok(Some(parsed));
                 }
-                if value == "_"
-                    && let Some(bv) = tokens.next().and_then(|v| v.strip_prefix("bv"))
-                {
-                    let parsed = U256::from_str_radix(bv, 10).map_err(|err| {
+                Ok(bindings.get(atom).copied())
+            }
+            Self::List(items) => match items.as_slice() {
+                [Self::Atom("_"), Self::Atom(bv), _width] if bv.starts_with("bv") => {
+                    let parsed = U256::from_str_radix(&bv[2..], 10).map_err(|err| {
                         SymbolicError::Solver(format!("invalid solver decimal model value: {err}"))
                     })?;
-                    insert_value(name, parsed);
-                    break;
+                    Ok(Some(parsed))
                 }
-            }
+                [Self::Atom("let"), Self::List(pairs), body] => {
+                    for pair in pairs {
+                        if let Self::List(pair) = pair
+                            && let [Self::Atom(name), term] = pair.as_slice()
+                            && let Some(value) = term.value(bindings)?
+                        {
+                            bindings.insert(name, value);
+                        }
+                    }
+                    body.value(bindings)
+                }
+                _ => Ok(None),
+            },
         }
     }
-    Ok(())
 }
 
 fn model_symbols_for_constraints(

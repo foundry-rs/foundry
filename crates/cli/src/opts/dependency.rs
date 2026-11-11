@@ -47,6 +47,8 @@ pub struct Dependency {
     pub tag: Option<String>,
     /// Optional alias of the dependency
     pub alias: Option<String>,
+    /// The explicitly requested ref kind, if any.
+    pub ref_kind: Option<DependencyRefKind>,
 }
 
 impl FromStr for Dependency {
@@ -54,6 +56,13 @@ impl FromStr for Dependency {
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
         // Handle dependency exact ref type (`@tag=`, `@branch=` or `@rev=`)`.
         // Only extract version for first tag/branch/commit specified.
+        let ref_kind =
+            VERSION_PREFIX_REGEX.captures(dependency).map(|captures| match &captures[1] {
+                "tag" => DependencyRefKind::Tag,
+                "branch" => DependencyRefKind::Branch,
+                "rev" => DependencyRefKind::Rev,
+                _ => unreachable!(),
+            });
         let url_and_version: Vec<&str> = VERSION_PREFIX_REGEX.split(dependency).collect();
         let dependency = url_and_version[0];
         let mut tag_or_branch = url_and_version.get(1).map(|version| version.to_string());
@@ -139,7 +148,7 @@ impl FromStr for Dependency {
             (None, None, None)
         };
 
-        Ok(Self { name: name.or_else(|| alias.clone()).unwrap(), url, tag, alias })
+        Ok(Self { name: name.or_else(|| alias.clone()).unwrap(), url, tag, alias, ref_kind })
     }
 }
 
@@ -153,6 +162,17 @@ impl Dependency {
     pub fn require_url(&self) -> Result<&str> {
         self.url.as_deref().ok_or_else(|| eyre::eyre!("dependency {} has no url", self.name()))
     }
+}
+
+/// An explicitly requested Git ref kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DependencyRefKind {
+    /// A Git tag.
+    Tag,
+    /// A Git branch.
+    Branch,
+    /// A Git commit revision.
+    Rev,
 }
 
 #[cfg(test)]
@@ -379,6 +399,7 @@ mod tests {
         assert_eq!(dep.url, Some("https://github.com/smartcontractkit/ccip".to_string()));
         assert_eq!(dep.tag, Some("contracts-ccip/v1.2.1".to_string()));
         assert_eq!(dep.alias, None);
+        assert_eq!(dep.ref_kind, Some(DependencyRefKind::Tag));
 
         let dep =
             Dependency::from_str("smartcontractkit/ccip@branch=contracts-ccip/v1.2.1").unwrap();
@@ -386,12 +407,14 @@ mod tests {
         assert_eq!(dep.url, Some("https://github.com/smartcontractkit/ccip".to_string()));
         assert_eq!(dep.tag, Some("contracts-ccip/v1.2.1".to_string()));
         assert_eq!(dep.alias, None);
+        assert_eq!(dep.ref_kind, Some(DependencyRefKind::Branch));
 
         let dep = Dependency::from_str("smartcontractkit/ccip@rev=80eb41b").unwrap();
         assert_eq!(dep.name, "ccip");
         assert_eq!(dep.url, Some("https://github.com/smartcontractkit/ccip".to_string()));
         assert_eq!(dep.tag, Some("80eb41b".to_string()));
         assert_eq!(dep.alias, None);
+        assert_eq!(dep.ref_kind, Some(DependencyRefKind::Rev));
     }
 
     #[test]

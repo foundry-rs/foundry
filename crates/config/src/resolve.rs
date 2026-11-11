@@ -23,23 +23,16 @@ impl UnresolvedEnvVarError {
     pub fn try_resolve(&self) -> Result<String, Self> {
         interpolate(&self.unresolved)
     }
-
-    fn is_simple(&self) -> bool {
-        RE_PLACEHOLDER.captures_iter(&self.unresolved).count() <= 1
-    }
 }
 
 impl fmt::Display for UnresolvedEnvVarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The unresolved input is omitted because it can contain literal credentials.
         write!(f, "environment variable `{}` ", self.var)?;
         f.write_str(match self.source {
             VarError::NotPresent => "not found",
             VarError::NotUnicode(_) => "is not valid unicode",
-        })?;
-        if !self.is_simple() {
-            write!(f, " in `{}`", self.unresolved)?;
-        }
-        Ok(())
+        })
     }
 }
 
@@ -85,5 +78,14 @@ mod tests {
         let cap = RE_PLACEHOLDER.captures(val).unwrap();
         assert_eq!(cap.name("outer").unwrap().as_str(), "${API_KEY}");
         assert_eq!(cap.name("inner").unwrap().as_str(), "API_KEY");
+    }
+
+    #[test]
+    fn unresolved_error_omits_input() {
+        let err = interpolate(
+            "https://user:synthetic-password@rpc.invalid/${FOUNDRY_TEST_UNSET_A}/${FOUNDRY_TEST_UNSET_B}",
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "environment variable `FOUNDRY_TEST_UNSET_A` not found");
     }
 }

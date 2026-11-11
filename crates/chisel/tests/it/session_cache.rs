@@ -126,3 +126,27 @@ Context:
 
 "#]]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_alias_output_omits_url_credentials() {
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    let home = tempfile::tempdir().unwrap();
+    fs::write(
+        home.path().join("foundry.toml"),
+        format!(
+            "[rpc_endpoints]\nprivate = \"http://user:synthetic-password@{}/?apikey=synthetic-key\"\n",
+            handle.socket_address()
+        ),
+    )
+    .unwrap();
+
+    command(home.path())
+        .args(["--use", "0.8.29", "eval", "!fork private"])
+        .assert()
+        .success()
+        .stdout_eq(str![[r#"
+Set fork URL to http://127.0.0.1:[..]/
+
+"#]])
+        .stderr_eq(str![""]);
+}

@@ -31,7 +31,7 @@ cat > "$corpus/foundry.toml" <<'EOF'
 [profile.default]
 test = "."
 optimizer = true
-solc = "0.8.36"
+solc = "0.8.38"
 offline = true
 
 [profile.default.invariant]
@@ -67,11 +67,11 @@ mapfile -t solar_sources < <(
   done
 )
 
-solc="$pgo_home/.svm/0.8.36/solc-0.8.36"
+solc="$pgo_home/.svm/0.8.38/solc-0.8.38"
 mkdir -p "$(dirname "$solc")"
 curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$solc" \
-  https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.36+commit.8a079791
-printf '%s  %s\n' c8d35afdddc3cd2743ee88b8f25e0fecd16e2bdd5f2120f37e52cd9cc45ae0e6 \
+  https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.38+commit.1835d247
+printf '%s  %s\n' 65c3180a336eabb6bdc4bbd49cc405aeb233976964ae6c11fba2a6c8be8f3243 \
   "$solc" | sha256sum --check
 chmod +x "$solc"
 

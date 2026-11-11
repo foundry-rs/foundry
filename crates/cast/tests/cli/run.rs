@@ -3,7 +3,9 @@
 use super::*;
 use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
-use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
+use anvil::eth::pool::transactions::TransactionOrder;
+use foundry_common::HYPERLIQUID_SYSTEM_ADDRESS;
+use foundry_test_utils::rpc::{spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method};
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
 #[casttest]
@@ -642,6 +644,77 @@ Warning: the replay does not match the transaction's receipt: it used 61000 gas 
 "#]]);
 }
 
+// A skipped system credit changes the target's prestate even when it opens the block, so the
+// replay must warn about it regardless of its index.
+#[casttest]
+async fn cast_run_warns_on_skipped_system_transactions(cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test().with_transaction_order(TransactionOrder::Fifo)).await;
+    let endpoint = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let system = HYPERLIQUID_SYSTEM_ADDRESS;
+    api.anvil_impersonate_account(system).await.unwrap();
+    api.anvil_set_balance(system, U256::from(10u128.pow(18))).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    for senders in [&[system, from][..], &[from, system, from]] {
+        let mut tx_hashes = Vec::new();
+        for &sender in senders {
+            let mut tx = TransactionRequest::default().with_from(sender).with_to(Address::ZERO);
+            if sender == system {
+                tx = tx.with_value(U256::from(1));
+            }
+            tx_hashes.push(*provider.send_transaction(tx.into()).await.unwrap().tx_hash());
+        }
+        api.mine_one().await.unwrap();
+        let [.., system_tx, target] = tx_hashes[..] else { unreachable!() };
+        let warning = format!(
+            "Warning: the replay skips system transactions before the target, so their state changes are missing: [{system_tx}]; `--replay-system-txes` attempts local replay where supported; `--debug-trace-transaction` renders the node's own trace instead\n"
+        );
+
+        cmd.cast_fuse()
+            .args(["run", &target.to_string(), "--rpc-url", &endpoint, "--no-bal"])
+            .assert_success()
+            .stderr_eq(format!("Executing previous transactions from the block.\n{warning}"));
+        cmd.cast_fuse()
+            .args([
+                "run",
+                &target.to_string(),
+                "--rpc-url",
+                &endpoint,
+                "--no-bal",
+                "--replay-system-txes",
+            ])
+            .assert_success()
+            .stderr_eq("Executing previous transactions from the block.\n");
+
+        // ArbOS internal transactions are skipped without a warning on any chain, since Orbit
+        // chains are unknown to `alloy-chains`, and even with `--replay-system-txes`, since they
+        // cannot be converted for replay.
+        let endpoint = spawn_rpc_proxy_mapping_method(
+            endpoint.clone(),
+            "eth_getBlockByNumber",
+            move |_, mut block| {
+                if let Some(txs) = block["transactions"].as_array_mut() {
+                    for tx in txs.iter_mut().filter(|tx| tx["hash"] == json!(system_tx)) {
+                        tx["type"] = json!("0x6a");
+                    }
+                }
+                block
+            },
+        )
+        .await;
+        for flags in [&[][..], &["--replay-system-txes"][..]] {
+            cmd.cast_fuse()
+                .args(["run", &target.to_string(), "--rpc-url", &endpoint, "--no-bal"])
+                .args(flags)
+                .assert_success()
+                .stderr_eq("Executing previous transactions from the block.\n");
+        }
+    }
+}
+
 // Forked state reports an account that does not exist as empty, but replay must not refund the
 // EIP-7702 authorization of an authority that did not exist before the transaction.
 #[casttest]
@@ -746,6 +819,48 @@ async fn cast_run_rejects_mismatched_transaction(cmd: _) {
     }
 }
 
+// Opens a replayed transaction in soldb and checks a source stop with its variables.
+#[forgetest]
+async fn cast_run_debug_soldb(prj: _, cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "run",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &endpoint,
+            "--debug",
+            "--with-local-artifacts",
+        ])
+        .stdin("break src/Counter.sol:8\ncontinue\nvars\nbacktrace\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Loaded trace with 118 steps.
+Sources loaded for: Counter (0x5fbdb2315678afecb367f032d93f642f64180aa3)
+src/Counter.sol:4  (step 0/117, pc 0, PUSH1, gas 22492)
+    4 | contract Counter {
+Breakpoint #1 set at src/Counter.sol:8
+Breakpoint #1 hit at step 108, src/Counter.sol:8
+src/Counter.sol:8 in setNumber  (step 108/117, pc 136, DUP1, gas 22124)
+    8 |         number = newNumber;
+warning: local variables are inferred from the legacy source map and the stack layout of solc's legacy code generator, not from compiler-reported variable locations
+uint256 newNumber = 111 [stack+2]
+State:
+uint256 number = <unknown: slot 0x0 has not been read or written yet> [slot 0x0]
+#0  setNumber at src/Counter.sol:8  step 108, PC 136
+#1  Counter at src/Counter.sol:4  step 23, PC 40
+Exiting debugger.
+
+"#]]);
+}
+
 // A forked Anvil replays upstream transactions with the hardfork of the upstream chain: Cancun
 // charges 21000 where EIP-2780 charges 15000.
 #[casttest]
@@ -788,4 +903,77 @@ async fn cast_run_upstream_tx_through_amsterdam_fork(cmd: _) {
             .assert_success()
             .stdout_eq(format!("...\nTransaction successfully executed.\nGas used: {gas}\n"));
     }
+}
+
+// Prefix transactions from system senders replay only with `--replay-system-txes`, which the
+// target observes: here a HyperEVM-style system transfer funds the account it reads and stores.
+#[casttest]
+async fn cast_run_replays_system_txes(cmd: _) {
+    let config = NodeConfig::test()
+        .with_base_fee(Some(0))
+        .with_gas_price(Some(0))
+        .with_transaction_order(TransactionOrder::Fifo);
+    let (api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let funded = address!("0x00000000000000000000000000000000000beef1");
+    // SSTORE(0, BALANCE(CALLDATALOAD(4))) and return the balance.
+    let probe = Address::with_last_byte(0xaa);
+    api.anvil_set_code(probe, bytes!("0x600435318060005560005260206000f3")).await.unwrap();
+    api.anvil_set_balance(HYPERLIQUID_SYSTEM_ADDRESS, U256::from(10u128.pow(20))).await.unwrap();
+    api.anvil_impersonate_account(HYPERLIQUID_SYSTEM_ADDRESS).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let system = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(HYPERLIQUID_SYSTEM_ADDRESS)
+                .with_to(funded)
+                .with_value(U256::from(10u128.pow(18)))
+                .with_gas_price(0)
+                .with_gas_limit(21_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let target = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(from)
+                .with_to(probe)
+                .with_input([[0u8; 4].as_slice(), funded.into_word().as_slice()].concat())
+                .with_gas_price(0)
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    let system_tx = *system.tx_hash();
+    assert!(system.get_receipt().await.unwrap().status());
+    let receipt = target.get_receipt().await.unwrap();
+    assert_eq!(receipt.transaction_index, Some(1));
+    assert_eq!(receipt.gas_used, 45_907);
+    let tx_hash = receipt.transaction_hash.to_string();
+    let endpoint = handle.http_endpoint();
+
+    // Without the system transfer the balance is zero, so the store costs less.
+    cmd.args(["run", &tx_hash, "--rpc-url", &endpoint])
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq("...\nTransaction successfully executed.\nGas used: 26007\n")
+        .stderr_eq(format!(
+            "Executing previous transactions from the block.\n\
+             Warning: the replay skips system transactions before the target, so their state changes are missing: [{system_tx}]; `--replay-system-txes` attempts local replay where supported; `--debug-trace-transaction` renders the node's own trace instead\n\
+             Warning: the replay does not match the transaction's receipt: it used 45907 gas on-chain but 26007 in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.\n"
+        ));
+    cmd.cast_fuse()
+        .args(["run", &tx_hash, "--rpc-url", &endpoint, "--replay-system-txes"])
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq("...\nTransaction successfully executed.\nGas used: 45907\n")
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
+"#]]);
 }

@@ -634,3 +634,62 @@ Transaction successfully executed.
 
 "#]]);
 }
+
+// `cast run --trace-printer` counts call frames from 1, as geth struct logs do: the transaction's
+// frame steps at depth 1 and the call it makes at depth 2.
+#[casttest]
+async fn cast_run_trace_printer_depth(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    // Parent runtime: CALL(gas, 0x..bb, 0, 0, 0, 0, 0); STOP.
+    api.anvil_set_code(Address::with_last_byte(0xaa), bytes!("0x6000600060006000600060bb5af100"))
+        .await
+        .unwrap();
+    // Child runtime: STOP.
+    api.anvil_set_code(Address::with_last_byte(0xbb), bytes!("0x00")).await.unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x00000000000000000000000000000000000000aa",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    cmd.cast_fuse()
+        .args([
+            "run",
+            "--trace-printer",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+SM [ADDRESS], caller:0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266,target:0x00000000000000000000000000000000000000aa is_static:false, transfer:0, input_size:0
+depth:1, PC:0, gas:[..], OPCODE: "PUSH1"(96)  refund:0x0(0) Stack:[], Data size:0
+depth:1, PC:2, gas:[..], OPCODE: "PUSH1"(96)  refund:0x0(0) Stack:[0], Data size:0
+depth:1, PC:4, gas:[..], OPCODE: "PUSH1"(96)  refund:0x0(0) Stack:[0, 0], Data size:0
+depth:1, PC:6, gas:[..], OPCODE: "PUSH1"(96)  refund:0x0(0) Stack:[0, 0, 0], Data size:0
+depth:1, PC:8, gas:[..], OPCODE: "PUSH1"(96)  refund:0x0(0) Stack:[0, 0, 0, 0], Data size:0
+depth:1, PC:10, gas:[..], OPCODE: "PUSH1"(96)  refund:0x0(0) Stack:[0, 0, 0, 0, 0], Data size:0
+depth:1, PC:12, gas:[..], OPCODE: "GAS"(90)  refund:0x0(0) Stack:[0, 0, 0, 0, 0, 187], Data size:0
+depth:1, PC:13, gas:[..], OPCODE: "CALL"(241)  refund:0x0(0) Stack:[0, 0, 0, 0, 0, 187, [..]], Data size:0
+SM [ADDRESS], caller:0x00000000000000000000000000000000000000aa,target:0x00000000000000000000000000000000000000bb is_static:false, transfer:0, input_size:0
+depth:2, PC:0, gas:[..], OPCODE: "STOP"(0)  refund:0x0(0) Stack:[], Data size:0
+depth:1, PC:14, gas:[..], OPCODE: "STOP"(0)  refund:0x0(0) Stack:[1], Data size:0
+Traces:
+...
+
+"#]]);
+}

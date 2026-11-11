@@ -1,24 +1,14 @@
+use crate::{CallTraceArena, CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder};
 use alloy_primitives::hex::ToHexExt;
-use revm_inspectors::tracing::{
-    CallTraceArena,
-    types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
-};
 
 /// Wrapper for building a folded stack trace using EVM call trace node.
 #[derive(Default)]
 pub struct EvmFoldedStackTraceBuilder {
-    /// Trace produced in isolate mode, meaning refund needs to be reversed at the depth=1
-    /// frame for consistent gas values.
-    isolate: bool,
     /// Raw folded stack trace builder.
     fst: FoldedStackTraceBuilder,
 }
 
 impl EvmFoldedStackTraceBuilder {
-    pub fn new(isolate: bool) -> Self {
-        Self { isolate, fst: FoldedStackTraceBuilder::default() }
-    }
-
     /// Returns the folded stack trace as formatted strings.
     pub fn build(self) -> Vec<String> {
         self.fst.build()
@@ -57,13 +47,8 @@ impl EvmFoldedStackTraceBuilder {
             }
         };
 
-        let mut gas_used = node.trace.gas_used;
-        let max_refund_adjust_depth = if self.isolate { 1 } else { 0 };
-        if node.trace.depth <= max_refund_adjust_depth {
-            gas_used += node.trace.gas_refund_counter;
-        }
-
-        self.fst.enter(func_name, gas_used);
+        // Call gas is gross: refunds are only subtracted from the test's reported gas.
+        self.fst.enter(func_name, node.trace.gas_used);
 
         // Track internal function step exits to do in this call context.
         let mut step_exits = vec![];
@@ -222,8 +207,8 @@ impl FoldedStackTraceBuilder {
 }
 
 /// Builds a folded stack trace from a call trace arena.
-pub fn build(arena: &CallTraceArena, isolate: bool) -> Vec<String> {
-    let mut fst = EvmFoldedStackTraceBuilder::new(isolate);
+pub fn build(arena: &CallTraceArena) -> Vec<String> {
+    let mut fst = EvmFoldedStackTraceBuilder::default();
     if !arena.nodes().is_empty() {
         fst.process_call_node(arena.nodes(), 0);
     }
@@ -232,12 +217,10 @@ pub fn build(arena: &CallTraceArena, isolate: bool) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::{CallTrace, DecodedInternalCall};
     use alloy_primitives::{Bytes, U256};
-    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::{
-        CallTraceArena,
-        types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep, TraceMemberOrder},
-    };
+    use evm2::interpreter::{InstrStop, opcode::OpCode};
 
     fn trace_step(gas_remaining: u64) -> CallTraceStep {
         CallTraceStep {
@@ -249,13 +232,12 @@ mod tests {
             returndata: Bytes::new(),
             gas_remaining,
             gas_refund_counter: 0,
-            gas_used: 0,
             gas_cost: 0,
             state_gas_cost: None,
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            status: Some(InstructionResult::Stop),
+            status: Some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
         }
@@ -381,7 +363,7 @@ mod tests {
         root.ordering = vec![TraceMemberOrder::Step(0), TraceMemberOrder::Step(1)];
 
         assert_eq!(
-            super::build(&arena, false),
+            super::build(&arena),
             vec!["fallback 70", "fallback;DebugVarsTest::foo(uint256) 30",]
         );
     }
@@ -405,8 +387,32 @@ mod tests {
         root.ordering = vec![TraceMemberOrder::Step(0), TraceMemberOrder::Step(1)];
 
         assert_eq!(
-            super::build(&arena, false),
+            super::build(&arena),
             vec!["fallback 100", "fallback;DebugVarsTest::resetsGas() 0",]
         );
+    }
+
+    #[test]
+    fn folded_stack_trace_does_not_add_refunds() {
+        // Call gas is gross, so a refund must not be added on top of it at any depth.
+        let mut arena = CallTraceArena::default();
+        let root = &mut arena.nodes_mut()[0];
+        root.trace.gas_used = 100;
+        root.trace.gas_refund_counter = 40;
+        root.children = vec![1];
+        root.ordering = vec![TraceMemberOrder::Call(0)];
+        arena.nodes_mut().push(CallTraceNode {
+            parent: Some(0),
+            idx: 1,
+            trace: CallTrace {
+                depth: 1,
+                gas_used: 60,
+                gas_refund_counter: 40,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(super::build(&arena), vec!["fallback 40", "fallback;fallback 60"]);
     }
 }

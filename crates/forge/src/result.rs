@@ -17,7 +17,9 @@ use foundry_evm::{
     decode::SkipReason,
     executors::{
         RawCallResult,
-        invariant::{CheckSequenceFailureSite, CheckSequenceOutcome, InvariantMetrics},
+        invariant::{
+            CheckSequenceFailureSite, CheckSequenceOutcome, InvariantMetrics, LiveInvariantStats,
+        },
     },
     fuzz::{
         CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult,
@@ -28,7 +30,7 @@ use foundry_evm::{
 use foundry_evm_symbolic::{SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap as Map},
+    collections::{BTreeMap, BTreeSet, HashMap as Map},
     fmt::{self, Write},
     path::PathBuf,
     sync::OnceLock,
@@ -1213,6 +1215,7 @@ impl SymbolicCounterexampleCall {
             traces: None,
             show_solidity: false,
             fuzz: Default::default(),
+            fork_block_number: None,
         }
     }
 
@@ -1309,6 +1312,10 @@ pub struct TestResult {
     /// Stable symbolic result object for `forge test --symbolic --json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbolic: Option<SymbolicResult>,
+
+    /// Work performed by the live symbolic assistant; does not represent a proof result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbolic_live: Option<LiveInvariantStats>,
 
     /// Traces
     pub traces: Traces,
@@ -1606,8 +1613,12 @@ impl TestResult {
     /// Creates a test setup result.
     pub fn setup_result(setup: TestSetup) -> Self {
         Self {
-            status: if setup.skipped { TestStatus::Skipped } else { TestStatus::Failure },
-            reason: setup.reason,
+            status: if matches!(setup.outcome, SetupOutcome::Skipped(_)) {
+                TestStatus::Skipped
+            } else {
+                TestStatus::Failure
+            },
+            reason: setup.outcome.reason().map(str::to_string),
             logs: setup.logs,
             traces: setup.traces,
             debug_bytecodes: setup.debug_bytecodes,
@@ -2141,34 +2152,101 @@ pub struct TestSetup {
     pub fork_block_number: Option<u64>,
     /// Cached setup-derived fuzz dictionary for stateless fuzz tests.
     pub(crate) fuzz_state: OnceLock<EvmFuzzState>,
+    /// Storage keys observed during setup, including implicit zero slots of created accounts.
+    pub(crate) fuzz_storage: SetupStorage,
 
-    /// The reason the setup failed, if it did.
-    pub reason: Option<String>,
-    /// Whether setup and entire test suite is skipped.
-    pub skipped: bool,
-    /// Whether the test failed to deploy.
-    pub deployment_failure: bool,
+    /// How the setup ended.
+    pub outcome: SetupOutcome,
+}
+
+/// How a [`TestSetup`] ended.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SetupOutcome {
+    /// Every step succeeded, so the suite's tests can run.
+    #[default]
+    Succeeded,
+    /// The setup was skipped, which skips the entire test suite.
+    Skipped(String),
+    /// Deploying the test contract failed.
+    DeploymentFailed(String),
+    /// Any other step failed, such as deploying a library or calling `setUp()`.
+    Failed(String),
+}
+
+impl SetupOutcome {
+    /// Whether the setup succeeded.
+    pub const fn is_success(&self) -> bool {
+        matches!(self, Self::Succeeded)
+    }
+
+    /// The reason the setup was skipped or failed, if it was.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Self::Succeeded => None,
+            Self::Skipped(reason) | Self::DeploymentFailed(reason) | Self::Failed(reason) => {
+                Some(reason)
+            }
+        }
+    }
+
+    /// The function that the result of a skipped or failed setup is reported under.
+    pub const fn function_name(&self) -> &'static str {
+        match self {
+            Self::DeploymentFailed(_) => "constructor()",
+            Self::Succeeded | Self::Skipped(_) | Self::Failed(_) => "setUp()",
+        }
+    }
 }
 
 impl TestSetup {
     pub fn failed(reason: String) -> Self {
-        Self { reason: Some(reason), ..Default::default() }
+        Self { outcome: SetupOutcome::Failed(reason), ..Default::default() }
     }
 
     pub fn skipped(reason: String) -> Self {
-        Self { reason: Some(reason), skipped: true, ..Default::default() }
+        Self { outcome: SetupOutcome::Skipped(reason), ..Default::default() }
     }
 
     pub fn extend<FEN: FoundryEvmNetwork>(
         &mut self,
         raw: RawCallResult<FEN>,
         trace_kind: TraceKind,
+        fork: Option<U256>,
     ) {
+        self.fuzz_storage.extend(fork, &raw);
         extend!(self, raw, trace_kind);
     }
 
     pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
         HitMaps::merge_opt(&mut self.coverage, other_coverage);
+    }
+}
+
+/// Setup storage observations, scoped to the fork on which they were made. Values are deliberately
+/// not retained: the dictionary must use the accepted state at the start of each test.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SetupStorage {
+    pub(crate) slots: BTreeMap<(Option<U256>, Address), BTreeSet<U256>>,
+}
+
+impl SetupStorage {
+    pub(crate) fn extend<FEN: FoundryEvmNetwork>(
+        &mut self,
+        fork: Option<U256>,
+        raw: &RawCallResult<FEN>,
+    ) {
+        for change in raw.state_changeset.account_changes() {
+            let slots = self.slots.entry((fork, change.address)).or_default();
+            if change.created || change.current.is_none() {
+                slots.clear();
+            }
+            if change.current.is_some() {
+                slots.extend(change.storage.slots.keys().copied());
+            }
+        }
+        for &(fork, address, slot) in &raw.suspended_storage {
+            self.slots.entry((fork, address)).or_default().insert(slot);
+        }
     }
 }
 

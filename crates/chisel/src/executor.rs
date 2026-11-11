@@ -10,7 +10,7 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend,
-    core::evm::FoundryEvmNetwork,
+    core::evm::{EvmFactoryFor, FoundryEvmNetwork},
     decode::decode_console_logs,
     inspectors::CheatsConfig,
     opts::{ExecutionSpecContext, resolve_execution_spec},
@@ -173,7 +173,9 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                                 let body = output.run_func_body();
                                 let Some(last) = body.last() else { return false };
                                 let StmtKind::Expr(expr) = last.kind else { return false };
-                                should_continue(expr)
+                                // A call that returns nothing cannot be inspected, but runs
+                                // like any statement: `revert("x")`, `require(...)`, `f()`.
+                                should_continue(expr) || matches!(expr.kind, ExprKind::Call(..))
                             })
                         })
                     })
@@ -300,20 +302,23 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             backend.clone()
         } else {
             let opts = &self.config.evm_opts;
-            let backend = Backend::spawn(opts.get_fork(
-                &self.config.foundry_config,
-                opts.env.chain_id.unwrap_or_default(),
-                None,
-            ))?;
+            let backend = Backend::spawn_source(
+                opts.get_fork(
+                    &self.config.foundry_config,
+                    opts.env.chain_id.unwrap_or_default(),
+                    None,
+                ),
+                opts.local_evm_env::<FEN>(),
+            )?;
             self.config.cached_backend = Some(backend.clone());
             backend
         };
-        let (mut evm_env, tx_env) = backend.env(&self.config.evm_opts).await?;
-        let fork_context = backend.fork()?.as_ref().map(|fork| fork.context());
+        let (mut evm_env, tx) = backend.env(&self.config.evm_opts).await?;
+        let fork_context = backend.fork().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.config.source_chain_id = fork_chain_id;
-        self.config.resolved_hardfork = resolve_execution_spec(
+        self.config.resolved_hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
             self.config.foundry_config.evm_version,
             self.config.foundry_config.hardfork,
             &mut evm_env,
@@ -343,7 +348,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             })
             .gas_limit(self.config.evm_opts.gas_limit())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
-            .build(evm_env, tx_env, backend, self.config.evm_opts.networks);
+            .build(evm_env, tx, backend, self.config.evm_opts.networks);
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }

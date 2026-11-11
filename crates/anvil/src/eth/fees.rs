@@ -1,5 +1,9 @@
 use crate::eth::{
-    backend::{info::StorageInfo, notifications::ChainNotifications},
+    backend::{
+        env::{BlobExcessGasAndPrice, SpecId},
+        info::StorageInfo,
+        notifications::ChainNotifications,
+    },
     error::BlockchainError,
 };
 use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
@@ -8,7 +12,6 @@ use alloy_network::Network;
 use alloy_primitives::{B256, Bytes};
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
-use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -19,7 +22,7 @@ use std::{
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
 #[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
+use foundry_evm_hardforks::OpHardfork;
 
 #[cfg(feature = "optimism")]
 mod optimism;
@@ -162,8 +165,8 @@ struct FeeState {
 /// Chain-derived fee state for the next block.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FeeSnapshot {
-    base_fee: u64,
-    blob_excess_gas_and_price: BlobExcessGasAndPrice,
+    pub(crate) base_fee: u64,
+    pub(crate) blob_excess_gas_and_price: BlobExcessGasAndPrice,
 }
 
 impl FeeManager {
@@ -293,17 +296,17 @@ impl FeeManager {
 
     /// Returns true for post London
     pub fn is_eip1559(&self) -> bool {
-        (self.state.read().rules.spec_id as u8) >= (SpecId::LONDON as u8)
+        self.state.read().rules.spec_id.enables(SpecId::LONDON)
     }
 
     pub fn is_eip4844(&self) -> bool {
-        (self.state.read().rules.spec_id as u8) >= (SpecId::CANCUN as u8)
+        self.state.read().rules.spec_id.enables(SpecId::CANCUN)
     }
 
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) >= (SpecId::CANCUN as u8) {
+        if state.rules.spec_id.enables(SpecId::CANCUN) {
             state.blob_excess_gas_and_price.blob_gasprice
         } else {
             0
@@ -312,7 +315,7 @@ impl FeeManager {
 
     pub fn base_fee(&self) -> u64 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 }
+        if state.rules.spec_id.enables(SpecId::LONDON) { state.base_fee } else { 0 }
     }
 
     pub const fn is_min_priority_fee_enforced(&self) -> bool {
@@ -326,13 +329,12 @@ impl FeeManager {
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
         let state = self.state.read();
-        ((state.rules.spec_id as u8) >= (SpecId::CANCUN as u8))
-            .then_some(state.blob_excess_gas_and_price)
+        state.rules.spec_id.enables(SpecId::CANCUN).then_some(state.blob_excess_gas_and_price)
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) >= (SpecId::CANCUN as u8) {
+        if state.rules.spec_id.enables(SpecId::CANCUN) {
             state.blob_excess_gas_and_price.blob_gasprice
         } else {
             0
@@ -367,32 +369,16 @@ impl FeeManager {
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
-        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+        if !state.rules.spec_id.enables(SpecId::LONDON) || state.base_fee == 0 {
             return 0;
         }
         calculate_next_block_base_fee_per_gas(state.rules, gas_used, gas_limit, last_fee_per_gas)
     }
 
-    /// Calculates the next block base fee from the parent block without applying the configured
-    /// zero-fee sentinel.
-    #[cfg(test)]
-    pub(crate) fn calculate_next_block_base_fee_per_gas(
-        &self,
-        gas_used: u64,
-        gas_limit: u64,
-        last_fee_per_gas: u64,
-    ) -> u64 {
-        let rules = self.state.read().rules;
-        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
-            return 0;
-        }
-        calculate_next_block_base_fee_per_gas(rules, gas_used, gas_limit, last_fee_per_gas)
-    }
-
     /// Calculates the next block base fee from a complete parent header.
     pub(crate) fn get_next_block_base_fee_from_header<H: BlockHeader>(&self, header: &H) -> u64 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+        if !state.rules.spec_id.enables(SpecId::LONDON) || state.base_fee == 0 {
             return 0;
         }
         calculate_parent_header_fees(state.rules, header).base_fee
@@ -403,7 +389,7 @@ impl FeeManager {
     pub(crate) fn get_parent_header_fees<H: BlockHeader>(&self, header: &H) -> ParentHeaderFees {
         let state = self.state.read();
         let mut fees = calculate_parent_header_fees(state.rules, header);
-        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+        if !state.rules.spec_id.enables(SpecId::LONDON) || state.base_fee == 0 {
             fees.base_fee = 0;
         }
         fees
@@ -416,7 +402,7 @@ impl FeeManager {
         header: &H,
     ) -> u64 {
         let rules = self.state.read().rules;
-        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+        if !rules.spec_id.enables(SpecId::LONDON) {
             return 0;
         }
         calculate_parent_header_fees(rules, header).base_fee
@@ -430,7 +416,7 @@ impl FeeManager {
     ) -> ParentHeaderFees {
         let rules = self.state.read().rules;
         let mut fees = calculate_parent_header_fees(rules, header);
-        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+        if !rules.spec_id.enables(SpecId::LONDON) {
             fees.base_fee = 0;
         }
         fees
@@ -842,7 +828,10 @@ mod tests {
             INITIAL_BASE_FEE,
             true,
             INITIAL_GAS_PRICE,
-            BlobExcessGasAndPrice::new_with_spec(0, SpecId::CANCUN),
+            BlobExcessGasAndPrice::new(
+                0,
+                alloy_eips::eip4844::BLOB_GASPRICE_UPDATE_FRACTION as u64,
+            ),
             BlobParams::cancun(),
             BaseFeeParams::ethereum(),
             None,
@@ -851,17 +840,18 @@ mod tests {
 
     #[test]
     fn raw_next_base_fee_respects_london_activation() {
+        let parent = alloy_consensus::Header {
+            gas_used: 30_000_000,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(INITIAL_BASE_FEE),
+            ..Default::default()
+        };
+
         let berlin = fee_manager(SpecId::BERLIN);
-        assert_eq!(
-            berlin.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
-            0
-        );
+        assert_eq!(berlin.calculate_next_block_base_fee_from_header(&parent), 0);
 
         let london = fee_manager(SpecId::LONDON);
-        assert_ne!(
-            london.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
-            0
-        );
+        assert_ne!(london.calculate_next_block_base_fee_from_header(&parent), 0);
     }
 
     #[cfg(feature = "optimism")]

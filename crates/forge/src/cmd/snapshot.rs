@@ -616,8 +616,9 @@ fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>
             // No percentage difference when both values are zero.
             return true;
         }
-        let diff = (1. - (lo as f64 / hi as f64)) * 100.;
-        diff < tolerance as f64
+        // Compare `(hi - lo) / hi <= tolerance / 100` without floating point, so that a deviation
+        // exactly at the tolerance, including a tolerance of zero, counts as within it.
+        u128::from(hi - lo) * 100 <= u128::from(tolerance) * u128::from(hi)
     } else {
         source_gas == target_gas
     }
@@ -635,6 +636,11 @@ mod tests {
         assert!(!within_tolerance(106, 100, Some(5)));
         assert!(within_tolerance(100, 100, None));
         assert!(within_tolerance(0, 0, Some(5)));
+        assert!(within_tolerance(100, 100, Some(0)));
+        assert!(!within_tolerance(100, 101, Some(0)));
+        assert!(within_tolerance(95, 100, Some(5)));
+        assert!(within_tolerance(100, 95, Some(5)));
+        assert!(!within_tolerance(94, 100, Some(5)));
     }
 
     #[test]

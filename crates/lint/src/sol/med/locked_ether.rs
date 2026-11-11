@@ -125,7 +125,7 @@ impl<'gcx> Visit<'gcx> for SendChecker<'gcx> {
     /// Inline assembly can contain ETH-sending opcodes (`call`, `selfdestruct`, ...): bail
     /// conservatively, as if an exit was found.
     fn visit_stmt(&mut self, stmt: &'gcx hir::Stmt<'gcx>) -> ControlFlow<()> {
-        if matches!(stmt.kind, StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_))
+        if matches!(stmt.kind, StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) | StmtKind::Err(_))
         {
             return ControlFlow::Break(());
         }

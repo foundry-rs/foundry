@@ -28,6 +28,7 @@ mod otterscan;
 mod proof;
 mod pubsub;
 mod revert;
+mod rpc_logging;
 mod sign;
 mod simulate;
 #[cfg(feature = "cmd")]

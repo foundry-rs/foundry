@@ -7,7 +7,7 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    BasicConfig, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
+    BasicConfig, Config, DenyLevel, FuzzConfig, InvariantConfig, SolcReq, SolidityErrorCode,
     parse_with_profile,
 };
 use foundry_test_utils::{
@@ -26,7 +26,7 @@ use std::{
 #[cfg(unix)]
 use foundry_test_utils::util::TestCommand;
 #[cfg(unix)]
-use std::path::PathBuf;
+use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 
 // tests `--help` is printed to std out
 #[forgetest]
@@ -347,6 +347,30 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(!prj.root().join(".git").exists());
     assert!(prj.root().join("lib/forge-std").exists());
     assert!(!prj.root().join("lib/forge-std/.git").exists());
+}
+
+// Without git on PATH, the error names git and retains the OS error.
+#[forgetest]
+fn init_without_git_names_git(prj: _, cmd: _) {
+    let empty = tempfile::tempdir().unwrap();
+
+    for no_git in [false, true] {
+        prj.wipe();
+        cmd.forge_fuse().env("PATH", empty.path());
+        cmd.arg("init")
+            .arg(prj.root())
+            .args(no_git.then_some("--no-git"))
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+...
+Error: could not run `git`[..]
+
+Context:
+- [..]
+
+"#]]);
+    }
 }
 
 // Checks that `--no-commit` is accepted as a noop backwards-compatibility flag
@@ -1899,6 +1923,116 @@ Compiler run successful!
 "#]]);
 }
 
+// Solar warns on every build that its code generation is experimental (2264); denying warnings
+// must not turn that notice into a failure.
+#[cfg(unix)]
+#[forgetest]
+fn deny_warnings_allows_solar_experimental_codegen(prj: _, cmd: _) {
+    prj.add_source("A.sol", "contract A {}");
+    let solar = prj.root().join("solar");
+    write_fake_solar(&solar, "0.8.38+commit.3a70399.solar.0.2.0");
+    prj.update_config(|config| {
+        config.solc = Some(SolcReq::Local(solar));
+        config.deny = DenyLevel::Warnings;
+    });
+
+    cmd.args(["build"]).assert_success();
+}
+
+// A `solar:<version>` pin builds with the release installed in `~/.foundry/solar`, and
+// `forge config` reports the pin.
+#[cfg(unix)]
+#[forgetest]
+fn solar_pin_uses_installed_release(prj: _, cmd: _) {
+    prj.add_source("A.sol", "contract A {}");
+    let home = prj.root().join("home");
+    write_fake_solar(&home.join(".foundry/solar/9.9.9/solar"), "0.8.38+commit.3a70399.solar.9.9.9");
+    prj.update_config(|config| {
+        config.solc = Some("solar:9.9.9".into());
+        config.deny = DenyLevel::Warnings;
+    });
+
+    cmd.env("HOME", &home);
+    cmd.args(["build", "--offline"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with Solar 0.8.38
+Solar 0.8.38 [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    cmd.forge_fuse().env("HOME", &home);
+    cmd.args(["config", "--json"])
+        .assert_json_stdout(str![[r#"{ "solc": "solar:9.9.9", "...": "{...}" }"#]]);
+}
+
+// Without network access, a Solar pin that is not installed fails, and `--use` accepts a pin.
+#[cfg(unix)]
+#[forgetest]
+fn solar_pin_offline_requires_installed_release(prj: _, cmd: _) {
+    prj.add_source("A.sol", "contract A {}");
+    let home = prj.root().join("home");
+    write_fake_solar(&home.join(".foundry/solar/9.9.8/solar"), "0.8.38+commit.3a70399.solar.9.9.8");
+    prj.update_config(|config| config.solc = Some("solar:9.9.9".into()));
+
+    cmd.env("HOME", &home);
+    cmd.args(["build", "--offline"]).assert_failure().stderr_eq(str![[r#"
+Error: can't install missing solar 9.9.9 in offline mode
+
+"#]]);
+
+    cmd.forge_fuse().env("HOME", &home);
+    cmd.args(["build", "--offline", "--use", "solar:9.9.8"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with Solar 0.8.38
+Solar 0.8.38 [ELAPSED]
+Compiler run successful!
+
+"#
+    ]]);
+
+    prj.update_config(|config| config.solc = Some("solar:9.9".into()));
+    cmd.forge_fuse().args(["build", "--offline"]).assert_failure().stderr_eq(str![[r#"
+Error: invalid Solar pin "solar:9.9", expected `solar:<version>` naming a release 0.2.0 or later, without pre-release or build metadata
+
+"#]]);
+}
+
+// Solar gets the thread count from `-j`.
+#[cfg(unix)]
+#[forgetest]
+fn solar_receives_threads(prj: _, cmd: _) {
+    prj.add_source("A.sol", "contract A {}");
+    let solar = prj.root().join("solar");
+    write_fake_solar(&solar, "0.8.38+commit.3a70399.solar.0.2.0");
+    let args = prj.root().join("solar-args");
+    let script = fs::read_to_string(&solar)
+        .unwrap()
+        .replace("cat >/dev/null", &format!("echo \"$@\" > {}\ncat >/dev/null", args.display()));
+    fs::write(&solar, script).unwrap();
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(solar)));
+
+    cmd.args(["build", "-j", "3"]).assert_success();
+    let args = fs::read_to_string(args).unwrap();
+    assert!(args.split_whitespace().any(|arg| arg == "--threads=3"), "{args}");
+}
+
+/// Writes a fake `solar` that reports the solc-compatible `version` and emits only the experimental
+/// codegen warning (2264).
+#[cfg(unix)]
+fn write_fake_solar(solar: &Path, version: &str) {
+    fs::create_dir_all(solar.parent().unwrap()).unwrap();
+    let script = r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    echo "Version: VERSION"
+    exit 0
+fi
+cat >/dev/null
+printf '%s\n' '{"errors":[{"component":"general","errorCode":"2264","formattedMessage":"Warning: code generation is experimental","message":"code generation is experimental","severity":"warning","type":"Warning"}],"sources":{"src/A.sol":{"id":0}},"contracts":{}}'
+"#;
+    fs::write(solar, script.replace("VERSION", version)).unwrap();
+    fs::set_permissions(solar, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
 // test that `forge build` ignores error codes only from matching path prefixes
 #[forgetest]
 fn can_compile_without_warnings_ignored_error_codes_from(prj: _, cmd: _) {
@@ -2173,7 +2307,7 @@ fn gas_report_all_contracts(prj: _, cmd: _) {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2187,7 +2321,7 @@ fn gas_report_all_contracts(prj: _, cmd: _) {
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133219 |             395 |        |        |        |         |
+|                                   133231 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2201,7 +2335,7 @@ fn gas_report_all_contracts(prj: _, cmd: _) {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2220,7 +2354,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2236,7 +2370,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133219,
+      "gas": 133231,
       "size": 395
     },
     "functions": {
@@ -2252,7 +2386,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2278,7 +2412,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2292,7 +2426,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133219 |             395 |        |        |        |         |
+|                                   133231 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2306,7 +2440,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2325,7 +2459,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2341,7 +2475,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133219,
+      "gas": 133231,
       "size": 395
     },
     "functions": {
@@ -2357,7 +2491,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2383,7 +2517,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2397,7 +2531,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133219 |             395 |        |        |        |         |
+|                                   133231 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2411,7 +2545,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2430,7 +2564,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2446,7 +2580,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133219,
+      "gas": 133231,
       "size": 395
     },
     "functions": {
@@ -2462,7 +2596,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2491,7 +2625,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2505,7 +2639,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133219 |             395 |        |        |        |         |
+|                                   133231 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2519,7 +2653,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2538,7 +2672,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2554,7 +2688,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133219,
+      "gas": 133231,
       "size": 395
     },
     "functions": {
@@ -2570,7 +2704,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2604,7 +2738,7 @@ fn gas_report_some_contracts(prj: _, cmd: _) {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2623,7 +2757,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2651,7 +2785,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2670,7 +2804,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2698,7 +2832,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133219 |             395 |        |        |        |         |
+|                                   133231 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2717,7 +2851,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133219,
+      "gas": 133231,
       "size": 395
     },
     "functions": {
@@ -2754,7 +2888,7 @@ fn gas_report_ignore_some_contracts(prj: _, cmd: _) {
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133219 |             395 |        |        |        |         |
+|                                   133231 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2768,7 +2902,7 @@ fn gas_report_ignore_some_contracts(prj: _, cmd: _) {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2787,7 +2921,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133219,
+      "gas": 133231,
       "size": 395
     },
     "functions": {
@@ -2803,7 +2937,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2835,7 +2969,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2849,7 +2983,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133219 |             395 |        |        |        |         |
+|                                   133231 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2868,7 +3002,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2884,7 +3018,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133219,
+      "gas": 133231,
       "size": 395
     },
     "functions": {
@@ -2924,7 +3058,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2938,7 +3072,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133219 |             395 |        |        |        |         |
+|                                   133231 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2952,7 +3086,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133015 |             394 |       |        |       |         |
+|                                 133027 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2981,7 +3115,7 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -2997,7 +3131,7 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133219,
+      "gas": 133231,
       "size": 395
     },
     "functions": {
@@ -3013,7 +3147,7 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133015,
+      "gas": 133027,
       "size": 394
     },
     "functions": {
@@ -3469,7 +3603,7 @@ contract NestedDeploy is Test {
 +============================================================================================+
 | Deployment Cost                           | Deployment Size |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
-|                                    328949 |            1163 |     |        |     |         |
+|                                    328961 |            1163 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
 |                                           |                 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
@@ -3524,7 +3658,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/NestedDeployTest.sol:Parent",
     "deployment": {
-      "gas": 328949,
+      "gas": 328961,
       "size": 1163
     },
     "functions": {
@@ -3541,6 +3675,109 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]
             .is_json(),
         );
+}
+
+// Dynamic test linking deploys `new` expressions with `vm.deployCode`, which must charge the
+// caller as a native create.
+// <https://github.com/foundry-rs/foundry/issues/17727>
+#[forgetest]
+fn gas_report_dynamic_test_linking_create(prj: _, cmd: _) {
+    prj.add_source(
+        "Box.sol",
+        r#"
+contract Box {
+    uint256 public value;
+    uint256 internal scratch;
+
+    constructor(uint256 v) {
+        value = v;
+        scratch = 1;
+        scratch = 0;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Box.t.sol",
+        r#"
+import {Box} from "src/Box.sol";
+
+interface Vm {
+    function startSnapshotGas(string calldata name) external;
+    function stopSnapshotGas() external returns (uint256);
+}
+
+contract BoxTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    function testDeploy() public {
+        vm.startSnapshotGas("deploy");
+        Box box = new Box(1);
+        vm.stopSnapshotGas();
+        require(box.value() == 1);
+    }
+}
+"#,
+    );
+    for (dynamic_test_linking, snapshot) in [
+        (
+            false,
+            str![[r#"
+{
+  "deploy": "150242"
+}
+"#]],
+        ),
+        (
+            true,
+            str![[r#"
+{
+  "deploy": "151227"
+}
+"#]],
+        ),
+    ] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        cmd.forge_fuse().args(["test", "--gas-report"]).assert_success().stdout_eq(str![[r#"
+...
+| Deployment Cost          | Deployment Size |      |        |      |         |
+|--------------------------+-----------------+------+--------+------+---------|
+|                   137744 |             375 |      |        |      |         |
+...
+"#]]);
+        assert_data_eq!(read_string(prj.root().join("snapshots/BoxTest.json")), snapshot);
+    }
+}
+
+// `vm.deployCode` must enforce the configured initcode size limit as a native create.
+#[forgetest]
+fn deploy_code_initcode_size_limit(prj: _, cmd: _) {
+    prj.add_test(
+        "Initcode.t.sol",
+        r#"
+interface Vm {
+    function deployCode(string calldata, bytes calldata) external returns (address);
+}
+
+contract Big {
+    constructor(bytes memory) {}
+}
+
+contract InitcodeTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    function testDeployCode() public {
+        vm.deployCode("test/Initcode.t.sol:Big", abi.encode(new bytes(7000)));
+    }
+}
+"#,
+    );
+    prj.update_config(|config| config.code_size_limit = Some(3000));
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: vm.deployCode: initcode size limit exceeded] testDeployCode() ([GAS])
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -3644,7 +3881,7 @@ object "Counter_21" {
     code {
         {
             /// @src 0:65:257  "contract Counter {..."
-            mstore(64, memoryguard(0x80))
+            mstore(64, memoryguard(128))
 ...
 "#]]);
 
@@ -3654,7 +3891,7 @@ object "Counter_21" {
 object "Counter_21" {
     code {
         {
-            mstore(64, memoryguard(0x80))
+            mstore(64, memoryguard(128))
             if callvalue()
 ...
 "#]]);
@@ -4682,7 +4919,7 @@ fn gas_report_include_tests(prj: _, cmd: _) {
 +=======================================================================================+
 | Deployment Cost                  | Deployment Size |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-|                           156801 |             509 |       |        |       |         |
+|                           156813 |             509 |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
 |                                  |                 |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
@@ -4706,7 +4943,7 @@ fn gas_report_include_tests(prj: _, cmd: _) {
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 | Function Name                           | Min             | Avg    | Median | Max    | # Calls |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
-| setUp                                   |          218890 | 218890 | 218890 | 218890 |       1 |
+| setUp                                   |          218902 | 218902 | 218902 | 218902 |       1 |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 | test_Increment                          |           51847 |  51847 |  51847 |  51847 |       1 |
 ╰-----------------------------------------+-----------------+--------+--------+--------+---------╯
@@ -4731,7 +4968,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 | src/Counter.sol:Counter Contract |                 |       |        |       |         |
 |----------------------------------|-----------------|-------|--------|-------|---------|
 | Deployment Cost                  | Deployment Size |       |        |       |         |
-|                           156801 |             509 |       |        |       |         |
+|                           156813 |             509 |       |        |       |         |
 |                                  |                 |       |        |       |         |
 | Function Name                    | Min             | Avg   | Median | Max   | # Calls |
 | increment                        |           43482 | 43482 |  43482 | 43482 |       1 |
@@ -4744,7 +4981,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 |                                 1544498 |            7573 |        |        |        |         |
 |                                         |                 |        |        |        |         |
 | Function Name                           | Min             | Avg    | Median | Max    | # Calls |
-| setUp                                   |          218890 | 218890 | 218890 | 218890 |       1 |
+| setUp                                   |          218902 | 218902 | 218902 | 218902 |       1 |
 | test_Increment                          |           51847 |  51847 |  51847 |  51847 |       1 |
 
 
@@ -4768,7 +5005,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "src/Counter.sol:Counter",
     "deployment": {
-      "gas": 156801,
+      "gas": 156813,
       "size": 509
     },
     "functions": {
@@ -4804,10 +5041,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     "functions": {
       "setUp()": {
         "calls": 1,
-        "min": 218890,
-        "mean": 218890,
-        "median": 218890,
-        "max": 218890
+        "min": 218902,
+        "mean": 218902,
+        "median": 218902,
+        "max": 218902
       },
       "test_Increment()": {
         "calls": 1,

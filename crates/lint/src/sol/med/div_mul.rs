@@ -134,7 +134,7 @@ fn check_stmt<'gcx>(
         }
         StmtKind::Block(block)
         | StmtKind::UncheckedBlock(block)
-        | StmtKind::AssemblyBlock(block) => check_block(ctx, gcx, *block, tainted),
+        | StmtKind::AssemblyBlock(block, _) => check_block(ctx, gcx, *block, tainted),
         StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => true,
     }
 }

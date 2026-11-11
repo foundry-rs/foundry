@@ -646,7 +646,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
             }
             // Assembly can both overwrite locals and terminate the frame. Stop this path rather
             // than carrying facts across unmodeled instructions.
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
+            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) | StmtKind::Err(_) => {
                 return Vec::new();
             }
         }

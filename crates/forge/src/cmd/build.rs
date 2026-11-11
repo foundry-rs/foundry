@@ -34,6 +34,7 @@ use solar::{
     interface::{Session, config::CompileOpts},
     sema::Compiler,
 };
+use soldeer_core::install::DependencyStatus;
 use std::{fmt::Write, path::PathBuf};
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, build);
@@ -121,6 +122,7 @@ impl BuildArgs {
         let format_json = shell::is_json();
 
         let mut output = ProjectCompiler::new()
+            .allow_linked_libraries(config.allow_linked_libraries)
             .external_compilers(&config)
             .files(files)
             .selected_paths(selected_paths)
@@ -282,7 +284,6 @@ impl BuildArgs {
             // Use soldeer_core's integrity check
             match soldeer_core::install::check_dependency_integrity(entry, &deps_dir).await {
                 Ok(status) => {
-                    use soldeer_core::install::DependencyStatus;
                     // Check if status indicates a problem
                     if matches!(
                         status,

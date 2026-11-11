@@ -1,5 +1,7 @@
 use super::*;
-use foundry_evm::revm::context_interface::cfg::gas::CALL_STIPEND;
+use alloy_sol_types::{Revert, SolError};
+use evm2::interpreter::gas::CALL_STIPEND;
+use foundry_evm::{core::backend::GLOBAL_FAIL_SLOT, inspectors::cheatcodes::ExpectedCallType};
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -7,6 +9,9 @@ const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 pub(crate) struct PathState {
     pub(crate) depth: usize,
     pub(crate) call_depth: usize,
+    /// The `call_depth` of the frame that the EVM counts as depth 0 for the call depth limit: the
+    /// first frame of the current transaction or of a `vm.deployCode` constructor.
+    pub(crate) call_depth_base: usize,
     pub(crate) origin: Address,
     pub(crate) origin_word: SymExpr,
     pub(crate) gas_price: SymExpr,
@@ -15,9 +20,17 @@ pub(crate) struct PathState {
     pub(crate) frame: CallFrame,
     pub(crate) world: SymbolicWorld,
     pub(crate) prank: SymbolicPrank,
+    /// Pranks of other root frames of an invariant sequence, which Forge scopes to the contract
+    /// that set them.
+    pub(crate) root_pranks: HashMap<Address, SymbolicPrank>,
     pub(crate) constraints: Vec<SymBoolExpr>,
+    /// Conditions a counterexample model meets when it can, so that replay reproduces it.
+    pub(crate) witness_preferences: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
+    /// Bumped by `recordLogs` and `getRecordedLogs*` so open frame checkpoints know the buffer
+    /// was reset.
+    pub(crate) recorded_logs_generation: u64,
     pub(crate) access_record: Option<AccessRecord>,
     pub(crate) root_calldata: Option<SymbolicCalldata>,
     /// Predicate context follows child calls but is not committed back to handler state.
@@ -26,8 +39,17 @@ pub(crate) struct PathState {
     branch_target: Option<SymbolicBranchTarget>,
     branch_target_reached: bool,
     needs_feasibility_check: bool,
-    pub(crate) loop_jumps: HashMap<usize, u32>,
+    /// Backward jumps taken per destination and return addresses on the stack.
+    pub(crate) loop_jumps: HashMap<(usize, Vec<usize>), u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
+    /// Account of the first call, or reverting CREATE, that failed in or below this frame since
+    /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
+    pub(crate) first_failed_callee: Option<Address>,
+    /// Account of the first call that reverted in or below this frame since it was entered,
+    /// which Forge reports as the `vm.assumeNoRevert` reverter.
+    pub(crate) first_reverted_callee: Option<Address>,
+    /// Assertion cheatcodes set this even when their revert is caught by the handler.
+    pub(crate) assertion_failed: bool,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -43,6 +65,12 @@ pub(crate) struct PathState {
     pub(crate) mapping_hook_keccak_preimages: HashMap<(Address, SymExpr), Arc<[SymExpr]>>,
     pub(crate) storage_hook_active: bool,
     pub(crate) pending_storage_hook_revert: bool,
+    /// Cheatcode writes that survive a revert of the frame that made them, as in Forge.
+    pub(crate) persistent_writes: Vec<PersistentWrite>,
+    /// Calls to unknown code made on this path, in order, for equivalence checking.
+    pub(crate) unknown_calls: Vec<UnknownCall>,
+    /// Abstract state of all unknown code, advanced by each state-changing call into it.
+    pub(crate) unknown_world: Option<SymExpr>,
 }
 
 impl PathState {
@@ -79,6 +107,7 @@ impl PathState {
         Self {
             depth: 0,
             call_depth: 0,
+            call_depth_base: 0,
             origin: caller,
             origin_word,
             gas_price,
@@ -87,9 +116,12 @@ impl PathState {
             frame,
             world: SymbolicWorld::default(),
             prank: SymbolicPrank::default(),
+            root_pranks: HashMap::default(),
             constraints: Vec::new(),
+            witness_preferences: Vec::new(),
             next_symbol: 0,
             recorded_logs: None,
+            recorded_logs_generation: 0,
             access_record: None,
             root_calldata: None,
             invariant_predicate: false,
@@ -99,6 +131,9 @@ impl PathState {
             needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
+            first_failed_callee: None,
+            first_reverted_callee: None,
+            assertion_failed: false,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
@@ -114,61 +149,152 @@ impl PathState {
             mapping_hook_keccak_preimages: HashMap::default(),
             storage_hook_active: false,
             pending_storage_hook_revert: false,
+            persistent_writes: Vec::new(),
+            unknown_calls: Vec::new(),
+            unknown_world: None,
         }
     }
 
-    pub(crate) fn apply_executor_env<FEN: FoundryEvmNetwork>(
+    /// Applies the executor's environment and the cheatcode state `setUp` left behind.
+    pub(crate) fn apply_executor_env(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
-    ) {
+        executor: &ExecutorView<'_>,
+    ) -> Result<(), SymbolicError> {
         self.block = SymbolicBlock::from_executor(cx, executor);
-        let gas_price = executor
-            .inspector()
-            .cheatcodes
-            .as_ref()
-            .and_then(|cheats| cheats.gas_price)
-            .unwrap_or_else(|| executor.tx_env().gas_price());
-        self.gas_price = SymExpr::constant(cx, U256::from(gas_price));
-        if let Some(cheats) = executor.inspector().cheatcodes.as_ref() {
-            for (target, overwrite) in cheats.arbitrary_storage_target_overwrite_modes() {
-                self.world.enable_arbitrary_storage(target, overwrite);
-            }
-            for (target, source) in cheats.arbitrary_storage_copied_target_sources() {
-                Arc::make_mut(&mut self.world.state)
-                    .arbitrary_storage_copies
-                    .insert(target, source);
-            }
-            self.storage_load_hooks.extend(cheats.storage_load_hooks().map(|(target, hook)| {
-                (
-                    target,
-                    SymbolicStorageHook {
-                        callback_target: hook.callback_target,
-                        callback_selector: hook.callback_selector,
-                    },
-                )
-            }));
-            self.storage_store_hooks.extend(cheats.storage_store_hooks().map(|(target, hook)| {
-                (
-                    target,
-                    SymbolicStorageHook {
-                        callback_target: hook.callback_target,
-                        callback_selector: hook.callback_selector,
-                    },
-                )
-            }));
-            self.mapping_storage_store_hooks.extend(cheats.mapping_storage_store_hooks().map(
-                |(target, root, hook)| {
-                    (
-                        (target, root.into()),
-                        SymbolicStorageHook {
-                            callback_target: hook.callback_target,
-                            callback_selector: hook.callback_selector,
-                        },
-                    )
-                },
+        self.gas_price = SymExpr::constant(cx, U256::from(executor.gas_price));
+        for &(target, overwrite) in &executor.arbitrary_storage_targets {
+            self.world.enable_arbitrary_storage(target, overwrite);
+        }
+        for &(target, source) in &executor.arbitrary_storage_copies {
+            Arc::make_mut(&mut self.world.state).arbitrary_storage_copies.insert(target, source);
+        }
+        self.storage_load_hooks.extend(executor.storage_load_hooks.iter().copied());
+        self.storage_store_hooks.extend(executor.storage_store_hooks.iter().copied());
+        self.mapping_storage_store_hooks
+            .extend(executor.mapping_storage_store_hooks.iter().copied());
+        if executor.expects_safe_memory {
+            return Err(SymbolicError::Unsupported(
+                "symbolic vm.expectSafeMemory inherited from setUp",
             ));
         }
+        self.persistent_accounts.extend(executor.persistent_accounts.iter().copied());
+
+        // Forge applies a `setUp` prank from the test frame, which is depth 1 in the inspector.
+        for prank in &executor.pranks {
+            if prank.depth != 1 || prank.delegate_call {
+                return Err(SymbolicError::Unsupported("symbolic prank inherited from setUp"));
+            }
+            let caller = (prank.new_caller, SymExpr::constant(cx, address_word(prank.new_caller)));
+            let origin = prank
+                .new_origin
+                .map(|origin| (origin, SymExpr::constant(cx, address_word(origin))));
+            // A run rooted at a handler parks the test contract's prank for that caller.
+            let slot = if prank.prank_caller == self.address {
+                &mut self.prank
+            } else {
+                self.root_pranks.entry(prank.prank_caller).or_default()
+            };
+            if prank.single_call {
+                slot.set_next(caller, origin);
+            } else {
+                slot.set_persistent(caller, origin);
+                // A `startPrank` that `setUp` already applied can be replaced.
+                slot.persistent_used = prank.used;
+            }
+        }
+        if let Some(accesses) = executor.accesses
+            && (executor.recording_accesses || !accesses.reads.is_empty())
+        {
+            let slots = |cx: &mut SymCx, slots: &HashMap<Address, Vec<U256>>| {
+                slots
+                    .iter()
+                    .map(|(address, slots)| {
+                        (*address, slots.iter().map(|slot| SymExpr::constant(cx, *slot)).collect())
+                    })
+                    .collect()
+            };
+            self.access_record = Some(AccessRecord {
+                reads: slots(cx, &accesses.reads),
+                writes: slots(cx, &accesses.writes),
+                stopped: !executor.recording_accesses,
+            });
+        }
+        let Some(cheats) = executor.cheatcodes else { return Ok(()) };
+        let mut mocked_calls = cheats.mocked_calls.iter().collect::<Vec<_>>();
+        mocked_calls.sort_by_key(|(callee, _)| **callee);
+        for (callee, mocks) in mocked_calls {
+            let callee = SymExpr::constant(cx, address_word(*callee));
+            for (mock, returns) in mocks {
+                let data = SymBytes::concrete(cx, mock.calldata.to_vec());
+                let reverts = returns.front().is_some_and(|data| data.reverts);
+                let returns = returns
+                    .iter()
+                    .map(|data| SymReturnData::from_concrete_bytes(cx, data.data.to_vec()))
+                    .collect();
+                self.call_mocks.push(CallMock::new(
+                    callee.clone(),
+                    mock.value,
+                    data,
+                    returns,
+                    reverts,
+                ));
+            }
+        }
+        for (callee, mocks) in &cheats.mocked_functions {
+            let callee = SymExpr::constant(cx, address_word(*callee));
+            for (data, target) in mocks {
+                let data = SymBytes::concrete(cx, data.to_vec());
+                self.function_mocks.push(FunctionMock::new(callee.clone(), *target, data));
+            }
+        }
+        if let Some(logs) = &cheats.recorded_logs {
+            let logs = logs
+                .iter()
+                .map(|log| {
+                    let topics = log
+                        .topics
+                        .iter()
+                        .map(|topic| SymExpr::constant(cx, (*topic).into()))
+                        .collect();
+                    let data_len = SymExpr::constant(cx, U256::from(log.data.len()));
+                    let data = SymBytes::concrete(cx, log.data.to_vec());
+                    SymbolicLog::new(topics, data_len, data, log.emitter)
+                })
+                .collect();
+            self.recorded_logs = Some(logs);
+        }
+        let mut expected_calls = cheats
+            .expected_calls
+            .iter()
+            .flat_map(|(callee, calls)| calls.iter().map(move |(key, call)| (callee, key, call)))
+            .collect::<Vec<_>>();
+        expected_calls.sort_by(|a, b| (a.0, &a.1.0).cmp(&(b.0, &b.1.0)));
+        for (callee, (data, scheme), (expected, observed)) in expected_calls {
+            if scheme.is_some() {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectCall scheme inherited from setUp",
+                ));
+            }
+            self.expected_calls.push(ExpectedCall {
+                callee: SymExpr::constant(cx, address_word(*callee)),
+                value: expected.value,
+                gas: expected.gas,
+                min_gas: expected.min_gas,
+                data: SymBytes::concrete(cx, data.to_vec()),
+                expected: expected.count,
+                observed: *observed,
+                exact: expected.call_type == ExpectedCallType::Count,
+            });
+        }
+        if let Some(wallets) = &cheats.wallets {
+            let wallets = wallets
+                .signers()
+                .map_err(|_| SymbolicError::Unsupported("symbolic wallets inherited from setUp"))?;
+            self.wallets.extend(wallets);
+        }
+        self.labels.extend(cheats.labels.iter().map(|(address, label)| (*address, label.clone())));
+        Ok(())
     }
 
     pub(crate) fn child(&self, frame: CallFrame) -> Self {
@@ -180,8 +306,21 @@ impl PathState {
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
         child.expected_revert = None;
+        child.first_failed_callee = None;
+        child.first_reverted_callee = None;
         child.assume_no_revert_next_call = None;
         child
+    }
+
+    /// Returns whether a CALL or CREATE issued by this frame runs as its own transaction, as
+    /// Forge's call isolation does for calls made by the test, handler, or invariant frame.
+    pub(crate) const fn starts_isolated_transaction(&self, executor: &ExecutorView<'_>) -> bool {
+        executor.isolate && self.call_depth == 0
+    }
+
+    /// Returns whether a CALL or CREATE issued by this frame exceeds the call depth limit.
+    pub(crate) const fn at_call_depth_limit(&self) -> bool {
+        self.call_depth - self.call_depth_base >= CALL_DEPTH_LIMIT as usize
     }
 
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
@@ -272,7 +411,7 @@ impl PathState {
             model.insert(var, value);
         }
 
-        expr.eval_model(&model).ok()
+        expr.eval_model_recording_keccak_preimages(cx, &model).ok()
     }
 
     pub(crate) fn split_corpus_seed_models(
@@ -323,6 +462,7 @@ impl PathState {
 
     pub(crate) fn take_noncommitting_check_state(&mut self, check: &mut Self) {
         self.constraints = std::mem::take(&mut check.constraints);
+        self.witness_preferences = std::mem::take(&mut check.witness_preferences);
         self.next_symbol = self.next_symbol.max(check.next_symbol);
         self.world.merge_replay_metadata_from(&check.world);
         self.storage_load_hooks = std::mem::take(&mut check.storage_load_hooks);
@@ -332,6 +472,7 @@ impl PathState {
 
     pub(crate) fn take_call_outcome_state(&mut self, child: &mut Self) {
         self.constraints = std::mem::take(&mut child.constraints);
+        self.witness_preferences = std::mem::take(&mut child.witness_preferences);
         self.next_symbol = child.next_symbol;
         self.inherit_branch_target_progress(child);
         self.storage_load_hooks = std::mem::take(&mut child.storage_load_hooks);
@@ -340,26 +481,61 @@ impl PathState {
         self.mapping_hook_keccak_preimages =
             std::mem::take(&mut child.mapping_hook_keccak_preimages);
         self.recorded_logs = child.recorded_logs.take();
-        self.access_record = child.access_record.take();
-        // Inspector state survives child reverts and exceptional halts.
-        self.block = child.block.clone();
-        self.expected_calls = std::mem::take(&mut child.expected_calls);
-        self.call_mocks = std::mem::take(&mut child.call_mocks);
-        self.function_mocks = std::mem::take(&mut child.function_mocks);
+        self.recorded_logs_generation = child.recorded_logs_generation;
+        self.assertion_failed |= child.assertion_failed;
+        self.expected_emit = child.expected_emit.clone();
+        self.take_inspector_state(child);
+        self.persistent_writes = std::mem::take(&mut child.persistent_writes);
+        // Results of unknown calls stay observed even when the frame that made them reverts.
+        self.unknown_calls = std::mem::take(&mut child.unknown_calls);
+        self.unknown_world = child.unknown_world.take();
+    }
+
+    /// Takes the cheatcode state of `other`, which survives reverts and exceptional halts.
+    fn take_inspector_state(&mut self, other: &mut Self) {
+        self.access_record = other.access_record.take();
+        self.block = other.block.clone();
+        self.gas_price = other.gas_price.clone();
+        self.wallets = std::mem::take(&mut other.wallets);
+        self.labels = std::mem::take(&mut other.labels);
+        self.persistent_accounts = std::mem::take(&mut other.persistent_accounts);
+        self.expected_calls = std::mem::take(&mut other.expected_calls);
+        self.expected_creates = std::mem::take(&mut other.expected_creates);
+        self.call_mocks = std::mem::take(&mut other.call_mocks);
+        self.function_mocks = std::mem::take(&mut other.function_mocks);
+    }
+
+    /// Drops logs recorded by a failed call that started with `len` logs in `generation`.
+    ///
+    /// If the buffer was replaced during the call, every log it holds was recorded by the call.
+    pub(crate) fn discard_failed_call_logs(&mut self, len: usize, generation: u64) {
+        if let Some(logs) = &mut self.recorded_logs {
+            logs.truncate(if generation == self.recorded_logs_generation { len } else { 0 });
+        }
     }
 
     pub(crate) fn take_reverted_top_level_effects(&mut self, mut reverted: Self) {
+        let recorded_logs_len = self.recorded_logs.as_ref().map_or(0, Vec::len);
+        let recorded_logs_generation = self.recorded_logs_generation;
         self.take_noncommitting_check_state(&mut reverted);
-        self.block = reverted.block;
+        self.take_inspector_state(&mut reverted);
+        self.world.take_snapshots_from(&mut reverted.world);
         self.recorded_logs = reverted.recorded_logs;
-        self.access_record = reverted.access_record;
+        self.recorded_logs_generation = reverted.recorded_logs_generation;
+        self.discard_failed_call_logs(recorded_logs_len, recorded_logs_generation);
         self.expected_revert = reverted.expected_revert;
+        self.first_failed_callee = reverted.first_failed_callee;
+        self.first_reverted_callee = reverted.first_reverted_callee;
+        self.assertion_failed = reverted.assertion_failed;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
         self.expected_emit = reverted.expected_emit;
-        self.expected_calls = reverted.expected_calls;
-        self.expected_creates = reverted.expected_creates;
-        self.call_mocks = reverted.call_mocks;
-        self.function_mocks = reverted.function_mocks;
+        // Like Forge's pranks, the root frames' pranks survive the revert. `self.prank` is
+        // already parked in `reverted.root_pranks` under this frame's address.
+        self.root_pranks = reverted.root_pranks;
+        if reverted.prank.has_active() {
+            self.root_pranks.insert(reverted.frame.address, reverted.prank);
+        }
+        self.prank = self.root_pranks.remove(&self.frame.address).unwrap_or_default();
     }
 
     /// Returns `true` if the path can be materialized into a replayable corpus seed.
@@ -728,6 +904,12 @@ impl PathState {
     pub(crate) fn exp_word(&mut self, cx: &mut SymCx) -> Result<(), SymbolicError> {
         let base = self.stack.pop()?;
         let exponent = self.stack.pop()?;
+        // A base the path pins to one value, such as by `require(b == 3)`, is a constant here.
+        let base = if let Some(value) = self.constrained_word(cx, &base) {
+            SymExpr::constant(cx, value)
+        } else {
+            base
+        };
         let result = if let Some(exponent) = self.constrained_word(cx, &exponent) {
             if let Some(base_value) = base.as_const() {
                 SymExpr::constant(cx, base_value.wrapping_pow(exponent))
@@ -762,60 +944,51 @@ impl PathState {
         self.stack.push(result)
     }
 
-    pub(crate) fn balance<FEN: FoundryEvmNetwork>(
+    pub(crate) fn balance(
         &self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
     ) -> SymExpr {
         self.world.balance_word_for_address(cx, executor, address)
     }
 
-    pub(crate) fn balance_word<FEN: FoundryEvmNetwork>(
+    pub(crate) fn balance_word(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
         self.world.balance_word(cx, executor, address_expr)
     }
 
-    pub(crate) fn extcode_size_word<FEN: FoundryEvmNetwork>(
+    pub(crate) fn extcode_size_word(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
         self.world.extcode_size_word(cx, executor, address_expr)
     }
 
-    pub(crate) fn extcode_hash_word<FEN: FoundryEvmNetwork>(
+    pub(crate) fn extcode_hash_word(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
         self.world.extcode_hash_word(cx, executor, address_expr)
     }
 
-    pub(crate) fn extcode_bytes_word<FEN: FoundryEvmNetwork>(
+    pub(crate) fn extcode_bytes_word(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address_expr: SymExpr,
         offset: SymExpr,
         size: usize,
     ) -> Result<SymBytes, SymbolicError> {
         self.world.extcode_bytes_word(cx, executor, address_expr, offset, size)
-    }
-
-    pub(crate) fn pop_address_word_or_symbolic_slot(
-        &mut self,
-        cx: &mut SymCx,
-    ) -> Result<(SymExpr, Address), SymbolicError> {
-        let expr = self.stack.pop()?;
-        let address = self.address_or_symbolic_slot(cx, expr.clone());
-        Ok((expr, address))
     }
 
     pub(crate) fn address_or_symbolic_slot(&mut self, cx: &mut SymCx, expr: SymExpr) -> Address {
@@ -838,13 +1011,13 @@ impl PathState {
     }
 
     pub(crate) fn fresh_bounded_uint(&mut self, cx: &mut SymCx, bits: U256) -> SymExpr {
+        // Like Forge, a zero-bit integer is `0`.
+        if bits.is_zero() {
+            return SymExpr::zero(cx);
+        }
         let value = self.fresh_word(cx, "symbolic");
         if bits < U256::from(256) {
-            let upper = if bits.is_zero() {
-                U256::ZERO
-            } else {
-                U256::ONE << usize::try_from(bits).expect("checked bit width")
-            };
+            let upper = U256::ONE << usize::try_from(bits).expect("checked bit width");
             self.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, upper));
         }
         value
@@ -899,11 +1072,21 @@ impl PathState {
     }
 
     pub(crate) fn prank_for_next_call(&mut self) -> (Address, SymExpr, Option<(Address, SymExpr)>) {
+        // Any root call ends an unused single-call prank at this depth, even when it was set by
+        // another handler in the same invariant sequence.
+        if self.call_depth == 0 {
+            self.root_pranks.retain(|_, prank| {
+                prank.next_caller = None;
+                prank.next_origin = None;
+                prank.has_active()
+            });
+        }
         if let Some((caller, caller_word)) = self.prank.next_caller.take() {
             (caller, caller_word, self.prank.next_origin.take())
         } else {
             match self.prank.persistent_caller.clone() {
                 Some((caller, caller_word)) => {
+                    self.prank.persistent_used = true;
                     (caller, caller_word, self.prank.persistent_origin.clone())
                 }
                 None => {
@@ -913,31 +1096,27 @@ impl PathState {
         }
     }
 
-    pub(crate) fn read_callers_words(&self, cx: &mut SymCx) -> Vec<SymExpr> {
-        let (mode, caller, origin) = if let Some((_, caller_word)) = self.prank.next_caller.as_ref()
-        {
-            (
-                U256::from(3),
-                caller_word.clone(),
-                self.prank
-                    .next_origin
-                    .as_ref()
-                    .map(|(_, origin_word)| origin_word.clone())
-                    .unwrap_or_else(|| self.origin_word.clone()),
-            )
-        } else if let Some((_, caller_word)) = self.prank.persistent_caller.as_ref() {
-            (
-                U256::from(4),
-                caller_word.clone(),
-                self.prank
-                    .persistent_origin
-                    .as_ref()
-                    .map(|(_, origin_word)| origin_word.clone())
-                    .unwrap_or_else(|| self.origin_word.clone()),
-            )
+    /// Returns the caller mode, sender, and origin of the nearest prank at or below this frame,
+    /// as Forge's `vm.readCallers` reports it.
+    pub(crate) fn callers(&self) -> Option<(U256, SymExpr, SymExpr)> {
+        let (mode, caller_word, origin) = if let Some((_, caller_word)) = &self.prank.next_caller {
+            (U256::from(3), caller_word, &self.prank.next_origin)
+        } else if let Some((_, caller_word)) = &self.prank.persistent_caller {
+            (U256::from(4), caller_word, &self.prank.persistent_origin)
         } else {
-            (U256::ZERO, self.caller_word.clone(), self.origin_word.clone())
+            return self.prank.inherited.clone();
         };
+        let origin_word = origin
+            .as_ref()
+            .map(|(_, origin_word)| origin_word.clone())
+            .unwrap_or_else(|| self.origin_word.clone());
+        Some((mode, caller_word.clone(), origin_word))
+    }
+
+    pub(crate) fn read_callers_words(&self, cx: &mut SymCx) -> Vec<SymExpr> {
+        let (mode, caller, origin) = self
+            .callers()
+            .unwrap_or_else(|| (U256::ZERO, self.origin_word.clone(), self.origin_word.clone()));
         vec![SymExpr::constant(cx, mode), caller, origin]
     }
 
@@ -948,22 +1127,126 @@ impl PathState {
     }
 
     pub(crate) fn record_sload(&mut self, address: Address, slot: SymExpr) {
-        if let Some(record) = &mut self.access_record {
+        if let Some(record) = &mut self.access_record
+            && !record.stopped
+        {
             record.read(address, slot);
         }
     }
 
     pub(crate) fn record_sstore(&mut self, address: Address, slot: SymExpr) {
-        if let Some(record) = &mut self.access_record {
+        if let Some(record) = &mut self.access_record
+            && !record.stopped
+        {
             record.write(address, slot);
         }
     }
 
+    /// Checks a `vm.expectEmit` declared in this frame after a call from it returns without
+    /// reverting, and returns whether the call fails it.
+    ///
+    /// Like Forge's `call_end`, the call fails a `count >= 1` expectation it did not meet, which
+    /// stays pending, and ends a `count = 0` one. Static calls keep it. Callers skip calls that
+    /// `vm.expectRevert` handles, which also keep it.
+    pub(crate) fn check_expected_emit_after_call(&mut self, kind: CallKind) -> bool {
+        if self.is_static || matches!(kind, CallKind::StaticCall) {
+            return false;
+        }
+        let Some(expected) = &mut self.expected_emit else { return false };
+        if expected.depth != self.call_depth {
+            return false;
+        }
+        if expected.is_forbidden() {
+            self.expected_emit = None;
+            return false;
+        }
+        expected.failed = true;
+        true
+    }
+
     pub(crate) fn expectations_satisfied(&self) -> bool {
         self.expected_revert.is_none()
-            && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_satisfied)
+            && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_forbidden)
             && self.expected_calls.iter().all(ExpectedCall::is_satisfied)
             && self.expected_creates.is_empty()
+    }
+
+    /// Sets a balance as `vm.deal` does, recording the write so it survives reverts.
+    pub(crate) fn set_persistent_balance(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        address: Address,
+        value: SymExpr,
+    ) {
+        let previous = self.world.balance_word_for_address(cx, executor, address);
+        let delta = SymExpr::binop(cx, SymBinOp::Sub, value.clone(), previous);
+        self.world.set_balance_word(address, value);
+        self.persistent_writes.push(PersistentWrite::Balance(address, delta));
+    }
+
+    /// Sets a nonce as the nonce cheatcodes do, recording the write so it survives reverts.
+    pub(crate) fn set_persistent_nonce(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        address: Address,
+        nonce: u64,
+    ) -> Result<(), SymbolicError> {
+        let previous = self.world.nonce(executor, address)?;
+        self.world.set_nonce(address, nonce);
+        let delta = i128::from(nonce) - i128::from(previous);
+        self.persistent_writes.push(PersistentWrite::Nonce(address, delta));
+        Ok(())
+    }
+
+    /// Reapplies the persistent writes recorded since `start` after a failed frame restored the
+    /// world.
+    ///
+    /// Forge's cheatcodes write balances and nonces outside the journal, so a revert only undoes
+    /// the journaled changes made on top of them: balances keep the write's wrapping delta, and
+    /// nonces keep its delta, saturated at the nonce bounds, unless the revert undoes the
+    /// account's creation, which resets the nonce. A failed frame that restored a snapshot
+    /// returns to the state from just before the first restore made since it started, so later
+    /// writes are dropped.
+    pub(crate) fn replay_persistent_writes(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        start: usize,
+    ) -> Result<(), SymbolicError> {
+        let mut nonce_deltas = HashMap::<Address, i128>::default();
+        let mut created = HashSet::<Address>::default();
+        for write in self.persistent_writes.split_off(start) {
+            match write {
+                PersistentWrite::Balance(address, delta) => {
+                    let balance = self.world.balance_word_for_address(cx, executor, address);
+                    let balance = SymExpr::binop(cx, SymBinOp::Add, balance, delta.clone());
+                    self.world.set_balance_word(address, balance);
+                    self.persistent_writes.push(PersistentWrite::Balance(address, delta));
+                }
+                PersistentWrite::Nonce(address, delta) => {
+                    *nonce_deltas.entry(address).or_default() += delta;
+                }
+                PersistentWrite::Created(address) => {
+                    created.insert(address);
+                }
+                PersistentWrite::Restore => break,
+            }
+        }
+        // Each account's nonce writes are recorded again as one net change, so an enclosing
+        // replay keeps this replay's saturation.
+        for (address, delta) in nonce_deltas {
+            let previous = self.world.nonce(executor, address)?;
+            let nonce = if created.contains(&address) {
+                0
+            } else {
+                u64::try_from((i128::from(previous) + delta).max(0)).unwrap_or(u64::MAX)
+            };
+            if nonce != previous {
+                self.set_persistent_nonce(executor, address, nonce)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -971,6 +1254,34 @@ impl PathState {
 pub(crate) struct SymbolicStorageHook {
     pub(crate) callback_target: Address,
     pub(crate) callback_selector: [u8; 4],
+}
+
+/// One call into code the equivalence check does not know, with its inputs and its fresh results.
+///
+/// Calls of the two programs with equal inputs get equal results, as if the callee were one fixed
+/// but unknown function of its inputs.
+#[derive(Clone, Debug)]
+pub(crate) struct UnknownCall {
+    /// CALL or STATICCALL.
+    pub(crate) opcode: u8,
+    /// Account making the call.
+    pub(crate) caller: Address,
+    /// Abstract state of unknown code when the call was made.
+    pub(crate) world: SymExpr,
+    pub(crate) target: SymExpr,
+    pub(crate) value: SymExpr,
+    pub(crate) input_len: SymExpr,
+    pub(crate) input: SymBytes,
+    /// The caller's world when the call was made, whose storage the callee may read.
+    pub(crate) caller_world: SymbolicWorld,
+    pub(crate) caller_balance: SymExpr,
+    pub(crate) success: SymExpr,
+    pub(crate) output_len: SymExpr,
+    pub(crate) output: SymBytes,
+    /// Abstract state of unknown code after a state-changing call.
+    pub(crate) world_after: Option<SymExpr>,
+    /// Ether the callee sent back to the caller during a state-changing call.
+    pub(crate) ether_in: Option<SymExpr>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -994,22 +1305,33 @@ impl SymbolicLog {
     pub(crate) fn into_parts(self) -> (Arc<[SymExpr]>, SymExpr, SymBytes, Address) {
         (self.topics, self.data_len, self.data, self.emitter)
     }
+
+    pub(crate) fn has_topics(&self) -> bool {
+        !self.topics.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AccessRecord {
     reads: HashMap<Address, Vec<SymExpr>>,
     writes: HashMap<Address, Vec<SymExpr>>,
+    /// Set by `vm.stopRecord`, which keeps the recorded accesses but stops collecting new ones.
+    stopped: bool,
 }
 
 impl AccessRecord {
+    /// Stops collecting accesses while keeping the recorded ones, as `vm.stopRecord` does.
+    pub(crate) const fn stop(&mut self) {
+        self.stopped = true;
+    }
+
     pub(crate) fn read(&mut self, address: Address, slot: SymExpr) {
-        Self::push_unique_slot(self.reads.entry(address).or_default(), slot);
+        self.reads.entry(address).or_default().push(slot);
     }
 
     pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
         self.read(address, slot.clone());
-        Self::push_unique_slot(self.writes.entry(address).or_default(), slot);
+        self.writes.entry(address).or_default().push(slot);
     }
 
     pub(crate) fn addresses(&self) -> Vec<Address> {
@@ -1028,24 +1350,24 @@ impl AccessRecord {
     pub(crate) fn write_slots(&self, address: Address) -> Vec<SymExpr> {
         self.writes.get(&address).cloned().unwrap_or_default()
     }
-
-    fn push_unique_slot(slots: &mut Vec<SymExpr>, slot: SymExpr) {
-        if !slots.iter().any(|existing| existing == &slot) {
-            slots.push(slot);
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedRevert {
     data: ExpectedRevertData,
     reverter: Option<SymExpr>,
+    count: u64,
     remaining: u64,
 }
 
 impl ExpectedRevert {
-    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, remaining: u64) -> Self {
-        Self { data, reverter, remaining: remaining.max(1) }
+    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, count: u64) -> Self {
+        let count = count.max(1);
+        Self { data, reverter, count, remaining: count }
+    }
+
+    pub(crate) const fn has_reverter(&self) -> bool {
+        self.reverter.is_some()
     }
 
     pub(crate) const fn consume_one(&mut self) -> bool {
@@ -1053,14 +1375,39 @@ impl ExpectedRevert {
         self.remaining == 0
     }
 
+    /// Returns whether Forge checks a reverter for a revert expected more than once, where it
+    /// reports the last failing call, which is the call itself unless it is a CREATE.
+    pub(crate) const fn repeats_with_reverter(&self) -> bool {
+        self.count > 1 && self.reverter.is_some()
+    }
+
+    /// Returns the reverter that Forge reports for a failed call: the call itself, `callee`, for
+    /// a revert expected more than once, otherwise the first call that failed since
+    /// `vm.expectRevert`.
+    pub(crate) const fn reverted_by(
+        &self,
+        callee: Option<Address>,
+        first_failed_callee: Option<Address>,
+    ) -> Option<Address> {
+        if self.count > 1 { callee } else { first_failed_callee }
+    }
+
+    /// Returns whether at least one expected revert has already matched.
+    pub(crate) const fn matched_any(&self) -> bool {
+        self.remaining < self.count
+    }
+
     pub(crate) fn match_condition(
         &self,
         cx: &mut SymCx,
-        reverter: Address,
+        reverter: Option<Address>,
         return_data: &SymReturnData,
     ) -> Option<SymBoolExpr> {
         let mut conditions = Vec::new();
-        if let Some(expected_reverter) = &self.reverter {
+        // Like Forge, skip the reverter check when no failing call or reverting CREATE was seen.
+        if let Some(expected_reverter) = &self.reverter
+            && let Some(reverter) = reverter
+        {
             conditions.push(expected_reverter.address_match_condition(cx, reverter));
         }
         match &self.data {
@@ -1083,16 +1430,27 @@ impl ExpectedRevert {
                 }));
             }
             ExpectedRevertData::Exact(data) => {
-                if return_data.len() < data.len() {
+                // Like Forge, also accept the expected bytes as the message of canonical
+                // `Error(string)` or `CheatcodeError(string)` revert data.
+                let message = SymbolicAbiValue::String { bytes: data.clone() };
+                let message = encode_sequence(cx, [&message]);
+                let mut candidates = vec![data.clone()];
+                for selector in [Revert::SELECTOR, Vm::CheatcodeError::SELECTOR] {
+                    let selector = SymBytes::concrete(cx, selector.to_vec());
+                    candidates.push(SymBytes::concat(cx, [selector, message.clone()]));
+                }
+                let mut matches = Vec::new();
+                for candidate in candidates {
+                    if let Some(bytes_match) = return_data.bytes.prefix_condition(cx, &candidate) {
+                        let len = SymExpr::constant(cx, U256::from(candidate.len()));
+                        let len_match = SymBoolExpr::eq(cx, return_data.len_word.clone(), len);
+                        matches.push(SymBoolExpr::and(cx, vec![len_match, bytes_match]));
+                    }
+                }
+                if matches.is_empty() {
                     return None;
                 }
-                let len = SymExpr::constant(cx, U256::from(data.len()));
-                conditions.push(SymBoolExpr::eq(cx, return_data.len_word.clone(), len));
-                conditions.extend((0..data.len()).map(|offset| {
-                    let expected = data.byte(cx, offset);
-                    let actual = return_data.byte(cx, offset);
-                    SymBoolExpr::eq(cx, actual, expected)
-                }));
+                conditions.push(SymBoolExpr::or(cx, matches));
             }
         }
         Some(SymBoolExpr::and(cx, conditions))
@@ -1107,9 +1465,9 @@ pub(crate) enum ExpectedRevertData {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum AssumeNoRevert {
-    Any,
-    Filtered(Vec<ExpectedRevert>),
+pub(crate) struct AssumeNoRevert {
+    pub(crate) filters: Option<Vec<ExpectedRevert>>,
+    pub(crate) reverted_by: Option<Address>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1143,8 +1501,19 @@ impl ExpectedCreate {
         kind: CreateKind,
         bytecode: &[u8],
     ) -> Option<SymBoolExpr> {
-        (self.kind == kind && self.bytecode == bytecode)
-            .then(|| self.deployer.address_match_condition(cx, deployer))
+        if self.bytecode != bytecode {
+            return None;
+        }
+        self.deployer_match_condition(cx, deployer, kind)
+    }
+
+    pub(crate) fn deployer_match_condition(
+        &self,
+        cx: &mut SymCx,
+        deployer: Address,
+        kind: CreateKind,
+    ) -> Option<SymBoolExpr> {
+        (self.kind == kind).then(|| self.deployer.address_match_condition(cx, deployer))
     }
 }
 
@@ -1159,8 +1528,8 @@ impl ExpectedCall {
     ) -> Self {
         let (gas, min_gas) = if value.is_some_and(|value| !value.is_zero()) {
             (
-                gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
-                min_gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
+                gas.map(|gas| gas.saturating_add(CALL_STIPEND.into())),
+                min_gas.map(|gas| gas.saturating_add(CALL_STIPEND.into())),
             )
         } else {
             (gas, min_gas)
@@ -1278,6 +1647,12 @@ impl CallMock {
         (self.data.len(), self.value.is_some())
     }
 
+    /// Returns whether the mock answers the call; Forge runs the real callee when the selected
+    /// mock's return queue is empty.
+    pub(crate) const fn answers(&self) -> bool {
+        !self.returns.is_empty()
+    }
+
     pub(crate) fn match_condition(
         &self,
         cx: &mut SymCx,
@@ -1366,19 +1741,41 @@ pub(crate) struct ExpectedEmit {
     emitter: Option<SymExpr>,
     remaining: u64,
     template: Option<SymbolicLog>,
+    /// Set by `vm.expectEmitAnonymous`, which lets a log without topics fill the template.
+    anonymous: bool,
+    /// Call depth of the frame that declared the expectation.
+    depth: usize,
+    /// Whether a call ended with the expectation unmet, which failed that call.
+    failed: bool,
 }
 
 impl ExpectedEmit {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         checks: ExpectedEmitChecks,
         emitter: Option<SymExpr>,
         remaining: u64,
+        anonymous: bool,
+        depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining: remaining.max(1), template: None }
+        Self { checks, emitter, remaining, template: None, anonymous, depth, failed: false }
     }
 
-    pub(crate) const fn is_satisfied(&self) -> bool {
-        self.template.is_none() && self.remaining == 0
+    /// Returns whether a call ended with this expectation unmet.
+    pub(crate) const fn failed(&self) -> bool {
+        self.failed
+    }
+
+    /// Returns whether this expectation forbids logs matching its template (`count = 0`).
+    ///
+    /// A `count >= 1` expectation is dropped once consumed, so a stored expectation with nothing
+    /// remaining is a `count = 0` expectation, which is met while no log matches it.
+    pub(crate) const fn is_forbidden(&self) -> bool {
+        self.remaining == 0
+    }
+
+    /// Returns whether this expectation was declared by `vm.expectEmitAnonymous`.
+    pub(crate) const fn is_anonymous(&self) -> bool {
+        self.anonymous
     }
 
     pub(crate) const fn template(&self) -> Option<&SymbolicLog> {
@@ -1389,14 +1786,10 @@ impl ExpectedEmit {
         self.template = Some(log);
     }
 
-    pub(crate) fn consume_one(&mut self) -> bool {
+    /// Consumes one matching log and returns whether the expectation is met.
+    pub(crate) const fn consume_one(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
-        if self.remaining == 0 {
-            self.template = None;
-            true
-        } else {
-            false
-        }
+        self.remaining == 0
     }
 
     pub(crate) fn match_condition(
@@ -1409,16 +1802,15 @@ impl ExpectedEmit {
         if let Some(expected_emitter) = &self.emitter {
             conditions.push(expected_emitter.address_match_condition(cx, actual.emitter));
         }
-        for (idx, &check_topic) in self.checks.topics.iter().enumerate() {
-            if !check_topic {
-                continue;
-            }
-            match (template.topics.get(idx), actual.topics.get(idx)) {
-                (Some(left), Some(right)) => {
-                    conditions.push(SymBoolExpr::eq(cx, left.clone(), right.clone()));
-                }
-                (None, None) => {}
-                _ => return None,
+        // Like Forge, logs with different topic counts never match.
+        if template.topics.len() != actual.topics.len() {
+            return Some(SymBoolExpr::constant(cx, false));
+        }
+        for ((left, right), check) in
+            template.topics.iter().zip(actual.topics.iter()).zip(self.checks.topics)
+        {
+            if check {
+                conditions.push(SymBoolExpr::eq(cx, left.clone(), right.clone()));
             }
         }
 
@@ -1429,7 +1821,11 @@ impl ExpectedEmit {
                 actual.data_len.clone(),
             ));
             if template.data.len() != actual.data.len() {
-                return None;
+                // Different concrete sizes never match; buffers of a symbolic size cannot be
+                // compared byte by byte.
+                let concrete =
+                    template.data_len.as_const().is_some() && actual.data_len.as_const().is_some();
+                return concrete.then(|| SymBoolExpr::constant(cx, false));
             }
             conditions.extend((0..template.data.len()).map(|idx| {
                 let template = template.data.byte(cx, idx);
@@ -1512,6 +1908,7 @@ pub(crate) struct CallFrame {
     pub(crate) caller_word: SymExpr,
     pub(crate) callvalue: SymExpr,
     pub(crate) is_static: bool,
+    pub(crate) is_constructor: bool,
     pub(crate) calldata: SymCalldata,
     pub(crate) stack: SymStack,
     pub(crate) memory: SymMemory,
@@ -1537,6 +1934,7 @@ impl CallFrame {
             caller_word: SymExpr::constant(cx, address_word(caller)),
             callvalue,
             is_static,
+            is_constructor: false,
             calldata,
             stack: SymStack::default(),
             memory: SymMemory::default(),
@@ -1551,6 +1949,11 @@ pub(crate) struct SymbolicPrank {
     next_origin: Option<(Address, SymExpr)>,
     persistent_caller: Option<(Address, SymExpr)>,
     persistent_origin: Option<(Address, SymExpr)>,
+    /// Whether a call used the `vm.startPrank` caller.
+    persistent_used: bool,
+    /// The caller mode, sender, and origin a caller frame's prank gave this frame. It does not
+    /// apply to calls this frame makes, but `vm.readCallers` reports it.
+    pub(crate) inherited: Option<(U256, SymExpr, SymExpr)>,
 }
 
 impl SymbolicPrank {
@@ -1570,6 +1973,28 @@ impl SymbolicPrank {
     ) {
         self.persistent_caller = Some(caller);
         self.persistent_origin = origin;
+        self.persistent_used = false;
+    }
+
+    /// Returns Forge's error for a `vm.prank` or `vm.startPrank` (`persistent`) that would
+    /// replace the active prank.
+    pub(crate) const fn overwrite_error(&self, persistent: bool) -> Option<&'static str> {
+        if self.next_caller.is_some() || (self.persistent_caller.is_some() && !self.persistent_used)
+        {
+            Some("cannot overwrite a prank until it is applied at least once")
+        } else if self.persistent_caller.is_some() && !persistent {
+            Some(
+                "cannot override an ongoing prank with a single vm.prank; use vm.startPrank to \
+                 override the current prank",
+            )
+        } else {
+            None
+        }
+    }
+
+    /// Ends this frame's prank. Like Forge, a caller frame's prank stays visible.
+    pub(crate) fn stop(&mut self) {
+        *self = Self { inherited: self.inherited.take(), ..Self::default() };
     }
 
     pub(crate) const fn has_active(&self) -> bool {
@@ -1617,13 +2042,22 @@ pub(crate) struct SymbolicWorldState {
     current_transaction_created_accounts: HashSet<Address>,
     balances: HashMap<Address, SymExpr>,
     code_cache: HashMap<Address, SymCode>,
+    /// Accounts whose code was written during the run; `code_cache` also holds backend reads.
+    written_code: HashSet<Address>,
     nonces: HashMap<Address, u64>,
     existing_accounts: HashSet<Address>,
     destroyed_accounts: HashSet<Address>,
+    pending_selfdestructs: HashSet<Address>,
     arbitrary_storage_accounts: HashMap<Address, bool>,
     arbitrary_storage_copies: HashMap<Address, Address>,
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
+    /// First zero-init base read of each symbolic key. Which `setUp` slot a key selects depends
+    /// on the slot hashes the run has seen, so later reads reuse it.
+    zero_init_base_reads: HashMap<(Address, SymExpr), SymExpr>,
+    /// Treat accounts that are not created here and have no known code as unknown: their balance,
+    /// code size and code hash are symbolic, and calls into them are abstracted.
+    symbolic_accounts: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
     replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
     replay_symbolic_storage_keys: HashMap<Symbol, Vec<(Address, SymExpr)>>,
@@ -1635,11 +2069,38 @@ struct SymbolicReplayStorageSlot {
     slot: U256,
 }
 
+/// A `vm.snapshotState` entry: the world state with the block environment and gas price, which
+/// Forge restores together.
+#[derive(Clone, Debug)]
+struct SymbolicSnapshot {
+    state: Arc<SymbolicWorldState>,
+    block: SymbolicBlock,
+    gas_price: SymExpr,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymbolicWorld {
     state: Arc<SymbolicWorldState>,
-    snapshots: HashMap<U256, Arc<SymbolicWorldState>>,
+    snapshots: HashMap<U256, SymbolicSnapshot>,
     next_snapshot_id: u64,
+}
+
+impl SymbolicWorldState {
+    /// Deletes the accounts that self-destructed in the transaction that just ended.
+    fn apply_pending_selfdestructs(&mut self, cx: &mut SymCx) {
+        for address in std::mem::take(&mut self.pending_selfdestructs) {
+            self.balances.insert(address, SymExpr::zero(cx));
+            self.nonces.insert(address, 0);
+            self.code_cache.insert(address, SymCode::empty(cx));
+            self.written_code.insert(address);
+            self.storage.retain(|write| write.address != address);
+            self.transient_storage.retain(|write| write.address != address);
+            // A deleted account reads zero storage like a fresh one.
+            self.created_accounts.insert(address);
+            self.existing_accounts.remove(&address);
+            self.destroyed_accounts.insert(address);
+        }
+    }
 }
 
 impl Deref for SymbolicWorld {
@@ -1661,10 +2122,10 @@ impl SymbolicWorld {
         state.zero_init_symbolic_storage = matches!(layout, SymbolicStorageLayout::ZeroInit);
     }
 
-    pub(crate) fn sload<FEN: FoundryEvmNetwork>(
+    pub(crate) fn sload(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
         key: SymExpr,
         concrete_key: Option<U256>,
@@ -1676,6 +2137,94 @@ impl SymbolicWorld {
 
     pub(crate) fn sstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
         Arc::make_mut(&mut self.state).storage.push(StorageWrite::new(address, key, value));
+    }
+
+    /// Reads the global fail slot: Forge bookkeeping, so arbitrary storage never makes it up.
+    pub(crate) fn global_fail_slot(
+        &self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+    ) -> Result<SymExpr, SymbolicError> {
+        let base = executor
+            .backend
+            .storage(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            .map(|value| SymExpr::constant(cx, value))
+            .map_err(|err| SymbolicError::Backend(err.to_string()))?;
+        let key = SymExpr::constant(cx, GLOBAL_FAIL_SLOT);
+        Ok(StorageWrite::select_from(cx, &self.storage, CHEATCODE_ADDRESS, key, base))
+    }
+
+    /// Returns the distinct storage keys written to `address` in this world, oldest first.
+    pub(crate) fn storage_write_keys(&self, address: Address) -> Vec<SymExpr> {
+        let mut keys = Vec::new();
+        for write in self.storage.iter().filter(|write| write.address == address) {
+            if !keys.contains(&write.key) {
+                keys.push(write.key.clone());
+            }
+        }
+        keys
+    }
+
+    /// Returns every account whose balance this world changed or destroyed.
+    pub(crate) fn balance_addresses(&self) -> Vec<Address> {
+        let mut addresses = self.balances.keys().copied().collect::<Vec<_>>();
+        for address in &self.destroyed_accounts {
+            if !addresses.contains(address) {
+                addresses.push(*address);
+            }
+        }
+        addresses
+    }
+
+    /// Returns every account this world wrote storage of, oldest first.
+    pub(crate) fn storage_write_addresses(&self) -> Vec<Address> {
+        let mut addresses = Vec::new();
+        for write in &self.storage {
+            if !addresses.contains(&write.address) {
+                addresses.push(write.address);
+            }
+        }
+        addresses
+    }
+
+    /// Returns every account whose nonce this world changed.
+    pub(crate) fn nonce_addresses(&self) -> Vec<Address> {
+        self.nonces.keys().copied().collect()
+    }
+
+    /// Returns every account created in this world.
+    pub(crate) fn created_account_addresses(&self) -> Vec<Address> {
+        self.created_accounts.iter().copied().collect()
+    }
+
+    /// Makes accounts without known code unknown, as the equivalence check needs.
+    pub(crate) fn enable_symbolic_accounts(&mut self) {
+        Arc::make_mut(&mut self.state).symbolic_accounts = true;
+    }
+
+    /// Aliases a symbolic address word to the account that stands for it.
+    pub(crate) fn alias_symbolic_address(&mut self, word: SymExpr, address: Address) {
+        Arc::make_mut(&mut self.state).symbolic_address_aliases.insert(word, address);
+    }
+
+    /// Returns whether `address` is an account whose code the equivalence check does not know.
+    pub(crate) fn is_unknown_account(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        address: Address,
+    ) -> Result<bool, SymbolicError> {
+        if !self.symbolic_accounts
+            || self.created_accounts.contains(&address)
+            || self.destroyed_accounts.contains(&address)
+            || address == CHEATCODE_ADDRESS
+            || address == SYMBOLIC_VM_COMPAT_ADDRESS
+            || address == HARDHAT_CONSOLE_ADDRESS
+            || is_precompile_for_spec(address, executor.spec_id)
+        {
+            return Ok(false);
+        }
+        Ok(self.extcode(cx, executor, address)?.is_empty())
     }
 
     pub(crate) fn tload(&self, cx: &mut SymCx, address: Address, key: SymExpr) -> SymExpr {
@@ -1690,10 +2239,25 @@ impl SymbolicWorld {
     }
 
     /// Clears transaction-scoped state at a top-level call boundary.
-    pub(crate) fn clear_transaction_scoped_state(&mut self) {
+    pub(crate) fn clear_transaction_scoped_state(&mut self, cx: &mut SymCx) {
         let state = Arc::make_mut(&mut self.state);
+        state.apply_pending_selfdestructs(cx);
         state.transient_storage.clear();
         state.current_transaction_created_accounts.clear();
+    }
+
+    /// Clears transient storage for a call that runs as its own transaction.
+    pub(crate) fn clear_transient_storage(&mut self) {
+        if !self.transient_storage.is_empty() {
+            Arc::make_mut(&mut self.state).transient_storage.clear();
+        }
+    }
+
+    /// Restores `outer`'s transient storage after a call that ran as its own transaction.
+    pub(crate) fn restore_transient_storage(&mut self, outer: &Self) {
+        if !self.transient_storage.is_empty() || !outer.transient_storage.is_empty() {
+            Arc::make_mut(&mut self.state).transient_storage = outer.transient_storage.clone();
+        }
     }
 
     pub(crate) fn mark_current_transaction_created(&mut self, address: Address) {
@@ -1781,19 +2345,38 @@ impl SymbolicWorld {
             .find_map(|(word, slot)| (*slot == address).then(|| word.clone()))
     }
 
-    pub(crate) fn snapshot_state(&mut self) -> U256 {
+    /// Returns the condition under which `expr` denotes the account at `address`. A
+    /// representative account stands for its symbolic address expression, not for its
+    /// placeholder address.
+    pub(crate) fn symbolic_address_condition(
+        &self,
+        cx: &mut SymCx,
+        expr: &SymExpr,
+        address: Address,
+    ) -> SymBoolExpr {
+        let candidate = self
+            .symbolic_word_for_address(address)
+            .unwrap_or_else(|| SymExpr::constant(cx, address_word(address)));
+        SymBoolExpr::eq(cx, expr.clone(), candidate)
+    }
+
+    pub(crate) fn snapshot_state(&mut self, block: &SymbolicBlock, gas_price: &SymExpr) -> U256 {
         let id = U256::from(self.next_snapshot_id);
         self.next_snapshot_id = self.next_snapshot_id.saturating_add(1);
-        self.snapshots.insert(id, Arc::clone(&self.state));
+        let snapshot = SymbolicSnapshot {
+            state: Arc::clone(&self.state),
+            block: block.clone(),
+            gas_price: gas_price.clone(),
+        };
+        self.snapshots.insert(id, snapshot);
         id
     }
 
-    pub(crate) fn restore_snapshot(&mut self, id: U256) -> bool {
-        let Some(snapshot) = self.snapshots.get(&id) else {
-            return false;
-        };
-        self.state = Arc::clone(snapshot);
-        true
+    /// Restores the world state of snapshot `id` and returns its block environment and gas price.
+    pub(crate) fn restore_snapshot(&mut self, id: U256) -> Option<(SymbolicBlock, SymExpr)> {
+        let snapshot = self.snapshots.get(&id)?;
+        self.state = Arc::clone(&snapshot.state);
+        Some((snapshot.block.clone(), snapshot.gas_price.clone()))
     }
 
     pub(crate) fn delete_snapshot(&mut self, id: U256) -> bool {
@@ -1804,10 +2387,17 @@ impl SymbolicWorld {
         self.snapshots.clear();
     }
 
-    pub(crate) fn storage_base<FEN: FoundryEvmNetwork>(
+    /// Takes `other`'s snapshot registry; like Forge's backend, a failed call keeps the snapshots
+    /// it took or deleted.
+    pub(crate) fn take_snapshots_from(&mut self, other: &mut Self) {
+        self.snapshots = std::mem::take(&mut other.snapshots);
+        self.next_snapshot_id = other.next_snapshot_id;
+    }
+
+    pub(crate) fn storage_base(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
         key: &SymExpr,
         concrete_key: Option<U256>,
@@ -1820,29 +2410,45 @@ impl SymbolicWorld {
         }
         if let Some(key) = concrete_key {
             return executor
-                .backend()
-                .storage_ref(address, key)
+                .backend
+                .storage(address, key)
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()));
         }
         if let Some(key) = key.as_const() {
             executor
-                .backend()
-                .storage_ref(address, key)
+                .backend
+                .storage(address, key)
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()))
         } else if self.zero_init_symbolic_storage {
-            Ok(SymExpr::zero(cx))
+            if let Some(value) = self.zero_init_base_reads.get(&(address, key.clone())) {
+                return Ok(value.clone());
+            }
+            // Unwritten slots are zero, but the slots `setUp` wrote are known concrete state.
+            let mut value = SymExpr::zero(cx);
+            for (slot, slot_value) in executor.backend.storage_slots(address) {
+                if slot_value.is_zero() {
+                    continue;
+                }
+                let slot = SymExpr::constant(cx, slot);
+                let slot_value = SymExpr::constant(cx, slot_value);
+                value = key.clone().select_storage_write(cx, slot, slot_value, value);
+            }
+            Arc::make_mut(&mut self.state)
+                .zero_init_base_reads
+                .insert((address, key.clone()), value.clone());
+            Ok(value)
         } else {
             let name = symbolic_storage_symbol(cx, address, key);
             Ok(SymExpr::get_var(cx, name))
         }
     }
 
-    fn arbitrary_storage_base<FEN: FoundryEvmNetwork>(
+    fn arbitrary_storage_base(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
         key: &SymExpr,
         concrete_key: Option<U256>,
@@ -1859,8 +2465,8 @@ impl SymbolicWorld {
                 overwrite_arbitrary_storage == Some(false) || is_copied_storage;
             if preserve_nonzero_slot {
                 let concrete = executor
-                    .backend()
-                    .storage_ref(address, slot)
+                    .backend
+                    .storage(address, slot)
                     .map_err(|err| SymbolicError::Backend(err.to_string()))?;
                 if !concrete.is_zero() {
                     return Ok(Some(SymExpr::constant(cx, concrete)));
@@ -1939,7 +2545,7 @@ impl SymbolicWorld {
             .push((address, key.clone()));
     }
 
-    fn merge_replay_metadata_from(&mut self, other: &Self) {
+    pub(crate) fn merge_replay_metadata_from(&mut self, other: &Self) {
         for (symbol, slots) in &other.replay_storage_slots {
             for slot in slots {
                 self.record_replay_storage_slot(*symbol, slot.address, slot.slot);
@@ -1956,58 +2562,47 @@ impl SymbolicWorld {
         }
     }
 
-    pub(crate) fn backend_balance<FEN: FoundryEvmNetwork>(
-        &self,
-        executor: &Executor<FEN>,
-        address: Address,
-    ) -> U256 {
+    pub(crate) fn backend_balance(&self, executor: &ExecutorView<'_>, address: Address) -> U256 {
         executor
-            .backend()
-            .basic_ref(address)
+            .backend
+            .basic(address)
             .ok()
             .flatten()
             .map(|account| account.balance)
             .unwrap_or_default()
     }
 
-    pub(crate) fn balance_word_for_address<FEN: FoundryEvmNetwork>(
+    pub(crate) fn balance_word_for_address(
         &self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
     ) -> SymExpr {
         if self.destroyed_accounts.contains(&address) {
             return SymExpr::zero(cx);
         }
-        self.balances
-            .get(&address)
-            .cloned()
-            .unwrap_or_else(|| SymExpr::constant(cx, self.backend_balance(executor, address)))
+        if let Some(balance) = self.balances.get(&address) {
+            return balance.clone();
+        }
+        if self.symbolic_accounts && !self.created_accounts.contains(&address) {
+            return SymExpr::var(cx, &format!("balance_{address:?}"));
+        }
+        SymExpr::constant(cx, self.backend_balance(executor, address))
     }
 
-    pub(crate) fn balance_word<FEN: FoundryEvmNetwork>(
+    pub(crate) fn balance_word(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        if let Some(address) = self.resolve_address(&address_expr) {
-            return Ok(self.balance_word_for_address(cx, executor, address));
-        }
-
-        let expr = address_expr;
-        let representative = expr.representative_symbolic_address();
-        let mut result = self.balance_word_for_address(cx, executor, representative);
-        for (address, balance) in &self.balances {
-            if self.destroyed_accounts.contains(address) {
-                continue;
-            }
-            let address = SymExpr::constant(cx, address_word(*address));
-            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
-            result = SymExpr::ite(cx, condition, balance.clone(), result);
-        }
-
-        Ok(result)
+        self.select_symbolic_account(
+            cx,
+            executor,
+            address_expr,
+            |world, address| world.balances.contains_key(&address),
+            |world, cx, address| Ok(world.balance_word_for_address(cx, executor, address)),
+        )
     }
 
     pub(crate) fn set_balance_word(&mut self, address: Address, value: SymExpr) {
@@ -2020,13 +2615,16 @@ impl SymbolicWorld {
         }
     }
 
-    pub(crate) fn transfer<FEN: FoundryEvmNetwork>(
+    /// Moves `value` from `from` to `to`, saturating the recipient's balance at `U256::MAX` when
+    /// `saturate` is set and wrapping it otherwise.
+    pub(crate) fn transfer(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         from: Address,
         to: Address,
         value: SymExpr,
+        saturate: bool,
     ) {
         if from == to || value.as_const().is_some_and(|value| value.is_zero()) {
             return;
@@ -2034,14 +2632,18 @@ impl SymbolicWorld {
         let from_balance = self.balance_word_for_address(cx, executor, from);
         let to_balance = self.balance_word_for_address(cx, executor, to);
         let from_balance = SymExpr::binop(cx, SymBinOp::Sub, from_balance, value.clone());
-        let to_balance = SymExpr::binop(cx, SymBinOp::Add, to_balance, value);
+        let to_balance = if saturate {
+            SymMemory::saturating_add_word(cx, to_balance, value)
+        } else {
+            SymExpr::binop(cx, SymBinOp::Add, to_balance, value)
+        };
         self.set_balance_word(from, from_balance);
         self.set_balance_word(to, to_balance);
     }
 
-    pub(crate) fn nonce<FEN: FoundryEvmNetwork>(
+    pub(crate) fn nonce(
         &self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<u64, SymbolicError> {
         if self.destroyed_accounts.contains(&address) {
@@ -2051,10 +2653,28 @@ impl SymbolicWorld {
             return Ok(*nonce);
         }
         executor
-            .backend()
-            .basic_ref(address)
+            .backend
+            .basic(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))
             .map(|account| account.map(|account| account.nonce).unwrap_or_default())
+    }
+
+    pub(crate) fn nonce_word(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        address_expr: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
+        self.select_symbolic_account(
+            cx,
+            executor,
+            address_expr,
+            |world, address| world.nonces.contains_key(&address),
+            |world, cx, address| {
+                let nonce = world.nonce(executor, address)?;
+                Ok(SymExpr::constant(cx, U256::from(nonce)))
+            },
+        )
     }
 
     pub(crate) fn set_nonce(&mut self, address: Address, nonce: u64) {
@@ -2066,9 +2686,9 @@ impl SymbolicWorld {
         }
     }
 
-    pub(crate) fn increment_nonce<FEN: FoundryEvmNetwork>(
+    pub(crate) fn increment_nonce(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<(), SymbolicError> {
         let nonce = self.nonce(executor, address)?;
@@ -2076,10 +2696,10 @@ impl SymbolicWorld {
         Ok(())
     }
 
-    pub(crate) fn has_code_or_nonce<FEN: FoundryEvmNetwork>(
+    pub(crate) fn has_code_or_nonce(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<bool, SymbolicError> {
         if self.destroyed_accounts.contains(&address) {
@@ -2091,15 +2711,18 @@ impl SymbolicWorld {
     pub(crate) fn install_code(&mut self, address: Address, code: SymCode) {
         let state = Arc::make_mut(&mut self.state);
         state.code_cache.insert(address, code);
+        state.written_code.insert(address);
         state.existing_accounts.insert(address);
         state.destroyed_accounts.remove(&address);
     }
 
-    /// Implements legacy `SELFDESTRUCT` semantics.
-    pub(crate) fn selfdestruct_legacy<FEN: FoundryEvmNetwork>(
+    /// Implements legacy `SELFDESTRUCT` semantics: the balance moves at once, and the account
+    /// is deleted when the running transaction ends, also for a call that ran as its own
+    /// transaction, as Forge does.
+    pub(crate) fn selfdestruct_legacy(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
         beneficiary: Address,
     ) -> Result<(), SymbolicError> {
@@ -2107,36 +2730,21 @@ impl SymbolicWorld {
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
             let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
             let beneficiary_balance =
-                SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
+                SymMemory::saturating_add_word(cx, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
         }
-        let nonce = if self.nonces.contains_key(&address) {
-            None
-        } else {
-            Some(self.nonce(executor, address)?)
-        };
         let zero = SymExpr::zero(cx);
-        let empty_code = SymCode::empty(cx);
         let state = Arc::make_mut(&mut self.state);
         state.balances.insert(address, zero);
-        state.code_cache.insert(address, empty_code);
-        if let Some(nonce) = nonce {
-            state.nonces.insert(address, nonce);
-        }
-        state.storage.retain(|write| write.address != address);
-        state.transient_storage.retain(|write| write.address != address);
-        state.created_accounts.remove(&address);
-        state.current_transaction_created_accounts.remove(&address);
-        state.existing_accounts.remove(&address);
-        state.destroyed_accounts.insert(address);
+        state.pending_selfdestructs.insert(address);
         Ok(())
     }
 
     /// Implements Cancun+ `SELFDESTRUCT` semantics for accounts not created in the current tx.
-    pub(crate) fn selfdestruct_cancun_existing<FEN: FoundryEvmNetwork>(
+    pub(crate) fn selfdestruct_cancun_existing(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
         beneficiary: Address,
     ) {
@@ -2146,78 +2754,19 @@ impl SymbolicWorld {
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
             let beneficiary_balance =
-                SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
+                SymMemory::saturating_add_word(cx, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
             let zero = SymExpr::zero(cx);
             Arc::make_mut(&mut self.state).balances.insert(address, zero);
         }
     }
 
-    pub(crate) fn account_exists<FEN: FoundryEvmNetwork>(
+    pub(crate) fn extcode(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
-        address: Address,
-    ) -> Result<bool, SymbolicError> {
-        if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
-            return Ok(true);
-        }
-        if self.destroyed_accounts.contains(&address) {
-            return Ok(false);
-        }
-        if self.existing_accounts.contains(&address) {
-            return Ok(true);
-        }
-        if self
-            .balances
-            .get(&address)
-            .is_some_and(|balance| !balance.as_const().is_some_and(|value| value.is_zero()))
-            || self.nonces.get(&address).is_some_and(|nonce| *nonce != 0)
-            || self.code_cache.get(&address).is_some_and(|code| !code.is_empty())
-        {
-            Arc::make_mut(&mut self.state).existing_accounts.insert(address);
-            return Ok(true);
-        }
-
-        let Some(account) = executor
-            .backend()
-            .basic_ref(address)
-            .map_err(|err| SymbolicError::Backend(err.to_string()))?
-        else {
-            return Ok(false);
-        };
-
-        if account.nonce != 0 || !account.balance.is_zero() {
-            Arc::make_mut(&mut self.state).existing_accounts.insert(address);
-            return Ok(true);
-        }
-
-        if let Some(code) = account.code.as_ref()
-            && !code.is_empty()
-        {
-            let code = SymCode::from_bytecode(cx, code);
-            let state = Arc::make_mut(&mut self.state);
-            state.code_cache.insert(address, code);
-            state.existing_accounts.insert(address);
-            return Ok(true);
-        }
-
-        Ok(false)
-    }
-
-    pub(crate) fn extcode<FEN: FoundryEvmNetwork>(
-        &mut self,
-        cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<SymCode, SymbolicError> {
-        if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
-            return Ok(SymCode::concrete(cx, vec![0]));
-        }
-        let spec_id: SpecId = executor.spec_id().into();
-        if precompile_number_for_spec(address, spec_id).is_some() {
-            return Ok(SymCode::empty(cx));
-        }
         if self.destroyed_accounts.contains(&address) {
             return Ok(SymCode::empty(cx));
         }
@@ -2225,8 +2774,8 @@ impl SymbolicWorld {
             return Ok(code.clone());
         }
         let account = executor
-            .backend()
-            .basic_ref(address)
+            .backend
+            .basic(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
         if let Some(account) = account.as_ref()
             && (account.nonce != 0
@@ -2234,6 +2783,13 @@ impl SymbolicWorld {
                 || account.code.as_ref().is_some_and(|code| !code.is_empty()))
         {
             Arc::make_mut(&mut self.state).existing_accounts.insert(address);
+        }
+        if address == CHEATCODE_ADDRESS
+            && account.as_ref().is_none_or(|account| account.code.is_none())
+        {
+            let code = SymCode::concrete(cx, vec![0]);
+            Arc::make_mut(&mut self.state).code_cache.insert(address, code.clone());
+            return Ok(code);
         }
         let bytecode = account.as_ref().and_then(|account| account.code.as_ref());
         let code = bytecode
@@ -2243,106 +2799,130 @@ impl SymbolicWorld {
         Ok(code)
     }
 
-    pub(crate) fn extcode_hash_for_address<FEN: FoundryEvmNetwork>(
+    pub(crate) fn extcode_hash_for_address(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<SymExpr, SymbolicError> {
-        if self.account_exists(cx, executor, address)? {
-            let code = self.extcode(cx, executor, address)?;
-            let bytes = code.read_byte_exprs(cx, 0, code.len());
-            Ok(keccak_word(cx, bytes))
-        } else {
-            Ok(SymExpr::zero(cx))
+        if self.is_unknown_account(cx, executor, address)? {
+            return Ok(SymExpr::var(cx, &format!("codehash_{address:?}")));
         }
+        // Cheatcode accounts keep Forge's fixed code hash, not the hash of their stub code,
+        // until `vm.etch` or a self-destruct writes their code.
+        if (address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS)
+            && !self.written_code.contains(&address)
+            && let Some(account) = executor
+                .backend
+                .basic(address)
+                .map_err(|err| SymbolicError::Backend(err.to_string()))?
+        {
+            return Ok(SymExpr::constant(cx, account.code_hash.into()));
+        }
+        if self.destroyed_accounts.contains(&address) {
+            return Ok(SymExpr::zero(cx));
+        }
+        let code = self.extcode(cx, executor, address)?;
+        let bytes = code.read_byte_exprs(cx, 0, code.len());
+        let hash = keccak_word(cx, bytes);
+        if !code.is_empty() || self.nonce(executor, address)? != 0 {
+            return Ok(hash);
+        }
+        // EIP-161: without code or a nonce, the account exists only while it has a balance.
+        let balance = self.balance_word_for_address(cx, executor, address);
+        let empty = SymBoolExpr::eq_word_const(cx, &balance, U256::ZERO);
+        let zero = SymExpr::zero(cx);
+        Ok(SymExpr::ite(cx, empty, zero, hash))
     }
 
-    pub(crate) fn extcode_size_word<FEN: FoundryEvmNetwork>(
+    /// Returns the code size of `address`, which is symbolic for an account without known code.
+    fn extcode_size_for_address(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
+        address: Address,
+    ) -> Result<SymExpr, SymbolicError> {
+        if self.is_unknown_account(cx, executor, address)? {
+            return Ok(SymExpr::var(cx, &format!("codesize_{address:?}")));
+        }
+        let len = self.extcode(cx, executor, address)?.len();
+        Ok(SymExpr::constant(cx, U256::from(len)))
+    }
+
+    pub(crate) fn extcode_size_word(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        if let Some(address) = self.resolve_address(&address_expr) {
-            let len = self.extcode(cx, executor, address)?.len();
-            return Ok(SymExpr::constant(cx, U256::from(len)));
+        // Like halmos, a query that names the empty compatibility address sees one byte of code,
+        // so Solidity's code-size check lets calls to it through. Forge leaves it empty, so a
+        // symbolic address that may denote it does not.
+        if address_expr.clone().address_operand(cx).as_const()
+            == Some(address_word(SYMBOLIC_VM_COMPAT_ADDRESS))
+            && self.extcode(cx, executor, SYMBOLIC_VM_COMPAT_ADDRESS)?.is_empty()
+        {
+            return Ok(SymExpr::constant(cx, U256::ONE));
         }
-
-        let expr = address_expr;
-        let representative = expr.representative_symbolic_address();
-        let len = self.extcode(cx, executor, representative)?.len();
-        let mut result = SymExpr::constant(cx, U256::from(len));
-        for (address, code) in &self.code_cache {
-            if self.destroyed_accounts.contains(address) {
-                continue;
-            }
-            let address = SymExpr::constant(cx, address_word(*address));
-            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
-            let len = SymExpr::constant(cx, U256::from(code.len()));
-            result = SymExpr::ite(cx, condition, len, result);
-        }
-
-        Ok(result)
+        self.select_symbolic_account(
+            cx,
+            executor,
+            address_expr,
+            |world, address| world.written_code.contains(&address),
+            |world, cx, address| world.extcode_size_for_address(cx, executor, address),
+        )
     }
 
-    pub(crate) fn extcode_hash_word<FEN: FoundryEvmNetwork>(
+    pub(crate) fn extcode_hash_word(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        if let Some(address) = self.resolve_address(&address_expr) {
-            return self.extcode_hash_for_address(cx, executor, address);
-        }
-
-        let expr = address_expr;
-        let representative = expr.representative_symbolic_address();
-        let mut result = self.extcode_hash_for_address(cx, executor, representative)?;
-        let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
-        for (address, code) in cached_codes.into_iter().rev() {
-            let hash = if self.destroyed_accounts.contains(address) {
-                SymExpr::zero(cx)
-            } else {
-                let bytes = code.read_byte_exprs(cx, 0, code.len());
-                keccak_word(cx, bytes)
-            };
-            let address = SymExpr::constant(cx, address_word(*address));
-            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
-            result = SymExpr::ite(cx, condition, hash, result);
-        }
-
-        Ok(result)
+        self.select_symbolic_account(
+            cx,
+            executor,
+            address_expr,
+            |world, address| world.written_code.contains(&address),
+            |world, cx, address| world.extcode_hash_for_address(cx, executor, address),
+        )
     }
 
-    pub(crate) fn extcode_bytes_word<FEN: FoundryEvmNetwork>(
+    pub(crate) fn extcode_bytes_word(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         address_expr: SymExpr,
         offset: SymExpr,
         size: usize,
     ) -> Result<SymBytes, SymbolicError> {
+        let address_expr = address_expr.address_operand(cx);
         if let Some(address) = self.resolve_address(&address_expr) {
+            if self.is_unknown_account(cx, executor, address)? {
+                return Err(SymbolicError::Unsupported("EXTCODECOPY of unknown code"));
+            }
             return Ok(self.extcode(cx, executor, address)?.read_bytes_offset(cx, offset, size));
         }
 
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
+        if self.is_unknown_account(cx, executor, representative)? {
+            return Err(SymbolicError::Unsupported("EXTCODECOPY of unknown code"));
+        }
         let mut result = self.extcode(cx, executor, representative)?.read_byte_exprs_offset(
             cx,
             offset.clone(),
             size,
         );
-        let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
-        for (address, code) in cached_codes.into_iter().rev() {
-            let bytes = if self.destroyed_accounts.contains(address) {
-                vec![SymExpr::zero(cx); size]
-            } else {
-                code.read_byte_exprs_offset(cx, offset.clone(), size)
-            };
-            let address = SymExpr::constant(cx, address_word(*address));
-            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
+        let candidates = self
+            .candidate_addresses(executor, |world, address| world.written_code.contains(&address));
+        for address in candidates {
+            let bytes = self.extcode(cx, executor, address)?.read_byte_exprs_offset(
+                cx,
+                offset.clone(),
+                size,
+            );
+            let condition = self.symbolic_address_condition(cx, &expr, address);
             for (idx, byte) in bytes.into_iter().enumerate() {
                 result[idx] = SymExpr::ite(cx, condition.clone(), byte, result[idx].clone());
             }
@@ -2351,27 +2931,61 @@ impl SymbolicWorld {
         Ok(SymBytes::exprs(cx, result))
     }
 
-    pub(crate) fn symbolic_call_targets<FEN: FoundryEvmNetwork>(
+    pub(crate) fn sload_word(
         &mut self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
-    ) -> Result<Vec<Address>, SymbolicError> {
-        let mut addresses = HashSet::<Address>::default();
-        addresses.extend(self.code_cache.keys().copied());
-        addresses.extend(self.existing_accounts.iter().copied());
-        addresses.extend(executor.backend().mem_db().cache.accounts.keys().copied());
-        if let Some(db) = executor.backend().active_fork_db() {
-            addresses.extend(db.cache.accounts.keys().copied());
-        }
-        let mut addresses = addresses.into_iter().collect::<Vec<_>>();
-        addresses.sort_unstable();
+        executor: &ExecutorView<'_>,
+        address_expr: SymExpr,
+        key: SymExpr,
+        concrete_key: Option<U256>,
+    ) -> Result<SymExpr, SymbolicError> {
+        self.select_symbolic_account(
+            cx,
+            executor,
+            address_expr,
+            |world, address| world.storage.iter().any(|write| write.address == address),
+            |world, cx, address| world.sload(cx, executor, address, key.clone(), concrete_key),
+        )
+    }
 
+    /// Selects `value_for` over the accounts an address operand may denote: its representative
+    /// account, then every candidate account under the condition that the address matches it.
+    /// Like the EVM, only the low 160 bits of the operand count.
+    fn select_symbolic_account(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        address_expr: SymExpr,
+        has_state: impl Fn(&Self, Address) -> bool,
+        mut value_for: impl FnMut(&mut Self, &mut SymCx, Address) -> Result<SymExpr, SymbolicError>,
+    ) -> Result<SymExpr, SymbolicError> {
+        let address_expr = address_expr.address_operand(cx);
+        if let Some(address) = self.resolve_address(&address_expr) {
+            return value_for(self, cx, address);
+        }
+
+        let representative = address_expr.representative_symbolic_address();
+        let mut result = value_for(self, cx, representative)?;
+        for address in self.candidate_addresses(executor, has_state) {
+            let value = value_for(self, cx, address)?;
+            let condition = self.symbolic_address_condition(cx, &address_expr, address);
+            result = SymExpr::ite(cx, condition, value, result);
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn symbolic_call_targets(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+    ) -> Result<Vec<Address>, SymbolicError> {
         let mut targets = Vec::new();
-        let spec_id: SpecId = executor.spec_id().into();
-        for address in addresses {
-            if address == CHEATCODE_ADDRESS
+        let candidates = self
+            .candidate_addresses(executor, |world, address| world.written_code.contains(&address));
+        for address in candidates {
+            if is_precompile_for_spec(address, executor.spec_id)
+                || address == CHEATCODE_ADDRESS
                 || address == SYMBOLIC_VM_COMPAT_ADDRESS
-                || precompile_number_for_spec(address, spec_id).is_some()
             {
                 continue;
             }
@@ -2380,6 +2994,41 @@ impl SymbolicWorld {
             }
         }
         Ok(targets)
+    }
+
+    /// Returns the concrete accounts the run knows, in address order.
+    pub(crate) fn concrete_alias_candidates(&self, executor: &ExecutorView<'_>) -> Vec<Address> {
+        self.candidate_addresses(executor, |_, _| false)
+    }
+
+    /// Returns the accounts a symbolic address may alias, in address order.
+    ///
+    /// Includes accounts that exist only in the backend, such as contracts deployed in `setUp`,
+    /// which the world caches only once touched, and the cheatcode address, which has code and
+    /// can hold balances. A representative account only carries the state written through
+    /// its expression, so it is a candidate only where `has_state` holds; elsewhere the
+    /// expression may denote a real account whose state must show through.
+    fn candidate_addresses(
+        &self,
+        executor: &ExecutorView<'_>,
+        has_state: impl Fn(&Self, Address) -> bool,
+    ) -> Vec<Address> {
+        let mut addresses = self
+            .code_cache
+            .keys()
+            .chain(self.balances.keys())
+            .chain(&self.existing_accounts)
+            .chain(&executor.account_addresses)
+            .chain(self.storage.iter().map(|write| &write.address))
+            .copied()
+            .chain([CHEATCODE_ADDRESS])
+            .filter(|address| {
+                self.symbolic_word_for_address(*address).is_none() || has_state(self, *address)
+            })
+            .collect::<Vec<_>>();
+        addresses.sort_unstable();
+        addresses.dedup();
+        addresses
     }
 }
 
@@ -2395,12 +3044,15 @@ fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> S
 pub(crate) struct SymbolicBlock {
     pub(crate) chain_id: SymExpr,
     pub(crate) coinbase: Address,
+    /// Symbolic `COINBASE` word, when the beneficiary is not fixed.
+    pub(crate) coinbase_word: Option<SymExpr>,
     pub(crate) timestamp: SymExpr,
     pub(crate) number: SymExpr,
     pub(crate) difficulty: SymExpr,
     pub(crate) gaslimit: SymExpr,
     pub(crate) basefee: SymExpr,
     pub(crate) blob_basefee: SymExpr,
+    pub(crate) slot_num: SymExpr,
     pub(crate) block_hashes: HashMap<U256, SymExpr>,
     pub(crate) blob_hashes: Vec<B256>,
 }
@@ -2410,63 +3062,56 @@ impl SymbolicBlock {
         Self {
             chain_id: SymExpr::one(cx),
             coinbase: Address::ZERO,
+            coinbase_word: None,
             timestamp: SymExpr::zero(cx),
             number: SymExpr::zero(cx),
             difficulty: SymExpr::zero(cx),
             gaslimit: SymExpr::zero(cx),
             basefee: SymExpr::zero(cx),
             blob_basefee: SymExpr::zero(cx),
+            slot_num: SymExpr::zero(cx),
             block_hashes: HashMap::default(),
             blob_hashes: Vec::new(),
         }
     }
 
-    pub(crate) fn from_executor<FEN: FoundryEvmNetwork>(
-        cx: &mut SymCx,
-        executor: &Executor<FEN>,
-    ) -> Self {
-        let evm_env = executor.evm_env();
-        let block = executor
-            .inspector()
-            .cheatcodes
-            .as_ref()
-            .and_then(|cheats| cheats.block.as_ref())
-            .unwrap_or(evm_env.block_env());
-        let difficulty = block.prevrandao().map(Into::into).unwrap_or_else(|| block.difficulty());
-
+    pub(crate) fn from_executor(cx: &mut SymCx, executor: &ExecutorView<'_>) -> Self {
+        let block = &executor.block;
         Self {
-            chain_id: SymExpr::constant(cx, U256::from(evm_env.cfg_env.chain_id)),
-            coinbase: block.beneficiary(),
-            timestamp: SymExpr::constant(cx, block.timestamp()),
-            number: SymExpr::constant(cx, block.number()),
-            difficulty: SymExpr::constant(cx, difficulty),
-            gaslimit: SymExpr::constant(cx, U256::from(block.gas_limit())),
-            basefee: SymExpr::constant(cx, U256::from(block.basefee())),
-            blob_basefee: SymExpr::constant(
-                cx,
-                U256::from(block.blob_gasprice().unwrap_or_default()),
-            ),
+            chain_id: SymExpr::constant(cx, U256::from(executor.chain_id)),
+            coinbase: block.coinbase,
+            coinbase_word: None,
+            timestamp: SymExpr::constant(cx, block.timestamp),
+            number: SymExpr::constant(cx, block.number),
+            difficulty: SymExpr::constant(cx, block.difficulty),
+            gaslimit: SymExpr::constant(cx, block.gas_limit),
+            basefee: SymExpr::constant(cx, block.basefee),
+            blob_basefee: SymExpr::constant(cx, block.blob_basefee),
+            slot_num: SymExpr::constant(cx, block.slot_num),
             block_hashes: HashMap::default(),
-            blob_hashes: executor.tx_env().blob_versioned_hashes().to_vec(),
+            blob_hashes: executor.blob_hashes.clone(),
         }
     }
 
+    /// Stores a block hash as `vm.setBlockhash` does, returning `false` for a block after the
+    /// current one, which the cheatcode rejects. `block_hash` applies the BLOCKHASH window.
     pub(crate) fn set_block_hash(
         &mut self,
         block_number: U256,
         block_hash: SymExpr,
-    ) -> Result<(), SymbolicError> {
+    ) -> Result<bool, SymbolicError> {
         let current = self.number.as_const_or("symbolic vm.setBlockhash current number")?;
-        if block_number < current && current - block_number <= U256::from(256) {
-            self.block_hashes.insert(block_number, block_hash);
+        if block_number > current {
+            return Ok(false);
         }
-        Ok(())
+        self.block_hashes.insert(block_number, block_hash);
+        Ok(true)
     }
 
-    pub(crate) fn block_hash<FEN: FoundryEvmNetwork>(
+    pub(crate) fn block_hash(
         &self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         block_number: U256,
     ) -> Result<SymExpr, SymbolicError> {
         let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
@@ -2476,20 +3121,17 @@ impl SymbolicBlock {
         if let Some(hash) = self.block_hashes.get(&block_number) {
             return Ok(hash.clone());
         }
-        let Ok(block_number) = u64::try_from(block_number) else {
-            return Ok(SymExpr::zero(cx));
-        };
         let hash = executor
-            .backend()
-            .block_hash_ref(block_number)
+            .backend
+            .block_hash(block_number)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
         Ok(SymExpr::constant(cx, U256::from_be_slice(hash.as_slice())))
     }
 
-    pub(crate) fn block_hash_word<FEN: FoundryEvmNetwork>(
+    pub(crate) fn block_hash_word(
         &self,
         cx: &mut SymCx,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         block_number: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
         if let Some(block_number) = block_number.as_const() {
@@ -2516,4 +3158,18 @@ impl SymbolicBlock {
 
         Ok(result)
     }
+}
+
+/// A cheatcode write that survives a revert of the frame that made it, see
+/// [`PathState::replay_persistent_writes`].
+#[derive(Clone, Debug)]
+pub(crate) enum PersistentWrite {
+    /// Adds a wrapping delta to an account's balance.
+    Balance(Address, SymExpr),
+    /// Adds a delta to an account's nonce.
+    Nonce(Address, i128),
+    /// Marks an account created, so a revert that undoes the creation resets its nonce.
+    Created(Address),
+    /// Marks a snapshot restore.
+    Restore,
 }

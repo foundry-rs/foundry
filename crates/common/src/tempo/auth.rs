@@ -172,41 +172,41 @@ pub async fn ensure_access_key(cfg: EnsureAccessKeyConfig) -> Result<AccessKeyOu
                 let signed = key_authorization.into_signed()?;
                 // Reject mismatches before persisting — an unusable store
                 // entry would silently break the next 402 retry.
-                if signed.authorization.key_id != key_address {
+                if signed.authorization().key_id != key_address {
                     eyre::bail!(
                         "wallet authorized key {} but the locally generated key is {}",
-                        signed.authorization.key_id,
+                        signed.authorization().key_id,
                         key_address,
                     );
                 }
-                if signed.authorization.chain_id != cfg.chain_id {
+                if signed.authorization().chain_id != cfg.chain_id {
                     eyre::bail!(
                         "wallet authorized chain {} but {} was requested",
-                        signed.authorization.chain_id,
+                        signed.authorization().chain_id,
                         cfg.chain_id,
                     );
                 }
-                if signed.authorization.key_type != SignatureType::Secp256k1 {
+                if signed.authorization().key_type != SignatureType::Secp256k1 {
                     eyre::bail!(
                         "wallet returned keyType {:?} but secp256k1 was requested",
-                        signed.authorization.key_type,
+                        signed.authorization().key_type,
                     );
                 }
                 // A 402 access key is a limited key; an admin key is never valid here.
-                if signed.authorization.is_admin() {
+                if signed.authorization().is_admin() {
                     eyre::bail!(
                         "wallet returned an admin key authorization, expected a limited access key"
                     );
                 }
                 // A T6 account-bound authorization must target the authorizing account.
-                if let Some(account) = signed.authorization.account
+                if let Some(account) = signed.authorization().account
                     && account != account_address
                 {
                     eyre::bail!(
                         "wallet authorized account {account} but the authorizing account is {account_address}",
                     );
                 }
-                let chain_id = signed.authorization.chain_id;
+                let chain_id = signed.authorization().chain_id;
                 TempoAccountsStore::default_path()?.upsert_secp256k1_access_key(
                     account_address,
                     &signer,
@@ -344,8 +344,10 @@ mod tests {
     use super::*;
     use crate::tempo::{TEMPO_HOME_ENV, read_tempo_accounts_store, test_env_mutex};
     use alloy_primitives::address;
+    use alloy_rlp::Encodable;
     use axum::{Json, Router, extract::State, routing::post};
     use std::sync::{Arc, Mutex};
+    use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature};
 
     #[test]
     fn pkce_challenge_matches_sdk_format() {
@@ -418,8 +420,6 @@ mod tests {
         expiry: u64,
         shape: MockAuthShape,
     ) -> String {
-        use alloy_rlp::Encodable;
-        use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature};
         let mut auth = KeyAuthorization::unrestricted(chain_id, SignatureType::Secp256k1, key_id);
         if shape.admin {
             // An admin authorization carries no expiry; bind it to its account (or zero, which the
@@ -542,7 +542,7 @@ mod tests {
         assert_eq!(entry.chain_id, 4217);
         assert_eq!(entry.expiry, Some(9_999_999_999));
         let decoded = entry.key_authorization.as_ref().expect("pending authorization");
-        assert_eq!(decoded.authorization.chain_id, 4217);
+        assert_eq!(decoded.authorization().chain_id, 4217);
 
         server.abort();
         unsafe { std::env::remove_var(TEMPO_HOME_ENV) };

@@ -19,10 +19,22 @@ impl SymbolicExecutor {
             deadline: None,
             nested_deferred_mode: DeferredPathMode::Skip,
             stateless_retry_safe: true,
+            folded_slots: FoldedSlots::default(),
+            equivalence: None,
         }
     }
 
-    fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
+    /// Whether an equivalence check leaves out inputs that run out of gas.
+    pub(super) fn ignores_out_of_gas(&self) -> bool {
+        self.equivalence.is_some_and(|mode| mode.ignore_out_of_gas)
+    }
+
+    /// Whether `GAS` is an ordinary unconstrained symbol, as in an equivalence check.
+    pub(super) const fn symbolic_gas(&self) -> bool {
+        self.equivalence.is_some()
+    }
+
+    pub(super) fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
         self.deferred_incomplete = None;
         self.nested_deferred_mode = DeferredPathMode::Skip;
         self.stateless_retry_safe = true;
@@ -95,8 +107,30 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Returns whether a path that kept running without a feasibility check, such as the rejected
+    /// branch of `vm.assume`, is feasible once it completes with `outcome`.
+    pub(super) fn completed_path_is_feasible(
+        &mut self,
+        state: &mut PathState,
+        outcome: StepOutcome,
+    ) -> Result<bool, SymbolicError> {
+        Ok(matches!(
+            outcome,
+            StepOutcome::Continue | StepOutcome::Forked | StepOutcome::AssumeRejected
+        ) || self.deferred_path_is_feasible(state)?)
+    }
+
+    /// Runs a path's deferred feasibility check, if it has one.
+    pub(super) fn deferred_path_is_feasible(
+        &mut self,
+        state: &mut PathState,
+    ) -> Result<bool, SymbolicError> {
+        Ok(!state.take_deferred_feasibility_check()
+            || self.branch_is_sat_or_defer(state, &state.constraints)?)
+    }
+
     /// Returns any deferred incomplete reason.
-    fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
+    pub(super) fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
         match self.deferred_incomplete? {
             DeferredIncomplete::Unsupported(reason) => Some((
                 SymbolicStopReason::Stuck,
@@ -126,10 +160,7 @@ impl SymbolicExecutor {
     /// Ordinary Solidity `require` reverts prune the current path. Assertion failures,
     /// forge-std assertion reverts, and DSTest failure signals are reported as
     /// counterexample candidates when the failing path is satisfiable.
-    pub fn run<FEN: FoundryEvmNetwork>(
-        &mut self,
-        input: SymbolicRunInput<'_, FEN>,
-    ) -> SymbolicRunResult {
+    pub fn run(&mut self, input: SymbolicRunInput<'_>) -> SymbolicRunResult {
         self.execute_run(input, None)
     }
 
@@ -138,9 +169,9 @@ impl SymbolicExecutor {
     /// Unlike [`Self::run`], this retains replay candidates independently of the proof result, so a
     /// later unsupported path or resource limit does not discard an input found on an earlier
     /// completed path. The caller must concretely replay every candidate before using it.
-    pub fn search_branch_target<FEN: FoundryEvmNetwork>(
+    pub fn search_branch_target(
         &mut self,
-        input: SymbolicRunInput<'_, FEN>,
+        input: SymbolicRunInput<'_>,
     ) -> SymbolicBranchTargetSearchResult {
         let mut candidates = Vec::new();
         if input.branch_target.is_none() {
@@ -164,12 +195,12 @@ impl SymbolicExecutor {
         SymbolicBranchTargetSearchResult { candidates, execution }
     }
 
-    fn execute_run<FEN: FoundryEvmNetwork>(
+    fn execute_run(
         &mut self,
-        input: SymbolicRunInput<'_, FEN>,
+        input: SymbolicRunInput<'_>,
         mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
     ) -> SymbolicRunResult {
-        self.reset_run_state(false);
+        self.reset_run_state(branch_candidates.is_some());
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
@@ -294,9 +325,9 @@ impl SymbolicExecutor {
     ///
     /// The configured invariant depth limits the number of target calls explored before the
     /// invariant is checked. A depth of zero checks only the invariant against setup state.
-    pub fn run_invariant<FEN: FoundryEvmNetwork>(
+    pub fn run_invariant(
         &mut self,
-        input: SymbolicInvariantRunInput<'_, FEN>,
+        input: SymbolicInvariantRunInput<'_>,
     ) -> SymbolicInvariantRunResult {
         self.reset_run_state(true);
         self.solver.clear_context_caches();
@@ -324,9 +355,9 @@ impl SymbolicExecutor {
     /// This is a best-effort candidate search from a concrete state. Returned candidates are
     /// unconfirmed until the caller replays them concretely, and an empty result does not prove
     /// any invariant.
-    pub fn search_invariant_candidates<FEN: FoundryEvmNetwork>(
+    pub fn search_invariant_candidates(
         &mut self,
-        input: SymbolicInvariantCandidateInput<'_, FEN>,
+        input: SymbolicInvariantCandidateInput<'_>,
     ) -> SymbolicInvariantCandidateSearchResult {
         self.reset_run_state(true);
         self.solver.clear_context_caches();
@@ -356,20 +387,21 @@ impl SymbolicExecutor {
         SymbolicInvariantCandidateSearchResult { candidates, limitation }
     }
 
-    pub(super) fn run_inner<FEN: FoundryEvmNetwork>(
+    pub(super) fn run_inner(
         &mut self,
-        input: &SymbolicRunInput<'_, FEN>,
+        input: &SymbolicRunInput<'_>,
         mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
         completed_paths: &mut usize,
     ) -> Result<SymbolicRunResult, SymbolicError> {
         let account = input
             .executor
-            .backend()
-            .basic_ref(input.target)
+            .backend
+            .basic(input.target)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
             .ok_or(SymbolicError::MissingAccount(input.target))?;
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
         let code = SymCode::from_bytecode(&mut self.cx, &bytecode);
+        self.folded_slots = FoldedSlots::register(&mut self.cx, &input.executor, self.deadline);
         let mut roots = Vec::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config, &mut self.cx)? {
             let corpus_seed_models = input
@@ -387,9 +419,9 @@ impl SymbolicExecutor {
             );
             root.set_corpus_seed_models(corpus_seed_models);
             root.set_branch_target(input.branch_target);
-            root.apply_executor_env(&mut self.cx, input.executor);
+            root.apply_executor_env(&mut self.cx, &input.executor)?;
             root.world.set_storage_layout(self.config.storage_layout);
-            root.world.clear_transaction_scoped_state();
+            root.world.clear_transaction_scoped_state(&mut self.cx);
             roots.push(root);
         }
         order_roots_by_corpus_seed_count(&mut roots, self.config.exploration_order);
@@ -456,9 +488,8 @@ impl SymbolicExecutor {
                     Some(op) => {
                         let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
                         self.step(
-                            input.executor,
+                            &input.executor,
                             &code,
-                            code.jump_table(),
                             &mut state,
                             &mut worklist,
                             completed_paths,
@@ -466,6 +497,18 @@ impl SymbolicExecutor {
                         )?
                     }
                     None => StepOutcome::Halt,
+                };
+                if !self.completed_path_is_feasible(&mut state, outcome)? {
+                    break;
+                }
+                let outcome = match outcome {
+                    // Like Forge, a test that ends with the global fail slot set has failed.
+                    StepOutcome::Halt
+                        if self.global_fail_slot_set(&input.executor, &mut state)? =>
+                    {
+                        StepOutcome::Failure
+                    }
+                    outcome => outcome,
                 };
                 match outcome {
                     StepOutcome::Continue => {}
@@ -572,6 +615,30 @@ impl SymbolicExecutor {
         Ok(Some(input))
     }
 
+    /// Returns a model for `state`, meeting its witness preferences when it can.
+    pub(super) fn witness_model(
+        &mut self,
+        state: &PathState,
+    ) -> Result<SymbolicModel, SymbolicError> {
+        let replayable_storage = state.world.replay_storage_symbols();
+        if !state.witness_preferences.is_empty() {
+            let mut constraints = state.constraints.clone();
+            constraints.extend(state.witness_preferences.iter().cloned());
+            if let Ok(model) = self.solver.model_with_replayable_storage(
+                &mut self.cx,
+                &constraints,
+                &replayable_storage,
+            ) {
+                return Ok(model);
+            }
+        }
+        self.solver.model_with_replayable_storage(
+            &mut self.cx,
+            &state.constraints,
+            &replayable_storage,
+        )
+    }
+
     /// Materializes the root call input for `state` from a solver model.
     fn materialize_root_input(
         &mut self,
@@ -582,20 +649,15 @@ impl SymbolicExecutor {
             .root_calldata
             .as_ref()
             .ok_or(SymbolicError::Unsupported("missing root symbolic calldata"))?;
-        let replayable_storage = state.world.replay_storage_symbols();
-        let model = self.solver.model_with_replayable_storage(
-            &mut self.cx,
-            &state.constraints,
-            &replayable_storage,
-        )?;
+        let model = self.witness_model(state)?;
         let args = calldata.model_to_args(&mut self.cx, &model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
         Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
     }
 
-    pub(super) fn run_invariant_inner<FEN: FoundryEvmNetwork>(
+    pub(super) fn run_invariant_inner(
         &mut self,
-        input: SymbolicInvariantRunInput<'_, FEN>,
+        input: SymbolicInvariantRunInput<'_>,
     ) -> Result<SymbolicInvariantRunResult, SymbolicError> {
         if input.targets.is_empty() {
             return Err(SymbolicError::Unsupported("symbolic invariant has no targets"));
@@ -617,30 +679,29 @@ impl SymbolicExecutor {
             input.sender,
             input.ffi_enabled,
         );
-        initial_state.apply_executor_env(&mut self.cx, input.executor);
+        initial_state.apply_executor_env(&mut self.cx, &input.executor)?;
         initial_state.world.set_storage_layout(self.config.storage_layout);
+        self.folded_slots = FoldedSlots::register(&mut self.cx, &input.executor, self.deadline);
         let initial = SequencePath { state: initial_state, steps: Vec::new() };
 
-        if symbolic_invariant_should_check(0, input.depth, input.check_interval) {
-            for outcome in self.execute_invariant_check(
-                input.executor,
-                initial.state.clone(),
-                input.invariant_address,
-                input.sender,
-                input.invariant,
-                after_invariant_for(0),
-                &mut completed_paths,
-            )? {
-                if outcome.failed {
-                    let (sequence, storage) =
-                        self.materialize_sequence(&initial.steps, &outcome.state)?;
-                    return Ok(SymbolicInvariantRunResult::Counterexample {
-                        kind: SymbolicInvariantCounterexampleKind::Predicate,
-                        sequence,
-                        storage,
-                        stats: self.stats_with_paths(completed_paths),
-                    });
-                }
+        // Like Forge, check the state right after `setUp` before any sequence call.
+        for outcome in self.execute_invariant_check(
+            &input.executor,
+            &initial.state,
+            input.invariant_address,
+            input.invariant,
+            after_invariant_for(0),
+            &mut completed_paths,
+        )? {
+            if outcome.failed {
+                let (sequence, storage) =
+                    self.materialize_sequence(&initial.steps, &outcome.state)?;
+                return Ok(SymbolicInvariantRunResult::Counterexample {
+                    kind: SymbolicInvariantCounterexampleKind::Predicate,
+                    sequence,
+                    storage,
+                    stats: self.stats_with_paths(completed_paths),
+                });
             }
         }
 
@@ -672,7 +733,7 @@ impl SymbolicExecutor {
                             let calldata = step.calldata.call_data(&mut self.cx);
                             let constraints = step.calldata.constraints().to_vec();
                             let mut call = self.prepare_sequence_call(
-                                input.executor,
+                                &input.executor,
                                 sequence.state.clone(),
                                 target.address,
                                 sender,
@@ -682,7 +743,7 @@ impl SymbolicExecutor {
                             )?;
 
                             while let Some(outcome) = self.execute_sequence_call_next(
-                                input.executor,
+                                &input.executor,
                                 &mut call,
                                 &mut completed_paths,
                             )? {
@@ -732,10 +793,9 @@ impl SymbolicExecutor {
                                     input.check_interval,
                                 ) {
                                     for mut invariant_outcome in self.execute_invariant_check(
-                                        input.executor,
-                                        post_state.clone(),
+                                        &input.executor,
+                                        &post_state,
                                         input.invariant_address,
-                                        input.sender,
                                         input.invariant,
                                         after_invariant_for(steps.len()),
                                         &mut completed_paths,
@@ -826,7 +886,5 @@ const fn symbolic_invariant_should_check(
     check_interval: u32,
 ) -> bool {
     sequence_len == depth
-        || (check_interval != 0
-            && sequence_len != 0
-            && sequence_len.is_multiple_of(check_interval as usize))
+        || (check_interval != 0 && sequence_len.is_multiple_of(check_interval as usize))
 }

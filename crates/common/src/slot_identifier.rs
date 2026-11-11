@@ -8,7 +8,10 @@ use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{B256, U256, hex, keccak256, map::B256Map};
 use foundry_common_fmt::format_token_raw;
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
-use serde::Serialize;
+use serde::{
+    Serialize,
+    ser::{SerializeMap, SerializeStruct},
+};
 use std::{collections::BTreeMap, str::FromStr, sync::Arc};
 use tracing::trace;
 
@@ -292,9 +295,25 @@ impl SlotInfo {
                     // offset 0, size 16 -> read bytes 16-32 (rightmost)
                     // offset 16, size 16 -> read bytes 0-16 (leftmost)
                     let byte_start = 32 - offset - size;
-                    prev_bytes[32 - size..]
+                    if matches!(member.slot_type.dyn_sol_type, DynSolType::Int(_)) {
+                        // ABI signed integers must be sign-extended to a full word.
+                        if previous_value.0[byte_start] & 0x80 != 0 {
+                            prev_bytes.fill(0xff);
+                        }
+                        if new_value.0[byte_start] & 0x80 != 0 {
+                            new_bytes.fill(0xff);
+                        }
+                    }
+                    // ABI fixed bytes are left-aligned, unlike integers and addresses.
+                    let abi_start =
+                        if matches!(member.slot_type.dyn_sol_type, DynSolType::FixedBytes(_)) {
+                            0
+                        } else {
+                            32 - size
+                        };
+                    prev_bytes[abi_start..abi_start + size]
                         .copy_from_slice(&previous_value.0[byte_start..byte_start + size]);
-                    new_bytes[32 - size..]
+                    new_bytes[abi_start..abi_start + size]
                         .copy_from_slice(&new_value.0[byte_start..byte_start + size]);
                 }
 
@@ -332,8 +351,6 @@ fn serialize_mapping_keys<S>(keys: &Option<Vec<String>>, serializer: S) -> Resul
 where
     S: serde::Serializer,
 {
-    use serde::ser::SerializeMap;
-
     if let Some(keys) = keys {
         let len = if keys.is_empty() { 0 } else { 1 };
         let mut map = serializer.serialize_map(Some(len))?;
@@ -362,8 +379,6 @@ impl Serialize for DecodedSlotValues {
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeStruct;
-
         let mut state = serializer.serialize_struct("DecodedSlotValues", 2)?;
         state.serialize_field("previousValue", &format_token_raw(&self.previous_value))?;
         state.serialize_field("newValue", &format_token_raw(&self.new_value))?;
@@ -384,7 +399,7 @@ impl SlotIdentifier {
         let parsed_types = storage_layout
             .types
             .iter()
-            .map(|(id, storage_type)| (id.clone(), parse_sol_type(&storage_type.label)))
+            .map(|(id, storage_type)| (id.clone(), resolve_sol_type(id, storage_type)))
             .collect();
         Self { storage_layout, parsed_types }
     }
@@ -401,35 +416,22 @@ impl SlotIdentifier {
         let slot_u256 = Into::<U256>::into(*slot);
         let slot_str = slot_u256.to_string();
 
+        // Match on a base slot from the layout. This is always the case for primitive types, which
+        // may share the slot with other variables.
+        if let Some(slot_info) = self.slot_variables(
+            self.storage_layout
+                .storage
+                .iter()
+                .filter(|storage| storage.slot == slot_str)
+                .map(|storage| (storage.label.clone(), storage)),
+            &slot_str,
+        ) {
+            return Some(slot_info);
+        }
+
         for storage in &self.storage_layout.storage {
             let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
             let dyn_type = self.parsed_type(&storage.storage_type);
-
-            // Check if we're able to match on a slot from the layout i.e any of the base slots.
-            // This will always be the case for primitive types that fit in a single slot.
-            if storage.slot == slot_str
-                && let Some(parsed_type) = dyn_type.cloned()
-            {
-                // Successfully parsed - handle arrays or simple types
-                let label = if let DynSolType::FixedArray(_, _) = &parsed_type {
-                    format!("{}{}", storage.label, get_array_base_indices(&parsed_type))
-                } else {
-                    storage.label.clone()
-                };
-
-                return Some(SlotInfo {
-                    label,
-                    slot_type: StorageTypeInfo {
-                        label: storage_type.label.clone(),
-                        dyn_sol_type: parsed_type,
-                    },
-                    offset: storage.offset,
-                    slot: storage.slot.clone(),
-                    members: None,
-                    decoded: None,
-                    keys: None,
-                });
-            }
 
             // Encoding types: <https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#json-output>
             if storage_type.encoding == ENCODING_INPLACE {
@@ -685,19 +687,14 @@ impl SlotIdentifier {
                 );
             }
 
-            // Return the first member as a primitive
-            return Some(SlotInfo {
-                label: member_label,
-                slot_type: StorageTypeInfo {
-                    label: member_type_info.label.clone(),
-                    dyn_sol_type: self.parsed_type(&first_member.storage_type)?.clone(),
-                },
-                offset: first_member.offset,
-                slot: slot_str.to_string(),
-                decoded: None,
-                members: None,
-                keys: None,
-            });
+            // Return the primitive members packed into the first slot.
+            return self.slot_variables(
+                members
+                    .iter()
+                    .filter(|m| m.slot == "0")
+                    .map(|m| (format!("{base_label}.{}", m.label), m)),
+                slot_str,
+            );
         }
 
         // Not the base slot - search through members
@@ -725,22 +722,14 @@ impl SlotIdentifier {
             }
 
             if member_slot == target_slot {
-                // Found the exact member slot
-
-                // Regular member
-                let member_type = self.parsed_type(&member.storage_type)?.clone();
-                return Some(SlotInfo {
-                    label: member_label,
-                    slot_type: StorageTypeInfo {
-                        label: member_type_info.label.clone(),
-                        dyn_sol_type: member_type,
-                    },
-                    offset: member.offset,
-                    slot: slot_str.to_string(),
-                    members: None,
-                    decoded: None,
-                    keys: None,
-                });
+                // Found the exact member slot, which may be shared by packed members.
+                return self.slot_variables(
+                    members
+                        .iter()
+                        .filter(|m| m.slot == member.slot)
+                        .map(|m| (format!("{base_label}.{}", m.label), m)),
+                    slot_str,
+                );
             }
         }
 
@@ -813,7 +802,7 @@ impl SlotIdentifier {
         }
 
         // Resolve the mapping type to get all key types and the final value type
-        let (key_types, value_type_label, full_type_label) =
+        let (key_types, value_type, full_type_label) =
             self.resolve_mapping_type(&storage.storage_type)?;
 
         // Reverse keys to process from outermost to innermost
@@ -825,8 +814,8 @@ impl SlotIdentifier {
 
         // Decode each key using the corresponding type
         for (i, key) in keys_to_decode.iter().enumerate() {
-            if let Some(key_type_label) = key_types.get(i)
-                && let Some(sol_type) = parse_sol_type(key_type_label)
+            if let Some(key_type) = key_types.get(i)
+                && let Some(sol_type) = self.parsed_type(key_type)
                 && let Ok(decoded) = sol_type.abi_decode(&key.0)
             {
                 let decoded_key_str = format_token_raw(&decoded);
@@ -841,7 +830,7 @@ impl SlotIdentifier {
 
         // Parse the final value type for decoding.
         // Contract types (e.g., "contract IPool") are addresses under the hood.
-        let dyn_sol_type = parse_sol_type(&value_type_label).unwrap_or(DynSolType::Bytes);
+        let dyn_sol_type = self.parsed_type(&value_type).cloned().unwrap_or(DynSolType::Bytes);
 
         Some(SlotInfo {
             label,
@@ -945,35 +934,83 @@ impl SlotIdentifier {
         None
     }
 
+    /// Resolves a mapping type to its key types, outermost first, and final value type, as type
+    /// ids into the layout, along with the mapping's label.
     fn resolve_mapping_type(&self, type_ref: &str) -> Option<(Vec<String>, String, String)> {
         let storage_type = self.storage_layout.types.get(type_ref)?;
 
         if storage_type.encoding != ENCODING_MAPPING {
             // Not a mapping, return the type as-is
-            return Some((vec![], storage_type.label.clone(), storage_type.label.clone()));
+            return Some((vec![], type_ref.to_string(), storage_type.label.clone()));
         }
 
         // Get key and value type references
         let key_type_ref = storage_type.key.as_ref()?;
         let value_type_ref = storage_type.value.as_ref()?;
-
-        // Resolve the key type
-        let key_type = self.storage_layout.types.get(key_type_ref)?;
-        let mut key_types = vec![key_type.label.clone()];
+        let mut key_types = vec![key_type_ref.clone()];
 
         // Check if the value is another mapping (nested case)
-        if let Some(value_storage_type) = self.storage_layout.types.get(value_type_ref) {
-            if value_storage_type.encoding == ENCODING_MAPPING {
-                // Recursively resolve the nested mapping
-                let (nested_keys, final_value, _) = self.resolve_mapping_type(value_type_ref)?;
-                key_types.extend(nested_keys);
-                return Some((key_types, final_value, storage_type.label.clone()));
-            }
-            // Value is not a mapping, we're done
-            return Some((key_types, value_storage_type.label.clone(), storage_type.label.clone()));
+        let value_storage_type = self.storage_layout.types.get(value_type_ref)?;
+        if value_storage_type.encoding == ENCODING_MAPPING {
+            // Recursively resolve the nested mapping
+            let (nested_keys, final_value, _) = self.resolve_mapping_type(value_type_ref)?;
+            key_types.extend(nested_keys);
+            return Some((key_types, final_value, storage_type.label.clone()));
+        }
+        // Value is not a mapping, we're done
+        Some((key_types, value_type_ref.clone(), storage_type.label.clone()))
+    }
+
+    /// Identifies a slot holding the ABI-decodable variables in `entries`, all stored in it.
+    ///
+    /// A slot shared by several packed variables gets one member per variable, so each is decoded
+    /// from its own bytes and labeled with its own name. Returns `None` if there are no such
+    /// variables.
+    fn slot_variables<'a>(
+        &self,
+        entries: impl IntoIterator<Item = (String, &'a Storage)>,
+        slot_str: &str,
+    ) -> Option<SlotInfo> {
+        let mut variables = entries
+            .into_iter()
+            .filter_map(|(label, storage)| {
+                let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
+                let parsed_type = self.parsed_type(&storage.storage_type)?.clone();
+                let label = if let DynSolType::FixedArray(_, _) = &parsed_type {
+                    format!("{label}{}", get_array_base_indices(&parsed_type))
+                } else {
+                    label
+                };
+                Some(SlotInfo {
+                    label,
+                    slot_type: StorageTypeInfo {
+                        label: storage_type.label.clone(),
+                        dyn_sol_type: parsed_type,
+                    },
+                    offset: storage.offset,
+                    slot: slot_str.to_string(),
+                    members: None,
+                    decoded: None,
+                    keys: None,
+                })
+            })
+            .collect::<Vec<_>>();
+        if variables.len() <= 1 {
+            return variables.pop();
         }
 
-        None
+        let label = variables.iter().map(|v| v.label.as_str()).collect::<Vec<_>>().join(", ");
+        let types = variables.iter().map(|v| v.slot_type.dyn_sol_type.clone()).collect::<Vec<_>>();
+        let tuple = DynSolType::Tuple(types);
+        Some(SlotInfo {
+            label,
+            slot_type: StorageTypeInfo { label: tuple.to_string(), dyn_sol_type: tuple },
+            offset: 0,
+            slot: slot_str.to_string(),
+            members: Some(variables),
+            decoded: None,
+            keys: None,
+        })
     }
 }
 
@@ -991,6 +1028,27 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
         }
         _ => String::new(),
     }
+}
+
+/// Prefix of the layout's type ids for user-defined value types, e.g.
+/// `t_userDefinedValueType(Delay)1234`.
+const UDVT_TYPE_PREFIX: &str = "t_userDefinedValueType(";
+
+/// Resolves the layout type `id` to a [`DynSolType`], returning `None` for types that have no
+/// direct ABI equivalent (mappings, structs).
+///
+/// A user-defined value type's label is its name (`Delay`, or `Time.Delay` when declared in a
+/// library), which says nothing of the underlying type, and the layout records only its size. It is
+/// resolved to an unsigned integer of that size, which keeps packed neighbours apart and decodes
+/// the common unsigned underlying types exactly. Other underlying types are displayed as raw
+/// unsigned bits, not their original signed, address, bool or fixed-bytes values. Mapping keys
+/// retain the full encoded key word, whose padding can differ from compact storage.
+fn resolve_sol_type(id: &str, storage_type: &StorageType) -> Option<DynSolType> {
+    if id.starts_with(UDVT_TYPE_PREFIX) {
+        let bytes = storage_type.number_of_bytes.parse::<usize>().ok()?;
+        return (1..=32).contains(&bytes).then(|| DynSolType::Uint(bytes * 8));
+    }
+    parse_sol_type(&storage_type.label)
 }
 
 /// Parses a storage type label into a [`DynSolType`], returning `None` for labels that have no
@@ -1030,6 +1088,258 @@ mod tests {
             ("enum Example.Status[][4]", "uint8[][4]"),
         ] {
             assert_eq!(parse_sol_type(label), DynSolType::parse(expected).ok(), "{label}");
+        }
+    }
+
+    fn decoded(info: &SlotInfo) -> Vec<(&str, String, String)> {
+        info.members
+            .iter()
+            .flatten()
+            .map(|member| {
+                let decoded = member.decoded.as_ref().unwrap();
+                (
+                    member.label.as_str(),
+                    format_token_raw(&decoded.previous_value),
+                    format_token_raw(&decoded.new_value),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn decodes_each_packed_variable() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "initialized", "offset": 0, "slot": "5", "type": "t_uint64" },
+                { "astId": 2, "contract": "C", "label": "initializing", "offset": 8, "slot": "5", "type": "t_bool" },
+                { "astId": 3, "contract": "C", "label": "next", "offset": 0, "slot": "6", "type": "t_uint64" }
+            ],
+            "types": {
+                "t_uint64": { "encoding": "inplace", "label": "uint64", "numberOfBytes": "8" },
+                "t_bool": { "encoding": "inplace", "label": "bool", "numberOfBytes": "1" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+
+        let mut info = identifier.identify(&B256::from(U256::from(5)), None).unwrap();
+        assert_eq!(info.label, "initialized, initializing");
+        assert_eq!(info.slot_type.label, "(uint64,bool)");
+        let new_value = B256::from(U256::from(1) << 64 | U256::from(7));
+        info.decode_values(B256::ZERO, new_value);
+        assert_eq!(
+            decoded(&info),
+            [
+                ("initialized", "0".to_string(), "7".to_string()),
+                ("initializing", "false".to_string(), "true".to_string())
+            ]
+        );
+
+        let info = identifier.identify(&B256::from(U256::from(6)), None).unwrap();
+        assert_eq!(info.label, "next");
+        assert!(info.members.is_none());
+    }
+
+    #[test]
+    fn decodes_packed_struct_members_past_the_first_slot() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "data", "offset": 0, "slot": "0", "type": "t_struct(Data)" }
+            ],
+            "types": {
+                "t_struct(Data)": {
+                    "encoding": "inplace", "label": "struct C.Data", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 2, "contract": "C", "label": "total", "offset": 0, "slot": "0", "type": "t_uint256" },
+                        { "astId": 3, "contract": "C", "label": "owner", "offset": 0, "slot": "1", "type": "t_address" },
+                        { "astId": 4, "contract": "C", "label": "paused", "offset": 20, "slot": "1", "type": "t_bool" }
+                    ]
+                },
+                "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" },
+                "t_address": { "encoding": "inplace", "label": "address", "numberOfBytes": "20" },
+                "t_bool": { "encoding": "inplace", "label": "bool", "numberOfBytes": "1" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+
+        let info = identifier.identify(&B256::ZERO, None).unwrap();
+        assert_eq!(info.label, "data.total");
+
+        let mut info = identifier.identify(&B256::from(U256::from(1)), None).unwrap();
+        assert_eq!(info.label, "data.owner, data.paused");
+        let new_value = B256::from(U256::from(1) << 160 | U256::from(0x1234));
+        info.decode_values(B256::ZERO, new_value);
+        assert_eq!(
+            decoded(&info),
+            [
+                (
+                    "data.owner",
+                    "0x0000000000000000000000000000000000000000".to_string(),
+                    "0x0000000000000000000000000000000000001234".to_string()
+                ),
+                ("data.paused", "false".to_string(), "true".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_packed_signed_variables() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "a", "offset": 0, "slot": "0", "type": "t_int8" },
+                { "astId": 2, "contract": "C", "label": "b", "offset": 1, "slot": "0", "type": "t_int8" }
+            ],
+            "types": {
+                "t_int8": { "encoding": "inplace", "label": "int8", "numberOfBytes": "1" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+
+        info.decode_values(B256::from(U256::from(0x7fff)), B256::from(U256::from(0x80fe)));
+        assert_eq!(
+            decoded(&info),
+            [
+                ("a", "-1".to_string(), "-2".to_string()),
+                ("b", "127".to_string(), "-128".to_string())
+            ]
+        );
+
+        info.decode_values(B256::from(U256::from(0x80fe)), B256::from(U256::from(0xff7f)));
+        assert_eq!(
+            decoded(&info),
+            [
+                ("a", "-2".to_string(), "127".to_string()),
+                ("b", "-128".to_string(), "-1".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_packed_fixed_bytes() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "counter", "offset": 0, "slot": "0", "type": "t_uint8" },
+                { "astId": 2, "contract": "C", "label": "tag", "offset": 1, "slot": "0", "type": "t_bytes1" },
+                { "astId": 3, "contract": "C", "label": "hash", "offset": 2, "slot": "0", "type": "t_bytes16" }
+            ],
+            "types": {
+                "t_uint8": { "encoding": "inplace", "label": "uint8", "numberOfBytes": "1" },
+                "t_bytes1": { "encoding": "inplace", "label": "bytes1", "numberOfBytes": "1" },
+                "t_bytes16": { "encoding": "inplace", "label": "bytes16", "numberOfBytes": "16" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+        let previous =
+            U256::from(0x0123456789abcdef0123456789abcdef_u128) << 16 | U256::from(0xab07);
+        let new = U256::from(0xfedcba9876543210fedcba9876543210_u128) << 16 | U256::from(0xcd0b);
+        info.decode_values(B256::from(previous), B256::from(new));
+        assert_eq!(
+            decoded(&info),
+            [
+                ("counter", "7".to_string(), "11".to_string()),
+                ("tag", "0xab".to_string(), "0xcd".to_string()),
+                (
+                    "hash",
+                    "0x0123456789abcdef0123456789abcdef".to_string(),
+                    "0xfedcba9876543210fedcba9876543210".to_string()
+                )
+            ]
+        );
+    }
+
+    /// User-defined value types as solc lays them out: a file-level one labeled by its name, a
+    /// library one by `Library.Name`, both 12 bytes (`uint96`).
+    fn udvt_layout() -> SlotIdentifier {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "config", "offset": 0, "slot": "0", "type": "t_struct(Config)" },
+                { "astId": 2, "contract": "C", "label": "ids", "offset": 0, "slot": "2", "type": "t_array(t_userDefinedValueType(FileId)10)3_storage" },
+                { "astId": 3, "contract": "C", "label": "byId", "offset": 0, "slot": "4", "type": "t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)" }
+            ],
+            "types": {
+                "t_struct(Config)": {
+                    "encoding": "inplace", "label": "struct C.Config", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 4, "contract": "C", "label": "owner", "offset": 0, "slot": "0", "type": "t_address" },
+                        { "astId": 5, "contract": "C", "label": "fileId", "offset": 20, "slot": "0", "type": "t_userDefinedValueType(FileId)10" },
+                        { "astId": 6, "contract": "C", "label": "libId", "offset": 0, "slot": "1", "type": "t_userDefinedValueType(LibId)11" }
+                    ]
+                },
+                "t_array(t_userDefinedValueType(FileId)10)3_storage": {
+                    "encoding": "inplace", "label": "FileId[3]", "numberOfBytes": "64",
+                    "base": "t_userDefinedValueType(FileId)10"
+                },
+                "t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)": {
+                    "encoding": "mapping", "label": "mapping(FileId => L.LibId)", "numberOfBytes": "32",
+                    "key": "t_userDefinedValueType(FileId)10", "value": "t_userDefinedValueType(LibId)11"
+                },
+                "t_userDefinedValueType(FileId)10": { "encoding": "inplace", "label": "FileId", "numberOfBytes": "12" },
+                "t_userDefinedValueType(LibId)11": { "encoding": "inplace", "label": "L.LibId", "numberOfBytes": "12" },
+                "t_address": { "encoding": "inplace", "label": "address", "numberOfBytes": "20" }
+            }
+        }))
+        .unwrap();
+        SlotIdentifier::new(Arc::new(layout))
+    }
+
+    /// Wider than a byte, which a `Library.Name` label used to be parsed as.
+    const ID: u64 = 0x0102_0304_0506;
+
+    #[test]
+    fn decodes_user_defined_value_type_members() {
+        let identifier = udvt_layout();
+
+        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+        assert_eq!(info.label, "config.owner, config.fileId");
+        info.decode_values(B256::ZERO, B256::from(U256::from(ID) << 160 | U256::from(0x1234)));
+        assert_eq!(
+            decoded(&info),
+            [
+                (
+                    "config.owner",
+                    "0x0000000000000000000000000000000000000000".to_string(),
+                    "0x0000000000000000000000000000000000001234".to_string()
+                ),
+                ("config.fileId", "0".to_string(), ID.to_string())
+            ]
+        );
+
+        let mut info = identifier.identify(&B256::from(U256::from(1)), None).unwrap();
+        assert_eq!(info.label, "config.libId");
+        assert_eq!(info.slot_type.label, "L.LibId");
+        info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
+        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+    }
+
+    #[test]
+    fn resolves_mappings_of_user_defined_value_types() {
+        let identifier = udvt_layout();
+
+        let mut slots = MappingSlots::default();
+        let key = B256::from(U256::from(ID));
+        let parent = B256::from(U256::from(4));
+        let entry = keccak256([key.0, parent.0].concat());
+        slots.record_hash(entry, key, parent);
+        slots.insert(entry);
+
+        let mut info = identifier.identify(&entry, Some(&slots)).unwrap();
+        assert_eq!(info.label, format!("byId[{ID}]"));
+        info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
+        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+    }
+
+    #[test]
+    fn leaves_unresolved_packed_udvt_arrays_unidentified() {
+        let identifier = udvt_layout();
+        // Resolving FileId[3] to uint96[3] would feed packed words into a decoder that treats
+        // slots as elements, giving both incorrect values and incorrect indices.
+        for slot in [2, 3] {
+            assert!(identifier.identify(&B256::from(U256::from(slot)), None).is_none());
         }
     }
 }

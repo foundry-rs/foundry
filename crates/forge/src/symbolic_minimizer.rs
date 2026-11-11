@@ -164,9 +164,10 @@ impl<'a> SequenceMinimizer<'a> {
         shrink_sequence_by_removing(
             base_calls.len(),
             &mut self.run,
+            true,
             || false,
             || {},
-            |shrinker| {
+            |shrinker, _| {
                 let candidate_calls = sequence_from_shrink(&base_calls, shrinker);
                 if candidate_calls == *current_calls {
                     return None;

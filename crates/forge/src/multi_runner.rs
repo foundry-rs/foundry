@@ -6,7 +6,7 @@ use crate::{
     result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
         ContractRunnerContext, InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
-        function_matches_network_pass,
+        function_matches_network_pass, inline_config_for,
     },
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
@@ -17,6 +17,7 @@ use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, LIBRARY_DEPLOYER,
     TestFunctionKind, external_compiler::external_artifact_is_test_eligible, get_contract_name,
+    namespaced_storage,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -25,7 +26,7 @@ use foundry_compilers::{
 use foundry_config::{Config, FoundryHardfork, InlineConfig};
 use foundry_evm::{
     backend::Backend,
-    core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    core::evm::{EvmEnvFor, EvmFactoryFor, FoundryEvmNetwork, SpecFor, TransactionRequestFor},
     decode::RevertDecoder,
     executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
     fuzz::{
@@ -41,7 +42,7 @@ use foundry_evm_networks::NetworkVariant;
 use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError, Resolver};
 use rayon::prelude::*;
 use std::{
-    borrow::Borrow,
+    borrow::{Borrow, Cow},
     collections::{BTreeMap, BTreeSet},
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -315,18 +316,50 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
 
         debug!("start executing all tests in contract");
 
+        // Resolve the contract's inline config once, for both its backend and its runner.
+        let tcfg = self.contract_tcfg(&identifier);
+        let db = if tcfg.spec_id != self.tcfg.spec_id && !db.is_forked_mode() {
+            db.clone_empty_with_env(tcfg.evm_env)
+        } else {
+            db.clone()
+        };
+        // Built from the shared config: the runner applies the contract's config before
+        // `setUp` and keeps the shared trace and live-log settings.
         let executor = self.tcfg.executor(
             self.known_contracts.clone(),
             self.analysis.clone(),
             artifact_id,
-            db.clone(),
+            db,
         );
-        let runner = ContractRunner::new(&identifier, contract, executor, span, self, context);
+        let runner =
+            ContractRunner::new(&identifier, contract, executor, tcfg, span, self, context);
         let r = runner.run_tests(filter);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 
         r
+    }
+
+    /// Returns the test configuration for `identifier`'s suite, with its contract-level inline
+    /// config applied. Borrows the shared configuration when the contract has none, or when it
+    /// fails to resolve, so that the runner reports the error during setup.
+    ///
+    /// Only contract-level config selects the backend's hardfork: a function-level hardfork pin
+    /// runs over network state seeded at its contract's hardfork, since `setUp` runs once per
+    /// contract.
+    fn contract_tcfg(&self, identifier: &str) -> Cow<'_, TestRunnerConfig<FEN>> {
+        if !self.tcfg.inline_config.contains_contract(identifier) {
+            return Cow::Borrowed(&self.tcfg);
+        }
+        let Ok(mut config) =
+            inline_config_for(&self.tcfg.config, &self.tcfg.inline_config, identifier, None)
+        else {
+            return Cow::Borrowed(&self.tcfg);
+        };
+        config.networks = config.networks.with_execution_profile(self.tcfg.evm_opts.networks);
+        let mut tcfg = self.tcfg.clone();
+        tcfg.reconfigure_with(Arc::new(config));
+        Cow::Owned(tcfg)
     }
 }
 
@@ -440,8 +473,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub executor_builder: ExecutorBuilder<FEN>,
     /// EVM environment.
     pub evm_env: EvmEnvFor<FEN>,
-    /// Transaction environment.
-    pub tx_env: TxEnvFor<FEN>,
+    /// Transaction defaults.
+    pub tx: TransactionRequestFor<FEN>,
     /// EVM version.
     pub spec_id: SpecFor<FEN>,
     /// Exact network hardfork selected for the execution environment.
@@ -493,20 +526,21 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
 
         self.sender = config.sender;
         self.evm_opts.networks = config.networks;
-        self.hardfork = resolve_execution_spec(
+        self.hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
             config.evm_version,
             config.hardfork,
             &mut self.evm_env,
             ExecutionSpecContext::local_or_fork(self.fork_chain_id, self.fork_hardfork),
             None,
         );
-        self.spec_id = self.evm_env.cfg_env.spec;
+        self.spec_id = self.evm_env.spec;
         self.isolation = config.isolate;
         // `line_coverage`, `debug`, `decode_internal` and `record_all_steps` are Forge-specific
         // and not present in the config.
         // TODO: `self.evm_opts` and `self.evm_env` are only partially reconfigured.
         self.evm_opts.always_use_create_2_factory = config.always_use_create_2_factory;
         self.evm_opts.no_fork_bal = config.no_fork_bal;
+        self.evm_opts.fork_prefetch = config.fork_prefetch;
         self.evm_opts.fork_state_by_number = config.fork_state_by_number;
         self.config = config;
     }
@@ -515,9 +549,6 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     pub fn configure_executor(&self, executor: &mut Executor<FEN>) {
         debug_assert!(
             executor.backend().networks().has_same_execution_profile(&self.evm_opts.networks)
-        );
-        debug_assert!(
-            executor.inspector().networks.has_same_execution_profile(&self.evm_opts.networks)
         );
         let inspector = executor.inspector_mut();
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
@@ -528,6 +559,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
+        inspector.enable_edgecov_opcode(self.edgecov_opcode());
         executor.set_spec_id(self.spec_id);
         executor.set_legacy_assertions(self.config.legacy_assertions);
     }
@@ -549,7 +581,8 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         );
         cheats_config.isolate = self.isolation;
         let cheats_config = Arc::new(cheats_config);
-        self.executor_builder
+        let mut executor = self
+            .executor_builder
             .clone()
             .inspectors(|stack| {
                 stack
@@ -564,12 +597,21 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions)
-            .build(self.evm_env.clone(), self.tx_env.clone(), db, self.evm_opts.networks)
+            .build(self.evm_env, self.tx.clone(), db, self.evm_opts.networks);
+        executor.inspector_mut().enable_edgecov_opcode(self.edgecov_opcode());
+        executor
+    }
+
+    /// Whether test executors run the compiler-instrumented `EDGECOV` and `CMPLOG` opcodes, so
+    /// that instrumented artifacts also deploy and run outside coverage-guided campaigns.
+    fn edgecov_opcode(&self) -> bool {
+        self.config.fuzz.corpus.collect_instrumented_edges()
+            || self.config.invariant.corpus.collect_instrumented_edges()
     }
 
     fn trace_requirements(&self) -> TraceRequirements {
         TraceRequirements::none()
-            .with_debug(self.debug)
+            .with_debug_recording(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_all_steps(self.record_all_steps)
             .with_verbosity(self.config.tracing.verbosity.max(self.evm_opts.verbosity))
@@ -624,7 +666,7 @@ impl MultiContractRunnerBuilder {
         backend: &Backend<FEN>,
     ) -> bool {
         self.create2_deployer_available.unwrap_or_else(|| {
-            !backend.is_in_forking_mode()
+            !backend.is_forked_mode()
                 && evm_opts.fork_url.is_none()
                 && evm_opts.create2_deployer == foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER
         })
@@ -736,7 +778,7 @@ impl MultiContractRunnerBuilder {
         self,
         output: &ProjectCompileOutput,
         mut evm_env: EvmEnvFor<FEN>,
-        tx_env: TxEnvFor<FEN>,
+        tx: TransactionRequestFor<FEN>,
         evm_opts: EvmOpts,
         backend: Backend<FEN>,
         executor_builder: ExecutorBuilder<FEN>,
@@ -846,13 +888,6 @@ impl MultiContractRunnerBuilder {
             );
         }
 
-        // Create known contracts from linked contracts and storage layout information (if any).
-        let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
-            .with_storage_layouts(output.artifact_ids().filter_map(|(id, artifact)| {
-                artifact.storage_layout.as_ref().map(|layout| (artifact_id(id), layout.clone()))
-            }))
-            .build();
-
         // Initialize and configure the solar compiler.
         let mut analysis = solar::sema::Compiler::new(
             solar::interface::Session::builder().with_stderr_emitter().build(),
@@ -866,18 +901,40 @@ impl MultiContractRunnerBuilder {
 
         // Populate solar's global context by parsing and lowering the sources.
         let files: Vec<_> = output.output().sources.as_ref().keys().cloned().collect();
+        let target_paths = (!self.line_coverage && !files.is_empty()).then_some(&files[..]);
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
-            configure_pcx_from_compile_output(
-                &mut pcx,
-                &self.config,
-                output,
-                (!self.line_coverage && !files.is_empty()).then_some(&files),
-            )?;
+            configure_pcx_from_compile_output(&mut pcx, &self.config, output, target_paths)?;
             pcx.parse();
             let _ = compiler.lower_asts();
             Ok(())
         })?;
+
+        // Create known contracts from linked contracts and storage layout information (if any),
+        // including ERC-7201 namespaces. Namespaces can be declared in sources that weren't
+        // recompiled, so they are computed from every source.
+        let storage_layouts = output.artifact_ids().filter_map(|(id, artifact)| {
+            artifact.storage_layout.as_ref().map(|layout| (artifact_id(id), layout.clone()))
+        });
+        let storage_layouts = if target_paths.is_none() {
+            namespaced_storage::extend_storage_layouts(&mut analysis, root, storage_layouts)
+        } else {
+            let mut compiler = solar::sema::Compiler::new(
+                solar::interface::Session::builder()
+                    .with_buffer_emitter(Default::default())
+                    .build(),
+            );
+            compiler.enter_mut(|compiler| -> Result<()> {
+                let mut pcx = compiler.parse();
+                configure_pcx_from_compile_output(&mut pcx, &self.config, output, None)?;
+                pcx.parse();
+                Ok(())
+            })?;
+            namespaced_storage::extend_storage_layouts(&mut compiler, root, storage_layouts)
+        };
+        let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
+            .with_storage_layouts(storage_layouts)
+            .build();
         let analysis = Arc::new(analysis);
 
         // Enum variant counts used to constrain fuzzed enum inputs to valid values.
@@ -898,17 +955,17 @@ impl MultiContractRunnerBuilder {
             literals(invariant_max_literals)
         };
 
-        let fork_context = backend.fork()?.as_ref().map(|fork| fork.context());
+        let fork_context = backend.fork().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
-        let hardfork = resolve_execution_spec(
+        let hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
             self.config.evm_version,
             self.config.hardfork,
             &mut evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
             None,
         );
-        let spec_id = evm_env.cfg_env.spec;
+        let spec_id = evm_env.spec;
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -927,7 +984,7 @@ impl MultiContractRunnerBuilder {
                 evm_opts,
                 executor_builder,
                 evm_env,
-                tx_env,
+                tx,
                 spec_id,
                 hardfork,
                 fork_chain_id,
@@ -1109,7 +1166,9 @@ mod tests {
         let config = Arc::new(Config::default());
         let builder = MultiContractRunnerBuilder::new(config, Arc::new(InlineConfig::new()));
         let mut evm_opts = EvmOpts::default();
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let backend =
+            Backend::<EthEvmNetwork>::spawn(None, evm_opts.local_evm_env::<EthEvmNetwork>())
+                .unwrap();
         assert!(builder.create2_deployer_available(&evm_opts, &backend));
 
         evm_opts.fork_url = Some("http://localhost:8545".into());

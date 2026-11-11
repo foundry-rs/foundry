@@ -19,7 +19,7 @@ foundry-common.workspace = true
 solar.workspace = true
 
 itertools.workspace = true
-similar = { version = "3", features = ["inline"] }
+similar = { version = "3", features = ["inline", "unicode"] }
 
 [dev-dependencies]
 foundry-test-utils.workspace = true
