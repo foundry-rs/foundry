@@ -225,9 +225,6 @@ pub struct SymbolicConcreteInput {
     pub args: Vec<DynSolValue>,
     /// ABI-encoded calldata for replay.
     pub calldata: Bytes,
-    /// Return data of each `svm.*` helper call on the path, in call order, which replay must
-    /// answer these calls with.
-    pub svm_returns: Vec<Bytes>,
 }
 
 /// Result of best-effort symbolic exploration toward one branch target.

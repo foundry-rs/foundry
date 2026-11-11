@@ -2420,7 +2420,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return None;
         }
         let args = func.abi_decode_input(&calldata[4..]).ok()?;
-        Some(SymbolicConcreteInput { args, calldata: calldata.clone(), svm_returns: Vec::new() })
+        Some(SymbolicConcreteInput { args, calldata: calldata.clone() })
     }
 
     /// Runs a symbolic test and replays any discovered counterexample concretely.
@@ -3104,8 +3104,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     );
                     continue;
                 }
-                SymbolicRunResult::Counterexample { args, calldata, svm_returns, .. } => {
-                    (SymbolicConcreteInput { args, calldata, svm_returns }, true)
+                SymbolicRunResult::Counterexample { args, calldata, .. } => {
+                    (SymbolicConcreteInput { args, calldata }, true)
                 }
             };
 
@@ -3477,11 +3477,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 continue;
             };
 
-            let input = SymbolicConcreteInput {
-                args,
-                calldata: call.call_details.calldata.clone(),
-                svm_returns: Vec::new(),
-            };
+            let input =
+                SymbolicConcreteInput { args, calldata: call.call_details.calldata.clone() };
             let property_target_reported = if invariant_contract.call_after_invariant {
                 reported_invariants.contains(&invariant_contract.anchor_idx)
                     || after_invariant_reported
@@ -6225,7 +6222,6 @@ fn solve_live_invariant_frontier<FEN: FoundryEvmNetwork>(
         corpus_seeds: vec![SymbolicConcreteInput {
             args,
             calldata: call.call_details.calldata.clone(),
-            svm_returns: Vec::new(),
         }],
         branch_target: Some(SymbolicBranchTarget::new(cmp.address, cmp.pc, cmp.opcode, result)),
     });
