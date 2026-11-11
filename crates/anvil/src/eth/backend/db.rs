@@ -243,7 +243,7 @@ fn deserialize_snapshot_code<'de, D: Deserializer<'de>>(
 
     #[derive(Deserialize)]
     struct Eip7702 {
-        raw: Bytes,
+        delegated_address: Address,
     }
 
     #[derive(Deserialize)]
@@ -265,7 +265,9 @@ fn deserialize_snapshot_code<'de, D: Deserializer<'de>>(
         Code::Tagged(Tagged::LegacyAnalyzed(code)) => {
             code.bytecode.slice(..code.original_len.min(code.bytecode.len()))
         }
-        Code::Tagged(Tagged::Eip7702(code)) => code.raw,
+        Code::Tagged(Tagged::Eip7702(code)) => {
+            Bytecode::new_eip7702(code.delegated_address).original_bytes()
+        }
     }))
 }
 
@@ -1757,5 +1759,41 @@ mod test {
         assert!(db.revert_state(snapshot, RevertStateSnapshotAction::RevertRemove));
         assert_eq!(db.basic_ref(cached).unwrap().unwrap(), original);
         assert!(!db.database().cache.accounts.contains_key(&uncached));
+    }
+
+    // Snapshots written by revm-based Anvil store EIP-7702 delegations as their delegated address,
+    // or with their raw code in older versions.
+    #[test]
+    fn deserializes_revm_eip7702_snapshot_code() {
+        let delegate = Address::with_last_byte(0xde);
+        let snapshot = serde_json::from_value::<StateSnapshot>(serde_json::json!({
+            "accounts": {
+                "0x0000000000000000000000000000000000000001": {
+                    "balance": "0x0", "nonce": 0, "code_hash": B256::ZERO,
+                    "code": {"Eip7702": {"delegated_address": delegate}}
+                },
+                "0x0000000000000000000000000000000000000002": {
+                    "balance": "0x0", "nonce": 0, "code_hash": B256::ZERO,
+                    "code": {"Eip7702": {
+                        "delegated_address": delegate,
+                        "version": 0,
+                        "raw": Bytecode::new_eip7702(delegate).original_bytes()
+                    }}
+                }
+            },
+            "storage": {},
+            "block_hashes": {}
+        }))
+        .unwrap();
+
+        let code = |byte| {
+            snapshot.accounts[&Address::with_last_byte(byte)]
+                .code
+                .as_ref()
+                .unwrap()
+                .original_bytes()
+        };
+        assert_eq!(code(1), Bytecode::new_eip7702(delegate).original_bytes());
+        assert_eq!(code(2), Bytecode::new_eip7702(delegate).original_bytes());
     }
 }
