@@ -4,11 +4,14 @@ use super::{
     EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks,
     FoundryTxConversion, FoundryTxResultExt, SendableExt, TxPayload, with_eip7702_delegations,
 };
+use crate::edgecov;
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Encodable2718;
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{Address, Bytes};
-use evm2::{TxResult, Version, evm::precompile::PrecompileProvider, registry::TxRegistry};
+use evm2::{
+    ExecutionConfig, TxResult, Version, evm::precompile::PrecompileProvider, registry::TxRegistry,
+};
 use op_alloy_consensus::OpTxEnvelope as OpConsensusTxEnvelope;
 use op_alloy_network::Optimism;
 use op_evm2::{
@@ -105,6 +108,10 @@ impl FoundryEvmFactory for OpEvmFactory {
 
     fn version(&self, spec: OpSpecId, chain_id: u64) -> Version {
         with_eip7702_delegations(op_version(spec, chain_id))
+    }
+
+    fn execution_config(&self, spec: OpSpecId, version: Version) -> ExecutionConfig<OpEvmTypes> {
+        edgecov::execution_config(spec, version)
     }
 
     fn tx_registry(&self, spec: OpSpecId) -> TxRegistry<OpEvmTypes, TxResult<OpEvmTypes>> {
