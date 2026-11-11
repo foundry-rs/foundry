@@ -256,10 +256,7 @@ impl<N: Network, B: ForkBlockEnv> FoundryDatabase for ForkDb<SharedBackend<N, B>
     ) {
         let remote = self.db.data();
         let overrides = if overrides {
-            match local {
-                Some(local) => prefetch::state_override(&remote, local),
-                None => Some(prefetch::StateOverrideBuilder::new(&remote).build()),
-            }
+            prefetch::state_override(&remote, local.unwrap_or(&Cache::default()))
         } else {
             None
         };

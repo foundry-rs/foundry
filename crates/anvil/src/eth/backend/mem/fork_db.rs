@@ -162,8 +162,9 @@ impl<N: Network> ForkedDatabase<N> {
         prefetch::prefetch_call(&self.backend, caller, target, value, input, overrides);
     }
 
-    /// Returns the local state that differs from the remote as overrides, or `None` when it is
-    /// too large to send, see [`StateOverrideBuilder`].
+    /// Returns the local state that differs from the remote as overrides, or `None` when there is
+    /// none or it is too large to send, see [`StateOverrideBuilder`]. Without overrides, the
+    /// simulation also runs on endpoints that do not take them.
     fn state_override(&self) -> Option<StateOverride> {
         let cache = &self.cache_db.cache;
         let mut overrides = StateOverrideBuilder::new(self.db.db());
@@ -175,7 +176,7 @@ impl<N: Network> ForkedDatabase<N> {
             let cleared = account.account_state.is_storage_cleared();
             overrides.storage(*address, &account.storage, cleared)?;
         }
-        Some(overrides.build())
+        Some(overrides.build()).filter(|overrides| !overrides.is_empty())
     }
 
     /// Returns a read-only view of the current state.

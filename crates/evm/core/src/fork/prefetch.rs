@@ -164,8 +164,7 @@ fn keys(db: &MemDb) -> Vec<Key> {
 /// The owner of the local state adds each account and its storage. Accounts and slots equal to
 /// what the fork loaded from the endpoint are left out, so the overrides hold contracts deployed
 /// locally, such as the test contract, and local changes to remote accounts, such as balances
-/// and storage set with cheatcodes. The cheatcode contract gets a stub that returns one zero
-/// word, so the simulation runs past most cheatcode calls.
+/// and storage set with cheatcodes.
 pub struct StateOverrideBuilder<'a> {
     remote: &'a MemDb,
     overrides: StateOverride,
@@ -225,15 +224,18 @@ impl<'a> StateOverrideBuilder<'a> {
         Some(())
     }
 
-    /// Returns the overrides, with the cheatcode stub.
-    pub fn build(mut self) -> StateOverride {
-        self.overrides.entry(CHEATCODE_ADDRESS).or_default().code = Some(CHEATCODE_STUB);
+    /// Returns the overrides.
+    pub fn build(self) -> StateOverride {
         self.overrides
     }
 }
 
 /// Returns the accepted state of a fork context that differs from the endpoint as overrides, see
-/// [`StateOverrideBuilder`]. Returns `None` when the local state is too large to send.
+/// [`StateOverrideBuilder`]. Returns `None` when no local state differs, so the simulation also
+/// runs on endpoints that do not take overrides, or when it is too large to send.
+///
+/// The cheatcode contract gets a stub that returns one zero word, so the simulation runs past
+/// most cheatcode calls.
 pub fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverride> {
     let mut overrides = StateOverrideBuilder::new(remote);
     for (address, info) in &local.accounts {
@@ -245,7 +247,12 @@ pub fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverride> {
     for (address, storage) in &local.storage {
         overrides.storage(*address, &storage.slots, storage.wiped)?;
     }
-    Some(overrides.build())
+    let mut overrides = overrides.build();
+    if overrides.is_empty() {
+        return None;
+    }
+    overrides.entry(CHEATCODE_ADDRESS).or_default().code = Some(CHEATCODE_STUB);
+    Some(overrides)
 }
 
 /// Simulates a call on the fork's endpoint and prefetches the state it touches, see
