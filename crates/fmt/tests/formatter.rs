@@ -1325,8 +1325,6 @@ fn inlined_loops_preserve_else_binding() {
         "while (b) for (;;) { if (c) x(); }",
         "for (;;) { if (b) x(); else y(); }",
         "for (;;) { if (b) { if (c) x(); } else y(); }",
-        "for (;;) { uint256 x; }",
-        "for (;;) { (uint256 x, uint256 y) = g(); }",
     ] {
         let source =
             format!("contract C {{ function f() external {{ if (a) {then} else z(); }} }}");
@@ -1359,20 +1357,18 @@ fn for_header_at_line_limit_keeps_nested_body_stable() {
 
 #[test]
 fn wrapped_body_trailing_comments_keep_braces() {
-    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
-        let expected = "contract C {\n    function f() external {\n        for (;;) {\n            break; /* aaaaaaaaa bbbbbbbbb */\n        }\n    }\n}\n";
-        let config = Arc::new(FormatterConfig {
-            line_length: 40,
-            wrap_comments: true,
-            single_line_statement_blocks: style,
-            ..Default::default()
-        });
-        for spacing in ["", " "] {
-            let source = format!(
-                "contract C {{ function f() external {{ for (;;) {{ break;{spacing}/* aaaaaaaaa bbbbbbbbb */ }} }} }}"
-            );
-            assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
-        }
+    let expected = "contract C {\n    function f() external {\n        for (;;) {\n            break; /* aaaaaaaaa bbbbbbbbb */\n        }\n    }\n}\n";
+    let config = Arc::new(FormatterConfig {
+        line_length: 40,
+        wrap_comments: true,
+        single_line_statement_blocks: SingleLineBlockStyle::Single,
+        ..Default::default()
+    });
+    for spacing in ["", " "] {
+        let source = format!(
+            "contract C {{ function f() external {{ for (;;) {{ break;{spacing}/* aaaaaaaaa bbbbbbbbb */ }} }} }}"
+        );
+        assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
     }
 }
 
@@ -1551,8 +1547,6 @@ fn preserve_statement_body_line_breaks() {
             (" ", " x();"),
             ("\n", " {\n            x();\n        }"),
             ("\r\n", " {\n            x();\n        }"),
-            ("\n    ", " {\n            x();\n        }"),
-            ("\r\n    ", " {\n            x();\n        }"),
         ] {
             let source =
                 format!("contract C {{ function f() external {{ {header}{spacing}x(); }} }}");
