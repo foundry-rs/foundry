@@ -1929,7 +1929,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         if let Some(trace) = &mut self.failure_trace {
-            trace.enter_frame(usize::from(interp.message().depth) + 1);
+            trace.enter_frame::<FEN>(interp, usize::from(interp.message().depth) + 1);
         }
     }
 

@@ -1,5 +1,5 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{B256, I256, U256, U512, keccak256, uint};
+use alloy_primitives::{Address, B256, Bytes, I256, U256, U512, keccak256, uint};
 use alloy_sol_types::SolCall;
 use evm2::interpreter::{InstrStop, op, opcode::OpCode};
 use foundry_evm_core::{
@@ -663,8 +663,16 @@ struct SiteFrame {
     entry: B256,
     /// For each stack slot, the pc of the `PUSH` its value was copied from, if any.
     pushed_at: Vec<Option<usize>>,
+    /// Address and code of this frame, to identify the instruction that halted it.
+    destination: Address,
+    /// See [`Self::destination`].
+    code: Bytes,
+    /// Whether this frame runs initcode.
+    is_create: bool,
     /// Highest pc executed so far, used to hash the executed part of initcode.
     max_pc: usize,
+    /// Pc of the latest instruction, which halted the frame if it halted.
+    last_pc: usize,
     /// Pc of the latest `JUMPI`, taken or not.
     last_jumpi: usize,
     /// Number of failure events recorded before this frame started.
@@ -680,11 +688,12 @@ impl SiteFrame {
     fn site<FEN: FoundryEvmNetwork>(&self, interpreter: &InterpreterFor<'_, '_, FEN>) -> B256 {
         let code = interpreter.original_bytecode_slice();
         let mut preimage = self.entry.to_vec();
-        preimage.extend_from_slice(interpreter.message().destination.as_slice());
-        // Initcode embeds constructor arguments, so constructors only hash executed code.
-        let code_hash = if interpreter.message().kind.is_create() {
+        // Initcode embeds constructor arguments, so constructors only hash executed code, and
+        // their address can derive from those arguments, so the entry identifies them instead.
+        let code_hash = if self.is_create {
             keccak256(code.get(..=self.max_pc).unwrap_or(code))
         } else {
+            preimage.extend_from_slice(interpreter.message().destination.as_slice());
             interpreter.original_bytecode_hash()
         };
         preimage.extend_from_slice(code_hash.as_slice());
@@ -698,6 +707,22 @@ impl SiteFrame {
         }
         keccak256(preimage)
     }
+
+    /// Returns the site of the latest instruction, which halted the frame, without the return
+    /// labels on its stack.
+    fn halt_site(&self) -> B256 {
+        let mut preimage = self.entry.to_vec();
+        let code_hash = if self.is_create {
+            keccak256(self.code.get(..=self.max_pc).unwrap_or(&self.code))
+        } else {
+            preimage.extend_from_slice(self.destination.as_slice());
+            keccak256(&self.code)
+        };
+        preimage.extend_from_slice(code_hash.as_slice());
+        preimage.extend_from_slice(&self.last_pc.to_be_bytes());
+        preimage.extend_from_slice(&self.last_jumpi.to_be_bytes());
+        keccak256(preimage)
+    }
 }
 
 /// A failure recorded by [`FailureTrace`].
@@ -707,13 +732,17 @@ enum FailureEvent {
     /// the hash of its revert data when assertions revert.
     Assertion { identity: B256, revert: Option<B256> },
     /// A call or create that reverted or halted, identified by the site where it failed, or of
-    /// the call when it halted elsewhere, with the number of failure events recorded within it.
+    /// the call when it ran no instructions, with the number of failure events recorded within it.
     Frame { site: B256, stop: InstrStop, events: usize },
 }
 
 impl FailureTrace {
-    /// Starts tracking a new frame at `depth`.
-    pub(crate) fn enter_frame(&mut self, depth: usize) {
+    /// Starts tracking the frame of `interpreter` at `depth`.
+    pub(crate) fn enter_frame<FEN: FoundryEvmNetwork>(
+        &mut self,
+        interpreter: &InterpreterFor<'_, '_, FEN>,
+        depth: usize,
+    ) {
         let frame = SiteFrame {
             entry: self.pending,
             events_before: self.events.len(),
@@ -722,7 +751,12 @@ impl FailureTrace {
         // Frames entered without an interpreter, such as cheatcode calls, were entered at
         // `pending` too.
         self.frames.resize(depth, frame.clone());
-        self.frames.push(frame);
+        self.frames.push(SiteFrame {
+            destination: interpreter.message().destination,
+            code: interpreter.original_bytecode(),
+            is_create: interpreter.message().kind.is_create(),
+            ..frame
+        });
     }
 
     /// Records the site of external calls and tracks which stack values are pushed constants.
@@ -736,6 +770,7 @@ impl FailureTrace {
         frame.pushed_at.resize(height, None);
         let pc = interpreter.pc();
         frame.max_pc = frame.max_pc.max(pc);
+        frame.last_pc = pc;
         let opcode = interpreter.opcode();
         match opcode {
             op::PUSH0..=op::PUSH32 => return frame.pushed_at.push(Some(pc)),
@@ -798,7 +833,7 @@ impl FailureTrace {
             // Frames without an interpreter, such as cheatcode calls, were entered at `pending`.
             let (site, events_before) =
                 self.frames.get(depth + 1).map_or((self.pending, self.events.len()), |frame| {
-                    (frame.failed_at.unwrap_or(frame.entry), frame.events_before)
+                    (frame.failed_at.unwrap_or_else(|| frame.halt_site()), frame.events_before)
                 });
             let events = self.events.len() - events_before;
             self.events.push(FailureEvent::Frame { site, stop: result.stop, events });

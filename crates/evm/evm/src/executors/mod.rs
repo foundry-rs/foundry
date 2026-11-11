@@ -3240,6 +3240,10 @@ mod tests {
             [invalid_jump, out_of_gas].map(|callee| U256::from_be_slice(callee.as_slice()));
         assert_ne!(identity(&forward, invalid_jump), identity(&forward, out_of_gas));
 
+        // Two invalid `JUMP`s, which halt with the same reason and data.
+        let jumps = [0x5f, 0x35, 0x60, 0x07, 0x57, 0x5f, 0x56, 0x5b, 0x5f, 0x56];
+        assert_ne!(identity(&jumps, U256::ZERO), identity(&jumps, U256::ONE));
+
         // Initcode reverting at either of two sites, whose failure the creator then replaces.
         let create = [0x36, 0x5f, 0x5f, 0x37, 0x36, 0x5f, 0x5f, 0xf0, 0x50, 0x5f, 0x5f, 0xfd];
         let [first, second] = [&[0x5f, 0x5f, 0xfd][..], &[0x60, 0x01, 0x50, 0x5f, 0x5f, 0xfd]]
@@ -3248,6 +3252,10 @@ mod tests {
         // Constructor arguments past the executed code are ignored.
         let args = U256::from_be_bytes(B256::right_padding_from(&[0x5f, 0x5f, 0xfd, 0x01]).0);
         assert_eq!(identity(&create, first), identity(&create, args));
+        // Even when they change the `CREATE2` address.
+        let create2 =
+            [0x36, 0x5f, 0x5f, 0x37, 0x5f, 0x36, 0x5f, 0x5f, 0xf5, 0x50, 0x5f, 0x5f, 0xfd];
+        assert_eq!(identity(&create2, first), identity(&create2, args));
 
         // The same contract reverting from two calls, whose failure the caller then replaces.
         let mut caught = vec![0x5f, 0x35, 0x60, 0x25, 0x57];
