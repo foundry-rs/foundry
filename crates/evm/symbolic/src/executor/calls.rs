@@ -12,14 +12,30 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
-        let free_write_target = self.free_address_write_target(state, kind);
+        let free_write_targets = self.free_address_write_targets(executor, state, kind)?;
         let pre_call_state = (!state.function_mocks.is_empty()
-            || free_write_target.is_some()
+            || !free_write_targets.is_empty()
             || !state.expected_calls.is_empty()
             || !state.call_mocks.is_empty()
             || (state.is_static && matches!(kind, CallKind::Call)))
         .then(|| state.clone());
         let call_pc = state.pc.saturating_sub(1);
+        // A word the fork decides in place leaves the remaining words to decide.
+        for (write_target, candidates) in &free_write_targets {
+            if self.branch_free_address_write_if_needed(
+                state,
+                worklist,
+                pre_call_state.as_ref().expect("free address writes require pre-call state"),
+                call_pc,
+                write_target,
+                candidates,
+            )? {
+                return Ok(StepOutcome::Forked);
+            }
+        }
+        if state.prank.has_active() {
+            state.resolve_prank_addresses(&mut self.cx);
+        }
 
         let has_value = matches!(kind, CallKind::Call | CallKind::CallCode);
         let in_offset_idx = if has_value { 3 } else { 2 };
@@ -39,11 +55,12 @@ impl SymbolicExecutor {
         }
 
         let gas = state.stack.pop()?;
-        if !gas.is_raw_gasleft() {
+        // The equivalence check does not model the callee's gas, so explicit limits are kept.
+        if !gas.is_raw_gasleft() && !self.symbolic_gas() {
             return Err(SymbolicError::Unsupported("explicit CALL gas limit not modeled"));
         }
         let target = state.stack.pop()?;
-        ensure_expr_not_gasleft(&target)?;
+        self.ensure_gas_modeled(&target)?;
         let target = target.address_operand(&mut self.cx);
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
@@ -59,11 +76,11 @@ impl SymbolicExecutor {
             (CallKind::CallCode, _) => state.stack.pop()?,
             (CallKind::StaticCall | CallKind::DelegateCall, _) => SymExpr::zero(&mut self.cx),
         };
-        ensure_expr_not_gasleft(&value)?;
+        self.ensure_gas_modeled(&value)?;
         let in_offset = state.stack.pop()?;
-        ensure_expr_not_gasleft(&in_offset)?;
+        self.ensure_gas_modeled(&in_offset)?;
         let in_size = state.stack.pop()?;
-        ensure_expr_not_gasleft(&in_size)?;
+        self.ensure_gas_modeled(&in_size)?;
         let in_size = match state.constrained_usize_checked(&mut self.cx, &in_size) {
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
@@ -81,9 +98,9 @@ impl SymbolicExecutor {
             }
         };
         let out_offset = state.stack.pop()?;
-        ensure_expr_not_gasleft(&out_offset)?;
+        self.ensure_gas_modeled(&out_offset)?;
         let out_size = state.stack.pop()?;
-        ensure_expr_not_gasleft(&out_size)?;
+        self.ensure_gas_modeled(&out_size)?;
         let out_size = match state.constrained_usize_checked(&mut self.cx, &out_size) {
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
@@ -146,7 +163,7 @@ impl SymbolicExecutor {
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
         // Gas is not modeled, so calldata derived from `GAS` / `gasleft()` must fail closed instead
         // of handing the callee a fabricated gas value.
-        if call_input.contains_gasleft(&mut self.cx) {
+        if !self.symbolic_gas() && call_input.contains_gasleft(&mut self.cx) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
 
@@ -202,18 +219,6 @@ impl SymbolicExecutor {
                 )? {
                     return Ok(StepOutcome::Forked);
                 }
-            }
-            if let Some(write_target) = &free_write_target
-                && self.branch_free_address_write_if_needed(
-                    executor,
-                    state,
-                    worklist,
-                    pre_call_state.as_ref().expect("free address writes require pre-call state"),
-                    call_pc,
-                    write_target,
-                )?
-            {
-                return Ok(StepOutcome::Forked);
             }
             return self.call_concrete_target(
                 executor,
@@ -1092,11 +1097,16 @@ impl SymbolicExecutor {
                 )
             } else if to == SYMBOLIC_VM_COMPAT_ADDRESS {
                 self.handle_symbolic_vm_cheatcode(
+                    executor,
                     state,
                     selector,
                     concrete_in_offset.expect("symbolic vm input offset is concrete"),
                 )
-                .map(CheatcodeOutcome::ContinueData)
+                .inspect(|outcome| {
+                    if let CheatcodeOutcome::ContinueData(ret) = outcome {
+                        state.svm_returns.push(ret.clone());
+                    }
+                })
             } else {
                 Err(SymbolicError::Unsupported("symbolic cheatcode address"))
             };
@@ -1130,6 +1140,28 @@ impl SymbolicExecutor {
                         }
                         None => SymReturnData::from_words(&mut self.cx, Vec::new()),
                     }
+                }
+                CheatcodeOutcome::Choices(choices) => {
+                    let mut choices = choices.into_iter();
+                    let (constraints, return_data) = choices.next().expect("nonempty choices");
+                    // Only `svm.createCalldata` returns choices, and replay answers it on each
+                    // path with that path's own return data.
+                    for (choice_constraints, choice_return_data) in choices {
+                        let mut choice = state.clone();
+                        choice.constraints.extend(choice_constraints);
+                        choice.svm_returns.push(choice_return_data.clone());
+                        complete_cheatcode_call(
+                            &mut self.cx,
+                            &mut choice,
+                            out_offset.clone(),
+                            &out_size,
+                            choice_return_data,
+                        )?;
+                        worklist.push_back(choice);
+                    }
+                    state.constraints.extend(constraints);
+                    state.svm_returns.push(return_data.clone());
+                    return_data
                 }
             };
 
@@ -1356,6 +1388,27 @@ impl SymbolicExecutor {
                 out_offset,
                 &out_size,
                 outcome,
+            );
+        }
+
+        if self.equivalence.is_some()
+            && state.world.is_unknown_account(&mut self.cx, executor, code_address)?
+        {
+            let target =
+                target_word.unwrap_or_else(|| SymExpr::constant(&mut self.cx, address_word(to)));
+            let input_len = in_size.size_word(&mut self.cx);
+            return self.call_unknown_code(
+                executor,
+                state,
+                kind,
+                to,
+                call_caller,
+                target,
+                value,
+                call_input,
+                input_len,
+                out_offset,
+                &out_size,
             );
         }
 
@@ -1853,7 +1906,11 @@ impl SymbolicExecutor {
         if matches!(kind, CallKind::DelegateCall | CallKind::CallCode) {
             candidates.push(CHEATCODE_ADDRESS);
         }
-        candidates.extend(active_precompiles(executor.spec_id).as_map().addresses());
+        // An equivalence check abstracts a target that is no known contract as one unknown
+        // function of the call's inputs, which also covers every precompile.
+        if self.equivalence.is_none() {
+            candidates.extend(active_precompiles(executor.spec_id).as_map().addresses());
+        }
         candidates.sort();
         candidates.dedup();
 
@@ -1878,7 +1935,7 @@ impl SymbolicExecutor {
         );
         let outside_sat = self.is_sat_with_state(state, &outside_constraints)?;
 
-        if !self.config.symbolic_call_targets && outside_sat {
+        if !self.config.symbolic_call_targets && self.equivalence.is_none() && outside_sat {
             return Err(SymbolicError::Unsupported("symbolic CALL target"));
         }
 
@@ -1907,6 +1964,40 @@ impl SymbolicExecutor {
                 branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
                 branch.stack.push(SymExpr::zero(&mut self.cx))?;
                 outcome = Some(StepOutcome::Continue);
+            } else if self.equivalence.is_some() {
+                // A target that is none of the known contracts is unknown code.
+                let to = branch.world.symbolic_address_slot(target.clone());
+                if matches!(kind, CallKind::Call) {
+                    outcome = self.prepare_value_transfer(
+                        executor,
+                        &mut branch,
+                        &mut parents,
+                        kind,
+                        call_caller,
+                        to,
+                        value.clone(),
+                        out_offset.clone(),
+                        &out_size,
+                    )?;
+                }
+                if outcome.is_none() {
+                    let input =
+                        in_size.read_from_memory(&mut self.cx, &branch.memory, in_offset.clone());
+                    let input_len = in_size.size_word(&mut self.cx);
+                    outcome = Some(self.call_unknown_code(
+                        executor,
+                        &mut branch,
+                        kind,
+                        to,
+                        call_caller,
+                        target,
+                        value.clone(),
+                        input,
+                        input_len,
+                        out_offset.clone(),
+                        &out_size,
+                    )?);
+                }
             } else if matches!(kind, CallKind::Call | CallKind::CallCode) {
                 let transfer_to = if matches!(kind, CallKind::Call) {
                     // A failed transfer would report this placeholder, not the symbolic target, as
@@ -2489,11 +2580,13 @@ fn constrained_byte(cx: &mut SymCx, state: &PathState, byte: &SymExpr) -> Option
     state.constrained_word(cx, byte).and_then(|byte| u8::try_from(byte).ok())
 }
 
-fn ensure_expr_not_gasleft(expr: &SymExpr) -> Result<(), SymbolicError> {
-    if expr.contains_gasleft() {
-        Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"))
-    } else {
-        Ok(())
+impl SymbolicExecutor {
+    fn ensure_gas_modeled(&self, expr: &SymExpr) -> Result<(), SymbolicError> {
+        if !self.symbolic_gas() && expr.contains_gasleft() {
+            Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"))
+        } else {
+            Ok(())
+        }
     }
 }
 

@@ -4,7 +4,7 @@ use alloy_primitives::U256;
 use evm2::{
     EvmTypes, Inspector,
     evm::JournalEntry,
-    interpreter::{InstrStop, Interpreter, Message, MessageResult, opcode::OpCode},
+    interpreter::{InstrStop, Interpreter, Message, MessageResult, op, opcode::OpCode},
 };
 use foundry_evm_traces::debug::{
     DebugRecording, DebugStepSink, RecordedFrame, StepConverter, step_record,
@@ -12,8 +12,9 @@ use foundry_evm_traces::debug::{
 use soldb_core::{EvmWord, StepRecord, StepTable};
 use std::{fmt, sync::Arc};
 
-/// The most stack words one instruction reads: `SWAP16` reads 17.
-const MAX_INPUTS: usize = 17;
+/// The most stack words the storage opcodes read: `SSTORE` and `TSTORE` read the slot and the
+/// value.
+const STORAGE_INPUTS: usize = 2;
 
 /// Records every opcode step of the debugged calls into a [`StepTable`], with the steps that
 /// each call and creation spans.
@@ -40,6 +41,12 @@ pub struct DebugRecorder {
     calls_below_root: Option<usize>,
     /// The step that started and did not end yet.
     pending: Option<PendingStep>,
+    /// The words of the pending step's stack above the ones it shares with the step appended
+    /// last, bottom first.
+    words: Vec<U256>,
+    /// How many bottom words the next step's stack shares with the stack of the step appended
+    /// last: an instruction changes only the words it reads, so the ones below them stay.
+    shared: usize,
     /// Converts the return data and storage of the steps.
     converter: StepConverter,
 }
@@ -62,11 +69,13 @@ struct PendingStep {
     depth: u64,
     #[cfg(test)]
     memory: Vec<u8>,
-    return_data: Arc<str>,
-    /// The stack height before the step.
-    height: usize,
-    /// The top words the step can pop or change, bottom first.
-    inputs: [U256; MAX_INPUTS],
+    /// The hex return data buffer, or `None` if it is the one of the step appended last.
+    return_data: Option<Arc<str>>,
+    /// How many bottom words of the stack are the ones of the step appended last; the rest are
+    /// in [`DebugRecorder::words`].
+    shared: usize,
+    /// The top words a storage opcode reads, bottom first.
+    inputs: [U256; STORAGE_INPUTS],
     inputs_len: usize,
     /// The journal length before the step.
     journal_len: usize,
@@ -84,6 +93,8 @@ impl DebugRecorder {
             open: Vec::new(),
             calls_below_root: Some(0),
             pending: None,
+            words: Vec::new(),
+            shared: 0,
             converter: StepConverter::default(),
         }
     }
@@ -148,27 +159,25 @@ impl DebugRecorder {
         let exit_step = self.table().len() - self.first_step;
         if let Some(open) = self.open.pop() {
             self.frames[open.frame].exit_step = exit_step;
+            // The step appended last may be the frame's, whose stack is not the caller's. A
+            // frame's first step has an empty stack, so entering a frame shares nothing either.
+            self.shared = 0;
             self.table().end_memory_frame();
         }
     }
 
     /// Records the steps this recorder appended one level deeper.
     ///
-    /// A step table cannot change a step in place, so the steps are appended again.
+    /// A step table cannot change a step in place, so the table is copied, with the steps of
+    /// earlier recorders as they are.
     fn lower_recorded_steps(&mut self) {
-        let Some(table) = &mut self.table else { return };
-        let steps = (self.first_step..table.len())
-            .map(|index| {
-                let step = table.step(index);
-                let mut record = step_record(&step);
-                record.depth += 1;
-                (record, step.stack().to_vec())
-            })
-            .collect::<Vec<_>>();
-        table.truncate(self.first_step);
-        for (record, stack) in steps {
-            table.append(record, stack);
-        }
+        let Some(table) = self.table.as_mut().filter(|table| table.len() > self.first_step) else {
+            return;
+        };
+        let mut lowered = StepTable::with_capacity(table.len());
+        copy_steps(table, 0..self.first_step, &mut lowered, 0);
+        copy_steps(table, self.first_step..table.len(), &mut lowered, 1);
+        *table = lowered;
     }
 
     /// Starts a step.
@@ -198,18 +207,29 @@ impl DebugRecorder {
 
         let return_data = self.converter.return_data(interp.return_data());
 
-        // An instruction changes only the words it reads, so the stack before it is what stays
-        // below them after it, and these.
+        // The step appended last has the bottom `shared` words of this stack, so only the
+        // words above them are copied. An instruction changes only the words it reads, so the
+        // next step shares the ones below them; a `DUP` reads a word but leaves it in place.
+        // `SWAPN` and `EXCHANGE` declare no inputs but swap words at the depth their immediate
+        // gives, so they share nothing.
         let stack = interp.stack();
         let stack = stack.as_slice();
+        let shared = self.shared.min(stack.len());
+        self.words.clear();
+        self.words.extend_from_slice(&stack[shared..]);
         let read = if op.is_valid() { op.inputs() as usize } else { 0 };
-        let inputs_len = read.min(stack.len()).min(MAX_INPUTS);
-        let mut inputs = [U256::ZERO; MAX_INPUTS];
+        let changed = match op.get() {
+            op::DUP1..=op::DUP16 => 0,
+            op::SWAPN | op::EXCHANGE => stack.len(),
+            _ => read,
+        };
+        self.shared = stack.len() - changed.min(stack.len());
+        let inputs_len = read.min(stack.len()).min(STORAGE_INPUTS);
+        let mut inputs = [U256::ZERO; STORAGE_INPUTS];
         inputs[..inputs_len].copy_from_slice(&stack[stack.len() - inputs_len..]);
 
         let lifted = self.calls_below_root == Some(1);
         let depth = self.frames[open.frame].depth as u64 + 1 - u64::from(lifted);
-        let height = stack.len();
         let pc = interp.pc() as u64;
         let gas = interp.gas().remaining();
         let journal_len = interp.host().state().journal().len();
@@ -221,7 +241,7 @@ impl DebugRecorder {
             #[cfg(test)]
             memory,
             return_data,
-            height,
+            shared,
             inputs,
             inputs_len,
             journal_len,
@@ -258,8 +278,7 @@ impl DebugRecorder {
         // The frame runs another step unless this one ended it; that step starts with the value
         // a load pushed on top.
         let loaded = status.is_none().then(|| after.last().copied()).flatten();
-        let kept = &after[..(step.height - step.inputs_len).min(after.len())];
-        self.append(step, kept, status, gas_cost, loaded, had_value);
+        self.append(step, status, gas_cost, loaded, had_value);
     }
 
     /// Ends the pending step of the instruction that starts a call or creation.
@@ -269,29 +288,22 @@ impl DebugRecorder {
     pub(crate) fn end_step_before_frame<T: EvmTypes>(&mut self, interp: &Interpreter<'_, '_, T>) {
         let Some(step) = self.pending.take() else { return };
         let gas_cost = step.gas.saturating_sub(interp.gas().remaining());
-        let stack = interp.stack();
-        let stack = stack.as_slice();
-        let kept = &stack[..(step.height - step.inputs_len).min(stack.len())];
-        self.append(step, kept, None, gas_cost, None, None);
+        self.append(step, None, gas_cost, None, None);
     }
 
     /// Ends the pending step if an inspector halted the frame before its instruction ran.
-    pub fn end_step_not_run<T: EvmTypes>(&mut self, interp: &Interpreter<'_, '_, T>) {
+    pub fn end_step_not_run(&mut self) {
         let Some(step) = self.pending.take() else { return };
-        let stack = interp.stack();
-        let stack = stack.as_slice();
-        let kept = &stack[..(step.height - step.inputs_len).min(stack.len())];
-        self.append(step, kept, None, 0, None, None);
+        self.append(step, None, 0, None, None);
     }
 
-    /// Appends `step`, whose stack is `kept` and its inputs.
+    /// Appends `step`, whose stack is the shared words of the step appended last and `words`.
     ///
     /// `loaded` is the value an `SLOAD` or `TLOAD` pushed, if the frame went on, and `had_value`
     /// the value an `SSTORE` overwrote, if the journal recorded it.
     fn append(
         &mut self,
         step: PendingStep,
-        kept: &[U256],
         status: Option<InstrStop>,
         gas_cost: u64,
         loaded: Option<U256>,
@@ -299,13 +311,12 @@ impl DebugRecorder {
     ) {
         #[cfg(test)]
         let expected_memory = step.memory;
-        let PendingStep { pc, op, gas, depth, return_data, inputs, inputs_len, .. } = step;
-        let inputs = &inputs[..inputs_len];
-        let storage = self.converter.storage(op.get(), inputs, loaded, had_value);
+        let PendingStep { pc, op, gas, depth, return_data, shared, inputs, inputs_len, .. } = step;
+        let storage = self.converter.storage(op.get(), &inputs[..inputs_len], loaded, had_value);
         let error =
             status.filter(|status| !status.is_success()).map(|status| format!("{status:?}"));
         let table = self.table.as_mut().expect("a frame is open");
-        table.append(
+        table.append_kept(
             StepRecord {
                 pc,
                 op: op.get(),
@@ -317,9 +328,10 @@ impl DebugRecorder {
                 storage: Some(storage.storage),
                 storage_diff: storage.storage_diff,
                 transient_storage: storage.transient_storage,
-                return_data: Some(return_data),
+                return_data,
             },
-            kept.iter().chain(inputs).map(|word| EvmWord(word.to_be_bytes())),
+            shared,
+            self.words.iter().map(|word| EvmWord(word.to_be_bytes())),
         );
         #[cfg(test)]
         assert_eq!(
@@ -411,6 +423,73 @@ impl<T: EvmTypes> Inspector<T> for DebugRecorder {
     }
 }
 
+/// Appends `steps` of `source` to `target`, `deeper` levels deeper.
+///
+/// Memory is written as it changes, within a frame for each depth, as the recorder writes it,
+/// so the copy does not store the memory of every step in full.
+fn copy_steps(
+    source: &StepTable,
+    steps: std::ops::Range<usize>,
+    target: &mut StepTable,
+    deeper: u64,
+) {
+    // The memory last written to each frame open in `target`, by depth.
+    let mut frames = Vec::<Vec<u8>>::new();
+    for index in steps {
+        let step = source.step(index);
+        let mut record = step_record(&step);
+        let memory = record.memory.take().unwrap_or_default();
+        record.depth += deeper;
+
+        let level = step.depth() as usize + 1;
+        // Memory never shrinks within a frame, so shorter memory at the same depth is another
+        // frame's.
+        while frames.len() > level
+            || (frames.len() == level
+                && frames.last().is_some_and(|last| last.len() > memory.len()))
+        {
+            target.end_memory_frame();
+            frames.pop();
+        }
+        while frames.len() < level {
+            target.start_memory_frame();
+            frames.push(Vec::new());
+        }
+        let last = frames.last_mut().expect("a frame is open");
+        let grew = last.len() < memory.len();
+        // Memory grows with zeros.
+        last.resize(memory.len(), 0);
+        let size = memory.len() as u64;
+        if let Some(range) = changed(last, &memory) {
+            target
+                .write_memory(range.start as u64, &memory[range.clone()], size)
+                .expect("the write is bounded by the memory");
+            last[range.clone()].copy_from_slice(&memory[range]);
+        } else if grew {
+            target.write_memory(0, &[], size).expect("memory only grows");
+        }
+        target.append(record, step.stack().iter());
+    }
+    for _ in frames {
+        target.end_memory_frame();
+    }
+}
+
+/// The range where `new` differs from `old`, which has the same length.
+///
+/// Compares whole chunks first, so unchanged memory is skipped without testing each byte.
+fn changed(old: &[u8], new: &[u8]) -> Option<std::ops::Range<usize>> {
+    const CHUNK: usize = 256;
+    let differs = |(a, b)| a != b;
+    let (index, (a, b)) =
+        old.chunks(CHUNK).zip(new.chunks(CHUNK)).enumerate().find(|(_, (a, b))| a != b)?;
+    let start = index * CHUNK + a.iter().zip(b).position(differs)?;
+    let (index, (a, b)) =
+        old.rchunks(CHUNK).zip(new.rchunks(CHUNK)).enumerate().find(|(_, (a, b))| a != b)?;
+    let end = old.len() - index * CHUNK - a.iter().rev().zip(b.iter().rev()).position(differs)?;
+    Some(start..end)
+}
+
 /// The destination a memory-writing opcode takes from its pre-execution stack.
 /// Memory-reading opcodes can expand memory but leave all new bytes zero.
 fn memory_write(op: OpCode, stack: &[U256]) -> Option<std::ops::Range<usize>> {
@@ -437,6 +516,7 @@ mod tests {
     use alloy_network::TransactionBuilder;
     use alloy_primitives::{Address, hex};
     use evm2::{
+        SpecId,
         bytecode::Bytecode,
         evm::{AccountInfo, InMemoryDB},
     };
@@ -517,8 +597,53 @@ mod tests {
             AccountInfo::default()
                 .with_code(Bytecode::new_legacy(hex::decode("61cafe5f5260205ff3").unwrap().into())),
         );
+        assert_reconstructs(db, target, SpecFor::<EthEvmNetwork>::default());
+    }
+
+    #[test]
+    fn immediate_stack_swaps_reconstruct_interpreter_stack() {
+        let target = Address::with_last_byte(0x40);
+        // `PUSH1 1; PUSH1 2; PUSH1 3; EXCHANGE 0x8e; STOP`.
+        let exchange = "600160026003e88e00".to_string();
+        // 18 pushes, `SWAPN 0x80`, and `STOP`.
+        let swapn = (1..=18).map(|i| format!("60{i:02x}")).collect::<String>() + "e78000";
+        for code in [exchange, swapn] {
+            let mut db = InMemoryDB::default();
+            db.insert_account_info(
+                &target,
+                AccountInfo::default()
+                    .with_code(Bytecode::new_legacy(hex::decode(&code).unwrap().into())),
+            );
+            assert_reconstructs(db, target, SpecId::AMSTERDAM);
+        }
+    }
+
+    #[test]
+    fn stack_reconstructs_across_dup_swap_and_call_return() {
+        let target = Address::with_last_byte(0x40);
+        let child = Address::with_last_byte(0x20);
+        let mut db = InMemoryDB::default();
+        // `PUSH1 0xaa; PUSH1 0xbb; SWAP1; DUP1`, a call to the child, and `STOP`, which must
+        // show the words below the call's arguments and its result, not the child's stack.
+        db.insert_account_info(
+            &target,
+            AccountInfo::default().with_code(Bytecode::new_legacy(
+                hex::decode("60aa60bb90805f5f5f5f5f60205af100").unwrap().into(),
+            )),
+        );
+        // `PUSH1 1; PUSH1 2; STOP`.
+        db.insert_account_info(
+            &child,
+            AccountInfo::default()
+                .with_code(Bytecode::new_legacy(hex::decode("6001600200").unwrap().into())),
+        );
+        assert_reconstructs(db, target, SpecFor::<EthEvmNetwork>::default());
+    }
+
+    /// Calls `target` under `spec` and checks that each recorded step has the interpreter's
+    /// memory and stack, read backwards and then forwards.
+    fn assert_reconstructs(db: InMemoryDB, target: Address, spec: SpecFor<EthEvmNetwork>) {
         let factory = EvmFactoryFor::<EthEvmNetwork>::default();
-        let spec = SpecFor::<EthEvmNetwork>::default();
         let mut evm =
             factory.create_evm(db, EvmEnv::new(spec, factory.version(spec, 1), Default::default()));
         evm.set_inspector(Snapshots::default());
@@ -549,29 +674,101 @@ mod tests {
 
     #[test]
     fn second_call_below_root_lowers_recorded_steps() {
-        let mut recorder = DebugRecorder::default();
-        let step = |pc, depth| (StepRecord { pc, depth, ..Default::default() }, [EvmWord([0; 32])]);
-        let mut call = |pc, depth| {
-            recorder.enter(1);
-            let (record, stack) = step(pc, depth);
-            recorder.table().append(record, stack);
-            recorder.exit();
-        };
+        /// Appends a step at `pc` and `depth`, with `pc` as its stack.
+        fn step(table: &mut StepTable, pc: u8, depth: u64) {
+            let record = StepRecord { pc: pc.into(), depth, ..Default::default() };
+            table.append(record, [EvmWord([pc; 32])]);
+        }
+
+        // A step of an earlier recorder that shares the table, which stays as it is.
+        let mut earlier = StepTable::new();
+        earlier.start_memory_frame();
+        earlier.write_memory(0, &[9; 2], 32).unwrap();
+        step(&mut earlier, 0, 1);
+        earlier.end_memory_frame();
+        let sink = DebugStepSink::new();
+        sink.put(earlier);
+        let mut recorder = DebugRecorder::new(sink);
+
         // The first call records one level up, as the arena lifts it into the root.
-        call(1, 1);
+        recorder.enter(1);
+        step(recorder.table(), 1, 1);
+        recorder.table().write_memory(0, &[1; 32], 32).unwrap();
+        step(recorder.table(), 2, 1);
+        recorder.table().write_memory(40, &[2; 8], 64).unwrap();
+        step(recorder.table(), 3, 1);
+        recorder.enter(2);
+        step(recorder.table(), 4, 2);
+        recorder.table().write_memory(0, &[3; 32], 32).unwrap();
+        step(recorder.table(), 5, 2);
+        recorder.exit();
+        // The caller resumes with the call's output.
+        recorder.table().write_memory(0, &[4; 4], 64).unwrap();
+        step(recorder.table(), 6, 1);
+        // Two calls in a row, the second with less memory than the first.
+        recorder.enter(2);
+        recorder.table().write_memory(0, &[], 96).unwrap();
+        step(recorder.table(), 7, 2);
+        recorder.exit();
+        recorder.enter(2);
+        step(recorder.table(), 8, 2);
+        recorder.exit();
+        step(recorder.table(), 9, 1);
+        recorder.exit();
         // A second call keeps the root, so both calls record below it.
-        call(2, 2);
+        recorder.enter(1);
+        recorder.table().write_memory(0, &[5; 32], 32).unwrap();
+        step(recorder.table(), 10, 2);
+        recorder.exit();
 
         let recording = recorder.finish();
+        assert_eq!(recording.steps, 1..11);
+        assert_eq!(
+            recording.frames.iter().map(|frame| frame.depth).collect::<Vec<_>>(),
+            [0, 1, 2, 2, 2, 1]
+        );
+        let caller = [vec![1; 32], vec![0; 8], vec![2; 8], vec![0; 16]].concat();
+        let resumed = [vec![4; 4], caller[4..].to_vec()].concat();
+        let expected = [
+            (0, 1, [vec![9; 2], vec![0; 30]].concat()),
+            (1, 2, vec![]),
+            (2, 2, vec![1; 32]),
+            (3, 2, caller),
+            (4, 3, vec![]),
+            (5, 3, vec![3; 32]),
+            (6, 2, resumed.clone()),
+            (7, 3, vec![0; 96]),
+            (8, 3, vec![]),
+            (9, 2, resumed),
+            (10, 2, vec![5; 32]),
+        ];
         let table = recorder.table.as_ref().unwrap();
-        let steps = recording
-            .steps
-            .map(|index| {
-                let step = table.step(index);
-                (step.pc(), step.depth(), step.stack().to_vec())
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(steps, [(1, 2, vec![EvmWord([0; 32])]), (2, 2, vec![EvmWord([0; 32])])]);
-        assert_eq!(recording.frames.iter().map(|frame| frame.depth).collect::<Vec<_>>(), [0, 1, 1]);
+        assert_eq!(table.len(), expected.len());
+        for index in (0..table.len()).rev().chain(0..table.len()) {
+            let step = table.step(index);
+            let (pc, depth, memory) = &expected[index];
+            assert_eq!((step.pc(), step.depth()), (*pc, *depth), "step {index}");
+            assert_eq!(step.memory().as_deref(), Some(memory.as_slice()), "memory at {index}");
+            assert_eq!(step.stack().to_vec(), [EvmWord([*pc as u8; 32])], "stack at {index}");
+        }
+    }
+
+    #[test]
+    fn changed_spans_the_differing_bytes() {
+        // Two whole chunks and a short one, which comes first when chunked from the end.
+        let old = vec![0; 600];
+        let with = |set: &[usize]| {
+            let mut new = old.clone();
+            for &at in set {
+                new[at] = 1;
+            }
+            new
+        };
+        assert_eq!(changed(&[], &[]), None);
+        assert_eq!(changed(&old, &old), None);
+        assert_eq!(changed(&old, &with(&[1, 599])), Some(1..600));
+        assert_eq!(changed(&old, &with(&[255, 256])), Some(255..257));
+        assert_eq!(changed(&old, &with(&[300, 301])), Some(300..302));
+        assert_eq!(changed(&old, &with(&[3])), Some(3..4));
     }
 }

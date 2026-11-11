@@ -42,7 +42,7 @@ use evm2::{
 };
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
-use std::{fmt, sync::Arc};
+use std::{fmt, mem, sync::Arc};
 use tempo_precompiles::{NONCE_PRECOMPILE_ADDRESS, nonce::NonceManager};
 
 #[cfg(any(feature = "base", feature = "optimism"))]
@@ -164,7 +164,7 @@ pub struct PoolTxGasConfig {
 /// A transaction executed and committed by [`AnvilBlockExecutor`].
 #[derive(Debug)]
 pub(crate) struct CommittedTx {
-    /// Network-neutral result.
+    /// Network-neutral result. Its logs and EIP-8130 phase statuses are moved into the receipt.
     pub(crate) result: ExecResult,
     /// Traces recorded while executing it.
     pub(crate) traces: Vec<evm2_inspectors::tracing::types::CallTraceNode>,
@@ -402,7 +402,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 .state_mut()
                 .set_bal_index(BlockAccessIndex::new(self.receipts.len() as u64 + 1));
         }
-        let result = match self.evm.transact_with_inspector(&evm_tx, &mut self.inspector) {
+        let mut result = match self.evm.transact_with_inspector(&evm_tx, &mut self.inspector) {
             Ok(executed) => {
                 let Ok(result) = executed.commit_with(&mut BlockChanges::new(&mut self.state));
                 exec_result::<N>(result)
@@ -423,7 +423,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
         let receipt = if let Some(depositor_nonce) = depositor_nonce {
             optimism::build_deposit_receipt(
                 result.status,
-                result.logs.clone(),
+                mem::take(&mut result.logs),
                 self.deposit_hardfork,
                 depositor_nonce,
                 self.gas_used,
@@ -432,18 +432,18 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             build_receipt(
                 tx.tx_type(),
                 result.status,
-                result.logs.clone(),
+                mem::take(&mut result.logs),
                 self.gas_used,
-                result.ext.eip8130_phase_statuses.clone(),
+                result.ext.eip8130_phase_statuses.take(),
             )
         };
         #[cfg(not(any(feature = "base", feature = "optimism")))]
         let receipt = build_receipt(
             tx.tx_type(),
             result.status,
-            result.logs.clone(),
+            mem::take(&mut result.logs),
             self.gas_used,
-            result.ext.eip8130_phase_statuses.clone(),
+            result.ext.eip8130_phase_statuses.take(),
         );
         self.receipts.push(receipt);
 

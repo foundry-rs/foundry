@@ -1075,7 +1075,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         }
         let state = evm.state_mut();
         let loaded = loaded_slots(state);
-        let warm = warm_accounts(state);
+        let mut warm = warm_accounts(state);
+        let cold_slots = cold_account_warm_slots(state, &self.forks.persistent);
         let transient = take_transient(state);
         let context = self.active_mut();
         context.transient = transient;
@@ -1094,8 +1095,17 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             }
             context.loaded.entry(address).or_default().extend(slots);
         }
-        // The context keeps the warmth it resumed with, which the running state holds in its
-        // prewarm set rather than in loaded accounts, even if this visit did not touch it.
+        // The running state holds the warmth the context resumed with in its prewarm set rather
+        // than in loaded accounts. The context keeps it, and the next context carries what is
+        // still warm of it, even if this visit did not touch it, but not what was cooled since,
+        // such as by an isolated static call.
+        let prewarm = state.prewarm_set();
+        for (address, slots) in &context.warm {
+            if prewarm.is_warm(address) {
+                let slots = slots.iter().filter(|key| prewarm.is_storage_warm(address, key));
+                warm.entry(*address).or_default().extend(slots);
+            }
+        }
         for (address, slots) in &warm {
             context.warm.entry(*address).or_default().extend(slots);
         }
@@ -1133,6 +1143,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             logs,
             prewarm,
             warm,
+            cold_slots,
         }
     }
 
@@ -1154,6 +1165,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             logs,
             mut prewarm,
             warm: source_warm,
+            cold_slots: source_cold_slots,
         } = suspended;
         if carry {
             self.active_mut().inherit(&source_loaded, &source_created, &source);
@@ -1237,6 +1249,24 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
                 && account.exists()
             {
                 account.mark_created();
+            }
+        }
+        // Persistent slots warm while their account is cold, such as the test contract's after an
+        // isolated static call cooled it, stay warm without warming the account, which the
+        // prewarm set cannot express. Only slots this context caches, including the implicit zeros
+        // of wiped storage, are loaded to warm them, so the switch reads nothing from the fork.
+        let state = evm.state_mut();
+        for (address, slots) in source_cold_slots {
+            for key in slots {
+                let cache = &state.overlay_db().cache;
+                let cached = cache.accounts.contains_key(&address)
+                    && cache
+                        .storage
+                        .get(&address)
+                        .is_some_and(|storage| storage.wiped || storage.slots.contains_key(&key));
+                if cached && state.storage_slot(&address, key).is_ok() {
+                    state.set_storage_warm(&address, key, true);
+                }
             }
         }
         F::Types::refresh_switched_transaction(evm, &self.tx_original);
@@ -1367,6 +1397,8 @@ struct Suspended {
     prewarm: PrewarmSet,
     /// Accounts and slots warm in the running transaction.
     warm: AddressMap<HashSet<U256>>,
+    /// Warm slots of persistent accounts the running transaction holds cold.
+    cold_slots: AddressMap<HashSet<U256>>,
 }
 
 /// Clears `evm`'s inspector and returns the EVM without the borrows the inspector held, such as
@@ -1568,6 +1600,33 @@ pub fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
             .filter(|key| state.storage_slot(&address, *key).is_ok_and(|slot| slot.is_warm()))
             .collect();
         warm.insert(address, slots);
+    }
+    warm
+}
+
+/// Returns the warm slots of the `persistent` accounts the running transaction in `state` loaded
+/// but holds cold, such as the test contract after an isolated static call cooled it.
+fn cold_account_warm_slots(
+    state: &mut State<'_>,
+    persistent: &AddressSet,
+) -> AddressMap<HashSet<U256>> {
+    let loaded = state
+        .loaded_accounts()
+        .filter(|(address, _)| persistent.contains(*address))
+        .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    let mut warm = AddressMap::default();
+    for (address, slots) in loaded {
+        if state.account(&address).is_ok_and(|account| account.is_warm()) {
+            continue;
+        }
+        let slots = slots
+            .into_iter()
+            .filter(|key| state.storage_slot(&address, *key).is_ok_and(|slot| slot.is_warm()))
+            .collect::<HashSet<_>>();
+        if !slots.is_empty() {
+            warm.insert(address, slots);
+        }
     }
     warm
 }

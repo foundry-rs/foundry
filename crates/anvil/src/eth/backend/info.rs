@@ -35,7 +35,7 @@ impl<N: Network> StorageInfo<N> {
     /// Returns the block with the given hash in the format of the ethereum API
     pub fn eth_block(&self, hash: B256) -> Option<AnyRpcBlock> {
         let block = self.block(hash)?;
-        Some(self.backend.convert_block(block))
+        Some(self.backend.convert_block_with_hash(block, Some(hash)))
     }
 }
 
@@ -51,6 +51,17 @@ where
     /// Returns the receipts of the block with the given hash
     pub fn receipts(&self, hash: B256) -> Option<Vec<N::ReceiptEnvelope>> {
         self.backend.mined_receipts(hash)
+    }
+
+    /// Calls `f` with the block with the given hash and its receipts, without cloning them.
+    ///
+    /// `f` runs under the storage read lock, so it must not take another backend lock.
+    pub(crate) fn with_block_and_receipts<T>(
+        &self,
+        hash: B256,
+        f: impl FnOnce(&Block, &[&N::ReceiptEnvelope]) -> T,
+    ) -> Option<T> {
+        self.backend.with_block_and_receipts(hash, f)
     }
 }
 

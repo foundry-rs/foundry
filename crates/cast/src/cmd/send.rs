@@ -370,7 +370,7 @@ impl SendTxArgs {
                         .raw_request::<_, ()>(
                             "wallet_switchEthereumChain".into(),
                             [serde_json::json!({
-                                "chainId": format!("0x{:x}", config_chain_id),
+                                "chainId": format!("{config_chain_id:#x}"),
                             })],
                         )
                         .await?;

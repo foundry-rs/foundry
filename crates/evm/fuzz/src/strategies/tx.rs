@@ -69,13 +69,15 @@ impl TxGenerator {
         config: InvariantConfig,
         fixtures: FuzzFixtures,
     ) -> Self {
-        let senders = Rc::new(senders);
         let dictionary_weight = config.dictionary.dictionary_weight;
         let payable_value_weight = config.corpus.payable_value_weight;
         let planned = Rc::new(RefCell::new(PlannedCalls::default()));
+        // The sender and delay strategies do not depend on the selected call: build them once.
+        let sender = select_sender(&state, senders, dictionary_weight);
+        let warp = optional_delay(&state, config.max_time_delay, dictionary_weight);
+        let roll = optional_delay(&state, config.max_block_delay, dictionary_weight);
         let strategy = any::<prop::sample::Selector>()
             .prop_flat_map(move |selector| {
-                let sender = select_sender(&state, senders.clone(), dictionary_weight);
                 let call = {
                     let generation = contracts.fuzzed_functions_generation();
                     let mut planned = planned.borrow_mut();
@@ -98,9 +100,7 @@ impl TxGenerator {
                     }
                     selector.select(planned.calls.iter()).clone()
                 };
-                let warp = optional_delay(&state, config.max_time_delay, dictionary_weight);
-                let roll = optional_delay(&state, config.max_block_delay, dictionary_weight);
-                (warp, roll, sender, call)
+                (warp.clone(), roll.clone(), sender.clone(), call)
             })
             .prop_map(move |(warp, roll, sender, call_details)| BasicTxDetails {
                 warp,
@@ -162,7 +162,7 @@ fn optional_delay(
 
 fn select_sender(
     state: &FuzzState,
-    senders: Rc<SenderFilters>,
+    senders: SenderFilters,
     dictionary_weight: u32,
 ) -> BoxedStrategy<Address> {
     if senders.targeted.is_empty() {

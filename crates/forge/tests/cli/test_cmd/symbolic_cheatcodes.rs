@@ -1,5 +1,5 @@
 use super::symbolic_helpers::{
-    assert_symbolic, assert_symbolic_witness, json_test_result, z3_available,
+    assert_symbolic, assert_symbolic_witness, json_test_result, read_artifact_ref, z3_available,
 };
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, snapbox::IntoData, str, util::OutputExt};
@@ -2944,6 +2944,185 @@ Suite result: FAILED. 1 passed; 7 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// `vm.deal` and `vm.store` through a free address write every known account under a guard
+// instead of forking once per account, and later uses of the address still see the account it
+// may name.
+#[forgetest_init]
+fn symbolic_free_address_writes_do_not_fork(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_free_address_writes_do_not_fork");
+
+    prj.add_test(
+        "SymbolicFreeAddressWrites.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Vault {
+    uint256 public total;
+    mapping(address => uint256) public bal;
+
+    function set(uint256 x) external {
+        total = x;
+    }
+
+    function add(uint256 x) external {
+        total += x;
+        bal[msg.sender] += x;
+    }
+
+    receive() external payable {}
+}
+
+contract SymbolicFreeAddressWrites is Test {
+    Vault vault;
+
+    function setUp() public {
+        vault = new Vault();
+    }
+
+    function checkWritesStayOnOnePath(address a, address b, uint256 x) public {
+        vm.deal(a, x);
+        vm.store(b, bytes32(uint256(1000)), bytes32(x));
+        // A slot hashed from a guarded address needs no decision.
+        vm.store(b, keccak256(abi.encode(a)), bytes32(x));
+        assert(a.balance == x);
+        assert(uint256(vm.load(b, bytes32(uint256(1000)))) == x);
+    }
+
+    // Each test below fails concretely for `a == address(vault)`.
+    function checkStoreMayTargetSetUpContract(address a) public {
+        vm.store(a, 0, bytes32(uint256(7)));
+        assert(vault.total() != 7);
+    }
+
+    function checkLaterDealShowsThrough(address a) public {
+        vm.deal(a, 5);
+        vm.deal(address(vault), 7);
+        assert(a.balance == 5);
+    }
+
+    function checkLaterStoreShowsThrough(address a) public {
+        vm.store(a, 0, bytes32(uint256(1)));
+        vault.set(2);
+        assert(uint256(vm.load(a, 0)) == 1);
+    }
+
+    function checkDealKeepsCode(address a) public {
+        vm.deal(a, 1);
+        assert(a.code.length == 0);
+    }
+
+    function checkStoreKeepsNonce(address a) public {
+        vm.store(a, bytes32(uint256(9)), bytes32(uint256(1)));
+        assert(vm.getNonce(a) == 0);
+    }
+
+    // A cheatcode that takes the address as an integer with high bits set still decides it
+    // by its low 160 bits.
+    function checkDirtyWordKeepsGuard(uint256 x) public {
+        vm.assume(x >> 160 != 0);
+        address a = address(uint160(x));
+        vm.deal(a, 5);
+        vm.warp(x);
+        vm.deal(address(vault), 7);
+        assert(a.balance == 5);
+    }
+
+    // A cheatcode call whose input size the path fixes but does not spell out still forks.
+    function checkSymbolicSizeSetNonce(address a, uint256 size) public {
+        vm.assume(size == 68);
+        bytes memory data = abi.encodeWithSelector(vm.setNonceUnsafe.selector, a, uint64(7));
+        bool ok;
+        assembly {
+            ok := call(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0, add(data, 0x20), size, 0, 0)
+        }
+        assert(vm.getNonce(address(vault)) != 7);
+    }
+
+    // A cheatcode argument cast from the address decides it, as the address itself does.
+    function checkDerivedArgumentDecidesAddress(address a) public {
+        vm.deal(a, 1);
+        vm.setNonceUnsafe(address(vault), uint64(uint160(a)));
+        assert(vm.getNonce(address(vault)) != uint64(uint160(address(vault))));
+    }
+
+    function checkPrankAfterDeal(address a) public {
+        vm.deal(a, 1);
+        vm.prank(a);
+        vault.add(1);
+        assert(vault.bal(address(vault)) == 0);
+    }
+
+    // A prank set before the write decides the address at the call it applies to. For
+    // `a == address(vault)` the call sends the value to itself.
+    function checkPrankBeforeDeal(address a) public {
+        vm.startPrank(a);
+        vm.deal(a, 5);
+        (bool ok,) = address(vault).call{value: 5}("");
+        vm.stopPrank();
+        assert(!ok || a != address(vault) || address(vault).balance == 10);
+    }
+
+    // A cheatcode call at a symbolic input offset still decides the address.
+    function checkSymbolicOffsetPrank(address a, uint8 n) public {
+        vm.deal(a, 5);
+        assembly {
+            mstore(0x40, add(mload(0x40), mul(n, 32)))
+        }
+        vm.prank(a);
+        (bool ok,) = address(vault).call{value: 5}("");
+        assert(!ok || a != address(vault) || address(vault).balance == 10);
+    }
+}
+"#,
+    );
+
+    // Forking over the known accounts made the path count grow with each write; only
+    // `vm.store` still forks, off a known precompile where it reverts.
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--symbolic-max-paths",
+        "2",
+        "--match-test",
+        "checkWritesStayOnOnePath",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+[PASS] checkWritesStayOnOnePath(address,address,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicFreeAddressWrites",
+        "--no-match-test",
+        "checkWritesStayOnOnePath",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 11 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealKeepsCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDerivedArgumentDecidesAddress(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDirtyWordKeepsGuard(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterDealShowsThrough(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterStoreShowsThrough(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankAfterDeal(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankBeforeDeal(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreKeepsNonce(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreMayTargetSetUpContract(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicOffsetPrank(address,uint8) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn symbolic_cheatcode_state_survives_reverting_call(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_cheatcode_state_survives_reverting_call");
@@ -3700,6 +3879,8 @@ fn symbolic_svm_creator_breadth(prj: _, cmd: _) {
     prj.add_test(
         "SymbolicSvmCreators.t.sol",
         r#"
+import "forge-std/Test.sol";
+
 interface Svm {
     function createUint8(string calldata name) external returns (uint8);
     function createInt16(string calldata name) external returns (int16);
@@ -3708,6 +3889,8 @@ interface Svm {
     function createBytes(uint256 len, string calldata name) external returns (bytes memory);
     function createString(string calldata name) external returns (string memory);
     function createString(uint256 len, string calldata name) external returns (string memory);
+    function createUint256(string calldata name) external returns (uint256);
+    function createBytes32(string calldata name) external returns (bytes32);
 }
 
 contract SymbolicSvmCreators {
@@ -3729,6 +3912,66 @@ contract SymbolicSvmCreators {
         assert(bytes(text).length == 2);
         assert(bytes(sizedText).length == 3);
         assert(fixedBytes == fixedBytes);
+    }
+
+    function checkSvmReplayFindsValues() public {
+        uint256 value = Svm(SVM_ADDRESS).createUint256("value");
+        bytes memory data = Svm(SVM_ADDRESS).createBytes(2, "data");
+        assert(!(value == 0x1234 && data[0] == 0x41 && data[1] == 0x42));
+    }
+
+    function checkSvmReplayRejectsHashCandidate() public {
+        bytes32 preimage = Svm(SVM_ADDRESS).createBytes32("preimage");
+        assert(sha256(abi.encode(preimage)) != bytes32(uint256(0xbeef)));
+    }
+
+    function checkSvmReplayRejectsDivergentHelperCall(bytes32 preimage) public {
+        assert(sha256(abi.encode(preimage)) != bytes32(uint256(0xbeef)));
+        Svm(SVM_ADDRESS).createUint256("value");
+    }
+
+    function checkSvmReplayRejectsDivergentSnapshot(bytes32 preimage) public {
+        assert(sha256(abi.encode(preimage)) != bytes32(uint256(0xbeef)));
+        Vm(SVM_ADDRESS).snapshotState();
+    }
+
+    function checkSvmReplayKeepsRevertedCalls() public {
+        try this.createThenRevert() {} catch {}
+        assert(Svm(SVM_ADDRESS).createUint256("value") != 7);
+    }
+
+    function checkSvmReplayClearedMocks(uint256 x) public {
+        Vm(address(uint160(uint256(keccak256("hevm cheat code"))))).clearMockedCalls();
+        assert(x != 5);
+    }
+
+    function createThenRevert() external {
+        Svm(SVM_ADDRESS).createUint256("reverted");
+        revert();
+    }
+}
+
+contract SymbolicSvmHandler {
+    uint256 public value;
+
+    function setValue() external {
+        value = Svm(0xF3993A62377BCd56AE39D773740A5390411E8BC9).createUint256("value");
+    }
+}
+
+contract SymbolicSvmInvariant is Test {
+    SymbolicSvmHandler handler;
+
+    function setUp() public {
+        handler = new SymbolicSvmHandler();
+        targetContract(address(handler));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.invariant.runs = 0
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_svmValue() public view {
+        assert(handler.value() != 0x1234);
     }
 }
 "#,
@@ -3752,6 +3995,83 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
+
+    // Replay answers the `svm` calls with the solver model, so only a real failure confirms.
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSvmReplay",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicSvmCreators.t.sol:SymbolicSvmCreators
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmReplayClearedMocks(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmReplayFindsValues() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmReplayKeepsRevertedCalls() ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of `svm` values] checkSvmReplayRejectsDivergentHelperCall(bytes32) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of `svm` values] checkSvmReplayRejectsDivergentSnapshot(bytes32) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSvmReplayRejectsHashCandidate() ([METRICS])
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered());
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--json",
+            "--match-test",
+            "checkSvmReplayFindsValues",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let symbolic = &json_test_result(&output, "checkSvmReplayFindsValues()")["symbolic"];
+    let svm_returns = serde_json::json!([
+        "0x0000000000000000000000000000000000000000000000000000000000001234",
+        "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000024142000000000000000000000000000000000000000000000000000000000000",
+    ]);
+    assert_eq!(symbolic["counterexample"]["svm_returns"], svm_returns);
+    assert_eq!(read_artifact_ref(&symbolic["artifact"])["calls"][0]["svm_returns"], svm_returns);
+
+    let artifact = symbolic["artifact"]["path"].as_str().unwrap();
+    cmd.forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		sender=0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 addr=0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 calldata=0x9bdeff27 args=[]] checkSvmReplayFindsValues() ([GAS])
+...
+"#]]);
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "test_regression_checkSvmReplayFindsValues_symbolic"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01)] test_regression_checkSvmReplayFindsValues_symbolic() ([GAS])
+...
+"#]]);
+
+    // Invariant replay does not answer `svm` calls, so the handler revert must not confirm.
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_svmValue"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_svmValue()");
+    assert_eq!(result["counterexample"], serde_json::Value::Null);
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert_eq!(
+        result["symbolic"]["incomplete"]["reason"],
+        "unsupported symbolic execution feature: symbolic invariant replay of svm values"
+    );
 }
 #[forgetest_init]
 fn symbolic_vm_expect_revert_double_registration_is_rejected(prj: _, cmd: _) {
