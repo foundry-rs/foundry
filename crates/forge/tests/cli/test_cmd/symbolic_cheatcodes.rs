@@ -3463,6 +3463,36 @@ contract CheatHelper {
         VM.setNonce(address(killable), 10);
         revert();
     }
+
+    function sendDealZeroAndRevert(address payable to, uint256 amount) public {
+        send(to, amount);
+        VM.deal(to, 0);
+        revert();
+    }
+
+    function sendDealZeroDealAndRevert(address payable to) external {
+        send(to, 10);
+        VM.deal(to, 0);
+        VM.deal(to, 100);
+        revert();
+    }
+
+    function dealAfterSaturatedChildAndRevert(address payable to) external {
+        try this.sendDealZeroAndRevert(to, 10) {} catch {}
+        VM.deal(to, 5);
+        revert();
+    }
+
+    function sendDealSelfMaxAndRevert(address payable to) external {
+        send(to, 10);
+        VM.deal(address(this), type(uint256).max);
+        revert();
+    }
+
+    function send(address to, uint256 amount) internal {
+        (bool ok,) = to.call{value: amount}("");
+        require(ok);
+    }
 }
 
 contract Forwarder {
@@ -3557,6 +3587,48 @@ contract SymbolicCheatWritesSurviveRevert is Test {
         assertEq(vm.getNonce(address(0x2005)), 7);
     }
 
+    function checkReplayedBalanceSaturates() public {
+        address payable to = payable(address(0x2006));
+        vm.deal(address(helper), 1000);
+        // The revert takes back the 10 wei the write already removed, leaving no balance.
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.sendDealZeroAndRevert, (to, 10)));
+        assertFalse(ok);
+        assertEq(to.balance, 0);
+        // The changes add up before saturating.
+        vm.deal(to, 50);
+        (ok,) = address(helper).call(abi.encodeCall(CheatHelper.sendDealZeroDealAndRevert, (to)));
+        assertFalse(ok);
+        assertEq(to.balance, 90);
+        // An enclosing revert keeps the saturated balance.
+        vm.deal(to, 50);
+        (ok,) = address(helper).call(abi.encodeCall(CheatHelper.dealAfterSaturatedChildAndRevert, (to)));
+        assertFalse(ok);
+        assertEq(to.balance, 5);
+        // A change above the maximum balance saturates there.
+        CheatHelper funded = new CheatHelper();
+        vm.deal(address(funded), 10);
+        (ok,) = address(funded).call(abi.encodeCall(CheatHelper.sendDealSelfMaxAndRevert, (to)));
+        assertFalse(ok);
+        assertEq(address(funded).balance, type(uint256).max);
+    }
+
+    function checkReplayedSymbolicBalanceSaturates(uint256 amount) public {
+        address payable to = payable(address(0x2007));
+        vm.deal(address(helper), amount);
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.sendDealZeroAndRevert, (to, amount)));
+        assertFalse(ok);
+        assertEq(to.balance, 0);
+    }
+
+    // Like Forge, the replay saturates at zero instead of wrapping below it.
+    function checkReplayedBalanceDoesNotWrap() public {
+        address payable to = payable(address(0x2008));
+        vm.deal(address(helper), 10);
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.sendDealZeroAndRevert, (to, 10)));
+        assertFalse(ok);
+        assertEq(to.balance, type(uint256).max - 9);
+    }
+
     function checkRolledBackDealFails(uint256 amount) public {
         vm.assume(amount != 0);
         (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.writeAndRevert, (amount)));
@@ -3576,14 +3648,17 @@ contract SymbolicCheatWritesSurviveRevert is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicCheatWritesSurviveRevert.t.sol:SymbolicCheatWritesSurviveRevert
+Ran 9 tests for test/SymbolicCheatWritesSurviveRevert.t.sol:SymbolicCheatWritesSurviveRevert
+[FAIL: assertion failed: 0 != [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkReplayedBalanceDoesNotWrap() ([METRICS])
+[PASS] checkReplayedBalanceSaturates() ([METRICS])
+[PASS] checkReplayedSymbolicBalanceSaturates(uint256) ([METRICS])
 [FAIL: assertion failed: [..] != 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkRolledBackDealFails(uint256) ([METRICS])
 [PASS] checkSymbolicTargetWriteSurvivesRevert(address) ([METRICS])
 [PASS] checkWritesBeforeSnapshotRestoreSurvive() ([METRICS])
 [PASS] checkWritesSurviveAsDeltas() ([METRICS])
 [PASS] checkWritesSurviveFailedFrames() ([METRICS])
 [PASS] checkWritesSurviveNestedRevert(uint256) ([METRICS])
-Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 7 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
