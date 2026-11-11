@@ -1171,9 +1171,8 @@ impl PathState {
         value: SymExpr,
     ) {
         let previous = self.world.balance_word_for_address(cx, executor, address);
-        let delta = SymExpr::binop(cx, SymBinOp::Sub, value.clone(), previous);
-        self.world.set_balance_word(address, value);
-        self.persistent_writes.push(PersistentWrite::Balance(address, delta));
+        self.world.set_balance_word(address, value.clone());
+        self.persistent_writes.push(PersistentWrite::Balance { address, balance: value, previous });
     }
 
     /// Sets a nonce as the nonce cheatcodes do, recording the write so it survives reverts.
@@ -1194,8 +1193,8 @@ impl PathState {
     /// world.
     ///
     /// Forge's cheatcodes write balances and nonces outside the journal, so a revert only undoes
-    /// the journaled changes made on top of them: balances keep the write's wrapping delta, and
-    /// nonces keep its delta, saturated at the nonce bounds, unless the revert undoes the
+    /// the journaled changes made on top of them: each account keeps the sum of its writes'
+    /// balance and nonce deltas, saturated once at the bounds, unless the revert undoes the
     /// account's creation, which resets the nonce. A failed frame that restored a snapshot
     /// returns to the state from just before the first restore made since it started, so later
     /// writes are dropped.
@@ -1205,15 +1204,18 @@ impl PathState {
         executor: &ExecutorView<'_>,
         start: usize,
     ) -> Result<(), SymbolicError> {
+        // Kept in the order the accounts were first written, so the built expressions do not
+        // depend on hash order.
+        let mut balance_writes = Vec::<(Address, Vec<(SymExpr, SymExpr)>)>::new();
         let mut nonce_deltas = HashMap::<Address, i128>::default();
         let mut created = HashSet::<Address>::default();
         for write in self.persistent_writes.split_off(start) {
             match write {
-                PersistentWrite::Balance(address, delta) => {
-                    let balance = self.world.balance_word_for_address(cx, executor, address);
-                    let balance = SymExpr::binop(cx, SymBinOp::Add, balance, delta.clone());
-                    self.world.set_balance_word(address, balance);
-                    self.persistent_writes.push(PersistentWrite::Balance(address, delta));
+                PersistentWrite::Balance { address, balance, previous } => {
+                    match balance_writes.iter_mut().find(|(account, _)| *account == address) {
+                        Some((_, writes)) => writes.push((balance, previous)),
+                        None => balance_writes.push((address, vec![(balance, previous)])),
+                    }
                 }
                 PersistentWrite::Nonce(address, delta) => {
                     *nonce_deltas.entry(address).or_default() += delta;
@@ -1224,8 +1226,34 @@ impl PathState {
                 PersistentWrite::Restore => break,
             }
         }
-        // Each account's nonce writes are recorded again as one net change, so an enclosing
-        // replay keeps this replay's saturation.
+        // Each account's balance and nonce writes are recorded again as one net change, so an
+        // enclosing replay keeps this replay's saturation.
+        for (address, writes) in balance_writes {
+            let reverted = self.world.balance_word_for_address(cx, executor, address);
+            // The exact sum of the balance and the deltas, as `high * 2^256 + low` with a signed
+            // `high`.
+            let mut low = reverted.clone();
+            let mut high = SymExpr::zero(cx);
+            for (balance, previous) in writes {
+                let added = SymExpr::binop(cx, SymBinOp::Add, low.clone(), balance);
+                let carry = SymBoolExpr::cmp(cx, SymCmpOp::Ult, added.clone(), low);
+                let carry = SymExpr::bool_word(cx, carry);
+                let borrow = SymBoolExpr::cmp(cx, SymCmpOp::Ult, added.clone(), previous.clone());
+                let borrow = SymExpr::bool_word(cx, borrow);
+                high = SymExpr::binop(cx, SymBinOp::Add, high, carry);
+                high = SymExpr::binop(cx, SymBinOp::Sub, high, borrow);
+                low = SymExpr::binop(cx, SymBinOp::Sub, added, previous);
+            }
+            let zero = SymExpr::zero(cx);
+            let max = SymExpr::constant(cx, U256::MAX);
+            let in_range = SymBoolExpr::eq(cx, high.clone(), zero.clone());
+            let saturated = SymExpr::ite(cx, in_range, low, max);
+            let negative = SymBoolExpr::cmp(cx, SymCmpOp::Slt, high, zero.clone());
+            let balance = SymExpr::ite(cx, negative, zero, saturated);
+            if balance != reverted {
+                self.set_persistent_balance(cx, executor, address, balance);
+            }
+        }
         for (address, delta) in nonce_deltas {
             let previous = self.world.nonce(executor, address)?;
             let nonce = if created.contains(&address) {
@@ -3024,8 +3052,8 @@ impl SymbolicBlock {
 /// [`PathState::replay_persistent_writes`].
 #[derive(Clone, Debug)]
 pub(crate) enum PersistentWrite {
-    /// Adds a wrapping delta to an account's balance.
-    Balance(Address, SymExpr),
+    /// Adds `balance - previous` to an account's balance, saturating at its bounds.
+    Balance { address: Address, balance: SymExpr, previous: SymExpr },
     /// Adds a delta to an account's nonce.
     Nonce(Address, i128),
     /// Marks an account created, so a revert that undoes the creation resets its nonce.
