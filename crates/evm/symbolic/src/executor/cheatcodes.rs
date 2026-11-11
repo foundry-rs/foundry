@@ -581,58 +581,104 @@ impl SymbolicExecutor {
         Ok(())
     }
 
-    /// Returns the target of a cheatcode write, such as `vm.deal`, made through a free symbolic
-    /// address by the CALL on top of the stack.
+    /// Returns an address word the CALL on top of the stack must decide before it runs, with
+    /// the known accounts to fork it over.
+    ///
+    /// `vm.etch` and the nonce cheatcodes through a free address fork over every known account,
+    /// since they need concrete code and nonces, and `vm.store` over the known precompiles,
+    /// where it reverts. `vm.deal` and the rest of a `vm.store` write each account under a
+    /// guard instead. A word written that way is decided only once a call targets it or a
+    /// cheatcode other than these writes and their reads takes it.
     pub(super) fn free_address_write_target(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &PathState,
         kind: CallKind,
-    ) -> Option<SymExpr> {
+    ) -> Option<(SymExpr, Vec<Address>)> {
+        let target = state.stack.peek(1).ok()?.clone();
+        let Some(to) = target.as_const().map(word_to_address) else {
+            let target = target.address_operand(&mut self.cx);
+            return self.guarded_address_word(state, target);
+        };
         let in_offset_idx = match kind {
             CallKind::Call => 3,
             CallKind::StaticCall => 2,
             CallKind::CallCode | CallKind::DelegateCall => return None,
         };
-        if state.stack.peek(1).ok()?.as_const() != Some(address_word(CHEATCODE_ADDRESS)) {
+        if to != CHEATCODE_ADDRESS && to != SYMBOLIC_VM_COMPAT_ADDRESS {
             return None;
         }
         let in_offset = usize::try_from(state.stack.peek(in_offset_idx).ok()?.as_const()?).ok()?;
-        let selector = state.memory.read_concrete(&mut self.cx, in_offset, 4).ok()?;
-        if ![
-            dealCall::SELECTOR,
-            etchCall::SELECTOR,
-            storeCall::SELECTOR,
-            setNonceCall::SELECTOR,
-            setNonceUnsafeCall::SELECTOR,
-        ]
-        .contains(&selector.as_slice().try_into().ok()?)
-        {
-            return None;
+        let in_size =
+            usize::try_from(state.stack.peek(in_offset_idx + 1).ok()?.as_const()?).ok()?;
+        let selector: [u8; 4] = state
+            .memory
+            .read_concrete(&mut self.cx, in_offset, 4)
+            .ok()?
+            .as_slice()
+            .try_into()
+            .ok()?;
+        let args_offset = in_offset + 4;
+        if to == CHEATCODE_ADDRESS {
+            let store = selector == storeCall::SELECTOR;
+            if store
+                || [etchCall::SELECTOR, setNonceCall::SELECTOR, setNonceUnsafeCall::SELECTOR]
+                    .contains(&selector)
+            {
+                let word = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0).ok()?;
+                if state.constrained_word(&mut self.cx, &word).is_some() {
+                    return None;
+                }
+                let mut candidates = state.world.concrete_alias_candidates(executor);
+                if store {
+                    candidates.retain(|address| is_precompile_for_spec(*address, executor.spec_id));
+                }
+                return (!candidates.is_empty()).then_some((word, candidates));
+            }
+            if [dealCall::SELECTOR, loadCall::SELECTOR, getNonce_0Call::SELECTOR]
+                .contains(&selector)
+            {
+                return None;
+            }
         }
-        let target = read_abi_word_arg(&mut self.cx, &state.memory, in_offset + 4, 0).ok()?;
-        state.constrained_word(&mut self.cx, &target).is_none().then_some(target)
+        (0..in_size.saturating_sub(4) / 32).find_map(|index| {
+            let word = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, index).ok()?;
+            self.guarded_address_word(state, word)
+        })
     }
 
-    /// Forks a cheatcode write through a free symbolic address over the concrete accounts the run
-    /// knows, so the write can land on one of them. Accounts the run has not seen yet stay
-    /// outside.
+    /// Returns a word a guarded cheatcode write went through, with the accounts it may still
+    /// denote, unless the path constraints already fix it.
+    fn guarded_address_word(
+        &mut self,
+        state: &PathState,
+        word: SymExpr,
+    ) -> Option<(SymExpr, Vec<Address>)> {
+        let candidates = state.world.guarded_candidates(&word)?;
+        state.constrained_word(&mut self.cx, &word).is_none().then_some((word, candidates))
+    }
+
+    /// Forks an address word over `candidates`, concrete accounts the run knows, so a cheatcode
+    /// write through it can land on one of them, or so a guarded word is decided. Accounts the
+    /// run has not seen yet stay outside.
     pub(super) fn branch_free_address_write_if_needed(
         &mut self,
-        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         pre_call_state: &PathState,
         call_pc: usize,
         target: &SymExpr,
+        candidates: &[Address],
     ) -> Result<bool, SymbolicError> {
-        let candidates = state.world.concrete_alias_candidates(executor);
         if candidates.len() > MAX_FREE_ADDRESS_ALIAS_CANDIDATES {
             return Err(SymbolicError::Unsupported(
                 "symbolic cheatcode address with too many alias candidates",
             ));
         }
-        for candidate in candidates {
-            let eq = SymBoolExpr::eq_word_const(&mut self.cx, target, address_word(candidate));
+        // Only the low 160 bits name an account, also for a word passed as a plain integer.
+        let address = target.clone().address_operand(&mut self.cx);
+        for &candidate in candidates {
+            let eq = SymBoolExpr::eq_word_const(&mut self.cx, &address, address_word(candidate));
             let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;
             let neq = eq.not(&mut self.cx);
             let (neq_constraints, neq_sat) = self.constraints_with_condition(state, neq)?;
@@ -654,6 +700,9 @@ impl SymbolicExecutor {
                 (false, false) => return Ok(false),
             }
         }
+        // The path rules out every candidate, so a guarded word may stand for its
+        // representative account again.
+        state.world.exclude_guarded_candidates(target, candidates);
         Ok(false)
     }
 
@@ -1553,8 +1602,12 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(&mut self.cx, wallets)))
             }
             storeCall::SELECTOR => {
-                let target =
-                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let (target, word) = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                )?;
                 if is_precompile_for_spec(target, executor.spec_id) {
                     return Ok(CheatcodeOutcome::Revert(error_string_return_data(
                         &mut self.cx,
@@ -1563,6 +1616,14 @@ impl SymbolicExecutor {
                 }
                 let slot = state.memory.load_word(&mut self.cx, in_offset + 36)?;
                 let value = state.memory.load_word(&mut self.cx, in_offset + 68)?;
+                // The call forked off the precompiles this write may name, where it reverts.
+                for (address, condition) in
+                    state.guard_free_address_write(&mut self.cx, executor, &word)
+                {
+                    if !is_precompile_for_spec(address, executor.spec_id) {
+                        state.world.guarded_sstore(address, slot.clone(), value.clone(), condition);
+                    }
+                }
                 state.world.sstore(target, slot, value);
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
@@ -1669,8 +1730,12 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&mut self.cx, &code)))
             }
             dealCall::SELECTOR => {
-                let target =
-                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let (target, word) = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                )?;
                 let value = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 if !self.symbolic_gas() && value.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
@@ -1679,6 +1744,14 @@ impl SymbolicExecutor {
                     .constrained_word(&mut self.cx, &value)
                     .map(|value| SymExpr::constant(&mut self.cx, value))
                     .unwrap_or(value);
+                for (address, condition) in
+                    state.guard_free_address_write(&mut self.cx, executor, &word)
+                {
+                    let previous =
+                        state.world.balance_word_for_address(&mut self.cx, executor, address);
+                    let balance = SymExpr::ite(&mut self.cx, condition, value.clone(), previous);
+                    state.set_persistent_balance(&mut self.cx, executor, address, balance);
+                }
                 state.set_persistent_balance(&mut self.cx, executor, target, value);
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }

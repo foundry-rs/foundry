@@ -12,7 +12,7 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
-        let free_write_target = self.free_address_write_target(state, kind);
+        let free_write_target = self.free_address_write_target(executor, state, kind);
         let pre_call_state = (!state.function_mocks.is_empty()
             || free_write_target.is_some()
             || !state.expected_calls.is_empty()
@@ -20,6 +20,18 @@ impl SymbolicExecutor {
             || (state.is_static && matches!(kind, CallKind::Call)))
         .then(|| state.clone());
         let call_pc = state.pc.saturating_sub(1);
+        if let Some((write_target, candidates)) = &free_write_target
+            && self.branch_free_address_write_if_needed(
+                state,
+                worklist,
+                pre_call_state.as_ref().expect("free address writes require pre-call state"),
+                call_pc,
+                write_target,
+                candidates,
+            )?
+        {
+            return Ok(StepOutcome::Forked);
+        }
 
         let has_value = matches!(kind, CallKind::Call | CallKind::CallCode);
         let in_offset_idx = if has_value { 3 } else { 2 };
@@ -203,18 +215,6 @@ impl SymbolicExecutor {
                 )? {
                     return Ok(StepOutcome::Forked);
                 }
-            }
-            if let Some(write_target) = &free_write_target
-                && self.branch_free_address_write_if_needed(
-                    executor,
-                    state,
-                    worklist,
-                    pre_call_state.as_ref().expect("free address writes require pre-call state"),
-                    call_pc,
-                    write_target,
-                )?
-            {
-                return Ok(StepOutcome::Forked);
             }
             return self.call_concrete_target(
                 executor,
