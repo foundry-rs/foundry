@@ -1,8 +1,8 @@
 //! Debug steps recorded straight into a SolDB step table.
 
 use alloy_primitives::{Bytes, U256, hex};
-use revm::bytecode::opcode;
-use soldb_core::{StepTable, StorageChange};
+use evm2::interpreter::op as opcode;
+use soldb_core::{StepRecord, StepTable, StepView, StorageChange};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -161,4 +161,21 @@ impl StepConverter {
 /// Formats `value` as a JSON-RPC quantity.
 pub fn quantity(value: U256) -> String {
     format!("{value:#x}")
+}
+
+/// A copy of `step` that a step table can append, with the full memory and storage it shows.
+pub fn step_record(step: &StepView<'_>) -> StepRecord {
+    StepRecord {
+        pc: step.pc(),
+        op: step.op(),
+        gas: step.gas(),
+        gas_cost: step.gas_cost(),
+        depth: step.depth(),
+        error: step.error().map(str::to_owned),
+        memory: step.memory(),
+        storage: Some(Arc::new(step.storage().clone())),
+        storage_diff: Some(step.storage_diff().clone()).filter(|diff| !diff.is_empty()),
+        transient_storage: Some(step.transient_storage().clone()).filter(|slots| !slots.is_empty()),
+        return_data: Some(Arc::from(step.return_data().unwrap_or_default())),
+    }
 }

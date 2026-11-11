@@ -1,11 +1,14 @@
 //! EVM inspectors.
 
 pub use foundry_cheatcodes::{self as cheatcodes, Cheatcodes, CheatsConfig};
-pub use foundry_evm_coverage::LineCoverageCollector;
+pub use foundry_evm_coverage::{
+    CmpOperands, EdgeCovConfig, EdgeCovHit, EdgeCovInspector, EdgeCovKind, EdgeCoverage,
+    EdgeIndexMap, EdgeKey, LineCoverageCollector,
+};
 pub use foundry_evm_fuzz::Fuzzer;
 pub use foundry_evm_traces::{StackSnapshotType, TracingInspector, TracingInspectorConfig};
 
-pub use revm_inspectors::access_list::AccessListInspector;
+pub use evm2_inspectors::access_list::AccessListInspector;
 
 mod custom_printer;
 pub use custom_printer::CustomPrintTracer;
@@ -23,14 +26,7 @@ mod script;
 pub use script::ScriptExecutionInspector;
 
 mod stack;
-pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder};
-
-mod edge_cov;
-pub(crate) use edge_cov::MAX_EDGE_COUNT;
-pub use edge_cov::{
-    CmpOperands, EdgeCovConfig, EdgeCovHit, EdgeCovInspector, EdgeCovKind, EdgeCoverage,
-    EdgeIndexMap, EdgeKey,
-};
+pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder, InspectorStackRefMut};
 
 mod revert_diagnostic;
 pub use revert_diagnostic::RevertDiagnostic;

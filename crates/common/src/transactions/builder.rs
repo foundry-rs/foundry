@@ -2,8 +2,10 @@ use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
-use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet};
-use alloy_primitives::{Address, B256, Signature, TxKind, U256};
+use alloy_network::{
+    AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet, TransactionBuilder,
+};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, serde_helpers::WithOtherFields};
 use eyre::Result;
@@ -159,6 +161,11 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// Returns true when [`Self::tempo_calls`] came from a Tempo AA `calls` list.
     fn has_tempo_call_list(&self) -> bool {
         false
+    }
+
+    /// Sets the input of the first Tempo AA call, or the transaction input without a call list.
+    fn set_first_call_input(&mut self, input: Bytes) {
+        self.set_input(input);
     }
 
     /// Returns true when this request will be built as a Tempo AA transaction.
@@ -456,6 +463,13 @@ impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
 
     fn has_tempo_call_list(&self) -> bool {
         !self.calls.is_empty()
+    }
+
+    fn set_first_call_input(&mut self, input: Bytes) {
+        match self.calls.first_mut() {
+            Some(call) => call.input = input,
+            None => self.set_input(input),
+        }
     }
 
     fn is_tempo_aa(&self) -> bool {

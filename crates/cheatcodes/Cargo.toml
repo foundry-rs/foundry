@@ -28,7 +28,7 @@ forge-script-sequence.workspace = true
 solar.workspace = true
 
 alloy-dyn-abi.workspace = true
-alloy-evm.workspace = true
+alloy-eips.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-genesis.workspace = true
@@ -58,8 +58,6 @@ p256 = "0.13"
 ed25519-consensus = "2.1"
 ecdsa = "0.16"
 rand.workspace = true
-monad-revm = { workspace = true, optional = true }
-revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -70,10 +68,14 @@ walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
 
-tempo-hardfork.workspace = true
 tempo-contracts.workspace = true
-tempo-precompiles.workspace = true
 tempo-primitives.workspace = true
+
+# evm2
+evm2.workspace = true
+tempo-hardfork.workspace = true
+tempo-precompiles.workspace = true
+monad-evm2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -81,7 +83,7 @@ tempfile.workspace = true
 [features]
 default = ["optimism"]
 monad = [
-    "dep:monad-revm",
+    "dep:monad-evm2",
     "foundry-config/monad",
     "foundry-evm-core/monad",
     "foundry-evm-fuzz/monad",

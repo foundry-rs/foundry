@@ -254,9 +254,11 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
                 .into_string()
                 .map_err(|e| eyre::eyre!(format!("{}", e.to_string_lossy())))?;
             sessions.push((
-                OffsetDateTime::from(modified_time).format(&format_description::parse(
-                    "[year]-[month]-[day] [hour]:[minute]:[second]",
-                )?)?,
+                OffsetDateTime::from(modified_time).format(
+                    &format_description::parse_borrowed::<1>(
+                        "[year]-[month]-[day] [hour]:[minute]:[second]",
+                    )?,
+                )?,
                 file_name,
             ));
         }

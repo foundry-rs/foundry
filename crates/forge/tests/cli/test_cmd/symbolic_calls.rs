@@ -145,12 +145,26 @@ contract InvalidAssumeNoRevertChild {
     }
 }
 
+contract RevertingConstructorChild {
+    constructor(uint256 x) {
+        require(x != 5);
+    }
+}
+
 contract SymbolicAssumeNoRevertInvalidChild is Test {
     function checkAssumeNoRevertInvalidChild() public {
         InvalidAssumeNoRevertChild child = new InvalidAssumeNoRevertChild();
         vm.assumeNoRevert();
         (bool success,) = address(child).call("");
         assertTrue(success);
+    }
+
+    // A CREATE leaves the assumption pending, so the catch branch's revert rejects the input.
+    function checkAssumeNoRevertSkipsRevertingCreate(uint256 x) public {
+        vm.assumeNoRevert();
+        try new RevertingConstructorChild(x) {} catch {
+            assert(false);
+        }
     }
 }
 "#,
@@ -159,15 +173,16 @@ contract SymbolicAssumeNoRevertInvalidChild is Test {
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkAssumeNoRevertInvalidChild",
+        "--match-contract",
+        "SymbolicAssumeNoRevertInvalidChild",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicAssumeNoRevertInvalidChild.t.sol:SymbolicAssumeNoRevertInvalidChild
+Ran 2 tests for test/SymbolicAssumeNoRevertInvalidChild.t.sol:SymbolicAssumeNoRevertInvalidChild
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertInvalidChild() ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[PASS] checkAssumeNoRevertSkipsRevertingCreate(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1346,11 +1361,74 @@ contract SymbolicDelegateCall {
 "#,
     );
 
+    prj.add_test(
+        "SymbolicCheatcodeDelegateCall.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function warp(uint256 timestamp) external;
+}
+
+contract SymbolicCheatcodeDelegateCall {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    // Like Forge, only CALL and STATICCALL reach a cheatcode. A DELEGATECALL or CALLCODE to the
+    // cheatcode address runs its one-byte code and has no effect.
+    function checkCheatcodeDelegateCall(uint256 x) public {
+        (bool ok,) = address(vm).delegatecall(abi.encodeCall(Vm.assume, (x > 10)));
+        assert(ok);
+        (ok,) = address(vm).delegatecall(abi.encodeCall(Vm.warp, (12345)));
+        assert(ok && block.timestamp != 12345);
+        bytes memory data = abi.encodeCall(Vm.assume, (false));
+        address target = address(vm);
+        assembly {
+            ok := callcode(gas(), target, 0, add(data, 32), mload(data), 0, 0)
+        }
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicDirtyCallTarget.t.sol",
+        r#"
+contract DirtyTargetProbe {
+    fallback() external {
+        assembly {
+            mstore(0, address())
+            return(0, 32)
+        }
+    }
+}
+
+contract SymbolicDirtyCallTarget {
+    DirtyTargetProbe probe;
+
+    function setUp() public {
+        probe = new DirtyTargetProbe();
+    }
+
+    // The callee's ADDRESS is the low 160 bits of a dirty CALL target word.
+    function checkDirtyCallTarget() public view {
+        uint256 clean = uint256(uint160(address(probe)));
+        uint256 dirty = clean | (uint256(0xdead) << 160);
+        uint256 seen;
+        assembly {
+            if iszero(staticcall(gas(), dirty, 0, 0, 0, 32)) { revert(0, 0) }
+            seen := mload(0)
+        }
+        assert(seen == clean);
+    }
+}
+"#,
+    );
+
     assert_symbolic(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkStatic|checkStaticCallValue|checkDelegate)\\(",
+        "^(checkStatic|checkStaticCallValue|checkDelegate|checkCheatcodeDelegateCall|checkDirtyCallTarget)\\(",
     ]))
     .success()
     .stdout_eq(
@@ -1366,6 +1444,14 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicStaticCallValue.t.sol:SymbolicStaticCallValue
 [PASS] checkStaticCallValue(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCheatcodeDelegateCall.t.sol:SymbolicCheatcodeDelegateCall
+[PASS] checkCheatcodeDelegateCall(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicDirtyCallTarget.t.sol:SymbolicDirtyCallTarget
+[PASS] checkDirtyCallTarget() ([METRICS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]
@@ -1607,14 +1693,15 @@ contract SymbolicCallcodeValue is Test {
         vm.deal(caller, 1);
         vm.prank(caller);
 
+        bytes memory input = abi.encodeWithSelector(SymbolicCallcodeValueTarget.echoValue.selector);
         bool ok;
         address callTarget = address(target);
         assembly {
-            ok := callcode(gas(), callTarget, 1, 0, 0, 0, 0)
+            ok := callcode(gas(), callTarget, 1, add(input, 0x20), mload(input), 0, 0)
         }
 
-        assert(!ok);
-        assertEq(caller.balance, 1);
+        assert(ok);
+        assertEq(caller.balance, 0);
         assertEq(address(this).balance, type(uint256).max);
     }
 

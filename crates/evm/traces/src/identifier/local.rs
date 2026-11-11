@@ -1,4 +1,5 @@
 use super::{IdentifiedAddress, TraceIdentifier};
+use crate::CallTraceNode;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Bytes, map::AddressHashMap};
@@ -6,7 +7,6 @@ use foundry_common::contracts::{
     ContractsByArtifact, bytecode_diff_score, matches_contract_creation,
 };
 use foundry_compilers::ArtifactId;
-use revm_inspectors::tracing::types::CallTraceNode;
 use std::borrow::Cow;
 
 /// A trace identifier that tries to identify addresses using local contracts.
@@ -226,10 +226,10 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CallKind, CallTrace};
     use foundry_compilers::artifacts::{
         BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, Offsets,
     };
-    use revm_inspectors::tracing::types::{CallKind, CallTrace};
 
     fn artifact(
         name: &str,
