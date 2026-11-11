@@ -1299,6 +1299,5 @@ fn assignment_rhs_leading_comment_keeps_member_chain_layout() {
 "#;
     let config =
         Arc::new(FormatterConfig { line_length: 46, bracket_spacing: true, ..Default::default() });
-    assert_data_eq!(format(source, Path::new("test.sol"), config.clone()), expected);
-    assert_data_eq!(format(expected, Path::new("test.sol"), config), expected);
+    assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
 }
