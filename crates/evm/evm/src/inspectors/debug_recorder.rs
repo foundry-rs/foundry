@@ -9,7 +9,7 @@ use evm2::{
 use foundry_evm_traces::debug::{
     DebugRecording, DebugStepSink, RecordedFrame, StepConverter, step_record,
 };
-use soldb_core::{Bytes, EvmWord, StepRecord, StepTable};
+use soldb_core::{EvmWord, StepRecord, StepTable};
 use std::{fmt, sync::Arc};
 
 /// The most stack words one instruction reads: `SWAP16` reads 17.
@@ -417,7 +417,7 @@ fn copy_steps(
     deeper: u64,
 ) {
     // The memory last written to each frame open in `target`, by depth.
-    let mut frames = Vec::<Bytes>::new();
+    let mut frames = Vec::<Vec<u8>>::new();
     for index in steps {
         let step = source.step(index);
         let mut record = step_record(&step);
@@ -436,29 +436,44 @@ fn copy_steps(
         }
         while frames.len() < level {
             target.start_memory_frame();
-            frames.push(Bytes::new());
+            frames.push(Vec::new());
         }
         let last = frames.last_mut().expect("a frame is open");
-        if *last != memory {
-            let differs = |&at: &usize| memory[at] != last.get(at).copied().unwrap_or(0);
-            let size = memory.len() as u64;
-            match (0..memory.len()).find(differs) {
-                Some(start) => {
-                    let end = (start..memory.len()).rfind(differs).unwrap() + 1;
-                    target
-                        .write_memory(start as u64, &memory[start..end], size)
-                        .expect("the write is bounded by the memory");
-                }
-                // Only the size grew.
-                None => target.write_memory(0, &[], size).expect("memory only grows"),
-            }
-            *last = memory;
+        let grew = last.len() < memory.len();
+        // Memory grows with zeros.
+        last.resize(memory.len(), 0);
+        let size = memory.len() as u64;
+        if let Some(range) = changed(last, &memory) {
+            target
+                .write_memory(range.start as u64, &memory[range.clone()], size)
+                .expect("the write is bounded by the memory");
+            last[range.clone()].copy_from_slice(&memory[range]);
+        } else if grew {
+            target.write_memory(0, &[], size).expect("memory only grows");
         }
         target.append(record, step.stack().iter());
     }
     for _ in frames {
         target.end_memory_frame();
     }
+}
+
+/// The range where `new` differs from `old`, which has the same length.
+///
+/// Compares whole chunks first, so unchanged memory is skipped without testing each byte.
+fn changed(old: &[u8], new: &[u8]) -> Option<std::ops::Range<usize>> {
+    const CHUNK: usize = 256;
+    if old == new {
+        return None;
+    }
+    let differs = |(a, b)| a != b;
+    let (index, (a, b)) =
+        old.chunks(CHUNK).zip(new.chunks(CHUNK)).enumerate().find(|(_, (a, b))| a != b)?;
+    let start = index * CHUNK + a.iter().zip(b).position(differs)?;
+    let (index, (a, b)) =
+        old.rchunks(CHUNK).zip(new.rchunks(CHUNK)).enumerate().find(|(_, (a, b))| a != b)?;
+    let end = old.len() - index * CHUNK - a.iter().rev().zip(b.iter().rev()).position(differs)?;
+    Some(start..end)
 }
 
 /// The destination a memory-writing opcode takes from its pre-execution stack.
@@ -676,5 +691,24 @@ mod tests {
             assert_eq!(step.memory().as_deref(), Some(memory.as_slice()), "memory at {index}");
             assert_eq!(step.stack().to_vec(), [EvmWord([*pc as u8; 32])], "stack at {index}");
         }
+    }
+
+    #[test]
+    fn changed_spans_the_differing_bytes() {
+        // Two whole chunks and a short one, which comes first when chunked from the end.
+        let old = vec![0; 600];
+        let with = |set: &[usize]| {
+            let mut new = old.clone();
+            for &at in set {
+                new[at] = 1;
+            }
+            new
+        };
+        assert_eq!(changed(&[], &[]), None);
+        assert_eq!(changed(&old, &old), None);
+        assert_eq!(changed(&old, &with(&[1, 599])), Some(1..600));
+        assert_eq!(changed(&old, &with(&[255, 256])), Some(255..257));
+        assert_eq!(changed(&old, &with(&[300, 301])), Some(300..302));
+        assert_eq!(changed(&old, &with(&[3])), Some(3..4));
     }
 }
