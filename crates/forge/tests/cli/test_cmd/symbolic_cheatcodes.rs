@@ -3052,6 +3052,16 @@ contract SymbolicFreeAddressWrites is Test {
         assert(vault.bal(address(vault)) == 0);
     }
 
+    // A prank set before the write decides the address at the call it applies to. For
+    // `a == address(vault)` the call sends the value to itself.
+    function checkPrankBeforeDeal(address a) public {
+        vm.startPrank(a);
+        vm.deal(a, 5);
+        (bool ok,) = address(vault).call{value: 5}("");
+        vm.stopPrank();
+        assert(!ok || a != address(vault) || address(vault).balance == 10);
+    }
+
     // A cheatcode call at a symbolic input offset still decides the address.
     function checkSymbolicOffsetPrank(address a, uint8 n) public {
         vm.deal(a, 5);
@@ -3096,18 +3106,19 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 10 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+Ran 11 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealKeepsCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDerivedArgumentDecidesAddress(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDirtyWordKeepsGuard(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterDealShowsThrough(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterStoreShowsThrough(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankAfterDeal(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankBeforeDeal(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreKeepsNonce(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreMayTargetSetUpContract(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicOffsetPrank(address,uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 10 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

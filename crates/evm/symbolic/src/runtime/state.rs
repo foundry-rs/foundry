@@ -1097,6 +1097,24 @@ impl PathState {
         }
     }
 
+    /// Resolves the pranked caller and origin accounts from their words again, so a word the
+    /// path fixed after the prank, such as a guarded address a call forked, names its account.
+    pub(crate) fn resolve_prank_addresses(&mut self, cx: &mut SymCx) {
+        let mut prank = std::mem::take(&mut self.prank);
+        for (address, word) in [
+            &mut prank.next_caller,
+            &mut prank.next_origin,
+            &mut prank.persistent_caller,
+            &mut prank.persistent_origin,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *address = self.address_or_symbolic_slot(cx, word.clone());
+        }
+        self.prank = prank;
+    }
+
     /// Returns the caller mode, sender, and origin of the nearest prank at or below this frame,
     /// as Forge's `vm.readCallers` reports it.
     pub(crate) fn callers(&self) -> Option<(U256, SymExpr, SymExpr)> {
@@ -2027,6 +2045,14 @@ impl SymbolicPrank {
             || self.next_origin.is_some()
             || self.persistent_caller.is_some()
             || self.persistent_origin.is_some()
+    }
+
+    /// Returns the caller and origin words of this prank.
+    pub(crate) fn words(&self) -> impl Iterator<Item = &SymExpr> {
+        [&self.next_caller, &self.next_origin, &self.persistent_caller, &self.persistent_origin]
+            .into_iter()
+            .flatten()
+            .map(|(_, word)| word)
     }
 }
 

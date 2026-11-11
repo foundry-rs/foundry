@@ -587,8 +587,9 @@ impl SymbolicExecutor {
     /// `vm.etch` and the nonce cheatcodes through a free address fork over every known account,
     /// since they need concrete code and nonces, and `vm.store` over the known precompiles,
     /// where it reverts. `vm.deal` and the rest of a `vm.store` write each account under a
-    /// guard instead. A word written that way is decided only once a call targets it or a
-    /// cheatcode other than these writes and their reads takes it.
+    /// guard instead. A word written that way is decided only once a call targets it, a pranked
+    /// call takes it as caller or origin, or a cheatcode other than these writes and their
+    /// reads takes it.
     pub(super) fn free_address_write_targets(
         &mut self,
         executor: &ExecutorView<'_>,
@@ -601,10 +602,16 @@ impl SymbolicExecutor {
             (CallKind::Call, Some(CHEATCODE_ADDRESS | SYMBOLIC_VM_COMPAT_ADDRESS)) => 3,
             (CallKind::StaticCall, Some(CHEATCODE_ADDRESS | SYMBOLIC_VM_COMPAT_ADDRESS)) => 2,
             _ => {
+                // A call the prank applies to also decides the pranked caller and origin, which
+                // the prank resolved to a representative account.
+                let mut words = Vec::new();
                 if to.is_none() {
-                    return Ok(self.guarded_words(state, target, Vec::new()));
+                    words = self.guarded_words(state, target, words);
                 }
-                return Ok(Vec::new());
+                for word in state.prank.words() {
+                    words = self.guarded_words(state, word, words);
+                }
+                return Ok(words);
             }
         };
         let (Ok(in_offset), Ok(in_size)) =

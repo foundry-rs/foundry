@@ -33,6 +33,9 @@ impl SymbolicExecutor {
                 return Ok(StepOutcome::Forked);
             }
         }
+        if state.prank.has_active() {
+            state.resolve_prank_addresses(&mut self.cx);
+        }
 
         let has_value = matches!(kind, CallKind::Call | CallKind::CallCode);
         let in_offset_idx = if has_value { 3 } else { 2 };
