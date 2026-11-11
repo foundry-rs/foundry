@@ -800,6 +800,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     /// jumping at the final report. `sender_filters` and `targeted_contracts` are the selection
     /// from [`Self::select_contracts_and_senders`], made before the executor's gas limit was
     /// lowered to `call_gas_limit`.
+    #[allow(clippy::too_many_arguments)]
     pub fn invariant_fuzz(
         &mut self,
         invariant_contract: InvariantContract<'_>,
