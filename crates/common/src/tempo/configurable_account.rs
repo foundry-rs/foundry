@@ -260,7 +260,7 @@ pub fn simulation_spec(
 /// that the node accepts: at most [`MAX_CONFIGURABLE_ACCOUNT_SIGNATURES`] owners that, in address
 /// order, reach `threshold` only on the last one. `owners` are sorted by address. Returns an empty
 /// list when no quorum exists.
-fn quorum(owners: &[ConfigurableAccountOwner], threshold: u8, largest: bool) -> Vec<Address> {
+pub fn quorum(owners: &[ConfigurableAccountOwner], threshold: u8, largest: bool) -> Vec<Address> {
     let threshold = usize::from(threshold);
     // `reach[i][k][w]`: `k` of the first `i` owners weigh `w`, below the threshold.
     let mut reach = vec![[[false; 256]; MAX_CONFIGURABLE_ACCOUNT_SIGNATURES]; owners.len() + 1];

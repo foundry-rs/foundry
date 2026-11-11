@@ -399,6 +399,45 @@ interface Vm {
         bytes revertData;
     }
 
+    /// An owner of a Tempo configurable account (TIP-1107).
+    struct ConfigurableAccountOwner {
+        /// The owner address: a secp256k1 address, or `keccak256(x || y)[12:]` of a P-256 key.
+        address owner;
+        /// The nonzero weight of the owner's approval.
+        uint8 weight;
+    }
+
+    /// The configuration of a Tempo configurable account (TIP-1107).
+    struct ConfigurableAccountConfig {
+        /// The salt that, with the initial owners and threshold, determines the account address.
+        bytes32 salt;
+        /// The configuration version: zero for the initial configuration, incremented by each update.
+        uint64 version;
+        /// The total owner weight that approvals must reach.
+        uint8 threshold;
+        /// The owners, sorted by ascending address.
+        ConfigurableAccountOwner[] owners;
+    }
+
+    /// The key type of a configurable account owner.
+    enum OwnerKeyType {
+        /// A secp256k1 key, signing with a 65-byte ECDSA signature.
+        Secp256k1,
+        /// A P-256 key, signing the digest directly (`0x01` signature).
+        P256,
+        /// A P-256 passkey, signing a WebAuthn assertion (`0x02` signature) with the RP ID
+        /// `localhost` and the origin `http://localhost`.
+        WebAuthn
+    }
+
+    /// A private key of a configurable account owner.
+    struct OwnerKey {
+        /// The key type.
+        OwnerKeyType keyType;
+        /// The private key, on secp256k1 or P-256 depending on `keyType`.
+        uint256 privateKey;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -1388,7 +1427,7 @@ interface Vm {
     ///
     /// The supplied `digest` should already be domain-separated with chain ID, contract address,
     /// and account address.
-    #[cheatcode(group = Testing, safety = Unsafe)]
+    #[cheatcode(group = Testing, safety = Unsafe, status = Deprecated(Some("TIP-1137 stops admin keys at Tempo T14")))]
     function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
 
     /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
@@ -3186,9 +3225,59 @@ interface Vm {
     ///
     /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.
     /// The supplied `digest` should already be domain-separated with chain ID, contract address,
-    /// and account address.
-    #[cheatcode(group = Crypto)]
+    /// and account address. Returns the same bytes as `signKeychain`.
+    #[cheatcode(group = Crypto, status = Deprecated(Some("replaced by `signKeychain`; TIP-1137 stops admin keys at Tempo T14")))]
     function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+
+    /// Derives the address of the Tempo configurable account with the initial configuration `config`
+    /// (TIP-1107), as `IConfigurableAccount.deriveAccount` does, without the chain's reserved
+    /// address checks. `config.version` is ignored.
+    #[cheatcode(group = Crypto)]
+    function deriveConfigurableAccount(ConfigurableAccountConfig calldata config) external pure returns (address account);
+
+    /// Returns the digest that the owners of the configurable account `account` approve for
+    /// `digest`, such as a transaction signature hash, under configuration version `configVersion`:
+    /// `keccak256("tempo:configurable-account:signature" || digest || account || uint64(configVersion))`.
+    #[cheatcode(group = Crypto)]
+    function configurableAccountDigest(address account, uint64 configVersion, bytes32 digest) external pure returns (bytes32 ownerDigest);
+
+    /// Encodes a `0x05` configurable account signature for `account` from its current configuration
+    /// `config` and encoded owner approvals of its owner digest (65-byte secp256k1, `0x01` P-256 or
+    /// `0x02` WebAuthn signatures).
+    ///
+    /// Approvals are encoded in the given order. Only the shape is checked, so this can build
+    /// signatures that the node rejects, such as unsorted or excess approvals.
+    #[cheatcode(group = Crypto)]
+    function encodeConfigurableAccountSignature(address account, ConfigurableAccountConfig calldata config, bytes[] calldata ownerSignatures) external pure returns (bytes memory signature);
+
+    /// Signs `digest` as the configurable account `account` with its current configuration `config`,
+    /// using secp256k1 owner keys.
+    ///
+    /// Signs with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted
+    /// by owner address, the last of which reaches the threshold. Reverts if `config` is invalid, a
+    /// key is not an owner, or no such quorum exists among the keys. Returns
+    /// the `0x05` signature accepted by `SignatureVerifier.verifyConfigurableAccount`.
+    #[cheatcode(group = Crypto)]
+    function signConfigurableAccount(uint256[] calldata privateKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);
+
+    /// Signs `digest` as the configurable account `account` with its current configuration `config`,
+    /// using secp256k1, P-256 or WebAuthn owner keys.
+    ///
+    /// Signs with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted
+    /// by owner address, the last of which reaches the threshold. Reverts if `config` is invalid, a
+    /// key is not an owner, or no such quorum exists among the keys. Returns
+    /// the `0x05` signature accepted by `SignatureVerifier.verifyConfigurableAccount`.
+    #[cheatcode(group = Crypto)]
+    function signConfigurableAccount(OwnerKey[] calldata ownerKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);
+
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` whose access key is the
+    /// configurable account `configurableAccount` with its current configuration `config` (TIP-1111).
+    ///
+    /// The owners approve the keychain V2 hash `keccak256(0x04 || digest || account)`, with
+    /// approvals chosen as in `signConfigurableAccount`. Returns the signature accepted by
+    /// `SignatureVerifier.verifyKeychain`.
+    #[cheatcode(group = Crypto)]
+    function signKeychainConfigurableAccount(OwnerKey[] calldata ownerKeys, address configurableAccount, ConfigurableAccountConfig calldata config, address account, bytes32 digest) external pure returns (bytes memory signature);
 
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///
