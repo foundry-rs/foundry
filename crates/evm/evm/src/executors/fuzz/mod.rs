@@ -195,11 +195,10 @@ impl SharedFuzzState {
             && self.total_runs.load(Ordering::Relaxed) < planned_runs
     }
 
-    /// Returns `true` if the timeout expired before any input was run or rejected.
+    /// Returns `true` if the timeout expired before any input completed a run, including when
+    /// every input so far was rejected.
     fn timed_out_before_any_run(&self) -> bool {
-        self.timed_out.load(Ordering::Relaxed)
-            && self.total_runs.load(Ordering::Relaxed) == 0
-            && self.total_rejects.load(Ordering::Relaxed) == 0
+        self.timed_out.load(Ordering::Relaxed) && self.total_runs.load(Ordering::Relaxed) == 0
     }
 
     /// Returns true if the worker was able to claim the failure, false if failure was set by
