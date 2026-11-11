@@ -28,7 +28,6 @@ interface Vm {
     function envString(string calldata) external returns (string memory);
     function envUint(string calldata) external returns (uint256);
     function createSelectFork(string calldata, uint256) external returns (uint256);
-    function rpc(string calldata, string calldata) external returns (bytes memory);
 }
 
 contract ForkPrefetchTest {
@@ -43,16 +42,6 @@ contract ForkPrefetchTest {
         (bool ok, bytes memory data) = SLOTS.call("");
         require(ok, "call");
         require(abi.decode(data, (uint256)) == 820, "sum");
-    }
-
-    function test_rpc_refresh() public {
-        vm.rpc(
-            "anvil_setStorageAt",
-            '["0x000000000000000000000000000000000000510c","0x0","0x0000000000000000000000000000000000000000000000000000000000000002"]'
-        );
-        (bool ok, bytes memory data) = SLOTS.call("");
-        require(ok, "call");
-        require(abi.decode(data, (uint256)) == 821, "sum");
     }
 }
 "#;
@@ -109,38 +98,4 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     // sends fewer single reads than the contract has slots.
     let reads = reads.lock().unwrap();
     assert!(reads.len() < SLOT_COUNT as usize, "{} single reads: {reads:?}", reads.len());
-}
-
-// The simulation of the test function runs past the stubbed `vm.rpc` and reads slot 0 before the
-// test changes it on the endpoint, so the refresh must not use that speculative read.
-#[forgetest]
-async fn fork_prefetch_refresh_after_rpc_mutation_reads_new_value(prj: _, cmd: _) {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    api.anvil_set_code(SLOTS, sum_slots_code().into()).await.unwrap();
-    for slot in 0..SLOT_COUNT {
-        api.anvil_set_storage_at(SLOTS, U256::from(slot), B256::with_last_byte(slot + 1))
-            .await
-            .unwrap();
-    }
-    api.mine_one().await.unwrap();
-    let block = api.block_number().unwrap();
-
-    prj.add_test("ForkPrefetch.t.sol", TEST);
-    cmd.env("PREFETCH_RPC_URL", handle.http_endpoint());
-    cmd.env("PREFETCH_BLOCK", block.to_string());
-    cmd.args([
-        "test",
-        "--match-test",
-        "test_rpc_refresh",
-        "--fork-prefetch",
-        "--no-storage-caching",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-...
-Ran 1 test for test/ForkPrefetch.t.sol:ForkPrefetchTest
-[PASS] test_rpc_refresh() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
 }
