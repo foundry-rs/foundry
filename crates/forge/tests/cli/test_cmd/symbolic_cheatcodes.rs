@@ -3670,6 +3670,31 @@ contract SymbolicSvmCreators {
         bytes32 preimage = Svm(SVM_ADDRESS).createBytes32("preimage");
         assert(sha256(abi.encode(preimage)) != bytes32(uint256(0xbeef)));
     }
+
+    function checkSvmReplayRejectsDivergentHelperCall(bytes32 preimage) public {
+        assert(sha256(abi.encode(preimage)) != bytes32(uint256(0xbeef)));
+        Svm(SVM_ADDRESS).createUint256("value");
+    }
+
+    function checkSvmReplayRejectsDivergentSnapshot(bytes32 preimage) public {
+        assert(sha256(abi.encode(preimage)) != bytes32(uint256(0xbeef)));
+        Vm(SVM_ADDRESS).snapshotState();
+    }
+
+    function checkSvmReplayKeepsRevertedCalls() public {
+        try this.createThenRevert() {} catch {}
+        assert(Svm(SVM_ADDRESS).createUint256("value") != 7);
+    }
+
+    function checkSvmReplayClearedMocks(uint256 x) public {
+        Vm(address(uint160(uint256(keccak256("hevm cheat code"))))).clearMockedCalls();
+        assert(x != 5);
+    }
+
+    function createThenRevert() external {
+        Svm(SVM_ADDRESS).createUint256("reverted");
+        revert();
+    }
 }
 
 contract SymbolicSvmHandler {
@@ -3727,12 +3752,16 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicSvmCreators.t.sol:SymbolicSvmCreators
+Ran 6 tests for test/SymbolicSvmCreators.t.sol:SymbolicSvmCreators
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmReplayClearedMocks(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmReplayFindsValues() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmReplayKeepsRevertedCalls() ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of `svm` values] checkSvmReplayRejectsDivergentHelperCall(bytes32) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of `svm` values] checkSvmReplayRejectsDivergentSnapshot(bytes32) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSvmReplayRejectsHashCandidate() ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
-"#]]);
+"#]].unordered());
 
     let output = cmd
         .forge_fuse()

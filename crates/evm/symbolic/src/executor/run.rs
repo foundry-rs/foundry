@@ -186,14 +186,10 @@ impl SymbolicExecutor {
         }
 
         let execution = self.execute_run(input, Some(&mut candidates));
-        if let SymbolicRunResult::Counterexample { args, calldata, svm_returns, .. } = &execution {
+        if let SymbolicRunResult::Counterexample { args, calldata, .. } = &execution {
             candidates.insert(
                 0,
-                SymbolicConcreteInput {
-                    args: args.clone(),
-                    calldata: calldata.clone(),
-                    svm_returns: svm_returns.clone(),
-                },
+                SymbolicConcreteInput { args: args.clone(), calldata: calldata.clone() },
             );
         }
         SymbolicBranchTargetSearchResult { candidates, execution }
@@ -540,7 +536,7 @@ impl SymbolicExecutor {
                         {
                             let input = match candidate {
                                 Some(input) => input,
-                                None => self.materialize_root_input(input.function, &state)?,
+                                None => self.materialize_root_input(input.function, &state)?.0,
                             };
                             success_input = Some((state.depth, input));
                         }
@@ -557,8 +553,13 @@ impl SymbolicExecutor {
                             constraint_count = state.constraints.len(),
                             "materializing counterexample from solver model"
                         );
-                        let SymbolicConcreteInput { args, calldata, svm_returns } =
+                        let (SymbolicConcreteInput { args, calldata }, model) =
                             self.materialize_root_input(input.function, &state)?;
+                        let svm_returns = state
+                            .svm_returns
+                            .iter()
+                            .map(|ret| ret.bytes.eval_model(&mut self.cx, &model).map(Bytes::from))
+                            .collect::<Result<_, _>>()?;
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
                             calldata,
@@ -615,7 +616,7 @@ impl SymbolicExecutor {
             return Ok(None);
         }
 
-        let input = self.materialize_root_input(function, state)?;
+        let (input, _) = self.materialize_root_input(function, state)?;
         candidates.push(input.clone());
         Ok(Some(input))
     }
@@ -644,12 +645,12 @@ impl SymbolicExecutor {
         )
     }
 
-    /// Materializes the root call input for `state` from a solver model.
+    /// Materializes the root call input for `state` from a solver model, and returns the model.
     fn materialize_root_input(
         &mut self,
         function: &Function,
         state: &PathState,
-    ) -> Result<SymbolicConcreteInput, SymbolicError> {
+    ) -> Result<(SymbolicConcreteInput, SymbolicModel), SymbolicError> {
         let calldata = state
             .root_calldata
             .as_ref()
@@ -657,12 +658,7 @@ impl SymbolicExecutor {
         let model = self.witness_model(state)?;
         let args = calldata.model_to_args(&mut self.cx, &model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
-        let svm_returns = state
-            .svm_returns
-            .iter()
-            .map(|ret| ret.bytes.eval_model(&mut self.cx, &model).map(Bytes::from))
-            .collect::<Result<_, _>>()?;
-        Ok(SymbolicConcreteInput { args, calldata: calldata_bytes, svm_returns })
+        Ok((SymbolicConcreteInput { args, calldata: calldata_bytes }, model))
     }
 
     pub(super) fn run_invariant_inner(

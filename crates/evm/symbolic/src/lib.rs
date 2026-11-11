@@ -160,6 +160,16 @@ impl SymbolicVmCheatcode {
     }
 }
 
+/// Returns the selectors that the symbolic engine answers as `svm.*` helpers at
+/// [`SYMBOLIC_VM_COMPAT_ADDRESS`].
+pub fn symbolic_vm_selectors() -> impl Iterator<Item = [u8; 4]> {
+    SymbolicVm::SymbolicVmCalls::SELECTORS
+        .iter()
+        .copied()
+        .chain([Vm::setArbitraryStorage_0Call::SELECTOR, Vm::snapshotStateCall::SELECTOR])
+        .filter(|selector| SymbolicVmCheatcode::from_selector(*selector).is_some())
+}
+
 /// How a `createCalldata` call names its contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CreateCalldataTarget {
@@ -225,9 +235,6 @@ pub struct SymbolicConcreteInput {
     pub args: Vec<DynSolValue>,
     /// ABI-encoded calldata for replay.
     pub calldata: Bytes,
-    /// Return data of each `svm.*` helper call on the path, in call order, which replay must
-    /// answer these calls with.
-    pub svm_returns: Vec<Bytes>,
 }
 
 /// Result of best-effort symbolic exploration toward one branch target.

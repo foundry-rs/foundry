@@ -81,7 +81,7 @@ use foundry_evm_symbolic::{
     SymbolicExecutor, SymbolicInvariantCandidateInput, SymbolicInvariantCounterexampleKind,
     SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
     SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, SymbolicStats,
-    SymbolicStopReason, SymbolicStorageAssignment,
+    SymbolicStopReason, SymbolicStorageAssignment, symbolic_vm_selectors,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -2420,7 +2420,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return None;
         }
         let args = func.abi_decode_input(&calldata[4..]).ok()?;
-        Some(SymbolicConcreteInput { args, calldata: calldata.clone(), svm_returns: Vec::new() })
+        Some(SymbolicConcreteInput { args, calldata: calldata.clone() })
     }
 
     /// Runs a symbolic test and replays any discovered counterexample concretely.
@@ -3104,8 +3104,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     );
                     continue;
                 }
-                SymbolicRunResult::Counterexample { args, calldata, svm_returns, .. } => {
-                    (SymbolicConcreteInput { args, calldata, svm_returns }, true)
+                SymbolicRunResult::Counterexample { args, calldata, .. } => {
+                    (SymbolicConcreteInput { args, calldata }, true)
                 }
             };
 
@@ -3477,11 +3477,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 continue;
             };
 
-            let input = SymbolicConcreteInput {
-                args,
-                calldata: call.call_details.calldata.clone(),
-                svm_returns: Vec::new(),
-            };
+            let input =
+                SymbolicConcreteInput { args, calldata: call.call_details.calldata.clone() };
             let property_target_reported = if invariant_contract.call_after_invariant {
                 reported_invariants.contains(&invariant_contract.anchor_idx)
                     || after_invariant_reported
@@ -5485,14 +5482,27 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     /// the symbolic path did.
     fn clone_executor_with_svm_returns(&self, svm_returns: &[Bytes]) -> Result<Executor<FEN>> {
         let mut executor = self.clone_executor();
-        if svm_returns.is_empty() {
-            return Ok(executor);
-        }
         // Like the symbolic model, the helper address reports one byte of code.
         executor
             .set_code(SYMBOLIC_VM_COMPAT_ADDRESS, Bytecode::new_raw(Bytes::from_static(&[0])))?;
         if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
-            cheats.core.mock_call_sequence(SYMBOLIC_VM_COMPAT_ADDRESS, svm_returns);
+            if svm_returns.is_empty() {
+                // A replay that diverges into a helper call runs out of values, while other calls
+                // see the account that the symbolic model gives them.
+                for selector in symbolic_vm_selectors() {
+                    cheats.core.mock_call_sequence(
+                        SYMBOLIC_VM_COMPAT_ADDRESS,
+                        Bytes::copy_from_slice(&selector),
+                        &[],
+                    );
+                }
+            } else {
+                cheats.core.mock_call_sequence(
+                    SYMBOLIC_VM_COMPAT_ADDRESS,
+                    Bytes::new(),
+                    svm_returns,
+                );
+            }
         }
         Ok(executor)
     }
@@ -5813,15 +5823,18 @@ fn symbolic_invariant_counterexample_calls(
         .collect()
 }
 
-/// Returns whether a replay answered with `svm_returns` made an `svm.*` call past them.
+/// Returns whether a replay answered with `svm_returns` made an `svm.*` call past them. A test
+/// that clears mocked calls also clears the sequence, which only matters when it had returns.
 fn svm_returns_exhausted<FEN: FoundryEvmNetwork>(
     svm_returns: &[Bytes],
     raw: &RawCallResult<FEN>,
 ) -> bool {
-    !svm_returns.is_empty()
-        && raw.cheatcodes.as_ref().is_none_or(|cheats| {
-            cheats.core.mock_call_sequence_exhausted(SYMBOLIC_VM_COMPAT_ADDRESS)
-        })
+    raw.cheatcodes.as_ref().is_none_or(|cheats| {
+        cheats
+            .core
+            .mock_call_sequence_exhausted(SYMBOLIC_VM_COMPAT_ADDRESS)
+            .unwrap_or(!svm_returns.is_empty())
+    })
 }
 
 fn frontier_selector(frontier: &FuzzBranchFrontierRecord) -> Option<Selector> {
@@ -6225,7 +6238,6 @@ fn solve_live_invariant_frontier<FEN: FoundryEvmNetwork>(
         corpus_seeds: vec![SymbolicConcreteInput {
             args,
             calldata: call.call_details.calldata.clone(),
-            svm_returns: Vec::new(),
         }],
         branch_target: Some(SymbolicBranchTarget::new(cmp.address, cmp.pc, cmp.opcode, result)),
     });

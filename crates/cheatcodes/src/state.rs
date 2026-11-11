@@ -148,8 +148,9 @@ impl CheatcodesCore {
         self.arbitrary_storage.get_or_insert_with(ArbitraryStorage::default)
     }
 
-    /// Answers the calls to `callee` with `returns` in order, and reverts every later call.
-    pub fn mock_call_sequence(&mut self, callee: Address, returns: &[Bytes]) {
+    /// Answers the calls to `callee` whose calldata starts with `calldata` with `returns` in
+    /// order, and reverts every later call.
+    pub fn mock_call_sequence(&mut self, callee: Address, calldata: Bytes, returns: &[Bytes]) {
         // A mock repeats its last return, so two reverting ends show if a call reached the first.
         let end = MockCallReturnData {
             reverts: true,
@@ -160,16 +161,17 @@ impl CheatcodesCore {
             .map(|data| MockCallReturnData { reverts: false, data: data.clone() })
             .chain([end.clone(), end])
             .collect();
-        self.mocked_calls.entry(callee).or_default().insert(MockCallDataContext::default(), queue);
+        self.mocked_calls
+            .entry(callee)
+            .or_default()
+            .insert(MockCallDataContext { calldata, value: None }, queue);
     }
 
-    /// Returns whether a call to `callee` ran past the returns of [`Self::mock_call_sequence`],
-    /// or the sequence was cleared.
-    pub fn mock_call_sequence_exhausted(&self, callee: Address) -> bool {
-        self.mocked_calls
-            .get(&callee)
-            .and_then(|mocks| mocks.get(&MockCallDataContext::default()))
-            .is_none_or(|queue| queue.len() < 2)
+    /// Returns whether a call to `callee` ran past the returns of a
+    /// [`Self::mock_call_sequence`] or of any other mock of `callee` with a single return, or
+    /// `None` when the mocks were cleared.
+    pub fn mock_call_sequence_exhausted(&self, callee: Address) -> Option<bool> {
+        self.mocked_calls.get(&callee).map(|mocks| mocks.values().any(|queue| queue.len() < 2))
     }
 }
 
