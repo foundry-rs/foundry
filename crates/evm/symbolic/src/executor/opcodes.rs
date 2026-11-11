@@ -312,6 +312,9 @@ impl SymbolicExecutor {
             Ok(offset) => host_max_offset.is_none_or(|max| *offset > max),
             Err(_) => true,
         }) {
+            if self.ignores_out_of_gas() {
+                return Ok(Some(StepOutcome::AssumeRejected));
+            }
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(Some(StepOutcome::ExceptionalHalt));
         }
@@ -338,12 +341,23 @@ impl SymbolicExecutor {
             if local_size <= U256::from(memory_limit) {
                 return Ok(None);
             }
+            if self.ignores_out_of_gas() {
+                return Ok(Some(StepOutcome::AssumeRejected));
+            }
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(Some(StepOutcome::ExceptionalHalt));
         }
         let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit);
         let valid_access = SymBoolExpr::and(&mut self.cx, vec![representable, within_limit]);
+        if self.ignores_out_of_gas() {
+            let (constraints, feasible) = self.constraints_with_condition(state, valid_access)?;
+            if !feasible {
+                return Ok(Some(StepOutcome::AssumeRejected));
+            }
+            state.constraints = constraints;
+            return Ok(None);
+        }
         self.apply_memory_access_guard(state, worklist, valid_access)
     }
 
@@ -404,6 +418,9 @@ impl SymbolicExecutor {
                     .and_then(|end| u64::try_from(end & !31usize).ok())
                     .is_some_and(|end| end <= memory_limit);
             if !valid {
+                if self.ignores_out_of_gas() {
+                    return Ok(Some(StepOutcome::AssumeRejected));
+                }
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 return Ok(Some(StepOutcome::ExceptionalHalt));
             }
@@ -443,6 +460,16 @@ impl SymbolicExecutor {
             SymBoolExpr::and(&mut self.cx, vec![size_fits, offset_fits, local_fits]);
         let valid_access = SymBoolExpr::or(&mut self.cx, vec![zero_size, nonzero_valid]);
 
+        // An equivalence check modulo gas leaves out the inputs that run out of memory gas.
+        if self.ignores_out_of_gas() {
+            let (constraints, feasible) = self.constraints_with_condition(state, valid_access)?;
+            if !feasible {
+                return Ok(Some(StepOutcome::AssumeRejected));
+            }
+            state.constraints = constraints;
+            state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
+            return Ok(None);
+        }
         let outcome = self.apply_memory_access_guard(state, worklist, valid_access)?;
         if outcome.is_none() {
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
@@ -659,12 +686,28 @@ impl SymbolicExecutor {
                             }
                         }
                         let max_limit = self.config.max_calldata_bytes as usize;
-                        let max_size = self.solver_upper_bound_usize(
+                        let max_size = match self.solver_upper_bound_usize(
                             state,
                             &size,
                             max_limit,
                             "symbolic SHA3 size",
-                        )?;
+                        ) {
+                            Ok(max_size) => max_size,
+                            // An equivalence check hashes an unbounded region to a symbol named
+                            // by the whole memory, the offset and the size, so equal memory
+                            // gives the two programs the same hash.
+                            Err(SymbolicError::Unsupported(_)) if self.equivalence.is_some() => {
+                                let mut identity = state.memory.identity_exprs(&mut self.cx);
+                                identity.push(offset);
+                                identity.push(size);
+                                let digest = ExpressionDigests::identity(identity.iter());
+                                let hash =
+                                    SymExpr::var(&mut self.cx, &format!("keccak_{digest:x}"));
+                                state.stack.push(hash)?;
+                                return Ok(StepOutcome::Continue);
+                            }
+                            Err(err) => return Err(err),
+                        };
                         let bytes = state.memory.read_byte_exprs_symbolic_size(
                             &mut self.cx,
                             offset,
@@ -1221,7 +1264,13 @@ impl SymbolicExecutor {
                 state.stack.push(size)?;
             }
             opcode::GAS => {
-                let gas = state.fresh_gasleft(&mut self.cx);
+                // An equivalence check gives each program its own unconstrained gas readings.
+                let gas = if let Some(mode) = &mut self.equivalence {
+                    mode.reads_gas = true;
+                    state.fresh_word(&mut self.cx, "gas")
+                } else {
+                    state.fresh_gasleft(&mut self.cx)
+                };
                 state.stack.push(gas)?;
             }
             opcode::JUMPDEST => {}
@@ -1373,8 +1422,10 @@ impl SymbolicExecutor {
                 state.stack.push(hash)?;
             }
             opcode::COINBASE => {
-                let coinbase = state.block.coinbase;
-                let coinbase = SymExpr::constant(&mut self.cx, address_word(coinbase));
+                let coinbase = match state.block.coinbase_word.clone() {
+                    Some(coinbase) => coinbase,
+                    None => SymExpr::constant(&mut self.cx, address_word(state.block.coinbase)),
+                };
                 state.stack.push(coinbase)?;
             }
             opcode::TIMESTAMP => {
@@ -1415,11 +1466,11 @@ impl SymbolicExecutor {
                     return Ok(outcome);
                 }
                 let offset = state.stack.pop()?;
-                if offset.contains_gasleft() {
+                if !self.symbolic_gas() && offset.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
                 let size = state.stack.pop()?;
-                if size.contains_gasleft() {
+                if !self.symbolic_gas() && size.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
                 let (data_len, data) = match state.constrained_usize_checked(&mut self.cx, &size) {
@@ -1450,7 +1501,7 @@ impl SymbolicExecutor {
                 let mut log_topics = Vec::with_capacity(topics);
                 for _ in 0..topics {
                     let topic = state.stack.pop()?;
-                    if topic.contains_gasleft() {
+                    if !self.symbolic_gas() && topic.contains_gasleft() {
                         return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                     }
                     log_topics.push(topic);
@@ -1516,7 +1567,7 @@ impl SymbolicExecutor {
         offset: &SymExpr,
         size: &SymExpr,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        if offset.contains_gasleft() || size.contains_gasleft() {
+        if !self.symbolic_gas() && (offset.contains_gasleft() || size.contains_gasleft()) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let return_data_len = state.return_data.len_word.clone();

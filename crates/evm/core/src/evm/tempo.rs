@@ -7,6 +7,7 @@ use super::{
 };
 use crate::{
     constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
+    edgecov,
     tempo::{PATH_USD_ADDRESS, initialize_tempo_test_genesis_inner},
 };
 use alloy_consensus::{SignableTransaction, transaction::Recovered};
@@ -15,13 +16,16 @@ use alloy_network::{
     AnyRpcTransaction, AnyTxEnvelope, NetworkTransactionBuilder, TransactionBuilder,
 };
 use alloy_primitives::{Address, Bytes};
-use evm2::{Evm, TxResult, Version, evm::precompile::PrecompileProvider, registry::TxRegistry};
+use evm2::{
+    Evm, EvmConfig, ExecutionConfig, OpcodeConfig, SpecId, TxResult, Version,
+    evm::precompile::PrecompileProvider, registry::TxRegistry,
+};
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use std::sync::Arc;
 use tempo_alloy::{TempoNetwork, primitives::TEMPO_TX_TYPE_ID};
 use tempo_evm::{
     TempoEvmExt, TempoEvmFactory, TempoEvmTypes, TempoTx, TempoTxEnv, TempoTxResultExt,
-    tempo_execution_config, tempo_tx_registry,
+    tempo_execution_config, tempo_opcode_config, tempo_tx_registry,
 };
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
@@ -142,6 +146,17 @@ impl FoundryEvmFactory for TempoEvmFactory {
         version
     }
 
+    fn execution_config(
+        &self,
+        spec: TempoHardfork,
+        version: Version,
+    ) -> ExecutionConfig<TempoEvmTypes> {
+        evm2::spec_to_generic!(SpecId::from(spec), |BASE_SPEC_ID| ExecutionConfig::for_config::<
+            InstrumentedTempoConfig<BASE_SPEC_ID>,
+        >()
+        .with_version(version))
+    }
+
     fn tx_registry(
         &self,
         spec: TempoHardfork,
@@ -178,4 +193,14 @@ impl FoundryEvmFactory for TempoEvmFactory {
         result.expect("tempo genesis initialization failed");
         evm.state_mut().commit_transaction();
     }
+}
+
+/// Tempo's opcode table of `BASE_SPEC_ID` with the [`edgecov`] instrumentation opcodes.
+struct InstrumentedTempoConfig<const BASE_SPEC_ID: u32>;
+
+impl<const BASE_SPEC_ID: u32> EvmConfig<TempoEvmTypes> for InstrumentedTempoConfig<BASE_SPEC_ID> {
+    const BASE_SPEC_ID: SpecId =
+        SpecId::try_from_u32(BASE_SPEC_ID).expect("invalid Tempo base spec id");
+    const OPCODE_CONFIG: &'static OpcodeConfig<TempoEvmTypes> =
+        &edgecov::with_instrumentation(tempo_opcode_config::<BASE_SPEC_ID>());
 }
