@@ -846,7 +846,7 @@ impl Cheatcode for dealCall {
             old_balance
         };
         // The balance survives reverts of the enclosing calls.
-        let write = PersistentWrite::Balance(address, new_balance.wrapping_sub(old_balance));
+        let write = PersistentWrite::balance(address, old_balance, new_balance);
         ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
