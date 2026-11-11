@@ -139,7 +139,7 @@ pub(crate) fn validate_signed_session_authorization(
     expected_key_type: SignatureType,
     authorization: &SignedKeyAuthorization,
 ) -> eyre::Result<()> {
-    let auth = &authorization.authorization;
+    let auth = authorization.authorization();
     ensure!(
         auth.key_id == session.key_address,
         "session {} key_authorization key_id is {}, expected {}",

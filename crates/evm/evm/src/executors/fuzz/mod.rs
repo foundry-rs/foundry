@@ -14,7 +14,7 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use eyre::Result;
-use foundry_common::{sh_println, sh_warn};
+use foundry_common::{sh_eprintln, sh_warn};
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     Breakpoints,
@@ -992,7 +992,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                                     "test": func.name,
                                     "metrics": shared_state.global_corpus_metrics.load(),
                                 });
-                                let _ = sh_println!("{metrics}");
+                                let _ = sh_eprintln!("{metrics}");
                                 last_metrics_report = Instant::now();
                             }
                         }

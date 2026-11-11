@@ -36,12 +36,16 @@ contract StateSnapshotTest is Test {
 
         assertEq(store.slot0, 300);
         assertEq(store.slot1, 400);
+        uint256 laterSnapshotId = vm.snapshotState();
 
         vm.revertToStateAndDelete(snapshotId);
         assertEq(store.slot0, 10, "snapshot revert for slot 0 unsuccessful");
         assertEq(store.slot1, 20, "snapshot revert for slot 1 unsuccessful");
         // nothing to revert to anymore
         assert(!vm.revertToState(snapshotId));
+        // later snapshots are kept
+        assert(vm.revertToState(laterSnapshotId));
+        assertEq(store.slot0, 300);
     }
 
     function testStateSnapshotDelete() public {
@@ -365,10 +369,28 @@ abstract contract NestedRestoreFrameRevertBase is Test {
     }
 
     function testRestoreInSucceedingCallIsKept() public {
+        address cooled = address(0xC001);
+        balanceGas(cooled);
+        vm.cool(cooled);
         uint256 snapshotId = prepare(20);
         helper.restoreSet(snapshotId, store, 5);
+        // The transaction's origin and recipient stay warm (EIP-2929), and the account it cooled
+        // stays cold.
+        assertEq(balanceGas(tx.origin), 105);
+        assertEq(balanceGas(address(this)), 105);
+        assertEq(balanceGas(cooled), 2605);
         assertEq(store.marker(), 0);
         assertEq(store.value(), 5);
+    }
+
+    function balanceGas(address target) internal view returns (uint256 gasUsed) {
+        assembly {
+            let start := gas()
+            let targetBalance := balance(target)
+            gasUsed := sub(start, gas())
+            // Keeps the `BALANCE` from being optimized out.
+            if eq(targetBalance, 0xdeadbeef) { revert(0, 0) }
+        }
     }
 
     function testRevertedOuterCallUndoesSiblingRestores() public {

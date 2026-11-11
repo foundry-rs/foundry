@@ -22,18 +22,19 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, StateMutability};
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256,
-    map::{AddressMap, AddressSet, HashMap, hash_map::Entry as AddressMapEntry},
+    map::{AddressSet, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
 use campaign::{
     InvariantCampaignAggregator, InvariantCampaignSpec, InvariantCampaignState,
     InvariantWorkerOutput, InvariantWorkerPlan,
 };
+use evm2::evm::PendingState;
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
     TestFunctionExt,
     contracts::{ContractsByAddress, ContractsByArtifact},
-    sh_eprintln, sh_println,
+    sh_eprintln,
 };
 use foundry_config::{FuzzCorpusConfig, InvariantConfig, InvariantDepthMode, InvariantWorkers};
 use foundry_evm_core::{
@@ -61,7 +62,6 @@ use proptest::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use result::{assert_after_invariant, can_continue, invariant_preflight_check};
-use revm::state::Account;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use snapshot::StateSnapshots;
@@ -1200,11 +1200,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 .unwrap_or_default();
                             handler =
                                 Some((current_tx.call_details.target, Selector::from(sel_bytes)));
-                            if let Some(fuzzer) =
-                                current_run.executor.inspector_mut().fuzzer.as_mut()
-                            {
-                                invariant_test.fuzz_state.collect_fuzzer_values(fuzzer);
-                            }
                             call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                             let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                             if config.show_metrics {
@@ -1316,22 +1311,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             if result.reverted {
                                 run_reverts += 1;
                             }
-                            let mut state_changeset = std::mem::take(&mut result.state_changeset);
+                            let state_changeset = std::mem::take(&mut result.state_changeset);
                             let reverted = result.reverted;
                             if !result.reverted {
-                                let mapping_slots = current_run
-                                    .executor
-                                    .inspector()
-                                    .fuzzer
-                                    .as_ref()
-                                    .and_then(|fuzzer| fuzzer.mapping_slots.as_ref());
                                 collect_data(
                                     &invariant_test,
-                                    &mut state_changeset,
+                                    &state_changeset,
                                     current_run.inputs.last().expect("checked above"),
                                     &result,
                                     run_depth,
-                                    mapping_slots,
                                 );
                                 if config.dictionary.include_view_values {
                                     collect_view_values(
@@ -1348,7 +1336,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             let created_before = current_run.created_contracts.len();
                             if let Err(error) =
                                 &invariant_test.targeted_contracts.collect_created_contracts(
-                                    &state_changeset,
+                                    state_changeset.account_changes(),
                                     project_contracts,
                                     setup_contracts,
                                     &campaign_seed.artifact_filters,
@@ -1685,7 +1673,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &corpus_manager.metrics,
                     &failure_metrics,
                 );
-                let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
+                let _ = sh_eprintln!("{}", serde_json::to_string(&metrics)?);
             }
 
             if stop_after_run {
@@ -1845,20 +1833,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             fuzz_fixtures.clone(),
         );
 
-        // If any of the targeted contracts have the storage layout enabled then we can sample
-        // mapping values. To accomplish, we need to record the mapping storage slots and keys.
-        let mapping_slots = targeted_contracts
-            .targets()
-            .iter()
-            .any(|(_, t)| t.storage_layout.is_some())
-            .then(AddressMap::default);
-
         // Set up fuzzer WITHOUT call_generator initially.
         // We defer call_override until after the initial invariant check to avoid
         // injecting random calls during setup which would break the invariant assertion.
         let extra_cheatcode_addresses = executor.inspector().extra_cheatcode_addresses();
         executor.inspector_mut().set_fuzzer(
-            Fuzzer::new(config.dictionary.max_fuzz_dictionary_values, mapping_slots)
+            Fuzzer::default()
                 .with_extra_cheatcode_addresses(extra_cheatcode_addresses)
                 .with_call_recording(config.corpus.is_coverage_guided()),
         );
@@ -1882,7 +1862,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         )?;
         executor.inspector_mut().set_execution_cancellation(cancellation);
         if let Some(fuzzer) = executor.inspector_mut().fuzzer.as_mut() {
-            fuzz_state.collect_fuzzer_values(fuzzer);
             let _ = fuzzer.take_observed_calls();
         }
         let generator = foundry_evm_fuzz::sequence::SequenceGenerator::invariant_with_fixtures(
@@ -2323,33 +2302,23 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 /// randomly generated addresses.
 fn collect_data<FEN: FoundryEvmNetwork>(
     invariant_test: &InvariantTest,
-    state_changeset: &mut AddressMap<Account>,
+    state_changeset: &PendingState,
     tx: &BasicTxDetails,
     call_result: &RawCallResult<FEN>,
     run_depth: u32,
-    mapping_slots: Option<&AddressMap<foundry_common::mapping_slots::MappingSlots>>,
 ) {
-    // We keep the nonce changes to apply later.
-    let sender_changeset = match state_changeset.entry(tx.sender) {
-        AddressMapEntry::Occupied(entry) => entry
-            .get()
-            .info
-            .code
-            .as_ref()
-            .is_none_or(|code| code.is_empty())
-            .then(|| entry.remove()),
-        AddressMapEntry::Vacant(_) => None,
-    };
-
     // Collect values from fuzzed call result and add them to fuzz dictionary.
     invariant_test.fuzz_state.collect_values_from_call(
         &invariant_test.targeted_contracts,
         tx,
         &call_result.result,
         &call_result.logs,
-        &*state_changeset,
+        // Skip the EOA sender's own nonce and balance changes.
+        state_changeset.account_changes().filter(|changes| {
+            changes.address != tx.sender
+                || changes.current.is_some_and(|info| !info.is_empty_code_hash())
+        }),
         run_depth,
-        mapping_slots,
     );
 
     // Inject typed sancov trace-cmp operands into the fuzz dictionary.
@@ -2357,10 +2326,6 @@ fn collect_data<FEN: FoundryEvmNetwork>(
         invariant_test.fuzz_state.collect_typed_cmp_values(
             cmp_values.iter().map(|s| (s.width, alloy_primitives::B256::from(s.value))),
         );
-    }
-    // Re-add changes
-    if let Some(changed) = sender_changeset {
-        state_changeset.insert(tx.sender, changed);
     }
 }
 
@@ -2380,7 +2345,7 @@ const MAX_VIEW_CALLS_PER_TX: usize = 32;
 fn collect_view_values<FEN: FoundryEvmNetwork>(
     invariant_test: &InvariantTest,
     executor: &Executor<FEN>,
-    state_changeset: &AddressMap<Account>,
+    state_changeset: &PendingState,
     tx: &BasicTxDetails,
     run_depth: u32,
     view_cursor: &mut usize,
@@ -2389,7 +2354,7 @@ fn collect_view_values<FEN: FoundryEvmNetwork>(
         let targets = invariant_test.targeted_contracts.targets();
         let mut candidates = targets
             .iter()
-            .filter(|(address, _)| state_changeset.contains_key(*address))
+            .filter(|(address, _)| state_changeset.account_changes_for(address).is_some())
             .flat_map(|(address, contract)| {
                 contract
                     .abi
@@ -2503,7 +2468,7 @@ pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
 ) -> Result<()> {
     let call_result = execute_and_commit_tx(executor, tx)?;
     targeted_contracts.collect_created_contracts(
-        &call_result.state_changeset,
+        call_result.state_changeset.account_changes(),
         dynamic_target_ctx.project_contracts,
         dynamic_target_ctx.setup_contracts,
         dynamic_target_ctx.artifact_filters,
@@ -2542,20 +2507,15 @@ mod tests {
 
     use super::*;
     use crate::executors::ExecutorBuilder;
-    use alloy_evm::EvmEnv;
+    use evm2::{bytecode::Bytecode, evm::InMemoryDB};
     use foundry_cheatcodes::CheatsConfig;
     use foundry_config::{FuzzCorpusMutationWeights, FuzzDictionaryConfig};
-    use foundry_evm_core::{backend::Backend, evm::EthEvmNetwork};
+    use foundry_evm_core::evm::EthEvmNetwork;
     use foundry_evm_fuzz::CallDetails;
     use proptest::{
         prelude::any,
         strategy::{Strategy, ValueTree},
         test_runner::Config,
-    };
-    use revm::{
-        bytecode::Bytecode,
-        context::{Block, TxEnv},
-        database::InMemoryDB,
     };
     use serde_json::json;
     use std::{sync::mpsc, thread};
@@ -2576,22 +2536,22 @@ mod tests {
 
     #[test]
     fn assumption_rejection_restores_delayed_block_environment() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default()
-            .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
-            .gas_limit(1 << 24)
-            .build(EvmEnv::default(), TxEnv::default(), backend, Default::default());
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default()
+                .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
+                .gas_limit(1 << 24),
+            Default::default(),
+        );
         let target = Address::repeat_byte(0x11);
         let mut code = vec![0x6e]; // PUSH15.
         code.extend_from_slice(MAGIC_ASSUME);
         code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, 0x0f, 0x60, 0x11, 0xf3]);
         executor.set_code(target, Bytecode::new_raw(Bytes::from(code))).unwrap();
 
-        let initial_block = executor.evm_env().block_env.clone();
-        let initial_cheatcode_block =
-            executor.inspector().cheatcodes.as_ref().unwrap().block.clone();
-        let expected_timestamp = initial_block.timestamp() + U256::from(10);
-        let expected_number = initial_block.number() + U256::from(5);
+        let initial_block = executor.evm_env().block;
+        let initial_cheatcode_block = executor.inspector().cheatcodes.as_ref().unwrap().block;
+        let expected_timestamp = initial_block.timestamp + U256::from(10);
+        let expected_number = initial_block.number + U256::from(5);
         let tx = BasicTxDetails {
             warp: Some(U256::from(10)),
             roll: Some(U256::from(5)),
@@ -2614,9 +2574,9 @@ mod tests {
                 |state, event| {
                     match event {
                         CampaignEvent::Feedback(_) => {
-                            let block = &state.0.evm_env().block_env;
-                            assert_eq!(block.timestamp(), expected_timestamp);
-                            assert_eq!(block.number(), expected_number);
+                            let block = &state.0.evm_env().block;
+                            assert_eq!(block.timestamp, expected_timestamp);
+                            assert_eq!(block.number, expected_number);
                             let block = state
                                 .0
                                 .inspector()
@@ -2626,8 +2586,8 @@ mod tests {
                                 .block
                                 .as_ref()
                                 .unwrap();
-                            assert_eq!(block.timestamp(), expected_timestamp);
-                            assert_eq!(block.number(), expected_number);
+                            assert_eq!(block.timestamp, expected_timestamp);
+                            assert_eq!(block.number, expected_number);
                         }
                         CampaignEvent::Check { kind, .. } => {
                             assert_eq!(kind, CampaignCallKind::AssumptionRejected);
@@ -2641,14 +2601,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(outcome, CampaignSequenceOutcome::Stopped);
-        assert_eq!(state.0.evm_env().block_env, initial_block);
+        assert_eq!(state.0.evm_env().block, initial_block);
         assert_eq!(state.0.inspector().cheatcodes.as_ref().unwrap().block, initial_cheatcode_block);
 
         let (kind, _) =
             crate::executors::campaign::execute_invariant_replay_tx(&mut state.0, &state.1)
                 .unwrap();
         assert_eq!(kind, CampaignCallKind::AssumptionRejected);
-        assert_eq!(state.0.evm_env().block_env, initial_block);
+        assert_eq!(state.0.evm_env().block, initial_block);
         assert_eq!(state.0.inspector().cheatcodes.as_ref().unwrap().block, initial_cheatcode_block);
     }
 
@@ -2945,11 +2905,8 @@ mod tests {
         const GAS_LIMIT: u64 = 1 << 24;
         let invariant_address = Address::repeat_byte(0x11);
         let handler_address = Address::repeat_byte(0x22);
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default().gas_limit(GAS_LIMIT),
             Default::default(),
         );
         // Return ABI-encoded `true` for the invariant predicate.

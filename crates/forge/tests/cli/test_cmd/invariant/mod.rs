@@ -500,6 +500,63 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 "#]]);
 }
 
+// Tests that the timeout interrupts a handler that loops without calls, which only the timeout
+// ends.
+#[forgetest_init]
+fn invariant_timeout_interrupts_loop_without_calls(prj: _, cmd: _) {
+    prj.add_test(
+        "LoopTimeoutTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract LoopHandler {
+    uint256 public acc;
+
+    function spin() public {
+        uint256 value;
+        // `value` stays even, so the loop never ends.
+        while (value != 1) {
+            unchecked {
+                value += 2;
+            }
+        }
+        acc = value;
+    }
+}
+
+contract LoopTimeoutTest is Test {
+    LoopHandler handler;
+
+    function setUp() public {
+        handler = new LoopHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.depth = 10
+    /// forge-config: default.invariant.timeout = 1
+    function invariant_loop_timeout() public view {
+        require(handler.acc() == 0);
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_loop_timeout", "--gas-limit", &i64::MAX.to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/LoopTimeoutTest.t.sol:LoopTimeoutTest
+[SKIP: timeout reached before any call] invariant_loop_timeout() (runs: 0, calls: 0, reverts: 0)
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+}
+
 // Tests that selector hits are uniformly distributed
 // <https://github.com/foundry-rs/foundry/issues/2986>
 #[forgetest_init]
@@ -3785,6 +3842,47 @@ Ran 1 test for test/HoistSenderTest.t.sol:HoistSenderTest
 [PASS] invariant_only_target_sender() (runs: 32, calls: 640, reverts: 0)
 ...
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Corpus metrics reported during an invariant campaign go to stderr, so `--json` stdout stays one
+// JSON document.
+#[forgetest_init]
+fn invariant_corpus_metrics_keep_json_stdout_clean(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.depth = 10;
+        config.invariant.timeout = Some(7);
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "InvariantMetrics.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantMetricsHandler {
+    uint256 public counter;
+
+    function inc() external {
+        counter++;
+    }
+}
+
+contract InvariantMetricsTest is Test {
+    function setUp() public {
+        targetContract(address(new InvariantMetricsHandler()));
+    }
+
+    function invariant_holds() public pure {}
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--json"]).assert_success();
+    serde_json::from_slice::<serde_json::Value>(&output.get_output().stdout).unwrap();
+    output.stderr_eq(str![[r#"
+...
+{"timestamp":[..],"event":"pulse","contract":"test/InvariantMetrics.t.sol:InvariantMetricsTest",[..]}
 ...
 "#]]);
 }
