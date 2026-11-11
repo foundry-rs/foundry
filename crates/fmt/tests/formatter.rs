@@ -1097,30 +1097,27 @@ impl<'ast> Visit<'ast> for StatementStructure {
 
 #[test]
 fn inlined_loops_preserve_else_binding() {
-    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
-        for then in [
-            "for (;;) { if (b) x(); }",
-            "{ for (;;) { if (b) x(); } }",
-            "for (;;) while (b) { if (c) x(); }",
-            "while (b) for (;;) { if (c) x(); }",
-            "for (;;) { if (b) x(); else y(); }",
-            "for (;;) { if (b) { if (c) x(); } else y(); }",
-            "for (;;) { uint256 x; }",
-            "for (;;) { (uint256 x, uint256 y) = g(); }",
-        ] {
-            let source =
-                format!("contract C {{ function f() external {{ if (a) {then} else z(); }} }}");
+    for then in [
+        "for (;;) { if (b) x(); }",
+        "{ for (;;) { if (b) x(); } }",
+        "for (;;) while (b) { if (c) x(); }",
+        "while (b) for (;;) { if (c) x(); }",
+        "for (;;) { if (b) x(); else y(); }",
+        "for (;;) { if (b) { if (c) x(); } else y(); }",
+        "for (;;) { uint256 x; }",
+        "for (;;) { (uint256 x, uint256 y) = g(); }",
+    ] {
+        let source =
+            format!("contract C {{ function f() external {{ if (a) {then} else z(); }} }}");
+        let expected = statement_structure(&source);
+        for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
             let config = Arc::new(FormatterConfig {
                 line_length: 120,
                 single_line_statement_blocks: style,
                 ..Default::default()
             });
             let actual = format(&source, Path::new("test.sol"), config);
-            assert_eq!(
-                statement_structure(&source),
-                statement_structure(&actual),
-                "{source}\n{actual}"
-            );
+            assert_eq!(expected, statement_structure(&actual), "{style:?}\n{source}\n{actual}");
         }
     }
 }
