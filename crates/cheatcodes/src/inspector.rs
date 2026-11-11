@@ -1222,7 +1222,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             executor,
         );
         if let Some(provenance) = &mut self.failure_provenance {
-            provenance.finish_assertion::<FEN>(interp);
+            provenance.finish_assertion();
         }
         result
     }
