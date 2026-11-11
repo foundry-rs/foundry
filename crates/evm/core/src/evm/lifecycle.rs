@@ -1222,8 +1222,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         }
         // Persistent slots warm while their account is cold, such as the test contract's after an
         // isolated static call cooled it, stay warm without warming the account, which the
-        // prewarm set cannot express. Only slots this context caches are loaded to warm them, so
-        // the switch reads nothing from the fork.
+        // prewarm set cannot express. Only slots this context caches, including the implicit zeros
+        // of wiped storage, are loaded to warm them, so the switch reads nothing from the fork.
         let state = evm.state_mut();
         for (address, slots) in source_cold_slots {
             for key in slots {
@@ -1232,7 +1232,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
                     && cache
                         .storage
                         .get(&address)
-                        .is_some_and(|storage| storage.slots.contains_key(&key));
+                        .is_some_and(|storage| storage.wiped || storage.slots.contains_key(&key));
                 if cached && state.storage_slot(&address, key).is_ok() {
                     state.set_storage_warm(&address, key, true);
                 }

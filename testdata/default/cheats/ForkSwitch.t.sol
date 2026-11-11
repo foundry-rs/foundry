@@ -484,6 +484,15 @@ contract ForkSwitchPersistentWarmthTest is Test {
         assertTrue(isValueWarm(), "slot warmth was dropped");
     }
 
+    // A contract created in the running transaction has wiped storage, so its untouched slots are
+    // cached only implicitly.
+    function testForkWipedSlotWarmthSurvivesCooledAccount() public {
+        ForkSwitchWipedSlotProbe probe = new ForkSwitchWipedSlotProbe();
+        vm.makePersistent(address(probe));
+
+        assertTrue(probe.readAfterSwitch(forkB), "wiped slot warmth was dropped");
+    }
+
     function isWarm(address account) internal view returns (bool) {
         uint256 cost;
         assembly {
@@ -539,5 +548,27 @@ contract ForkSwitchPersistentWarmthIsolatedTest is ForkSwitchPersistentWarmthTes
         vm.selectFork(forkC);
 
         assertTrue(!isWarm(address(box)), "cooled warmth was carried");
+    }
+}
+
+contract ForkSwitchWipedSlotProbe {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    uint256 untouched;
+
+    // Cools this account, warms an untouched slot of it, and returns whether the slot is still warm
+    // after switching to `fork`.
+    function readAfterSwitch(uint256 fork) external returns (bool) {
+        vm.cool(address(this));
+        uint256 current = untouched;
+        vm.selectFork(fork);
+        uint256 cost;
+        assembly {
+            cost := gas()
+            current := sload(untouched.slot)
+            cost := sub(cost, gas())
+        }
+        require(current == 0);
+        return cost < 2000;
     }
 }
