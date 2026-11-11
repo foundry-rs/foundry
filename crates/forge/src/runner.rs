@@ -1256,8 +1256,8 @@ enum SequenceMinimization {
     /// The minimized sequence, with the failure reasons of the original and the minimized
     /// sequence.
     Minimized(MinimizedSequence, SequenceReasons),
-    /// Replaying the original sequence did not reproduce the campaign's failure, so replays cannot
-    /// tell whether a smaller sequence preserves it.
+    /// Replaying the original or the minimized sequence did not reproduce the campaign's failure,
+    /// so replays cannot tell whether a smaller sequence preserves it.
     KeepOriginal,
     /// Leave the original sequence to the shrinker that removes calls, within the shrink budget.
     RemoveCalls,
@@ -1639,8 +1639,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ///
     /// Without a shrink budget, calls, or the campaign's failure to compare with, such as for
     /// persisted failures, the sequence is not replayed here. It is kept as is when replaying it
-    /// does not reproduce the campaign's failure, and left to the shrinker that removes calls when
-    /// the failure cannot be identified.
+    /// or its minimized form does not reproduce the campaign's failure, and left to the shrinker
+    /// that removes calls when the failure cannot be identified.
     fn minimize_invariant_sequence(
         &self,
         replay: SequenceReplay<'_>,
@@ -1696,7 +1696,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         )
         .expect("the sequence has calls");
         let Some(outcome) = replay_candidate(&minimization.minimized_calls) else {
-            return SequenceMinimization::RemoveCalls;
+            return SequenceMinimization::KeepOriginal;
         };
         SequenceMinimization::Minimized(minimization, (expected.reason, outcome.reason))
     }

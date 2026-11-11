@@ -4311,19 +4311,25 @@ contract ReplayDriftTest is GateTest {
 }
 
 contract ExpectProbe is Test {
-    uint256 expected;
-    constructor(uint256 value) { expected = value; }
-    function check(uint256 x) public { vm.assertTrue(x == expected, "probe"); }
+    function check(uint256 x, uint256 expected) public { vm.assertTrue(x == expected, "probe"); }
 }
 
-// Replays fail the same assertion of another probe with the same outcome.
+contract ExpectWrapper {
+    ExpectProbe probe;
+    uint256 expected;
+    constructor(ExpectProbe target, uint256 value) { probe = target; expected = value; }
+    function check(uint256 x) external { probe.check(x, expected); }
+}
+
+// Replays fail the same assertion of the probe through another wrapper with the same outcome.
 contract ProbeDriftTest is GateTest {
-    ExpectProbe[2] probes = [new ExpectProbe(0), new ExpectProbe(1)];
+    ExpectProbe probe = new ExpectProbe();
+    ExpectWrapper[2] wrappers = [new ExpectWrapper(probe, 0), new ExpectWrapper(probe, 1)];
     function invariant_probe_drift() public {
         if (!gate.touched()) return;
         uint256 i = vm.envOr("FOUNDRY_TEST_INVARIANT_PROBE_DRIFT", uint256(0));
         vm.setEnv("FOUNDRY_TEST_INVARIANT_PROBE_DRIFT", "1");
-        probes[i].check(gate.x());
+        wrappers[i].check(gate.x());
     }
 }
 
@@ -4335,6 +4341,21 @@ contract PhaseProbeTest is GateTest {
         if (!gate.touched()) return;
         vm.setEnv("FOUNDRY_TEST_INVARIANT_PHASE", phase == 0 ? "1" : "2");
         revert(phase == 0 ? "first" : "second");
+    }
+}
+
+// Only the first replay fails like the campaign, and once later ones did not, the empty sequence
+// fails as well.
+contract FinalCheckTest is GateTest {
+    function invariant_final_check() public {
+        uint256 phase = vm.envOr("FOUNDRY_TEST_INVARIANT_FINAL_CHECK", uint256(0));
+        if (!gate.touched()) {
+            if (phase >= 3) revert("phase");
+            return;
+        }
+        vm.setEnv("FOUNDRY_TEST_INVARIANT_FINAL_CHECK", vm.toString(phase + 1));
+        if (phase >= 2) revert("later");
+        revert("first");
     }
 }
 "#,
@@ -4368,6 +4389,19 @@ contract PhaseProbeTest is GateTest {
     }
     cmd.forge_fuse()
         .args(["test", "--fuzz-seed", "1", "--mc", "PhaseProbeTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: first]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] calldata=set(uint256) args=[580941973555059668566857299413718168208629078518665098370115901368133 [5.809e68]]
+...
+"#]]);
+
+    // The final check of the minimized sequence fails another way, so the original stays.
+    prj.update_config(|config| config.invariant.shrink_run_limit = 1);
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "FinalCheckTest"])
         .assert_failure()
         .stdout_eq(str![[r#"
 ...
