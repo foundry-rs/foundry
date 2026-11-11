@@ -130,14 +130,14 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         }
         let executed = executor.transact(&tx).map_err(transaction_error)?;
         let Some((id, persistent)) = inactive else {
-            let persistent = if untracked {
+            let (persistent, accepted) = if untracked {
                 merge_untracked_nested_changes(evm.state_mut(), &executed)?
             } else {
                 merge_changes(evm.state_mut(), executed.account_changes(), |_| true, None, None)?;
-                Vec::new()
+                Default::default()
             };
             let result = executed.result().clone();
-            return Ok(ExecutedNested { result, context: None, cursor, persistent });
+            return Ok(ExecutedNested { result, context: None, cursor, persistent, accepted });
         };
         // The inactive context's code is not in the running transaction's database.
         let TxResultWithState { result, pending_state, .. } = executed.detach();
@@ -153,7 +153,13 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         rebase_loaded_accounts(evm.state_mut(), executor.state_mut(), &persistent)?;
         executor.clear_inspector();
         let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
-        Ok(ExecutedNested { result, context: Some((id, cache)), cursor, persistent: Vec::new() })
+        Ok(ExecutedNested {
+            result,
+            context: Some((id, cache)),
+            cursor,
+            persistent: Vec::new(),
+            accepted: Vec::new(),
+        })
     }
 }
 
@@ -167,6 +173,9 @@ pub struct ExecutedNested<T: EvmTypesHost> {
     cursor: Option<ForkCursor<T>>,
     /// Writes of an untracked merge, to replay when an enclosing call reverts.
     persistent: Vec<PersistentWrite>,
+    /// Changes of an untracked merge accepted into the running state, see
+    /// [`merge_untracked_nested_changes`].
+    accepted: Vec<PersistentWrite>,
 }
 
 impl<T: EvmTypesHost> ExecutedNested<T> {
@@ -178,6 +187,11 @@ impl<T: EvmTypesHost> ExecutedNested<T> {
     /// Takes the writes of an untracked merge, see [`PersistentWrite`].
     pub fn take_persistent(&mut self) -> Vec<PersistentWrite> {
         mem::take(&mut self.persistent)
+    }
+
+    /// Takes the changes of an untracked merge accepted into the running state.
+    pub fn take_accepted(&mut self) -> Vec<PersistentWrite> {
+        mem::take(&mut self.accepted)
     }
 }
 
@@ -1420,17 +1434,41 @@ pub unsafe fn release_inspector<'b, T: EvmTypes>(mut evm: Evm<'_, T>) -> Evm<'b,
 /// Applies a nested transaction's changes to the running transaction's `state` as journaled
 /// writes and returns them as [`PersistentWrite`]s, for the caller to replay when an enclosing
 /// call reverts, such as for `broadcastRawTransaction`.
+///
+/// Also returns the changes accepted into `state` instead, which no revert undoes, for the caller
+/// to replay only when it discards the running state.
 pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
-) -> DbResult<Vec<PersistentWrite>> {
+) -> DbResult<(Vec<PersistentWrite>, Vec<PersistentWrite>)> {
     // Accounts and slots the running transaction has not loaded start from the nested
     // transaction's writes.
     let unloaded = unloaded_changes(state, executed.account_changes());
     state.commit_source(&unloaded);
+    let mut accepted = Vec::new();
+    for change in unloaded.account_changes() {
+        let address = change.address;
+        let (balance, nonce) =
+            change.original.map_or((U256::ZERO, 0), |info| (info.balance, info.nonce));
+        if let Some(current) = change.current {
+            if current.balance != balance {
+                accepted.push(PersistentWrite::balance(address, balance, current.balance));
+            }
+            if current.nonce != nonce {
+                let delta = i128::from(current.nonce) - i128::from(nonce);
+                accepted.push(PersistentWrite::Nonce { address, delta, created: false });
+            }
+        }
+        accepted.extend(
+            change
+                .storage
+                .changed_slots()
+                .map(|(key, slot)| PersistentWrite::Slot(address, *key, slot.current)),
+        );
+    }
     let mut persistent = Vec::new();
     merge_changes(state, executed.account_changes(), |_| true, Some(&mut persistent), None)?;
-    Ok(persistent)
+    Ok((persistent, accepted))
 }
 
 /// Applies the changes of a nested transaction that `child` ran and detached into `pending` to the

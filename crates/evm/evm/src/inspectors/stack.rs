@@ -605,12 +605,17 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         };
         drop(child);
         // The merged changes include the writes of a successful transaction; a failed one rolled
-        // them back, so they are replayed over its merged changes.
+        // them back, so they are replayed over its merged changes. The writes it accepted
+        // outside its journal are dropped with its state.
         let writes = mem::replace(&mut cheats.persistent_writes, outer_writes);
         cheats.frame_rollback = frame_rollback;
         let result = result.and_then(|(result, mut persistent)| {
             if !result.is_success() {
-                let writes = writes.into_iter().map(|(.., write)| write).collect::<Vec<_>>();
+                let writes = writes
+                    .into_iter()
+                    .filter(|&(_, len, _)| len != 0)
+                    .map(|(.., write)| write)
+                    .collect::<Vec<_>>();
                 let applied = PersistentWrite::apply_all(&writes, evm.state_mut())?;
                 persistent
                     .extend(writes.into_iter().filter(|write| !write.is_delta()).chain(applied));
@@ -672,11 +677,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
         let mut executed = self.replay(cheats, &mut replay, evm, depth, prepared, true)?;
         drop(replay);
-        cheats.record_persistent(
-            usize::from(depth).saturating_sub(1),
-            evm.state(),
-            executed.take_persistent(),
-        );
+        let caller_depth = usize::from(depth).saturating_sub(1);
+        cheats.record_persistent(caller_depth, evm.state(), executed.take_persistent());
+        cheats.record_accepted(caller_depth, executed.take_accepted());
         Ok(backend.backend_mut().store_executed(evm, executed))
     }
 
@@ -1950,17 +1953,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             let failed = !result.stop.is_success();
             let end = cheats.snapshot_restores.frame_end(
                 evm.state_mut(),
+                &mut cheats.persistent_writes,
                 message.depth,
                 failed,
                 features,
             );
             // A frame ends here once per hook layer, and only the layer that opened it returns
             // its checkpoint.
-            if let Some((checkpoint, ledger)) = end {
-                // The reinstated state holds the persistent writes recorded over it.
-                if let Some(ledger) = ledger {
-                    cheats.persistent_writes = ledger;
-                }
+            if let Some(checkpoint) = end {
                 cheats.frame_rollback =
                     Some((usize::from(message.depth), checkpoint.journal_len()));
             }

@@ -187,6 +187,11 @@ contract PersistentWritesTest is Test {
         vm.stopBroadcast();
     }
 
+    function broadcastThenRevert() external {
+        vm.broadcastRawTransaction(RAW_TX);
+        revert();
+    }
+
     function executeThenRevert() external {
         vm.store(TARGET, bytes32(uint256(1)), bytes32(uint256(42)));
         vm.executeTransaction(RAW_TX);
@@ -196,6 +201,13 @@ contract PersistentWritesTest is Test {
     function selectThenDeal() external {
         vm.selectFork(otherFork);
         vm.deal(FRESH, 100);
+        revert();
+    }
+
+    function restoreThenSelectThenDeal() external {
+        vm.revertToState(vm.snapshotState());
+        vm.selectFork(otherFork);
+        vm.deal(FRESH, 300);
         revert();
     }
 
@@ -231,7 +243,8 @@ contract PersistentWritesTest is Test {
         // A snapshot restore keeps the writes made before the snapshot.
         assertEq(balanceAfter(abi.encodeCall(this.dealThenRestoreInChild, ())), 100, "dealThenRestoreInChild");
         assertEq(balanceAfter(abi.encodeCall(this.dealThenRestore, ())), 100, "dealThenRestore");
-        assertEq(balanceAfter(abi.encodeCall(this.restoreThenDeal, ())), 77, "restoreThenDeal");
+        // The revert undoes the restore, so the deal it rolled back composes with the later one.
+        assertEq(balanceAfter(abi.encodeCall(this.restoreThenDeal, ())), 127, "restoreThenDeal");
 
         callReverting(abi.encodeCall(this.createThenSetNonce, ()));
         assertEq(vm.getNonce(address(bumper)), 9, "createThenSetNonce");
@@ -298,6 +311,16 @@ contract PersistentWritesTest is Test {
         assertEq(A.balance, 50, "failed raw transaction deal");
     }
 
+    // A raw transaction accepts its changes to accounts the running transaction has not loaded, so
+    // a revert neither undoes nor replays them.
+    function testRawTransactionInRevertedCall() public {
+        vm.chainId(1);
+        vm.deal(SENDER, 1 ether);
+        callReverting(abi.encodeCall(this.broadcastThenRevert, ()));
+        assertEq(TARGET.balance, 17);
+        assertEq(vm.getNonce(SENDER), 1);
+    }
+
     // A fork switch accepts the writes on the fork it leaves, so a later revert does not replay
     // them on the fork it selected.
     function testForkWritesStayOnTheirFork() public {
@@ -311,5 +334,11 @@ contract PersistentWritesTest is Test {
         // A write after the switch is undone with the frame only if its rollback reached it.
         callReverting(abi.encodeCall(this.selectThenDeal, ()));
         assertEq(FRESH.balance, 100, "dealt after the switch");
+
+        // A revert that undoes a restore does not keep the writes made after a later switch, which
+        // accepted the state the restore installed.
+        vm.selectFork(fork);
+        callReverting(abi.encodeCall(this.restoreThenSelectThenDeal, ()));
+        assertEq(FRESH.balance, 100, "dealt after a restore and a switch");
     }
 }

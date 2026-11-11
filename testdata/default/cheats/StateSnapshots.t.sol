@@ -268,6 +268,35 @@ contract NestedRestoreHelper {
         store.set(3);
         revert("outer reverted");
     }
+
+    /// Restores twice, so the first deal is dropped, then writes `target`'s balance and nonce.
+    function restoreWrite(uint256 snapshotId, address target) public {
+        require(vm.revertToState(snapshotId), "restore failed");
+        vm.deal(target, 50);
+        require(vm.revertToState(snapshotId), "second restore failed");
+        vm.deal(target, 100);
+        vm.setNonce(target, 7);
+    }
+
+    function restoreWriteRevert(uint256 snapshotId, address target) external {
+        restoreWrite(snapshotId, target);
+        revert("restore reverted");
+    }
+
+    function nestedRestoreWriteRevert(uint256 snapshotId, address target) external {
+        this.restoreWrite(snapshotId, target);
+        revert("outer reverted");
+    }
+
+    function restoreTransactRevert(uint256 snapshotId, bytes calldata rawTx, bool execute) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        if (execute) {
+            vm.executeTransaction(rawTx);
+        } else {
+            vm.broadcastRawTransaction(rawTx);
+        }
+        revert("restore reverted");
+    }
 }
 
 contract NestedRestoreConstructor {
@@ -473,6 +502,50 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         assertEq(store.marker(), MARKER);
         assertEq(store.value(), 121);
         assertEq(store.slots(1), 0);
+    }
+
+    function testRevertedRestoreKeepsLaterWrites() public {
+        address target = address(0xDEA1);
+        uint256 snapshotId = prepare(20);
+        expectHelperRevert(abi.encodeCall(helper.restoreWriteRevert, (snapshotId, target)), "restore reverted");
+        assertUndone(20, 1);
+        assertEq(target.balance, 100);
+        assertEq(vm.getNonce(target), 7);
+    }
+
+    function testRevertedCallKeepsWritesAfterNestedRestore() public {
+        address target = address(0xDEA1);
+        uint256 snapshotId = prepare(20);
+        expectHelperRevert(abi.encodeCall(helper.nestedRestoreWriteRevert, (snapshotId, target)), "outer reverted");
+        assertUndone(20, 1);
+        assertEq(target.balance, 100);
+        assertEq(vm.getNonce(target), 7);
+    }
+
+    function testRevertedRestoreKeepsLaterExecutedTransaction() public {
+        revertedRestoreTransaction(true);
+    }
+
+    function testRevertedRestoreKeepsLaterRawTransaction() public {
+        revertedRestoreTransaction(false);
+    }
+
+    function revertedRestoreTransaction(bool execute) internal {
+        bytes memory rawTx = signedTransaction(abi.encodeCall(this.markStore, ()));
+        uint256 snapshotId = prepare(20);
+        expectHelperRevert(
+            abi.encodeCall(helper.restoreTransactRevert, (snapshotId, rawTx, execute)), "restore reverted"
+        );
+        // The transaction's writes and nonce survive, while the restore is undone.
+        assertEq(store.marker(), 99);
+        assertEq(address(0xBEEF5).balance, 5);
+        assertEq(store.value(), 21);
+        assertEq(vm.getNonce(vm.addr(1)), 1);
+    }
+
+    function markStore() external {
+        store.mark(99);
+        payable(address(0xBEEF5)).transfer(5);
     }
 
     function caughtTransactionRestore() external {

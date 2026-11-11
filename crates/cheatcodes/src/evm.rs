@@ -1669,6 +1669,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    let fork_id = ccx.active_fork_id();
     let (evm, db) = ccx.evm_db_mut();
     if let Some(replaced) = db.revert_state(
         snapshot_id,
@@ -1676,7 +1677,8 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertKeep,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.restore_persistent_writes(snapshot_id, replaced, false);
+        let switched = ccx.active_fork_id() != fork_id;
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, false, switched);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         ccx.state.env_overrides.restore_snapshot(snapshot_id, false);
@@ -1697,6 +1699,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    let fork_id = ccx.active_fork_id();
     let (evm, db) = ccx.evm_db_mut();
     if let Some(replaced) = db.revert_state(
         snapshot_id,
@@ -1704,7 +1707,8 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertRemove,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.restore_persistent_writes(snapshot_id, replaced, true);
+        let switched = ccx.active_fork_id() != fork_id;
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, true, switched);
         ccx.state.env_overrides.restore_snapshot(snapshot_id, true);
         if let Some(fork_block_number) =
             ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)
