@@ -36,7 +36,7 @@ impl<T: EvmTypesHost> Inspector<T> for LineCoverageCollector {
     fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         let message = interp.message();
         let call = (!message.kind.is_create())
-            .then(|| (CallData::new(&message.input), !message.value.is_zero()));
+            .then(|| (CallData::new(interp.input()), !message.value.is_zero()));
         let map = self.get_or_insert_map(interp);
         if let Some((call, with_value)) = call {
             map.call(call, with_value);

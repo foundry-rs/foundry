@@ -4385,6 +4385,7 @@ async fn test_fork_get_account_info() {
             balance: U256::from(14353753764795095694u64),
             nonce: 6689,
             code: Default::default(),
+            ..Default::default()
         }
     );
 
@@ -4401,6 +4402,7 @@ async fn test_fork_get_account_info() {
             balance: U256::from(14352720829244098514u64),
             nonce: 6690,
             code: Default::default(),
+            ..Default::default()
         }
     );
 
@@ -4430,6 +4432,7 @@ async fn test_fork_get_account_info() {
             balance: U256::from(14352720829244098514u64),
             nonce: 6690,
             code: Default::default(),
+            ..Default::default()
         }
     );
 }

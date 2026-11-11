@@ -418,6 +418,7 @@ pub(crate) fn revert_cheatcode_call(
     return_data: SymReturnData,
 ) -> Result<(), SymbolicError> {
     state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
+    state.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
     state.return_data = return_data;
     state.copy_call_output_offset(cx, out_offset, out_size)?;
     state.stack.push(SymExpr::zero(cx))?;
@@ -530,13 +531,24 @@ pub(crate) fn read_abi_address_or_symbolic_slot_arg(
     Ok(state.address_or_symbolic_slot(cx, word))
 }
 
+/// Reads an address argument as a word, pinned to its constant when path constraints force one.
+pub(crate) fn read_abi_address_word_arg(
+    cx: &mut SymCx,
+    state: &PathState,
+    args_offset: usize,
+    index: usize,
+) -> Result<SymExpr, SymbolicError> {
+    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    Ok(state.constrained_word(cx, &word).map_or(word, |value| SymExpr::constant(cx, value)))
+}
+
 pub(crate) fn read_abi_address_word_or_symbolic_slot_arg(
     cx: &mut SymCx,
     state: &mut PathState,
     args_offset: usize,
     index: usize,
 ) -> Result<(Address, SymExpr), SymbolicError> {
-    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?.address_operand(cx);
     let address = state.address_or_symbolic_slot(cx, word.clone());
     Ok((address, word))
 }
@@ -878,15 +890,16 @@ pub(crate) fn parse_env_value(value: &str, ty: &DynSolType) -> Result<DynSolValu
 }
 
 pub(crate) fn parse_env_uint(value: &str) -> Result<U256, SymbolicError> {
-    value.parse::<U256>().map_err(|_| SymbolicError::Unsupported("symbolic env uint parse"))
+    match DynSolType::Uint(256).coerce_str(value) {
+        Ok(DynSolValue::Uint(value, _)) => Ok(value),
+        _ => Err(SymbolicError::Unsupported("symbolic env uint parse")),
+    }
 }
 
 pub(crate) fn parse_env_int(value: &str) -> Result<U256, SymbolicError> {
-    if let Some(value) = value.strip_prefix('-') {
-        let magnitude = parse_env_uint(value)?;
-        Ok(U256::ZERO.wrapping_sub(magnitude))
-    } else {
-        parse_env_uint(value)
+    match DynSolType::Int(256).coerce_str(value) {
+        Ok(DynSolValue::Int(value, _)) => Ok(value.into_raw()),
+        _ => Err(SymbolicError::Unsupported("symbolic env int parse")),
     }
 }
 

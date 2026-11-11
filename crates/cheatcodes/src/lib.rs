@@ -31,7 +31,7 @@ pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
-    StorageHook, message_result, revert_frame,
+    StorageHook, decode_cheatcode_call, message_result, revert_frame,
 };
 pub use spec::{CheatcodeDef, Vm};
 
@@ -73,12 +73,13 @@ mod state;
 pub use state::CheatcodesCore;
 
 mod string;
+pub use string::parse_value;
 
 mod tempo;
 
 mod test;
 pub use test::{
-    expect::ExpectedCallTracker,
+    expect::{ExpectedCallTracker, ExpectedCallType},
     revert_handlers::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
 };
 

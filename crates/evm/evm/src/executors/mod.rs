@@ -1143,6 +1143,7 @@ fn install_env<FEN: FoundryEvmNetwork>(
     evm: &mut FoundryEvmFor<'_, FEN>,
     env: EvmEnvFor<FEN>,
 ) {
+    evm.set_initial_call_depth(env.initial_call_depth);
     if same_execution_config::<FEN>(&evm_env(evm), &env) {
         evm.set_block(env.block);
         backend.lifecycle().sync_database_policy(evm);
@@ -1152,7 +1153,7 @@ fn install_env<FEN: FoundryEvmNetwork>(
     let lifecycle = backend.lifecycle();
     let factory = lifecycle.factory().configure_for(&lifecycle.forks().active_db(), &env);
     let precompiles = factory.precompiles(&env, evm.ext());
-    let EvmEnv { spec, version, block } = env;
+    let EvmEnv { spec, version, block, .. } = env;
     evm.set_block_and_execution_config(
         block,
         factory.execution_config(spec, version),
@@ -1175,11 +1176,11 @@ fn same_execution_config<FEN: FoundryEvmNetwork>(
         features,
         chain_id,
         tx_gas_limit_cap,
+        tx_total_gas_cap,
         memory_limit,
         max_code_size,
         max_initcode_size,
         max_blobs_per_tx,
-        initial_call_depth,
         _non_exhaustive: (),
     } = next.version;
     let version = &current.version;
@@ -1188,11 +1189,11 @@ fn same_execution_config<FEN: FoundryEvmNetwork>(
         && version.features == features
         && version.chain_id == chain_id
         && version.tx_gas_limit_cap == tx_gas_limit_cap
+        && version.tx_total_gas_cap == tx_total_gas_cap
         && version.memory_limit == memory_limit
         && version.max_code_size == max_code_size
         && version.max_initcode_size == max_initcode_size
         && version.max_blobs_per_tx == max_blobs_per_tx
-        && version.initial_call_depth == initial_call_depth
 }
 
 #[cfg(feature = "monad")]
@@ -1271,7 +1272,7 @@ fn execute<FEN: FoundryEvmNetwork>(
     // A spec or chain ID change deferred by a cheatcode applies from the next transaction.
     let mut env = evm_env(&evm);
     if let Some(pending) = backend.backend().lifecycle().pending_env() {
-        env = EvmEnv::new(pending.spec, pending.version, env.block);
+        env = EvmEnv { spec: pending.spec, version: pending.version, ..env };
     }
     if let Some(spec) = stack.cheatcodes.as_deref().and_then(|cheats| cheats.execution_evm_version)
         && spec != env.spec

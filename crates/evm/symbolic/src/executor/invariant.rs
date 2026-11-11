@@ -110,6 +110,7 @@ impl SymbolicExecutor {
         );
         initial_state.apply_executor_env(&mut self.cx, &input.executor)?;
         initial_state.world.set_storage_layout(self.config.storage_layout);
+        self.folded_slots = FoldedSlots::register(&mut self.cx, &input.executor, self.deadline);
 
         let calldatas = SymbolicCalldata::variants_with_prefix(
             &input.target.function,
@@ -290,11 +291,12 @@ impl SymbolicExecutor {
         calldata: SymCalldata,
         constraints: Vec<SymBoolExpr>,
     ) -> Result<SequenceCall, SymbolicError> {
-        state.world.clear_transaction_scoped_state();
+        state.world.clear_transaction_scoped_state(&mut self.cx);
         state.mapping_hook_keccak_preimages.clear();
         let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;
         state.call_depth_base = 0;
+        state.assertion_failed = false;
         // Like Forge, expectations end with the root call; only a met count 0 one can remain.
         state.expected_emit = None;
         // Each sequence call runs with a fresh block hash overlay.
@@ -344,12 +346,7 @@ impl SymbolicExecutor {
         steps: &[SequenceStepTemplate],
         state: &PathState,
     ) -> Result<(Vec<SymbolicInvariantStep>, Vec<SymbolicStorageAssignment>), SymbolicError> {
-        let replayable_storage = state.world.replay_storage_symbols();
-        let model = self.solver.model_with_replayable_storage(
-            &mut self.cx,
-            &state.constraints,
-            &replayable_storage,
-        )?;
+        let model = self.witness_model(state)?;
         let sequence = steps
             .iter()
             .map(|step| {

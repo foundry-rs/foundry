@@ -53,7 +53,7 @@ impl<T: EvmTypes> Inspector<T> for Fuzzer {
                 depth: self.call_depth - 1,
                 caller: message.caller,
                 target: message.destination,
-                calldata: message.input.to_bytes(),
+                calldata: message.input.to_bytes(interp.memory()),
                 value: (!message.value.is_zero()).then_some(message.value),
             });
         }

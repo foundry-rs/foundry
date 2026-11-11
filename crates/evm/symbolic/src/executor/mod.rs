@@ -1,6 +1,6 @@
 use super::{abi::*, runtime::*, *};
 use foundry_evm::{
-    constants::MAGIC_ASSUME,
+    constants::{MAGIC_ASSUME, MAGIC_SKIP},
     inspectors::cheatcodes::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
 };
 
@@ -28,11 +28,12 @@ enum CallStatus {
 
 enum JoinedCallOutcome {
     ExpectedRevert(PathState),
-    /// A successful call; `unmet_expected_revert` means the caller must see it as a revert.
+    /// A successful call; `unmet_expected_revert` is the reason the caller must see as a revert
+    /// instead.
     Success {
         parent: PathState,
         child: PathState,
-        unmet_expected_revert: bool,
+        unmet_expected_revert: Option<&'static str>,
     },
     Revert {
         parent: PathState,
@@ -164,7 +165,65 @@ impl SymbolicExecutor {
         let mut parent = state.clone();
         parent.first_failed_callee =
             parent.first_failed_callee.or(outcome.state.first_failed_callee);
+        parent.first_reverted_callee =
+            parent.first_reverted_callee.or(outcome.state.first_reverted_callee);
         parent.take_call_outcome_state(&mut outcome.state);
+        // Like Forge's `call_end`, a frame that ends with its own `vm.expectRevert` still pending
+        // reverts. If a deeper revert already matched a counted expectation, Forge's depth check
+        // passed and the reason is the unmet one. A frame that returned keeps its state, like a
+        // call that succeeds under the caller's `vm.expectRevert`; in internal expect-revert mode
+        // it returns and leaves the expectation pending for the caller.
+        if let Some(expected) = outcome.state.expected_revert.take() {
+            const DEPTH_REASON: &str =
+                "call didn't revert at a lower depth than cheatcode call depth";
+            match outcome.status {
+                // Like Forge's `create_end`, a CREATE always settles the expectation.
+                CallStatus::Success
+                    if executor.internal_expect_revert && !outcome.state.frame.is_constructor =>
+                {
+                    // The reverter history belongs to the expectation, which the child reset.
+                    parent.expected_revert = Some(expected);
+                    parent.first_failed_callee = outcome.state.first_failed_callee;
+                    return Ok(JoinedCallOutcome::Success {
+                        parent,
+                        child: outcome.state,
+                        unmet_expected_revert: None,
+                    });
+                }
+                CallStatus::Success => {
+                    let reason = if expected.matched_any() || executor.internal_expect_revert {
+                        "next call did not revert as expected"
+                    } else {
+                        DEPTH_REASON
+                    };
+                    return Ok(JoinedCallOutcome::Success {
+                        parent,
+                        child: outcome.state,
+                        unmet_expected_revert: Some(reason),
+                    });
+                }
+                CallStatus::Revert
+                    if !executor.internal_expect_revert && !expected.matched_any() =>
+                {
+                    outcome.state.frame.return_data =
+                        error_string_return_data(&mut self.cx, DEPTH_REASON);
+                }
+                CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {}
+            }
+        }
+        if let Some(assumption) = &mut parent.assume_no_revert_next_call {
+            // CREATE leaves the assumption pending, but nested CALL reverts still establish its
+            // first reverter. The CREATE revert itself is not a call_end event.
+            assumption.reverted_by = assumption.reverted_by.or(outcome.state.first_reverted_callee);
+        }
+        if outcome.state.frame.is_constructor
+            && let Some(child_assumption) = outcome.state.assume_no_revert_next_call.take()
+        {
+            if parent.assume_no_revert_next_call.is_some() || assume_no_revert.is_some() {
+                return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
+            }
+            parent.assume_no_revert_next_call = Some(child_assumption);
+        }
         if !matches!(outcome.status, CallStatus::Success) {
             parent.discard_failed_call_logs(
                 state.recorded_logs.as_ref().map_or(0, Vec::len),
@@ -197,14 +256,19 @@ impl SymbolicExecutor {
         }
 
         // Like Forge, a revert under `vm.assumeNoRevert` skips `vm.expectRevert`, and a matching
-        // revert returns `FOUNDRY::ASSUME`, which discards the run only if it reaches the top.
+        // revert returns `FOUNDRY::ASSUME`, which discards the run only if it reaches the top. Its
+        // filters match the first call that reverted in the call, not the callee.
         if let Some(assumption) = assume_no_revert
             && matches!(outcome.status, CallStatus::Revert)
         {
+            let reverter = assumption
+                .reverted_by
+                .or(outcome.state.first_reverted_callee)
+                .unwrap_or(outcome.state.address);
             if self.assume_no_revert_matches(
                 &parent,
                 assumption,
-                outcome.state.address,
+                reverter,
                 &outcome.state.frame.return_data,
             )? {
                 outcome.state.frame.return_data =
@@ -224,7 +288,7 @@ impl SymbolicExecutor {
                 return Ok(JoinedCallOutcome::Success {
                     parent,
                     child: outcome.state,
-                    unmet_expected_revert: true,
+                    unmet_expected_revert: Some("next call did not revert as expected"),
                 });
             }
             match outcome.status {
@@ -253,7 +317,7 @@ impl SymbolicExecutor {
             CallStatus::Success => JoinedCallOutcome::Success {
                 parent,
                 child: outcome.state,
-                unmet_expected_revert: false,
+                unmet_expected_revert: None,
             },
             CallStatus::Revert => JoinedCallOutcome::Revert { parent, child: outcome.state },
             CallStatus::ExceptionalHalt => JoinedCallOutcome::ExceptionalHalt(parent),
@@ -369,7 +433,8 @@ impl SymbolicExecutor {
                                 halted.constraints = out_of_bounds_constraints;
                                 halted.return_data = SymReturnData::empty(&mut self.cx);
                                 *completed_paths += 1;
-                                let status = self.successful_call_status(kind, &halted);
+                                let status =
+                                    self.successful_call_status(executor, kind, &mut halted)?;
                                 outcomes.push(CallOutcome { status, state: halted });
                             }
 
@@ -385,13 +450,16 @@ impl SymbolicExecutor {
                 let op = match op {
                     CallPathOpcode::Execute(op) => op,
                     CallPathOpcode::Halt => {
+                        if !self.completed_path_is_feasible(&mut state, StepOutcome::Halt)? {
+                            break;
+                        }
                         if *completed_paths >= path_limit {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
                         *completed_paths += 1;
                         // Running past the end of code stops like STOP, with no output.
                         state.return_data = SymReturnData::empty(&mut self.cx);
-                        let status = self.successful_call_status(kind, &state);
+                        let status = self.successful_call_status(executor, kind, &mut state)?;
                         outcomes.push(CallOutcome { status, state });
                         break;
                     }
@@ -400,22 +468,19 @@ impl SymbolicExecutor {
 
                 let _step_span = matches!(kind, CallPathKind::Sequence)
                     .then(|| trace_span!("symbolic_step", pc = state.pc, op).entered());
-                match self.step(
-                    executor,
-                    code,
-                    code.jump_table(),
-                    &mut state,
-                    &mut *worklist,
-                    completed_paths,
-                    op,
-                )? {
+                let outcome =
+                    self.step(executor, code, &mut state, &mut *worklist, completed_paths, op)?;
+                if !self.completed_path_is_feasible(&mut state, outcome)? {
+                    break;
+                }
+                match outcome {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
                         if *completed_paths >= path_limit {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
                         *completed_paths += 1;
-                        let status = self.successful_call_status(kind, &state);
+                        let status = self.successful_call_status(executor, kind, &mut state)?;
                         outcomes.push(CallOutcome { status, state });
                         break;
                     }
@@ -424,7 +489,8 @@ impl SymbolicExecutor {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
                         *completed_paths += 1;
-                        outcomes.push(CallOutcome { status: CallStatus::Revert, state });
+                        let status = Self::failed_call_status(kind, &state, CallStatus::Revert);
+                        outcomes.push(CallOutcome { status, state });
                         break;
                     }
                     StepOutcome::ExceptionalHalt => {
@@ -434,7 +500,9 @@ impl SymbolicExecutor {
                         *completed_paths += 1;
                         // An exceptional halt returns no output.
                         state.return_data = SymReturnData::empty(&mut self.cx);
-                        outcomes.push(CallOutcome { status: CallStatus::ExceptionalHalt, state });
+                        let status =
+                            Self::failed_call_status(kind, &state, CallStatus::ExceptionalHalt);
+                        outcomes.push(CallOutcome { status, state });
                         break;
                     }
                     StepOutcome::Failure => {
@@ -453,11 +521,35 @@ impl SymbolicExecutor {
         Ok(outcomes)
     }
 
-    fn successful_call_status(&self, kind: CallPathKind, state: &PathState) -> CallStatus {
-        if matches!(kind, CallPathKind::External) || state.expectations_satisfied() {
-            CallStatus::Success
-        } else {
+    /// Like Forge, a sequence call that reverts still fails if an assertion failed in it.
+    const fn failed_call_status(
+        kind: CallPathKind,
+        state: &PathState,
+        status: CallStatus,
+    ) -> CallStatus {
+        if matches!(kind, CallPathKind::Sequence) && state.assertion_failed {
             CallStatus::Failure
+        } else {
+            status
+        }
+    }
+
+    /// Like Forge, a sequence call fails if an expectation is unmet, an assertion failed, or the
+    /// global fail slot is set.
+    fn successful_call_status(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        kind: CallPathKind,
+        state: &mut PathState,
+    ) -> Result<CallStatus, SymbolicError> {
+        if matches!(kind, CallPathKind::External)
+            || (state.expectations_satisfied()
+                && !state.assertion_failed
+                && !self.global_fail_slot_set(executor, state)?)
+        {
+            Ok(CallStatus::Success)
+        } else {
+            Ok(CallStatus::Failure)
         }
     }
 }

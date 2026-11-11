@@ -39,6 +39,10 @@ impl SymStack {
     pub(crate) const fn len(&self) -> usize {
         self.0.len()
     }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &SymExpr> {
+        self.0.iter()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -901,6 +905,9 @@ pub(crate) struct SymCode {
     jump_table: JumpTable,
     /// Whether revm stores this code as legacy bytecode, which is never an EIP-7702 delegation.
     legacy: bool,
+    /// The first opcode position with a symbolic byte. That byte may be a `JUMPDEST` or a `PUSH`
+    /// that hides later ones, so the jump table is unknown from this position on.
+    symbolic_jumpdests_from: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -912,7 +919,12 @@ pub(crate) enum GuardedOpcode {
 
 impl SymCode {
     pub(crate) fn empty(cx: &mut SymCx) -> Self {
-        Self { bytes: SymBytes::empty(cx), jump_table: JumpTable::default(), legacy: true }
+        Self {
+            bytes: SymBytes::empty(cx),
+            jump_table: JumpTable::default(),
+            legacy: true,
+            symbolic_jumpdests_from: None,
+        }
     }
 
     pub(crate) fn from_byte_exprs(cx: &mut SymCx, bytes: Vec<SymExpr>) -> Self {
@@ -921,18 +933,21 @@ impl SymCode {
     }
 
     pub(crate) fn from_bytes(cx: &mut SymCx, bytes: SymBytes) -> Self {
-        let analysis = if let Some(bytes) = bytes.as_concrete_slice() {
-            bytes.to_vec()
+        let (analysis, symbolic_jumpdests_from) = if let Some(bytes) = bytes.as_concrete_slice() {
+            (bytes.to_vec(), None)
         } else {
-            (0..bytes.len())
-                .map(|idx| {
-                    bytes.byte(cx, idx).as_const().map_or(opcode::STOP, |value| value.to::<u8>())
-                })
-                .collect::<Vec<_>>()
+            let bytes = (0..bytes.len())
+                .map(|idx| bytes.byte(cx, idx).as_const().map(|value| value.to::<u8>()))
+                .collect::<Vec<_>>();
+            let symbolic_jumpdests_from = first_symbolic_opcode(&bytes);
+            (
+                bytes.into_iter().map(|byte| byte.unwrap_or(opcode::STOP)).collect(),
+                symbolic_jumpdests_from,
+            )
         };
         let analyzed = Bytecode::new_legacy(Bytes::from(analysis));
         let jump_table = analyzed.legacy_jump_table().cloned().unwrap_or_default();
-        Self { bytes, jump_table, legacy: false }
+        Self { bytes, jump_table, legacy: false, symbolic_jumpdests_from }
     }
 
     pub(crate) fn concrete(cx: &mut SymCx, bytes: Vec<u8>) -> Self {
@@ -942,7 +957,7 @@ impl SymCode {
     pub(crate) fn from_bytecode(cx: &mut SymCx, bytecode: &Bytecode) -> Self {
         let bytes = SymBytes::concrete(cx, bytecode.original_byte_slice().to_vec());
         let jump_table = bytecode.legacy_jump_table().cloned().unwrap_or_default();
-        Self { bytes, jump_table, legacy: !bytecode.is_eip7702() }
+        Self { bytes, jump_table, legacy: !bytecode.is_eip7702(), symbolic_jumpdests_from: None }
     }
 
     pub(crate) fn from_memory_offset(
@@ -974,8 +989,14 @@ impl SymCode {
         self.bytes.is_empty()
     }
 
-    pub(crate) const fn jump_table(&self) -> &JumpTable {
-        &self.jump_table
+    /// Returns whether `dest` is a valid jump destination.
+    ///
+    /// Fails when a symbolic code byte at or before `dest` can change the jump table.
+    pub(crate) fn is_valid_jumpdest(&self, dest: usize) -> Result<bool, SymbolicError> {
+        if self.symbolic_jumpdests_from.is_some_and(|from| dest >= from) {
+            return Err(SymbolicError::Unsupported("symbolic bytecode jump table"));
+        }
+        Ok(self.jump_table.is_valid(dest))
     }
 
     pub(crate) const fn is_legacy(&self) -> bool {
@@ -1095,6 +1116,19 @@ impl SymCode {
     ) -> Result<Vec<u8>, SymbolicError> {
         self.concrete_range(cx, 0, self.len(), reason)
     }
+}
+
+/// Returns the first opcode position that holds a symbolic byte, skipping concrete push data.
+fn first_symbolic_opcode(bytes: &[Option<u8>]) -> Option<usize> {
+    let mut pc = 0;
+    while let Some(byte) = bytes.get(pc) {
+        let Some(op) = *byte else { return Some(pc) };
+        pc += 1;
+        if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
+            pc += usize::from(op - opcode::PUSH1) + 1;
+        }
+    }
+    None
 }
 
 #[derive(Clone, Debug)]
