@@ -4659,7 +4659,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             } else {
                 let executor = self.clone_invariant_executor();
                 let targets = targeted.targets().clone();
-                let senders = sender_filters;
+                let senders = sender_filters.clone();
                 let config = self.config.symbolic.clone();
                 let ffi_enabled = self.config.ffi;
                 let runtime = tokio::runtime::Handle::current();
@@ -4691,6 +4691,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
         let mut invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
+            sender_filters,
+            &targeted,
             &self.setup.fuzz_fixtures,
             self.build_fuzz_state(true, None),
             progress.as_ref(),
@@ -4731,10 +4733,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if success {
             if let Some(best_value) = invariant_result.optimization_best_value {
                 // Optimization mode: replay and shrink to find shortest best sequence.
-                let targets = evm
-                    .select_contracts_and_senders(invariant_contract.address)
-                    .map(|(_, targets)| targets.targets().keys().copied().collect::<Vec<_>>())
-                    .unwrap_or_default();
+                let targets = targeted.targets().keys().copied().collect::<Vec<_>>();
                 match self.replay_error(
                     evm.config(),
                     self.clone_invariant_executor(),

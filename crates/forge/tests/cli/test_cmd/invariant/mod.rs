@@ -3921,6 +3921,64 @@ contract FreshSenderTest is Test {
 "#]]);
 }
 
+// Target getters run under the project limit, so a `targetSenders()` too expensive for
+// `call_gas_limit` still restricts the campaign to its senders.
+#[forgetest_init]
+fn invariant_call_gas_limit_keeps_target_selection(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+        config.invariant.call_gas_limit = Some(100_000);
+    });
+    prj.add_test(
+        "CallGasTargets.t.sol",
+        r#"
+contract SenderProbe {
+    address public wrongSender;
+
+    function ping() external {
+        if (msg.sender != address(0xBEEF)) wrongSender = msg.sender;
+    }
+}
+
+contract CallGasTargetsTest {
+    SenderProbe probe;
+    uint256[100] slots;
+
+    function setUp() public {
+        probe = new SenderProbe();
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(probe);
+    }
+
+    // Reads 100 cold slots, far more than `call_gas_limit`, before returning `0xBEEF`.
+    function targetSenders() public view returns (address[] memory senders) {
+        uint256 sum;
+        for (uint256 i; i < slots.length; i++) {
+            sum += slots[i];
+        }
+        senders = new address[](1 + sum);
+        senders[0] = address(0xBEEF);
+    }
+
+    function invariant_only_target_sender() public view {
+        require(probe.wrongSender() == address(0));
+    }
+}
+   "#,
+    );
+    cmd.args(["test", "--mt", "invariant_only_target_sender"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_only_target_sender() (runs: 5, calls: 25, reverts: 0)
+...
+"#
+    ]]);
+}
+
 // A failure found under `call_gas_limit` replays and shrinks under the same limit, so the
 // counterexample still fails when replayed and when persisted.
 #[forgetest_init]

@@ -187,10 +187,12 @@ pub struct InvariantConfig {
     /// Unset by default, which keeps the project `gas_limit`; a larger value has no effect. Set it
     /// so a handler with a fuzzed loop bound cannot run until the campaign deadline. An invariant
     /// check or `afterInvariant` that runs out of gas under it fails like any other revert. The
-    /// limit includes a call's intrinsic gas: a handler call whose intrinsic gas or calldata floor
-    /// is above it runs with exactly that gas instead of stopping the campaign, so it has no gas
-    /// left to execute and reverts. Network charges count too, such as Tempo's new-account charge
-    /// for nonce-zero senders, so keep the limit well above them.
+    /// limit includes a call's intrinsic gas. A handler call whose intrinsic gas or calldata floor
+    /// is above it runs with that amount as its limit instead of stopping the campaign. When the
+    /// limit is the intrinsic gas, the call has no gas left to execute and reverts; when it is the
+    /// EIP-7623 calldata floor, which can exceed the intrinsic gas, the difference is left to
+    /// execute and the handler can still run. Network charges count as intrinsic gas too, such as
+    /// Tempo's new-account charge for nonce-zero senders, so keep the limit well above them.
     pub call_gas_limit: Option<u64>,
 }
 
