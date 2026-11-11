@@ -1,7 +1,7 @@
 use crate::cmd::{confirm_continue, rpc_provider};
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{Address, B256, Signature, U256, hex};
+use alloy_primitives::{Address, Signature, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::Authorization;
 use alloy_signer::Signer;
@@ -457,7 +457,7 @@ impl WalletSubcommands {
                 let mut accounts = Vec::new();
                 for (i, wallet) in wallets.iter().enumerate() {
                     let public_key = hex::encode_prefixed(wallet.public_key());
-                    let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
+                    let private_key = hex::encode_prefixed(wallet.to_bytes());
                     if format_json {
                         let mut account = serde_json::Map::new();
                         account.insert("address".into(), json!(wallet.address().to_string()));
@@ -512,7 +512,7 @@ impl WalletSubcommands {
                     };
 
                     let address = wallet.address().to_checksum(None);
-                    let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
+                    let private_key = hex::encode_prefixed(wallet.to_bytes());
                     if format_json {
                         accounts_json.push(if insecure {
                             json!({ "address": address, "private_key": private_key })
@@ -683,7 +683,7 @@ flag to set your key via:
                 let (wallet, _) = PrivateKeySigner::encrypt_keystore(
                     dir,
                     &mut thread_rng(),
-                    wallet.credential().to_bytes(),
+                    wallet.to_bytes(),
                     &password,
                     Some(&account_name),
                 )?;
@@ -771,7 +771,7 @@ flag to set your key via:
                     eyre::bail!("Only local wallets are supported by this command.");
                 };
 
-                let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
+                let private_key = hex::encode_prefixed(wallet.to_bytes());
                 if shell::verbosity() == 0 {
                     print_scalar(private_key)?;
                 } else if shell::is_json() {
@@ -789,7 +789,7 @@ flag to set your key via:
                 let password = password_or_prompt(unsafe_password, "Enter password: ")?;
                 let wallet = PrivateKeySigner::decrypt_keystore(keypath, password)?;
 
-                let private_key = B256::from_slice(&wallet.credential().to_bytes());
+                let private_key = wallet.to_bytes();
                 if shell::is_json() {
                     print_json_success(
                         json!({"account": account_name, "private_key": private_key}),
@@ -852,7 +852,7 @@ flag to set your key via:
                 let (wallet, _) = PrivateKeySigner::encrypt_keystore(
                     keypath.parent().unwrap_or(Path::new("")),
                     &mut thread_rng(),
-                    wallet.credential().to_bytes(),
+                    wallet.to_bytes(),
                     &new_password,
                     Some(&account_name),
                 )?;
@@ -1001,7 +1001,7 @@ fn new_keypairs(number: u32) -> Result<Vec<Value>> {
     for _ in 0..number {
         let wallet = PrivateKeySigner::random_with(&mut rng);
         let address = wallet.address().to_checksum(None);
-        let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
+        let private_key = hex::encode_prefixed(wallet.to_bytes());
         if shell::is_json() {
             json_values.push(json!({
                 "address": address,

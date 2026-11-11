@@ -475,7 +475,7 @@ fn selector_from_signature(signature: &str) -> [u8; 4] {
 }
 
 fn u256_literal(value: U256) -> String {
-    if value <= U256::from(u128::MAX) { value.to_string() } else { format!("0x{value:x}") }
+    if value <= U256::from(u128::MAX) { value.to_string() } else { format!("{value:#x}") }
 }
 
 fn sanitize_identifier(value: &str) -> String {

@@ -1047,13 +1047,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     /// Returns whether the in-flight state changeset for the current call sets the global
     /// assertion failure flag.
     pub fn has_pending_global_failure(state_changeset: &PendingState) -> bool {
-        state_changeset.account_changes().any(|change| {
-            change.address == CHEATCODE_ADDRESS
-                && change
-                    .storage
-                    .slots
-                    .get(&GLOBAL_FAIL_SLOT)
-                    .is_some_and(|slot| !slot.value.current.is_zero())
+        state_changeset.account_changes_for(&CHEATCODE_ADDRESS).is_some_and(|change| {
+            change
+                .storage
+                .slots
+                .get(&GLOBAL_FAIL_SLOT)
+                .is_some_and(|slot| !slot.value.current.is_zero())
         })
     }
 

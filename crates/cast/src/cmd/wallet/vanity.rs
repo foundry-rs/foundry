@@ -60,7 +60,7 @@ impl WalletData {
     fn new(wallet: &PrivateKeySigner) -> Self {
         Self {
             address: wallet.address().to_checksum(None),
-            private_key: hex::encode_prefixed(wallet.credential().to_bytes()),
+            private_key: hex::encode_prefixed(wallet.to_bytes()),
         }
     }
 }

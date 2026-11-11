@@ -538,8 +538,8 @@ impl InvariantTest {
     }
 
     /// Set last invariant run call sequence.
-    fn set_last_run_inputs(&mut self, inputs: &Vec<BasicTxDetails>) {
-        self.test_data.last_run_inputs.clone_from(inputs);
+    fn set_last_run_inputs(&mut self, inputs: Vec<BasicTxDetails>) {
+        self.test_data.last_run_inputs = inputs;
     }
 
     /// Merge current collected line coverage with the new coverage from last fuzzed call.
@@ -551,12 +551,7 @@ impl InvariantTest {
     /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
     /// separated from reverts.
     fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
-        let Some(selector) = tx_details
-            .call_details
-            .calldata
-            .get(..4)
-            .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-            .map(Selector::from)
+        let Some(selector) = tx_details.call_details.calldata.get(..4).map(Selector::from_slice)
         else {
             return;
         };
@@ -1089,8 +1084,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         'stop: while should_continue_invariant_worker(campaign_state, runs, plan) {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
-            let failures_checkpoint = invariant_test.test_data.failures.clone();
-            let failures_revision = failures_checkpoint.revision();
+            // A run that records no failure changes only the revert count.
+            let failures_revision = invariant_test.test_data.failures.revision();
+            let handler_failures_before_run = invariant_test.test_data.failures.handler_count();
+            let reverts_before_run = invariant_test.test_data.failures.reverts;
             let mut stop_after_run = false;
             let mut run_cancelled = false;
             let mut observed_call_entries = Vec::<(Vec<ObservedCall>, BasicTxDetails)>::new();
@@ -1195,14 +1192,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             let current_tx = current_run.inputs.last().ok_or_else(|| {
                                 eyre!("no input generated to call fuzzed target.")
                             })?;
-                            let sel_bytes: [u8; 4] = current_tx
+                            let selector = current_tx
                                 .call_details
                                 .calldata
                                 .get(..4)
-                                .and_then(|selector| selector.try_into().ok())
+                                .map(Selector::from_slice)
                                 .unwrap_or_default();
-                            handler =
-                                Some((current_tx.call_details.target, Selector::from(sel_bytes)));
+                            handler = Some((current_tx.call_details.target, selector));
                             call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                             let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                             if config.show_metrics {
@@ -1511,7 +1507,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     );
                     campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
                 } else {
-                    invariant_test.test_data.failures.clone_from(&failures_checkpoint);
+                    invariant_test.test_data.failures.reverts = reverts_before_run;
                 }
                 break 'stop;
             }
@@ -1523,9 +1519,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &invariant_test.test_data.failures,
                 );
             }
-            if invariant_test.test_data.failures.handler_count()
-                > failures_checkpoint.handler_count()
-            {
+            if invariant_test.test_data.failures.handler_count() > handler_failures_before_run {
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
             }
 
@@ -1554,10 +1548,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     );
                 }
             }
-            let optimization = current_run.optimization_value.map(|v| {
-                let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
-                (v, prefix)
-            });
+            let optimization = current_run
+                .optimization_value
+                .map(|value| (value, &current_run.inputs[..current_run.optimization_prefix_len]));
             let mut corpus_inputs = corpus_run
                 .as_ref()
                 .map_or(current_run.inputs.as_slice(), |history| history.inputs.as_slice());
@@ -1585,14 +1578,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // End current invariant test run.
-            if current_run.save_last_run_inputs {
-                invariant_test.set_last_run_inputs(&current_run.inputs);
-            }
             if let Some(value) = current_run.optimization_value {
                 invariant_test.update_optimization_value(
                     value,
                     &current_run.inputs[..current_run.optimization_prefix_len],
                 );
+            }
+            if current_run.save_last_run_inputs {
+                invariant_test.set_last_run_inputs(std::mem::take(&mut current_run.inputs));
             }
             invariant_test.merge_line_coverage(current_run.line_coverage.take());
             for fuzz_run in &current_run.fuzz_runs {

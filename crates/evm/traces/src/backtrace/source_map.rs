@@ -5,7 +5,10 @@ use foundry_compilers::{
     ProjectCompileOutput, artifacts::sourcemap::SourceMap, buildinfo::SourceEdit,
 };
 use foundry_evm_core::ic::IcPcMap;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 /// Source path, content on disk, and preprocessor edits of a build source.
 pub type BuildSource = (PathBuf, String, Vec<SourceEdit>);
@@ -27,8 +30,8 @@ pub struct PcSourceMapper<'a> {
     source_data: SourceData,
     /// Source files i.e source path, content, and preprocessor edits (indexed by source_id).
     sources: &'a [BuildSource],
-    /// Cached line offset mappings for each source file.
-    line_offsets: Vec<Vec<usize>>,
+    /// Line offset mappings for each source file, computed on first use.
+    line_offsets: Vec<OnceLock<Vec<usize>>>,
 }
 
 impl<'a> PcSourceMapper<'a> {
@@ -37,9 +40,7 @@ impl<'a> PcSourceMapper<'a> {
         // Build instruction counter to program counter mapping
         let ic_pc_map = IcPcMap::new(source_data.bytecode.as_ref());
 
-        // Pre-calculate line offsets for each source file
-        let line_offsets =
-            sources.iter().map(|(_, content, _)| compute_line_offsets(content)).collect();
+        let line_offsets = sources.iter().map(|_| OnceLock::new()).collect();
 
         Self { ic_pc_map, source_data, sources, line_offsets }
     }
@@ -72,7 +73,8 @@ impl<'a> PcSourceMapper<'a> {
             return None;
         }
 
-        let line_offsets = self.line_offsets.get(source_idx)?;
+        let line_offsets =
+            self.line_offsets.get(source_idx)?.get_or_init(|| compute_line_offsets(content));
         let (line, column) = offset_to_line_column(line_offsets, offset);
 
         trace!(
