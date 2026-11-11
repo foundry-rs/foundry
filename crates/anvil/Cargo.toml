@@ -32,6 +32,8 @@ foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
 foundry-fork-db.workspace = true
 foundry-primitives = { workspace = true, default-features = false }
+tempo-alloy.workspace = true
+tempo-contracts.workspace = true
 tempo-primitives.workspace = true
 
 # evm2
@@ -139,8 +141,6 @@ rand.workspace = true
 reqwest.workspace = true
 foundry-test-utils.workspace = true
 
-tempo-alloy.workspace = true
-tempo-contracts.workspace = true
 tempo-precompiles = { workspace = true, features = ["rpc"] }
 
 [features]

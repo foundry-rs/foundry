@@ -4,11 +4,13 @@ use super::{
     EvmEnv, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks, FoundryTxConversion,
     TxPayload, eth_envelope_from_any_rpc, eth_tx, with_eip7702_delegations,
 };
+use crate::edgecov;
 use alloy_consensus::transaction::Recovered;
 use alloy_network::{AnyRpcTransaction, Ethereum};
 use alloy_primitives::{Address, Bytes, U256, address};
 use evm2::{
-    BaseEvmTypes, Evm, EvmTypes, PrecompileError, Precompiles, SpecId, TxResult, Version,
+    BaseEvmTypes, Evm, EvmTypes, ExecutionConfig, PrecompileError, Precompiles, SpecId, TxResult,
+    Version,
     ethereum::TxEnvelope,
     evm::precompile::{PrecompileOutput, PrecompileProvider},
     interpreter::{GasTracker, Message},
@@ -72,6 +74,10 @@ impl FoundryEvmFactory for EthEvmFactory {
         let mut version = Version::new(spec);
         version.chain_id = chain_id;
         with_eip7702_delegations(version)
+    }
+
+    fn execution_config(&self, spec: SpecId, version: Version) -> ExecutionConfig<BaseEvmTypes> {
+        edgecov::execution_config(spec, version)
     }
 
     fn tx_registry(&self, spec: SpecId) -> TxRegistry<BaseEvmTypes, TxResult<BaseEvmTypes>> {
