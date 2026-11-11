@@ -154,10 +154,26 @@ contract FuzzerDict {
     address public immutable immutableOwner;
     // Regular storage variables should also get added to the dictionary.
     address public storageOwner;
+    bool public broken;
 
     constructor(address _immutableOwner, address _storageOwner) {
         immutableOwner = _immutableOwner;
         storageOwner = _storageOwner;
+    }
+
+    function slot() public view returns (uint256) {
+        return uint256(keccak256(abi.encode(address(this), uint256(0x123456))));
+    }
+
+    function probe() external view {
+        uint256 key = slot();
+        uint256 value;
+        assembly { value := sload(key) }
+        require(value == 0);
+    }
+
+    function step(uint256 value) external {
+        if (value == slot()) broken = true;
     }
 }
    "#,
@@ -174,6 +190,8 @@ contract FuzzerDictTest is Test {
 
     function setUp() public {
         fuzzerDict = new FuzzerDict(address(100), address(200));
+        fuzzerDict.probe();
+        targetContract(address(fuzzerDict));
     }
 
     /// forge-config: default.fuzz.runs = 2000
@@ -184,6 +202,14 @@ contract FuzzerDictTest is Test {
     /// forge-config: default.fuzz.runs = 2000
     function testStorageOwner(address who) public {
         assertTrue(who != fuzzerDict.storageOwner());
+    }
+
+    function testZeroSlotKey(uint256 value) public view {
+        require(value != fuzzerDict.slot(), "SLOT_FOUND");
+    }
+
+    function invariant_seed() public view {
+        require(!fuzzerDict.broken(), "SLOT_FOUND");
     }
 }
    "#,
@@ -201,6 +227,38 @@ Ran 1 test for test/FuzzerDictTest.t.sol:FuzzerDictTest
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
+
+    // The runtime-derived zero-slot key must come from setup storage, not PUSH literals.
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.runs = 512;
+        config.fuzz.dictionary.dictionary_weight = 100;
+        config.fuzz.dictionary.include_push_bytes = false;
+        config.invariant.runs = 512;
+        config.invariant.depth = 1;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.dictionary = config.fuzz.dictionary;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "testZeroSlotKey"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+[FAIL: SLOT_FOUND; counterexample: [..]] testZeroSlotKey(uint256) (runs: [..], [AVG_GAS])
+...
+"#
+    ]]);
+    cmd.forge_fuse().args(["test", "--mt", "invariant_seed"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+[FAIL: SLOT_FOUND]
+...
+ invariant_seed() (runs: [..], calls: [..], reverts: 0)
+...
+"#
+    ]]);
+    prj.clear_cache_dir();
+    cmd.forge_fuse().env("FOUNDRY_FUZZ_INCLUDE_STORAGE", "false");
+    cmd.env("FOUNDRY_INVARIANT_INCLUDE_STORAGE", "false");
+    cmd.args(["test", "--mt", "testZeroSlotKey|invariant_seed"]).assert_success();
 }
 
 #[forgetest_init]
@@ -6466,4 +6524,239 @@ Warning: Persisted failure for [..] was recorded at fork block 0 but is replayed
 ...
 "#]])
         .stderr_eq(str![""]);
+}
+
+#[forgetest_init]
+async fn fork_setup_storage_guidance(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let target = Address::from_word(B256::from(U256::from(0x10000)));
+    let key = keccak256(
+        DynSolValue::Tuple(vec![
+            DynSolValue::Address(target),
+            DynSolValue::Uint(U256::from(0x123456), 256),
+        ])
+        .abi_encode(),
+    );
+    let value = keccak256(
+        DynSolValue::Tuple(vec![
+            DynSolValue::Address(target),
+            DynSolValue::Uint(U256::from(3), 256),
+        ])
+        .abi_encode(),
+    );
+    api.anvil_set_code(target, bytes!("00")).await.unwrap();
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    api.anvil_set_storage_at(target, key.into(), value).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.runs = 512;
+        config.fuzz.dictionary.dictionary_weight = 100;
+        config.fuzz.dictionary.include_push_bytes = false;
+    });
+    prj.add_test(
+        "ForkSetupStorage.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata) external returns (uint256);
+    function createSelectFork(string calldata, uint256) external returns (uint256);
+    function selectFork(uint256) external;
+    function rollFork(uint256) external;
+    function makePersistent(address) external;
+    function setNonceUnsafe(address, uint64) external;
+    function load(address, bytes32) external view returns (bytes32);
+}
+
+contract GuidedStorage {
+    function slot(uint256 salt) public view returns (uint256) {
+        return uint256(keccak256(abi.encode(address(this), salt)));
+    }
+
+    function probe(uint256 salt) external view {
+        uint256 key = slot(salt);
+        uint256 value;
+        assembly { value := sload(key) }
+        require(value == 0);
+    }
+}
+
+contract RoundTripGuidance {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    GuidedStorage child;
+    uint256 forkA;
+
+    function persistent() internal pure virtual returns (bool) { return false; }
+    function returnInSetup() internal pure virtual returns (bool) { return true; }
+
+    function setUp() public virtual {
+        forkA = vm.createSelectFork("RPC_URL", 0);
+        child = new GuidedStorage();
+        child.probe(0x123456);
+        if (persistent()) vm.makePersistent(address(child));
+        vm.createSelectFork("RPC_URL", 0);
+        if (returnInSetup()) vm.selectFork(forkA);
+    }
+
+    function testFuzz_seed(uint256 value) public view {
+        require(value != child.slot(0x123456), "SLOT_FOUND");
+    }
+}
+
+contract CrossPersistentGuidance is RoundTripGuidance {
+    function persistent() internal pure override returns (bool) { return true; }
+    function returnInSetup() internal pure override returns (bool) { return false; }
+}
+
+contract SameSetupForkedGuidance is RoundTripGuidance {
+    function returnInSetup() internal pure override returns (bool) { return false; }
+
+    function setUp() public override {
+        super.setUp();
+        address previous = address(child);
+        vm.setNonceUnsafe(address(this), 1);
+        child = new GuidedStorage();
+        require(address(child) == previous, "different child address");
+    }
+}
+
+contract DeferredReturnGuidance is RoundTripGuidance {
+    function returnInSetup() internal pure override returns (bool) { return false; }
+
+    function beforeTestSetup(bytes4 selector) public view returns (bytes[] memory calls) {
+        calls = new bytes[](1);
+        calls[0] = abi.encodeCall(this.prepare, (selector == this.testFuzz_sibling.selector));
+    }
+
+    function prepare(bool sibling) public {
+        vm.selectFork(forkA);
+        if (sibling) child.probe(2);
+    }
+
+    function testFuzz_sibling(uint256 value) public view {
+        require(value != child.slot(2), "SIBLING_SLOT_FOUND");
+    }
+}
+
+contract RolledGuidance {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant target = address(0x10000);
+
+    function slot(uint256 salt) internal pure returns (bytes32) {
+        return keccak256(abi.encode(target, salt));
+    }
+
+    function setUp() public {
+        vm.createSelectFork("RPC_URL", 1);
+        require(vm.load(target, slot(0x123456)) == 0);
+    }
+
+    function beforeTestSetup(bytes4) public pure returns (bytes[] memory calls) {
+        calls = new bytes[](1);
+        calls[0] = abi.encodeWithSelector(this.prepare.selector);
+    }
+
+    function prepare() public {
+        // Rolling discards nonpersistent storage from the accepted cache. Seeding must read
+        // the new backing value, not assume an observed but uncached slot is still zero.
+        vm.rollFork(3);
+    }
+
+    function testFuzz_current(uint256 value) public pure {
+        require(value != uint256(slot(3)), "BACKING_VALUE_FOUND");
+    }
+}
+"#
+        .replace("RPC_URL", &handle.http_endpoint()),
+    );
+
+    for contract in ["RoundTripGuidance", "CrossPersistentGuidance", "DeferredReturnGuidance"] {
+        cmd.forge_fuse()
+            .args(["test", "--mc", &format!("^{contract}$")])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+...
+[FAIL: SLOT_FOUND; counterexample: [..]] testFuzz_seed(uint256) (block: 0) (runs: [..], [AVG_GAS])
+...
+Suite result: FAILED. 0 passed; [..] failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+    cmd.forge_fuse().args(["test", "--mc", "^SameSetupForkedGuidance$"]).assert_success();
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^RolledGuidance$", "--mt", "testFuzz_current"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: BACKING_VALUE_FOUND; counterexample: [..]] testFuzz_current(uint256) (block: 3) (runs: [..], [AVG_GAS])
+...
+"#]]);
+
+    // Fresh runs must miss these runtime-derived seeds when storage guidance is disabled.
+    prj.clear_cache_dir();
+    cmd.forge_fuse().env("FOUNDRY_FUZZ_INCLUDE_STORAGE", "false");
+    cmd.args([
+        "test",
+        "--mc",
+        "^(RoundTrip|CrossPersistent|DeferredReturn|Rolled|SameSetupForked)Guidance$",
+    ])
+    .assert_success();
+}
+
+// Corpus metrics reported during a fuzz campaign go to stderr, so `--json` stdout stays one JSON
+// document.
+#[forgetest_init]
+fn fuzz_corpus_metrics_keep_json_stdout_clean(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.runs = u32::MAX;
+        config.fuzz.timeout = Some(7);
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+    });
+    prj.add_test(
+        "FuzzMetrics.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FuzzMetricsTest is Test {
+    function testFuzz_metrics(uint256) public pure {}
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--json"]).assert_success();
+    serde_json::from_slice::<Value>(&output.get_output().stdout).unwrap();
+    output.stderr_eq(str![[r#"
+...
+{"timestamp":[..],"test":"testFuzz_metrics","metrics":[..]}
+...
+"#]]);
+}
+
+// With `instrumented_edges`, every test executor runs the `EDGECOV` and `CMPLOG` probes, so
+// instrumented artifacts also deploy and run outside coverage-guided campaigns.
+#[forgetest_init]
+fn instrumented_edges_run_probes_in_unit_tests(prj: _, cmd: _) {
+    prj.add_test(
+        "Probes.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ProbesTest is Test {
+    address probed = address(0x1234);
+
+    function setUp() public {
+        // PUSH2 1; EDGECOV; PUSH1 2; PUSH1 1; PUSH2 0x0114; CMPLOG; EQ; STOP
+        vm.etch(probed, hex"610001c0600260016101" hex"14c11400");
+    }
+
+    function test_probes() public {
+        (bool ok,) = probed.call("");
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "ProbesTest"]).assert_failure();
+    prj.update_config(|config| config.fuzz.corpus.instrumented_edges = true);
+    cmd.assert_success();
 }

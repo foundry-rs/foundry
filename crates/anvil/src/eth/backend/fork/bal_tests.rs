@@ -1,7 +1,10 @@
 //! Tests for BAL source eligibility, validation and fork cache insertion.
 
 use super::*;
-use crate::mem::in_memory_db::MemDb;
+use crate::{
+    eth::backend::{db::BlockchainDbMeta, env::BlockEnv},
+    mem::in_memory_db::MemDb,
+};
 use alloy_eips::eip7928::{
     AccountChanges, BalanceChange, BlockAccessIndex, CodeChange, NonceChange, SlotChanges,
     StorageChange, compute_block_access_list_hash,
@@ -11,9 +14,8 @@ use alloy_primitives::bytes;
 use alloy_provider::ProviderBuilder;
 use alloy_rpc_types::Block;
 use alloy_transport::mock::Asserter;
-use foundry_evm::{backend::BlockchainDbMeta, hardfork::EthereumHardfork};
+use foundry_evm_hardforks::EthereumHardfork;
 use futures::executor::block_on;
-use revm::{context::BlockEnv, state::AccountInfo};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -191,7 +193,7 @@ async fn fork_bal_prefill_validates_before_caching() {
             let account = &accounts[&address];
             assert_eq!(account.balance, U256::from(42));
             assert_eq!(account.nonce, 3);
-            assert_eq!(account.code.as_ref().unwrap().original_bytes(), bytes!("6000"));
+            assert_eq!(account.code.as_ref().unwrap(), &bytes!("6000"));
         }
     }
 }
@@ -297,7 +299,8 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
             vec![StorageChange::new(index(1), U256::from(22))],
         ));
     let db = database(hash);
-    let cached_account = AccountInfo { balance: U256::from(99), ..Default::default() };
+    let cached_account =
+        foundry_fork_db::AccountInfo { balance: U256::from(99), ..Default::default() };
     db.accounts().write().insert(address, cached_account.clone());
     db.storage().write().insert(
         address,
@@ -334,12 +337,8 @@ fn fork_bal_seed_keeps_final_account_code() {
         let account = &accounts[&address];
         assert_eq!(account.balance, U256::from(42));
         assert_eq!(account.nonce, 3);
-        assert_eq!(account.code_hash(), alloy_primitives::keccak256(&code));
-        assert_eq!(account.code.as_ref().unwrap().original_bytes(), code);
-        assert_eq!(
-            account.code.as_ref().unwrap().is_eip7702(),
-            code.starts_with(&[0xef, 0x01, 0x00])
-        );
+        assert_eq!(account.code_hash, alloy_primitives::keccak256(&code));
+        assert_eq!(account.code.as_ref().unwrap(), &code);
     }
 }
 

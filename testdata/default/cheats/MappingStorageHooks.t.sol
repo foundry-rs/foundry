@@ -46,6 +46,15 @@ contract MappingHookTarget {
         require(!success);
         assembly { sstore(slot, value) }
     }
+
+    /// Returns the gas an SLOAD of `slot` costs, and the value so the load is kept.
+    function loadCost(bytes32 slot) external view returns (uint256 cost, uint256 value) {
+        assembly {
+            let start := gas()
+            value := sload(slot)
+            cost := sub(start, gas())
+        }
+    }
 }
 
 contract MappingHookImplementation {
@@ -379,4 +388,40 @@ contract MappingStorageHooksTest is Test {
 }
 
 /// forge-config: default.isolate = false
-contract MappingStorageHooksNonIsolatedTest is MappingStorageHooksTest {}
+contract MappingStorageHooksNonIsolatedTest is MappingStorageHooksTest {
+    MappingHookTarget probe;
+
+    /// The callback is instrumentation: it must not cool warmth set before it, nor drop warmth
+    /// it sets itself through cheatcodes.
+    function testCallbackKeepsOtherWarmth() public {
+        probe = new MappingHookTarget();
+        probe.loadCost(bytes32(uint256(1)));
+        probe.loadCost(bytes32(uint256(2)));
+        vm.cool(address(probe));
+        vm.warmSlot(address(probe), bytes32(uint256(1)));
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onWarmProbe.selector);
+        target.setBalance(address(this), 1);
+        assertLt(probeCost(1), 1000, "warmth set before the callback was cooled");
+        assertLt(probeCost(2), 1000, "warmth set in the callback was cooled");
+    }
+
+    /// Accesses the callback makes stay cold for the hooked frame.
+    function testCallbackAccessesStayCold() public {
+        probe = new MappingHookTarget();
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onLoadProbe.selector);
+        target.setBalance(address(this), 1);
+        assertGt(probeCost(1), 2000, "callback warmth leaked into the hooked frame");
+    }
+
+    function onWarmProbe(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        vm.warmSlot(address(probe), bytes32(uint256(2)));
+    }
+
+    function onLoadProbe(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        probe.loadCost(bytes32(uint256(1)));
+    }
+
+    function probeCost(uint256 slot) internal view returns (uint256 cost) {
+        (cost,) = probe.loadCost(bytes32(slot));
+    }
+}

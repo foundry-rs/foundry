@@ -49,7 +49,8 @@ use foundry_common::{
     },
     shell,
     tempo::{
-        TempoSponsor, active_tempo_hardfork, maybe_print_fee_token, resolve_and_set_fee_token,
+        TempoSponsor, active_tempo_hardfork, mark_sponsored_gas_estimation, maybe_print_fee_token,
+        resolve_and_set_fee_token,
     },
 };
 use foundry_config::Config;
@@ -58,7 +59,6 @@ use foundry_evm::{
         constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
         evm::{FoundryEvmNetwork, TempoEvmNetwork},
     },
-    hardfork::TempoHardfork,
     traces::CallKind,
 };
 use foundry_wallets::wallet_browser::{error::BrowserWalletError, signer::BrowserSigner};
@@ -67,6 +67,7 @@ use itertools::Itertools;
 use tempo_alloy::{
     TempoNetwork,
     accounts::TempoAccountsWallet,
+    chainspec::hardfork::TempoHardfork,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},
 };
 use tempo_primitives::transaction::{Call, TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};
@@ -165,7 +166,8 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier, browser).await?;
+            estimate_gas(tx, provider, estimate_multiplier, browser, tempo_sponsor.is_some())
+                .await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -1729,8 +1731,14 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         // Estimate gas for the batch transaction
-        estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier, false)
-            .await?;
+        estimate_gas(
+            &mut batch_tx,
+            provider.as_ref(),
+            self.args.gas_estimate_multiplier,
+            false,
+            tempo_sponsor.is_some(),
+        )
+        .await?;
 
         sh_println!("Estimated gas: {}", batch_tx.inner.gas.unwrap_or(0))?;
 
@@ -1964,11 +1972,14 @@ async fn wait_for_batch_receipt<N: Network>(
     }
 }
 
+/// Estimates and sets the gas limit of `tx`, which a Tempo fee payer signs afterwards when
+/// `sponsored`.
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
     browser: bool,
+    sponsored: bool,
 ) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -1977,7 +1988,10 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.reset_gas_limit();
 
-    let request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
+    let mut request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
+    if sponsored {
+        mark_sponsored_gas_estimation(provider, &mut request).await;
+    }
     let estimate =
         provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
     tx.set_gas_limit(apply_gas_estimate_multiplier(estimate, Some(estimate_multiplier))?);
@@ -2171,9 +2185,12 @@ mod tests {
             fork_block_number: Some(block_number),
             ..Default::default()
         };
-        let backend =
-            Backend::<EthEvmNetwork>::spawn(evm_opts.get_fork(&Config::default(), 31337, None))
-                .unwrap();
+        let (env, _, _) = evm_opts.env_with_fork_context::<EthEvmNetwork>().await.unwrap();
+        let backend = Backend::<EthEvmNetwork>::spawn(
+            evm_opts.get_fork(&Config::default(), 31337, None),
+            env,
+        )
+        .unwrap();
         assert_eq!(backend.transaction_count(sender).await.unwrap(), 1);
 
         provider
@@ -2812,7 +2829,7 @@ mod tests {
             asserter.push_success(&alloy_primitives::U64::from(estimate));
             let mut tx = alloy_rpc_types::TransactionRequest::default();
 
-            let result = estimate_gas(&mut tx, &provider, multiplier, false).await;
+            let result = estimate_gas(&mut tx, &provider, multiplier, false, false).await;
 
             assert_eq!(result.is_ok(), expected.is_some());
             assert_eq!(tx.gas, expected);

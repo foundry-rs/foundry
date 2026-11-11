@@ -190,8 +190,8 @@ mod tests {
     use super::*;
     use crate::invariant::{TargetedContract, TargetedContracts};
     use alloy_json_abi::JsonAbi;
+    use evm2::evm::InMemoryDB;
     use foundry_config::FuzzDictionaryConfig;
-    use revm::database::InMemoryDB;
 
     #[test]
     fn delays_are_bounded_and_draw_dictionary_constants() {
