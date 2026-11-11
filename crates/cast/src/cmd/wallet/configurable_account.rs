@@ -31,8 +31,8 @@ use foundry_common::{
     tempo::{
         active_tempo_hardfork,
         configurable_account::{
-            abi_owners, ca_error, combine_approvals, current_config, parse_owner_signature,
-            simulation_spec,
+            abi_owners, ca_error, combine_approvals, current_config, decode_unsigned_tx,
+            parse_owner_signature, simulation_spec,
         },
     },
 };
@@ -47,8 +47,7 @@ use tempo_alloy::{
 use tempo_contracts::precompiles::{CONFIGURABLE_ACCOUNT_ADDRESS, IConfigurableAccount};
 use tempo_primitives::transaction::{
     CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, ConfigurableAccountConfig, ConfigurableAccountOwner,
-    PrimitiveSignature, TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction, TempoTxEnvelope,
-    configurable_account_digest,
+    PrimitiveSignature, TempoSignature, TempoTxEnvelope, configurable_account_digest,
 };
 
 /// Decides whether `cast wallet new` creates a configurable account.
@@ -141,21 +140,6 @@ async fn rpc_tempo_hardfork(config: &Config) -> Result<Option<(String, Option<Te
 fn scheduled_hardfork(chain: Chain) -> (String, Option<TempoHardfork>) {
     let timestamp = now().as_secs();
     (format!("chain {chain}"), TempoHardfork::from_chain_and_timestamp(chain.id(), timestamp))
-}
-
-/// Decodes the unsigned Tempo transaction that `cast mktx --raw-unsigned` prints.
-fn decode_unsigned_tx(raw: &str) -> Result<TempoTransaction> {
-    let bytes = hex::decode(raw.trim()).wrap_err("invalid hex transaction")?;
-    let Some((&TEMPO_TX_TYPE_ID, mut fields)) = bytes.split_first() else {
-        eyre::bail!(
-            "expected an unsigned Tempo (0x76) transaction from `cast mktx --raw-unsigned`"
-        );
-    };
-    let tx = <TempoTransaction as alloy_rlp::Decodable>::decode(&mut fields).map_err(|_| {
-        eyre::eyre!("invalid unsigned Tempo transaction; sponsored transactions are not supported")
-    })?;
-    eyre::ensure!(fields.is_empty(), "trailing bytes after the unsigned Tempo transaction");
-    Ok(tx)
 }
 
 /// Parses an owner as `ADDRESS` or `ADDRESS:WEIGHT`.
@@ -546,7 +530,9 @@ pub struct AssembleArgs {
 impl AssembleArgs {
     pub async fn run(self) -> Result<()> {
         let Self { unsigned_tx, signatures, from: account, rpc } = self;
-        let tx = decode_unsigned_tx(&unsigned_tx)?;
+        let tx = decode_unsigned_tx(
+            &hex::decode(unsigned_tx.trim()).wrap_err("invalid hex transaction")?,
+        )?;
         let approvals = signatures
             .iter()
             .enumerate()

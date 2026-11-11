@@ -55,8 +55,8 @@ use tempo_primitives::{
     SignatureType, TempoTxEnvelope,
     transaction::{
         ConfigurableAccountConfig, ConfigurableAccountOwner, ConfigurableAccountSignature,
-        MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature, TempoSignature,
-        configurable_account_digest, tt_signature::WebAuthnSignature,
+        MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature, TEMPO_TX_TYPE_ID, TempoSignature,
+        TempoTransaction, configurable_account_digest, tt_signature::WebAuthnSignature,
     },
 };
 
@@ -611,6 +611,34 @@ pub fn parse_config(value: &str) -> Result<ConfigurableAccountConfig> {
     Ok(config)
 }
 
+/// Returns `config` as JSON, in the form [`parse_config`] reads.
+pub fn config_json(config: &ConfigurableAccountConfig) -> Value {
+    serde_json::json!({
+        "salt": config.salt,
+        "version": config.version,
+        "threshold": config.threshold,
+        "owners": config
+            .owners
+            .iter()
+            .map(|owner| serde_json::json!({ "owner": owner.owner, "weight": owner.weight }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// Decodes an unsigned Tempo transaction as `cast mktx --raw-unsigned` encodes it.
+pub fn decode_unsigned_tx(bytes: &[u8]) -> Result<TempoTransaction> {
+    let Some((&TEMPO_TX_TYPE_ID, mut fields)) = bytes.split_first() else {
+        eyre::bail!(
+            "expected an unsigned Tempo (0x76) transaction from `cast mktx --raw-unsigned`"
+        );
+    };
+    let tx = <TempoTransaction as alloy_rlp::Decodable>::decode(&mut fields).map_err(|_| {
+        eyre::eyre!("invalid unsigned Tempo transaction; sponsored transactions are not supported")
+    })?;
+    eyre::ensure!(fields.is_empty(), "trailing bytes after the unsigned Tempo transaction");
+    Ok(tx)
+}
+
 /// A local key that approves the transactions of the configurable accounts it owns.
 #[derive(Clone, Debug)]
 pub enum ConfigurableAccountOwnerKey {
@@ -641,7 +669,8 @@ impl ConfigurableAccountOwnerKey {
         }
     }
 
-    async fn sign(&self, digest: &B256) -> Result<PrimitiveSignature> {
+    /// Approves `digest`.
+    pub async fn sign(&self, digest: &B256) -> Result<PrimitiveSignature> {
         Ok(match self {
             Self::Wallet(signer) => PrimitiveSignature::Secp256k1(signer.sign_hash(digest).await?),
             Self::Accounts(key) => key.sign_hash(digest).await?,

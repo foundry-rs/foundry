@@ -1,6 +1,6 @@
 use crate::transaction::TransactionWithMetadata;
 use alloy_network::{Network, ReceiptResponse};
-use alloy_primitives::{TxHash, hex, map::HashMap};
+use alloy_primitives::{Address, B256, Bytes, TxHash, hex, map::HashMap};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, fs, shell};
 use foundry_compilers::ArtifactId;
@@ -60,6 +60,34 @@ pub struct ScriptSequence<N: Network> {
     /// consumers treat as successful, and resume never resubmits them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reverted: Vec<TxHash>,
+    /// Tempo configurable account transactions that wait for their owners' approvals. Resume
+    /// sends them once the approvals reach the account's threshold.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub awaiting_owners: Vec<AwaitingOwners>,
+}
+
+/// A Tempo configurable account transaction whose nonce, fees and gas limit are fixed, waiting for
+/// its owners to approve its digest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwaitingOwners {
+    /// The index of the transaction in the sequence's `transactions`.
+    pub index: usize,
+    /// The configurable account that sends the transaction.
+    pub account: Address,
+    /// The account's configuration, as `--tempo.config` takes it.
+    pub config: serde_json::Value,
+    /// The unsigned Tempo transaction, as `cast mktx --raw-unsigned` prints it.
+    pub unsigned_tx: Bytes,
+    /// The digest that each owner signs.
+    pub digest: B256,
+    /// The owner approvals of `digest` collected so far, as Tempo primitive signatures.
+    #[serde(default)]
+    pub approvals: Vec<Bytes>,
+    /// The transaction signed with the approvals once they reach the threshold. Resume sends it
+    /// in order, recording it as a submission attempt only when it does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed: Option<Bytes>,
 }
 
 impl<N: Network> Default for ScriptSequence<N> {
@@ -76,6 +104,7 @@ impl<N: Network> Default for ScriptSequence<N> {
             commit: Default::default(),
             recovery_generation: Default::default(),
             reverted: Default::default(),
+            awaiting_owners: Default::default(),
         }
     }
 }
