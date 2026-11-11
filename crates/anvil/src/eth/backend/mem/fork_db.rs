@@ -153,18 +153,8 @@ impl<N: Network> ForkedDatabase<N> {
         &self.db
     }
 
-    /// Prefetches the remote state a call is about to read, see
-    /// [`SharedBackend::prefetch_access_list`](foundry_fork_db::SharedBackend::prefetch_access_list).
-    /// The state that exists only locally goes along as overrides, so the simulation follows the
-    /// call through contracts deployed here. Calls to precompiles are skipped.
-    pub fn prefetch_call(&self, caller: Address, target: Address, value: U256, input: Bytes) {
-        let overrides = self.state_override();
-        prefetch::prefetch_call(&self.backend, caller, target, value, input, overrides);
-    }
-
-    /// Returns the local state that differs from the remote as overrides, or `None` when there is
-    /// none or it is too large to send, see [`StateOverrideBuilder`]. Without overrides, the
-    /// simulation also runs on endpoints that do not take them.
+    /// Returns the local state that differs from the remote as overrides, see
+    /// [`StateOverrideBuilder`].
     fn state_override(&self) -> Option<StateOverride> {
         let cache = &self.cache_db.cache;
         let mut overrides = StateOverrideBuilder::new(self.db.db());
@@ -389,7 +379,8 @@ impl<N: Network> MaybeForkedDatabase for ForkedDatabase<N> {
     }
 
     fn maybe_prefetch_call(&self, caller: Address, target: Address, value: U256, input: Bytes) {
-        self.prefetch_call(caller, target, value, input)
+        let overrides = self.state_override();
+        prefetch::prefetch_call(&self.backend, caller, target, value, input, overrides);
     }
 }
 

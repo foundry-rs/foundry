@@ -23,7 +23,7 @@
 //! their inspector.
 
 use crate::{
-    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
+    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER},
     evm::{
         BackingDb, BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, ForkPosition, FoundryDatabase,
@@ -1231,11 +1231,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Prefetches the remote state a call is about to read, if the active context is an RPC fork.
     ///
-    /// The call is simulated on the fork's endpoint and the accounts and slots it touches there
-    /// are fetched in parallel while the EVM runs it. A `top_level` call is simulated with the
-    /// accepted state that differs from the remote, such as the test contract, applied as
-    /// overrides. A nested call is simulated as is, so one into an account that exists only
-    /// locally is skipped, as are calls to precompiles and cheatcode contracts.
+    /// A `top_level` call is simulated with the local state that differs from the remote, such as
+    /// the test contract, as overrides. A nested call is simulated as is.
     pub fn prefetch_call(
         &self,
         caller: Address,
@@ -1244,12 +1241,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         input: Bytes,
         top_level: bool,
     ) {
-        if target == CHEATCODE_ADDRESS || target == HARDHAT_CONSOLE_ADDRESS {
-            return;
-        }
-        // A repeated top-level call, such as a fuzz run or a replayed transaction, reads other
-        // slots with other arguments, so it is simulated again; the fork backend skips
-        // simulations while reads hit its cache.
         let context = self.lifecycle.active();
         context.db.prefetch_call(caller, target, value, input, context.cache.as_deref(), top_level);
     }

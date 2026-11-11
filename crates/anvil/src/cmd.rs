@@ -655,10 +655,8 @@ pub struct AnvilEvmArgs {
 
     /// Prefetches the remote state of calls and transactions on the fork.
     ///
-    /// Each call is simulated on the endpoint with `eth_createAccessList` and the accounts and
-    /// storage slots it touches are fetched in batches before the EVM reads them, so a cold call
-    /// costs a few round trips instead of one per slot. The simulations and batch requests count
-    /// against the endpoint's rate limit; a failed batch turns prefetching off.
+    /// Each call is simulated on the endpoint with `eth_createAccessList` and the state it touches
+    /// is fetched in batches. Simulations and batches count against the endpoint's rate limit.
     #[arg(long, requires = "fork_url", help_heading = "Fork config")]
     pub fork_prefetch: bool,
 

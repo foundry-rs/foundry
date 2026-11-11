@@ -213,7 +213,6 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
     }
 
     /// Set whether to prefetch the remote state of calls into fork contracts.
-    /// See [`InspectorStack::fork_prefetch`].
     #[inline]
     pub const fn fork_prefetch(mut self, yes: bool) -> Self {
         self.fork_prefetch = yes;
@@ -896,10 +895,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     }
 
     /// Set whether calls into fork contracts prefetch the remote state they are about to read.
-    ///
-    /// Each call is simulated on the fork's endpoint with `eth_createAccessList` while the EVM runs
-    /// it, and the accounts and slots of the result are fetched in parallel, so a cold call costs a
-    /// few round trips instead of one per slot.
     #[inline]
     pub const fn fork_prefetch(&mut self, yes: bool) {
         self.inner.fork_prefetch = yes;

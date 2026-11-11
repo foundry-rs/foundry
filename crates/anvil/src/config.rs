@@ -1282,9 +1282,7 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether calls and transactions on a fork prefetch the remote state they are about to
-    /// read: each is simulated on the endpoint with `eth_createAccessList` and the accounts and
-    /// slots of the result are fetched in batches before the EVM reads them.
+    /// Sets whether calls and transactions on a fork prefetch the remote state they read.
     #[must_use]
     pub const fn with_fork_prefetch(mut self, fork_prefetch: bool) -> Self {
         self.fork_prefetch = fork_prefetch;

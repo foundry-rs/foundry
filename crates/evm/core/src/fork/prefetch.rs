@@ -7,11 +7,10 @@
 //! The cache file keeps only the keys the EVM then reads, so a wrong prediction only costs an RPC
 //! request and does not carry over to the next block.
 //!
-//! A call into fork contracts is predicted more precisely by simulating it on the fork's endpoint
-//! with `eth_createAccessList`, see [`prefetch_call`].
+//! A call is predicted more precisely by simulating it on the endpoint, see [`prefetch_call`].
 
 use super::Fork;
-use crate::constants::CHEATCODE_ADDRESS;
+use crate::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256,
@@ -158,13 +157,8 @@ fn keys(db: &MemDb) -> Vec<Key> {
         .collect()
 }
 
-/// Collects the state of a fork that differs from its endpoint as overrides for a simulation on
-/// the endpoint, see [`SharedBackend::prefetch_access_list`].
-///
-/// The owner of the local state adds each account and its storage. Accounts and slots equal to
-/// what the fork loaded from the endpoint are left out, so the overrides hold contracts deployed
-/// locally, such as the test contract, and local changes to remote accounts, such as balances
-/// and storage set with cheatcodes.
+/// Collects the local state of a fork that differs from what it loaded from the endpoint, as
+/// overrides for a simulation there, such as the test contract and balances set with cheatcodes.
 pub struct StateOverrideBuilder<'a> {
     remote: &'a MemDb,
     overrides: StateOverride,
@@ -230,12 +224,9 @@ impl<'a> StateOverrideBuilder<'a> {
     }
 }
 
-/// Returns the accepted state of a fork context that differs from the endpoint as overrides, see
-/// [`StateOverrideBuilder`]. Returns `None` when no local state differs, so the simulation also
-/// runs on endpoints that do not take overrides, or when it is too large to send.
-///
-/// The cheatcode contract gets a stub that returns one zero word, so the simulation runs past
-/// most cheatcode calls.
+/// Returns the local state of a fork context as overrides, see [`StateOverrideBuilder`], with a
+/// stub for the cheatcode contract. Returns `None` when nothing differs, so endpoints without
+/// override support still simulate, or when the state is too large to send.
 pub fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverride> {
     let mut overrides = StateOverrideBuilder::new(remote);
     for (address, info) in &local.accounts {
@@ -256,7 +247,8 @@ pub fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverride> {
 }
 
 /// Simulates a call on the fork's endpoint and prefetches the state it touches, see
-/// [`SharedBackend::prefetch_access_list`]. Calls to precompiles are skipped.
+/// [`SharedBackend::prefetch_access_list`]. Calls to precompiles, the cheatcode contract and the
+/// console are skipped.
 pub fn prefetch_call<N: Network, B: ForkBlockEnv>(
     backend: &SharedBackend<N, B>,
     caller: Address,
@@ -265,7 +257,10 @@ pub fn prefetch_call<N: Network, B: ForkBlockEnv>(
     input: Bytes,
     overrides: Option<StateOverride>,
 ) {
-    if target <= Address::with_last_byte(0xff) {
+    if target <= Address::with_last_byte(0xff)
+        || target == CHEATCODE_ADDRESS
+        || target == HARDHAT_CONSOLE_ADDRESS
+    {
         return;
     }
     let tx = TransactionRequest::default().from(caller).to(target).value(value).input(input.into());
