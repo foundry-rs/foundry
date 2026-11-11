@@ -2980,6 +2980,8 @@ contract SymbolicFreeAddressWrites is Test {
     function checkWritesStayOnOnePath(address a, address b, uint256 x) public {
         vm.deal(a, x);
         vm.store(b, bytes32(uint256(1000)), bytes32(x));
+        // A slot hashed from a guarded address needs no decision.
+        vm.store(b, keccak256(abi.encode(a)), bytes32(x));
         assert(a.balance == x);
         assert(uint256(vm.load(b, bytes32(uint256(1000)))) == x);
     }
@@ -3051,9 +3053,13 @@ contract SymbolicFreeAddressWrites is Test {
 "#,
     );
 
-    let stdout = assert_symbolic(cmd.args([
+    // Forking over the known accounts made the path count grow with each write; only
+    // `vm.store` still forks, off a known precompile where it reverts.
+    assert_symbolic(cmd.args([
         "test",
         "--symbolic",
+        "--symbolic-max-paths",
+        "2",
         "--match-test",
         "checkWritesStayOnOnePath",
     ]))
@@ -3064,17 +3070,7 @@ Ran 1 test for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [PASS] checkWritesStayOnOnePath(address,address,uint256) ([METRICS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
-"#]])
-    .get_output()
-    .stdout_lossy();
-    // `[METRICS]` hides the path count. Forking over the known accounts made it grow with each
-    // write; only `vm.store` still forks, off a known precompile where it reverts.
-    let paths = stdout
-        .split("(paths: ")
-        .nth(1)
-        .and_then(|rest| rest.split(',').next())
-        .and_then(|paths| paths.parse::<usize>().ok());
-    assert!(paths.is_some_and(|paths| paths <= 2), "{stdout}");
+"#]]);
 
     assert_symbolic(cmd.forge_fuse().args([
         "test",

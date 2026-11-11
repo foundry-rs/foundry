@@ -653,10 +653,13 @@ impl SymbolicExecutor {
                     }
                 }
             }
-            if [dealCall::SELECTOR, loadCall::SELECTOR, getNonce_0Call::SELECTOR]
-                .contains(&selector)
+            // These take their other arguments as symbolic words, so a guarded word there, such
+            // as a storage slot hashed from it, needs no decision.
+            if store
+                || [dealCall::SELECTOR, loadCall::SELECTOR, getNonce_0Call::SELECTOR]
+                    .contains(&selector)
             {
-                return Ok(Vec::new());
+                return Ok(words);
             }
         }
         if !state.world.has_guarded_addresses() {
