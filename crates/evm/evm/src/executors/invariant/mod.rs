@@ -1,6 +1,7 @@
 use crate::{
     executors::{
-        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
+        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, EvmExecutionCancellation, Executor,
+        RawCallResult,
         campaign::{
             CampaignCallKind, CampaignControl, CampaignEvent, CampaignSequenceOutcome,
             FuzzCampaign, FuzzCampaignMode,
@@ -1050,7 +1051,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let live_solver =
             (plan.worker_id == 0).then_some(campaign_state.live_solver.as_ref()).flatten();
         let mut frontier_recorder = FuzzFrontierRecorder::new(frontier_limit);
-        executor.inspector_mut().set_execution_cancellation(campaign_state.cancellation().clone());
+        // The campaign deadline must not cancel the initial invariant check, or an initial-state
+        // failure is dropped. `prepare_worker` installs it right after that check.
+        executor.inspector_mut().set_early_exit(campaign_state.early_exit().clone());
 
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
             &mut executor,
@@ -1063,6 +1066,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &config,
             &campaign_seed,
             corpus_seed,
+            campaign_state.cancellation().clone(),
         )?;
         let collect_corpus_cmp =
             invariant_worker_collects_evm_cmp_log(&config, plan.worker_id, worker_count);
@@ -1787,6 +1791,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         config: &InvariantConfig,
         campaign_seed: &InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
+        cancellation: EvmExecutionCancellation,
     ) -> Result<(InvariantTest, WorkerCorpus)> {
         let fuzz_state = fuzz_state.into_invariant();
         let targeted_contracts = FuzzRunIdentifiedContracts::new(
@@ -1835,6 +1840,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &[],
             &mut failures,
         )?;
+        executor.inspector_mut().set_execution_cancellation(cancellation);
         if let Some(fuzzer) = executor.inspector_mut().fuzzer.as_mut() {
             let _ = fuzzer.take_observed_calls();
         }
