@@ -2479,7 +2479,9 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
-// Dynamic calldata shapes: nested structs and shorter variants with positional inner lengths.
+// Dynamic calldata shapes: nested structs, shorter variants with positional inner lengths, and
+// lengths 0, 1 and `default_dynamic_length` for inputs without an explicit length. Shapes past the
+// calldata variant budget stop the run as incomplete instead of dropping the short lengths.
 #[forgetest_init]
 fn symbolic_dynamic_input_shapes(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_dynamic_input_shapes");
@@ -2518,16 +2520,50 @@ contract SymbolicMixedLengthSets {
 "#,
     );
 
-    assert_symbolic(cmd.args([
+    prj.add_test(
+        "SymbolicDefaultDynamicLength.t.sol",
+        r#"
+contract SymbolicDefaultDynamicLength {
+    function checkEmptyArray(uint256[] memory values) public pure {
+        assert(values.length != 0);
+    }
+
+    function checkOneByte(bytes memory data) public pure {
+        assert(data.length != 1);
+    }
+
+    // 3^7 = 2187 shapes exceed the default budget of 1024.
+    function checkSevenBytes(
+        bytes memory a,
+        bytes memory,
+        bytes memory,
+        bytes memory,
+        bytes memory,
+        bytes memory,
+        bytes memory
+    ) public pure {
+        assert(a.length != 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "^(checkStruct|checkBatch)\\(",
+        "--match-contract",
+        "^Symbolic(NestedStruct|MixedLengthSets|DefaultDynamicLength)$",
     ]))
-    .success()
+    .failure()
     .stdout_eq(
         str![[r#"
 ...
+Ran 3 tests for test/SymbolicDefaultDynamicLength.t.sol:SymbolicDefaultDynamicLength
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkEmptyArray(uint256[]) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkOneByte(bytes) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): symbolic calldata variant limit exceeded (1024)] checkSevenBytes(bytes,bytes,bytes,bytes,bytes,bytes,bytes) ([METRICS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+
 Ran 1 test for test/SymbolicMixedLengthSets.t.sol:SymbolicMixedLengthSets
 [PASS] checkBatch(bytes[]) ([METRICS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]

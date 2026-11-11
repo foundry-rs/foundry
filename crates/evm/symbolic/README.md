@@ -493,12 +493,13 @@ this order:
    `symbolic.default_bytes_lengths` for `bytes` and `string`.
 3. The legacy positional `symbolic.array_lengths`, applied to the next dynamic
    leaf that was not matched by a named or type-specific default.
-4. `symbolic.default_dynamic_length`.
+4. Lengths 0, 1 and `symbolic.default_dynamic_length`.
 
 Length-set config fields accept Halmos-style arrays and expand into separate
 symbolic calldata shapes. For nested dynamic values, Foundry explores the cross
 product implied by the selected outer lengths. Eager calldata expansion is capped
-by the effective symbolic path width (`symbolic.width` / `symbolic.max_paths`).
+by the effective symbolic path width (`symbolic.width` / `symbolic.max_paths`);
+if the shapes exceed it, the run stops as incomplete.
 Extra positional `array_lengths` entries are rejected as config errors.
 
 Pending symbolic paths are explored in breadth-first order by default. Set
