@@ -3891,7 +3891,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let anchor_idx =
             live_invariants.iter().position(|(invariant, _)| *invariant == func).unwrap_or(0);
 
-        let mut executor = self.clone_invariant_executor();
+        // Target discovery runs under the project limit like `setUp`; the campaign cap is set
+        // once the targets are selected.
+        let mut executor = self.clone_executor();
         if invariant_config.gas_report_samples == 0 {
             // The campaign never reads its call traces or revert diagnostics: a failure and the
             // last run are replayed on a fresh clone of the test executor, which keeps them. The
@@ -3982,6 +3984,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
+        if let Some(limit) = self.config.invariant.call_gas_limit {
+            evm.executor.set_gas_limit(limit.min(evm.executor.gas_limit()));
+        }
         let current_settings = InvariantSettings::new(
             &targeted.targets(),
             &sender_filters,
@@ -4018,15 +4023,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         narrow_generated_corpus_root(corpus_dir, target_dir)
                     })
                     .or(resolved_corpus_dir);
-                let executor = self.clone_invariant_executor();
-                return self.run_showmap(
-                    executor,
-                    func,
-                    &func.name,
-                    corpus_dir,
-                    showmap,
-                    replay_target,
-                );
+                return self.run_showmap(func, &func.name, corpus_dir, showmap, replay_target);
             }
             if let Some(minimize) = minimize {
                 let target = self.fuzz_minimize_target_id(&invariant_display_name);
@@ -4660,7 +4657,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     "Live symbolic assistance does not support invariant.call_override; running concrete campaign only."
                 );
             } else {
-                let executor = self.clone_executor();
+                let executor = self.clone_invariant_executor();
                 let targets = targeted.targets().clone();
                 let senders = sender_filters;
                 let config = self.config.symbolic.clone();
@@ -5169,15 +5166,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 })
                 .or(legacy_corpus_dir)
                 .or_else(|| fuzz_config.corpus.corpus_dir.clone());
-            let executor = self.clone_executor();
-            return self.run_showmap(
-                executor,
-                func,
-                &test_name,
-                corpus_dir,
-                showmap,
-                replay_target,
-            );
+            return self.run_showmap(func, &test_name, corpus_dir, showmap, replay_target);
         }
         if let Some(minimize) = self.cr.mcr.tcfg.fuzz_minimize.as_ref() {
             let target = self.fuzz_minimize_target_id(&func.signature());
@@ -5360,11 +5349,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     }
 
     /// Replays the persisted corpus and writes AFL-`afl-showmap`-style files.
-    /// Replays a corpus into showmap coverage files on `executor`, which the caller clones
-    /// with the limits of the campaign the corpus came from.
     fn run_showmap(
         mut self,
-        mut executor: Executor<FEN>,
         func: &Function,
         test_name: &str,
         corpus_dir: Option<PathBuf>,
@@ -5381,7 +5367,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // For EVM we enable line coverage rather than edge coverage so the IDs
         // (bytecode_hash, pc) are deterministic across forge processes —
         // `EdgeCovInspector` uses a per-process random hash and would yield
-        // non-comparable IDs across approaches.
+        // non-comparable IDs across approaches. Invariant corpus entries replay under the
+        // campaign's call gas limit, like the campaign that found them.
+        let mut executor = if func.is_invariant_test() {
+            self.clone_invariant_executor()
+        } else {
+            self.clone_executor()
+        };
         let domain = showmap.domain;
         executor.inspector_mut().collect_line_coverage(domain.includes_evm());
         executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
@@ -5457,7 +5449,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     /// run under `call_gas_limit` so a counterexample keeps the semantics it was found under.
     fn clone_invariant_executor(&self) -> Executor<FEN> {
         let mut executor = self.clone_executor();
-        executor.set_gas_limit(self.config.invariant.call_gas_limit(executor.gas_limit()));
+        if let Some(limit) = self.config.invariant.call_gas_limit {
+            executor.set_gas_limit(limit.min(executor.gas_limit()));
+        }
         executor
     }
 

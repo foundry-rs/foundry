@@ -180,13 +180,17 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
-    /// Gas limit for every call the invariant campaign makes: handler calls, invariant checks
-    /// and `afterInvariant`.
+    /// Gas limit for every call the invariant campaign makes after `setUp` and target
+    /// selection: handler calls, invariant checks and `afterInvariant`, and every replay and
+    /// shrink of them.
     ///
-    /// Defaults to the project `gas_limit`, and never raises it. Set it so a handler with a
-    /// fuzzed loop bound cannot run until the campaign deadline and consume the whole budget.
-    /// A handler call whose EIP-7623 calldata floor is above the limit runs with the floor as its
-    /// limit, so large fuzzed arrays do not stop the campaign.
+    /// Unset by default, which keeps the project `gas_limit`; a larger value has no effect. Set it
+    /// so a handler with a fuzzed loop bound cannot run until the campaign deadline. An invariant
+    /// check or `afterInvariant` that runs out of gas under it fails like any other revert. The
+    /// limit includes a call's intrinsic gas: a handler call whose intrinsic gas or calldata floor
+    /// is above it runs with exactly that gas instead of stopping the campaign, so it has no gas
+    /// left to execute and reverts. Network charges count too, such as Tempo's new-account charge
+    /// for nonce-zero senders, so keep the limit well above them.
     pub call_gas_limit: Option<u64>,
 }
 
@@ -229,11 +233,6 @@ impl InvariantConfig {
     pub const fn has_delay(&self) -> bool {
         matches!(self.max_block_delay, Some(delay) if delay > 0)
             || matches!(self.max_time_delay, Some(delay) if delay > 0)
-    }
-
-    /// Returns the gas limit of a campaign call: `call_gas_limit` when it is below `gas_limit`.
-    pub fn call_gas_limit(&self, gas_limit: u64) -> u64 {
-        self.call_gas_limit.map_or(gas_limit, |limit| limit.min(gas_limit))
     }
 }
 
