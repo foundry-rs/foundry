@@ -388,6 +388,11 @@ pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValu
 
     match (value, ty) {
         (Value::Array(array), ty) => parse_json_array(array, ty),
+        // `serialize_value_as_json` writes strings that hold a JSON object as raw objects, so
+        // `vm.serializeString` can nest objects. Read them back as their compact JSON text.
+        (Value::Object(object), DynSolType::String) => {
+            Ok(DynSolValue::String(serde_json::to_string(object)?))
+        }
         (Value::Object(object), ty) => parse_json_map(object, ty),
         (Value::String(s), DynSolType::String) => Ok(DynSolValue::String(s.clone())),
         (Value::String(s), DynSolType::Uint(_) | DynSolType::Int(_)) => string::parse_value(s, ty),
@@ -1088,9 +1093,50 @@ mod tests {
         assert!(error.to_string().contains("unterminated block comment"));
     }
 
+    /// Returns `true` if `s` parses as a JSON object. `serialize_value_as_json` writes such
+    /// strings as raw objects.
+    fn is_json_object(s: &str) -> bool {
+        serde_json::from_str::<Map<String, Value>>(s).is_ok()
+    }
+
+    /// Returns `true` if `s` survives a typed JSON roundtrip. A string that holds a JSON object
+    /// comes back as compact JSON, so only compact objects keep their text.
+    fn string_roundtrips(s: &str) -> bool {
+        serde_json::from_str::<Map<String, Value>>(s)
+            .ok()
+            .is_none_or(|map| serde_json::to_string(&map).unwrap() == s)
+    }
+
+    /// Returns `true` if every string in `value` survives a typed JSON roundtrip.
+    fn strings_roundtrip(value: &DynSolValue) -> bool {
+        match value {
+            DynSolValue::String(s) => string_roundtrips(s),
+            DynSolValue::Array(v) | DynSolValue::FixedArray(v) | DynSolValue::Tuple(v) => {
+                v.iter().all(strings_roundtrip)
+            }
+            DynSolValue::CustomStruct { tuple, .. } => tuple.iter().all(strings_roundtrip),
+            _ => true,
+        }
+    }
+
+    #[test]
+    fn test_json_roundtrip_json_object_string() {
+        let v = DynSolValue::Tuple(vec![DynSolValue::String("{}".to_string())]);
+        let json = serialize_value_as_json(v.clone(), None, false).unwrap();
+        assert_eq!(json, json!([{}]));
+        assert_eq!(parse_json_as(&json, &v.as_type().unwrap()).unwrap(), v);
+
+        // Objects come back as compact JSON text.
+        let json = json!({ "a": 1, "b": { "c": [] } });
+        assert_eq!(
+            parse_json_as(&json, &DynSolType::String).unwrap(),
+            DynSolValue::String(r#"{"a":1,"b":{"c":[]}}"#.to_string())
+        );
+    }
+
     fn valid_value(value: &DynSolValue) -> bool {
         (match value {
-            DynSolValue::String(s) if s == "{}" => false,
+            DynSolValue::String(s) if is_json_object(s) => false,
 
             DynSolValue::Tuple(_) | DynSolValue::CustomStruct { .. } => false,
 
@@ -1137,7 +1183,8 @@ mod tests {
             any::<u32>().prop_map(|v| DynSolValue::Uint(U256::from(v), 256)),
             any::<[u8; 20]>().prop_map(Address::from).prop_map(DynSolValue::Address),
             any::<[u8; 32]>().prop_map(B256::from).prop_map(|b| DynSolValue::FixedBytes(b, 32)),
-            ".*".prop_filter("invalid string value", |s| s != "{}").prop_map(DynSolValue::String),
+            ".*".prop_filter("invalid string value", |s| string_roundtrips(s))
+                .prop_map(DynSolValue::String),
         ];
 
         // Combine them to create a list of unique fields that preserve the random order.
@@ -1180,7 +1227,7 @@ mod tests {
         }
 
         #[test]
-        fn test_json_roundtrip(v in any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some())) {
+        fn test_json_roundtrip(v in any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some() && strings_roundtrip(v))) {
             let json = serialize_value_as_json(v.clone(), None, false).unwrap();
             let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
             assert_eq!(value, v);
