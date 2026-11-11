@@ -1,6 +1,7 @@
 use crate::{
     executors::{
-        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
+        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, EvmExecutionCancellation, Executor,
+        RawCallResult,
         campaign::{
             CampaignCallKind, CampaignControl, CampaignEvent, CampaignSequenceOutcome,
             FuzzCampaign, FuzzCampaignMode,
@@ -797,10 +798,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     /// `initial_handler_failures` pre-seeds the campaign's `broken_handlers` map with bugs
     /// recovered from disk by the runner's persisted-failure replay step, so the live
     /// progress bar and JSON pulse stream surface them from the first emission instead of
-    /// jumping at the final report.
+    /// jumping at the final report. `sender_filters` and `targeted_contracts` are the selection
+    /// from [`Self::select_contracts_and_senders`], made before the executor's gas limit was
+    /// lowered to `call_gas_limit`.
+    #[allow(clippy::too_many_arguments)]
     pub fn invariant_fuzz(
         &mut self,
         invariant_contract: InvariantContract<'_>,
+        sender_filters: SenderFilters,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
@@ -817,8 +823,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             self.invariant_campaign_anchors,
         ))?;
         let actual_worker_count = worker_plans.len();
-        let campaign_seed =
-            self.prepare_campaign_seed(&invariant_contract, initial_handler_failures)?;
+        let campaign_seed = InvariantCampaignSeed {
+            artifact_filters: self.artifact_filters.clone(),
+            sender_filters,
+            targeted_contracts: targeted_contracts.targets().clone(),
+            targets_are_updatable: targeted_contracts.is_updatable,
+            initial_handler_failures,
+        };
         let replay_targets = FuzzRunIdentifiedContracts::new(
             campaign_seed.targeted_contracts.clone(),
             campaign_seed.targets_are_updatable,
@@ -1040,7 +1051,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let live_solver =
             (plan.worker_id == 0).then_some(campaign_state.live_solver.as_ref()).flatten();
         let mut frontier_recorder = FuzzFrontierRecorder::new(frontier_limit);
-        executor.inspector_mut().set_execution_cancellation(campaign_state.cancellation().clone());
+        // The campaign deadline must not cancel the initial invariant check, or an initial-state
+        // failure is dropped. `prepare_worker` installs it right after that check.
+        executor.inspector_mut().set_early_exit(campaign_state.early_exit().clone());
 
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
             &mut executor,
@@ -1053,6 +1066,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &config,
             &campaign_seed,
             corpus_seed,
+            campaign_state.cancellation().clone(),
         )?;
         let collect_corpus_cmp =
             invariant_worker_collects_evm_cmp_log(&config, plan.worker_id, worker_count);
@@ -1764,29 +1778,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         }
     }
 
-    fn prepare_campaign_seed(
-        &mut self,
-        invariant_contract: &InvariantContract<'_>,
-        initial_handler_failures: std::collections::HashMap<
-            (Address, Selector),
-            InvariantFuzzError,
-        >,
-    ) -> Result<InvariantCampaignSeed> {
-        self.select_contract_artifacts(invariant_contract.address)?;
-        let (sender_filters, targeted_contracts) =
-            self.select_contracts_and_senders(invariant_contract.address)?;
-        let targets_are_updatable = targeted_contracts.is_updatable;
-        let targeted_contracts = targeted_contracts.targets().clone();
-
-        Ok(InvariantCampaignSeed {
-            artifact_filters: self.artifact_filters.clone(),
-            sender_filters,
-            targeted_contracts,
-            targets_are_updatable,
-            initial_handler_failures,
-        })
-    }
-
     /// Prepares worker-local structures to execute an invariant campaign slice.
     #[allow(clippy::too_many_arguments)]
     fn prepare_worker(
@@ -1800,6 +1791,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         config: &InvariantConfig,
         campaign_seed: &InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
+        cancellation: EvmExecutionCancellation,
     ) -> Result<(InvariantTest, WorkerCorpus)> {
         let fuzz_state = fuzz_state.into_invariant();
         let targeted_contracts = FuzzRunIdentifiedContracts::new(
@@ -1848,6 +1840,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &[],
             &mut failures,
         )?;
+        executor.inspector_mut().set_execution_cancellation(cancellation);
         if let Some(fuzzer) = executor.inspector_mut().fuzzer.as_mut() {
             let _ = fuzzer.take_observed_calls();
         }

@@ -10,16 +10,14 @@ use evm2::{
     EvmTypesHost, Inspector,
     interpreter::{Interpreter, op as opcode},
 };
+use foundry_evm_core::edgecov::{
+    InstrumentedEdgeHit, MAX_CMP_LOG_SITES, MAX_CMP_OBSERVATIONS_PER_SITE,
+};
+
+pub use foundry_evm_core::edgecov::CmpOperands;
 
 /// Default capacity for the hitcount buffer.
 pub const MAX_EDGE_COUNT: usize = 65536;
-
-// Maximum number of unique comparison sites to track for CmpLog-style feedback.
-const MAX_CMP_LOG_SITES: usize = 1024;
-
-// Maximum number of comparison operand pairs to track per site. This matches the downstream loop
-// detection threshold so a hot loop can be classified without filling the whole log.
-const MAX_CMP_OBSERVATIONS_PER_SITE: u8 = 8;
 
 /// Edge coverage collection kind.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -56,21 +54,6 @@ impl Default for EdgeCovConfig {
     fn default() -> Self {
         Self::new(EdgeCovKind::CollisionFree, false)
     }
-}
-
-/// A comparison operand pair captured during execution.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CmpOperands {
-    /// First operand of the comparison.
-    pub op1: U256,
-    /// Second operand of the comparison.
-    pub op2: U256,
-    /// Program counter where the comparison occurred.
-    pub pc: usize,
-    /// Contract address where the comparison occurred.
-    pub address: Address,
-    /// EVM opcode that performed the comparison.
-    pub opcode: u8,
 }
 
 /// Identity of a control-flow edge: the jump at `pc` in the code running at `address` to
@@ -149,6 +132,8 @@ pub struct EdgeCovHit {
 pub enum EdgeCoverage {
     Hash(Vec<u8>),
     CollisionFree(Vec<EdgeCovHit>),
+    /// Hits of compiler-instrumented edges, keyed by their dense compiler-assigned IDs.
+    Instrumented(Vec<InstrumentedEdgeHit>),
 }
 
 impl EdgeCoverage {
@@ -156,6 +141,7 @@ impl EdgeCoverage {
         match self {
             Self::Hash(hitcount) => hitcount.iter().all(|&count| count == 0),
             Self::CollisionFree(hits) => hits.is_empty(),
+            Self::Instrumented(hits) => hits.is_empty(),
         }
     }
 }

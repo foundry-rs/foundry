@@ -8,6 +8,7 @@ mod calls;
 mod cheatcodes;
 mod constraints;
 mod create;
+mod equivalence;
 mod invariant;
 mod opcodes;
 mod run;

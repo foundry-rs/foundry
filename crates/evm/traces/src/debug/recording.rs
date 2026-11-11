@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Bytes, U256, hex};
 use evm2::interpreter::op as opcode;
-use soldb_core::{StepTable, StorageChange};
+use soldb_core::{StepRecord, StepTable, StepView, StorageChange};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -83,8 +83,8 @@ pub struct RecordedFrame {
 /// The debug recorder and the SolDB frontend both convert steps through this.
 #[derive(Debug, Default)]
 pub struct StepConverter {
-    /// The last return data buffer and its hex encoding.
-    return_data: Option<(Bytes, Arc<str>)>,
+    /// The return data buffer of the last step.
+    return_data: Option<Bytes>,
     /// The storage of the steps that touch no slot.
     no_storage: Arc<BTreeMap<String, String>>,
 }
@@ -101,21 +101,23 @@ pub struct StepStorage {
 }
 
 impl StepConverter {
-    /// The hex encoding of the return data `buffer`.
-    pub fn return_data(&mut self, buffer: &Bytes) -> Arc<str> {
+    /// The hex encoding of the return data `buffer`, or `None` if it is the buffer passed last,
+    /// so a step record with it keeps the previous step's return data.
+    ///
+    /// The step of each call must be appended to the same table, in order.
+    pub fn return_data(&mut self, buffer: &Bytes) -> Option<Arc<str>> {
         match &self.return_data {
             // Unchanged return data is the same buffer, so comparing the pointers first skips
             // most full comparisons.
-            Some((last, hex))
+            Some(last)
                 if (last.as_ptr() == buffer.as_ptr() && last.len() == buffer.len())
                     || last == buffer =>
             {
-                hex.clone()
+                None
             }
             _ => {
-                let hex = Arc::<str>::from(hex::encode(buffer));
-                self.return_data = Some((buffer.clone(), hex.clone()));
-                hex
+                self.return_data = Some(buffer.clone());
+                Some(Arc::from(hex::encode(buffer)))
             }
         }
     }
@@ -161,4 +163,21 @@ impl StepConverter {
 /// Formats `value` as a JSON-RPC quantity.
 pub fn quantity(value: U256) -> String {
     format!("{value:#x}")
+}
+
+/// A copy of `step` that a step table can append, with the full memory and storage it shows.
+pub fn step_record(step: &StepView<'_>) -> StepRecord {
+    StepRecord {
+        pc: step.pc(),
+        op: step.op(),
+        gas: step.gas(),
+        gas_cost: step.gas_cost(),
+        depth: step.depth(),
+        error: step.error().map(str::to_owned),
+        memory: step.memory(),
+        storage: Some(Arc::new(step.storage().clone())),
+        storage_diff: Some(step.storage_diff().clone()).filter(|diff| !diff.is_empty()),
+        transient_storage: Some(step.transient_storage().clone()).filter(|slots| !slots.is_empty()),
+        return_data: Some(Arc::from(step.return_data().unwrap_or_default())),
+    }
 }

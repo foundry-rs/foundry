@@ -181,6 +181,14 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// Gas limit for every campaign call after `setUp` and target selection: handler calls,
+    /// invariant checks, `afterInvariant`, and their replays and shrinks.
+    ///
+    /// Unset keeps the project `gas_limit`; a larger value has no effect. A handler call whose
+    /// minimum gas is above the limit runs with that minimum instead. At the intrinsic charge,
+    /// network charges included, it has no gas left and reverts. At an EIP-7623 calldata floor
+    /// above the intrinsic charge, it keeps the difference and can still run.
+    pub call_gas_limit: Option<u64>,
 }
 
 impl Default for InvariantConfig {
@@ -207,6 +215,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            call_gas_limit: None,
         }
     }
 }

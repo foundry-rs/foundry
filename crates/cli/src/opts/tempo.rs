@@ -219,6 +219,12 @@ impl TempoOpts {
         self.sponsor.is_some() || self.sponsor_signer.is_some() || self.sponsor_sig.is_some()
     }
 
+    /// Returns `true` if a fee payer will sponsor the transaction, through a sponsor signature, a
+    /// sponsor service or a printed sponsor hash.
+    pub const fn is_sponsored(&self) -> bool {
+        self.has_sponsor_submission() || self.sponsor_url.is_some() || self.print_sponsor_hash
+    }
+
     /// Resolves sponsor CLI options into a reusable sponsor config for transaction submission.
     pub async fn sponsor_config(&self) -> Result<Option<TempoSponsor>> {
         let Some(sponsor) = self.sponsor else {
@@ -299,10 +305,9 @@ impl TempoOpts {
         // Note: the fee_payer_signature is NOT set here. It must be applied AFTER
         // gas estimation so that `--tempo.print-sponsor-hash` and
         // `--tempo.sponsor-signature` produce identical gas estimates. Callers
-        // should call `set_fee_payer_signature` on the built tx request.
-        if (self.has_sponsor_submission() || self.sponsor_url.is_some() || self.print_sponsor_hash)
-            && tx.nonce_key().is_none()
-        {
+        // should call `set_fee_payer_signature` on the built tx request, and
+        // mark only the estimation request with `mark_sponsored_gas_estimation`.
+        if self.is_sponsored() && tx.nonce_key().is_none() {
             tx.set_nonce_key(U256::ZERO);
         }
     }
