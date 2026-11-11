@@ -553,8 +553,6 @@ pub struct CallOutcome {
     pub output: Bytes,
     /// Receipt gas charged by the transaction.
     pub gas_used: u128,
-    /// Gas consumed before refunds and receipt floors, including intrinsic gas.
-    pub gas_spent: u128,
     /// Gas reported by simulations under the selected execution family's rules.
     pub simulation_gas_used: u128,
     /// State changes of the call.
@@ -566,7 +564,6 @@ impl From<Executed> for CallOutcome {
         Self {
             exit: result.stop,
             gas_used: result.tx_gas_used() as u128,
-            gas_spent: result.total_gas_spent as u128,
             simulation_gas_used: result.ext.simulation_gas_used as u128,
             output: result.output,
             state,

@@ -306,7 +306,7 @@ pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
         None
     }
 
-    /// Gas reported by simulations, including access lists, and used for script gas estimation.
+    /// Gas reported by simulations, including access lists, and used to seed gas estimation.
     ///
     /// Ordinarily this is receipt gas, including calldata floors and refunds. Networks that
     /// charge unused gas report consumption here; their receipts retain `tx_gas_used()`.
