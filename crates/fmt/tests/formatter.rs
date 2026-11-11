@@ -1,7 +1,7 @@
 use forge_fmt::{DocCommentStyle, FormatterConfig};
 use foundry_config::fmt::IndentStyle;
 use foundry_test_utils::init_tracing;
-use snapbox::{Data, assert_data_eq};
+use snapbox::{Data, assert_data_eq, str};
 use solar::sema::Compiler;
 use std::{
     fs,
@@ -538,6 +538,247 @@ fn return_expression_comment_is_idempotent() {
         Arc::new(FormatterConfig { line_length: 60, wrap_comments: true, ..Default::default() });
 
     assert_eq!(format(source, Path::new("test.sol"), config), expected);
+}
+
+#[test]
+fn unmatched_disable_end_preserves_comments_and_nested_blocks() {
+    let source = r#"// forgefmt: disable-end
+// forgefmt: disable-end
+/**@notice Before disabled blocks.*/
+contract  Before {}
+// forgefmt: disable-start
+contract  OuterDisabled {}
+// forgefmt: disable-start
+contract  InnerDisabled {}
+// forgefmt: disable-end
+contract  StillDisabled {}
+// forgefmt: disable-end
+// forgefmt: disable-end
+/* Another comment. */
+/**
+ * @notice After disabled blocks.
+ */
+contract  After {}
+"#;
+
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+        assert_data_eq!(
+            format(source, Path::new("test.sol"), config),
+            str![[r#"
+// forgefmt: disable-end
+// forgefmt: disable-end
+/**
+ * @notice Before disabled blocks.
+ */
+contract Before {}
+
+// forgefmt: disable-start
+contract  OuterDisabled {}
+// forgefmt: disable-start
+contract  InnerDisabled {}
+// forgefmt: disable-end
+contract  StillDisabled {}
+// forgefmt: disable-end
+// forgefmt: disable-end
+/* Another comment. */
+/**
+ * @notice After disabled blocks.
+ */
+contract After {}
+
+"#]]
+        );
+    }
+}
+
+#[test]
+fn disable_directive_whitespace_preserves_doc_comments() {
+    for start_space in ["", " ", "  ", "\t"] {
+        for end_space in ["", " ", "  ", "\t"] {
+            let source = format!(
+                "// forgefmt:{start_space}disable-start\ncontract  A {{}}\n// forgefmt:{end_space}disable-end\n/**@notice format me*/\ncontract  B {{}}\n"
+            );
+            let expected = format!(
+                "// forgefmt:{start_space}disable-start\ncontract  A {{}}\n// forgefmt:{end_space}disable-end\n/**\n * @notice format me\n */\ncontract B {{}}\n"
+            );
+
+            for wrap_comments in [false, true] {
+                let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+                assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+            }
+        }
+    }
+}
+
+#[test]
+fn block_disable_directives_preserve_doc_comments() {
+    for disabled in [
+        "// forgefmt: disable-start\ncontract  A {}\n/**forgefmt:disable-end*/\n",
+        "/**forgefmt:disable-start*/\ncontract  A {}\n/**forgefmt:disable-end*/\n",
+        "/*forgefmt:disable-start*/\ncontract  A {}\n/*forgefmt:disable-end*/\n",
+        "/**forgefmt:disable-start\nforgefmt:disable-end*/\n",
+        "/*forgefmt:disable-start\nforgefmt:disable-end*/\n",
+    ] {
+        let source = format!("{disabled}/**@notice format me*/\ncontract  B {{}}\n");
+        let expected = format!("{disabled}/**\n * @notice format me\n */\ncontract B {{}}\n");
+        for wrap_comments in [false, true] {
+            let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+            assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+        }
+    }
+}
+
+#[test]
+fn disable_directives_between_comments_preserve_doc_comments() {
+    let disabled = "// before\n// forgefmt:disable-start\n// inside\ncontract  A {}\n// inside\n// forgefmt:disable-end\n// after\n";
+    let source = format!("{disabled}/**@notice format me*/\ncontract  B {{}}\n");
+    let expected = format!("{disabled}/**\n * @notice format me\n */\ncontract B {{}}\n");
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+        assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+    }
+}
+
+#[test]
+fn directive_like_text_preserves_doc_comments() {
+    for prefix in [
+        "// mention forgefmt: disable-start\n",
+        "// forgefmt: disable-start-invalid\n",
+        "/* mention forgefmt: disable-start */\n",
+        "contract A {\n    string constant TEXT = \"forgefmt: disable-start\";\n}\n\n",
+    ] {
+        let source = format!("{prefix}/**@notice format me*/\ncontract  B {{}}\n");
+        let expected = format!("{prefix}/**\n * @notice format me\n */\ncontract B {{}}\n");
+        for wrap_comments in [false, true] {
+            let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+            assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+        }
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_disable_directives() {
+    let source = "/// @notice Before\n/// forgefmt: disable-start\ncontract  A {}\n/// forgefmt: disable-end\n/// @notice After\ncontract  B {}\n";
+    let expected = "/// @notice Before\n/// forgefmt: disable-start\ncontract  A {}\n/// forgefmt: disable-end\n/// @notice After\ncontract B {}\n";
+    for wrap_comments in [true, false] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_directive_doc_groups() {
+    let source = "/// @notice Before\n/// forgefmt:disable-end\n/// @dev After\ncontract  A {}\n";
+    let expected = "/// @notice Before\n/// forgefmt:disable-end\n/// @dev After\ncontract A {}\n";
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_single_item_directives() {
+    for directive in ["disable-next-item", "disable-line"] {
+        let source = format!(
+            "/// @notice Before\n/// forgefmt:                     {directive}\n/// @dev After\ncontract  A {{}}\n\n/// @notice Unrelated\ncontract  B {{}}\n"
+        );
+        for docs_style in [DocCommentStyle::Preserve, DocCommentStyle::Line, DocCommentStyle::Block]
+        {
+            let unrelated = if docs_style == DocCommentStyle::Block {
+                "/**\n * @notice Unrelated\n */"
+            } else {
+                "/// @notice Unrelated"
+            };
+            let expected = format!(
+                "/// @notice Before\n/// forgefmt:                     {directive}\n/// @dev After\ncontract  A {{}}\n\n{unrelated}\ncontract B {{}}\n"
+            );
+            for wrap_comments in [false, true] {
+                let config = Arc::new(FormatterConfig {
+                    wrap_comments,
+                    docs_style,
+                    line_length: 40,
+                    ..Default::default()
+                });
+                assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+            }
+        }
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_next_line_directive_target() {
+    let source =
+        "/// @notice Before\n/// forgefmt: disable-next-line\n/// @dev After\ncontract  A {}\n";
+    let expected =
+        "/// @notice Before\n/// forgefmt: disable-next-line\n/// @dev After\ncontract A {}\n";
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            line_length: 20,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_trailing_directive_doc_groups() {
+    let source =
+        "contract A {} /// forgefmt: disable-next-item\n/// @notice Before\ncontract  B {}\n";
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), source);
+    }
+}
+
+#[test]
+fn directive_doc_groups_are_separate_from_regular_comments() {
+    let source = "// A long regular comment with enough words to exceed the configured width.\n/// @notice Before\n/// forgefmt:disable-end\n/// @dev After\ncontract  A {}\n";
+    for wrap_comments in [false, true] {
+        let regular = if wrap_comments {
+            "// A long regular comment with enough\n// words to exceed the configured width."
+        } else {
+            "// A long regular comment with enough words to exceed the configured width."
+        };
+        let expected = format!(
+            "{regular}\n/// @notice Before\n/// forgefmt:disable-end\n/// @dev After\ncontract A {{}}\n"
+        );
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            line_length: 40,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn doc_style_conversion_keeps_adjacent_regular_comments() {
+    let source = "contract A {\n    /// @notice a\n    // regular note\n    function f() external {}\n\n    // regular note\n    /// @notice b\n    function g() external {}\n\n    /// @notice c\n    //\n    function h() external {}\n}\n";
+    let expected = "contract A {\n    /**\n     * @notice a\n     */\n    // regular note\n    function f() external {}\n\n    // regular note\n    /**\n     * @notice b\n     */\n    function g() external {}\n\n    /**\n     * @notice c\n     */\n    //\n    function h() external {}\n}\n";
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
 }
 
 fn tests_dir() -> PathBuf {

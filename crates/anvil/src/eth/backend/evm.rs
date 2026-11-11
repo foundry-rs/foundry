@@ -40,6 +40,7 @@ use foundry_evm_networks::{
 };
 use foundry_primitives::FoundryTxEnvelope;
 use std::{fmt, sync::Arc};
+use tempo_primitives::transaction::PrimitiveSignature;
 
 pub use evm2::evm::precompile::PrecompileOutput;
 pub use foundry_evm_core::evm::{
@@ -179,6 +180,10 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
 
     /// Replaces EIP-7702 authorities by authorization index, see [`authority_overrides`].
     fn apply_authority_overrides(_tx: &mut TxFor<Self>, _overrides: &[(usize, Address)]) {}
+
+    /// Prepares a signed transaction that carries a placeholder signature of an impersonated
+    /// sender which signed execution would reject.
+    fn apply_impersonation(_tx: &mut TxFor<Self>) {}
 
     /// Applies per-transaction context to `evm`.
     fn set_tx_context(
@@ -371,6 +376,24 @@ impl AnvilEvmNetwork for TempoEvmNetwork {
             .with_simulation_overrides(unique_tx_identifier, None, None);
     }
 
+    fn apply_impersonation(tx: &mut tempo_evm::TempoTxEnv) {
+        // Anvil signs for an impersonated configurable account with zero secp256k1 owner
+        // approvals, which no owner key produces and only a simulation accepts. Simulation skips
+        // the quorum recovery and keeps every other check of the signed transaction.
+        let placeholder_quorum = tx
+            .as_aa()
+            .and_then(|aa| aa.signature().as_configurable_account())
+            .is_some_and(|signature| {
+                signature.signatures().iter().all(|approval| {
+                    matches!(approval, PrimitiveSignature::Secp256k1(approval)
+                        if approval.r().is_zero() && approval.s().is_zero())
+                })
+            });
+        if placeholder_quorum {
+            *tx = tx.clone().with_simulation_overrides(tx.unique_tx_identifier(), None, None);
+        }
+    }
+
     fn prepared_evm_tx(
         prepared: &PreparedTx,
         cheats: Option<&CheatsManager>,
@@ -554,6 +577,11 @@ pub fn evm_tx<N: AnvilEvmNetwork>(
     let envelope = decode_envelope::<N>(tx)?;
     let mut evm_tx = TypesFor::<N>::evm_tx(envelope, sender, payload)
         .map_err(|err| BlockchainError::Message(err.to_string()))?;
+    if !payload.is_simulated() {
+        let (mut inner, signer) = evm_tx.into_parts();
+        N::apply_impersonation(&mut inner);
+        evm_tx = Recovered::new_unchecked(inner, signer);
+    }
     if let Some(cheats) = cheats {
         let overrides = authority_overrides(tx, cheats);
         if !overrides.is_empty() {

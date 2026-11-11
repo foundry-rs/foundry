@@ -2028,3 +2028,51 @@ async fn tempo_t14_configurable_account_run_fork_replay_matches_node(cmd: _) {
         assert_eq!(gas, receipt.gas_used, "replayed {hash}:\n{stdout}");
     }
 }
+
+// From T14 a sponsored transaction pays to load its fee payer's account, which checks the fee
+// payer's root key, so its gas estimate must include that access. Before T14 it must not.
+#[casttest]
+async fn tempo_sponsored_send_estimate_covers_fee_payer_access(cmd: _) {
+    for hardfork in [TempoHardfork::T13, TempoHardfork::T14] {
+        let (_, handle) =
+            anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+        let rpc = handle.http_endpoint();
+        let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
+        let sponsor_key =
+            format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
+
+        let receipt = cmd
+            .cast_fuse()
+            .args([
+                "send",
+                "0x7373737373737373737373737373737373737373",
+                "--private-key",
+                &hex::encode_prefixed(wallets[0].credential().to_bytes()),
+                "--tempo.sponsor",
+                &wallets[1].address().to_string(),
+                "--tempo.sponsor-signer",
+                &sponsor_key,
+                "--json",
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let hash = serde_json::from_str::<serde_json::Value>(&receipt).unwrap()["transactionHash"]
+            .as_str()
+            .unwrap()
+            .parse::<B256>()
+            .unwrap();
+
+        let provider = handle.http_provider();
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status(), "{hardfork:?}: {receipt:?}");
+        let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        assert!(signed.tx().fee_payer_signature.is_some());
+        assert_eq!(signed.tx().gas_limit, receipt.gas_used, "{hardfork:?}");
+    }
+}

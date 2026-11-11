@@ -243,7 +243,7 @@ fn deserialize_snapshot_code<'de, D: Deserializer<'de>>(
 
     #[derive(Deserialize)]
     struct Eip7702 {
-        raw: Bytes,
+        delegated_address: Address,
     }
 
     #[derive(Deserialize)]
@@ -265,7 +265,9 @@ fn deserialize_snapshot_code<'de, D: Deserializer<'de>>(
         Code::Tagged(Tagged::LegacyAnalyzed(code)) => {
             code.bytecode.slice(..code.original_len.min(code.bytecode.len()))
         }
-        Code::Tagged(Tagged::Eip7702(code)) => code.raw,
+        Code::Tagged(Tagged::Eip7702(code)) => {
+            Bytecode::new_eip7702(code.delegated_address).original_bytes()
+        }
     }))
 }
 
@@ -682,14 +684,19 @@ impl<ExtDB: DatabaseRef> DatabaseRef for CacheDB<ExtDB> {
 #[derive(Debug)]
 pub struct EvmDb<'a> {
     db: &'a dyn DatabaseRef,
-    spec: SpecId,
+    state_clear: bool,
     forked: Option<u64>,
 }
 
 impl<'a> EvmDb<'a> {
     /// Reads `db` for execution at `spec`, as a fork of `forked` if set.
     pub fn new(db: &'a dyn DatabaseRef, spec: SpecId, forked: Option<u64>) -> Self {
-        Self { db, spec, forked }
+        Self { db, state_clear: spec >= SpecId::SPURIOUS_DRAGON, forked }
+    }
+
+    /// Reads retained storage on empty accounts for development state operations.
+    pub(crate) fn for_storage(db: &'a dyn DatabaseRef) -> Self {
+        Self { db, state_clear: false, forked: None }
     }
 }
 
@@ -703,7 +710,7 @@ impl DynDatabase for EvmDb<'_> {
         let account = self.db.basic_ref(*address).map_err(evm_db_err)?;
         // Anvil's databases, like forked state, report an account they do not hold as an existing
         // empty account.
-        Ok(existing_account(self.spec >= SpecId::SPURIOUS_DRAGON, account))
+        Ok(existing_account(self.state_clear, account))
     }
 
     fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {
@@ -1757,5 +1764,41 @@ mod test {
         assert!(db.revert_state(snapshot, RevertStateSnapshotAction::RevertRemove));
         assert_eq!(db.basic_ref(cached).unwrap().unwrap(), original);
         assert!(!db.database().cache.accounts.contains_key(&uncached));
+    }
+
+    // Snapshots written by revm-based Anvil store EIP-7702 delegations as their delegated address,
+    // or with their raw code in older versions.
+    #[test]
+    fn deserializes_revm_eip7702_snapshot_code() {
+        let delegate = Address::with_last_byte(0xde);
+        let snapshot = serde_json::from_value::<StateSnapshot>(serde_json::json!({
+            "accounts": {
+                "0x0000000000000000000000000000000000000001": {
+                    "balance": "0x0", "nonce": 0, "code_hash": B256::ZERO,
+                    "code": {"Eip7702": {"delegated_address": delegate}}
+                },
+                "0x0000000000000000000000000000000000000002": {
+                    "balance": "0x0", "nonce": 0, "code_hash": B256::ZERO,
+                    "code": {"Eip7702": {
+                        "delegated_address": delegate,
+                        "version": 0,
+                        "raw": Bytecode::new_eip7702(delegate).original_bytes()
+                    }}
+                }
+            },
+            "storage": {},
+            "block_hashes": {}
+        }))
+        .unwrap();
+
+        let code = |byte| {
+            snapshot.accounts[&Address::with_last_byte(byte)]
+                .code
+                .as_ref()
+                .unwrap()
+                .original_bytes()
+        };
+        assert_eq!(code(1), Bytecode::new_eip7702(delegate).original_bytes());
+        assert_eq!(code(2), Bytecode::new_eip7702(delegate).original_bytes());
     }
 }
