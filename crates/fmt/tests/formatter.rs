@@ -1450,6 +1450,39 @@ fn for_body_assignment_spacing_is_stable() {
 }
 
 #[test]
+fn for_nested_body_tail_comments_keep_braces() {
+    for header in ["while (a)", "if (a)"] {
+        let source = format!(
+            r#"contract C {{
+    function f(bool a) external {{
+        for (;;) {{
+            {header} {{
+                break; // tail
+            }}
+        }}
+    }}
+}}
+"#
+        );
+        let expected = format!(
+            r#"contract C {{
+    function f(bool a) external {{
+        for (;;) {{
+            {header} break; // tail
+        }}
+    }}
+}}
+"#
+        );
+        let config = Arc::new(FormatterConfig {
+            single_line_statement_blocks: SingleLineBlockStyle::Single,
+            ..Default::default()
+        });
+        assert_data_eq!(format(&source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
 fn fractional_and_wide_number_literals() {
     let source = "contract C { function f() external { 1.25e-2; 1e100; 1.2e3; } }";
     let expected = "contract C {\n    function f() external {\n        1.25e-2;\n        1e100;\n        1.2e3;\n    }\n}\n";
@@ -1541,4 +1574,24 @@ fn assignment_rhs_leading_comment_keeps_member_chain_layout() {
     let config =
         Arc::new(FormatterConfig { line_length: 46, bracket_spacing: true, ..Default::default() });
     assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+}
+
+#[test]
+fn preserve_statement_body_line_breaks() {
+    for header in ["for (;;)", "if (a)", "while (a)"] {
+        for (spacing, body) in [
+            (" ", " x();"),
+            ("\n", " {\n            x();\n        }"),
+            ("\r\n", " {\n            x();\n        }"),
+            ("\n    ", " {\n            x();\n        }"),
+            ("\r\n    ", " {\n            x();\n        }"),
+        ] {
+            let source =
+                format!("contract C {{ function f() external {{ {header}{spacing}x(); }} }}");
+            let expected = format!(
+                "contract C {{\n    function f() external {{\n        {header}{body}\n    }}\n}}\n"
+            );
+            assert_data_eq!(format(&source, Path::new("test.sol"), Arc::default()), expected);
+        }
+    }
 }

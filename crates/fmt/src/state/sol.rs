@@ -2848,7 +2848,7 @@ impl<'ast> State<'_, 'ast> {
         if let Some(snip) = self.snippet(span_between) {
             // Check for newlines after the closing parenthesis of the `if (...)`.
             if let Some((_, after_paren)) = snip.rsplit_once(')') {
-                return after_paren.lines().count() > 1;
+                return after_paren.contains('\n');
             }
         }
         false
@@ -2965,6 +2965,13 @@ impl<'ast> State<'_, 'ast> {
         let stmt = &block.stmts[0];
         // Removing the outer braces would leave a standalone block that still prints multiline.
         if matches!(stmt.kind, ast::StmtKind::Block(_)) {
+            return true;
+        }
+        // Collapsing a nested body can move trailing comments outside its span. Keep the
+        // enclosing braces independently of how many source lines the child occupies.
+        if matches!(stmt.kind, ast::StmtKind::If(..) | ast::StmtKind::While(..))
+            && self.peek_comment_between(block.span.lo(), block.span.hi()).is_some()
+        {
             return true;
         }
         // Keep comment context stable when wrapping can introduce new lines after the statement.
