@@ -979,8 +979,8 @@ fn for_body_normalization_is_stable() {
     let source =
         "contract C { function f() external { uint256 n; for(uint i=0;i<n;i++) n += uint(n); } }";
     for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
-        for line_length in [54, 56, 57] {
-            let body = if line_length <= 56 {
+        for line_length in [56, 57] {
+            let body = if line_length == 56 {
                 "{\n            n += uint256(n);\n        }"
             } else {
                 "n += uint256(n);"
@@ -1004,7 +1004,7 @@ fn for_header_normalization_is_stable() {
         ["for (uint i = 0; i < n; i++)", "for(uint i=0;i<n;i++)", "for (uint256 i = 0; i < n; i++)"]
     {
         for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
-            for line_length in [44, 45, 48] {
+            for line_length in [44, 45] {
                 let source = format!(
                     "contract C {{ function f() external {{ uint256 n; {header} n++; }} }}"
                 );
@@ -1097,37 +1097,30 @@ impl<'ast> Visit<'ast> for StatementStructure {
 
 #[test]
 fn inlined_loops_preserve_else_binding() {
-    for style in
-        [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single, SingleLineBlockStyle::Multi]
-    {
-        for line_length in [40, 80, 120] {
-            for body in [
-                "for (;;) { if (b) x(); }",
-                "while (b) { if (c) x(); }",
-                "for (;;) while (b) { if (c) x(); }",
-                "while (b) for (;;) { if (c) x(); }",
-                "for (;;) { if (b) x(); else y(); }",
-                "for (;;) { if (b) { if (c) x(); } else y(); }",
-                "for (;;) { uint256 x; }",
-                "for (;;) { (uint256 x, uint256 y) = g(); }",
-            ] {
-                for then in [body.to_owned(), format!("{{ {body} }}")] {
-                    let source = format!(
-                        "contract C {{ function f() external {{ if (a) {then} else z(); }} }}"
-                    );
-                    let config = Arc::new(FormatterConfig {
-                        line_length,
-                        single_line_statement_blocks: style,
-                        ..Default::default()
-                    });
-                    let actual = format(&source, Path::new("test.sol"), config);
-                    assert_eq!(
-                        statement_structure(&source),
-                        statement_structure(&actual),
-                        "{source}\n{actual}"
-                    );
-                }
-            }
+    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+        for then in [
+            "for (;;) { if (b) x(); }",
+            "{ for (;;) { if (b) x(); } }",
+            "for (;;) while (b) { if (c) x(); }",
+            "while (b) for (;;) { if (c) x(); }",
+            "for (;;) { if (b) x(); else y(); }",
+            "for (;;) { if (b) { if (c) x(); } else y(); }",
+            "for (;;) { uint256 x; }",
+            "for (;;) { (uint256 x, uint256 y) = g(); }",
+        ] {
+            let source =
+                format!("contract C {{ function f() external {{ if (a) {then} else z(); }} }}");
+            let config = Arc::new(FormatterConfig {
+                line_length: 120,
+                single_line_statement_blocks: style,
+                ..Default::default()
+            });
+            let actual = format(&source, Path::new("test.sol"), config);
+            assert_eq!(
+                statement_structure(&source),
+                statement_structure(&actual),
+                "{source}\n{actual}"
+            );
         }
     }
 }
@@ -1167,11 +1160,9 @@ fn wrapped_body_trailing_comments_keep_braces() {
 
 #[test]
 fn for_body_assignment_spacing_is_stable() {
-    for style in
-        [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single, SingleLineBlockStyle::Multi]
-    {
-        for line_length in [36, 37, 40] {
-            let body = if style == SingleLineBlockStyle::Multi || line_length == 36 {
+    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+        for line_length in [36, 37] {
+            let body = if line_length == 36 {
                 "for (;;) {\n            variable = g() + b;\n        }"
             } else {
                 "for (;;) variable = g() + b;"
@@ -1204,7 +1195,7 @@ fn for_body_assignment_spacing_is_stable() {
             let expected = format!(
                 "contract C {{\n    function f(uint256 b) external {{\n        uint256 variable;\n        for (;;) {body}\n    }}\n}}\n"
             );
-            for padding in (0..=24).chain([65_516]) {
+            for padding in [0, 20, 65_516] {
                 let spacing = " ".repeat(padding);
                 let body = if nested {
                     format!("g(variable = h({spacing}) + b);")

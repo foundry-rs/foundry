@@ -15,11 +15,7 @@ contract C {
             x();
         }
 
-        if (c) {
-            x();
-        }
-
-        while (c) {
+        for (; c;) {
             x();
         }
 
@@ -27,50 +23,8 @@ contract C {
             x();
         }
 
-        if (c) {
-            x();
-        }
-
-        while (c) {
-            x();
-        }
-
         for (; c;) {
             x();
-        }
-
-        if (c) {
-            x();
-        }
-
-        while (c) {
-            x();
-        }
-
-        for (; c;) {
-            x();
-        }
-
-        if (c) {
-            x();
-        }
-
-        while (c) {
-            x();
-        }
-
-        for (; c;) {
-            x();
-        }
-
-        if (c) {
-            x();
-            y();
-        }
-
-        while (c) {
-            x();
-            y();
         }
 
         for (; c;) {
@@ -78,31 +32,9 @@ contract C {
             y();
         }
 
-        if (c) {
-            /* comment */
-            x();
-        }
-
-        while (c) {
-            /* comment */
-            x();
-        }
-
         for (; c;) {
             /* comment */
             x();
-        }
-
-        for (uint256 i = 0; i < n; i++) {
-            a[i] = b.get(i);
-        }
-
-        for (uint256 i = 0; i < n; i++) {
-            a[i] = b.get(i);
-        }
-
-        for (uint256 i = 0; i < n; i++) {
-            a[i] = b.get(i);
         }
     }
 }

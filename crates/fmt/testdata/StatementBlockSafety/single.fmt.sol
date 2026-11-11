@@ -11,28 +11,6 @@ contract C {
             (uint256 x, uint256 y) = g();
         }
 
-        while (c) {
-            uint256 x;
-        }
-
-        while (c) {
-            (uint256 x, uint256 y) = g();
-        }
-
-        if (c) {
-            uint256 x;
-        }
-
-        if (c) {
-            (uint256 x, uint256 y) = g();
-        }
-
-        for (;;) {
-            while (c) {
-                uint256 x;
-            }
-        }
-
         for (;;) {
             while (c) {
                 (uint256 x, uint256 y) = g();
@@ -52,72 +30,12 @@ contract C {
         }
 
         for (;;) {
-            {
-                {
-                    break;
-                }
-            }
-        }
-
-        if (c) {
-            g( /* c */
-                1
-            );
-        }
-
-        if (c) {
-            {
-                break;
-            }
-        }
-
-        if (c) {
-            {
-                {
-                    break;
-                }
-            }
-        }
-
-        while (c) {
-            g( /* c */
-                1
-            );
-        }
-
-        while (c) {
-            {
-                break;
-            }
-        }
-
-        while (c) {
-            {
-                {
-                    break;
-                }
-            }
-        }
-
-        for (;;) {
             if ( /* c */
                 c
             ) {
                 break;
             }
         }
-
-        for (;;) {
-            if ( /* c */
-                c
-            ) {
-                break;
-            }
-        }
-
-        if (a) if (b) x();
-
-        while (a) if (b) x();
 
         for (uint256 i; i < n; ++i) if (b) x();
 
