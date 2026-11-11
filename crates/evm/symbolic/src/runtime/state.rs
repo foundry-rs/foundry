@@ -2052,9 +2052,9 @@ pub(crate) struct SymbolicWorldState {
     arbitrary_storage_copies: HashMap<Address, Address>,
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
-    /// First zero-init base read of each symbolic key. Which `setUp` slot a key selects depends
-    /// on the slot hashes the run has seen, so later reads reuse it.
-    zero_init_base_reads: HashMap<(Address, SymExpr), SymExpr>,
+    /// First base read of each symbolic key. Which `setUp` slot a key selects depends on the slot
+    /// hashes the run has seen, so later reads reuse it.
+    symbolic_key_base_reads: HashMap<(Address, SymExpr), SymExpr>,
     /// Treat accounts that are not created here and have no known code as unknown: their balance,
     /// code size and code hash are symbolic, and calls into them are abstracted.
     symbolic_accounts: bool,
@@ -2421,14 +2421,20 @@ impl SymbolicWorld {
                 .storage(address, key)
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()))
-        } else if self.zero_init_symbolic_storage {
-            if let Some(value) = self.zero_init_base_reads.get(&(address, key.clone())) {
+        } else {
+            if let Some(value) = self.symbolic_key_base_reads.get(&(address, key.clone())) {
                 return Ok(value.clone());
             }
-            // Unwritten slots are zero, but the slots `setUp` wrote are known concrete state.
-            let mut value = SymExpr::zero(cx);
+            // Unwritten slots are zero under zero-init and abstract otherwise, but the backend's
+            // cached slots, such as the slots `setUp` wrote, are known concrete state.
+            let mut value = if self.zero_init_symbolic_storage {
+                SymExpr::zero(cx)
+            } else {
+                let name = symbolic_storage_symbol(cx, address, key);
+                SymExpr::get_var(cx, name)
+            };
             for (slot, slot_value) in executor.backend.storage_slots(address) {
-                if slot_value.is_zero() {
+                if self.zero_init_symbolic_storage && slot_value.is_zero() {
                     continue;
                 }
                 let slot = SymExpr::constant(cx, slot);
@@ -2436,12 +2442,9 @@ impl SymbolicWorld {
                 value = key.clone().select_storage_write(cx, slot, slot_value, value);
             }
             Arc::make_mut(&mut self.state)
-                .zero_init_base_reads
+                .symbolic_key_base_reads
                 .insert((address, key.clone()), value.clone());
             Ok(value)
-        } else {
-            let name = symbolic_storage_symbol(cx, address, key);
-            Ok(SymExpr::get_var(cx, name))
         }
     }
 
