@@ -912,6 +912,8 @@ pub struct FailureProvenance {
     /// Whether a frame halted at an instruction that is not recorded, so the call has no
     /// provenance.
     unknown: bool,
+    /// Sites of the calls that entered the frames in progress, by depth.
+    callers: Vec<B256>,
 }
 
 impl FailureProvenance {
@@ -940,14 +942,21 @@ impl FailureProvenance {
         self.pending_revert = Some((depth, Self::site::<FEN>(interpreter)));
     }
 
-    /// Records the failed assertion of the finished cheatcode call, if any, at the instruction of
-    /// `interpreter` that made the call.
-    pub(crate) fn finish_assertion<FEN: FoundryEvmNetwork>(
+    /// Records the site of `interpreter`'s call that enters the frame at `depth`.
+    pub fn enter_frame<FEN: FoundryEvmNetwork>(
         &mut self,
+        depth: usize,
         interpreter: &InterpreterFor<'_, '_, FEN>,
     ) {
+        self.callers.truncate(depth);
+        self.callers.push(Self::site::<FEN>(interpreter));
+    }
+
+    /// Records the failed assertion of the finished cheatcode call, if any, by the sites of the
+    /// calls that led to it, so the same assertion reached through different callers differs.
+    pub(crate) fn finish_assertion(&mut self) {
         if let Some(assertion) = self.pending_assertion.take() {
-            let site = Self::site::<FEN>(interpreter);
+            let site = keccak256(self.callers.concat());
             self.fold(keccak256([site.as_slice(), assertion.as_slice()].concat()));
         }
     }
@@ -961,6 +970,7 @@ impl FailureProvenance {
         result: &MessageResultFor<FEN>,
     ) {
         let pending_revert = self.pending_revert.take();
+        self.callers.truncate(depth);
         if result.stop.is_success() {
             return;
         }

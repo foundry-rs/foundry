@@ -887,7 +887,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Set whether to record the failure provenance of each call, see
     /// [`RawCallResult::failure_provenance`](crate::executors::RawCallResult::failure_provenance).
     ///
-    /// Only steps `REVERT` and `INVALID`, so it can stay set during campaigns.
+    /// Only steps `REVERT` and `INVALID` and hashes the site of each call, so it can stay set
+    /// during campaigns.
     #[inline]
     pub fn collect_failure_provenance(&mut self, yes: bool) {
         if let Some(cheatcodes) = &mut self.cheatcodes {
@@ -2077,6 +2078,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if let Some(result) = self.env_handoff(interp, message) {
             return Some(result);
         }
+        if let Some(provenance) =
+            self.cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut())
+        {
+            provenance.enter_frame::<FEN>(usize::from(message.depth), interp);
+        }
 
         let depth = message.depth;
         // A transaction handler can run the top-level calls below the transaction, such as
@@ -2275,6 +2281,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // A CREATE redirected to the CREATE2 factory is observed as a call to the factory.
         if self.redirect_create2(interp, message) {
             return self.call(interp, message);
+        }
+        if let Some(provenance) =
+            self.cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut())
+        {
+            provenance.enter_frame::<FEN>(usize::from(message.depth), interp);
         }
 
         let depth = message.depth;
