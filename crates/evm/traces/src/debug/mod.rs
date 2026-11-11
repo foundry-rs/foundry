@@ -11,7 +11,7 @@ use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
 pub use recording::{
-    DebugRecording, DebugStepSink, RecordedFrame, StepConverter, StepStorage, quantity,
+    DebugRecording, DebugStepSink, RecordedFrame, StepConverter, StepStorage, quantity, step_record,
 };
 pub use sources::{ArtifactData, ContractSources, SourceData};
 

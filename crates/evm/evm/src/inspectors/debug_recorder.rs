@@ -6,7 +6,9 @@ use evm2::{
     evm::JournalEntry,
     interpreter::{InstrStop, Interpreter, Message, MessageResult, opcode::OpCode},
 };
-use foundry_evm_traces::debug::{DebugRecording, DebugStepSink, RecordedFrame, StepConverter};
+use foundry_evm_traces::debug::{
+    DebugRecording, DebugStepSink, RecordedFrame, StepConverter, step_record,
+};
 use soldb_core::{EvmWord, StepRecord, StepTable};
 use std::{fmt, sync::Arc};
 
@@ -30,6 +32,12 @@ pub struct DebugRecorder {
     frames: Vec<RecordedFrame>,
     /// The frames that run now, innermost last.
     open: Vec<OpenFrame>,
+    /// The calls that started below the transaction with no frame open, under the empty root
+    /// node, or `None` once a call at depth zero replaced that node.
+    ///
+    /// The trace arena lifts a single such call into the root, see
+    /// `SparsedTraceArena::lift_single_top_level_call`, so its steps record one level up.
+    calls_below_root: Option<usize>,
     /// The step that started and did not end yet.
     pending: Option<PendingStep>,
     /// Converts the return data and storage of the steps.
@@ -74,6 +82,7 @@ impl DebugRecorder {
             // The arena of a new tracer starts with an empty root node.
             frames: vec![RecordedFrame::default()],
             open: Vec::new(),
+            calls_below_root: Some(0),
             pending: None,
             converter: StepConverter::default(),
         }
@@ -106,6 +115,18 @@ impl DebugRecorder {
 
     /// Opens a frame at journal depth `depth`, as the tracer opens a node.
     fn enter(&mut self, depth: usize) {
+        if depth == 0 {
+            self.calls_below_root = None;
+        } else if self.open.is_empty()
+            && let Some(calls) = &mut self.calls_below_root
+        {
+            *calls += 1;
+            // With a second call, the empty root stays to group the calls, so the steps of the
+            // first one go back down a level.
+            if *calls == 2 {
+                self.lower_recorded_steps();
+            }
+        }
         let entry_step = self.table().len() - self.first_step;
         let frame = RecordedFrame { depth, entry_step, exit_step: entry_step };
         // The tracer replaces the root node with the call at depth zero.
@@ -128,6 +149,25 @@ impl DebugRecorder {
         if let Some(open) = self.open.pop() {
             self.frames[open.frame].exit_step = exit_step;
             self.table().end_memory_frame();
+        }
+    }
+
+    /// Records the steps this recorder appended one level deeper.
+    ///
+    /// A step table cannot change a step in place, so the steps are appended again.
+    fn lower_recorded_steps(&mut self) {
+        let Some(table) = &mut self.table else { return };
+        let steps = (self.first_step..table.len())
+            .map(|index| {
+                let step = table.step(index);
+                let mut record = step_record(&step);
+                record.depth += 1;
+                (record, step.stack().to_vec())
+            })
+            .collect::<Vec<_>>();
+        table.truncate(self.first_step);
+        for (record, stack) in steps {
+            table.append(record, stack);
         }
     }
 
@@ -167,7 +207,8 @@ impl DebugRecorder {
         let mut inputs = [U256::ZERO; MAX_INPUTS];
         inputs[..inputs_len].copy_from_slice(&stack[stack.len() - inputs_len..]);
 
-        let depth = self.frames[open.frame].depth as u64 + 1;
+        let lifted = self.calls_below_root == Some(1);
+        let depth = self.frames[open.frame].depth as u64 + 1 - u64::from(lifted);
         let height = stack.len();
         let pc = interp.pc() as u64;
         let gas = interp.gas().remaining();
@@ -504,5 +545,33 @@ mod tests {
             );
             assert_eq!(step.stack().to_vec(), steps[index].1, "stack at {index}");
         }
+    }
+
+    #[test]
+    fn second_call_below_root_lowers_recorded_steps() {
+        let mut recorder = DebugRecorder::default();
+        let step = |pc, depth| (StepRecord { pc, depth, ..Default::default() }, [EvmWord([0; 32])]);
+        let mut call = |pc, depth| {
+            recorder.enter(1);
+            let (record, stack) = step(pc, depth);
+            recorder.table().append(record, stack);
+            recorder.exit();
+        };
+        // The first call records one level up, as the arena lifts it into the root.
+        call(1, 1);
+        // A second call keeps the root, so both calls record below it.
+        call(2, 2);
+
+        let recording = recorder.finish();
+        let table = recorder.table.as_ref().unwrap();
+        let steps = recording
+            .steps
+            .map(|index| {
+                let step = table.step(index);
+                (step.pc(), step.depth(), step.stack().to_vec())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(steps, [(1, 2, vec![EvmWord([0; 32])]), (2, 2, vec![EvmWord([0; 32])])]);
+        assert_eq!(recording.frames.iter().map(|frame| frame.depth).collect::<Vec<_>>(), [0, 1, 1]);
     }
 }
