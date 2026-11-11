@@ -73,8 +73,6 @@ pub use env_overrides::EnvOverrideState;
 pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
-mod access;
-
 /// Runs nested executions on behalf of cheatcodes.
 ///
 /// The executor owns the inspectors besides [`Cheatcodes`], so nested executions are observed by
@@ -162,6 +160,7 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
         nonce,
     );
     message.call_target = message.destination;
+    message.code_address = message.destination;
     Ok(executor.exec_message(ccx.state, ccx.backend, ccx.evm, &mut message)?)
 }
 
@@ -829,8 +828,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Depth of a create that a hook ended with a revert without running its frame.
     pub unrun_create_depth: Option<usize>,
 
-    /// Context and effective code identities of the initialized execution frames.
-    frame_access: Vec<access::FrameAccess>,
+    /// Code that issued the CREATE being handed off to a new frame EVM.
+    pub env_handoff_creator: Option<Address>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -917,7 +916,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             deploy_code_output: None,
             applied_access_list: None,
             unrun_create_depth: None,
-            frame_access: Default::default(),
+            env_handoff_creator: None,
         }
     }
 
@@ -1205,7 +1204,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        self.ensure_cheatcode_access(backend, caller)?;
+        let db = backend.backend();
+        db.ensure_cheatcode_access_forking_mode(&caller)?;
+        if interp.message().depth < message.depth {
+            db.ensure_cheatcode_access_forking_mode(&interp.message().code_address)?;
+        }
 
         apply_dispatch(
             &decoded,
@@ -1235,7 +1238,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        self.ensure_cheatcode_access(backend, caller)?;
+        let db = backend.backend();
+        db.ensure_cheatcode_access_forking_mode(&caller)?;
+        if interp.message().depth < message.depth {
+            db.ensure_cheatcode_access_forking_mode(&interp.message().code_address)?;
+        }
 
         let input = message.input.to_bytes(interp.memory());
         crate::monad::apply_monad_cheatcode(
@@ -1252,21 +1259,20 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         )
     }
 
-    /// Grants cheat code access for new contracts if the caller also has
-    /// cheatcode access or the new contract is created in top most call.
+    /// Grants cheatcode access for top-level deployments or authorized callers, provided the
+    /// code issuing the CREATE also has access while forked.
     ///
-    /// There may be cheatcodes in the constructor of the new contract, in order to allow them
-    /// automatically we need to determine the new address.
+    /// Constructors need access before the new contract's runtime code has been deployed.
     fn allow_cheatcodes_on_create(
-        &self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         depth: usize,
         caller: Address,
         created_address: Address,
+        creator: Option<Address>,
     ) {
         let db = backend.backend();
         if (depth <= 1 || db.has_cheatcode_access(&caller))
-            && self.can_inherit_cheatcode_access(backend)
+            && (!db.is_forked_mode() || creator.is_none_or(|code| db.has_cheatcode_access(&code)))
             && !db.has_cheatcode_access(&created_address)
         {
             backend.backend_mut().allow_cheatcode_access(created_address);
@@ -1311,6 +1317,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(call.depth);
+        // A root call, including a redirected CREATE2, has no issuing CREATE frame.
+        if interp.message().depth == call.depth {
+            self.env_handoff_creator = None;
+        }
         let is_root = curr_depth == self.root_depth;
         self.start_created_accounts_frame(is_root, CreatedAccountsFrameKind::Call, curr_depth);
         if is_root {
@@ -1905,8 +1915,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Called after a frame interpreter has been initialized.
     pub fn initialize_interp_hook(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
-        self.enter_frame_access(interp);
-
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -2543,6 +2551,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(input.depth);
+        let creator = self.env_handoff_creator.take().or_else(|| {
+            let message = interp.message();
+            (message.depth < input.depth).then_some(message.code_address)
+        });
         let is_root = curr_depth == self.root_depth;
         self.start_created_accounts_frame(is_root, CreatedAccountsFrameKind::Create, curr_depth);
         if is_root {
@@ -2652,13 +2664,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             input.call_target = input.destination;
         }
 
-        // Allow cheatcodes from the address of the new contract
+        input.code_address = input.destination;
+
+        // Allow cheatcodes from the address of the new contract.
         let address = input.destination;
-        self.allow_cheatcodes_on_create(
+        Self::allow_cheatcodes_on_create(
             backend,
             curr_depth - self.root_depth,
             input.caller,
             address,
+            creator,
         );
 
         self.record_created_account(backend.backend().active_fork_id(), address);

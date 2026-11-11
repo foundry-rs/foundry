@@ -24,6 +24,7 @@ use std::fs;
 mod base;
 mod brutalize;
 mod cheatcode_access;
+mod cheatcode_libraries;
 mod core;
 mod exact_fork;
 mod fork_bal;

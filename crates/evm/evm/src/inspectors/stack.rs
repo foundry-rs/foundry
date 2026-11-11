@@ -570,14 +570,14 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let outer_destructs = self.executed_destructs.replace(AddressMap::default());
         // The nested transaction's calls do not apply access lists to the running one.
         let applied_access_list = cheats.applied_access_list.take();
-        let executed = cheats.with_fresh_frame_access(|cheats| {
-            let mut inspector = InspectorStackRefMut {
-                cheatcodes: Some(cheats),
-                inner: &mut *self,
-                backend: &mut *backend,
-            };
-            child.transact_with_inspector(tx, &mut inspector).map(ExecutedTx::detach)
+        child.set_inspector(InspectorStackRefMut {
+            cheatcodes: Some(&mut *cheats),
+            inner: &mut *self,
+            backend: &mut *backend,
         });
+        let executed = child.transact(tx).map(ExecutedTx::detach);
+        // SAFETY: The nested EVM runs over the lifecycle's owned databases.
+        let mut child = unsafe { release_inspector(child) };
         cheats.applied_access_list = applied_access_list;
         let destructed = mem::replace(&mut self.executed_destructs, outer_destructs);
         let result = match executed {
@@ -1203,7 +1203,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Option<MessageResultFor<FEN>> {
-        if message.destination == CHEATCODE_ADDRESS {
+        if message.destination == CHEATCODE_ADDRESS
+            || self.inner.extra_cheatcode_addresses.contains(&message.destination)
+        {
             return None;
         }
         let backend = &mut *self.backend;
@@ -1231,9 +1233,19 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // The frame EVM's hooks see their own interpreter, not the caller's memory the input of
         // a call instruction's message is a range of.
         message.input = message.input.to_bytes(interp.memory()).into();
+        // The new root interpreter describes the CREATE itself, so preserve its issuing code.
+        let creator = (message.kind.is_create() && interp.message().depth < message.depth)
+            .then_some(interp.message().code_address);
+        let previous_creator = self
+            .cheatcodes
+            .as_deref_mut()
+            .map(|cheats| mem::replace(&mut cheats.env_handoff_creator, creator));
         let evm = interp.host();
         let cheatcodes = self.cheatcodes.as_deref_mut();
         let result = self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, message);
+        if let Some((cheats, previous)) = self.cheatcodes.as_deref_mut().zip(previous_creator) {
+            cheats.env_handoff_creator = previous;
+        }
         match result {
             Ok(result) => {
                 // evm2 runs the end hooks right after this hook returns a result.
@@ -1436,20 +1448,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // The accounts the call self-destructs keep their state until the running transaction ends,
         // unless the call replaces the running state, such as by switching forks.
         let outer_destructs = self.inner.executed_destructs.replace(AddressMap::default());
-        let mut execute = |cheatcodes: Option<&mut Cheatcodes<FEN>>| {
-            let mut inspector = InspectorStackRefMut {
-                cheatcodes,
-                inner: &mut *self.inner,
-                backend: &mut *backend,
-            };
-            child.transact_with_inspector(&tx, &mut inspector).map(ExecutedTx::detach)
-        };
-        let executed = if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            // Isolation continues the outer call, so authorization retains its ancestors.
-            cheats.with_nested_frame_access(|cheats| execute(Some(cheats)))
-        } else {
-            execute(None)
-        };
+        child.set_inspector(InspectorStackRefMut {
+            cheatcodes: self.cheatcodes.as_deref_mut(),
+            inner: &mut *self.inner,
+            backend: &mut *backend,
+        });
+        let executed = child.transact(&tx).map(|executed| executed.detach());
+        // SAFETY: The nested EVM runs over the lifecycle's owned databases.
+        let mut child = unsafe { release_inspector(child) };
         let destructed = mem::replace(&mut self.inner.executed_destructs, outer_destructs);
         self.inner.isolated_source_fork = previous_source_fork;
         if !persistent_warmth.is_empty() {
@@ -1634,7 +1640,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.inner.tx_created.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.root_depth = usize::from(interp.host().initial_call_depth());
-            cheatcodes.leave_frame_access(0);
             // Transactions run from the test or script carry no access list.
             cheatcodes.tx_warm_addresses = tx_warm_addresses(&evm_env(interp.host()), None);
             cheatcodes.clear_storage_hook_mapping_slots();
@@ -2181,9 +2186,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             return;
         }
         self.end_snapshot_frame(interp, message, result);
-        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            cheats.leave_frame_access(message.depth);
-        }
 
         // The root frame of a nested transaction duplicates a frame whose hooks run in the
         // surrounding transaction.
@@ -2329,9 +2331,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         self.end_snapshot_frame(interp, message, result);
-        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            cheats.leave_frame_access(message.depth);
-        }
 
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
@@ -2489,24 +2488,16 @@ impl InspectorStackInner {
         env: EvmEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
-        let mut execute = |cheatcodes: Option<&mut Cheatcodes<FEN>>| {
-            // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
-            // which only lives for this call; its inspector is released before its state moves
-            // back.
-            let mut frame = unsafe { backend.backend().lifecycle().begin_frame_evm(evm, env) };
-            frame.set_inspector(InspectorStackRefMut { cheatcodes, inner: self, backend });
-            let result = Host::execute_message(&mut frame, message);
-            // SAFETY: See above.
-            let frame = unsafe { release_inspector(frame) };
-            // SAFETY: See above.
-            unsafe { backend.backend().lifecycle().end_frame_evm(evm, frame) };
-            result
-        };
-        if let Some(cheats) = cheatcodes {
-            cheats.with_nested_frame_access(|cheats| execute(Some(cheats)))
-        } else {
-            execute(None)
-        }
+        // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
+        // which only lives for this call; its inspector is released before its state moves back.
+        let mut frame = unsafe { backend.backend().lifecycle().begin_frame_evm(evm, env) };
+        frame.set_inspector(InspectorStackRefMut { cheatcodes, inner: self, backend });
+        let result = Host::execute_message(&mut frame, message);
+        // SAFETY: See above.
+        let frame = unsafe { release_inspector(frame) };
+        // SAFETY: See above.
+        unsafe { backend.backend().lifecycle().end_frame_evm(evm, frame) };
+        result
     }
 
     /// Whether this frame is the root of a nested transaction, duplicating a surrounding frame.
@@ -2560,11 +2551,9 @@ impl InspectorStackInner {
             &mut blob_hashes_override,
         );
         let in_replay = mem::replace(&mut cheats.in_replay, true);
-        let executed = cheats.with_fresh_frame_access(|cheats| {
-            let mut inspector =
-                InspectorStackRefMut { cheatcodes: Some(cheats), inner: &mut *self, backend };
-            prepared.execute(evm, Some(&mut inspector), untracked)
-        });
+        let mut inspector =
+            InspectorStackRefMut { cheatcodes: Some(&mut *cheats), inner: &mut *self, backend };
+        let executed = prepared.execute(evm, Some(&mut inspector), untracked);
         cheats.snapshot_restores = snapshot_restores;
         cheats.in_replay = in_replay;
         cheats.env_overrides.swap_transaction_overrides(

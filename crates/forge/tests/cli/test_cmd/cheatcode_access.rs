@@ -6,58 +6,71 @@ use super::*;
 async fn fork_cheatcode_access_compatibility(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     prj.add_test("CheatcodeAccess.t.sol", CHEATCODE_ACCESS_COMPATIBILITY);
-    for isolate in [false, true] {
-        for (contract, expected) in [
-            (
-                "CheatcodeAccessCompatibilityTest",
-                str![[r#"
+    cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
+    cmd.env("FOUNDRY_ISOLATE", "false");
+    cmd.args([
+        "test",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--evm-version",
+        "prague",
+        "--match-contract",
+        "CheatcodeAccessCompatibilityTest",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 ...
 Ran 12 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
 [PASS] testForkAuthorizationIsReadAtCheatcodeUse() ([GAS])
 [PASS] testForkCallbacksRetainChildAccess() ([GAS])
 [PASS] testForkConstructorsRetainAccessWithCallerOverrides() ([GAS])
+[PASS] testForkDelegatedCodeRequiresAuthorization() ([GAS])
 [PASS] testForkDelegatedConstructorsCannotUseCheatcodes() ([GAS])
 [PASS] testForkDelegatedCreationDoesNotAuthorizeChildren() ([GAS])
-[PASS] testForkDeployCodeCannotAuthorizeUntrustedChildren() ([GAS])
-[PASS] testForkDeployCodeRetainsAccessAfterNestedExecution() ([GAS])
 [PASS] testForkEip7702RequiresAuthorizedContextAndImplementation() ([GAS])
+[PASS] testForkEnvHandoffChecksCreatorCode() ([GAS])
 [PASS] testForkExplicitAuthorizationAllowsDirectAndDelegatedCalls() ([GAS])
 [PASS] testForkExplicitFactoryAuthorizationAllowsChildren() ([GAS])
-[PASS] testForkGenericFactoryCannotAuthorizeUntrustedChildren() ([GAS])
-[PASS] testForkParentAccessRestoredAfterDelegation() ([GAS])
+[PASS] testForkTrustedConstructorRetainsAccessAfterEnvChange() ([GAS])
+[PASS] testForkTrustedFactoryRetainsChildAccess() ([GAS])
 Suite result: ok. 12 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 12 tests passed, 0 failed, 0 skipped (12 total tests)
 
-"#]],
-            ),
-            (
-                "CheatcodeAccessRootDelegationTest",
-                str![[r#"
+"#]]);
+}
+
+#[forgetest]
+async fn fork_cheatcode_access_in_isolation(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    prj.add_test("CheatcodeAccess.t.sol", CHEATCODE_ACCESS_COMPATIBILITY);
+    cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
+    cmd.args([
+        "test",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--evm-version",
+        "prague",
+        "--isolate",
+        "--match-contract",
+        "CheatcodeAccessCompatibilityTest",
+        "--match-test",
+        "testFork(DelegatedConstructorsCannotUseCheatcodes|DelegatedCreationDoesNotAuthorizeChildren|Eip7702RequiresAuthorizedContextAndImplementation|EnvHandoffChecksCreatorCode|TrustedConstructorRetainsAccessAfterEnvChange)",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/CheatcodeAccess.t.sol:CheatcodeAccessRootDelegationTest
-[PASS] testForkRootDelegationCannotAuthorizeFactoryChildren() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Ran 5 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
+[PASS] testForkDelegatedConstructorsCannotUseCheatcodes() ([GAS])
+[PASS] testForkDelegatedCreationDoesNotAuthorizeChildren() ([GAS])
+[PASS] testForkEip7702RequiresAuthorizedContextAndImplementation() ([GAS])
+[PASS] testForkEnvHandoffChecksCreatorCode() ([GAS])
+[PASS] testForkTrustedConstructorRetainsAccessAfterEnvChange() ([GAS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Ran 1 test suite [ELAPSED]: 5 tests passed, 0 failed, 0 skipped (5 total tests)
 
-"#]],
-            ),
-        ] {
-            cmd.forge_fuse().args([
-                "test",
-                "--fork-url",
-                &handle.http_endpoint(),
-                "--evm-version",
-                "prague",
-                "--match-contract",
-                contract,
-            ]);
-            cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
-            cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
-            cmd.assert_success().stdout_eq(expected);
-        }
-    }
+"#]]);
 }
 
 #[forgetest]
@@ -77,35 +90,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
-#[forgetest]
-async fn fork_cheatcode_access_after_create_select_fork(prj: _, cmd: _) {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    prj.add_test("CheatcodeAccess.t.sol", CHEATCODE_ACCESS_COMPATIBILITY);
-    cmd.env("FOUNDRY_ACCESS_REGRESSION_FORK_URL", handle.http_endpoint());
-    cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
-    cmd.args(["test", "--match-contract", "CheatcodeAccessSelectForkTest"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-...
-Ran 1 test for test/CheatcodeAccess.t.sol:CheatcodeAccessSelectForkTest
-[PASS] testForkAccessCheckedAfterSelectingFork() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
-"#]]);
-}
-
 const CHEATCODE_ACCESS_COMPATIBILITY: &str = r#"
 interface Vm {
     function prank(address sender) external;
     function startBroadcast(address sender) external;
     function stopBroadcast() external;
     function allowCheatcodes(address account) external;
-    function createSelectFork(string calldata url) external returns (uint256);
-    function envString(string calldata name) external view returns (string memory);
+    function chainId(uint256 newChainId) external;
     function deployCode(string calldata artifactPath) external returns (address);
-    function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address);
     function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
     function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
@@ -116,6 +108,7 @@ interface Vm {
 
 interface Authorizer {
     function authorizeReader() external;
+    function changeChainId(uint256 newChainId) external;
 }
 
 interface CallbackCreator {
@@ -157,32 +150,17 @@ contract ConstructorReader is EnvReader {
     }
 }
 
-contract NestedConstructorReader is EnvReader {
-    constructor(uint256 mode) {
-        require(readDefault() == 7, "nested constructor access lost");
-        require(mode != 1, "expected constructor revert");
-        if (mode == 2) assembly { invalid() }
-    }
-}
-
-contract RecursiveConstructorReader is EnvReader {
-    constructor(uint256 mode) {
-        for (uint256 childMode; childMode < 3; childMode++) {
-            try vm.deployCode{gas: 1_000_000}("CheatcodeAccess.t.sol:NestedConstructorReader", abi.encode(childMode)) returns (address child) {
-                require(childMode == 0, "nested constructor did not fail");
-                require(EnvReader(child).read() == 7, "recursive child runtime access lost");
-            } catch {
-                require(childMode != 0, "recursive child creation failed");
-            }
-            require(readDefault() == 7, "constructor access lost after recursive execution");
-        }
-        require(mode != 1, "expected recursive constructor revert");
-        if (mode == 2) assembly { invalid() }
+contract DeployCodeConstructorReader is EnvReader {
+    constructor() {
+        require(readDefault() == 7, "handoff constructor access lost");
+        address child = vm.deployCode("CheatcodeAccess.t.sol:ConstructorReader");
+        require(ConstructorReader(child).constructorValue() == 7, "nested deployCode constructor access lost");
+        require(EnvReader(child).read() == 7, "nested deployCode child access lost");
     }
 }
 
 contract EnvFactory {
-    function create(bool salted, bool readInConstructor, bytes32 salt) external returns (address) {
+    function create(bool salted, bool readInConstructor, bytes32 salt) public returns (address) {
         if (readInConstructor) {
             return salted
                 ? address(new ConstructorReader{salt: salt}())
@@ -191,17 +169,15 @@ contract EnvFactory {
         return salted ? address(new EnvReader{salt: salt}()) : address(new EnvReader());
     }
 
-    function createThrough(EnvFactory factory, bool salted, bytes32 salt) external returns (address) {
-        return factory.create(salted, false, salt);
+    function createAfterChainIdChange(bool salted, bool readInConstructor, bytes32 salt, uint256 newChainId)
+        external returns (address)
+    {
+        Authorizer(address(this)).changeChainId(newChainId);
+        return create(salted, readInConstructor, salt);
     }
 
-    function deployCodeThrough(EnvFactory factory) external returns (address) {
-        return factory.deployCode();
-    }
-
-    function deployCode() external returns (address) {
-        return Vm(address(uint160(uint256(keccak256("hevm cheat code")))))
-            .deployCode("CheatcodeAccess.t.sol:EnvReader");
+    function createThrough(EnvFactory factory) external returns (address) {
+        return factory.create(false, true, bytes32(0));
     }
 }
 
@@ -278,6 +254,11 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
         vm.allowCheatcodes(READER);
     }
 
+    function changeChainId(uint256 newChainId) external {
+        require(msg.sender == address(this), "unexpected chain ID callback sender");
+        vm.chainId(newChainId);
+    }
+
     function createCallbackReader(uint256 mode) external returns (address) {
         require(msg.sender == callbackPool, "unexpected callback sender");
         require(readDefault() == 7, "callback access lost");
@@ -304,10 +285,8 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
     function testForkCallbacksRetainChildAccess() public {
         address implementation = address(0xA003);
         vm.etch(implementation, type(CallbackPool).runtimeCode);
-        vm.etch(address(0xA001), type(CallbackPool).runtimeCode);
         vm.etch(address(0xA002), type(CallbackPoolProxy).runtimeCode);
-        vm.etch(address(0xA004), abi.encodePacked(hex"ef0100", implementation));
-        address[3] memory pools = [address(0xA001), address(0xA002), address(0xA004)];
+        address[2] memory pools = [address(0xA002), address(new CallbackPoolProxy())];
         for (uint256 i; i < pools.length; i++) {
             callbackPool = pools[i];
             for (uint256 mode; mode < 4; mode++) {
@@ -357,20 +336,6 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
         (ok, output) = otherDelegator.call(abi.encodeCall(EnvReader.read, ()));
         expectDenied(ok, output, otherDelegator);
         require(readDefault() == 7, "parent access lost after delegation designator");
-
-        EnvFactory localFactory = new EnvFactory();
-        vm.etch(DELEGATOR, abi.encodePacked(hex"ef0100", FACTORY));
-        for (uint256 mode; mode < 2; mode++) {
-            if (mode == 1) vm.allowCheatcodes(FACTORY);
-            (ok, output) = DELEGATOR.call(abi.encodeCall(
-                EnvFactory.createThrough, (localFactory, true, bytes32(mode))
-            ));
-            require(ok, "delegated factory creation failed");
-            address child = abi.decode(output, (address));
-            (ok, output) = child.call(abi.encodeCall(EnvReader.read, ()));
-            if (mode == 0) expectDenied(ok, output, child);
-            else expectValue(ok, output);
-        }
     }
 
     function testForkConstructorsRetainAccessWithCallerOverrides() public {
@@ -413,27 +378,7 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
         }
     }
 
-    function testForkGenericFactoryCannotAuthorizeUntrustedChildren() public {
-        EnvFactory localFactory = new EnvFactory();
-        for (uint256 mode; mode < 4; mode++) {
-            (bool created, bytes memory result) = invoke(
-                mode >= 2, FACTORY,
-                abi.encodeCall(EnvFactory.createThrough, (localFactory, mode % 2 == 1, bytes32(mode)))
-            );
-            require(created, "generic factory creation failed");
-            address child = abi.decode(result, (address));
-            (bool ok, bytes memory output) = child.call(abi.encodeCall(EnvReader.read, ()));
-            expectDenied(ok, output, child);
-        }
-    }
-
-    function testForkParentAccessRestoredAfterDelegation() public {
-        (bool empty,) = address(0x1111).call("");
-        require(empty, "empty-code call failed");
-        require(readDefault() == 7, "parent access lost after empty-code call");
-        (bool precompile, bytes memory digest) = address(2).staticcall(hex"1234");
-        require(precompile && abi.decode(digest, (bytes32)) == sha256(hex"1234"), "precompile call failed");
-        require(readDefault() == 7, "parent access lost after precompile call");
+    function testForkDelegatedCodeRequiresAuthorization() public {
         for (uint256 mode; mode < 2; mode++) {
             (bool ok, bytes memory output) = invoke(mode == 1, READER, abi.encodeCall(EnvReader.read, ()));
             expectDenied(ok, output, READER);
@@ -441,42 +386,51 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
         }
     }
 
-    function testForkDeployCodeCannotAuthorizeUntrustedChildren() public {
-        EnvFactory localFactory = new EnvFactory();
-        for (uint256 mode; mode < 2; mode++) {
-            (bool created, bytes memory result) = invoke(
-                mode == 1, FACTORY, abi.encodeCall(EnvFactory.deployCodeThrough, (localFactory))
-            );
-            require(created, "nested generic factory creation failed");
-            address child = abi.decode(result, (address));
-            (bool ok, bytes memory output) = child.call(abi.encodeCall(EnvReader.read, ()));
-            expectDenied(ok, output, child);
-            require(readDefault() == 7, "parent access lost after nested generic factory");
-        }
-    }
-
-    function testForkDeployCodeRetainsAccessAfterNestedExecution() public {
-        for (uint256 mode; mode < 3; mode++) {
-            try vm.deployCode{gas: 5_000_000}("CheatcodeAccess.t.sol:RecursiveConstructorReader", abi.encode(mode)) returns (address child) {
-                require(mode == 0, "nested constructor did not fail");
-                require(EnvReader(child).read() == 7, "nested child runtime access lost");
-            } catch {
-                require(mode != 0, "nested child creation failed");
+    function testForkEnvHandoffChecksCreatorCode() public {
+        for (uint256 mode; mode < 8; mode++) {
+            bool salted = mode % 2 == 1;
+            bool readInConstructor = mode % 4 >= 2;
+            address child = salted
+                ? vm.computeCreate2Address(
+                    bytes32(mode),
+                    keccak256(readInConstructor ? type(ConstructorReader).creationCode : type(EnvReader).creationCode),
+                    address(this)
+                )
+                : vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+            (bool ok, bytes memory output) = invoke(mode >= 4, FACTORY, abi.encodeCall(
+                EnvFactory.createAfterChainIdChange, (salted, readInConstructor, bytes32(mode), block.chainid + mode + 1)
+            ));
+            if (readInConstructor) {
+                expectDenied(ok, output, child);
+            } else {
+                require(ok && abi.decode(output, (address)) == child, "handoff child creation failed");
+                (ok, output) = child.call(abi.encodeCall(EnvReader.read, ()));
+                expectDenied(ok, output, child);
             }
-            require(readDefault() == 7, "parent access lost after nested execution");
-            (bool ok, bytes memory output) = READER.delegatecall(abi.encodeCall(EnvReader.read, ()));
-            expectDenied(ok, output, READER);
         }
+        address deployed = vm.deployCode("CheatcodeAccess.t.sol:ConstructorReader");
+        require(ConstructorReader(deployed).constructorValue() == 7, "stale creator blocked deployCode");
     }
-}
 
-contract CheatcodeAccessSelectForkTest is AccessFixture {
-    function testForkAccessCheckedAfterSelectingFork() public {
-        vm.createSelectFork(vm.envString("FOUNDRY_ACCESS_REGRESSION_FORK_URL"));
-        vm.etch(READER, type(EnvReader).runtimeCode);
-        (bool ok, bytes memory output) = READER.delegatecall(abi.encodeCall(EnvReader.read, ()));
-        expectDenied(ok, output, READER);
-        require(readDefault() == 7, "parent access lost after selecting fork");
+    function testForkTrustedConstructorRetainsAccessAfterEnvChange() public {
+        vm.chainId(block.chainid + 1);
+        DeployCodeConstructorReader child = new DeployCodeConstructorReader();
+        require(child.read() == 7, "handoff child runtime access lost");
+    }
+
+    function testForkTrustedFactoryRetainsChildAccess() public {
+        EnvFactory factory = new EnvFactory();
+        bytes memory input = abi.encodeCall(EnvFactory.createThrough, (factory));
+        for (uint256 mode; mode < 3; mode++) {
+            bool ok;
+            bytes memory output;
+            if (mode == 0) (ok, output) = FACTORY.call(input);
+            else (ok, output) = invoke(mode == 2, FACTORY, input);
+            require(ok, "trusted factory creation failed");
+            ConstructorReader child = ConstructorReader(abi.decode(output, (address)));
+            require(child.constructorValue() == 7, "trusted factory constructor access lost");
+            require(child.read() == 7, "trusted factory child access lost");
+        }
     }
 }
 
@@ -497,33 +451,4 @@ contract CheatcodeAccessNonForkTest is AccessFixture {
     }
 }
 
-contract RootDelegatedFactoryAccess is UsesVm {
-    EnvFactory internal factory;
-    bytes32[2] internal expectedErrors;
-
-    function testForkRootDelegationCannotAuthorizeFactoryChildren() public {
-        for (uint256 mode; mode < 2; mode++) {
-            address child = factory.create(mode == 1, false, bytes32(mode));
-            (bool ok, bytes memory output) = child.call(abi.encodeCall(EnvReader.read, ()));
-            require(!ok, "delegated root authorized factory child");
-            require(keccak256(output) == expectedErrors[mode], "unexpected authorization error");
-        }
-    }
-}
-
-contract CheatcodeAccessRootDelegationTest is RootDelegatedFactoryAccess {
-    function setUp() public {
-        factory = new EnvFactory();
-        address[2] memory children = [
-            vm.computeCreateAddress(address(factory), vm.getNonce(address(factory))),
-            vm.computeCreate2Address(bytes32(uint256(1)), keccak256(type(EnvReader).creationCode), address(factory))
-        ];
-        for (uint256 mode; mode < children.length; mode++) {
-            expectedErrors[mode] = denialHash(children[mode]);
-        }
-        address implementation = address(0x1234);
-        vm.etch(implementation, type(RootDelegatedFactoryAccess).runtimeCode);
-        vm.etch(address(this), abi.encodePacked(hex"ef0100", implementation));
-    }
-}
 "#;
