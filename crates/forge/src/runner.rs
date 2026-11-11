@@ -5245,6 +5245,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         );
 
         let state = self.build_fuzz_state(false, Some(func));
+        let shrink_run_limit = self.config.invariant.shrink_run_limit as usize;
+        let (sender, address) = (self.tcfg.sender, self.address);
+        let minimize = |counterexample: &BaseCounterExample,
+                        still_fails: &mut dyn FnMut(&Bytes) -> bool| {
+            let call = SymbolicCounterexampleCall::from_base_counterexample(
+                counterexample,
+                sender,
+                address,
+            );
+            minimize_single_call_counterexample(func, &call, shrink_run_limit, |candidate| {
+                still_fails(&candidate.calldata)
+            })
+            .filter(|minimized| minimized.changed())
+            .map(|minimized| minimized.minimized_call.calldata)
+        };
         let mut executor = self.executor.into_owned();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
@@ -5278,6 +5293,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 progress.as_ref(),
                 &self.tcfg.early_exit,
                 &self.cr.tokio_handle,
+                (shrink_run_limit > 0).then_some(&minimize),
             )
         };
         let result = match result {
