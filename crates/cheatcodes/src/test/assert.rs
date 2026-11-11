@@ -677,7 +677,7 @@ impl SiteFrame {
     /// Returns the site of the instruction about to execute: the frame's entry, the executing
     /// code and pc, and the return labels of the internal functions that led to it. Values that
     /// are not pushed constants, such as inputs, are ignored.
-    fn site<FEN: FoundryEvmNetwork>(&self, interpreter: &mut InterpreterFor<'_, '_, FEN>) -> B256 {
+    fn site<FEN: FoundryEvmNetwork>(&self, interpreter: &InterpreterFor<'_, '_, FEN>) -> B256 {
         let code = interpreter.original_bytecode_slice();
         let mut preimage = self.entry.to_vec();
         preimage.extend_from_slice(interpreter.message().destination.as_slice());
