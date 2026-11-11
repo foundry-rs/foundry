@@ -8,6 +8,8 @@ use serde_json::Value;
 /// A contract on the fork whose code sums its first [`SLOT_COUNT`] storage slots.
 const SLOTS: Address = address!("0x000000000000000000000000000000000000510c");
 const SLOT_COUNT: u8 = 40;
+/// A contract on the fork whose code returns its slot 0.
+const SLOT_ZERO: Address = address!("0x000000000000000000000000000000000000510d");
 /// Where forge deploys the test contract.
 const TEST_CONTRACT: Address = address!("0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496");
 
@@ -23,11 +25,15 @@ fn sum_slots_code() -> Vec<u8> {
     code
 }
 
+/// Runtime code that returns storage slot 0.
+const SLOT_ZERO_CODE: [u8; 11] = [0x60, 0x00, 0x54, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3];
+
 const TEST: &str = r#"
 interface Vm {
     function envString(string calldata) external returns (string memory);
     function envUint(string calldata) external returns (uint256);
     function createSelectFork(string calldata, uint256) external returns (uint256);
+    function rpc(string calldata, string calldata) external returns (bytes memory);
 }
 
 contract ForkPrefetchTest {
@@ -42,6 +48,18 @@ contract ForkPrefetchTest {
         (bool ok, bytes memory data) = SLOTS.call("");
         require(ok, "call");
         require(abi.decode(data, (uint256)) == 820, "sum");
+    }
+
+    function test_refresh() public {
+        test_sum();
+        // The simulation of this test prefetched slot 0 of SLOT_ZERO with the old value.
+        vm.rpc(
+            "anvil_setStorageAt",
+            '["0x000000000000000000000000000000000000510d","0x0","0x0000000000000000000000000000000000000000000000000000000000000002"]'
+        );
+        (bool ok, bytes memory data) = address(0x510d).call("");
+        require(ok, "call");
+        require(abi.decode(data, (uint256)) == 2, "refreshed");
     }
 }
 "#;
@@ -59,6 +77,8 @@ async fn fork_prefetch_simulates_the_test_and_batches_its_reads(prj: _, cmd: _) 
             .await
             .unwrap();
     }
+    api.anvil_set_code(SLOT_ZERO, SLOT_ZERO_CODE.into()).await.unwrap();
+    api.anvil_set_storage_at(SLOT_ZERO, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
     api.mine_one().await.unwrap();
     let block = api.block_number().unwrap();
     let (reads_rpc, reads) =
@@ -75,6 +95,21 @@ async fn fork_prefetch_simulates_the_test_and_batches_its_reads(prj: _, cmd: _) 
 ...
 Ran 1 test for test/ForkPrefetch.t.sol:ForkPrefetchTest
 [PASS] test_sum() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    let single_reads = reads.lock().unwrap().len();
+
+    // A slot that the endpoint changes after a prefetch read it is read again.
+    cmd.forge_fuse();
+    cmd.env("PREFETCH_RPC_URL", &rpc);
+    cmd.env("PREFETCH_BLOCK", block.to_string());
+    cmd.args(["test", "--match-test", "test_refresh", "--fork-prefetch", "--no-storage-caching"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/ForkPrefetch.t.sol:ForkPrefetchTest
+[PASS] test_refresh() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
@@ -96,6 +131,5 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     assert!(simulations.iter().any(|params| is_address(&params[0]["to"], SLOTS)));
     // Prefetched slots are read in batch requests, which this proxy does not record, so the EVM
     // sends fewer single reads than the contract has slots.
-    let reads = reads.lock().unwrap();
-    assert!(reads.len() < SLOT_COUNT as usize, "{} single reads: {reads:?}", reads.len());
+    assert!(single_reads < SLOT_COUNT as usize, "{single_reads} single reads");
 }

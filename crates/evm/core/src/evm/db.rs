@@ -231,14 +231,17 @@ impl<N: Network, B: ForkBlockEnv> FoundryDatabase for ForkDb<SharedBackend<N, B>
         Some(self.source_chain_id)
     }
 
+    // A prefetch may have read the old value before the out-of-band change, so it is dropped too.
     fn evict_account(&self, address: &Address) {
         self.db.data().accounts.write().remove(address);
+        self.db.drop_prefetched();
     }
 
     fn evict_storage(&self, address: &Address, slot: &U256) {
         if let Some(storage) = self.db.data().storage.write().get_mut(address) {
             storage.remove(slot);
         }
+        self.db.drop_prefetched();
     }
 
     fn set_eip161(&self, eip161: bool) {
