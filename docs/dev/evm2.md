@@ -22,6 +22,15 @@ revm does not execute anything. Foundry's own code uses `revm` only for the bloc
 RPC fork cache metadata serializes. The `base` feature, which release builds enable, still links
 revm 43 and alloy-evm 0.39 through `base-evm2` and the Base crates it depends on.
 
+Gas consumers distinguish receipt charges from execution consumption. Monad uses
+[`category-labs/monad-alloy-evm2`](https://github.com/category-labs/monad-alloy-evm2): ordinary
+transactions charge their full gas limit, including on revert. Receipts, block accounting and
+access-list RPC results retain that charge. Anvil estimates from `total_gas_spent` and verifies
+the required limit by execution. Forge's result adapter reports Monad consumption while retaining
+Ethereum's calldata floor and refunds. Monad script estimates still cover the required calldata
+floor. Isolated frames pay their calldata floor rather than a full-limit receipt charge. The
+native Monad factory leaves reserve-balance enforcement opt-in.
+
 ## User-visible output changes
 
 - **Cheatcode `EXTCODEHASH`**: the cheatcode address, and any network-specific extra cheatcode

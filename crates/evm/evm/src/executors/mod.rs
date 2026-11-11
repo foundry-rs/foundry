@@ -38,8 +38,9 @@ use foundry_evm_core::{
     },
     evm::{
         ChainFor, EthEvmNetwork, EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmExt,
-        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryTxConversion, SpecFor,
-        TransactionRequestFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
+        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryTxConversion,
+        FoundryTxResultExt, SpecFor, TransactionRequestFor, TxFor, TxResultFor, TypesFor, evm_env,
+        release_inspector,
     },
 };
 use foundry_evm_coverage::HitMaps;
@@ -1407,7 +1408,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub has_state_snapshot_failure: bool,
     /// The raw result of the call.
     pub result: Bytes,
-    /// The gas used for the call
+    /// Gas reported by the execution family for simulation, including intrinsic gas.
+    /// Excludes unused gas charged by networks such as Monad.
     pub gas_used: u64,
     /// Refunded gas
     pub gas_refunded: u64,
@@ -1746,6 +1748,14 @@ pub fn calculate_stipend<FEN: FoundryEvmNetwork>(
     evm_env: &EvmEnvFor<FEN>,
     tx: &TransactionRequestFor<FEN>,
 ) -> u64 {
+    calculate_intrinsic_and_floor_gas::<FEN>(evm_env, tx).0
+}
+
+/// Returns the intrinsic gas and calldata floor for `tx` in `evm_env`.
+pub fn calculate_intrinsic_and_floor_gas<FEN: FoundryEvmNetwork>(
+    evm_env: &EvmEnvFor<FEN>,
+    tx: &TransactionRequestFor<FEN>,
+) -> (u64, u64) {
     let access_list = tx.access_list();
     evm2::ethereum::intrinsic_and_floor_gas(
         &evm_env.version,
@@ -1756,7 +1766,6 @@ pub fn calculate_stipend<FEN: FoundryEvmNetwork>(
         access_list.map_or(0, |list| list.iter().map(|item| item.storage_keys.len() as u64).sum()),
         tx.value().unwrap_or_default(),
     )
-    .0
 }
 
 /// Converts the data aggregated in the `inspector` and `execution` to a `RawCallResult`.
@@ -1769,7 +1778,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         execution;
     let exit_reason = tx_result.stop;
     let gas_refunded = if tx_result.status { tx_result.refunded } else { 0 };
-    let gas_used = tx_result.tx_gas_used();
+    let gas_used = FoundryTxResultExt::simulation_gas_used(&tx_result);
     let created_address = tx_result.created_address.filter(|_| tx_result.status);
     let result = if created_address.is_some() { Bytes::new() } else { tx_result.output };
 
@@ -2568,7 +2577,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             error.root_cause().to_string(),
-            "invalid Monad protocol system transaction: gas limit must be zero, got 100000"
+            "invalid Monad protocol transaction: NonZeroGasLimit(100000)"
         );
         assert_eq!(executor.get_nonce(system).unwrap(), 3);
     }
@@ -3002,5 +3011,39 @@ mod tests {
             executor.commit(&mut restored);
             assert_eq!(executor.is_raw_call_mut_success(target, &mut restored), legacy);
         }
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn monad_simulation_reports_consumption_for_success_revert_and_halt() {
+        let target = Address::repeat_byte(0x11);
+        for limit in [100_000, 1_000_000] {
+            let mut executor = test_executor::<MonadEvmNetwork>(
+                ExecutorBuilder::default().gas_limit(limit),
+                NetworkConfigs::with_monad(),
+            );
+            for (code, stop, gas_used) in [
+                (bytes!("00"), InstrStop::Stop, 21_000),
+                (bytes!("5f5ffd"), InstrStop::Revert, 21_004),
+                (bytes!("fe"), InstrStop::InvalidFEOpcode, limit),
+            ] {
+                executor.set_code(target, Bytecode::new_raw(code)).unwrap();
+                let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+                assert_eq!(result.exit_reason, Some(stop));
+                assert_eq!(result.gas_used, gas_used);
+                assert_eq!(result.gas_refunded, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn simulation_retains_enabled_calldata_floor() {
+        let executor =
+            eth_executor(ExecutorBuilder::default().spec_id(SpecId::PRAGUE).gas_limit(100_000));
+        let result = executor
+            .call_raw(CALLER, Address::repeat_byte(0x11), vec![1; 1_000].into(), U256::ZERO)
+            .unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.gas_used, 61_000);
     }
 }

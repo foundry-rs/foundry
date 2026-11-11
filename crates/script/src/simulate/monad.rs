@@ -21,7 +21,7 @@ use foundry_evm::{
         BlockContext, ChainFor, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryTxConversion,
         MonadEvmNetwork, TxFor, TypesFor,
     },
-    executors::{EvmError, RawCallResult},
+    executors::{EvmError, RawCallResult, calculate_intrinsic_and_floor_gas},
 };
 
 struct MonadSimulation {
@@ -128,8 +128,17 @@ impl MonadSimulation {
                     value,
                 )
             };
+            let floor = calculate_intrinsic_and_floor_gas::<MonadEvmNetwork>(&env, &tx).1;
             let result = self
                 .transact(env, tx)
+                .map(|mut raw| {
+                    // Deployment gas is used as a limit for broadcasting. Consumed gas alone
+                    // can be below the required calldata floor for large initcode.
+                    if !is_fixed_gas_limit {
+                        raw.gas_used = raw.gas_used.max(floor);
+                    }
+                    raw
+                })
                 .map_err(EvmError::from)
                 .and_then(|raw| self.runner.executor.persist_deployment(raw, None));
             return self.runner.deployment_result(result);
@@ -145,11 +154,13 @@ impl MonadSimulation {
         let calldata = calldata.unwrap_or_default();
         let (env, tx) =
             self.prepare_call(from, to, calldata.clone(), value, authorization_list.clone());
+        let floor = calculate_intrinsic_and_floor_gas::<MonadEvmNetwork>(&env, &tx).1;
         let result = self.call(env, tx)?;
         let mut gas_used = result.gas_used;
         if result.exit_reason.is_some_and(InstrStop::is_success) {
             let initial_limit = self.runner.executor.tx().gas_limit();
-            let mut search = GasSearch::new(gas_used);
+            // Probes must cover validation's calldata floor even when execution consumes less.
+            let mut search = GasSearch::new(gas_used.max(floor));
             while let Some(limit) = search.next_limit() {
                 // Keep the existing gas-probe preparation and authorization behavior unchanged.
                 self.runner.executor.tx_mut().set_gas_limit(limit);

@@ -2777,3 +2777,42 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
         }
     }
 }
+
+#[cfg(feature = "monad")]
+#[forgetest]
+fn monad_isolated_calls_preserve_execution_gas(prj: _, cmd: _) {
+    prj.add_test(
+        "MonadGas.t.sol",
+        r#"
+contract MonadGasChild {
+    function noop() external pure {}
+    function fail() external pure { revert(); }
+}
+
+contract MonadGasTest {
+    function test_repeated_calls_and_creates() public {
+        uint256 before = gasleft();
+        for (uint256 i; i < 3; ++i) {
+            MonadGasChild child = new MonadGasChild();
+            child.noop();
+            try child.fail() { revert("expected revert"); } catch {}
+        }
+        require(gasleft() > before / 2, "receipt charge consumed parent gas");
+    }
+}
+"#,
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        cmd.forge_fuse()
+            .args(["test", "--network", "monad", "--mc", "MonadGasTest", "--gas-limit", "10000000"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadGas.t.sol:MonadGasTest
+[PASS] test_repeated_calls_and_creates() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}

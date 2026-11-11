@@ -146,7 +146,13 @@ fn block_participants(transactions: &[Recovered<TxEnvelope>]) -> HashSet<Address
     transactions.iter().flat_map(|tx| std::iter::once(tx.signer()).chain(authorities(tx))).collect()
 }
 
-impl FoundryTxResultExt for MonadTxResultExt {}
+impl FoundryTxResultExt for MonadTxResultExt {
+    fn simulation_gas_used(result: &TxResult<MonadEvmTypes>) -> u64 {
+        // Monad charges the full limit and never refunds gas. Reports and gas searches need
+        // the consumption retained before that receipt floor, including intrinsic gas.
+        result.total_gas_spent
+    }
+}
 
 impl FoundryEvmNetwork for MonadEvmNetwork {
     type Network = Ethereum;

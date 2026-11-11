@@ -5974,9 +5974,11 @@ impl TryFrom<Result<CallOutcome>> for GasEstimationCallResult {
                 Ok(Self::OutOfGas)
             }
             Err(err) => Err(err),
-            Ok(CallOutcome { exit, output, gas_used, .. }) => {
+            Ok(CallOutcome { exit, output, gas_spent, .. }) => {
                 if exit.is_success() {
-                    Ok(Self::Success(gas_used))
+                    // A receipt floor can charge the whole probe limit. Only consumption is
+                    // a lower bound for searching for the smallest successful gas limit.
+                    Ok(Self::Success(gas_spent))
                 } else if exit.is_revert() {
                     Ok(Self::Revert(Some(output)))
                 } else if exit.is_out_of_gas() {

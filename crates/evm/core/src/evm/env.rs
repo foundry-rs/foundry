@@ -3,7 +3,9 @@
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, fake_exponential};
 use alloy_primitives::{U256, map::AddressMap};
-use evm2::{Evm, EvmFeatures, EvmTypes, EvmTypesHost, Version, env::BlockEnv, evm::AccountInfo};
+use evm2::{
+    Evm, EvmFeatures, EvmTypes, EvmTypesHost, TxResultExt, Version, env::BlockEnv, evm::AccountInfo,
+};
 use std::fmt::Debug;
 
 /// The spec, runtime version and block an EVM is built with.
@@ -281,7 +283,7 @@ unsafe impl<E: SendableExt> Send for StoredExt<E> {}
 // SAFETY: see the `Send` implementation.
 unsafe impl<E: SendableExt> Sync for StoredExt<E> {}
 
-/// Network-only transaction outcome flags.
+/// Network-specific transaction outcome data.
 ///
 /// The shared `TxResult::stop` carries the outcome.
 pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
@@ -296,6 +298,14 @@ pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
     /// including EIP-8130 simulations, return `None`.
     fn eip8130_phase_statuses(&self) -> Option<&[u8]> {
         None
+    }
+
+    /// Gas reported by Forge simulations and used to seed script gas estimation.
+    ///
+    /// Ordinarily this is receipt gas, including calldata floors and refunds. Networks that
+    /// charge unused gas report consumption here; their receipts retain `tx_gas_used()`.
+    fn simulation_gas_used(result: &TxResultExt<Self>) -> u64 {
+        result.tx_gas_used()
     }
 }
 

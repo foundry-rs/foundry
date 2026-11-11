@@ -8718,10 +8718,9 @@ dependencies = [
 [[package]]
 name = "monad-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=b6116c79df5f3c14de93e4350357beb0fe31cae7#b6116c79df5f3c14de93e4350357beb0fe31cae7"
+source = "git+https://github.com/category-labs/monad-alloy-evm2?rev=80b36bc4f39166cf2ee3298a0074e671e0479124#80b36bc4f39166cf2ee3298a0074e671e0479124"
 dependencies = [
  "alloy-consensus",
- "alloy-eips",
  "alloy-primitives",
  "alloy-sol-types",
  "evm2",

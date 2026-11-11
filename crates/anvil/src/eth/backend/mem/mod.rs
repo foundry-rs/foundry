@@ -551,8 +551,10 @@ pub struct CallOutcome {
     pub exit: InstrStop,
     /// Return or revert data.
     pub output: Bytes,
-    /// Gas used by the transaction.
+    /// Receipt gas charged by the transaction.
     pub gas_used: u128,
+    /// Gas consumed before refunds and receipt floors, including intrinsic gas.
+    pub gas_spent: u128,
     /// State changes of the call.
     pub state: PendingState,
 }
@@ -562,6 +564,7 @@ impl From<Executed> for CallOutcome {
         Self {
             exit: result.stop,
             gas_used: result.tx_gas_used() as u128,
+            gas_spent: result.total_gas_spent as u128,
             output: result.output,
             state,
         }

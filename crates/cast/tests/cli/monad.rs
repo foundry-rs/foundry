@@ -398,19 +398,16 @@ async fn monad_run_traces_protocol_system_call(cmd: _) {
     let endpoint = handle.http_endpoint();
     let tx_hash = receipt.transaction_hash;
     let tx_hash_string = tx_hash.to_string();
-    let original =
-        cmd.args(["run", &tx_hash_string, "--rpc-url", &endpoint, "--quick"]).assert_failure();
-    let original = original.get_output();
-    assert!(
-        original.stderr_lossy().contains("invalid Monad protocol system transaction"),
-        "{}",
-        original.stderr_lossy()
-    );
-    assert!(
-        !original.stdout_lossy().contains("Staking::syscallSnapshot()"),
-        "{}",
-        original.stdout_lossy()
-    );
+    cmd.args(["run", &tx_hash_string, "--rpc-url", &endpoint, "--quick"])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: EVM error
+
+Context:
+- invalid Monad protocol transaction: NotLegacy { tx_type: 2 }
+
+"#]]);
 
     let canonical_endpoint =
         foundry_test_utils::rpc::spawn_canonical_monad_system_rpc(endpoint.clone(), tx_hash).await;

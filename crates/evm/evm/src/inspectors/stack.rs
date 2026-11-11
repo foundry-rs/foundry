@@ -1520,9 +1520,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             Err(_) => return not_executed(Bytes::new()),
         };
         let mut result = executed.result;
-        if skip_floor {
-            result.floor_gas = floor;
-        }
+        // An isolated frame pays the calldata floor, including when validation skipped it
+        // above. A network's receipt charge (such as Monad's full limit) is not frame gas.
+        result.floor_gas = floor;
         self.inner.tx_created.extend(
             executed
                 .pending_state

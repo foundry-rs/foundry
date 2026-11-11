@@ -149,7 +149,8 @@ async fn monad_ten_deduplicates_access_list_storage_pages() {
         api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_access_list_probe_code(2, 1))
             .await
             .unwrap();
-        let same_page = provider.create_access_list(&storage_gas_probe_call()).await.unwrap();
+        let request = storage_gas_probe_call().with_gas_limit(100_000);
+        let same_page = provider.create_access_list(&request).await.unwrap();
         assert_eq!(
             same_page.access_list,
             AccessList::from(vec![AccessListItem {
@@ -157,11 +158,15 @@ async fn monad_ten_deduplicates_access_list_storage_pages() {
                 storage_keys: expected_same_page_keys,
             }])
         );
+        let same_page_estimate = provider
+            .estimate_gas(request.clone().with_access_list(same_page.access_list))
+            .await
+            .unwrap();
 
         api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_access_list_probe_code(129, 1))
             .await
             .unwrap();
-        let different_page = provider.create_access_list(&storage_gas_probe_call()).await.unwrap();
+        let different_page = provider.create_access_list(&request).await.unwrap();
         assert_eq!(
             different_page.access_list,
             AccessList::from(vec![AccessListItem {
@@ -169,7 +174,15 @@ async fn monad_ten_deduplicates_access_list_storage_pages() {
                 storage_keys: vec![one, page_one],
             }])
         );
-        assert_eq!(different_page.gas_used - same_page.gas_used, U256::from(gas_delta));
+        let different_page_estimate = provider
+            .estimate_gas(request.with_access_list(different_page.access_list))
+            .await
+            .unwrap();
+        assert_eq!(different_page_estimate - same_page_estimate, gas_delta);
+        // Access-list gasUsed describes the receipt charge, whereas estimation finds the
+        // smallest successful limit with that access list.
+        assert_eq!(same_page.gas_used, U256::from(100_000));
+        assert_eq!(different_page.gas_used, U256::from(100_000));
     }
 }
 
@@ -2622,4 +2635,35 @@ fn large_contract_init_code(runtime_len: usize) -> Bytes {
     code.extend_from_slice(&[0x60, 0x00, 0xf3]);
     code.resize(HEADER_LEN + runtime_len as usize, 0);
     Bytes::from(code)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_estimates_consumption_and_receipts_charge_the_limit() {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // PUSH0; POP; STOP consumes four gas beyond the transaction's intrinsic cost.
+    api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, bytes!("5f5000")).await.unwrap();
+    for limit in [100_000, 1_000_000] {
+        let request = storage_gas_probe_call().with_from(sender).with_gas_limit(limit);
+        assert_eq!(provider.estimate_gas(request.clone()).await.unwrap(), 21_004);
+        let receipt =
+            provider.send_transaction(request).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.gas_used(), limit);
+    }
+
+    for code in [bytes!("5f5ffd"), bytes!("fe")] {
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, code).await.unwrap();
+        let receipt = provider
+            .send_transaction(storage_gas_probe_call().with_from(sender).with_gas_limit(100_000))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(!receipt.status());
+        assert_eq!(receipt.gas_used(), 100_000);
+    }
 }
