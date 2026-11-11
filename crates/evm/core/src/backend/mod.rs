@@ -49,6 +49,7 @@ use alloy_primitives::{
     map::{AddressMap, AddressSet, HashSet},
     uint,
 };
+use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use evm2::{
     EvmFeatures, Inspector,
@@ -60,7 +61,7 @@ use evm2::{
     },
 };
 use eyre::WrapErr;
-use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
+use foundry_common::{SYSTEM_TRANSACTION_TYPE, block_on, is_known_system_sender};
 use foundry_evm_networks::NetworkConfigs;
 pub use foundry_fork_db::{
     AccountFetchPolicy, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend,
@@ -1159,8 +1160,57 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
         trace!(?address, ?field, "refresh fork account");
         let db = &self.lifecycle.active().db;
-        db.evict_account(&address);
-        let mut refreshed = db.clone_backing().get_account(&address)?.unwrap_or_default();
+        let remote = self.active_fork_info().and_then(|info| info.remote.as_ref());
+        let mut refreshed = match (remote, db.remote_state()) {
+            // A read through the fork backend can return a value that a prefetch staged or has in
+            // flight from before the mutation, so the field is read from the endpoint and replaces
+            // the backend's cached account, which reads check first.
+            (Some(fork), Some(cache)) => {
+                let mut refreshed = db.clone_backing().get_account(&address)?.unwrap_or_default();
+                let provider = fork.provider::<AnyNetwork>();
+                let block = fork.state_block_id();
+                let err =
+                    |err| DatabaseError::GetAccount(address, Arc::new(eyre::Report::new(err)));
+                let mut code = None;
+                match field {
+                    ForkAccountField::Balance => {
+                        refreshed.balance =
+                            block_on(provider.get_balance(address).block_id(block).into_future())
+                                .map_err(err)?;
+                    }
+                    ForkAccountField::Nonce => {
+                        refreshed.nonce = block_on(
+                            provider.get_transaction_count(address).block_id(block).into_future(),
+                        )
+                        .map_err(err)?;
+                    }
+                    ForkAccountField::Code => {
+                        let bytes =
+                            block_on(provider.get_code_at(address).block_id(block).into_future())
+                                .map_err(err)?;
+                        refreshed.code_hash =
+                            if bytes.is_empty() { KECCAK256_EMPTY } else { keccak256(&bytes) };
+                        refreshed.code = None;
+                        code = Some(bytes);
+                    }
+                }
+                if let Some(account) = cache.accounts.write().get_mut(&address) {
+                    account.balance = refreshed.balance;
+                    account.nonce = refreshed.nonce;
+                    if let Some(code) = code {
+                        account.code_hash = refreshed.code_hash;
+                        account.code = Some(code);
+                    }
+                }
+                refreshed
+            }
+            (_, cache) => {
+                if let Some(cache) = cache {
+                    cache.accounts.write().remove(&address);
+                }
+                db.clone_backing().get_account(&address)?.unwrap_or_default()
+            }
+        };
         if matches!(field, ForkAccountField::Code) && refreshed.code.is_none() {
             refreshed.code = Some(db.clone_backing().get_code_by_hash(&refreshed.code_hash)?);
         }
@@ -1208,8 +1258,30 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
         trace!(?address, ?slot, "refresh fork storage");
         let db = &self.lifecycle.active().db;
-        db.evict_storage(&address, &slot);
-        let value = db.clone_backing().get_storage(&address, &slot)?;
+        let remote = self.active_fork_info().and_then(|info| info.remote.as_ref());
+        let value = match (remote, db.remote_state()) {
+            // See `refresh_fork_account`: the slot is read from the endpoint, so a value a
+            // prefetch staged or has in flight from before the mutation is not used.
+            (Some(fork), Some(cache)) => {
+                let value = block_on(
+                    fork.provider::<AnyNetwork>()
+                        .get_storage_at(address, slot)
+                        .block_id(fork.state_block_id())
+                        .into_future(),
+                )
+                .map_err(|err| DatabaseError::GetStorage(address, slot, Arc::new(err.into())))?;
+                cache.storage.write().entry(address).or_default().insert(slot, value);
+                value
+            }
+            (_, cache) => {
+                if let Some(cache) = cache
+                    && let Some(storage) = cache.storage.write().get_mut(&address)
+                {
+                    storage.remove(&slot);
+                }
+                db.clone_backing().get_storage(&address, &slot)?
+            }
+        };
 
         self.lifecycle.materialize(evm);
         let state = evm.state_mut();

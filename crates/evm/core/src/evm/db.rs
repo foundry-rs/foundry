@@ -13,7 +13,7 @@ use evm2::{
     evm::{AccountInfo, Cache, DbResult, DynDatabase, EmptyDB, InMemoryDB, NonStaticAny},
     interpreter::Word,
 };
-use foundry_fork_db::{ForkBlockEnv, SharedBackend};
+use foundry_fork_db::{ForkBlockEnv, SharedBackend, cache::MemDb};
 use parking_lot::RwLock;
 use std::{
     any::TypeId,
@@ -35,11 +35,10 @@ pub trait FoundryDatabase: DynDatabase {
         None
     }
 
-    /// Drops remotely cached state of `address`, so the next read refetches it.
-    fn evict_account(&self, _address: &Address) {}
-
-    /// Drops a remotely cached storage slot, so the next read refetches it.
-    fn evict_storage(&self, _address: &Address, _slot: &U256) {}
+    /// Returns the cache of remote state this database reads, if it reads a remote fork.
+    fn remote_state(&self) -> Option<Arc<MemDb>> {
+        None
+    }
 
     /// Sets whether the execution reading this database applies EIP-161, under which empty
     /// accounts do not exist.
@@ -89,12 +88,8 @@ impl FoundryDatabase for Box<dyn BackingDb> {
         (**self).active_fork_source_chain_id()
     }
 
-    fn evict_account(&self, address: &Address) {
-        (**self).evict_account(address);
-    }
-
-    fn evict_storage(&self, address: &Address, slot: &U256) {
-        (**self).evict_storage(address, slot);
+    fn remote_state(&self) -> Option<Arc<MemDb>> {
+        (**self).remote_state()
     }
 
     fn set_eip161(&self, eip161: bool) {
@@ -231,14 +226,8 @@ impl<N: Network, B: ForkBlockEnv> FoundryDatabase for ForkDb<SharedBackend<N, B>
         Some(self.source_chain_id)
     }
 
-    fn evict_account(&self, address: &Address) {
-        self.db.data().accounts.write().remove(address);
-    }
-
-    fn evict_storage(&self, address: &Address, slot: &U256) {
-        if let Some(storage) = self.db.data().storage.write().get_mut(address) {
-            storage.remove(slot);
-        }
+    fn remote_state(&self) -> Option<Arc<MemDb>> {
+        Some(self.db.data())
     }
 
     fn set_eip161(&self, eip161: bool) {
@@ -367,12 +356,8 @@ impl FoundryDatabase for AcceptedView {
         self.backing.active_fork_source_chain_id()
     }
 
-    fn evict_account(&self, address: &Address) {
-        self.backing.evict_account(address);
-    }
-
-    fn evict_storage(&self, address: &Address, slot: &U256) {
-        self.backing.evict_storage(address, slot);
+    fn remote_state(&self) -> Option<Arc<MemDb>> {
+        self.backing.remote_state()
     }
 
     fn set_eip161(&self, eip161: bool) {
