@@ -3801,54 +3801,6 @@ contract InvariantMetricsTest is Test {
 "#]]);
 }
 
-#[forgetest_init]
-fn invariant_call_gas_limit_caps_campaign_calls(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.invariant.runs = 5;
-        config.invariant.depth = 5;
-        config.invariant.call_gas_limit = Some(1_000_000);
-    });
-    prj.add_test(
-        "CallGasLimit.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract GasProbe {
-    uint256 public handlerGas;
-
-    function record() external {
-        handlerGas = gasleft();
-    }
-}
-
-contract CallGasLimitTest is Test {
-    GasProbe probe;
-    uint256 setUpGas;
-
-    function setUp() public {
-        setUpGas = gasleft();
-        probe = new GasProbe();
-        targetContract(address(probe));
-    }
-
-    function invariant_calls_run_under_the_cap() public view {
-        assertGt(setUpGas, 1_000_000);
-        if (probe.handlerGas() != 0) {
-            assertLt(probe.handlerGas(), 1_000_000);
-        }
-    }
-}
-   "#,
-    );
-    cmd.args(["test", "--mt", "invariant_calls_run_under_the_cap"]).assert_success().stdout_eq(
-        str![[r#"
-...
-[PASS] invariant_calls_run_under_the_cap() (runs: 5, calls: 25, reverts: 0)
-...
-"#]],
-    );
-}
-
 // A handler call whose intrinsic gas or calldata floor is above `call_gas_limit` runs with that
 // amount as its limit instead of aborting the campaign with a transaction validation error.
 #[forgetest_init]
@@ -3921,68 +3873,10 @@ contract FreshSenderTest is Test {
 "#]]);
 }
 
-// Target getters run under the project limit, so a `targetSenders()` too expensive for
-// `call_gas_limit` still restricts the campaign to its senders.
+// Campaign calls, and the replays and shrinks of a failure, run under `call_gas_limit`, while
+// `setUp` and target discovery keep the project limit.
 #[forgetest_init]
-fn invariant_call_gas_limit_keeps_target_selection(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.invariant.runs = 5;
-        config.invariant.depth = 5;
-        config.invariant.call_gas_limit = Some(100_000);
-    });
-    prj.add_test(
-        "CallGasTargets.t.sol",
-        r#"
-contract SenderProbe {
-    address public wrongSender;
-
-    function ping() external {
-        if (msg.sender != address(0xBEEF)) wrongSender = msg.sender;
-    }
-}
-
-contract CallGasTargetsTest {
-    SenderProbe probe;
-    uint256[100] slots;
-
-    function setUp() public {
-        probe = new SenderProbe();
-    }
-
-    function targetContracts() public view returns (address[] memory targets) {
-        targets = new address[](1);
-        targets[0] = address(probe);
-    }
-
-    // Reads 100 cold slots, far more than `call_gas_limit`, before returning `0xBEEF`.
-    function targetSenders() public view returns (address[] memory senders) {
-        uint256 sum;
-        for (uint256 i; i < slots.length; i++) {
-            sum += slots[i];
-        }
-        senders = new address[](1 + sum);
-        senders[0] = address(0xBEEF);
-    }
-
-    function invariant_only_target_sender() public view {
-        require(probe.wrongSender() == address(0));
-    }
-}
-   "#,
-    );
-    cmd.args(["test", "--mt", "invariant_only_target_sender"]).assert_success().stdout_eq(str![[
-        r#"
-...
-[PASS] invariant_only_target_sender() (runs: 5, calls: 25, reverts: 0)
-...
-"#
-    ]]);
-}
-
-// A failure found under `call_gas_limit` replays and shrinks under the same limit, so the
-// counterexample still fails when replayed and when persisted.
-#[forgetest_init]
-fn invariant_call_gas_limit_applies_to_replay(prj: _, cmd: _) {
+fn invariant_call_gas_limit_caps_campaign_calls(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 2;
@@ -3991,26 +3885,41 @@ fn invariant_call_gas_limit_applies_to_replay(prj: _, cmd: _) {
     prj.add_test(
         "CallGasReplay.t.sol",
         r#"
-import {Test} from "forge-std/Test.sol";
-
 contract LowGasProbe {
     bool public lowGas;
 
     function record() external {
+        require(msg.sender == address(0xBEEF), "wrong sender");
         lowGas = gasleft() < 2_000_000;
     }
 }
 
-contract CallGasReplayTest is Test {
+contract CallGasReplayTest {
     LowGasProbe probe;
+    uint256[600] pad;
 
     function setUp() public {
+        require(gasleft() > 2_000_000, "setUp under the cap");
         probe = new LowGasProbe();
-        targetContract(address(probe));
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(probe);
+    }
+
+    // Reads more cold storage than the cap allows, so discovery must keep the project limit.
+    function targetSenders() public view returns (address[] memory senders) {
+        uint256 sum;
+        for (uint256 i; i < pad.length; ++i) {
+            sum += pad[i];
+        }
+        senders = new address[](1 + sum);
+        senders[0] = address(0xBEEF);
     }
 
     function invariant_never_low_gas() public view {
-        assertTrue(!probe.lowGas());
+        require(!probe.lowGas(), "low gas");
     }
 }
    "#,
@@ -4020,9 +3929,9 @@ contract CallGasReplayTest is Test {
     cmd.args(["test", "--mt", "invariant_never_low_gas", "-vvvv"]).assert_failure().stdout_eq(
         str![[r#"
 ...
-[FAIL: assertion failed]
+[FAIL: low gas]
 	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[test/CallGasReplay.t.sol:LowGasProbe]0x[..] calldata=record() args=[]
+		sender=0x000000000000000000000000000000000000bEEF addr=[test/CallGasReplay.t.sol:LowGasProbe]0x[..] calldata=record() args=[]
  invariant_never_low_gas() (runs: 1, calls: 1, reverts: 0)
 ...
   [..] CallGasReplayTest::invariant_never_low_gas()

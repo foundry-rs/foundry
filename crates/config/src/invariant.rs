@@ -180,19 +180,13 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
-    /// Gas limit for every call the invariant campaign makes after `setUp` and target
-    /// selection: handler calls, invariant checks and `afterInvariant`, and every replay and
-    /// shrink of them.
+    /// Gas limit for every campaign call after `setUp` and target selection: handler calls,
+    /// invariant checks, `afterInvariant`, and their replays and shrinks.
     ///
-    /// Unset by default, which keeps the project `gas_limit`; a larger value has no effect. Set it
-    /// so a handler with a fuzzed loop bound cannot run until the campaign deadline. An invariant
-    /// check or `afterInvariant` that runs out of gas under it fails like any other revert. The
-    /// limit includes a call's intrinsic gas. A handler call whose intrinsic gas or calldata floor
-    /// is above it runs with that amount as its limit instead of stopping the campaign. When the
-    /// limit is the intrinsic gas, the call has no gas left to execute and reverts; when it is the
-    /// EIP-7623 calldata floor, which can exceed the intrinsic gas, the difference is left to
-    /// execute and the handler can still run. Network charges count as intrinsic gas too, such as
-    /// Tempo's new-account charge for nonce-zero senders, so keep the limit well above them.
+    /// Unset keeps the project `gas_limit`; a larger value has no effect. A handler call whose
+    /// minimum gas is above the limit runs with that minimum instead. At the intrinsic charge,
+    /// network charges included, it has no gas left and reverts. At an EIP-7623 calldata floor
+    /// above the intrinsic charge, it keeps the difference and can still run.
     pub call_gas_limit: Option<u64>,
 }
 
