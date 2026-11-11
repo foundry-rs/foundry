@@ -3874,6 +3874,19 @@ contract CallGasFloorTest is Test {
 
     function invariant_wide_calls_run() public {}
 }
+
+contract Ping {
+    function ping() external {}
+}
+
+contract FreshSenderTest is Test {
+    function setUp() public {
+        targetContract(address(new Ping()));
+        targetSender(address(0xBEEF));
+    }
+
+    function invariant_fresh_sender_runs() public {}
+}
    "#,
     );
     // Before Prague there is no calldata floor, and the intrinsic gas alone is above the cap. The
@@ -3894,6 +3907,18 @@ contract CallGasFloorTest is Test {
 ...
 "#]],
     );
+    // Tempo T1 charges a nonce-zero sender for its account on top of the Ethereum intrinsic gas,
+    // so the bound comes from the network's own validation. As before Prague, the call is left
+    // with no gas to execute and reverts.
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_fresh_sender_runs", "--network", "tempo"])
+        .args(["--hardfork", "tempo:T1"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] invariant_fresh_sender_runs() (runs: 5, calls: 25, reverts: 25)
+...
+"#]]);
 }
 
 // A failure found under `call_gas_limit` replays and shrinks under the same limit, so the
@@ -3954,7 +3979,6 @@ contract CallGasReplayTest is Test {
         config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
     });
     let failures = prj.root().join("cache").join("invariant").join("failures");
-    // Without the persisted failure the campaign runs again and writes the corpus.
     std::fs::remove_dir_all(&failures).unwrap();
     cmd.forge_fuse().args(["test", "--mt", "invariant_never_low_gas"]).assert_failure();
     std::fs::remove_dir_all(&failures).unwrap();

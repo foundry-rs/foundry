@@ -3,8 +3,10 @@
 use super::{Executor, RawCallResult};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{TxKind, U256};
+use evm2::registry::HandlerError;
 use eyre::{Result, eyre};
 use foundry_evm_core::{
+    backend::TransactionValidationError,
     constants::MAGIC_ASSUME,
     evm::{BlockEnvFor, FoundryEvmNetwork},
 };
@@ -220,30 +222,36 @@ pub(super) fn execute_invariant_tx<FEN: FoundryEvmNetwork>(
     // Persist exactly what was sent so replay, shrinking, and corpus entries do not claim an
     // unavailable value was executed.
     tx.call_details.value = (!value.is_zero()).then_some(value);
-    let kind = TxKind::Call(tx.call_details.target);
-    let (mut evm_env, mut tx_request) =
-        executor.prepare_call_env(tx.sender, kind, tx.call_details.calldata.clone(), value);
-    // The EVM rejects a transaction whose gas limit is below its intrinsic gas or, from Prague,
-    // the EIP-7623 calldata floor. Large fuzzed arrays reach both under a `call_gas_limit`, and
-    // the error would abort the campaign, so the larger one is the lower bound of a call's limit.
-    // The block limit of the prepared env is the same cap, so it moves with the call.
-    let (intrinsic_gas, floor_gas) = evm2::ethereum::intrinsic_and_floor_gas(
-        &evm_env.version,
+    let (mut evm_env, mut tx_request) = executor.prepare_call_env(
         tx.sender,
-        kind,
-        &tx.call_details.calldata,
-        0,
-        0,
+        TxKind::Call(tx.call_details.target),
+        tx.call_details.calldata.clone(),
         value,
     );
-    let min_gas = intrinsic_gas.max(floor_gas);
-    if min_gas > tx_request.gas_limit().unwrap_or_default() {
-        tx_request.set_gas_limit(min_gas);
-        evm_env.block.gas_limit = evm_env.block.gas_limit.max(U256::from(min_gas));
+    // The network rejects a transaction whose gas limit is below its intrinsic gas or, from
+    // Prague, the EIP-7623 calldata floor. Large fuzzed arrays or network-specific charges reach
+    // them under a low `call_gas_limit` or project `gas_limit`, and the error would abort the
+    // campaign, so the call runs again with the gas the network requires. Intrinsic gas is checked
+    // before the floor, so at most two retries are needed.
+    let mut result = executor.call_with_env(evm_env, tx_request.clone());
+    for _ in 0..2 {
+        let Err(error) = &result else { break };
+        let Some(
+            &(HandlerError::IntrinsicGasTooLow { required, .. }
+            | HandlerError::GasLimitBelowFloor { required, .. }),
+        ) = error.chain().find_map(|cause| {
+            cause.downcast_ref::<HandlerError>().or_else(|| {
+                cause.downcast_ref::<TransactionValidationError>().map(|error| &error.error)
+            })
+        })
+        else {
+            break;
+        };
+        tx_request.set_gas_limit(required);
+        evm_env.block.gas_limit = evm_env.block.gas_limit.max(U256::from(required));
+        result = executor.call_with_env(evm_env, tx_request.clone());
     }
-    executor
-        .call_with_env(evm_env, tx_request)
-        .map_err(|error| eyre!("Could not make raw evm call: {error}"))
+    result.map_err(|error| eyre!("Could not make raw evm call: {error}"))
 }
 
 /// Advances the execution block environment and the cheatcode block override by an invariant
