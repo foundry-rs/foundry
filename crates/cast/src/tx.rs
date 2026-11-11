@@ -380,17 +380,59 @@ where
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
         let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
-            Some(receipt) => receipt,
+            Some(receipt) if cast_async || confs <= 1 => receipt,
+            Some(_) => self.confirm_mined(tx_hash, confs, timeout).await?,
             None if cast_async => eyre::bail!("tx not found: {tx_hash:?}"),
-            None => {
-                PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
-                    .with_required_confirmations(confs)
-                    .with_timeout(timeout.map(Duration::from_secs))
-                    .get_receipt()
-                    .await?
-            }
+            None => self.pending_receipt(tx_hash, confs, timeout).await?,
         };
         Ok(self.finish(receipt, field).await?.1)
+    }
+
+    /// Waits for a pending transaction to be mined and confirmed `confs` times.
+    async fn pending_receipt(
+        &self,
+        tx_hash: TxHash,
+        confs: u64,
+        timeout: Option<u64>,
+    ) -> Result<N::ReceiptResponse> {
+        Ok(PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
+            .with_required_confirmations(confs)
+            .with_timeout(timeout.map(Duration::from_secs))
+            .get_receipt()
+            .await?)
+    }
+
+    /// Waits until an already-mined transaction has `confs` confirmations.
+    ///
+    /// The pending transaction watcher only sees blocks mined after it starts, so it cannot
+    /// confirm a transaction that is already mined: this polls the chain head and receipt
+    /// instead. A reorg may move the transaction to an earlier or later block, or remove it.
+    /// Its current inclusion must have enough confirmations, within the same timeout.
+    async fn confirm_mined(
+        &self,
+        tx_hash: TxHash,
+        confs: u64,
+        timeout: Option<u64>,
+    ) -> Result<N::ReceiptResponse> {
+        let confirm = async {
+            let mut poll = tokio::time::interval(self.provider.client().poll_interval());
+            loop {
+                poll.tick().await;
+                let head = self.provider.get_block_number().await?;
+                if let Some(receipt) = self.provider.get_transaction_receipt(tx_hash).await?
+                    && let Some(mined) = receipt.block_number()
+                    && head >= mined.saturating_add(confs - 1)
+                {
+                    break Ok(receipt);
+                }
+            }
+        };
+        match timeout {
+            Some(timeout) => tokio::time::timeout(Duration::from_secs(timeout), confirm)
+                .await
+                .map_err(|_| eyre::eyre!("transaction was not confirmed within the timeout"))?,
+            None => confirm.await,
+        }
     }
 
     /// Attaches the revert reason (best effort) and formats the receipt.
@@ -932,7 +974,7 @@ pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
 mod tests {
     use super::*;
     use alloy_json_rpc::{RequestPacket, ResponsePacket};
-    use alloy_network::{Ethereum, NetworkTransactionBuilder};
+    use alloy_network::{AnyNetwork, Ethereum, NetworkTransactionBuilder};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
     use alloy_sol_types::SolValue;
@@ -986,6 +1028,107 @@ mod tests {
                 barrier.wait().await;
                 inner.call(req).await
             })
+        }
+    }
+
+    /// A successful receipt of a transfer mined in block 5.
+    fn mined_receipt(tx_hash: TxHash) -> serde_json::Value {
+        serde_json::json!({
+            "type": "0x2",
+            "status": "0x1",
+            "cumulativeGasUsed": "0x5208",
+            "logs": [],
+            "logsBloom": format!("0x{}", "00".repeat(256)),
+            "transactionHash": tx_hash,
+            "transactionIndex": "0x0",
+            "blockHash": B256::repeat_byte(0x05),
+            "blockNumber": "0x5",
+            "gasUsed": "0x5208",
+            "effectiveGasPrice": "0x1",
+            "from": Address::repeat_byte(0x22),
+            "to": TO,
+            "contractAddress": null
+        })
+    }
+
+    #[tokio::test]
+    async fn receipt_of_mined_tx_waits_for_confirmations() {
+        for (inclusion, heads) in [(5u64, vec![5, 6, 7]), (4, vec![6]), (7, vec![7, 8, 9])] {
+            let tx_hash = B256::repeat_byte(0xaa);
+            let asserter = Asserter::new();
+            asserter.push_success(&mined_receipt(tx_hash));
+            // Confirm the current inclusion, even if a reorg moved it earlier or later.
+            let mut receipt = mined_receipt(tx_hash);
+            receipt["blockNumber"] = serde_json::json!(U64::from(inclusion));
+            receipt["blockHash"] = serde_json::json!(B256::repeat_byte(inclusion as u8));
+            for head in heads {
+                asserter.push_success(&U64::from(head));
+                asserter.push_success(&receipt);
+            }
+            let provider = ProviderBuilder::<_, _, AnyNetwork>::default().connect_client(
+                RpcClient::mocked(asserter.clone()).with_poll_interval(Duration::from_millis(1)),
+            );
+            let sender = CastTxSender::new(&provider);
+
+            let block = sender
+                .receipt(format!("{tx_hash:#x}"), Some("blockNumber".into()), 3, Some(5), false)
+                .await
+                .unwrap();
+
+            assert_eq!(block, inclusion.to_string());
+            assert!(asserter.read_q().is_empty(), "returned before the third confirmation");
+        }
+    }
+
+    #[tokio::test]
+    async fn receipt_of_mined_tx_times_out_without_confirmations() {
+        let tx_hash = B256::repeat_byte(0xaa);
+        let asserter = Asserter::new();
+        asserter.push_success(&mined_receipt(tx_hash));
+        for _ in 0..10_000 {
+            asserter.push_success(&U64::from(5));
+            asserter.push_success(&mined_receipt(tx_hash));
+        }
+        let provider = ProviderBuilder::<_, _, AnyNetwork>::default().connect_client(
+            RpcClient::mocked(asserter).with_poll_interval(Duration::from_millis(1)),
+        );
+        let sender = CastTxSender::new(&provider);
+
+        let err =
+            sender.receipt(format!("{tx_hash:#x}"), None, 3, Some(1), false).await.unwrap_err();
+
+        assert_eq!(err.to_string(), "transaction was not confirmed within the timeout");
+    }
+
+    #[tokio::test]
+    async fn receipt_of_remined_tx_times_out_without_confirmations() {
+        for disappears in [false, true] {
+            let tx_hash = B256::repeat_byte(0xaa);
+            let asserter = Asserter::new();
+            asserter.push_success(&mined_receipt(tx_hash));
+            asserter.push_success(&U64::from(7));
+            if disappears {
+                asserter.push_success(&serde_json::Value::Null);
+                asserter.push_success(&U64::from(7));
+            }
+            // The old inclusion has three confirmations, but the new one has only one.
+            let mut remined = mined_receipt(tx_hash);
+            remined["blockNumber"] = serde_json::json!("0x7");
+            remined["blockHash"] = serde_json::json!(B256::repeat_byte(0x07));
+            asserter.push_success(&remined);
+            for _ in 0..10_000 {
+                asserter.push_success(&U64::from(7));
+                asserter.push_success(&remined);
+            }
+            let provider = ProviderBuilder::<_, _, AnyNetwork>::default().connect_client(
+                RpcClient::mocked(asserter).with_poll_interval(Duration::from_millis(1)),
+            );
+            let sender = CastTxSender::new(&provider);
+
+            let err =
+                sender.receipt(format!("{tx_hash:#x}"), None, 3, Some(1), false).await.unwrap_err();
+
+            assert_eq!(err.to_string(), "transaction was not confirmed within the timeout");
         }
     }
 

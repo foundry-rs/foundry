@@ -1182,16 +1182,79 @@ contract RecordAccountAccessesTest is Test {
         );
     }
 
+    /// @notice Test that a create that reverts or halts inside its frame records
+    ///         the unchanged nonce of the would-be deployed account
+    function testCreateFailedInFrameNonce() public {
+        bytes[2] memory initcodes = [
+            // Reverts.
+            abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true)),
+            // Halts on INVALID.
+            bytes(hex"fe")
+        ];
+        for (uint256 i; i < initcodes.length; ++i) {
+            vm.startStateDiffRecording();
+            create2or.create2(bytes32(0), initcodes[i]);
+            Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+            address child = deriveCreate2Address(address(create2or), bytes32(0), keccak256(initcodes[i]));
+            assertEq(called.length, 2, "incorrect length");
+            assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
+            assertEq(called[1].account, child, "incorrect account");
+            assertEq(called[1].newNonce, 0, "incorrect newNonce");
+            assertEq(vm.getNonce(child), 0, "incorrect child nonce");
+        }
+    }
+
+    /// @notice Test that a create into a pre-funded address records its balance
+    ///         as unchanged, whether the create reverts, succeeds or collides
+    function testCreatePrefundedBalance() public {
+        bytes[3] memory initcodes = [
+            // Reverts.
+            abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true)),
+            // Succeeds.
+            abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(false)),
+            // Collides with an account that has a nonce.
+            bytes(hex"00")
+        ];
+        for (uint256 i; i < initcodes.length; ++i) {
+            address child = deriveCreate2Address(address(create2or), bytes32(0), keccak256(initcodes[i]));
+            vm.deal(child, 123);
+            if (i == 2) vm.setNonce(child, 1);
+            vm.startStateDiffRecording();
+            create2or.create2(bytes32(0), initcodes[i]);
+            Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+            assertEq(called.length, 2, "incorrect length");
+            assertEq(called[1].account, child, "incorrect account");
+            assertEq(called[1].oldBalance, 123, "incorrect oldBalance");
+            assertEq(called[1].newBalance, 123, "incorrect newBalance");
+        }
+    }
+
+    /// @notice Test that a call that fails for lack of funds is recorded as reverted
+    function testCallOutOfFunds() public {
+        vm.startStateDiffRecording();
+        (bool success,) = address(1234).call{value: address(this).balance + 1}("");
+        assertTrue(!success);
+        Vm.AccountAccess[] memory called = vm.stopAndReturnStateDiff();
+        assertEq(called.length, 1, "incorrect length");
+        assertTrue(called[0].reverted, "call not reverted");
+    }
+
     /// @notice It is important to test SELFDESTRUCT behavior as long as there
     ///         are public networks that support the opcode, regardless of whether
     ///         or not Ethereum mainnet does.
     function testSelfDestruct() public {
+        vm.chainId(42);
         uint256 startingBalance = address(this).balance;
         this.startRecordingFromLowerDepth();
         address a = address(new SelfDestructor{value: 1 ether}(address(this)));
         address b = address(new SelfDestructor{value: 1 ether}(address(bytes20("doesn't exist yet"))));
+        // Changing chains must not rewrite previously recorded accesses.
+        vm.chainId(43);
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 5, "incorrect length");
+        for (uint256 i; i < called.length; ++i) {
+            assertEq(called[i].chainInfo.chainId, 42, "incorrect recorded chain");
+        }
         assertEq(
             called[1],
             Vm.AccountAccess({
@@ -1292,10 +1355,14 @@ contract RecordAccountAccessesTest is Test {
 
     /// @notice Test that EXT* opcodes are recorded as account accesses
     function testExtOpcodes() public {
+        vm.chainId(42);
         vm.startStateDiffRecording();
         extChecker.checkExts(address(1234));
         Vm.AccountAccess[] memory called = vm.stopAndReturnStateDiff();
         assertEq(called.length, 5, "incorrect length");
+        for (uint256 i; i < called.length; ++i) {
+            assertEq(called[i].chainInfo.chainId, 42, "incorrect recorded chain");
+        }
         // call to extChecker
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call));
         // extChecker checks

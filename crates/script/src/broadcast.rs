@@ -7,7 +7,8 @@ use crate::{
     receipts::is_mined_receipt_for,
     recovery::{AttemptKind, DelegatedStatus},
     sequence::{
-        ScriptSequenceKind, blocked_pending, completed_transaction_prefix, operation_ordinal,
+        DelegatedResolution, ScriptSequenceKind, blocked_pending, completed_transaction_prefix,
+        operation_ordinal,
     },
     session::{
         SignerScope, insert_session_access_key_for_remaining_transactions,
@@ -37,7 +38,9 @@ use alloy_signer::Signature;
 use eyre::{Context, ContextCompat, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
+use foundry_cli::utils::{
+    apply_gas_estimate_multiplier, has_batch_support, has_different_gas_calc,
+};
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{
@@ -55,7 +58,6 @@ use foundry_evm::{
         constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
         evm::{FoundryEvmNetwork, TempoEvmNetwork},
     },
-    hardfork::TempoHardfork,
     traces::CallKind,
 };
 use foundry_wallets::wallet_browser::{error::BrowserWalletError, signer::BrowserSigner};
@@ -64,6 +66,7 @@ use itertools::Itertools;
 use tempo_alloy::{
     TempoNetwork,
     accounts::TempoAccountsWallet,
+    chainspec::hardfork::TempoHardfork,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},
 };
 use tempo_primitives::transaction::{Call, TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};
@@ -601,6 +604,35 @@ const fn should_broadcast_sequentially(
     estimate_via_rpc || slow || required_signers == 0 || ordering_senders != 1 || !batch_supported
 }
 
+/// Fees chosen once per sequence for its remaining unsigned operations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FeePlan {
+    /// Every remaining operation already has a signed payload, so no fees are set.
+    PreSigned,
+    /// Legacy transactions pay this gas price.
+    Legacy(u128),
+    /// EIP-1559 transactions pay these fees.
+    Eip1559(Eip1559Estimation),
+}
+
+impl FeePlan {
+    /// Sets the planned fees on an unsigned operation.
+    ///
+    /// # Panics
+    ///
+    /// Panics for `FeePlan::PreSigned`, which has no unsigned operation to price.
+    fn apply<N: Network>(self, tx: &mut N::TransactionRequest) {
+        match self {
+            Self::Legacy(gas_price) => tx.set_gas_price(gas_price),
+            Self::Eip1559(fees) => {
+                tx.set_max_priority_fee_per_gas(fees.max_priority_fee_per_gas);
+                tx.set_max_fee_per_gas(fees.max_fee_per_gas);
+            }
+            Self::PreSigned => unreachable!("pre-signed operations are not priced"),
+        }
+    }
+}
+
 /// Represents how to send _all_ transactions
 pub enum SendTransactionsKind<N: Network> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
@@ -888,15 +920,15 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     // Make a one-time gas price estimation
                     let all_signed =
                         remaining_indices.iter().all(|index| signed_payloads[*index].is_some());
-                    let (gas_price, eip1559_fees) = match (
+                    let fee_plan = match (
                         all_signed,
                         is_legacy,
                         self.args.with_gas_price,
                         self.args.priority_gas_price,
                     ) {
-                        (true, _, _, _) => (None, None),
-                        (false, true, Some(gas_price), _) => (Some(gas_price.to()), None),
-                        (false, true, None, _) => (Some(provider.get_gas_price().await?), None),
+                        (true, _, _, _) => FeePlan::PreSigned,
+                        (false, true, Some(gas_price), _) => FeePlan::Legacy(gas_price.to()),
+                        (false, true, None, _) => FeePlan::Legacy(provider.get_gas_price().await?),
                         (false, false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => {
                             let max_fee: u128 = max_fee_per_gas.to();
                             let max_priority: u128 = max_priority_fee_per_gas.to();
@@ -905,13 +937,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "--priority-gas-price ({max_priority}) cannot be higher than --with-gas-price ({max_fee})"
                                 );
                             }
-                            (
-                                None,
-                                Some(Eip1559Estimation {
-                                    max_fee_per_gas: max_fee,
-                                    max_priority_fee_per_gas: max_priority,
-                                }),
-                            )
+                            FeePlan::Eip1559(Eip1559Estimation {
+                                max_fee_per_gas: max_fee,
+                                max_priority_fee_per_gas: max_priority,
+                            })
                         }
                         (false, false, _, _) => {
                             let fees = estimate_eip1559_fees(
@@ -938,7 +967,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 browser_suggested_tip,
                             )?;
 
-                            (None, Some(fees.estimation()))
+                            FeePlan::Eip1559(fees.estimation())
                         }
                     };
 
@@ -987,15 +1016,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     tx.set_create();
                                 }
 
-                                if let Some(gas_price) = gas_price {
-                                    tx.set_gas_price(gas_price);
-                                } else {
-                                    let eip1559_fees = eip1559_fees.expect("was set above");
-                                    tx.set_max_priority_fee_per_gas(
-                                        eip1559_fees.max_priority_fee_per_gas,
-                                    );
-                                    tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
-                                }
+                                fee_plan.apply::<FEN::Network>(&mut tx);
 
                                 // `vm.attachBlob` transactions also need a blob fee.
                                 if tx.blob_sidecar().is_some()
@@ -1357,13 +1378,13 @@ impl BundledState<TempoEvmNetwork> {
             );
         }
 
-        let batch_resolution = if self.args.resume_tx_hash.is_some() {
+        let batch_resolution = if let Some(hash) = self.args.resume_tx_hash {
             self.sequence
-                .restore_delegated_pending(
+                .restore_delegated_pending(DelegatedResolution::new(
                     self.args.resume_attempt,
-                    self.args.resume_tx_hash,
+                    Some(hash),
                     false,
-                )?
+                )?)?
                 .map(|(_, _, attempt, hash)| (attempt, hash))
         } else {
             None
@@ -1957,11 +1978,9 @@ where
     tx.reset_gas_limit();
 
     let request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
-    tx.set_gas_limit(
-        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
-            * estimate_multiplier
-            / 100,
-    );
+    let estimate =
+        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
+    tx.set_gas_limit(apply_gas_estimate_multiplier(estimate, Some(estimate_multiplier))?);
     Ok(())
 }
 
@@ -2109,6 +2128,7 @@ impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sequence::DelegatedAction;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, Bloom, address, hex};
@@ -2151,9 +2171,12 @@ mod tests {
             fork_block_number: Some(block_number),
             ..Default::default()
         };
-        let backend =
-            Backend::<EthEvmNetwork>::spawn(evm_opts.get_fork(&Config::default(), 31337, None))
-                .unwrap();
+        let (env, _, _) = evm_opts.env_with_fork_context::<EthEvmNetwork>().await.unwrap();
+        let backend = Backend::<EthEvmNetwork>::spawn(
+            evm_opts.get_fork(&Config::default(), 31337, None),
+            env,
+        )
+        .unwrap();
         assert_eq!(backend.transaction_count(sender).await.unwrap(), 1);
 
         provider
@@ -2271,7 +2294,12 @@ mod tests {
         sequence.persist_batch_delegated_request(0, 0, Default::default()).unwrap();
         let (_, attempt, _) = sequence.batch_attempt(0).unwrap();
 
-        sequence.restore_delegated_pending(Some(attempt), None, true).unwrap();
+        sequence
+            .restore_delegated_pending(DelegatedResolution::Attempt {
+                attempt,
+                action: Some(DelegatedAction::Retry),
+            })
+            .unwrap();
 
         assert!(sequence.batch_attempt(0).is_none());
         drop(sequence);
@@ -2773,6 +2801,24 @@ mod tests {
             };
             assert_eq!(payload.as_ref(), SIGNED_TX);
             assert_eq!(prepared_hash, hash);
+        }
+    }
+
+    #[tokio::test]
+    async fn estimate_gas_multiplies_large_estimates_without_overflow() {
+        for (estimate, multiplier, expected) in
+            [(u64::MAX / 2, 130, Some(11_990_383_647_911_208_549)), (u64::MAX, 200, None)]
+        {
+            let asserter = Asserter::new();
+            let provider: RootProvider<Ethereum> =
+                alloy_provider::ProviderBuilder::default().connect_mocked_client(asserter.clone());
+            asserter.push_success(&alloy_primitives::U64::from(estimate));
+            let mut tx = alloy_rpc_types::TransactionRequest::default();
+
+            let result = estimate_gas(&mut tx, &provider, multiplier, false).await;
+
+            assert_eq!(result.is_ok(), expected.is_some());
+            assert_eq!(tx.gas, expected);
         }
     }
 }

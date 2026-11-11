@@ -83,6 +83,16 @@ jobs:
         run: |
           cargo test --locked -p anvil --test it tempo_canary:: -- --test-threads=1
 
+      - name: Verify proofs from a native Tempo testnet fork
+        if: |
+          github.event_name == 'schedule' ||
+          github.event.inputs.network == 'testnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+        run: |
+          cargo test --locked -p forge --test cli tempo_proofs::native::tempo_proofs_native_fork -- --ignored --exact --nocapture
+
       - name: Check Tempo fork schedule compatibility
         env:
           TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}

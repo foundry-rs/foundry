@@ -19,15 +19,15 @@ use tempo_primitives::{
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
 
 #[cfg(any(feature = "base", feature = "optimism"))]
-use super::get_deposit_tx_parts;
+use super::DepositTransactionParts;
 #[cfg(any(feature = "base", feature = "optimism"))]
-use op_revm::transaction::deposit::DepositTransactionParts;
+use super::get_deposit_tx_parts;
 
 #[cfg(any(test, feature = "base", feature = "optimism"))]
 use alloy_serde::OtherFields;
 
 #[cfg(feature = "base")]
-use base_common_evm::EIP8130_TRANSACTION_TYPE;
+use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
 use base_common_rpc_types::BaseTransactionRequest;
 
@@ -82,6 +82,8 @@ const TEMPO_REQUEST_FIELDS: &[&str] = &[
     "validBefore",
     "validAfter",
     "feePayerSignature",
+    "configurableAccountSimulation",
+    "keyAuthorizationSimulation",
 ];
 
 impl FoundryTransactionRequest {
@@ -480,6 +482,16 @@ impl TryFrom<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest 
                 .and_then(|value| value.0);
             tempo_tx_req.fee_payer_signature =
                 tx.other.get_deserialized::<Option<_>>("feePayerSignature").transpose()?.flatten();
+            tempo_tx_req.configurable_account_simulation = tx
+                .other
+                .get_deserialized::<Option<_>>("configurableAccountSimulation")
+                .transpose()?
+                .flatten();
+            tempo_tx_req.key_authorization_simulation = tx
+                .other
+                .get_deserialized::<Option<_>>("keyAuthorizationSimulation")
+                .transpose()?
+                .flatten();
             return Ok(Self::Tempo(Box::new(tempo_tx_req)));
         }
         #[cfg(all(feature = "base", not(feature = "optimism")))]
@@ -1053,6 +1065,8 @@ mod tests {
             valid_before: NonZeroU64::new(100),
             valid_after: NonZeroU64::new(10),
             fee_payer_signature: Some(signature),
+            configurable_account_simulation: None,
+            key_authorization_simulation: None,
         };
         let request = serde_json::from_value::<WithOtherFields<TransactionRequest>>(
             serde_json::to_value(&expected).unwrap(),

@@ -1,4 +1,4 @@
-use alloy_primitives::{U256, keccak256};
+use alloy_primitives::{Address, U256, address, keccak256};
 use foundry_test_utils::{
     TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
 };
@@ -414,6 +414,63 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
+// Tests that the timeout interrupts a handler that loops without calls, which only the timeout
+// ends.
+#[forgetest_init]
+fn invariant_timeout_interrupts_loop_without_calls(prj: _, cmd: _) {
+    prj.add_test(
+        "LoopTimeoutTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract LoopHandler {
+    uint256 public acc;
+
+    function spin() public {
+        uint256 value;
+        // `value` stays even, so the loop never ends.
+        while (value != 1) {
+            unchecked {
+                value += 2;
+            }
+        }
+        acc = value;
+    }
+}
+
+contract LoopTimeoutTest is Test {
+    LoopHandler handler;
+
+    function setUp() public {
+        handler = new LoopHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.depth = 10
+    /// forge-config: default.invariant.timeout = 1
+    function invariant_loop_timeout() public view {
+        require(handler.acc() == 0);
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_loop_timeout", "--gas-limit", &i64::MAX.to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/LoopTimeoutTest.t.sol:LoopTimeoutTest
+[PASS] invariant_loop_timeout() (runs: 0, calls: 0, reverts: 0)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
 // Tests that selector hits are uniformly distributed
 // <https://github.com/foundry-rs/foundry/issues/2986>
 #[forgetest_init]
@@ -476,9 +533,9 @@ contract InvariantSelectorsWeightTest is Test {
     function afterInvariant() public {
         assertEq(handlerOne.hit1(), 2);
         assertEq(handlerTwo.hit2(), 2);
-        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit3(), 2);
         assertEq(handlerTwo.hit4(), 2);
-        assertEq(handlerTwo.hit5(), 1);
+        assertEq(handlerTwo.hit5(), 2);
     }
 
     function invariant_selectors_weight() public view {}
@@ -500,11 +557,11 @@ Ran 1 test for test/InvariantSelectorsWeightTest.t.sol:InvariantSelectorsWeightT
 |------------+-----------+-------+---------+----------|
 | HandlerTwo | selector2 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
-| HandlerTwo | selector3 | 3     | 0       | 0        |
+| HandlerTwo | selector3 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
 | HandlerTwo | selector4 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
-| HandlerTwo | selector5 | 1     | 0       | 0        |
+| HandlerTwo | selector5 | 2     | 0       | 0        |
 ╰------------+-----------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -1194,123 +1251,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
-#[forgetest_init]
-fn invariant_selector_focus_worker_exercises_targeted_selector(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.invariant.runs = 2;
-        config.invariant.depth = 1;
-        config.invariant.workers =
-            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
-        config.fuzz.seed = Some(U256::ZERO);
-    });
-    prj.add_test(
-        "InvariantSelectorFocusTest.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract FocusTarget {
-    bool public broken;
-
-    function aaaBreak() public {
-        broken = true;
-    }
-
-    function zzzSafe() public {}
-}
-
-contract InvariantSelectorFocusTest is Test {
-    FocusTarget target;
-
-    function setUp() public {
-        target = new FocusTarget();
-        bytes4[] memory selectors = new bytes4[](2);
-        selectors[0] = target.aaaBreak.selector;
-        selectors[1] = target.zzzSafe.selector;
-        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
-    }
-
-    function invariant_focus() public view {
-        require(!target.broken(), "focused");
-    }
-}
-   "#,
-    );
-
-    let output = cmd.args(["test", "--mt", "invariant_focus"]).assert_failure();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(stdout.contains("[FAIL: focused]"), "{stdout}");
-    assert!(stdout.contains("invariant_focus()"), "{stdout}");
-    assert!(stdout.contains("aaaBreak"), "{stdout}");
-}
-
-#[forgetest_init]
-fn invariant_selector_focus_workers_respect_user_filters(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.invariant.runs = 2;
-        config.invariant.depth = 4;
-        config.invariant.workers =
-            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
-        config.fuzz.seed = Some(U256::ONE);
-    });
-    prj.add_test(
-        "InvariantSelectorFocusFiltersTest.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract FocusFilterTarget {
-    bool public broken;
-
-    function aaaBreak() public {
-        broken = true;
-    }
-
-    function yyySafe() public {}
-
-    function zzzSafe() public {}
-}
-
-contract InvariantSelectorFocusAllowlistTest is Test {
-    FocusFilterTarget target;
-
-    function setUp() public {
-        target = new FocusFilterTarget();
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = target.zzzSafe.selector;
-        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
-    }
-
-    function invariant_allowlist_focus() public view {
-        require(!target.broken(), "focused");
-    }
-}
-
-contract InvariantSelectorFocusBlocklistTest is Test {
-    FocusFilterTarget target;
-
-    function setUp() public {
-        target = new FocusFilterTarget();
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = target.aaaBreak.selector;
-        excludeSelector(FuzzSelector({addr: address(target), selectors: selectors}));
-    }
-
-    function invariant_blocklist_focus() public view {
-        require(!target.broken(), "focused");
-    }
-}
-   "#,
-    );
-
-    let output = cmd.args(["test", "--mt", "invariant_allowlist_focus"]).assert_success();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(!stdout.contains("aaaBreak"), "{stdout}");
-
-    let output =
-        cmd.forge_fuse().args(["test", "--mt", "invariant_blocklist_focus"]).assert_success();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(!stdout.contains("aaaBreak"), "{stdout}");
-}
-
 // <https://github.com/foundry-rs/foundry/issues/11453>
 #[forgetest_init]
 fn corpus_dir(prj: _, cmd: _) {
@@ -1539,6 +1479,67 @@ contract ComparisonCorpusTest is Test {
     );
 
     cmd.args(["test", "--mc", "ComparisonCorpusTest", "--fuzz-seed", "0x574"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
+}
+
+// solc compiles `if (a == b)` to `SUB` + `JUMPI`, without an `EQ` opcode.
+#[forgetest_init]
+fn invariant_corpus_reuses_sub_equality_hints(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 100;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.dictionary.include_storage = false;
+        config.invariant.dictionary.include_push_bytes = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+    });
+    prj.add_test(
+        "SubEqualityCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SubEqualityCorpusHandler {
+    bool public reached;
+
+    function compare(uint256 value) external {
+        uint256 magic = uint256(keccak256(abi.encode(address(this)))) % (1 << 40);
+        if (value == magic) reached = true;
+    }
+}
+
+contract SubEqualityCorpusTest is Test {
+    SubEqualityCorpusHandler handler;
+
+    function setUp() public {
+        handler = new SubEqualityCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_equality_is_reached() public view {
+        assertFalse(handler.reached());
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "SubEqualityCorpusTest", "--fuzz-seed", "0x574"])
         .assert_failure()
         .stdout_eq(str![[r#"
 ...
@@ -3618,6 +3619,85 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     ]]);
 }
 
+// Corpus entries that share a prefix which creates a dynamic target must all replay: the shared
+// prefix is executed once and its created target stays registered for every entry under it.
+#[forgetest_init]
+fn invariant_corpus_replays_shared_dynamic_target_prefix(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 8;
+        config.invariant.depth = 5;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "DynamicCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Child {
+    uint256 public calls;
+
+    function f() external {
+        calls++;
+    }
+
+    function g() external {
+        calls++;
+    }
+}
+
+contract Factory {
+    Child public child;
+
+    function create() external {
+        child = new Child();
+    }
+}
+
+contract DynamicCorpusTest is Test {
+    Factory factory;
+
+    function setUp() public {
+        factory = new Factory();
+    }
+
+    function invariant_dynamic_targets() public view {}
+}
+   "#,
+    );
+
+    // `setUp` deploys the factory from the test contract, and `create()` deploys the child from
+    // the factory; both use the first nonce.
+    let factory = address!("0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496").create(1);
+    let child = factory.create(1);
+    let tx = |target: Address, selector: &str| {
+        format!(
+            r#"{{"sender":"0x0000000000000000000000000000000000010000","target":"{target}","calldata":"{selector}","value":"0x0"}}"#
+        )
+    };
+    let create = tx(factory, "0xefc81a8c");
+    let corpus = prj.root().join("invariant_corpus").join("DynamicCorpusTest");
+    std::fs::create_dir_all(&corpus).unwrap();
+    for (id, call) in [(1, "0x26121ff0"), (2, "0xe2179b8e")] {
+        std::fs::write(
+            corpus.join(format!("00000000-0000-0000-0000-00000000000{id}-1.json")),
+            format!("[{create},{}]", tx(child, call)),
+        )
+        .unwrap();
+    }
+    assert_eq!(std::fs::read_dir(&corpus).unwrap().count(), 2);
+
+    assert_invariant(cmd.args(["test", "--mc", "DynamicCorpusTest"])).success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_dynamic_targets() ([RUNS])
+...
+"#
+    ]]);
+}
+
 // Calls hoisted from handler sub-calls must respect `targetSenders`.
 #[forgetest_init]
 fn invariant_corpus_hoisting_respects_target_senders(prj: _, cmd: _) {
@@ -3676,6 +3756,47 @@ Ran 1 test for test/HoistSenderTest.t.sol:HoistSenderTest
 [PASS] invariant_only_target_sender() (runs: 32, calls: 640, reverts: 0)
 ...
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Corpus metrics reported during an invariant campaign go to stderr, so `--json` stdout stays one
+// JSON document.
+#[forgetest_init]
+fn invariant_corpus_metrics_keep_json_stdout_clean(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.depth = 10;
+        config.invariant.timeout = Some(7);
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "InvariantMetrics.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantMetricsHandler {
+    uint256 public counter;
+
+    function inc() external {
+        counter++;
+    }
+}
+
+contract InvariantMetricsTest is Test {
+    function setUp() public {
+        targetContract(address(new InvariantMetricsHandler()));
+    }
+
+    function invariant_holds() public pure {}
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--json"]).assert_success();
+    serde_json::from_slice::<serde_json::Value>(&output.get_output().stdout).unwrap();
+    output.stderr_eq(str![[r#"
+...
+{"timestamp":[..],"event":"pulse","contract":"test/InvariantMetrics.t.sol:InvariantMetricsTest",[..]}
 ...
 "#]]);
 }

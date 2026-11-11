@@ -14,8 +14,7 @@ use crate::{
     sequence::get_commit_hash,
 };
 use alloy_chains::{Chain, NamedChain};
-use alloy_evm::revm::context::Block;
-use alloy_network::TransactionBuilder;
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
 use alloy_provider::Provider;
 use dialoguer::Confirm;
@@ -28,7 +27,7 @@ use foundry_common::{
     tempo::known_fee_token_symbol,
 };
 use foundry_evm::{
-    core::{FoundryBlock, evm::FoundryEvmNetwork},
+    core::evm::FoundryEvmNetwork,
     traces::{
         CallTraceDecoder, Traces, debug::ContractSources, decode_trace_arena, prune_trace_depth,
         render_trace_arena_inner,
@@ -59,7 +58,29 @@ pub struct PreSimulationState<FEN: FoundryEvmNetwork> {
     pub execution_artifacts: ExecutionArtifacts,
 }
 
-type SimulationOutcome<N> = (String, Option<TransactionWithMetadata<N>>, bool, Traces);
+/// The result of simulating one transaction against its RPC.
+struct SimulationOutcome<N: Network> {
+    rpc: String,
+    transaction: SimulatedTransaction<N>,
+    traces: Traces,
+}
+
+/// Whether a simulated transaction executed, and what it became.
+enum SimulatedTransaction<N: Network> {
+    /// Execution failed, which aborts the script once every outcome is reported.
+    Failed,
+    /// Execution succeeded, filling in the transaction's gas and metadata.
+    Succeeded(TransactionWithMetadata<N>),
+    /// Execution succeeded, but the transaction sends no value to an address without code.
+    NoCode(TransactionWithMetadata<N>),
+}
+
+impl<N: Network> SimulatedTransaction<N> {
+    /// Classifies a successful execution of `transaction`.
+    const fn succeeded(transaction: TransactionWithMetadata<N>, no_code: bool) -> Self {
+        if no_code { Self::NoCode(transaction) } else { Self::Succeeded(transaction) }
+    }
+}
 
 struct RpcSimulationContext<R> {
     runner: R,
@@ -230,13 +251,16 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     .wrap_err("Internal EVM error during simulation")?;
 
                 if !result.success {
-                    return Ok((rpc, None, false, result.traces));
+                    return Ok(SimulationOutcome {
+                        rpc,
+                        transaction: SimulatedTransaction::Failed,
+                        traces: result.traces,
+                    });
                 }
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    let block_number = runner.executor.evm_env().block_env.number() + U256::ONE;
-                    runner.executor.evm_env_mut().block_env.set_number(block_number);
+                    runner.executor.evm_env_mut().block.number += U256::ONE;
                 }
 
                 let is_noop_tx = if let Some(to) = to {
@@ -250,10 +274,14 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                         &result,
                         self.args.gas_estimate_multiplier,
                         &self.build_data,
-                    )
+                    )?
                     .build();
 
-                eyre::Ok((rpc, Some(transaction), is_noop_tx, result.traces))
+                eyre::Ok(SimulationOutcome {
+                    rpc,
+                    transaction: SimulatedTransaction::succeeded(transaction, is_noop_tx),
+                    traces: result.traces,
+                })
             })
             .collect::<Vec<_>>();
 
@@ -278,10 +306,12 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
         let mut abort = false;
         for res in results {
-            let (rpc, tx, is_noop_tx, mut traces) = res?;
+            let SimulationOutcome { rpc, transaction, mut traces } = res?;
 
-            // Transaction will be `None`, if execution didn't pass.
-            if !shell::is_json() && (tx.is_none() || tracing.verbosity > 3) {
+            // Failed executions always show their traces.
+            if !shell::is_json()
+                && (matches!(transaction, SimulatedTransaction::Failed) || tracing.verbosity > 3)
+            {
                 let decoder = &contexts.get(&rpc).expect("invalid rpc url").decoder;
                 for (_, trace) in &mut traces {
                     decode_trace_arena(trace, decoder).await;
@@ -295,8 +325,10 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 }
             }
 
-            if let Some(tx) = tx {
-                if is_noop_tx {
+            match transaction {
+                SimulatedTransaction::Failed => abort = true,
+                SimulatedTransaction::Succeeded(tx) => final_txs.push_back(tx),
+                SimulatedTransaction::NoCode(tx) => {
                     let to = tx.contract_address.unwrap();
                     sh_warn!(
                         "Script contains a transaction to {to} which does not contain any code."
@@ -316,11 +348,9 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                             eyre::bail!("User canceled the script.");
                         }
                     }
-                }
 
-                final_txs.push_back(tx);
-            } else {
-                abort = true;
+                    final_txs.push_back(tx);
+                }
             }
         }
 
@@ -483,8 +513,8 @@ mod tests {
 
         let monad_eight = contexts.get(&monad_eight_rpc).unwrap();
         let monad_eight_runner = &monad_eight.runner;
-        assert_eq!(monad_eight_runner.executor.evm_env().cfg_env.chain_id, 42);
-        assert_eq!(monad_eight_runner.executor.evm_env().block_env.number(), U256::ZERO);
+        assert_eq!(monad_eight_runner.executor.evm_env().chain_id(), 42);
+        assert_eq!(monad_eight_runner.executor.evm_env().block.number, U256::ZERO);
         assert_eq!(monad_eight_runner.evm_opts.fork_block_number, Some(0));
         assert!(!monad_eight_runner.evm_opts.fork_block_number_is_inferred);
         assert_eq!(monad_eight_runner.evm_opts.networks, NetworkConfigs::with_monad());
@@ -495,8 +525,8 @@ mod tests {
 
         let monad_nine = contexts.get(&monad_nine_rpc).unwrap();
         let monad_nine_runner = &monad_nine.runner;
-        assert_eq!(monad_nine_runner.executor.evm_env().cfg_env.chain_id, 42);
-        assert_eq!(monad_nine_runner.executor.evm_env().block_env.number(), U256::ZERO);
+        assert_eq!(monad_nine_runner.executor.evm_env().chain_id(), 42);
+        assert_eq!(monad_nine_runner.executor.evm_env().block.number, U256::ZERO);
         assert_eq!(monad_nine_runner.evm_opts.fork_block_number, Some(0));
         assert!(!monad_nine_runner.evm_opts.fork_block_number_is_inferred);
         assert_eq!(monad_nine_runner.evm_opts.networks, NetworkConfigs::with_monad());

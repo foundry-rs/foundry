@@ -5,7 +5,7 @@
 use super::*;
 use alloy_provider::MULTICALL3_ADDRESS;
 use anvil::eth::error::BlockchainError;
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 use tempo_precompiles::{
     SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS, VALIDATOR_CONFIG_ADDRESS,
     VALIDATOR_CONFIG_V2_ADDRESS, ZONE_FACTORY_ADDRESS, ZONE_VERIFIER_ADDRESS,
