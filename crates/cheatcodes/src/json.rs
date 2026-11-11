@@ -388,11 +388,6 @@ pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValu
 
     match (value, ty) {
         (Value::Array(array), ty) => parse_json_array(array, ty),
-        // `serialize_value_as_json` writes strings that hold a JSON object as raw objects, so
-        // `vm.serializeString` can nest objects. Read them back as their compact JSON text.
-        (Value::Object(object), DynSolType::String) => {
-            Ok(DynSolValue::String(serde_json::to_string(object)?))
-        }
         (Value::Object(object), ty) => parse_json_map(object, ty),
         (Value::String(s), DynSolType::String) => Ok(DynSolValue::String(s.clone())),
         (Value::String(s), DynSolType::Uint(_) | DynSolType::Int(_)) => string::parse_value(s, ty),
@@ -1093,45 +1088,31 @@ mod tests {
         assert!(error.to_string().contains("unterminated block comment"));
     }
 
-    /// Returns `true` if `s` parses as a JSON object. `serialize_value_as_json` writes such
-    /// strings as raw objects.
+    /// Returns `true` if `s` parses as a JSON object. `serialize_value_as_json` writes such a
+    /// string as the object, so `vm.serializeString` can nest objects, and it does not
+    /// roundtrip.
     fn is_json_object(s: &str) -> bool {
         serde_json::from_str::<Map<String, Value>>(s).is_ok()
     }
 
-    /// Returns `true` if `s` survives a typed JSON roundtrip. A string that holds a JSON object
-    /// comes back as compact JSON, so only compact objects keep their text.
-    fn string_roundtrips(s: &str) -> bool {
-        serde_json::from_str::<Map<String, Value>>(s)
-            .ok()
-            .is_none_or(|map| serde_json::to_string(&map).unwrap() == s)
-    }
-
-    /// Returns `true` if every string in `value` survives a typed JSON roundtrip.
-    fn strings_roundtrip(value: &DynSolValue) -> bool {
+    /// Returns `true` if `value` holds a string that parses as a JSON object.
+    fn has_json_object_string(value: &DynSolValue) -> bool {
         match value {
-            DynSolValue::String(s) => string_roundtrips(s),
+            DynSolValue::String(s) => is_json_object(s),
             DynSolValue::Array(v) | DynSolValue::FixedArray(v) | DynSolValue::Tuple(v) => {
-                v.iter().all(strings_roundtrip)
+                v.iter().any(has_json_object_string)
             }
-            DynSolValue::CustomStruct { tuple, .. } => tuple.iter().all(strings_roundtrip),
-            _ => true,
+            DynSolValue::CustomStruct { tuple, .. } => tuple.iter().any(has_json_object_string),
+            _ => false,
         }
     }
 
     #[test]
-    fn test_json_roundtrip_json_object_string() {
+    fn test_json_object_string_serializes_as_object() {
         let v = DynSolValue::Tuple(vec![DynSolValue::String("{}".to_string())]);
-        let json = serialize_value_as_json(v.clone(), None, false).unwrap();
-        assert_eq!(json, json!([{}]));
-        assert_eq!(parse_json_as(&json, &v.as_type().unwrap()).unwrap(), v);
-
-        // Objects come back as compact JSON text.
-        let json = json!({ "a": 1, "b": { "c": [] } });
-        assert_eq!(
-            parse_json_as(&json, &DynSolType::String).unwrap(),
-            DynSolValue::String(r#"{"a":1,"b":{"c":[]}}"#.to_string())
-        );
+        assert_eq!(serialize_value_as_json(v.clone(), None, false).unwrap(), json!([{}]));
+        // The roundtrip proptests skip such strings.
+        assert!(has_json_object_string(&v));
     }
 
     fn valid_value(value: &DynSolValue) -> bool {
@@ -1183,7 +1164,7 @@ mod tests {
             any::<u32>().prop_map(|v| DynSolValue::Uint(U256::from(v), 256)),
             any::<[u8; 20]>().prop_map(Address::from).prop_map(DynSolValue::Address),
             any::<[u8; 32]>().prop_map(B256::from).prop_map(|b| DynSolValue::FixedBytes(b, 32)),
-            ".*".prop_filter("invalid string value", |s| string_roundtrips(s))
+            ".*".prop_filter("invalid string value", |s| !is_json_object(s))
                 .prop_map(DynSolValue::String),
         ];
 
@@ -1227,7 +1208,7 @@ mod tests {
         }
 
         #[test]
-        fn test_json_roundtrip(v in any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some() && strings_roundtrip(v))) {
+        fn test_json_roundtrip(v in any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some() && !has_json_object_string(v))) {
             let json = serialize_value_as_json(v.clone(), None, false).unwrap();
             let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
             assert_eq!(value, v);

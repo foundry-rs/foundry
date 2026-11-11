@@ -542,15 +542,6 @@ contract WriteJsonTest is Test {
         assertEq(overwritten, '{"value": 123}');
     }
 
-    // `serializeString` writes a string that holds a JSON object as a nested object. Reading it back
-    // as a string returns its compact JSON text.
-    function test_serializeStringObjectRoundtrip() public {
-        string memory serialized = vm.serializeString("jsonObjectString", "nested", '{"a": 1, "b": {}}');
-        assertEq(serialized, '{"nested":{"a":1,"b":{}}}');
-        assertEq(vm.parseJsonString(serialized, ".nested"), '{"a":1,"b":{}}');
-        assertEq(vm.parseJsonString(serialized, ".nested.b"), "{}");
-    }
-
     struct simpleJson {
         uint256 a;
         string b;
