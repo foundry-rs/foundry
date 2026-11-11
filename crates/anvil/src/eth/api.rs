@@ -3226,7 +3226,7 @@ impl EthApi<FoundryNetwork> {
 
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
-            let transaction = typed_tx.into_impersonated();
+            let transaction = self.backend.impersonated_transaction(typed_tx, from).await?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
@@ -3274,7 +3274,7 @@ impl EthApi<FoundryNetwork> {
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
         let pending_transaction = if self.is_impersonated(from) {
-            let transaction = typed_tx.into_impersonated();
+            let transaction = self.backend.impersonated_transaction(typed_tx, from).await?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_resend: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
@@ -4779,7 +4779,8 @@ impl EthApi<FoundryNetwork> {
                         if let Some(pending) = protocol_pending {
                             pending
                         } else if self.is_impersonated(from) {
-                            let transaction = typed_tx.into_impersonated();
+                            let transaction =
+                                self.backend.impersonated_transaction(typed_tx, from).await?;
                             self.ensure_typed_transaction_supported(&transaction)?;
                             PendingTransaction::with_impersonated(transaction, from)
                         } else {
