@@ -1476,8 +1476,9 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// `None` when not recorded or unknown.
     pub failure_identity: Option<B256>,
     /// Where this call failed, recorded only while
-    /// [`InspectorStack::collect_failure_provenance`] is set: its failed assertions and failed
-    /// frames, by the sites that failed, in order, with their revert data. Unlike
+    /// [`InspectorStack::collect_failure_provenance`] is set: its failed assertions, by the calls
+    /// that led to them, and its failed frames, by the sites that failed, in order, with their
+    /// revert data. Unlike
     /// `failure_identity`, it depends on values, so only runs of the same input are comparable.
     ///
     /// `None` when not recorded, or when a frame halted, such as on an invalid jump, at an
@@ -3378,24 +3379,71 @@ mod tests {
     #[test]
     fn failure_provenance_tells_apart_equal_raw_failures() {
         let mut executor = failure_identity_executor(false);
-        let [check, forward, first, second, halt] =
-            [0x31, 0x32, 0x33, 0x34, 0x35].map(Address::with_last_byte);
+        let [
+            check,
+            forward,
+            first,
+            second,
+            halt,
+            wrapper,
+            other_wrapper,
+            callee,
+            sites,
+            branch,
+            checks,
+        ] = [0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b]
+            .map(Address::with_last_byte);
         // Jump to the calldata and revert empty at pc 6 from 3, or at pc 10 from 7.
         let code =
             Bytes::from_static(&[0x5f, 0x35, 0x56, 0x5b, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x5f, 0xfd]);
         executor.set_code(check, Bytecode::new_raw(code)).unwrap();
         executor.set_code(forward, Bytecode::new_raw(forwarder(check, 1))).unwrap();
+        // Jump to the calldata, call a reverting callee from pc 0x1f from 3, or from pc 0x3f from
+        // 0x23, at equal cost, then revert empty at a shared pc.
+        executor
+            .set_code(callee, Bytecode::new_raw(Bytes::from_static(&[0x5f, 0x5f, 0xfd])))
+            .unwrap();
+        let mut code = vec![0x5f, 0x35, 0x56];
+        for _ in 0..2 {
+            code.extend_from_slice(&[0x5b, 0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x73]);
+            code.extend_from_slice(callee.as_slice());
+            code.extend_from_slice(&[0x5a, 0xf1, 0x60, 0x43, 0x56]);
+        }
+        code.extend_from_slice(&[0x5b, 0x5f, 0x5f, 0xfd]);
+        executor.set_code(sites, Bytecode::new_raw(code.into())).unwrap();
+        // Jump to the calldata and branch from pc 8 from 3, or from pc 0xf from 0xa, to a shared
+        // block that calls a contract that branches and returns, then reverts empty.
+        let code = Bytes::from_static(&[0x60, 0x01, 0x60, 0x05, 0x57, 0x5b, 0x00]);
+        executor.set_code(branch, Bytecode::new_raw(code)).unwrap();
+        let mut code = vec![0x5f, 0x35, 0x56];
+        for _ in 0..2 {
+            code.extend_from_slice(&[0x5b, 0x60, 0x01, 0x60, 0x11, 0x57, 0x00]);
+        }
+        code.extend_from_slice(&[0x5b, 0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x73]);
+        code.extend_from_slice(branch.as_slice());
+        code.extend_from_slice(&[0x5a, 0xf1, 0x5f, 0x5f, 0xfd]);
+        executor.set_code(checks, Bytecode::new_raw(code.into())).unwrap();
         // Two instances of a contract failing an assertion that does not revert.
         for target in [first, second] {
             executor.set_code(target, Bytecode::new_raw(forwarder(CHEATCODE_ADDRESS, 1))).unwrap();
+        }
+        // Two wrappers making the same assertion through the first contract.
+        for target in [wrapper, other_wrapper] {
+            executor.set_code(target, Bytecode::new_raw(forwarder(first, 1))).unwrap();
         }
         let assertion =
             assertTrue_1Call { condition: false, err: "failed".to_string() }.abi_encode();
         let runs = [
             (forward, U256::from(3).to_be_bytes_vec()),
             (forward, U256::from(7).to_be_bytes_vec()),
+            (sites, U256::from(0x03).to_be_bytes_vec()),
+            (sites, U256::from(0x23).to_be_bytes_vec()),
+            (checks, U256::from(0x03).to_be_bytes_vec()),
+            (checks, U256::from(0x0a).to_be_bytes_vec()),
             (first, assertion.clone()),
-            (second, assertion),
+            (second, assertion.clone()),
+            (wrapper, assertion.clone()),
+            (other_wrapper, assertion),
         ];
         let raw_failures = |executor: &mut Executor<EthEvmNetwork>| {
             runs.clone().map(|(target, calldata)| {
@@ -3406,12 +3454,26 @@ mod tests {
         };
 
         // Without provenance, a replay cannot be checked.
-        assert_eq!(raw_failures(&mut executor), [None, None, None, None]);
+        assert!(raw_failures(&mut executor).iter().all(Option::is_none));
 
         executor.inspector_mut().collect_failure_provenance(true);
         let anchors = raw_failures(&mut executor).map(Option::unwrap);
         let exits = anchors.each_ref().map(|failure| failure.exit_reason.unwrap());
-        assert_eq!(exits, [InstrStop::Revert, InstrStop::Revert, InstrStop::Stop, InstrStop::Stop]);
+        assert_eq!(
+            exits,
+            [
+                InstrStop::Revert,
+                InstrStop::Revert,
+                InstrStop::Revert,
+                InstrStop::Revert,
+                InstrStop::Revert,
+                InstrStop::Revert,
+                InstrStop::Stop,
+                InstrStop::Stop,
+                InstrStop::Stop,
+                InstrStop::Stop
+            ]
+        );
         // Campaigns, which do not record failure identities, record the same provenance as
         // replays that do.
         executor.inspector_mut().collect_failure_identity(false);

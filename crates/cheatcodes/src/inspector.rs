@@ -1222,7 +1222,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             executor,
         );
         if let Some(provenance) = &mut self.failure_provenance {
-            provenance.finish_assertion::<FEN>(interp);
+            provenance.finish_assertion();
         }
         result
     }
@@ -1895,7 +1895,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
         }
         if self.failure_provenance.is_some() {
-            steps = steps.union(opcodes([op::REVERT, op::INVALID]));
+            steps = steps.union(opcodes([op::JUMPI, op::REVERT, op::INVALID]));
         }
         steps
     }
@@ -1951,10 +1951,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(trace) = &mut self.failure_trace {
             trace.step::<FEN>(interp, depth);
         }
-        if let Some(provenance) = &mut self.failure_provenance
-            && matches!(opcode, op::REVERT | op::INVALID)
-        {
-            provenance.record_revert::<FEN>(interp, depth);
+        if let Some(provenance) = &mut self.failure_provenance {
+            match opcode {
+                op::JUMPI => provenance.record_jumpi(depth, self.pc),
+                op::REVERT | op::INVALID => provenance.record_revert::<FEN>(interp, depth),
+                _ => {}
+            }
         }
 
         // Marks an `ORIGIN` or `GASPRICE` instruction whose pushed value `step_end` overrides.

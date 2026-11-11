@@ -912,6 +912,11 @@ pub struct FailureProvenance {
     /// Whether a frame halted at an instruction that is not recorded, so the call has no
     /// provenance.
     unknown: bool,
+    /// Sites of the calls that entered the frames in progress, by depth.
+    callers: Vec<B256>,
+    /// Pc of the latest `JUMPI` of each frame in progress, taken or not, by the depth
+    /// [`Self::record_revert`] receives.
+    jumpis: Vec<usize>,
 }
 
 impl FailureProvenance {
@@ -937,23 +942,46 @@ impl FailureProvenance {
         interpreter: &InterpreterFor<'_, '_, FEN>,
         depth: usize,
     ) {
-        self.pending_revert = Some((depth, Self::site::<FEN>(interpreter)));
+        // The optimizer shares revert blocks between checks, which the frame's latest branch
+        // tells apart.
+        let jumpi = self.jumpis.get(depth).copied().unwrap_or_default();
+        let site = Self::site::<FEN>(interpreter);
+        self.pending_revert =
+            Some((depth, keccak256([site.as_slice(), &jumpi.to_be_bytes()].concat())));
     }
 
-    /// Records the failed assertion of the finished cheatcode call, if any, at the instruction of
-    /// `interpreter` that made the call.
-    pub(crate) fn finish_assertion<FEN: FoundryEvmNetwork>(
+    /// Records the `JUMPI` about to execute at `pc` in the frame at `depth`.
+    pub(crate) fn record_jumpi(&mut self, depth: usize, pc: usize) {
+        if self.jumpis.len() <= depth {
+            self.jumpis.resize(depth + 1, 0);
+        }
+        self.jumpis[depth] = pc;
+    }
+
+    /// Records the site of `interpreter`'s call that enters the frame at `depth`.
+    pub fn enter_frame<FEN: FoundryEvmNetwork>(
         &mut self,
+        depth: usize,
         interpreter: &InterpreterFor<'_, '_, FEN>,
     ) {
+        self.callers.truncate(depth);
+        self.callers.push(Self::site::<FEN>(interpreter));
+        // The entered frame, stepped at `depth + 1`, has not branched yet.
+        self.jumpis.truncate(depth + 1);
+    }
+
+    /// Records the failed assertion of the finished cheatcode call, if any, by the sites of the
+    /// calls that led to it, so the same assertion reached through different callers differs.
+    pub(crate) fn finish_assertion(&mut self) {
         if let Some(assertion) = self.pending_assertion.take() {
-            let site = Self::site::<FEN>(interpreter);
+            let site = keccak256(self.callers.concat());
             self.fold(keccak256([site.as_slice(), assertion.as_slice()].concat()));
         }
     }
 
-    /// Records the outcome of the frame at `depth` once all inspectors have finalized it, given
-    /// the interpreter of its caller, or of the frame itself for the first frame.
+    /// Records the outcome of the frame at `depth` once all inspectors have finalized it, by the
+    /// sites of the calls that led to it, given the interpreter of its caller, or of the frame
+    /// itself for the first frame.
     pub fn finish_frame<FEN: FoundryEvmNetwork>(
         &mut self,
         depth: usize,
@@ -961,9 +989,10 @@ impl FailureProvenance {
         result: &MessageResultFor<FEN>,
     ) {
         let pending_revert = self.pending_revert.take();
-        if result.stop.is_success() {
-            return;
-        }
+        // The same callee fails the same way when entered through different calls.
+        let callers = (!result.stop.is_success()).then(|| keccak256(self.callers.concat()));
+        self.callers.truncate(depth);
+        let Some(callers) = callers else { return };
         let stop = result.stop as u8;
         let site = match pending_revert {
             Some((frame, site)) if frame == depth + 1 => site,
@@ -985,7 +1014,9 @@ impl FailureProvenance {
             }
         };
         let output = keccak256(&result.output);
-        self.fold(keccak256([site.as_slice(), &[stop], output.as_slice()].concat()));
+        self.fold(keccak256(
+            [callers.as_slice(), site.as_slice(), &[stop], output.as_slice()].concat(),
+        ));
     }
 
     /// Returns the provenance of the finished call, if known, and starts recording the next call.
