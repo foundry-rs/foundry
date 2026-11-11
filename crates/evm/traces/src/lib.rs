@@ -617,27 +617,23 @@ pub enum InternalTraceMode {
     Full,
 }
 
-/// Adds the opcodes that end a call frame or start a child call to `filter`.
+/// The opcodes that end a call frame or start a child call.
 ///
 /// A backtrace only needs the last step of each frame on the failing path, so recording these is
 /// enough for source locations.
-fn terminal_filter(filter: OpcodeFilter) -> OpcodeFilter {
-    [
-        OpCode::STOP,
-        OpCode::RETURN,
-        OpCode::REVERT,
-        OpCode::INVALID,
-        OpCode::SELFDESTRUCT,
-        OpCode::CALL,
-        OpCode::CALLCODE,
-        OpCode::DELEGATECALL,
-        OpCode::STATICCALL,
-        OpCode::CREATE,
-        OpCode::CREATE2,
-    ]
-    .into_iter()
-    .fold(filter, |filter, op| filter.enabled(op))
-}
+const TERMINAL_OPCODES: [OpCode; 11] = [
+    OpCode::STOP,
+    OpCode::RETURN,
+    OpCode::REVERT,
+    OpCode::INVALID,
+    OpCode::SELFDESTRUCT,
+    OpCode::CALL,
+    OpCode::CALLCODE,
+    OpCode::DELEGATECALL,
+    OpCode::STATICCALL,
+    OpCode::CREATE,
+    OpCode::CREATE2,
+];
 
 /// Opcode step recording granularity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -835,10 +831,16 @@ impl TraceRequirements {
                 StepRecording::Jumps => {
                     Some([OpCode::JUMP, OpCode::JUMPDEST].into_iter().map(OpCode::get).collect())
                 }
-                StepRecording::Terminal => Some(terminal_filter(OpcodeFilter::new())),
-                StepRecording::JumpsAndTerminal => Some(terminal_filter(
-                    OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST),
-                )),
+                StepRecording::Terminal => {
+                    Some(TERMINAL_OPCODES.into_iter().map(OpCode::get).collect())
+                }
+                StepRecording::JumpsAndTerminal => Some(
+                    [OpCode::JUMP, OpCode::JUMPDEST]
+                        .into_iter()
+                        .chain(TERMINAL_OPCODES)
+                        .map(OpCode::get)
+                        .collect(),
+                ),
             },
             record_precompile_calls: false,
             record_immediate_bytes: self.immediate_bytes,
