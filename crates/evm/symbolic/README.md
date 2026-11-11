@@ -663,8 +663,8 @@ solver = "z3"
 # `solver_command` is set. Entries with spaces/quotes/backslashes are parsed as
 # argv strings, not shell snippets.
 # solver_portfolio = ["yices", "z3"]
-# Per SMT query and, for stateless tests, the deferred hard-arithmetic phase.
-# This is the overall wall-clock bound for symbolic invariant exploration.
+# Per SMT query. This is also the wall-clock bound of each symbolic run, including
+# symbolic invariant exploration.
 timeout = 30
 max_depth = 10000
 max_paths = 1024
@@ -1080,7 +1080,8 @@ Incomplete runs carry a stop reason:
 
 - `Stuck`: unsupported symbolic construct or configured width/depth/query limit.
 - `RevertAll`: every explored path ended in an ordinary revert.
-- `Timeout`: solver timeout or solver `unknown`.
+- `Timeout`: run budget (`symbolic.timeout`) spent, solver timeout, or solver
+  `unknown`.
 - `Error`: backend, ABI, bytecode, or solver process failure.
 
 ## Development Checks

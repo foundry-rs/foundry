@@ -16,7 +16,6 @@ impl SymbolicExecutor {
             cx: SymCx::new(),
             solver,
             deferred_incomplete: None,
-            deadline: None,
             nested_deferred_mode: DeferredPathMode::Skip,
             stateless_retry_safe: true,
             folded_slots: FoldedSlots::default(),
@@ -34,27 +33,15 @@ impl SymbolicExecutor {
         self.equivalence.is_some()
     }
 
-    pub(super) fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
+    pub(super) fn reset_run_state(&mut self) {
         self.deferred_incomplete = None;
         self.nested_deferred_mode = DeferredPathMode::Skip;
         self.stateless_retry_safe = true;
-        self.deadline = if use_wall_clock_deadline {
-            self.config
-                .timeout
-                .filter(|seconds| *seconds > 0)
-                .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()))
-        } else {
-            None
-        };
+        self.solver.arm_deadline();
     }
 
     pub(super) fn check_timeout(&self) -> Result<(), SymbolicError> {
-        if let Some(deadline) = self.deadline
-            && Instant::now() >= deadline
-        {
-            return Err(SymbolicError::Timeout(self.config.timeout.unwrap_or_default()));
-        }
-        Ok(())
+        self.solver.check_deadline()
     }
 
     /// Defers an incomplete result until all counterexample-producing modeled paths are explored.
@@ -200,7 +187,7 @@ impl SymbolicExecutor {
         input: SymbolicRunInput<'_>,
         mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
     ) -> SymbolicRunResult {
-        self.reset_run_state(branch_candidates.is_some());
+        self.reset_run_state();
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
@@ -329,7 +316,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicInvariantRunInput<'_>,
     ) -> SymbolicInvariantRunResult {
-        self.reset_run_state(true);
+        self.reset_run_state();
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
@@ -359,7 +346,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicInvariantCandidateInput<'_>,
     ) -> SymbolicInvariantCandidateSearchResult {
-        self.reset_run_state(true);
+        self.reset_run_state();
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(error) = self.solver.check_available() {
@@ -401,7 +388,8 @@ impl SymbolicExecutor {
             .ok_or(SymbolicError::MissingAccount(input.target))?;
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
         let code = SymCode::from_bytecode(&mut self.cx, &bytecode);
-        self.folded_slots = FoldedSlots::register(&mut self.cx, &input.executor, self.deadline);
+        self.folded_slots =
+            FoldedSlots::register(&mut self.cx, &input.executor, self.solver.deadline());
         let mut roots = Vec::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config, &mut self.cx)? {
             let corpus_seed_models = input
@@ -687,7 +675,8 @@ impl SymbolicExecutor {
         );
         initial_state.apply_executor_env(&mut self.cx, &input.executor)?;
         initial_state.world.set_storage_layout(self.config.storage_layout);
-        self.folded_slots = FoldedSlots::register(&mut self.cx, &input.executor, self.deadline);
+        self.folded_slots =
+            FoldedSlots::register(&mut self.cx, &input.executor, self.solver.deadline());
         let initial = SequencePath { state: initial_state, steps: Vec::new() };
 
         // Like Forge, check the state right after `setUp` before any sequence call.

@@ -62,6 +62,7 @@ pub(crate) fn constraints_prefer_hard_arith_fallback_first(
 pub(crate) fn hard_arith_fallback_model(
     cx: &SymCx,
     constraints: &[SymBoolExpr],
+    deadline: Option<Instant>,
 ) -> Option<SymbolicModel> {
     if !constraints.iter().any(SymBoolExpr::contains_hard_arith)
         || constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
@@ -104,6 +105,7 @@ pub(crate) fn hard_arith_fallback_model(
         vars: &vars,
         candidates: &candidates,
         max_assignments: HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS,
+        deadline,
     };
     search.model(0, &mut model, &mut assignments)
 }
@@ -494,6 +496,7 @@ struct FallbackSearch<'a> {
     vars: &'a [Symbol],
     candidates: &'a [Vec<U256>],
     max_assignments: usize,
+    deadline: Option<Instant>,
 }
 
 impl FallbackSearch<'_> {
@@ -526,7 +529,7 @@ impl FallbackSearch<'_> {
         }
 
         for candidate in &self.candidates[index] {
-            if *assignments >= self.max_assignments {
+            if *assignments >= self.max_assignments || deadline_passed(self.deadline) {
                 return None;
             }
             *assignments += 1;
@@ -900,7 +903,10 @@ fn collect_bool_hard_arith_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
     });
 }
 
-pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
+pub(crate) fn fallback_single_var_model(
+    constraints: &[SymBoolExpr],
+    deadline: Option<Instant>,
+) -> Option<SymbolicModel> {
     let mut vars = SymbolicVars::default();
     let mut constants = HashSet::<U256>::default();
     for constraint in constraints {
@@ -959,6 +965,9 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     let mut candidates = candidates.into_iter().collect::<Vec<_>>();
     candidates.sort_unstable();
     for candidate in candidates {
+        if deadline_passed(deadline) {
+            return None;
+        }
         let mut model = SymbolicModel::default();
         model.insert(var, candidate);
         if eval_model_constraints(constraints, &model) {
@@ -973,7 +982,10 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
 ///
 /// Unsupported expressions and exhausted search return `None`, leaving the external solver as the
 /// authoritative fallback.
-pub(crate) fn fallback_bounded_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
+pub(crate) fn fallback_bounded_model(
+    constraints: &[SymBoolExpr],
+    deadline: Option<Instant>,
+) -> Option<SymbolicModel> {
     if constraints.iter().any(SymBoolExpr::contains_hard_arith) {
         return None;
     }
@@ -1020,6 +1032,7 @@ pub(crate) fn fallback_bounded_model(constraints: &[SymBoolExpr]) -> Option<Symb
         vars: &vars,
         candidates: &candidates,
         max_assignments: FALLBACK_MODEL_MAX_ASSIGNMENTS,
+        deadline,
     };
     let mut model = SymbolicModel::default();
     let mut assignments = 0usize;

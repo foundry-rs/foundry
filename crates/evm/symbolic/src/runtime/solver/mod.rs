@@ -120,6 +120,7 @@ impl SolverCommand {
 pub(crate) struct SmtLibSubprocessSolver {
     commands: Result<Vec<SolverCommand>, SolverConfigError>,
     timeout: Option<u32>,
+    deadline: Option<Instant>,
     max_queries: usize,
     queries: usize,
     dump_smt: bool,
@@ -148,6 +149,7 @@ impl SmtLibSubprocessSolver {
         Self {
             commands: solver_commands_for_config(config),
             timeout: config.timeout,
+            deadline: None,
             max_queries: config.max_solver_queries as usize,
             queries: 0,
             dump_smt: config.dump_smt,
@@ -199,6 +201,37 @@ impl SmtLibSubprocessSolver {
         self.normalization_cache.clear();
         self.sat_cache.clear();
         self.model_cache.clear();
+    }
+
+    /// Starts the wall-clock budget of one symbolic run.
+    pub(crate) fn arm_deadline(&mut self) {
+        self.deadline = self
+            .timeout
+            .filter(|seconds| *seconds > 0)
+            .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
+    }
+
+    /// Returns the end of the wall-clock budget of the current symbolic run.
+    pub(crate) const fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    /// Fails once the wall-clock budget of the current symbolic run is spent.
+    pub(crate) fn check_deadline(&self) -> Result<(), SymbolicError> {
+        if deadline_passed(self.deadline) {
+            return Err(SymbolicError::Timeout(self.timeout.unwrap_or_default()));
+        }
+        Ok(())
+    }
+
+    /// Returns the per-query timeout, capped by the time left in the current symbolic run.
+    fn query_timeout(&self) -> Option<Duration> {
+        self.timeout.filter(|seconds| *seconds > 0).map(|seconds| {
+            let timeout = Duration::from_secs(seconds.into());
+            self.deadline.map_or(timeout, |deadline| {
+                timeout.min(deadline.saturating_duration_since(Instant::now()))
+            })
+        })
     }
 
     /// Verifies that a configured solver can be invoked before exploration starts.
@@ -347,14 +380,14 @@ impl SmtLibSubprocessSolver {
                 }
             }
         }
-        if let Some(model) = fallback_single_var_model(&smt_constraints)
+        if let Some(model) = fallback_single_var_model(&smt_constraints, self.deadline)
             && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key.clone(), true);
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        if let Some(model) = fallback_bounded_model(&smt_constraints)
+        if let Some(model) = fallback_bounded_model(&smt_constraints, self.deadline)
             && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key.clone(), true);
@@ -372,8 +405,12 @@ impl SmtLibSubprocessSolver {
             return Ok(model);
         }
         if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints)
-            && let Some(model) =
-                validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
+            && let Some(model) = validated_hard_arith_fallback_model(
+                cx,
+                &smt_constraints,
+                constraints,
+                self.deadline,
+            )
         {
             self.heuristic_witnesses += 1;
             trace!("model: validated hard arithmetic fallback model before solver");
@@ -381,12 +418,16 @@ impl SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
+        self.check_deadline()?;
         let output = match self.query_normalized(cx, &smt_constraints, true, constraints) {
             Ok(output) => output,
             Err(SymbolicError::SolverUnknown) => {
-                if let Some(model) =
-                    validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
-                {
+                if let Some(model) = validated_hard_arith_fallback_model(
+                    cx,
+                    &smt_constraints,
+                    constraints,
+                    self.deadline,
+                ) {
                     self.heuristic_witnesses += 1;
                     trace!("model: validated hard arithmetic fallback model after solver unknown");
                     self.cache_sat_result(cache_key.clone(), true);
@@ -411,9 +452,12 @@ impl SmtLibSubprocessSolver {
                 Err(SymbolicError::Solver("counterexample path became unsat".to_string()))
             }
             "unknown" => {
-                if let Some(model) =
-                    validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
-                {
+                if let Some(model) = validated_hard_arith_fallback_model(
+                    cx,
+                    &smt_constraints,
+                    constraints,
+                    self.deadline,
+                ) {
                     self.heuristic_witnesses += 1;
                     self.cache_sat_result(cache_key.clone(), true);
                     self.cache_model_result(cache_key, model.clone());
@@ -505,13 +549,13 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
-        if let Some(model) = fallback_single_var_model(&smt_constraints)
+        if let Some(model) = fallback_single_var_model(&smt_constraints, self.deadline)
             && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
-        if let Some(model) = fallback_bounded_model(&smt_constraints)
+        if let Some(model) = fallback_bounded_model(&smt_constraints, self.deadline)
             && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key, true);
@@ -530,7 +574,9 @@ impl SmtLibSubprocessSolver {
             return Ok(BranchFeasibility::Sat);
         }
         if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints) {
-            if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some() {
+            if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints, self.deadline)
+                .is_some()
+            {
                 self.heuristic_witnesses += 1;
                 trace!("is_sat: validated hard arithmetic fallback model before solver");
                 self.cache_sat_result(cache_key, true);
@@ -541,10 +587,17 @@ impl SmtLibSubprocessSolver {
                 return Ok(BranchFeasibility::NeedsSolver);
             }
         }
+        self.check_deadline()?;
         let output = match self.query_normalized(cx, &smt_constraints, false, constraints) {
             Ok(output) => output,
             Err(SymbolicError::SolverUnknown) => {
-                if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some()
+                if validated_hard_arith_fallback_model(
+                    cx,
+                    &smt_constraints,
+                    constraints,
+                    self.deadline,
+                )
+                .is_some()
                 {
                     self.heuristic_witnesses += 1;
                     trace!("is_sat: validated hard arithmetic fallback model after solver unknown");
@@ -565,7 +618,13 @@ impl SmtLibSubprocessSolver {
                 Ok(BranchFeasibility::Unsat)
             }
             "unknown" => {
-                if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some()
+                if validated_hard_arith_fallback_model(
+                    cx,
+                    &smt_constraints,
+                    constraints,
+                    self.deadline,
+                )
+                .is_some()
                 {
                     self.heuristic_witnesses += 1;
                     self.cache_sat_result(cache_key, true);
@@ -627,12 +686,13 @@ impl SmtLibSubprocessSolver {
         let commands =
             ordered_commands.iter().map(|(_, command)| command.clone()).collect::<Vec<_>>();
 
+        let timeout = self.query_timeout();
         let mut smt = String::with_capacity(256 + smt_constraints.len().saturating_mul(192));
         smt.push_str("(set-logic QF_BV)\n");
         if commands.iter().all(|command| command.smt_timeout)
-            && let Some(timeout) = self.timeout.filter(|timeout| *timeout > 0)
+            && let Some(timeout) = timeout
         {
-            let _ = writeln!(smt, "(set-option :timeout {})", timeout.saturating_mul(1000));
+            let _ = writeln!(smt, "(set-option :timeout {})", timeout.as_millis().max(1));
         }
         for var in vars {
             let name = cx.symbol_name(var);
@@ -658,16 +718,10 @@ impl SmtLibSubprocessSolver {
             && command.program == "z3"
             && command.args == ["-in", "-smt2"]
         {
-            let output = self.query_z3(command, &smt).into_result();
+            let output = self.query_z3(command, &smt, timeout).into_result();
             SolverCommandRun { output, summaries: Vec::new() }
         } else {
-            run_solver_commands(
-                cx,
-                &commands,
-                &smt,
-                self.timeout,
-                model.then_some(model_constraints),
-            )
+            run_solver_commands(cx, &commands, &smt, timeout, model.then_some(model_constraints))
         };
         let query_time = started.elapsed();
         self.solver_time += query_time;
@@ -683,7 +737,12 @@ impl SmtLibSubprocessSolver {
         result.output
     }
 
-    fn query_z3(&mut self, command: &SolverCommand, smt: &str) -> SolverProcessOutcome {
+    fn query_z3(
+        &mut self,
+        command: &SolverCommand,
+        smt: &str,
+        timeout: Option<Duration>,
+    ) -> SolverProcessOutcome {
         let mut session = match self.z3_session.take() {
             Some(session) => session,
             None => match Z3Session::spawn(command) {
@@ -691,7 +750,7 @@ impl SmtLibSubprocessSolver {
                 Err(err) => return SolverProcessOutcome::Error(err),
             },
         };
-        let outcome = session.query(command, smt, self.timeout);
+        let outcome = session.query(command, smt, timeout);
         match outcome {
             output @ SolverProcessOutcome::Output(_) => {
                 self.z3_session = Some(session);
@@ -699,11 +758,16 @@ impl SmtLibSubprocessSolver {
             }
             SolverProcessOutcome::Error(_) => {
                 drop(session);
-                run_solver_process(command, smt, self.timeout, &AtomicBool::new(false))
+                run_solver_process(command, smt, self.query_timeout(), &AtomicBool::new(false))
             }
             other => other,
         }
     }
+}
+
+/// Returns whether a run deadline is set and has passed.
+fn deadline_passed(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|deadline| Instant::now() >= deadline)
 }
 
 fn cache_result<K, V>(cache: &mut HashMap<K, V>, key: K, value: V, max_entries: usize)
@@ -781,7 +845,8 @@ fn remove_witnessed_isolated_hash_constraints(
                 }
                 _ => expr,
             });
-            let removable = fallback_single_var_model(std::slice::from_ref(&abstracted)).is_some();
+            let removable =
+                fallback_single_var_model(std::slice::from_ref(&abstracted), None).is_some();
             (!removable).then_some(constraint)
         })
         .collect()
@@ -838,8 +903,9 @@ fn validated_hard_arith_fallback_model(
     cx: &SymCx,
     normalized_constraints: &[SymBoolExpr],
     original_constraints: &[SymBoolExpr],
+    deadline: Option<Instant>,
 ) -> Option<SymbolicModel> {
-    let model = hard_arith_fallback_model(cx, normalized_constraints)?;
+    let model = hard_arith_fallback_model(cx, normalized_constraints, deadline)?;
     eval_model_constraints(original_constraints, &model).then_some(model)
 }
 
@@ -1117,7 +1183,7 @@ fn run_solver_commands(
     cx: &SymCx,
     commands: &[SolverCommand],
     smt: &str,
-    timeout: Option<u32>,
+    timeout: Option<Duration>,
     model_constraints: Option<&[SymBoolExpr]>,
 ) -> SolverCommandRun {
     if commands.is_empty() {
@@ -1473,7 +1539,7 @@ impl Z3Session {
         &mut self,
         command: &SolverCommand,
         smt: &str,
-        timeout: Option<u32>,
+        timeout: Option<Duration>,
     ) -> SolverProcessOutcome {
         if let Err(err) = self
             .stdin
@@ -1486,9 +1552,6 @@ impl Z3Session {
         }
 
         let started_at = Instant::now();
-        let timeout = timeout
-            .filter(|seconds| *seconds > 0)
-            .map(|seconds| Duration::from_secs(seconds.into()));
         let mut output = String::new();
         loop {
             let Some(wait) = solver_wait_duration(started_at.elapsed(), timeout) else {
@@ -1551,7 +1614,7 @@ fn spawn_solver_process(command: &SolverCommand) -> Result<SolverChild, String> 
 fn run_solver_process(
     command: &SolverCommand,
     smt: &str,
-    timeout: Option<u32>,
+    timeout: Option<Duration>,
     cancel: &AtomicBool,
 ) -> SolverProcessOutcome {
     let mut child = match spawn_solver_process(command) {
@@ -1566,8 +1629,6 @@ fn run_solver_process(
     }
 
     let started_at = Instant::now();
-    let timeout =
-        timeout.filter(|seconds| *seconds > 0).map(|seconds| Duration::from_secs(seconds.into()));
     loop {
         if cancel.load(Ordering::SeqCst) {
             return SolverProcessOutcome::Cancelled;

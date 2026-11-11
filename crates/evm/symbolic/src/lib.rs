@@ -576,7 +576,6 @@ pub struct SymbolicExecutor {
     cx: runtime::SymCx,
     solver: runtime::SmtLibSubprocessSolver,
     deferred_incomplete: Option<DeferredIncomplete>,
-    deadline: Option<Instant>,
     nested_deferred_mode: DeferredPathMode,
     stateless_retry_safe: bool,
     folded_slots: runtime::FoldedSlots,

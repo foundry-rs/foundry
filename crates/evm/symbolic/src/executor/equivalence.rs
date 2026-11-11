@@ -111,7 +111,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicEquivalenceInput<'_>,
     ) -> SymbolicEquivalenceResult {
-        self.reset_run_state(true);
+        self.reset_run_state();
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if input.code_a == input.code_b {

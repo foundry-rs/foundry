@@ -136,13 +136,6 @@ impl SymbolicExecutor {
             let Some(state) = self.pop_next_path(deferred_paths) else {
                 return Ok(None);
             };
-            if self.deadline.is_none() {
-                self.deadline = self
-                    .config
-                    .timeout
-                    .filter(|seconds| *seconds > 0)
-                    .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
-            }
             self.check_timeout()?;
             trace!("escalating deferred hard arithmetic branch to SMT solver");
             match self.is_sat_with_state(&state, &state.constraints) {

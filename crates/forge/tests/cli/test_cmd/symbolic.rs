@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
     process::Command,
+    time::{Duration, Instant},
 };
 
 use super::symbolic_helpers::{
@@ -8058,7 +8059,15 @@ fn symbolic_xor_specialist_limits_fall_back(prj: _, cmd: _) {
     source.push_str("assert(x == a);\n}\n}\n");
     prj.add_test("XorLimits.t.sol", &source);
     let output = cmd
-        .args(["test", "--symbolic", "--json", "--match-contract", "XorLimitsTest"])
+        .args([
+            "test",
+            "--symbolic",
+            "--symbolic-timeout",
+            "120",
+            "--json",
+            "--match-contract",
+            "XorLimitsTest",
+        ])
         .assert_failure()
         .get_output()
         .stdout
@@ -8071,7 +8080,9 @@ fn symbolic_xor_specialist_limits_fall_back(prj: _, cmd: _) {
 }
 
 // Each Babylonian square-root iteration nests the previous estimate inside a division-by-zero
-// `ite` condition. Normalizing those words must stay polynomial in the loop depth.
+// `ite` condition. Normalizing those words must stay polynomial in the loop depth. Encoding a
+// symbolic-length `bytes` makes many slow solver steps that ran for about 40 s with a 1 s timeout
+// before the run deadline; the run must now end within about the timeout.
 #[forgetest_init]
 fn symbolic_normalizes_nested_division_loop(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_normalizes_nested_division_loop");
@@ -8098,6 +8109,12 @@ contract SymbolicSqrt {
         uint256 r = sqrt(x);
         assert(r * r <= x);
     }
+
+    /// forge-config: default.symbolic.timeout = 1
+    function checkEncodeSymbolicLength(uint256 n) public pure {
+        bytes memory encoded = abi.encode(new bytes(n % 3));
+        assert(encoded.length >= 64);
+    }
 }
 "#,
     );
@@ -8111,6 +8128,24 @@ contract SymbolicSqrt {
     assert_eq!(result["symbolic"]["status"], "incomplete", "{result}");
     assert_eq!(
         result["symbolic"]["incomplete"]["reason"], "symbolic execution timeout exceeded (1s)",
+        "{result}"
+    );
+
+    let started = Instant::now();
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--match-test", "checkEncodeSymbolicLength"])
+        .assert()
+        .get_output()
+        .stdout
+        .clone();
+    let elapsed = started.elapsed();
+    assert!(elapsed < Duration::from_secs(11), "took {elapsed:?} with a 1 s timeout");
+    let result = json_test_result(&output, "checkEncodeSymbolicLength(uint256)");
+    let symbolic = &result["symbolic"];
+    assert!(
+        symbolic["status"] == "pass"
+            || (symbolic["status"] == "incomplete" && symbolic["incomplete"]["kind"] == "timeout"),
         "{result}"
     );
 }
