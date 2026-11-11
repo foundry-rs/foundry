@@ -8762,6 +8762,8 @@ contract CreatedStorageForkTest is Store {
         return new Store();
     }
 
+    function poke() external {}
+
     function testForkCreatedInEarlierTransaction() public {
         vm.selectFork(fork);
         require(created.get() == 0, "created in setUp");
@@ -8773,6 +8775,8 @@ contract CreatedStorageForkTest is Store {
         Store store = this.selectAndCreate();
         require(store.get() == 0, "created in a switching call");
         require(store.written() == 1, "written in a switching call");
+        this.poke();
+        require(store.written() == 1, "written after a later call");
     }
 }
 "#
@@ -8790,5 +8794,5 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]];
     cmd.args(["test"]).assert_success().stdout_eq(output.clone());
-    cmd.forge_fuse().args(["test", "--isolate"]).assert_success().stdout_eq(output);
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
 }

@@ -1549,6 +1549,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     }
                 }
             }
+            // The new transaction overlay does not know which accounts the running transaction
+            // created, so a later isolated call that loads them would merge them as new and wipe
+            // their storage. Its database already holds their storage.
+            for address in &self.inner.tx_created {
+                if let Ok(mut account) = evm.state_mut().account(address)
+                    && account.exists()
+                {
+                    account.mark_created();
+                }
+            }
             // Unless the call switched forks, the running transaction's state stays in place: it
             // keeps the warmth it had, except for accounts it holds cold.
             let keeps_cold = restored || !fork_changed;
