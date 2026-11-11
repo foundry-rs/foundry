@@ -75,15 +75,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if !db.is_forked_mode() {
             return true;
         }
-        let Some((creator, ancestors)) = self.frame_access.split_last() else {
-            return true;
-        };
 
         // Trusted callbacks may grant children access despite untrusted callers. Untrusted code
         // borrowing an authorized context must not gain access through an authorized factory.
-        db.has_cheatcode_access(&creator.context)
-            && (creator.code == creator.context || db.has_cheatcode_access(&creator.code))
-            && ancestors.iter().all(|frame| {
+        self.frame_access.last().is_none_or(|creator| db.has_cheatcode_access(&creator.context))
+            && self.frame_access.iter().all(|frame| {
                 frame.code == frame.context
                     || !db.has_cheatcode_access(&frame.context)
                     || db.has_cheatcode_access(&frame.code)
