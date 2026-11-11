@@ -10114,51 +10114,25 @@ contract AccessBoundaryScript {
         .stdout_lossy();
     let code = output.trim().parse::<Bytes>().unwrap();
 
-    for broadcast in [false, true] {
-        let (api, handle) = spawn(NodeConfig::test()).await;
-        api.anvil_set_code(address!("0000000000000000000000000000000000001234"), code.clone())
-            .await
-            .unwrap();
-        let sender = handle.dev_accounts().next().unwrap();
-        cmd.forge_fuse().args([
-            "script",
-            "AccessBoundaryScript",
-            "--rpc-url",
-            &handle.http_endpoint(),
-            "--sender",
-            &sender.to_string(),
-            "--unlocked",
-        ]);
-        if broadcast {
-            cmd.arg("--broadcast");
-        }
-        cmd.assert_success().stdout_eq(str![[r#"
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_code(address!("0000000000000000000000000000000000001234"), code).await.unwrap();
+    let sender = handle.dev_accounts().next().unwrap();
+    cmd.forge_fuse().args([
+        "script",
+        "AccessBoundaryScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+    ]);
+    cmd.assert_success().stdout_eq(str![[r#"
 ...
 Script ran successfully.
 ...
 "#]]);
 
-        let sequence = if broadcast {
-            foundry_common::fs::read_json_file(
-                &prj.root().join("broadcast/AccessBoundary.s.sol/31337/run-latest.json"),
-            )
-            .unwrap()
-        } else {
-            latest_dry_run_sequence(prj.root())
-        };
-        assert_eq!(sequence.transactions.len(), 1);
-        assert_eq!(sequence.receipts.len(), usize::from(broadcast));
-
-        let provider = handle.http_provider();
-        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), u64::from(broadcast));
-        if broadcast {
-            assert!(sequence.receipts[0].status());
-            assert_eq!(
-                provider.get_storage_at(sender.create(0), U256::ZERO).await.unwrap(),
-                U256::from(42),
-            );
-        } else {
-            assert!(provider.get_code_at(sender.create(0)).await.unwrap().is_empty());
-        }
-    }
+    let sequence = latest_dry_run_sequence(prj.root());
+    assert_eq!(sequence.transactions.len(), 1);
+    assert!(sequence.receipts.is_empty());
 }

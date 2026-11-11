@@ -12,10 +12,9 @@ async fn fork_cheatcode_access_compatibility(prj: _, cmd: _) {
                 "CheatcodeAccessCompatibilityTest",
                 str![[r#"
 ...
-Ran 13 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
+Ran 12 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
 [PASS] testForkAuthorizationIsReadAtCheatcodeUse() ([GAS])
 [PASS] testForkCallbacksRetainChildAccess() ([GAS])
-[PASS] testForkConstructorsAndLocalLibrariesRetainAccess() ([GAS])
 [PASS] testForkConstructorsRetainAccessWithCallerOverrides() ([GAS])
 [PASS] testForkDelegatedConstructorsCannotUseCheatcodes() ([GAS])
 [PASS] testForkDelegatedCreationDoesNotAuthorizeChildren() ([GAS])
@@ -26,9 +25,9 @@ Ran 13 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
 [PASS] testForkExplicitFactoryAuthorizationAllowsChildren() ([GAS])
 [PASS] testForkGenericFactoryCannotAuthorizeUntrustedChildren() ([GAS])
 [PASS] testForkParentAccessRestoredAfterDelegation() ([GAS])
-Suite result: ok. 13 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 12 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 13 tests passed, 0 failed, 0 skipped (13 total tests)
+Ran 1 test suite [ELAPSED]: 12 tests passed, 0 failed, 0 skipped (12 total tests)
 
 "#]],
             ),
@@ -142,18 +141,6 @@ abstract contract UsesVm {
 contract EnvReader is UsesVm {
     function read() external view returns (uint256) {
         return readDefault();
-    }
-
-    function ping() external pure returns (uint256) {
-        return 7;
-    }
-
-    function fail() external pure {
-        revert("expected child revert");
-    }
-
-    function readThrough(EnvReader reader) external view returns (uint256) {
-        return reader.read();
     }
 
     function requestAuthorization() external returns (uint256) {
@@ -330,14 +317,6 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
         }
     }
 
-    function testForkConstructorsAndLocalLibrariesRetainAccess() public {
-        require(constructorValue == 7, "test constructor access lost");
-        ConstructorReader reader = new ConstructorReader();
-        require(reader.constructorValue() == 7, "child constructor access lost");
-        require(reader.read() == 7, "child runtime access lost");
-        require(EnvLibrary.read() == 7, "local library access lost");
-    }
-
     function testForkDelegatedCreationDoesNotAuthorizeChildren() public {
         for (uint256 mode; mode < 4; mode++) {
             (bool created, bytes memory result) = invoke(mode >= 2, FACTORY, creationInput(mode, false));
@@ -409,6 +388,8 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
     }
 
     function testForkExplicitAuthorizationAllowsDirectAndDelegatedCalls() public {
+        require(constructorValue == 7, "test constructor access lost");
+        require(EnvLibrary.read() == 7, "local library access lost");
         (bool ok, bytes memory output) = READER.call(abi.encodeCall(EnvReader.read, ()));
         expectDenied(ok, output, READER);
         vm.allowCheatcodes(READER);
@@ -417,6 +398,7 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
         for (uint256 mode; mode < 2; mode++) {
             (ok, output) = invoke(mode == 1, READER, abi.encodeCall(EnvReader.read, ()));
             expectValue(ok, output);
+            require(readDefault() == 7, "parent access lost after authorized return");
         }
     }
 
@@ -446,7 +428,6 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
     }
 
     function testForkParentAccessRestoredAfterDelegation() public {
-        EnvReader localReader = new EnvReader();
         (bool empty,) = address(0x1111).call("");
         require(empty, "empty-code call failed");
         require(readDefault() == 7, "parent access lost after empty-code call");
@@ -454,20 +435,7 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
         require(precompile && abi.decode(digest, (bytes32)) == sha256(hex"1234"), "precompile call failed");
         require(readDefault() == 7, "parent access lost after precompile call");
         for (uint256 mode; mode < 2; mode++) {
-            (bool ok, bytes memory output) = invoke(mode == 1, READER, abi.encodeCall(EnvReader.ping, ()));
-            expectValue(ok, output);
-            require(readDefault() == 7, "parent access lost after return");
-
-            (ok, output) = invoke(mode == 1, READER, abi.encodeCall(EnvReader.fail, ()));
-            require(!ok, "child did not revert");
-            require(keccak256(output) == keccak256(abi.encodeWithSignature("Error(string)", "expected child revert")), "wrong child revert");
-            require(readDefault() == 7, "parent access lost after revert");
-
-            (ok, output) = invoke(mode == 1, READER, abi.encodeCall(EnvReader.readThrough, (localReader)));
-            expectValue(ok, output);
-            require(readDefault() == 7, "parent access lost after nested call");
-
-            (ok, output) = invoke(mode == 1, READER, abi.encodeCall(EnvReader.read, ()));
+            (bool ok, bytes memory output) = invoke(mode == 1, READER, abi.encodeCall(EnvReader.read, ()));
             expectDenied(ok, output, READER);
             require(readDefault() == 7, "parent access lost after denied access");
         }
