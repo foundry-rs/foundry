@@ -91,13 +91,15 @@ macro_rules! with_evm_network {
 }
 pub(crate) use with_evm_network;
 
-/// Network-neutral outcome flags of an executed transaction.
+/// Network-neutral outcome data of an executed transaction.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResultExt {
     /// Whether an OP-stack deposit failed and kept only its mint and nonce bump.
     pub failed_deposit: bool,
     /// Per-phase statuses of an included signed Base EIP-8130 transaction.
     pub eip8130_phase_statuses: Option<Vec<u8>>,
+    /// Gas reported by simulations, resolved before erasing the execution family.
+    pub simulation_gas_used: u64,
 }
 
 /// Network-neutral transaction result.
@@ -682,6 +684,7 @@ pub fn exec_result<N: AnvilEvmNetwork>(result: TxResult<TypesFor<N>>) -> ExecRes
     let ext = ResultExt {
         failed_deposit: result.ext.is_failed_deposit(),
         eip8130_phase_statuses: result.ext.eip8130_phase_statuses().map(<[u8]>::to_vec),
+        simulation_gas_used: FoundryTxResultExt::simulation_gas_used(&result),
     };
     result.with_ext(ext)
 }

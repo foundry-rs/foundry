@@ -24,8 +24,9 @@ revm 43 and alloy-evm 0.39 through `base-evm2` and the Base crates it depends on
 
 Gas consumers distinguish receipt charges from execution consumption. Monad uses
 [`category-labs/monad-alloy-evm2`](https://github.com/category-labs/monad-alloy-evm2): ordinary
-transactions charge their full gas limit, including on revert. Receipts, block accounting and
-access-list RPC results retain that charge. Anvil estimates from `total_gas_spent` and verifies
+transactions charge their full gas limit, including on revert. Receipts and block accounting
+retain that charge. Access-list RPC results report simulation gas through the execution family's
+result adapter. Anvil estimates from `total_gas_spent` and verifies
 the required limit by execution. Forge's result adapter reports Monad consumption while retaining
 Ethereum's calldata floor and refunds. Monad script estimates still cover the required calldata
 floor. Isolated frames pay their calldata floor rather than a full-limit receipt charge. The

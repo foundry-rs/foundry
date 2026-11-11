@@ -2816,3 +2816,48 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
     }
 }
+
+#[cfg(feature = "monad")]
+#[forgetest_init]
+fn monad_storage_warmth_cheatcodes(prj: _, cmd: _) {
+    prj.add_test(
+        "MonadStorageWarmth.t.sol",
+        include_str!("../../fixtures/MonadStorageWarmth.t.sol"),
+    );
+    prj.update_config(|config| {
+        config.hardfork = Some("monad:MonadTen".parse().unwrap());
+        config.isolate = false;
+    });
+    cmd.forge_fuse()
+        .args(["test", "--network", "monad", "--mc", "MonadStorageWarmthTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 8 tests for test/MonadStorageWarmth.t.sol:MonadStorageWarmthTest
+[PASS] test_cool_clears_loaded_pages() ([GAS])
+[PASS] test_explicit_slot_warmth_updates_page() ([GAS])
+[PASS] test_load_warms_only_its_page() ([GAS])
+[PASS] test_snapshot_restores_page_warmth() ([GAS])
+[PASS] test_store_preserves_first_write_charge() ([GAS])
+[PASS] test_store_seeds_warm_pages() ([GAS])
+[PASS] test_store_warmth_reverts_with_frame() ([GAS])
+[PASS] test_warmth_preserves_write_and_growth_accounting() ([GAS])
+Suite result: ok. 8 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    for hardfork in ["monad:MonadNine", "prague"] {
+        prj.update_config(|config| config.hardfork = Some(hardfork.parse().unwrap()));
+        let network = if hardfork == "prague" { "ethereum" } else { "monad" };
+        cmd.forge_fuse()
+            .args(["test", "--network", network, "--mc", "StorageSlotWarmthTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadStorageWarmth.t.sol:StorageSlotWarmthTest
+[PASS] test_store_retains_slot_warmth_before_monad_ten() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}

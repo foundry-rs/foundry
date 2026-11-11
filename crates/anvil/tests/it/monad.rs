@@ -179,10 +179,9 @@ async fn monad_ten_deduplicates_access_list_storage_pages() {
             .await
             .unwrap();
         assert_eq!(different_page_estimate - same_page_estimate, gas_delta);
-        // Access-list gasUsed describes the receipt charge, whereas estimation finds the
-        // smallest successful limit with that access list.
-        assert_eq!(same_page.gas_used, U256::from(100_000));
-        assert_eq!(different_page.gas_used, U256::from(100_000));
+        assert_eq!(different_page.gas_used - same_page.gas_used, U256::from(gas_delta));
+        assert_eq!(same_page.gas_used, U256::from(same_page_estimate));
+        assert_eq!(different_page.gas_used, U256::from(different_page_estimate));
     }
 }
 
@@ -2648,10 +2647,26 @@ async fn monad_estimates_consumption_and_receipts_charge_the_limit() {
     for limit in [100_000, 1_000_000] {
         let request = storage_gas_probe_call().with_from(sender).with_gas_limit(limit);
         assert_eq!(provider.estimate_gas(request.clone()).await.unwrap(), 21_004);
+        let access_list = provider.create_access_list(&request).await.unwrap();
+        assert_eq!(access_list.error, None);
+        assert!(access_list.access_list.is_empty());
+        assert_eq!(access_list.gas_used, U256::from(21_004));
         let receipt =
             provider.send_transaction(request).await.unwrap().get_receipt().await.unwrap();
         assert!(receipt.status());
         assert_eq!(receipt.gas_used(), limit);
+        let block =
+            provider.get_block_by_hash(receipt.block_hash().unwrap()).await.unwrap().unwrap();
+        assert_eq!(block.header.gas_used, limit);
+    }
+
+    // A reverting simulation reports consumption too, without committing a transaction.
+    api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, bytes!("5f5ffd")).await.unwrap();
+    for limit in [100_000, 1_000_000] {
+        let request = storage_gas_probe_call().with_from(sender).with_gas_limit(limit);
+        let access_list = provider.create_access_list(&request).await.unwrap();
+        assert_eq!(access_list.error.as_deref(), Some("execution reverted"));
+        assert_eq!(access_list.gas_used, U256::from(21_004));
     }
 
     for code in [bytes!("5f5ffd"), bytes!("fe")] {

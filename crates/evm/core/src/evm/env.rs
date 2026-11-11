@@ -2,7 +2,7 @@
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, fake_exponential};
-use alloy_primitives::{U256, map::AddressMap};
+use alloy_primitives::{Address, U256, map::AddressMap};
 use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, TxResultExt, Version, env::BlockEnv, evm::AccountInfo,
 };
@@ -153,6 +153,12 @@ pub trait FoundryExecutionHooks: EvmTypes {
     fn tx_call_depth_offset(_tx: &Self::Tx) -> u16 {
         0
     }
+
+    /// Sets storage warmth after an out-of-band access or an explicit warmth cheatcode.
+    /// Networks with a larger access unit update that unit alongside the individual slot.
+    fn set_storage_warm(evm: &mut Evm<'_, Self>, address: &Address, slot: U256, warm: bool) {
+        evm.state_mut().set_storage_warm(address, slot, warm);
+    }
 }
 
 /// Per-EVM network state, such as OP L1 block info or Monad's reserve-balance context.
@@ -300,7 +306,7 @@ pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
         None
     }
 
-    /// Gas reported by Forge simulations and used to seed script gas estimation.
+    /// Gas reported by simulations, including access lists, and used for script gas estimation.
     ///
     /// Ordinarily this is receipt gas, including calldata floors and refunds. Networks that
     /// charge unused gas report consumption here; their receipts retain `tx_gas_used()`.

@@ -555,6 +555,8 @@ pub struct CallOutcome {
     pub gas_used: u128,
     /// Gas consumed before refunds and receipt floors, including intrinsic gas.
     pub gas_spent: u128,
+    /// Gas reported by simulations under the selected execution family's rules.
+    pub simulation_gas_used: u128,
     /// State changes of the call.
     pub state: PendingState,
 }
@@ -565,6 +567,7 @@ impl From<Executed> for CallOutcome {
             exit: result.stop,
             gas_used: result.tx_gas_used() as u128,
             gas_spent: result.total_gas_spent as u128,
+            simulation_gas_used: result.ext.simulation_gas_used as u128,
             output: result.output,
             state,
         }
@@ -3950,7 +3953,7 @@ impl<N: Network> Backend<N> {
             access_list
         };
         let result = executed.result;
-        Ok((result.stop, result.output.clone(), result.tx_gas_used(), access_list))
+        Ok((result.stop, result.output.clone(), result.ext.simulation_gas_used, access_list))
     }
 
     /// Restores the block's base and blob base fees that a zero-fee call env clears. Like geth,

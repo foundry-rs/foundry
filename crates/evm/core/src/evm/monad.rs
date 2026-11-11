@@ -20,6 +20,7 @@ use evm2::{
 use monad_evm2::{
     MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
     MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_tx_registry, monad_version,
+    page::set_storage_page_warm,
     protocol_system_call,
     reserve_balance::{reserve_account, sync_reserve_balance},
     staking::constants::SYSTEM_ADDRESS,
@@ -243,5 +244,10 @@ impl FoundryExecutionHooks for MonadEvmTypes {
         ext.reserve_balance.rebase(&chain, |address| {
             views.iter().find(|(tracked, _)| *tracked == address).map(|(_, view)| *view)
         });
+    }
+
+    fn set_storage_warm(evm: &mut Evm<'_, Self>, address: &Address, slot: U256, warm: bool) {
+        evm.state_mut().set_storage_warm(address, slot, warm);
+        set_storage_page_warm(evm, *address, slot, warm);
     }
 }

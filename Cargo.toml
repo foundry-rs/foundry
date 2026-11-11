@@ -377,7 +377,7 @@ tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "f099fd9e
 op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b6116c79df5f3c14de93e4350357beb0fe31cae7", default-features = false }
 base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b6116c79df5f3c14de93e4350357beb0fe31cae7", default-features = false }
 # Monad's maintained evm2 type family.
-monad-evm2 = { git = "https://github.com/category-labs/monad-alloy-evm2", rev = "80b36bc4f39166cf2ee3298a0074e671e0479124", default-features = false }
+monad-evm2 = { git = "https://github.com/category-labs/monad-alloy-evm2", rev = "18e6e03cb7e97b3fe7bb70d1f946a89766ae5c49", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.5.0", default-features = false }

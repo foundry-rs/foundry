@@ -342,6 +342,7 @@ impl Cheatcode for loadCall {
                 .map_err(|e| fmt_err!("failed to load storage slot: {e}"))?;
             (slot.warm(), slot.current())
         };
+        TypesFor::<FEN>::set_storage_warm(ccx.evm, &target, slot.into(), true);
 
         if is_cold
             && value.is_zero()
@@ -925,6 +926,7 @@ impl Cheatcode for storeCall {
         warm_storage_slot(state, &target, slot.into())
             .map_err(|e| fmt_err!("failed to store storage slot: {e}"))?
             .set(value.into());
+        TypesFor::<FEN>::set_storage_warm(ccx.evm, &target, slot.into(), true);
         ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
         Ok(Default::default())
     }
@@ -965,10 +967,9 @@ impl Cheatcode for coolCall {
             let (evm, db) = ccx.evm_db_mut();
             db.remove_prewarm(evm.state_mut(), target);
         }
-        let state = ccx.evm.state_mut();
-        state.set_account_warm(target, false);
+        ccx.evm.state_mut().set_account_warm(target, false);
         for slot in slots {
-            state.set_storage_warm(target, slot, false);
+            TypesFor::<FEN>::set_storage_warm(ccx.evm, target, slot, false);
         }
         Ok(Default::default())
     }
@@ -1003,7 +1004,7 @@ impl Cheatcode for noAccessListCall {
 impl Cheatcode for warmSlotCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
-        ccx.evm.state_mut().set_storage_warm(&target, slot.into(), true);
+        TypesFor::<FEN>::set_storage_warm(ccx.evm, &target, slot.into(), true);
         Ok(Default::default())
     }
 }
@@ -1011,7 +1012,7 @@ impl Cheatcode for warmSlotCall {
 impl Cheatcode for coolSlotCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
-        ccx.evm.state_mut().set_storage_warm(&target, slot.into(), false);
+        TypesFor::<FEN>::set_storage_warm(ccx.evm, &target, slot.into(), false);
         Ok(Default::default())
     }
 }

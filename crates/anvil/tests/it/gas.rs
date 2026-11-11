@@ -1076,3 +1076,47 @@ async fn gas_limit_below_calldata_floor() {
     assert_eq!(err.message, "intrinsic gas too high -- CallGasCostMoreThanGasLimit");
     assert_eq!(provider.get_block_number().await.unwrap(), 0);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn access_list_gas_retains_ethereum_floor_and_refunds() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let contract = Address::repeat_byte(0x54);
+
+    // STOP leaves the calldata floor above execution consumption.
+    api.anvil_set_code(contract, bytes!("00")).await.unwrap();
+    let request = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(sender)
+            .to(contract)
+            .gas_limit(200_000)
+            .input(Bytes::from(vec![1; 1000]).into()),
+    );
+    let access_list = provider.create_access_list(&request).await.unwrap();
+    assert_eq!(access_list.error, None);
+    assert_eq!(access_list.gas_used, U256::from(61_000));
+    let receipt = provider.send_transaction(request).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+    assert_eq!(U256::from(receipt.gas_used()), access_list.gas_used);
+
+    // Clearing an existing slot refunds 4,800 gas with the generated access list applied.
+    api.anvil_set_code(contract, bytes!("5f5f5500")).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    let request = WithOtherFields::new(
+        TransactionRequest::default().from(sender).to(contract).gas_limit(200_000),
+    );
+    let access_list = provider.create_access_list(&request).await.unwrap();
+    assert_eq!(access_list.error, None);
+    assert_eq!(access_list.gas_used, U256::from(23_404));
+    let receipt = provider
+        .send_transaction(request.with_access_list(access_list.access_list))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+    assert_eq!(U256::from(receipt.gas_used()), access_list.gas_used);
+}

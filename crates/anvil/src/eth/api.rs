@@ -3879,7 +3879,7 @@ impl EthApi<FoundryNetwork> {
                 // EVM failures (including reverts) are surfaced in the result's `error`
                 // field per the execution-apis `eth_createAccessList` spec, so callers
                 // can still inspect the traced slots when execution fails.
-                let CallOutcome { exit, gas_used, .. } =
+                let CallOutcome { exit, simulation_gas_used, .. } =
                     self.backend.call_with_state_typed_access_list(
                         &cache_db,
                         typed_request,
@@ -3891,7 +3891,7 @@ impl EthApi<FoundryNetwork> {
 
                 Ok(AccessListResult {
                     access_list,
-                    gas_used: U256::from(gas_used),
+                    gas_used: U256::from(simulation_gas_used),
                     error: execution_error(exit),
                 })
             })
