@@ -1203,7 +1203,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn has_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
-        self.comments.iter().filter(|c| c.pos() > start_pos && c.pos() < end_pos).any(|_| true)
+        self.has_comment_before_with(end_pos, |c| c.pos() > start_pos)
     }
 
     fn has_breakable_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
