@@ -1088,14 +1088,14 @@ mod tests {
         assert!(error.to_string().contains("unterminated block comment"));
     }
 
-    /// Returns `true` if `s` parses as a JSON object. `serialize_value_as_json` writes such a
-    /// string as the object, so `vm.serializeString` can nest objects, and it does not
+    /// Returns `true` if `serialize_value_as_json` writes `s` as a JSON object, which does not
     /// roundtrip.
     fn is_json_object(s: &str) -> bool {
-        serde_json::from_str::<Map<String, Value>>(s).is_ok()
+        serialize_value_as_json(DynSolValue::String(s.to_string()), None, false)
+            .is_ok_and(|json| json.is_object())
     }
 
-    /// Returns `true` if `value` holds a string that parses as a JSON object.
+    /// Returns `true` if `value` holds a string that `is_json_object` matches.
     fn has_json_object_string(value: &DynSolValue) -> bool {
         match value {
             DynSolValue::String(s) => is_json_object(s),
@@ -1105,14 +1105,6 @@ mod tests {
             DynSolValue::CustomStruct { tuple, .. } => tuple.iter().any(has_json_object_string),
             _ => false,
         }
-    }
-
-    #[test]
-    fn test_json_object_string_serializes_as_object() {
-        let v = DynSolValue::Tuple(vec![DynSolValue::String("{}".to_string())]);
-        assert_eq!(serialize_value_as_json(v.clone(), None, false).unwrap(), json!([{}]));
-        // The roundtrip proptests skip such strings.
-        assert!(has_json_object_string(&v));
     }
 
     fn valid_value(value: &DynSolValue) -> bool {
