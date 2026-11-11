@@ -652,11 +652,11 @@ reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 
-# The single evm2 revision for the whole graph: alloy-rs/evm2 main at `66687c1`. Tempo, reth,
-# reth-core and evm2-networks all pin `alloy-rs/evm2`, at different revisions. Cargo rejects a
-# patch from the same source, so this goes through `DaniPopes/evm2`, the pre-transfer URL of
-# alloy-rs/evm2, which GitHub redirects to it.
+# The single evm2 revision for the whole graph: alloy-rs/evm2 main at `ae1ebac` plus
+# `State::reload_storage_slot` (alloy-rs/evm2#1073), until that merges. Tempo, reth, reth-core and
+# evm2-networks all pin `alloy-rs/evm2`, at different revisions. Cargo rejects a patch from the
+# same source, so this goes through a fork.
 [patch."https://github.com/alloy-rs/evm2"]
-evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "66687c18b34d3bdbb899f5eb7605070615c03475" }
-evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "66687c18b34d3bdbb899f5eb7605070615c03475" }
-evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "66687c18b34d3bdbb899f5eb7605070615c03475" }
+evm2 = { git = "https://github.com/stevencartavia/evm2", rev = "b1f1b7e9a0f8909580ca9665ea8b77d0f4c2ebcd" }
+evm2-inspectors = { git = "https://github.com/stevencartavia/evm2", rev = "b1f1b7e9a0f8909580ca9665ea8b77d0f4c2ebcd" }
+evm2-macros = { git = "https://github.com/stevencartavia/evm2", rev = "b1f1b7e9a0f8909580ca9665ea8b77d0f4c2ebcd" }
