@@ -3089,7 +3089,7 @@ mod tests {
     }
 
     #[test]
-    fn failure_identity_is_unknown_without_a_recorded_origin() {
+    fn failure_identity_needs_a_recorded_origin() {
         let target = Address::with_last_byte(0x31);
         let identity = |executor: &mut Executor<EthEvmNetwork>, calls: &[Vec<u8>]| {
             let code = Bytecode::new_raw(vm_script(calls, &[0x00]));
@@ -3112,13 +3112,49 @@ mod tests {
         }
         let mut executor = failure_identity_executor(false);
         assert!(identity(&mut executor, &[snapshot, assertion.abi_encode()]).is_some());
-        // A `fail()` that only writes the global failure slot has no recorded origin.
+
+        // A `fail()` is identified by its call site, even after a caught assertion that reverted
+        // and so did not fail the call.
+        let mut executor = failure_identity_executor(true);
         let fail = storeCall {
             target: CHEATCODE_ADDRESS,
             slot: GLOBAL_FAIL_SLOT.into(),
             value: B256::with_last_byte(1),
+        }
+        .abi_encode();
+        // Catch the assertion, then call `fail()` at either of two sites chosen by the calldata.
+        let assertion = assertion.abi_encode();
+        let data = 119;
+        let block = |call: &[u8], offset: usize| {
+            let mut block = vm_script(&[call.to_vec()], &[])[..37].to_vec();
+            block[3..5].copy_from_slice(&u16::try_from(offset).unwrap().to_be_bytes());
+            block
         };
-        assert_eq!(identity(&mut executor, &[fail.abi_encode()]), None);
+        let mut code = block(&assertion, data);
+        code.extend_from_slice(&[0x5f, 0x35, 0x60, 0x50, 0x57]);
+        code.extend(block(&fail, data + assertion.len()));
+        code.extend_from_slice(&[0x00, 0x5b]);
+        code.extend(block(&fail, data + assertion.len()));
+        code.push(0x00);
+        assert_eq!((code[0x50], code.len()), (0x5b, data));
+        code.extend_from_slice(&assertion);
+        code.extend(fail);
+        executor.set_code(target, Bytecode::new_raw(code.into())).unwrap();
+        executor.inspector_mut().collect_failure_provenance(true);
+        let [first, second] = [U256::ZERO, U256::ONE].map(|site| {
+            let calldata = site.to_be_bytes_vec().into();
+            let mut result = executor.call_raw(CALLER, target, calldata, U256::ZERO).unwrap();
+            assert!(!executor.is_raw_call_mut_success(target, &mut result));
+            (result.failure_identity.unwrap(), result.failure_provenance.unwrap())
+        });
+        assert_ne!(first.0, second.0);
+        // A replay can check which `fail()` it reached too.
+        assert_ne!(first.1, second.1);
+        // The caught assertion alone is identified too, as it fails invariant handlers.
+        let code = Bytecode::new_raw(vm_script(&[assertion], &[0x00]));
+        executor.set_code(target, code).unwrap();
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(result.assertion_failed && result.failure_identity.is_some());
     }
 
     #[test]

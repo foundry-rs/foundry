@@ -777,8 +777,13 @@ impl FailureTrace {
         }
     }
 
-    /// Records a failed assertion made by the latest call.
-    fn record_assertion(&mut self, selector: [u8; 4], message: &str, revert: Option<B256>) {
+    /// Records a failed assertion, or a `fail()`, made by the latest call.
+    pub(crate) fn record_assertion(
+        &mut self,
+        selector: [u8; 4],
+        message: &str,
+        revert: Option<B256>,
+    ) {
         let identity = keccak256([self.pending.as_slice(), &selector, message.as_bytes()].concat());
         self.events.push(FailureEvent::Assertion { identity, revert });
     }
@@ -805,8 +810,9 @@ impl FailureTrace {
     /// returned `output`, and starts recording the next call.
     ///
     /// The identity is unknown when a snapshot restore discarded part of the history, when the
-    /// call succeeded without a failed assertion, such as after a `fail()` that only wrote the
-    /// global failure slot, or when several failed assertions could have produced the revert data.
+    /// call succeeded without a failed assertion or `fail()`, such as after a legacy DSTest failure
+    /// that only wrote its own flag, or when several failed assertions could have produced the
+    /// revert data.
     pub fn take_identity(&mut self, exit: InstrStop, output: &[u8]) -> Option<B256> {
         let Self { events, snapshot_restored, .. } = std::mem::take(self);
         if snapshot_restored {
@@ -865,7 +871,7 @@ pub struct FailureProvenance {
     /// Frame index and site of the `REVERT` or `INVALID` instruction about to end a frame.
     pending_revert: Option<(usize, B256)>,
     /// Identity of the failed assertion made by the cheatcode call in progress.
-    pending_assertion: Option<B256>,
+    pub(crate) pending_assertion: Option<B256>,
     /// Hash of the failed assertions and failed frames so far, in execution order.
     hash: B256,
 }
