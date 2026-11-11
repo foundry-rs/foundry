@@ -310,6 +310,8 @@ pub struct NodeConfig {
     pub enable_tracing: bool,
     /// Explicitly disables the use of RPC caching.
     pub no_storage_caching: bool,
+    /// Whether historical fork states share unchanged state instead of copying it per block.
+    pub fork_compact_history: bool,
     /// How to configure the server
     pub server_config: ServerConfig,
     /// The host the server will listen on
@@ -694,6 +696,7 @@ impl Default for NodeConfig {
             print_traces: false,
             enable_auto_impersonate: false,
             no_storage_caching: false,
+            fork_compact_history: false,
             server_config: Default::default(),
             host: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
             transaction_order: Default::default(),
@@ -1128,6 +1131,13 @@ impl NodeConfig {
     #[must_use]
     pub const fn with_no_storage_caching(mut self, no_storage_caching: bool) -> Self {
         self.no_storage_caching = no_storage_caching;
+        self
+    }
+
+    /// Sets whether historical fork states share unchanged state instead of copying it per block.
+    #[must_use]
+    pub const fn with_fork_compact_history(mut self, fork_compact_history: bool) -> Self {
+        self.fork_compact_history = fork_compact_history;
         self
     }
 
@@ -2509,6 +2519,10 @@ latest block number: {latest_block}"
         debug!(target: "node", fork_number=config.block_number, fork_hash=%config.block_hash, "set up fork db");
 
         let mut db = ForkedDatabase::new(backend, block_chain_db);
+        // Without state history, block states are never kept and nothing needs recording.
+        if self.fork_compact_history && self.prune_history.is_state_history_supported() {
+            db = db.with_compact_history();
+        }
 
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);

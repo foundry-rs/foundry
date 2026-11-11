@@ -352,6 +352,7 @@ impl NodeArgs {
             .with_base_fee(self.evm.block_base_fee_per_gas)
             .disable_min_priority_fee(self.evm.disable_min_priority_fee)
             .with_no_storage_caching(self.evm.no_storage_caching)
+            .with_fork_compact_history(self.evm.fork_compact_history)
             .with_server_config(self.server_config)
             .with_host(self.host)
             .set_silent(shell::is_quiet())
@@ -675,6 +676,19 @@ pub struct AnvilEvmArgs {
     /// See --fork-url.
     #[arg(long, requires = "fork_url", help_heading = "Fork config")]
     pub no_storage_caching: bool,
+
+    /// Keeps historical states of a fork compact.
+    ///
+    /// By default, every mined block keeps a full copy of the local changes and of all state
+    /// fetched from the fork, and older copies are written to disk. With this flag, each block
+    /// state shares everything unchanged with the previous one, reads state never changed locally
+    /// from the fork, and stays in memory, so long-running forks can keep their history cheaply.
+    ///
+    /// The number of retained states is still bounded by --max-persisted-states.
+    ///
+    /// See --fork-url.
+    #[arg(long, requires = "fork_url", help_heading = "Fork config")]
+    pub fork_compact_history: bool,
 
     /// The block gas limit.
     #[arg(long, alias = "block-gas-limit", help_heading = "Environment config")]
