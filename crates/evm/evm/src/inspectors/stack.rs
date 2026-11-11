@@ -2394,6 +2394,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if let Some(prewarm) = self.backend.backend().lifecycle().tx_prewarm() {
             *state.prewarm_set_mut() = prewarm.clone();
         }
+        // So does the persistent warmth the contexts recorded, which later switches restore.
+        if self.backend.backend().lifecycle().has_persistent_warmth() {
+            self.backend.backend_mut().take_persistent_warmth();
+        }
         // The recipient cools like any other account the transaction loaded, unlike the addresses
         // `vm.cool` keeps warm.
         if !is_precompile

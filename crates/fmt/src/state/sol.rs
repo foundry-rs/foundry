@@ -88,6 +88,14 @@ impl<'ast> State<'_, 'ast> {
         if !item_needs_iso(&next_item.kind) {
             return;
         }
+        // A trailing directive can begin a doc group that continues before the next item.
+        if self
+            .directive_doc_groups
+            .iter()
+            .any(|group| group.lo() < self.cursor.pos && self.cursor.pos < group.hi())
+        {
+            return;
+        }
         // Never isolate items within a `disable-start`/`disable-end` region, where the source
         // layout is preserved verbatim. The cursor sits right past the line break that follows the
         // previous item, so check the byte that was last copied from the source. Line-based
