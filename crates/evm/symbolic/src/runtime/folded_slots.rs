@@ -8,10 +8,10 @@
 //! preimage. Before a run, the mapping roots in the storage layout of each deployed contract are
 //! hashed with every candidate key: the source literals, the addresses of the backend's accounts,
 //! and the contract's `PUSH` immediates. The nested level of a nested mapping is a product over
-//! the keys, so it is searched only when the run accesses a large constant slot that the
-//! contract's code pushes, and only the match is recorded. A registered preimage is a real one, so
-//! this adds no unsoundness; constants that no candidate produces, such as ERC-1967 and ERC-7201
-//! roots, stay fixed slots.
+//! the literals and immediates, so it is searched only when the run accesses a large constant slot
+//! that the contract's code pushes, and only the match is recorded. A registered preimage is a
+//! real one, so this adds no unsoundness; constants that no candidate produces, such as ERC-1967
+//! and ERC-7201 roots, stay fixed slots.
 
 use super::*;
 use foundry_common::slot_identifier::{ENCODING_INPLACE, ENCODING_MAPPING};
@@ -45,7 +45,7 @@ impl FoldedSlots {
     ) -> Self {
         let mut folded = Self::default();
         let Some(known_contracts) = executor.known_contracts else { return folded };
-        let mut candidates = executor
+        let literals = executor
             .literals
             .map(|literals| {
                 literals
@@ -57,8 +57,6 @@ impl FoldedSlots {
                     .collect::<HashSet<U256>>()
             })
             .unwrap_or_default();
-        // `setUp` often keys entries by deployed accounts, such as the test contract.
-        candidates.extend(executor.account_addresses.iter().map(|&address| address_word(address)));
         for &address in &executor.account_addresses {
             if let Ok(Some(account)) = executor.backend.basic(address)
                 && let Some(code) = &account.code
@@ -68,10 +66,18 @@ impl FoldedSlots {
                 && let Some(layout) = &contract.storage_layout
             {
                 let constants = push_immediates(code.original_byte_slice()).collect::<HashSet<_>>();
-                let mut keys = candidates.clone();
+                let mut keys = literals.clone();
                 keys.extend(constants.iter().copied());
                 let mut keys = keys.into_iter().collect::<Vec<_>>();
                 keys.sort_unstable();
+                // `setUp` often keys entries by deployed accounts, such as the test contract. A
+                // folded nested slot only has constant keys, so the nested search skips them.
+                let mut first_level_keys = keys.clone();
+                first_level_keys.extend(
+                    executor.account_addresses.iter().map(|&address| address_word(address)),
+                );
+                first_level_keys.sort_unstable();
+                first_level_keys.dedup();
                 for entry in &layout.storage {
                     if let Ok(slot) = entry.slot.parse::<U256>()
                         && !walk_mapping_slots(
@@ -79,7 +85,7 @@ impl FoldedSlots {
                             layout,
                             slot,
                             &entry.storage_type,
-                            &keys,
+                            &first_level_keys,
                             1,
                             &mut |cx, key, slot| {
                                 (!past_deadline(deadline))
