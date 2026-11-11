@@ -909,6 +909,9 @@ pub struct FailureProvenance {
     pub(crate) pending_assertion: Option<B256>,
     /// Hash of the failed assertions and failed frames so far, in execution order.
     hash: B256,
+    /// Whether a frame halted at an instruction that is not recorded, so the call has no
+    /// provenance.
+    unknown: bool,
 }
 
 impl FailureProvenance {
@@ -964,8 +967,14 @@ impl FailureProvenance {
         let stop = result.stop as u8;
         let site = match pending_revert {
             Some((frame, site)) if frame == depth + 1 => site,
-            // Halts and frames without instructions, such as cheatcode and precompile calls, are
-            // identified by the call that entered them.
+            // Halts such as invalid jumps or running out of gas can happen at any instruction,
+            // which is not recorded.
+            _ if result.stop != InstrStop::Revert => {
+                self.unknown = true;
+                return;
+            }
+            // Frames without instructions, such as cheatcode calls, are identified by the call
+            // that entered them.
             _ => {
                 let entry = if usize::from(interpreter.message().depth) < depth {
                     Self::site::<FEN>(interpreter)
@@ -979,9 +988,10 @@ impl FailureProvenance {
         self.fold(keccak256([site.as_slice(), &[stop], output.as_slice()].concat()));
     }
 
-    /// Returns the provenance of the finished call and starts recording the next call.
-    pub fn take(&mut self) -> B256 {
-        std::mem::take(self).hash
+    /// Returns the provenance of the finished call, if known, and starts recording the next call.
+    pub fn take(&mut self) -> Option<B256> {
+        let this = std::mem::take(self);
+        (!this.unknown).then_some(this.hash)
     }
 
     /// Appends a failure event to the hash.

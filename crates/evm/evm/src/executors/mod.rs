@@ -1479,7 +1479,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// frames, by the sites that failed, in order, with their revert data. Unlike
     /// `failure_identity`, it depends on values, so only runs of the same input are comparable.
     ///
-    /// `None` when not recorded.
+    /// `None` when not recorded, or when a frame halted, such as on an invalid jump, at an
+    /// instruction that is not recorded.
     pub failure_provenance: Option<B256>,
 }
 
@@ -1873,7 +1874,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         .and_then(|c| c.failure_trace.as_mut())
         .and_then(|trace| trace.take_identity(exit_reason, &result));
     let failure_provenance =
-        cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut()).map(|p| p.take());
+        cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut()).and_then(|p| p.take());
 
     let mut raw = RawCallResult {
         exit_reason: Some(exit_reason),
@@ -3377,7 +3378,8 @@ mod tests {
     #[test]
     fn failure_provenance_tells_apart_equal_raw_failures() {
         let mut executor = failure_identity_executor(false);
-        let [check, forward, first, second] = [0x31, 0x32, 0x33, 0x34].map(Address::with_last_byte);
+        let [check, forward, first, second, halt] =
+            [0x31, 0x32, 0x33, 0x34, 0x35].map(Address::with_last_byte);
         // Jump to the calldata and revert empty at pc 6 from 3, or at pc 10 from 7.
         let code =
             Bytes::from_static(&[0x5f, 0x35, 0x56, 0x5b, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x5f, 0xfd]);
@@ -3414,6 +3416,14 @@ mod tests {
         // replays that do.
         executor.inspector_mut().collect_failure_identity(false);
         assert_eq!(raw_failures(&mut executor).map(Option::unwrap), anchors);
+
+        // A halt's instruction is not recorded, so replays of a call that halted cannot be
+        // checked.
+        executor.set_code(halt, Bytecode::new_raw(Bytes::from_static(&[0x5f, 0x56]))).unwrap();
+        executor.set_code(forward, Bytecode::new_raw(forwarder(halt, 1))).unwrap();
+        let result = executor.call_raw(CALLER, forward, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Revert));
+        assert_eq!(result.raw_failure(), None);
 
         // Each pair differs only in where it failed.
         for [a, b] in anchors.as_chunks::<2>().0 {
