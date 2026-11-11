@@ -286,6 +286,43 @@ impl SparsedTraceArena {
             Cow::Owned(arena)
         }
     }
+
+    /// Makes a single top-level call that ran below the transaction the root node, one level up.
+    ///
+    /// A transaction handler can run the top-level calls one level below the transaction, such as
+    /// Tempo's for the calls of an AA transaction. The tracer then keeps an empty root node above
+    /// them. With more than one top-level call, that root groups the calls and stays.
+    ///
+    /// The debug recorder already records the steps of a single such call one level up, so only
+    /// its frames move here.
+    pub fn lift_single_top_level_call(&mut self) {
+        let nodes = self.arena.nodes_mut();
+        if nodes.len() < 2 || nodes[0].children.len() != 1 || nodes[0].trace != CallTrace::default()
+        {
+            return;
+        }
+        nodes.remove(0);
+        for node in nodes {
+            node.idx -= 1;
+            node.parent = node.parent.and_then(|parent| parent.checked_sub(1));
+            node.children.iter_mut().for_each(|child| *child -= 1);
+            node.trace.depth -= 1;
+        }
+        self.ignored = std::mem::take(&mut self.ignored)
+            .into_iter()
+            .map(|((start_node, start_step), (end_node, end_step))| {
+                ((start_node.saturating_sub(1), start_step), (end_node.saturating_sub(1), end_step))
+            })
+            .collect();
+        self.diagnostics = std::mem::take(&mut self.diagnostics)
+            .into_iter()
+            .filter_map(|(node_idx, diagnostic)| Some((node_idx.checked_sub(1)?, diagnostic)))
+            .collect();
+        if let Some(debug_steps) = &mut self.debug_steps {
+            debug_steps.frames.remove(0);
+            debug_steps.frames.iter_mut().for_each(|frame| frame.depth -= 1);
+        }
+    }
 }
 
 impl Deref for SparsedTraceArena {

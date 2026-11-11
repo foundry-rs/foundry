@@ -5,6 +5,7 @@ use alloy_primitives::{Address, B256, Bytes, U256, address};
 use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_common::LIBRARY_DEPLOYER;
+use foundry_compilers::artifacts::ConfigurableContractArtifact;
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
@@ -40,6 +41,7 @@ mod symbolic_cheatcodes;
 mod symbolic_conformance;
 mod symbolic_creates;
 mod symbolic_engine_capabilities;
+mod symbolic_equivalence;
 mod symbolic_false_pass_prevention;
 mod symbolic_helpers;
 mod symbolic_invariant;
@@ -553,6 +555,507 @@ Ran 1 test for test/DecodeDelegatecallStorage.t.sol:DecodeDelegatecallStorageTes
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
+}
+
+// Proxy storage written by both the proxy's own code and its implementations decodes each slot
+// with the layout of the code that wrote it last, even for proxies created during the recording.
+// Libraries write with their caller's layout under both the legacy and the IR pipeline.
+#[forgetest_init]
+fn state_diff_decodes_proxy_storage_by_writer(prj: _, cmd: _) {
+    prj.add_test(
+        "StateDiffProxy.t.sol",
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+library MintLib {
+    struct Stats {
+        uint256 minted;
+    }
+
+    function add(Stats storage stats, uint256 amount) external {
+        stats.minted += amount;
+    }
+}
+
+contract TokenV1 {
+    address public owner;
+    uint256 public value;
+    MintLib.Stats public stats;
+
+    function initialize(address owner_) external {
+        owner = owner_;
+    }
+
+    function setValue(uint256 value_) external {
+        value = value_;
+    }
+
+    function mint(uint256 amount) external {
+        MintLib.add(stats, amount);
+    }
+}
+
+contract TokenV2 {
+    address public owner;
+    uint256 public balance;
+    MintLib.Stats public stats;
+    uint256 public extra;
+
+    function setExtra(uint256 extra_) external {
+        extra = extra_;
+    }
+}
+
+contract ERC1967Proxy {
+    bytes32 private constant IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    constructor(address implementation, bytes memory data) {
+        _upgradeTo(implementation, data);
+    }
+
+    function upgradeTo(address implementation) external {
+        _upgradeTo(implementation, "");
+    }
+
+    function _upgradeTo(address implementation, bytes memory data) internal {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            sstore(slot, implementation)
+        }
+        if (data.length > 0) {
+            (bool success,) = implementation.delegatecall(data);
+            require(success);
+        }
+    }
+
+    receive() external payable {}
+
+    fallback() external payable {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            let implementation := sload(slot)
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+
+contract LegacyImplementation {
+    address private reserved;
+    uint256 public value;
+
+    function setValue(uint256 value_) external {
+        value = value_;
+    }
+}
+
+contract LegacyProxy {
+    address public target;
+
+    function upgradeTo(address target_) external {
+        target = target_;
+    }
+
+    receive() external payable {}
+
+    fallback() external payable {
+        address implementation = target;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+
+contract FacetA {
+    uint256 public a;
+
+    function setA(uint256 a_) external {
+        a = a_;
+    }
+}
+
+contract FacetB {
+    uint256 private reservedB;
+    uint256 public b;
+
+    function setB(uint256 b_) external {
+        b = b_;
+    }
+}
+
+contract Router {
+    address private immutable FACET_A;
+    address private immutable FACET_B;
+
+    constructor(address facetA, address facetB) {
+        FACET_A = facetA;
+        FACET_B = facetB;
+    }
+
+    receive() external payable {}
+
+    fallback() external payable {
+        address facet = msg.sig == FacetA.setA.selector ? FACET_A : FACET_B;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), facet, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+
+contract StateDiffProxyTest is Test {
+    function test_createdProxy() public {
+        TokenV1 implementation = new TokenV1();
+
+        vm.startStateDiffRecording();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(implementation), abi.encodeCall(TokenV1.initialize, (address(0xBEEF)))
+        );
+        TokenV1(address(proxy)).mint(5);
+        console.log(vm.getStateDiff());
+    }
+
+    function test_upgradedProxy() public {
+        TokenV1 v1 = new TokenV1();
+        TokenV2 v2 = new TokenV2();
+        ERC1967Proxy proxy = new ERC1967Proxy(address(v1), "");
+
+        vm.startStateDiffRecording();
+        TokenV1(address(proxy)).setValue(7);
+        ERC1967Proxy(payable(address(proxy))).upgradeTo(address(v2));
+        TokenV2(address(proxy)).setExtra(9);
+        console.log(vm.getStateDiff());
+    }
+
+    function test_disjointFacets() public {
+        Router router = new Router(address(new FacetA()), address(new FacetB()));
+
+        vm.startStateDiffRecording();
+        FacetA(address(router)).setA(1);
+        FacetB(address(router)).setB(2);
+        console.log(vm.getStateDiff());
+    }
+
+    function test_legacyProxy() public {
+        LegacyImplementation implementation = new LegacyImplementation();
+        LegacyProxy proxy = new LegacyProxy();
+
+        vm.startStateDiffRecording();
+        proxy.upgradeTo(address(implementation));
+        LegacyImplementation(address(proxy)).setValue(3);
+        console.log(vm.getStateDiff());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-vv", "--mc", "StateDiffProxyTest", "--extra-output", "storageLayout"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 4 tests for test/StateDiffProxy.t.sol:StateDiffProxyTest
+[PASS] test_createdProxy() ([GAS])
+Logs:
+  0x2e234DAe75C793f67A35089C9d99245E1C58470b
+  contract: test/StateDiffProxy.t.sol:ERC1967Proxy
+  - nonce diff: 0 → 1
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (owner, address): 0x0000000000000000000000000000000000000000 → 0x000000000000000000000000000000000000bEEF
+  @ 0x0000000000000000000000000000000000000000000000000000000000000002 (stats, (uint256,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000005
+      minted (uint256): 0 → 5
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f
+  
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  contract: test/StateDiffProxy.t.sol:MintLib
+  - nonce diff: 0 → 1
+  
+
+[PASS] test_disjointFacets() ([GAS])
+Logs:
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  - nonce diff: 0 → 1
+  
+  0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+  contract: test/StateDiffProxy.t.sol:Router
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (a, uint256): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000001 (b, uint256): 0 → 2
+  
+
+[PASS] test_legacyProxy() ([GAS])
+Logs:
+  0x2e234DAe75C793f67A35089C9d99245E1C58470b
+  contract: test/StateDiffProxy.t.sol:LegacyProxy
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (target, address): 0x0000000000000000000000000000000000000000 → 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  @ 0x0000000000000000000000000000000000000000000000000000000000000001 (value, uint256): 0 → 3
+  
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  - nonce diff: 0 → 1
+  
+
+[PASS] test_upgradedProxy() ([GAS])
+Logs:
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  - nonce diff: 0 → 1
+  
+  0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+  contract: test/StateDiffProxy.t.sol:ERC1967Proxy
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000001 (value, uint256): 0 → 7
+  @ 0x0000000000000000000000000000000000000000000000000000000000000003 (extra, uint256): 0 → 9
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f → 0x0000000000000000000000002e234dae75c793f67a35089c9d99245e1c58470b
+  
+
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "-vv",
+            "--mt",
+            "test_createdProxy",
+            "--extra-output",
+            "storageLayout",
+            "--via-ir",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/StateDiffProxy.t.sol:StateDiffProxyTest
+[PASS] test_createdProxy() ([GAS])
+Logs:
+  0x2e234DAe75C793f67A35089C9d99245E1C58470b
+  contract: test/StateDiffProxy.t.sol:ERC1967Proxy
+  - nonce diff: 0 → 1
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (owner, address): 0x0000000000000000000000000000000000000000 → 0x000000000000000000000000000000000000bEEF
+  @ 0x0000000000000000000000000000000000000000000000000000000000000002 (stats, (uint256,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000005
+      minted (uint256): 0 → 5
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f
+  
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xe02a92Ef2BAD4e4763e2545e18f3b15b2d39B049
+  contract: test/StateDiffProxy.t.sol:MintLib
+  - nonce diff: 0 → 1
+  
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
+// Library attribution must not guess a missing caller or use code from another chain context.
+#[forgetest_init]
+fn state_diff_library_writer_context(prj: _, cmd: _) {
+    prj.add_test(
+        "LibraryWriter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
+
+library WriterLib {
+    struct Stats { uint256 amount; }
+    function set(Stats storage stats) external { stats.amount = 42; }
+}
+
+contract LibraryWriter {
+    WriterLib.Stats public stats;
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function recordAndSet() external returns (string memory) {
+        vm.startStateDiffRecording();
+        // Clear pending runner accesses so the enclosing frame is absent.
+        vm.startStateDiffRecording();
+        WriterLib.set(stats);
+        return vm.getStateDiffJson();
+    }
+
+    function set() external { WriterLib.set(stats); }
+
+    function switchContextAndSet() external returns (string memory) {
+        vm.chainId(2);
+        vm.etch(address(0x2000), type(Caller).runtimeCode);
+        WriterLib.set(stats);
+        return vm.getStateDiffJson();
+    }
+}
+
+contract Caller {
+    uint256 public actual;
+    function set() external { actual = 42; }
+    function run(address target) external returns (string memory) {
+        return LibraryWriter(target).recordAndSet();
+    }
+}
+
+contract Proxy {
+    uint256 public proxyDecoy;
+    fallback() external {
+        (bool ok, bytes memory result) = address(0x2000).delegatecall(msg.data);
+        require(ok);
+        assembly { return(add(result, 32), mload(result)) }
+    }
+}
+
+contract PrefixWriterTest {
+    WriterLib.Stats public stats;
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_completedPrefix() public {
+        vm.etch(0x4e59b44847b379578588920cA78FbF26c0B4956C, type(Caller).runtimeCode);
+        vm.startStateDiffRecording();
+        WriterLib.set(stats);
+        string memory slot = string.concat(
+            ".", vm.toLowercase(vm.toString(address(this))), ".stateDiff.", vm.toString(bytes32(0))
+        );
+        string memory diff = vm.getStateDiffJson();
+        require(vm.parseJsonKeys(diff, slot).length == 2, "unrecorded parent must stay raw");
+        require(vm.parseJsonBytes32(diff, string.concat(slot, ".newValue")) == bytes32(uint256(42)));
+    }
+}
+
+contract LibraryWriterTest is Test {
+    string constant SLOT = ".0x0000000000000000000000000000000000001000.stateDiff.0x0000000000000000000000000000000000000000000000000000000000000000";
+
+    function assertRaw(string memory diff) internal pure {
+        assertEq(vm.parseJsonKeys(diff, SLOT).length, 2);
+        assertEq(vm.parseJsonBytes32(diff, string.concat(SLOT, ".newValue")), bytes32(uint256(42)));
+        assertEq(vm.parseJsonBytes32(diff, string.concat(SLOT, ".previousValue")), bytes32(0));
+    }
+
+    function test_missingParentDirect() public {
+        vm.etch(address(0x1000), type(LibraryWriter).runtimeCode);
+        assertRaw(new Caller().run(address(0x1000)));
+    }
+
+    function test_missingParentDelegated() public {
+        vm.etch(address(0x1000), type(Proxy).runtimeCode);
+        vm.etch(address(0x2000), type(LibraryWriter).runtimeCode);
+        assertRaw(new Caller().run(address(0x1000)));
+    }
+
+    function test_recordedParent() public {
+        vm.etch(address(0x1000), type(LibraryWriter).runtimeCode);
+        vm.startStateDiffRecording();
+        vm.startStateDiffRecording();
+        LibraryWriter(address(0x1000)).set();
+        assertEq(vm.parseJsonString(vm.getStateDiffJson(), string.concat(SLOT, ".label")), "stats");
+    }
+
+    function test_parentContextChanged() public {
+        vm.etch(address(0x1000), type(Proxy).runtimeCode);
+        vm.etch(address(0x2000), type(LibraryWriter).runtimeCode);
+        vm.chainId(1);
+        vm.startStateDiffRecording();
+        vm.startStateDiffRecording();
+        assertRaw(LibraryWriter(address(0x1000)).switchContextAndSet());
+    }
+
+    function checkPriorContext(bool replaceCode) internal {
+        vm.etch(address(0x1000), type(Proxy).runtimeCode);
+        vm.etch(address(0x2000), type(Caller).runtimeCode);
+        vm.chainId(1);
+        vm.startStateDiffRecording();
+        vm.startStateDiffRecording();
+        Caller(address(0x1000)).set();
+        vm.chainId(2);
+        if (replaceCode) vm.etch(address(0x2000), type(WriterLib).runtimeCode);
+        string memory diff = vm.getStateDiffJson();
+        assertEq(vm.parseJsonString(diff, string.concat(SLOT, ".label")), "actual");
+        assertEq(vm.parseJsonBytes32(diff, string.concat(SLOT, ".newValue")), bytes32(uint256(42)));
+    }
+
+    function test_priorContextChangedCode() public { checkPriorContext(true); }
+    function test_priorContextControl() public { checkPriorContext(false); }
+}
+"#,
+    );
+
+    let solc = foundry_compilers::compilers::solc::Solc::find_svm_installed_version(
+        &SOLC_VERSION.parse().unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    prj.update_config(|config| config.solc = Some(foundry_config::SolcReq::Local(solc.solc)));
+    cmd.args(["build", "--extra-output", "storageLayout"]).assert_success();
+
+    // Resolve external layouts without network access or modifying the user's cache.
+    let home = tempfile::tempdir().unwrap();
+    let cache = home.path().join(".foundry/cache/etherscan/mainnet/storage_layouts");
+    std::fs::create_dir_all(&cache).unwrap();
+    for (address, contract) in [(0x1000, "Proxy"), (0x2000, "Caller")] {
+        let artifact = foundry_common::fs::read_json_file::<ConfigurableContractArtifact>(
+            &prj.artifacts().join(format!("LibraryWriter.t.sol/{contract}.json")),
+        )
+        .unwrap();
+        let layout = serde_json::json!({
+            "version": 3,
+            "contractName": contract,
+            "storageLayout": artifact.storage_layout.unwrap(),
+        });
+        foundry_common::fs::write_json_file(&cache.join(format!("0x{address:040x}.json")), &layout)
+            .unwrap();
+    }
+
+    for via_ir in [false, true] {
+        cmd.forge_fuse();
+        cmd.env("HOME", home.path());
+        cmd.env("USERPROFILE", home.path());
+        cmd.args([
+            "test",
+            "--mc",
+            "LibraryWriterTest|PrefixWriterTest",
+            "--decode-external-storage",
+            "--extra-output",
+            "storageLayout",
+        ]);
+        if via_ir {
+            cmd.arg("--via-ir");
+        }
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 7 tests passed, 0 failed, 0 skipped (7 total tests)
+...
+"#]]);
+    }
 }
 
 // tests that a warning is displayed if there are tests but none match a non-empty filter

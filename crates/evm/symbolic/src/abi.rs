@@ -5,6 +5,8 @@ pub(super) struct SymbolicCalldata {
     bytes: SymBytes,
     inputs: Vec<SymbolicInput>,
     constraints: Vec<SymBoolExpr>,
+    /// Symbolic length of the calldata, at most `bytes.len()`, when it is not fixed.
+    size: Option<SymExpr>,
 }
 
 impl SymbolicCalldata {
@@ -30,7 +32,31 @@ impl SymbolicCalldata {
             bytes: SymBytes::concrete(cx, function.selector().to_vec()),
             inputs: Vec::new(),
             constraints: Vec::new(),
+            size: None,
         })
+    }
+
+    /// Builds `len` bytes of unconstrained raw calldata that is not tied to any ABI.
+    pub(super) fn raw(cx: &mut SymCx, len: usize, prefix: &str) -> Self {
+        let words = (0..len.div_ceil(32))
+            .map(|idx| {
+                let word = SymExpr::var(cx, &format!("{prefix}_raw{len}_{idx}"));
+                SymBytes::word(cx, word)
+            })
+            .collect::<Vec<_>>();
+        let bytes = SymBytes::concat(cx, words);
+        let bytes = bytes.slice_concrete(cx, 0, len);
+        Self { bytes, inputs: Vec::new(), constraints: Vec::new(), size: None }
+    }
+
+    /// Builds unconstrained raw calldata of a symbolic length of at most `max` bytes, whose
+    /// bytes past its end read as zero.
+    pub(super) fn symbolic_size(cx: &mut SymCx, max: usize, prefix: &str) -> Self {
+        let Self { bytes, .. } = Self::raw(cx, max, prefix);
+        let size = SymExpr::var(cx, &format!("{prefix}_size"));
+        let fits = SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, &size, U256::from(max));
+        let bytes = SymBytes::sized(cx, bytes, size.clone(), max);
+        Self { bytes, inputs: Vec::new(), constraints: vec![fits], size: Some(size) }
     }
 
     pub(super) fn variants_with_prefix(
@@ -127,7 +153,7 @@ impl SymbolicCalldata {
                 ));
             }
 
-            out.push(Self { bytes, inputs, constraints: state.constraints });
+            out.push(Self { bytes, inputs, constraints: state.constraints, size: None });
         }
         Ok(out)
     }
@@ -189,7 +215,10 @@ impl SymbolicCalldata {
     }
 
     pub(super) fn call_data(&self, cx: &mut SymCx) -> SymCalldata {
-        SymCalldata::from_bytes(cx, self.bytes.clone())
+        match &self.size {
+            Some(size) => SymCalldata::with_size_word(self.bytes.clone(), size.clone()),
+            None => SymCalldata::from_bytes(cx, self.bytes.clone()),
+        }
     }
 
     /// Returns this calldata ABI-encoded as a single `bytes` value.
@@ -217,6 +246,20 @@ impl SymbolicCalldata {
         model: &(impl SymbolicModelLookup + ?Sized),
     ) -> Result<Vec<DynSolValue>, SymbolicError> {
         self.inputs.iter().map(|input| input.value.model_value(cx, model)).collect()
+    }
+
+    /// Evaluates the full calldata bytes under a solver model.
+    pub(super) fn model_to_bytes(
+        &self,
+        cx: &mut SymCx,
+        model: &(impl SymbolicModelLookup + ?Sized),
+    ) -> Result<Vec<u8>, SymbolicError> {
+        let mut bytes = self.bytes.eval_model(cx, model)?;
+        if let Some(size) = &self.size {
+            let size = size.eval_model(model)?;
+            bytes.truncate(usize::try_from(size).unwrap_or(usize::MAX));
+        }
+        Ok(bytes)
     }
 
     pub(super) fn seed_model(

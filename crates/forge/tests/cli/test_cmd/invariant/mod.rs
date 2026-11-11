@@ -3759,3 +3759,44 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+// Corpus metrics reported during an invariant campaign go to stderr, so `--json` stdout stays one
+// JSON document.
+#[forgetest_init]
+fn invariant_corpus_metrics_keep_json_stdout_clean(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.depth = 10;
+        config.invariant.timeout = Some(7);
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "InvariantMetrics.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantMetricsHandler {
+    uint256 public counter;
+
+    function inc() external {
+        counter++;
+    }
+}
+
+contract InvariantMetricsTest is Test {
+    function setUp() public {
+        targetContract(address(new InvariantMetricsHandler()));
+    }
+
+    function invariant_holds() public pure {}
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--json"]).assert_success();
+    serde_json::from_slice::<serde_json::Value>(&output.get_output().stdout).unwrap();
+    output.stderr_eq(str![[r#"
+...
+{"timestamp":[..],"event":"pulse","contract":"test/InvariantMetrics.t.sol:InvariantMetricsTest",[..]}
+...
+"#]]);
+}

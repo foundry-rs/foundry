@@ -20,10 +20,21 @@ impl SymbolicExecutor {
             nested_deferred_mode: DeferredPathMode::Skip,
             stateless_retry_safe: true,
             folded_slots: FoldedSlots::default(),
+            equivalence: None,
         }
     }
 
-    fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
+    /// Whether an equivalence check leaves out inputs that run out of gas.
+    pub(super) fn ignores_out_of_gas(&self) -> bool {
+        self.equivalence.is_some_and(|mode| mode.ignore_out_of_gas)
+    }
+
+    /// Whether `GAS` is an ordinary unconstrained symbol, as in an equivalence check.
+    pub(super) const fn symbolic_gas(&self) -> bool {
+        self.equivalence.is_some()
+    }
+
+    pub(super) fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
         self.deferred_incomplete = None;
         self.nested_deferred_mode = DeferredPathMode::Skip;
         self.stateless_retry_safe = true;
@@ -119,7 +130,7 @@ impl SymbolicExecutor {
     }
 
     /// Returns any deferred incomplete reason.
-    fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
+    pub(super) fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
         match self.deferred_incomplete? {
             DeferredIncomplete::Unsupported(reason) => Some((
                 SymbolicStopReason::Stuck,
