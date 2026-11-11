@@ -2103,7 +2103,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
                 message.destination,
                 message.value,
                 message.input.to_bytes(interp.memory()),
-                depth == 0,
+                depth == root,
             );
         }
 
