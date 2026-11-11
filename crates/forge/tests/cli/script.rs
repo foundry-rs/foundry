@@ -10249,6 +10249,72 @@ contract CaDeployScript is Script {
     assert_eq!(U256::from_be_slice(&number), U256::from(1));
 }
 
+/// `--resume` publishes the saved transactions of a configurable account sender with its owner
+/// keys, without running the script again: here a second run would fail in `setUp`.
+#[forgetest_init]
+async fn tempo_t14_script_resumes_configurable_account_without_rerun(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "CaResume.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CaResumeScript is Script {
+    function setUp() public {
+        require(vm.envOr("CA_RESUME_GO", false), "the script ran again");
+    }
+
+    function run() external {
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
+    api.anvil_deal_tip20(account, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
+    let (account_arg, fee_token) = (account.to_string(), fee_token.to_string());
+    let common = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account_arg,
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--private-keys",
+        &keys[0],
+        "--private-keys",
+        &keys[1],
+    ];
+
+    // Simulate only, which saves the transactions for `--resume`.
+    cmd.forge_fuse().arg("script").arg(&script).args(common);
+    cmd.env("CA_RESUME_GO", "true");
+    cmd.assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+
+    cmd.forge_fuse().arg("script").arg(&script).args(common).arg("--resume");
+    cmd.assert_success().stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+Deployed contracts (chain 31337):
+  Counter  0xaE5D79A5D89Cd34393D7c27e598D89C2E3662769
+
+"#]]);
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+}
+
 /// On T14, `forge script` with a keystore that `cast wallet new` linked to a configurable account
 /// broadcasts from the account while `vm.sign` signs with the key, and `--sender` with the key
 /// broadcasts from the key.

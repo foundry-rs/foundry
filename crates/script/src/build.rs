@@ -20,9 +20,13 @@ use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
-    ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    external_compiler::is_builtin_compiler_source, fs::canonicalize_path, namespaced_storage,
+    ContractData, ContractsByArtifact, ContractsByArtifactBuilder,
+    compile::ProjectCompiler,
+    external_compiler::is_builtin_compiler_source,
+    fs::canonicalize_path,
+    namespaced_storage,
     provider::ProviderBuilder,
+    tempo::configurable_account::{detect_configurable_account, parse_config},
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -43,6 +47,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use tempo_alloy::TempoNetwork;
 
 /// Container for the compiled contracts.
 #[derive(Clone, Debug)]
@@ -505,7 +510,13 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     &self.script_wallets,
                     expected_session_sender,
                     &remaining_transactions,
-                )?;
+                )? || only_configurable_accounts_missing(
+                    &self.script_config,
+                    &sequence,
+                    &self.script_wallets,
+                    &remaining_transactions,
+                )
+                .await?;
 
                 if has_available_signers {
                     (
@@ -647,6 +658,55 @@ fn has_available_script_signers(
         .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account()));
 
     Ok(remaining.iter().all(|tx| signers.contains(&tx.sender) || session_scope == Some(*tx)))
+}
+
+/// Returns whether every remaining sender without its own signer is a Tempo configurable account,
+/// which broadcast signs with its owners' keys.
+///
+/// Resume only publishes the saved transactions, so it runs the script again only to collect
+/// signers that the wallet options do not provide. A configurable account has no key of its own
+/// and needs no run: broadcast finds its owners among the wallets and fails clearly when they do
+/// not reach the threshold. When detection fails, resume runs the script as before.
+async fn only_configurable_accounts_missing<FEN: FoundryEvmNetwork>(
+    script_config: &ScriptConfig<FEN>,
+    sequence: &ScriptSequenceKind<FEN::Network>,
+    script_wallets: &Wallets,
+    remaining: &[SignerScope],
+) -> Result<bool> {
+    let tempo = &script_config.tempo;
+    if !script_config.evm_opts.networks.is_tempo() || tempo.eoa {
+        return Ok(false);
+    }
+    let signers = script_wallets
+        .signers()
+        .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
+    let config = tempo.configurable_account_config.as_deref().map(parse_config).transpose()?;
+    let mut missing = remaining.iter().filter(|scope| !signers.contains(&scope.sender)).peekable();
+    if missing.peek().is_none() {
+        return Ok(false);
+    }
+    for scope in missing {
+        // The endpoint broadcast uses, which honours `--rpc-url` on a single-chain resume.
+        let Some(rpc_url) = (0..sequence.sequences().len())
+            .find(|&i| sequence.sequences()[i].chain == scope.chain)
+            .map(|i| sequence.rpc_url(i))
+        else {
+            return Ok(false);
+        };
+        if tempo.configurable_account.is_some_and(|account| account != scope.sender) {
+            return Ok(false);
+        }
+        let provider =
+            ProviderBuilder::<TempoNetwork>::from_config_with_url(&script_config.config, rpc_url)?
+                .build()?;
+        let detected =
+            detect_configurable_account(&provider, scope.sender, &signers, config.clone(), false)
+                .await;
+        if !matches!(detected, Ok(Some(_))) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
