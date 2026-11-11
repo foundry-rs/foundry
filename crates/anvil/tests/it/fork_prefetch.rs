@@ -16,10 +16,10 @@ const SLOT_COUNT: u8 = 40;
 fn sum_slots_code() -> Vec<u8> {
     let mut code = vec![0x60, 0x00];
     for slot in 0..SLOT_COUNT {
-        // PUSH1 slot, SLOAD, ADD
+        // PUSH1 slot, SLOAD, ADD.
         code.extend([0x60, slot, 0x54, 0x01]);
     }
-    // PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN
+    // PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN.
     code.extend([0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
     code
 }
