@@ -13,6 +13,7 @@ use crate::{
     expected_emit::{self, ExpectedEmitTracker},
     script::Broadcast,
     test::{
+        assert::{FailureProvenance, FailureTrace},
         assume::AssumeNoRevert,
         expect::{self, ExpectedCallTracker, ExpectedCreate, ExpectedRevert, ExpectedRevertKind},
         revert_handlers,
@@ -741,6 +742,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Unlike the global failure slot, this survives reverts, so callers still see the failure
     /// when the asserting call reverts afterwards.
     pub assertion_failed: bool,
+    /// Records failures by call site while set, so minimizers can tell failures apart.
+    pub failure_trace: Option<FailureTrace>,
+    /// Records where each call failed while set, so a replay can check it failed the same way.
+    pub failure_provenance: Option<FailureProvenance>,
 
     /// Gas metering state.
     pub gas_metering: GasMetering,
@@ -884,6 +889,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             frame_rollback: Default::default(),
             persistent_write_snapshots: Default::default(),
             assertion_failed: false,
+            failure_trace: Default::default(),
+            failure_provenance: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
             pc: Default::default(),
@@ -1201,7 +1208,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // but only if the backend is in forking mode
         backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
 
-        apply_dispatch(
+        let result = apply_dispatch(
             &decoded,
             &mut CheatsCtxt {
                 state: self,
@@ -1213,7 +1220,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 depth: message.depth.into(),
             },
             executor,
-        )
+        );
+        if let Some(provenance) = &mut self.failure_provenance {
+            provenance.finish_assertion::<FEN>(interp);
+        }
+        result
     }
 
     /// Decodes the input data and applies Monad-specific cheatcodes.
@@ -1863,6 +1874,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.core.mapping_slots.is_some()
             || self.core.arbitrary_storage.is_some()
             || self.deploy_code_depth.is_some()
+            || self.failure_trace.is_some()
         {
             return OpcodeSet::ALL;
         }
@@ -1881,6 +1893,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
         if self.has_active_env_overrides() {
             steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
+        }
+        if self.failure_provenance.is_some() {
+            steps = steps.union(opcodes([op::REVERT, op::INVALID]));
         }
         steps
     }
@@ -1912,6 +1927,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(expected) = &mut self.expected_revert {
             expected.max_depth = max(usize::from(interp.message().depth) + 1, expected.max_depth);
         }
+
+        if let Some(trace) = &mut self.failure_trace {
+            trace.enter_frame(usize::from(interp.message().depth) + 1);
+        }
     }
 
     /// Called before each instruction in [`Self::steps`] executes.
@@ -1928,6 +1947,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         let depth = usize::from(interp.message().depth) + 1;
         let opcode = interp.opcode();
+
+        if let Some(trace) = &mut self.failure_trace {
+            trace.step::<FEN>(interp, depth);
+        }
+        if let Some(provenance) = &mut self.failure_provenance
+            && matches!(opcode, op::REVERT | op::INVALID)
+        {
+            provenance.record_revert::<FEN>(interp, depth);
+        }
 
         // Marks an `ORIGIN` or `GASPRICE` instruction whose pushed value `step_end` overrides.
         self.pending_origin_override = opcode == op::ORIGIN && self.origin_override.is_some();

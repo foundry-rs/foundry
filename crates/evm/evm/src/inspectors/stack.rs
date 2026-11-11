@@ -847,6 +847,28 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.inner.sancov_trace_cmp = yes;
     }
 
+    /// Set whether to record the failure identity of each call, see
+    /// [`RawCallResult::failure_identity`](crate::executors::RawCallResult::failure_identity).
+    ///
+    /// Steps every instruction while set, so it is only meant for replays of a failure.
+    #[inline]
+    pub fn collect_failure_identity(&mut self, yes: bool) {
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.failure_trace = yes.then(Default::default);
+        }
+    }
+
+    /// Set whether to record the failure provenance of each call, see
+    /// [`RawCallResult::failure_provenance`](crate::executors::RawCallResult::failure_provenance).
+    ///
+    /// Only steps `REVERT` and `INVALID`, so it can stay set during campaigns.
+    #[inline]
+    pub fn collect_failure_provenance(&mut self, yes: bool) {
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.failure_provenance = yes.then(Default::default);
+        }
+    }
+
     /// Set whether to enable call isolation.
     #[inline]
     pub const fn enable_isolation(&mut self, yes: bool) {
@@ -2202,6 +2224,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         self.do_call_end(interp, message, result);
 
+        if let Some(trace) = self.cheatcodes.as_mut().and_then(|c| c.failure_trace.as_mut()) {
+            trace.finish_frame::<FEN>(usize::from(message.depth), result);
+        }
+        if let Some(provenance) =
+            self.cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut())
+        {
+            provenance.finish_frame::<FEN>(usize::from(message.depth), interp, result);
+        }
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
         }
@@ -2333,6 +2363,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         self.do_create_end(interp, message, result);
 
+        if let Some(trace) = self.cheatcodes.as_mut().and_then(|c| c.failure_trace.as_mut()) {
+            trace.finish_frame::<FEN>(usize::from(message.depth), result);
+        }
+        if let Some(provenance) =
+            self.cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut())
+        {
+            provenance.finish_frame::<FEN>(usize::from(message.depth), interp, result);
+        }
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
         }
@@ -2777,6 +2815,18 @@ mod tests {
         let set = |opcodes: &[u8]| opcodes.iter().copied().collect::<OpcodeSet>();
 
         stack.set_cheatcodes(Cheatcodes::new(Default::default()));
+        assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
+
+        // Recording failure identities steps everything, only while set.
+        stack.collect_failure_identity(true);
+        assert_eq!(steps(&mut stack), OpcodeSet::ALL);
+        stack.collect_failure_identity(false);
+        assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
+
+        // Recording failure provenance only steps the instructions that end a frame early.
+        stack.collect_failure_provenance(true);
+        assert_eq!(steps(&mut stack), set(&[op::REVERT, op::INVALID]));
+        stack.collect_failure_provenance(false);
         assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
 
         // Without other stepping inspectors, the fuzzer steps nothing and cancellation polls at
