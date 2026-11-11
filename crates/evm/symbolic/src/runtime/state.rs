@@ -2412,9 +2412,14 @@ impl SymbolicWorld {
             .extend(candidates);
     }
 
+    /// Returns whether a guarded cheatcode write went through any address word.
+    pub(crate) fn has_guarded_addresses(&self) -> bool {
+        !self.guarded_symbolic_addresses.is_empty()
+    }
+
     /// Returns the concrete accounts a guarded word may still denote.
     pub(crate) fn guarded_candidates(&self, expr: &SymExpr) -> Option<Vec<Address>> {
-        if self.guarded_symbolic_addresses.is_empty() {
+        if !self.has_guarded_addresses() {
             return None;
         }
         let (alias, _) = self.alias_entry(expr)?;

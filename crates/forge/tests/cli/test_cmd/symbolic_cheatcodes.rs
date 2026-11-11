@@ -3023,6 +3023,17 @@ contract SymbolicFreeAddressWrites is Test {
         assert(a.balance == 5);
     }
 
+    // A cheatcode call whose input size the path fixes but does not spell out still forks.
+    function checkSymbolicSizeSetNonce(address a, uint256 size) public {
+        vm.assume(size == 68);
+        bytes memory data = abi.encodeWithSelector(vm.setNonceUnsafe.selector, a, uint64(7));
+        bool ok;
+        assembly {
+            ok := call(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0, add(data, 0x20), size, 0, 0)
+        }
+        assert(vm.getNonce(address(vault)) != 7);
+    }
+
     function checkPrankAfterDeal(address a) public {
         vm.deal(a, 1);
         vm.prank(a);
@@ -3069,7 +3080,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 7 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+Ran 8 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealKeepsCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDirtyWordKeepsGuard(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterDealShowsThrough(address) ([METRICS])
@@ -3077,7 +3088,8 @@ Ran 7 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankAfterDeal(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreKeepsNonce(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreMayTargetSetUpContract(address) ([METRICS])
-Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

@@ -12,25 +12,26 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
-        let free_write_target = self.free_address_write_target(executor, state, kind);
+        let free_write_targets = self.free_address_write_targets(executor, state, kind)?;
         let pre_call_state = (!state.function_mocks.is_empty()
-            || free_write_target.is_some()
+            || !free_write_targets.is_empty()
             || !state.expected_calls.is_empty()
             || !state.call_mocks.is_empty()
             || (state.is_static && matches!(kind, CallKind::Call)))
         .then(|| state.clone());
         let call_pc = state.pc.saturating_sub(1);
-        if let Some((write_target, candidates)) = &free_write_target
-            && self.branch_free_address_write_if_needed(
+        // A word the fork decides in place leaves the remaining words to decide.
+        for (write_target, candidates) in &free_write_targets {
+            if self.branch_free_address_write_if_needed(
                 state,
                 worklist,
                 pre_call_state.as_ref().expect("free address writes require pre-call state"),
                 call_pc,
                 write_target,
                 candidates,
-            )?
-        {
-            return Ok(StepOutcome::Forked);
+            )? {
+                return Ok(StepOutcome::Forked);
+            }
         }
 
         let has_value = matches!(kind, CallKind::Call | CallKind::CallCode);
