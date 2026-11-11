@@ -8809,6 +8809,7 @@ async fn fork_transact_reverted_creation_keeps_storage(prj: _, cmd: _) {
     let created = from.create(0);
     api.anvil_set_balance(created, U256::ONE).await.unwrap();
     api.anvil_set_storage_at(created, U256::from(1), B256::with_last_byte(5)).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(2), B256::with_last_byte(6)).await.unwrap();
     api.anvil_mine(Some(U256::ONE), None).await.unwrap();
     // Init code that stores 1 at slot 1 and deploys an empty contract.
     let tx_hash: B256 = provider
@@ -8840,6 +8841,7 @@ contract TransactCreationForkTest {
         vm.transact(<tx>);
         require(vm.load(CREATED, bytes32(0)) == 0, "replayed creation");
         require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(1)), "replayed write");
+        require(vm.load(CREATED, bytes32(uint256(2))) == 0, "replayed unloaded slot");
         revert("rolled back");
     }
 
@@ -8850,6 +8852,11 @@ contract TransactCreationForkTest {
         require(CREATED.code.length == 0, "rolled back creation");
         require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "seeded");
         require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(5)), "fork storage");
+        require(vm.load(CREATED, bytes32(uint256(2))) == bytes32(uint256(6)), "slot read in replay");
+        // A slot loaded before another replay keeps its value after the replay reverts.
+        vm.store(CREATED, bytes32(uint256(2)), 0);
+        try this.replayAndRevert() {} catch {}
+        require(vm.load(CREATED, bytes32(uint256(2))) == 0, "slot stored before replay");
     }
 }
 "#
