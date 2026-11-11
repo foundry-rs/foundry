@@ -10,8 +10,8 @@
 use super::{ChainFor, FoundryEvmExt, FoundryEvmNetwork, TxFor, TypesFor};
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    BlockHeader, EthereumTxEnvelope, SignableTransaction, Signed, Transaction, TxEip1559,
-    TxEip4844Variant, Typed2718,
+    BlockHeader, EthereumTxEnvelope, EthereumTypedTransaction, SignableTransaction, Signed,
+    Transaction, TxEip1559, TxEip4844Variant, Typed2718,
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_eips::Decodable2718;
@@ -21,7 +21,7 @@ use alloy_network::{
 };
 use alloy_primitives::{Address, Signature};
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockTransactions;
+use alloy_rpc_types::{BlockTransactions, TransactionRequest};
 use evm2::{
     EvmTypesHost,
     ethereum::{LazyTxEip7702, TxEnvelope},
@@ -127,15 +127,36 @@ pub fn placeholder_signature() -> Signature {
 /// Signed EIP-7702 authorizations are kept as signed, so their authorities are recovered during
 /// execution exactly as on chain.
 pub fn eth_tx(envelope: EthereumTxEnvelope<TxEip4844Variant>) -> TxEnvelope {
-    match envelope {
-        EthereumTxEnvelope::Legacy(tx) => TxEnvelope::Legacy(tx.strip_signature()),
-        EthereumTxEnvelope::Eip2930(tx) => TxEnvelope::Eip2930(tx.strip_signature()),
-        EthereumTxEnvelope::Eip1559(tx) => TxEnvelope::Eip1559(tx.strip_signature()),
-        EthereumTxEnvelope::Eip4844(tx) => TxEnvelope::Eip4844(tx.strip_signature()),
-        EthereumTxEnvelope::Eip7702(tx) => {
-            TxEnvelope::Eip7702(LazyTxEip7702::from_recovered_authorizations(tx.strip_signature()))
+    eth_unsigned_tx(match envelope {
+        EthereumTxEnvelope::Legacy(tx) => tx.strip_signature().into(),
+        EthereumTxEnvelope::Eip2930(tx) => tx.strip_signature().into(),
+        EthereumTxEnvelope::Eip1559(tx) => tx.strip_signature().into(),
+        EthereumTxEnvelope::Eip4844(tx) => tx.strip_signature().into(),
+        EthereumTxEnvelope::Eip7702(tx) => tx.strip_signature().into(),
+    })
+}
+
+/// Converts an unsigned Ethereum transaction into evm2's Ethereum transaction.
+pub fn eth_unsigned_tx(tx: EthereumTypedTransaction<TxEip4844Variant>) -> TxEnvelope {
+    match tx {
+        EthereumTypedTransaction::Legacy(tx) => TxEnvelope::Legacy(tx),
+        EthereumTypedTransaction::Eip2930(tx) => TxEnvelope::Eip2930(tx),
+        EthereumTypedTransaction::Eip1559(tx) => TxEnvelope::Eip1559(tx),
+        EthereumTypedTransaction::Eip4844(tx) => TxEnvelope::Eip4844(tx),
+        EthereumTypedTransaction::Eip7702(tx) => {
+            TxEnvelope::Eip7702(LazyTxEip7702::from_recovered_authorizations(tx))
         }
     }
+}
+
+/// Converts a complete unsigned Ethereum request into a simulated evm2 transaction.
+///
+/// evm2's Ethereum transaction has no signature, so this skips the placeholder-signed envelope of
+/// [`FoundryTxConversion::tx_from_request`], which hashes the encoded transaction.
+pub fn eth_tx_from_request(request: TransactionRequest) -> eyre::Result<Recovered<TxEnvelope>> {
+    let sender = request.from.ok_or_else(|| eyre::eyre!("transaction request has no sender"))?;
+    let unsigned = request.build_unsigned().map_err(|err| eyre::eyre!(err.error.to_string()))?;
+    Ok(Recovered::new_unchecked(eth_unsigned_tx(unsigned), sender))
 }
 
 /// Returns the Ethereum envelope of a transaction fetched over RPC.
