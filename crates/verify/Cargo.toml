@@ -32,7 +32,7 @@ alloy-provider = { workspace = true, features = ["trace-api"] }
 tracing.workspace = true
 foundry-compilers.workspace = true
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
-revm.workspace = true
+evm2.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 reqwest = { workspace = true, features = ["json"] }
@@ -45,9 +45,6 @@ yansi.workspace = true
 itertools.workspace = true
 url.workspace = true
 
-# monad
-monad-revm = { workspace = true, optional = true }
-
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }
 foundry-test-utils.workspace = true
@@ -56,7 +53,6 @@ tempfile.workspace = true
 [features]
 default = ["optimism"]
 monad = [
-    "dep:monad-revm",
     "foundry-common/monad",
     "foundry-config/monad",
     "foundry-evm/monad",
