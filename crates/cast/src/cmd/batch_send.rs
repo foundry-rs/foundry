@@ -7,7 +7,10 @@ use crate::{
     call_spec::CallSpec,
     cmd::{
         auth::{confirm_and_build, confirm_and_build_with_tempo_wallet},
-        send::{SendOptions, cast_send, cast_send_with_tempo_wallet},
+        send::{
+            SendOptions, cast_send, cast_send_with_configurable_account,
+            cast_send_with_tempo_wallet,
+        },
     },
     tempo,
     tx::{self, CastTxBuilder, InitState, InputState, SendTxOpts, apply_poll_interval},
@@ -73,9 +76,20 @@ impl BatchSendArgs {
         apply_poll_interval(&provider, send_tx.poll_interval);
 
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let (signer, tempo_access_key) =
+        let (mut signer, tempo_access_key) =
             tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
                 .await?;
+        let configurable_account = if unlocked || tempo_access_key.is_some() {
+            None
+        } else {
+            tempo::resolve_configurable_account::<TempoNetwork>(
+                &tx.tempo,
+                &config,
+                send_tx.eth.wallet.from,
+                &mut signer,
+            )
+            .await?
+        };
 
         // Preserve key_id for modes that do not call build_with_tempo_wallet, such as unlocked.
         if let Some(access_key) = &tempo_access_key {
@@ -83,7 +97,10 @@ impl BatchSendArgs {
         }
 
         let builder = CastTxBuilder::<TempoNetwork, _, _>::new(&provider, tx, &config).await?;
-        let builder = with_batch_calls(&calls, builder, &provider).await?;
+        let mut builder = with_batch_calls(&calls, builder, &provider).await?;
+        if let Some(account) = &configurable_account {
+            account.prepare_request::<TempoNetwork>(builder.tx_mut());
+        }
         tempo::print_expires(expires_at)?;
 
         let send_opts = SendOptions::new(&send_tx, &config).resolving_fee_token(true, &config);
@@ -101,6 +118,13 @@ impl BatchSendArgs {
                 return Ok(());
             };
             cast_send_with_tempo_wallet(&provider, tx_request, &prepared, &send_opts).await?;
+        } else if let Some(account) = &configurable_account {
+            let Some(tx_request) =
+                confirm_and_build(builder, account.account(), force, lane, false).await?
+            else {
+                return Ok(());
+            };
+            cast_send_with_configurable_account(&provider, tx_request, account, &send_opts).await?;
         } else {
             let (signer, _) = tx::resolve_send_signer(signer, &send_tx.eth).await?;
             let Some(tx_request) = confirm_and_build(builder, &signer, force, lane, false).await?

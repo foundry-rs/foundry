@@ -3,10 +3,12 @@
 //! No public Tempo network schedules T14 yet, so the tests run against local Anvil T14 nodes.
 
 use alloy_consensus::Transaction;
+use alloy_eips::Decodable2718;
 use alloy_network::ReceiptResponse;
 use alloy_primitives::{Address, B256, U256, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolCall;
 use anvil::NodeConfig;
 use base64::Engine;
 use foundry_cli::utils::parse_json;
@@ -16,9 +18,14 @@ use foundry_test_utils::{TestCommand, assert_data_eq, util::OutputExt};
 use p256::ecdsa::{SigningKey, signature::Signer as _};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
+use tempo_contracts::precompiles::ITIP20;
 use tempo_hardfork::TempoHardfork;
-use tempo_primitives::transaction::{
-    CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, tt_signature::derive_p256_address,
+use tempo_primitives::{
+    TempoTxEnvelope,
+    transaction::{
+        CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, ConfigurableAccountConfig, ConfigurableAccountOwner,
+        tt_signature::derive_p256_address,
+    },
 };
 
 /// Returns the gas limit and the gas used of the last transaction in the latest block, and
@@ -521,4 +528,234 @@ Continue anyway? [y/N] Aborted.
 Error: [..] is already a configurable account
 
 "#]]);
+}
+
+/// A 2-of-3 configurable account over the keys `0x61..61`, `0x62..62` and `0x63..63`, the
+/// account it derives, its configuration as `--tempo.config` takes it, and the keys sorted by
+/// address.
+fn two_of_three() -> (Address, String, [PrivateKeySigner; 3]) {
+    let mut keys = [0x61, 0x62, 0x63]
+        .map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
+    keys.sort_by_key(|key| key.address());
+    let config = ConfigurableAccountConfig {
+        salt: B256::repeat_byte(0x07),
+        version: 0,
+        threshold: 2,
+        owners: keys
+            .iter()
+            .map(|key| ConfigurableAccountOwner { owner: key.address(), weight: 1 })
+            .collect(),
+    };
+    let json = serde_json::json!({
+        "salt": config.salt,
+        "version": config.version,
+        "threshold": config.threshold,
+        "owners": config.owners.iter().map(|owner| serde_json::json!({
+            "owner": owner.owner,
+            "weight": owner.weight,
+        })).collect::<Vec<_>>(),
+    });
+    (config.derive_account().unwrap(), json.to_string(), keys)
+}
+
+fn private_key(key: &PrivateKeySigner) -> String {
+    hex::encode_prefixed(key.to_bytes())
+}
+
+/// Returns the receipt of the last transaction in the latest block, as JSON.
+async fn last_receipt(provider: &RetryProvider) -> serde_json::Value {
+    let block = provider.get_block_number().await.unwrap();
+    let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+    let hash = receipts.last().unwrap().transaction_hash();
+    provider
+        .raw_request::<_, serde_json::Value>("eth_getTransactionReceipt".into(), (hash,))
+        .await
+        .unwrap()
+}
+
+/// `cast send`, `mktx`, `batch-send` and `estimate` detect a 2-of-3 configurable account sender
+/// from the chain and sign `0x05` with its local owners, without flags once it is registered.
+/// The estimate models the owners' approvals exactly, missing owners fail clearly, and a plain
+/// EOA keeps its secp256k1 signature.
+#[casttest]
+async fn tempo_t14_send_detects_configurable_account(cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = two_of_three();
+    api.anvil_deal_tip20(account, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+    let (account_arg, target) = (account.to_string(), Address::repeat_byte(0x73).to_string());
+    let fee_token = ALPHA_USD_ADDRESS.to_string();
+    let common = ["--rpc-url", &rpc, "--tempo.fee-token", &fee_token];
+    let owner = |key: &PrivateKeySigner| format!("private-key://{}", private_key(key));
+
+    // An account that has not sent its first transaction has no onchain configuration, so its
+    // first transaction takes it from `--tempo.config` and registers the account.
+    cmd.cast_fuse()
+        .args(["send", &target, "--from", &account_arg, "--private-key", &private_key(&keys[0])])
+        .args(["--tempo.owner", &owner(&keys[1]), "--tempo.config", &config])
+        .args(common)
+        .assert_success()
+        .stderr_eq(format!(
+            "Sending as Tempo configurable account {account}\nPaying gas in AlphaUSD \
+             ({ALPHA_USD_ADDRESS})\n"
+        ));
+    let receipt = last_receipt(&provider).await;
+    assert_eq!(receipt["from"], serde_json::json!(account));
+    // The estimate models the two secp256k1 approvals and the registration exactly.
+    let (gas_limit, gas_used) = last_tx_gas(&provider).await;
+    assert_eq!(gas_limit, gas_used);
+
+    // Registered, the account is detected from its configuration event; the owners need not be
+    // given in address order.
+    let estimate = cmd
+        .cast_fuse()
+        .args([
+            "estimate",
+            &target,
+            "--from",
+            &account_arg,
+            "--private-key",
+            &private_key(&keys[2]),
+        ])
+        .args(["--tempo.owner", &owner(&keys[1])])
+        .args(common)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    cmd.cast_fuse()
+        .args(["send", &target, "--from", &account_arg, "--private-key", &private_key(&keys[2])])
+        .args(["--tempo.owner", &owner(&keys[1])])
+        .args(common)
+        .assert_success();
+    let (gas_limit, gas_used) = last_tx_gas(&provider).await;
+    assert_eq!(gas_limit, gas_used);
+    assert_eq!(estimate.trim().parse::<u64>().unwrap(), gas_used);
+    assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(account));
+
+    // `--tempo.configurable-account` names the sender without `--from`.
+    let raw = cmd
+        .cast_fuse()
+        .args(["mktx", &target, "--tempo.configurable-account", &account_arg])
+        .args(["--private-key", &private_key(&keys[0]), "--tempo.owner", &owner(&keys[2])])
+        .args(common)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let envelope = TempoTxEnvelope::decode_2718_exact(&hex::decode(raw.trim()).unwrap()).unwrap();
+    let TempoTxEnvelope::AA(signed) = &envelope else {
+        panic!("expected a Tempo transaction");
+    };
+    assert_eq!(signed.signature().as_configurable_account().unwrap().signatures().len(), 2);
+    cmd.cast_fuse().args(["publish", raw.trim(), "--rpc-url", &rpc]).assert_success();
+    assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(account));
+
+    cmd.cast_fuse()
+        .args(["batch-send", "--call", &target, "--call", &target, "--from", &account_arg])
+        .args(["--private-key", &private_key(&keys[1]), "--tempo.owner", &owner(&keys[0])])
+        .args(common)
+        .assert_success();
+    assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(account));
+
+    // One owner does not reach the threshold.
+    cmd.cast_fuse()
+        .args(["send", &target, "--from", &account_arg, "--private-key", &private_key(&keys[0])])
+        .args(common)
+        .assert_failure()
+        .stderr_eq(format!(
+            "Error: {account} is a Tempo configurable account that needs owner weight 2, but the \
+             local owner keys {} reach weight 1. Its owners are {} (weight 1), {} (weight 1), {} \
+             (weight 1). Pass the other owner keys with --tempo.owner, or have each owner sign \
+             the digest from `cast mktx --raw-unsigned --tempo.digest` with `cast wallet sign \
+             --no-hash` and combine the signatures with `cast wallet assemble`.\n",
+            keys[0].address(),
+            keys[0].address(),
+            keys[1].address(),
+            keys[2].address(),
+        ));
+
+    // A plain EOA keeps its secp256k1 signature.
+    let eoa = handle.dev_wallets().next().unwrap();
+    cmd.cast_fuse()
+        .args(["send", &target, "--private-key", &private_key(&eoa)])
+        .args(["--from", &eoa.address().to_string()])
+        .args(common)
+        .assert_success()
+        .stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+"#]]);
+    assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(eoa.address()));
+    let block = provider.get_block_number().await.unwrap();
+    let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+    let raw = provider
+        .raw_request::<_, alloy_primitives::Bytes>(
+            "eth_getRawTransactionByHash".into(),
+            (receipts.last().unwrap().transaction_hash(),),
+        )
+        .await
+        .unwrap();
+    let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+        panic!("expected a Tempo transaction");
+    };
+    assert_eq!(
+        signed.signature().primitive_signature_type(),
+        Some(tempo_primitives::SignatureType::Secp256k1)
+    );
+}
+
+/// A configurable account sends with a sponsor paying its fees: the owners sign the sender's
+/// `0x05` signature and the sponsor its fee-payer signature.
+#[casttest]
+async fn tempo_t14_send_configurable_account_sponsored(cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = two_of_three();
+    let sponsor = handle.dev_wallets().nth(1).unwrap();
+    api.anvil_deal_tip20(sponsor.address(), ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+    let balance = |address: Address| {
+        let provider = provider.clone();
+        async move {
+            let call = ITIP20::balanceOfCall { account: address };
+            let output = provider
+                .raw_request::<_, alloy_primitives::Bytes>(
+                    "eth_call".into(),
+                    (serde_json::json!({
+                        "to": ALPHA_USD_ADDRESS,
+                        "data": alloy_primitives::Bytes::from(call.abi_encode()),
+                    }),),
+                )
+                .await
+                .unwrap();
+            U256::from_be_slice(&output)
+        }
+    };
+    // Gas estimation runs before the sponsor signs, so it checks the sender's balance as for any
+    // sponsored sender; the send itself must leave it untouched.
+    api.anvil_deal_tip20(account, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+    let (sponsor_before, account_before) =
+        (balance(sponsor.address()).await, balance(account).await);
+
+    cmd.cast_fuse()
+        .args(["send", &Address::repeat_byte(0x73).to_string(), "--from", &account.to_string()])
+        .args(["--private-key", &private_key(&keys[0]), "--tempo.config", &config])
+        .args(["--tempo.owner", &format!("private-key://{}", private_key(&keys[2]))])
+        .args(["--tempo.fee-token", &ALPHA_USD_ADDRESS.to_string(), "--rpc-url", &rpc])
+        .args(["--tempo.sponsor", &sponsor.address().to_string()])
+        .args(["--tempo.sponsor-signer", &format!("private-key://{}", private_key(&sponsor))])
+        .assert_success();
+    let receipt = last_receipt(&provider).await;
+    assert_eq!(receipt["from"], serde_json::json!(account));
+    assert_eq!(receipt["feePayer"], serde_json::json!(sponsor.address()));
+    assert!(balance(sponsor.address()).await < sponsor_before);
+    assert_eq!(balance(account).await, account_before);
 }

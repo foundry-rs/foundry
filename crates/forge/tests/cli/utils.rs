@@ -1,12 +1,15 @@
 //! Various helper functions
 
 use alloy_chains::NamedChain;
+use alloy_primitives::{Address, B256, hex};
+use alloy_signer_local::PrivateKeySigner;
 use std::{
     io::Read,
     path::Path,
     process::{Child, Command, Output, Stdio},
     thread::{self, JoinHandle},
 };
+use tempo_alloy::primitives::transaction::{ConfigurableAccountConfig, ConfigurableAccountOwner};
 
 /// Returns the current millis since unix epoch.
 ///
@@ -191,4 +194,33 @@ impl Drop for KillOnDrop {
             let _ = stderr.join();
         }
     }
+}
+
+/// A 2-of-3 Tempo configurable account over the keys `0x61..61`, `0x62..62` and `0x63..63`:
+/// the account it derives, its configuration as `--tempo.config` takes it, and the hex private
+/// keys of its owners sorted by address.
+pub fn tempo_two_of_three_account() -> (Address, String, Vec<String>) {
+    let mut keys = [0x61, 0x62, 0x63]
+        .map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
+    keys.sort_by_key(|key| key.address());
+    let config = ConfigurableAccountConfig {
+        salt: B256::repeat_byte(0x07),
+        version: 0,
+        threshold: 2,
+        owners: keys
+            .iter()
+            .map(|key| ConfigurableAccountOwner { owner: key.address(), weight: 1 })
+            .collect(),
+    };
+    let json = serde_json::json!({
+        "salt": config.salt,
+        "version": config.version,
+        "threshold": config.threshold,
+        "owners": config.owners.iter().map(|owner| serde_json::json!({
+            "owner": owner.owner,
+            "weight": owner.weight,
+        })).collect::<Vec<_>>(),
+    });
+    let keys = keys.iter().map(|key| hex::encode_prefixed(key.to_bytes())).collect();
+    (config.derive_account().unwrap(), json.to_string(), keys)
 }

@@ -1,0 +1,103 @@
+use super::TempoOpts;
+use alloy_primitives::Address;
+use alloy_provider::Provider;
+use alloy_signer::Signer;
+use eyre::Result;
+use foundry_common::tempo::{
+    configurable_account::{
+        ConfigurableAccountOwnerKey, ConfigurableAccountSigner, detect_configurable_account,
+        parse_config, stored_owner_keys,
+    },
+    resolve_tempo_sponsor_signer,
+};
+use foundry_wallets::WalletSigner;
+use std::sync::Arc;
+use tempo_alloy::TempoNetwork;
+use tempo_primitives::transaction::ConfigurableAccountConfig;
+
+impl TempoOpts {
+    /// Returns whether the configurable account options select the sender.
+    pub const fn has_configurable_account_options(&self) -> bool {
+        self.configurable_account.is_some()
+            || self.configurable_account_config.is_some()
+            || !self.owners.is_empty()
+    }
+
+    /// Detects a configurable account sender and selects the local owners that sign for it.
+    ///
+    /// The sender is `--tempo.configurable-account`, else `from`, else the address of the only
+    /// signer in `signers`. It is a configurable account when the chain says so (see
+    /// [`detect_configurable_account`]), or `--tempo.config` gives its configuration. Its owners
+    /// are taken from `signers`, `--tempo.owner` and the Tempo Accounts store. Fails with `hint`
+    /// when the local owners do not reach the threshold.
+    ///
+    /// Returns `None` for a sender that is not a configurable account, and before T14.
+    pub async fn configurable_account_signer<P: Provider<TempoNetwork>>(
+        &self,
+        provider: &P,
+        from: Option<Address>,
+        signers: &[Arc<WalletSigner>],
+        hint: &str,
+    ) -> Result<Option<ConfigurableAccountSigner>> {
+        let Some((account, config, keys)) =
+            self.configurable_account_owners(provider, from, signers).await?
+        else {
+            return Ok(None);
+        };
+        ConfigurableAccountSigner::new(account, config, keys, hint).map(Some)
+    }
+
+    /// Detects a configurable account sender as [`Self::configurable_account_signer`] does, and
+    /// returns the account, its configuration and all its local owner keys, which may not reach
+    /// the threshold.
+    pub async fn configurable_account_owners<P: Provider<TempoNetwork>>(
+        &self,
+        provider: &P,
+        from: Option<Address>,
+        signers: &[Arc<WalletSigner>],
+    ) -> Result<Option<(Address, ConfigurableAccountConfig, Vec<ConfigurableAccountOwnerKey>)>>
+    {
+        if let (Some(account), Some(from)) = (self.configurable_account, from) {
+            eyre::ensure!(
+                account == from,
+                "--tempo.configurable-account {account} does not match the sender {from}"
+            );
+        }
+        let only_signer = match signers {
+            [signer] => Some(signer.address()),
+            _ => None,
+        };
+        let Some(account) = self.configurable_account.or(from).or(only_signer) else {
+            eyre::ensure!(
+                !self.has_configurable_account_options(),
+                "configurable account options need a sender: pass --from or \
+                 --tempo.configurable-account"
+            );
+            return Ok(None);
+        };
+        let config = self.configurable_account_config.as_deref().map(parse_config).transpose()?;
+
+        let mut owners = Vec::with_capacity(self.owners.len());
+        for spec in &self.owners {
+            owners.push(Box::pin(resolve_tempo_sponsor_signer(spec)).await?);
+        }
+        let owners = owners.into_iter().map(Arc::new).collect::<Vec<_>>();
+        let keys = signers.iter().chain(&owners).map(|signer| signer.address()).collect::<Vec<_>>();
+        let required = self.has_configurable_account_options();
+        let Some(config) =
+            detect_configurable_account(provider, account, &keys, config, required).await?
+        else {
+            return Ok(None);
+        };
+
+        let chain_id = provider.get_chain_id().await?;
+        let keys = signers
+            .iter()
+            .chain(&owners)
+            .filter(|signer| config.owner_weight(signer.address()).is_some())
+            .map(|signer| ConfigurableAccountOwnerKey::Wallet(signer.clone()))
+            .chain(stored_owner_keys(chain_id, &config))
+            .collect();
+        Ok(Some((account, config, keys)))
+    }
+}
