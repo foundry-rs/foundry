@@ -21,7 +21,7 @@ use foundry_common::{
     get_pretty_receipt_w_reason_attr,
     provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     shell,
-    tempo::ensure_expiring_nonce_discriminator_active,
+    tempo::{ensure_expiring_nonce_discriminator_active, mark_sponsored_gas_estimation},
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
@@ -486,6 +486,8 @@ struct TxBuilderInner<N: Network, P> {
     eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     /// Optional percentage applied to provider gas estimates.
     gas_estimate_multiplier: Option<u64>,
+    /// Whether a Tempo fee payer will sponsor the transaction.
+    sponsored: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -580,6 +582,7 @@ where
                 browser: false,
                 eip1559_fee_estimate: config.eip1559_fee_estimate,
                 gas_estimate_multiplier: None,
+                sponsored: tx_opts.tempo.is_sponsored(),
                 chain,
                 etherscan_api_key,
                 etherscan_api_url,
@@ -746,12 +749,13 @@ where
             let gas_request =
                 (fees_are_complete && self.access_list.is_none() && self.tx.gas_limit().is_none())
                     .then(|| self.tx.clone());
-            let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier) = (
+            let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier, sponsored) = (
                 self.blob,
                 self.legacy,
                 self.browser,
                 self.eip1559_fee_estimate,
                 self.gas_estimate_multiplier,
+                self.sponsored,
             );
             let Self { provider, tx, .. } = &mut self;
             let provider = &*provider;
@@ -760,11 +764,14 @@ where
                 Self::fill_fees(provider, tx, blob, legacy, browser, eip1559_fee_estimate),
                 async {
                     match gas_request {
-                        Some(request) => {
-                            Self::estimate_gas(provider, request, gas_estimate_multiplier)
-                                .await
-                                .map(Some)
-                        }
+                        Some(request) => Self::estimate_gas(
+                            provider,
+                            request,
+                            gas_estimate_multiplier,
+                            sponsored,
+                        )
+                        .await
+                        .map(Some),
                         None => Ok(None),
                     }
                 },
@@ -813,8 +820,13 @@ where
             } else {
                 self.tx.clone()
             };
-            let estimated =
-                Self::estimate_gas(&self.provider, request, self.gas_estimate_multiplier).await?;
+            let estimated = Self::estimate_gas(
+                &self.provider,
+                request,
+                self.gas_estimate_multiplier,
+                self.sponsored,
+            )
+            .await?;
             self.tx.set_gas_limit(estimated);
         }
 
@@ -880,9 +892,13 @@ where
     /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
     async fn estimate_gas(
         provider: &P,
-        request: N::TransactionRequest,
+        mut request: N::TransactionRequest,
         multiplier: Option<u64>,
+        sponsored: bool,
     ) -> Result<u64> {
+        if sponsored {
+            mark_sponsored_gas_estimation(provider, &mut request).await;
+        }
         let err = match provider.estimate_gas(request).await {
             Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier),
             Err(err) => err,

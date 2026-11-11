@@ -28,7 +28,7 @@ use foundry_common::{
     },
     retry::Retry,
     shell,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -569,11 +569,14 @@ impl CreateArgs {
         }
 
         if self.tx.gas_limit.is_none() {
-            let request = if browser_signer.is_some() {
+            let mut request = if browser_signer.is_some() {
                 deployer.tx.browser_wallet_gas_estimation_request()
             } else {
                 deployer.tx.clone()
             };
+            if self.tx.tempo.is_sponsored() {
+                mark_sponsored_gas_estimation(&provider, &mut request).await;
+            }
             let estimated = provider.estimate_gas(request).await?;
             deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(
                 estimated,
