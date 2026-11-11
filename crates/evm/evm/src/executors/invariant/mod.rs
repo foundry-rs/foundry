@@ -797,10 +797,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     /// `initial_handler_failures` pre-seeds the campaign's `broken_handlers` map with bugs
     /// recovered from disk by the runner's persisted-failure replay step, so the live
     /// progress bar and JSON pulse stream surface them from the first emission instead of
-    /// jumping at the final report.
+    /// jumping at the final report. `sender_filters` and `targeted_contracts` are the selection
+    /// from [`Self::select_contracts_and_senders`], made before the executor's gas limit was
+    /// lowered to `call_gas_limit`.
+    #[allow(clippy::too_many_arguments)]
     pub fn invariant_fuzz(
         &mut self,
         invariant_contract: InvariantContract<'_>,
+        sender_filters: SenderFilters,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
@@ -817,8 +822,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             self.invariant_campaign_anchors,
         ))?;
         let actual_worker_count = worker_plans.len();
-        let campaign_seed =
-            self.prepare_campaign_seed(&invariant_contract, initial_handler_failures)?;
+        let campaign_seed = InvariantCampaignSeed {
+            artifact_filters: self.artifact_filters.clone(),
+            sender_filters,
+            targeted_contracts: targeted_contracts.targets().clone(),
+            targets_are_updatable: targeted_contracts.is_updatable,
+            initial_handler_failures,
+        };
         let replay_targets = FuzzRunIdentifiedContracts::new(
             campaign_seed.targeted_contracts.clone(),
             campaign_seed.targets_are_updatable,
@@ -1762,29 +1772,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 Err(e) => trace!(target: "forge::test", "handler shrink failed: {e}"),
             }
         }
-    }
-
-    fn prepare_campaign_seed(
-        &mut self,
-        invariant_contract: &InvariantContract<'_>,
-        initial_handler_failures: std::collections::HashMap<
-            (Address, Selector),
-            InvariantFuzzError,
-        >,
-    ) -> Result<InvariantCampaignSeed> {
-        self.select_contract_artifacts(invariant_contract.address)?;
-        let (sender_filters, targeted_contracts) =
-            self.select_contracts_and_senders(invariant_contract.address)?;
-        let targets_are_updatable = targeted_contracts.is_updatable;
-        let targeted_contracts = targeted_contracts.targets().clone();
-
-        Ok(InvariantCampaignSeed {
-            artifact_filters: self.artifact_filters.clone(),
-            sender_filters,
-            targeted_contracts,
-            targets_are_updatable,
-            initial_handler_failures,
-        })
     }
 
     /// Prepares worker-local structures to execute an invariant campaign slice.
