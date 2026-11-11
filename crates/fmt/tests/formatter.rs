@@ -1563,3 +1563,27 @@ fn preserve_statement_body_line_breaks() {
         }
     }
 }
+
+#[test]
+fn wrapped_line_tail_comment_keeps_for_body_braces() {
+    let source = r#"contract C { function f() external { for (;;) { break; // aaaaaaaaa bbbbbbbbb ccccccccc ddddddddd eeeeeeeee fffffffff
+} y(); } }
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        for (;;) {
+            break; // aaaaaaaaa bbbbbbbbb ccccccccc
+            // ddddddddd eeeeeeeee fffffffff
+        }
+        y();
+    }
+}
+"#;
+    let config = Arc::new(FormatterConfig {
+        line_length: 40,
+        wrap_comments: true,
+        single_line_statement_blocks: SingleLineBlockStyle::Single,
+        ..Default::default()
+    });
+    assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+}

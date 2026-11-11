@@ -2251,7 +2251,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::StmtKind::For { init, cond, next, body } = &stmt.kind else { unreachable!() };
         let span = stmt.span;
         let inline = self.is_single_line_block(stmt);
-        let set_inline_cache = !inline.is_cached && self.single_line_stmt.is_none();
+        let set_inline_cache = self.single_line_stmt.is_none();
         if set_inline_cache {
             self.single_line_stmt = Some(inline.outcome);
         }
@@ -2363,7 +2363,7 @@ impl<'ast> State<'_, 'ast> {
         let span = stmt.span;
         // Check if blocks should be inlined and update cache if necessary
         let inline = self.is_single_line_block(stmt);
-        let set_inline_cache = !inline.is_cached && self.single_line_stmt.is_none();
+        let set_inline_cache = self.single_line_stmt.is_none();
         if set_inline_cache {
             self.single_line_stmt = Some(inline.outcome);
         }
@@ -2764,12 +2764,14 @@ impl<'ast> State<'_, 'ast> {
             return Decision { outcome: cached_decision, is_cached: true };
         }
 
-        // Multi always keeps braces; Preserve also respects an explicit body line break.
+        // Reject source layouts that Preserve must retain before measuring normalized output.
+        let then_span = Self::inline_stmt_span(then);
         if matches!(self.config.single_line_statement_blocks, config::SingleLineBlockStyle::Multi)
             || (matches!(
                 self.config.single_line_statement_blocks,
                 config::SingleLineBlockStyle::Preserve
-            ) && self.is_stmt_in_new_line(cond, then))
+            ) && (self.is_stmt_in_new_line(cond, then)
+                || !self.same_source_line(then_span.lo(), then_span.hi())))
             || self.is_multiline_block_stmt(then, true)
         {
             return Decision { outcome: false, is_cached: false };
@@ -2821,11 +2823,7 @@ impl<'ast> State<'_, 'ast> {
         header_len: usize,
         body_len: Option<usize>,
     ) -> bool {
-        let span = if let ast::StmtKind::If(cond, then, _) = &stmt.kind {
-            cond.span.to(then.span)
-        } else {
-            stmt.span
-        };
+        let span = Self::inline_stmt_span(stmt);
         if matches!(
             self.config.single_line_statement_blocks,
             config::SingleLineBlockStyle::Preserve
@@ -2840,6 +2838,14 @@ impl<'ast> State<'_, 'ast> {
             return self.is_inline_stmt(els, 6, None);
         }
         true
+    }
+
+    fn inline_stmt_span(stmt: &ast::Stmt<'_>) -> Span {
+        if let ast::StmtKind::If(cond, then, _) = &stmt.kind {
+            cond.span.to(then.span)
+        } else {
+            stmt.span
+        }
     }
 
     /// Checks if a statement was explicitly written in a new line.
