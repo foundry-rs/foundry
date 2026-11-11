@@ -6,6 +6,7 @@ use foundry_evm::executors::invariant::{
     SequenceShrink, ShrinkCandidateKeys, ShrinkRun, shrink_sequence_by_removing,
 };
 use itertools::Itertools;
+use std::time::Instant;
 
 const MAX_SUBSET_CANDIDATES_PER_PASS: usize = 256;
 
@@ -85,6 +86,7 @@ pub(crate) fn minimize_sequence_counterexample(
     calls: &[SymbolicCounterexampleCall],
     sender_candidates: &[Address],
     max_attempts: usize,
+    deadline: Option<Instant>,
     mut still_fails: impl FnMut(&[SymbolicCounterexampleCall]) -> bool,
 ) -> Option<MinimizedSequence> {
     if calls.is_empty() {
@@ -93,7 +95,7 @@ pub(crate) fn minimize_sequence_counterexample(
 
     let original_calls = calls.to_vec();
     let mut minimizer =
-        SequenceMinimizer::new(original_calls.clone(), max_attempts, &mut still_fails);
+        SequenceMinimizer::new(original_calls.clone(), max_attempts, deadline, &mut still_fails);
 
     minimizer.minimize_len();
     minimizer.minimize_calldata();
@@ -115,13 +117,15 @@ impl<'a> SequenceMinimizer<'a> {
     fn new(
         current_calls: Vec<SymbolicCounterexampleCall>,
         max_attempts: usize,
+        deadline: Option<Instant>,
         still_fails: &'a mut dyn FnMut(&[SymbolicCounterexampleCall]) -> bool,
     ) -> Self {
         let tried_candidates = ShrinkCandidateKeys::new(replay_sequence_key(&current_calls));
-        Self { current_calls, tried_candidates, run: ShrinkRun::new(max_attempts), still_fails }
+        let run = ShrinkRun::new(max_attempts).with_deadline(deadline);
+        Self { current_calls, tried_candidates, run, still_fails }
     }
 
-    const fn can_try(&self) -> bool {
+    fn can_try(&self) -> bool {
         self.run.can_try()
     }
 
@@ -2017,6 +2021,7 @@ mod tests {
             &[start],
             &[sender, sender],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
+            None,
             |calls| {
                 replays += 1;
                 assert_eq!(calls.len(), 1);
@@ -2061,6 +2066,7 @@ mod tests {
             &sequence,
             &[smaller_sender],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
+            None,
             |candidate| {
                 let mut primed = false;
                 for call in candidate {

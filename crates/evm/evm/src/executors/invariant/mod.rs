@@ -997,6 +997,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             aggregator.finish_campaign()?
         };
         result.interrupted = campaign_state.interrupted(result.runs, self.config.runs);
+        result.shrink_deadline = campaign_state.shrink_deadline();
         result.symbolic_live =
             campaign_state.live_solver.as_ref().map(|solver| solver.lock().unwrap().finish());
         persist_campaign_optimization(
@@ -1673,7 +1674,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         trace!(?fuzz_fixtures);
         invariant_test.fuzz_state.log_stats();
 
-        // Campaign-local terminal stops and deadlines must not suppress post-campaign shrinking.
+        // Campaign-local terminal stops and deadlines must not suppress post-campaign shrinking,
+        // which a timed campaign bounds by its own shrink deadline instead.
         executor.inspector_mut().set_early_exit(campaign_state.early_exit().clone());
         Self::shrink_handler_failures(
             &config,
@@ -1681,6 +1683,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &mut invariant_test.test_data,
             progress,
             campaign_state.early_exit(),
+            campaign_state.shrink_deadline(),
         );
 
         // Move out the final test data and drop worker-local fuzz state before returning this
@@ -1726,6 +1729,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         result: &mut InvariantTestData,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
+        shrink_deadline: Option<Instant>,
     ) {
         let total = result.failures.handler_count();
         if total == 0 {
@@ -1754,6 +1758,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 executor,
                 &shrink_progress,
                 early_exit,
+                shrink_deadline,
             ) {
                 Ok(shrunk) if !shrunk.is_empty() => {
                     failure.call_sequence = shrunk;

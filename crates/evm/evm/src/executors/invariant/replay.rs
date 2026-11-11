@@ -21,7 +21,7 @@ use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantC
 use foundry_evm_traces::{TraceKind, TraceRequirements, Traces, load_contracts};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 pub struct ReplayErrorResult {
     pub counterexample_sequence: Vec<BaseCounterExample>,
@@ -143,6 +143,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
+    shrink_deadline: Option<Instant>,
     position: Option<(usize, usize)>,
 ) -> Result<ReplayErrorResult> {
     // Multi-invariant runs include `[i/N]` in the shrink progress message so users see how many
@@ -170,6 +171,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             targets,
             &shrink_progress,
             early_exit,
+            shrink_deadline,
         )?;
         (calls, None, Some(value))
     } else {
@@ -183,6 +185,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             rd,
             &shrink_progress,
             early_exit,
+            shrink_deadline,
         )?;
         (shrunk.calls, shrunk.result, None)
     };

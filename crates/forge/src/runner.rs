@@ -1234,6 +1234,8 @@ struct SequenceReplay<'a> {
     target_invariant: &'a Function,
     assertion_failure: bool,
     storage: &'a [SymbolicStorageAssignment],
+    /// When shrinking the failure must stop, for a timed campaign.
+    shrink_deadline: Option<Instant>,
 }
 
 /// Metadata for the symbolic artifact persisted with a replayed invariant sequence.
@@ -1479,6 +1481,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 replay.target_invariant,
                 identified_contracts,
                 progress,
+                replay.shrink_deadline,
                 position,
             )?;
 
@@ -1560,6 +1563,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         target_invariant: &Function,
         identified_contracts: &ContractsByAddress,
         progress: Option<&indicatif::ProgressBar>,
+        shrink_deadline: Option<Instant>,
         position: Option<(usize, usize)>,
     ) -> Result<ReplayErrorResult> {
         replay_error(
@@ -1582,6 +1586,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &mut self.result.deprecated_cheatcodes,
             progress,
             &self.tcfg.early_exit,
+            shrink_deadline,
             position,
         )
     }
@@ -1612,6 +1617,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &original_calls,
             &self.symbolic_sequence_sender_candidates(current_settings),
             replay.invariant_config.shrink_run_limit as usize,
+            replay.shrink_deadline,
             preserves,
         )?;
         preserves(&minimization.minimized_calls).then_some(minimization)
@@ -4198,6 +4204,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 identified_contracts,
                 progress.as_ref(),
                 None,
+                None,
             ) {
                 Ok(ReplayErrorResult {
                     counterexample_sequence: sequence, check_result, ..
@@ -4431,6 +4438,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         target_invariant: anchor,
                         assertion_failure: false,
                         storage: &storage,
+                        shrink_deadline: None,
                     };
                     let replayed = self
                         .symbolic_sequence_failure(check, &symbolic_calls)
@@ -4742,6 +4750,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     anchor,
                     identified_contracts,
                     progress.as_ref(),
+                    invariant_result.shrink_deadline,
                     None,
                 ) {
                     Ok(ReplayErrorResult {
@@ -4878,6 +4887,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             target_invariant: invariant,
                             assertion_failure: case_data.assertion_failure,
                             storage,
+                            shrink_deadline: invariant_result.shrink_deadline,
                         },
                         calls,
                         Some(case_data.inner_sequence.clone()),
