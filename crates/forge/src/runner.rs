@@ -34,7 +34,7 @@ use alloy_primitives::{
 use evm2::{
     bytecode::Bytecode,
     evm::{Cache, InMemoryDB},
-    interpreter::op as opcode,
+    interpreter::{InstrStop, op as opcode},
 };
 use eyre::Result;
 use foundry_common::{
@@ -82,7 +82,8 @@ use foundry_evm_symbolic::{
     SymbolicExecutor, SymbolicInvariantCandidateInput, SymbolicInvariantCounterexampleKind,
     SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
     SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, SymbolicStats,
-    SymbolicStopReason, SymbolicStorageAssignment, symbolic_vm_selectors,
+    SymbolicStopReason, SymbolicStorageAssignment, is_symbolic_failure_revert,
+    symbolic_vm_selectors,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -2573,31 +2574,38 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let base_counterexample =
             BaseCounterExample::from_fuzz_call(calldata, args, raw.traces.clone());
-        // Concrete replay rejected the input as an assumption, as fuzzing does.
-        let rejected_by_assume = raw.result.as_ref() == MAGIC_ASSUME;
-        // A replay that runs out of `svm` values left the solver path, so its failure proves
-        // nothing.
-        let svm_exhausted = svm_returns_exhausted(&svm_returns, &raw);
-        if rejected_by_assume
-            || svm_exhausted
-            || self.executor.is_raw_call_success(
-                self.address,
-                Cow::Borrowed(&raw.state_changeset),
-                &raw,
-            )
+        // The solver model is not a user-facing counterexample until replay confirms it, so
+        // report a mismatch as an incomplete run instead.
+        let mismatch = if raw.result.as_ref() == MAGIC_ASSUME {
+            // Concrete replay rejected the input as an assumption, as fuzzing does.
+            Some("symbolic counterexample did not replay: rejected by `vm.assume`".to_string())
+        } else if svm_returns_exhausted(&svm_returns, &raw) {
+            // A replay that runs out of `svm` values left the solver path, so its failure proves
+            // nothing.
+            Some("symbolic counterexample did not replay: ran out of `svm` values".to_string())
+        } else if self.executor.is_raw_call_success(
+            self.address,
+            Cow::Borrowed(&raw.state_changeset),
+            &raw,
+        ) {
+            Some("symbolic counterexample did not replay".to_string())
+        } else if raw.exit_reason == Some(InstrStop::Revert)
+            && raw.failed_assertion.is_none()
+            && !is_symbolic_failure_revert(&raw.result)
         {
-            // The solver model is not a user-facing counterexample until replay confirms it, so
-            // report the mismatch as an incomplete run instead.
+            // Symbolic execution prunes ordinary reverts and non-`assert` panics, so this replay
+            // fails for a reason other than the failure the solver model was found for. A
+            // `vm.assert*` that failed without reverting already confirmed the failure.
+            Some(format!(
+                "symbolic counterexample did not replay: concrete replay reverted with `{}`",
+                reason.as_deref().unwrap_or_default()
+            ))
+        } else {
+            None
+        };
+        if let Some(reason) = mismatch {
             let call_trace = SymbolicCallTrace::test_result_traces(raw.traces.is_some());
             self.result.extend(raw);
-            let reason = if rejected_by_assume {
-                "symbolic counterexample did not replay: rejected by `vm.assume`"
-            } else if svm_exhausted {
-                "symbolic counterexample did not replay: ran out of `svm` values"
-            } else {
-                "symbolic counterexample did not replay"
-            }
-            .to_string();
             let display_reason = format!(
                 "incomplete symbolic execution ({:?}): {reason}",
                 SymbolicStopReason::Error

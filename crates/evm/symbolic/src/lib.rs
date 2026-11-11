@@ -610,3 +610,16 @@ enum DeferredIncomplete {
     SolverUnknown,
     HardArithmetic,
 }
+
+/// Returns whether top-level revert data fails a `check*` or `prove*` test.
+///
+/// Symbolic execution fails a path on an `assert` panic, an assertion-failure message or a
+/// cheatcode failure, such as an unmet `vm.expectRevert`, and prunes every other revert. Concrete
+/// replay uses it to confirm that a counterexample fails the same way. Forge reports most
+/// cheatcode failures as `CheatcodeError`, and an unmet `vm.expectEmit` as a bare ABI-encoded
+/// string.
+pub fn is_symbolic_failure_revert(data: &[u8]) -> bool {
+    data.starts_with(&<Vm::CheatcodeError as alloy_sol_types::SolError>::SELECTOR)
+        || runtime::is_assertion_revert(data)
+        || <String as alloy_sol_types::SolValue>::abi_decode(data).is_ok()
+}

@@ -449,9 +449,11 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 // `isAdmin[user] == true`. That candidate does not replay concretely from the
 // default concrete storage value, so Forge must report Incomplete instead of a
 // user-facing counterexample. The same holds when the candidate's concrete
-// replay stops at the `vm.assume` that the symbolic path satisfied. An entry that
-// `setUp` wrote is known state, so a symbolic key that hits it reads the written
-// value: a bounded burn proves safe and a real burn replays.
+// replay stops at the `vm.assume` that the symbolic path satisfied, or reverts
+// or panics on the real zero before it reaches the assert. A failed `vm.assert*`
+// that does not revert still confirms the model if the replay reverts later. An
+// entry that `setUp` wrote is known state, so a symbolic key that hits it reads
+// the written value: a bounded burn proves safe and a real burn replays.
 #[forgetest_init]
 fn symbolic_sload_unwritten_mapping_default_layout(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_sload_unwritten_mapping_default_layout");
@@ -461,6 +463,7 @@ fn symbolic_sload_unwritten_mapping_default_layout(prj: _, cmd: _) {
         r#"
 interface Vm {
     function assume(bool condition) external pure;
+    function assertGt(uint256 left, uint256 right) external pure;
 }
 
 contract Token {
@@ -480,6 +483,7 @@ contract SymbolicSLoadUnwrittenMapping {
     Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
 
     mapping(address => bool) isAdmin;
+    mapping(address => uint256) balanceOf;
     Token token;
 
     function setUp() public {
@@ -493,6 +497,23 @@ contract SymbolicSLoadUnwrittenMapping {
     function checkAssumedAdminIsUnreachable(address user) public view {
         vm.assume(isAdmin[user]);
         assert(false);
+    }
+
+    function checkDivByUnwrittenBalance(address owner) public view {
+        uint256 balance = balanceOf[owner];
+        uint256 quotient = 10 / balance;
+        assert(quotient == 0 && balance == 0);
+    }
+
+    function checkRequireUnwrittenBalance(address owner) public view {
+        require(balanceOf[owner] != 0);
+        assert(false);
+    }
+
+    /// forge-config: default.assertions_revert = false
+    function checkSoftAssertThenRevert(uint256 b) public pure {
+        vm.assertGt(b, 0);
+        10 / b;
     }
 
     // A read at a symbolic key that hits the entry `setUp` wrote returns the written balance.
@@ -520,14 +541,17 @@ contract SymbolicSLoadUnwrittenMapping {
     .stdout_eq(str![[r#"
 ...
 Failing tests:
-Encountered 3 failing tests in test/SymbolicSLoadUnwrittenMapping.t.sol:SymbolicSLoadUnwrittenMapping
+Encountered 6 failing tests in test/SymbolicSLoadUnwrittenMapping.t.sol:SymbolicSLoadUnwrittenMapping
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: rejected by `vm.assume`] checkAssumedAdminIsUnreachable(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: concrete replay reverted with `panic: division or modulo by zero (0x12)`] checkDivByUnwrittenBalance(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNoUserIsAdmin(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: concrete replay reverted with `EvmError: Revert`] checkRequireUnwrittenBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetUpHolderKeepsBalance(address,uint256) ([METRICS])
+[FAIL: panic: division or modulo by zero (0x12); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSoftAssertThenRevert(uint256) ([METRICS])
 
-Encountered a total of 3 failing tests, 1 tests succeeded
+Encountered a total of 6 failing tests, 1 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 3 failed tests
+Tip: Run `forge test --rerun` to retry only the 6 failed tests
 
 "#]]);
 }
