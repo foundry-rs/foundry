@@ -2944,6 +2944,185 @@ Suite result: FAILED. 1 passed; 7 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// `vm.deal` and `vm.store` through a free address write every known account under a guard
+// instead of forking once per account, and later uses of the address still see the account it
+// may name.
+#[forgetest_init]
+fn symbolic_free_address_writes_do_not_fork(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_free_address_writes_do_not_fork");
+
+    prj.add_test(
+        "SymbolicFreeAddressWrites.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Vault {
+    uint256 public total;
+    mapping(address => uint256) public bal;
+
+    function set(uint256 x) external {
+        total = x;
+    }
+
+    function add(uint256 x) external {
+        total += x;
+        bal[msg.sender] += x;
+    }
+
+    receive() external payable {}
+}
+
+contract SymbolicFreeAddressWrites is Test {
+    Vault vault;
+
+    function setUp() public {
+        vault = new Vault();
+    }
+
+    function checkWritesStayOnOnePath(address a, address b, uint256 x) public {
+        vm.deal(a, x);
+        vm.store(b, bytes32(uint256(1000)), bytes32(x));
+        // A slot hashed from a guarded address needs no decision.
+        vm.store(b, keccak256(abi.encode(a)), bytes32(x));
+        assert(a.balance == x);
+        assert(uint256(vm.load(b, bytes32(uint256(1000)))) == x);
+    }
+
+    // Each test below fails concretely for `a == address(vault)`.
+    function checkStoreMayTargetSetUpContract(address a) public {
+        vm.store(a, 0, bytes32(uint256(7)));
+        assert(vault.total() != 7);
+    }
+
+    function checkLaterDealShowsThrough(address a) public {
+        vm.deal(a, 5);
+        vm.deal(address(vault), 7);
+        assert(a.balance == 5);
+    }
+
+    function checkLaterStoreShowsThrough(address a) public {
+        vm.store(a, 0, bytes32(uint256(1)));
+        vault.set(2);
+        assert(uint256(vm.load(a, 0)) == 1);
+    }
+
+    function checkDealKeepsCode(address a) public {
+        vm.deal(a, 1);
+        assert(a.code.length == 0);
+    }
+
+    function checkStoreKeepsNonce(address a) public {
+        vm.store(a, bytes32(uint256(9)), bytes32(uint256(1)));
+        assert(vm.getNonce(a) == 0);
+    }
+
+    // A cheatcode that takes the address as an integer with high bits set still decides it
+    // by its low 160 bits.
+    function checkDirtyWordKeepsGuard(uint256 x) public {
+        vm.assume(x >> 160 != 0);
+        address a = address(uint160(x));
+        vm.deal(a, 5);
+        vm.warp(x);
+        vm.deal(address(vault), 7);
+        assert(a.balance == 5);
+    }
+
+    // A cheatcode call whose input size the path fixes but does not spell out still forks.
+    function checkSymbolicSizeSetNonce(address a, uint256 size) public {
+        vm.assume(size == 68);
+        bytes memory data = abi.encodeWithSelector(vm.setNonceUnsafe.selector, a, uint64(7));
+        bool ok;
+        assembly {
+            ok := call(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0, add(data, 0x20), size, 0, 0)
+        }
+        assert(vm.getNonce(address(vault)) != 7);
+    }
+
+    // A cheatcode argument cast from the address decides it, as the address itself does.
+    function checkDerivedArgumentDecidesAddress(address a) public {
+        vm.deal(a, 1);
+        vm.setNonceUnsafe(address(vault), uint64(uint160(a)));
+        assert(vm.getNonce(address(vault)) != uint64(uint160(address(vault))));
+    }
+
+    function checkPrankAfterDeal(address a) public {
+        vm.deal(a, 1);
+        vm.prank(a);
+        vault.add(1);
+        assert(vault.bal(address(vault)) == 0);
+    }
+
+    // A prank set before the write decides the address at the call it applies to. For
+    // `a == address(vault)` the call sends the value to itself.
+    function checkPrankBeforeDeal(address a) public {
+        vm.startPrank(a);
+        vm.deal(a, 5);
+        (bool ok,) = address(vault).call{value: 5}("");
+        vm.stopPrank();
+        assert(!ok || a != address(vault) || address(vault).balance == 10);
+    }
+
+    // A cheatcode call at a symbolic input offset still decides the address.
+    function checkSymbolicOffsetPrank(address a, uint8 n) public {
+        vm.deal(a, 5);
+        assembly {
+            mstore(0x40, add(mload(0x40), mul(n, 32)))
+        }
+        vm.prank(a);
+        (bool ok,) = address(vault).call{value: 5}("");
+        assert(!ok || a != address(vault) || address(vault).balance == 10);
+    }
+}
+"#,
+    );
+
+    // Forking over the known accounts made the path count grow with each write; only
+    // `vm.store` still forks, off a known precompile where it reverts.
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--symbolic-max-paths",
+        "2",
+        "--match-test",
+        "checkWritesStayOnOnePath",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+[PASS] checkWritesStayOnOnePath(address,address,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicFreeAddressWrites",
+        "--no-match-test",
+        "checkWritesStayOnOnePath",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 11 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealKeepsCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDerivedArgumentDecidesAddress(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDirtyWordKeepsGuard(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterDealShowsThrough(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterStoreShowsThrough(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankAfterDeal(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankBeforeDeal(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreKeepsNonce(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreMayTargetSetUpContract(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicOffsetPrank(address,uint8) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn symbolic_cheatcode_state_survives_reverting_call(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_cheatcode_state_survives_reverting_call");
