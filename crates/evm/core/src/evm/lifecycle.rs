@@ -1045,7 +1045,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let state = evm.state_mut();
         let loaded = loaded_slots(state);
         let mut warm = warm_accounts(state);
-        let cold_slots = cold_account_warm_slots(state);
+        let cold_slots = cold_account_warm_slots(state, &self.forks.persistent);
         let transient = take_transient(state);
         let context = self.active_mut();
         context.transient = transient;
@@ -1226,9 +1226,6 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         // the switch reads nothing from the fork.
         let state = evm.state_mut();
         for (address, slots) in source_cold_slots {
-            if !persistent.contains(&address) {
-                continue;
-            }
             for key in slots {
                 let cache = &state.overlay_db().cache;
                 let cached = cache.accounts.contains_key(&address)
@@ -1369,7 +1366,7 @@ struct Suspended {
     prewarm: PrewarmSet,
     /// Accounts and slots warm in the running transaction.
     warm: AddressMap<HashSet<U256>>,
-    /// Warm slots of accounts the running transaction holds cold.
+    /// Warm slots of persistent accounts the running transaction holds cold.
     cold_slots: AddressMap<HashSet<U256>>,
 }
 
@@ -1576,11 +1573,19 @@ pub fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
     warm
 }
 
-/// Returns the warm slots of the accounts the running transaction in `state` loaded but holds
-/// cold, such as the test contract after an isolated static call cooled it.
-fn cold_account_warm_slots(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
+/// Returns the warm slots of the `persistent` accounts the running transaction in `state` loaded
+/// but holds cold, such as the test contract after an isolated static call cooled it.
+fn cold_account_warm_slots(
+    state: &mut State<'_>,
+    persistent: &AddressSet,
+) -> AddressMap<HashSet<U256>> {
+    let loaded = state
+        .loaded_accounts()
+        .filter(|(address, _)| persistent.contains(*address))
+        .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
     let mut warm = AddressMap::default();
-    for (address, slots) in loaded_slots(state) {
+    for (address, slots) in loaded {
         if state.account(&address).is_ok_and(|account| account.is_warm()) {
             continue;
         }
