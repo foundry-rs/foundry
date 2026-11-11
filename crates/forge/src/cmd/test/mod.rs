@@ -2710,11 +2710,16 @@ impl TestArgs {
                         }
                         let identities = decoder.address_identities();
 
+                        // Only a run that identified an address changed the decoder.
+                        let mut identified = false;
                         for trace in &result.gas_report_traces {
-                            decoder.restore_address_identities(&identities);
+                            if identified {
+                                decoder.restore_address_identities(&identities);
+                                identified = false;
+                            }
 
                             for arena in trace {
-                                decoder.identify_scoped(arena, &mut identifier);
+                                identified |= decoder.identify_scoped(arena, &mut identifier);
                                 gas_report.analyze([arena], &decoder).await;
                             }
                         }

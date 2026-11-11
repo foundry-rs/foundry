@@ -603,15 +603,19 @@ impl CallTraceDecoder {
         self.collect_identified_addresses(self.identify_addresses(arena, identifier), true);
     }
 
-    /// Identifies unknown addresses without re-registering their ABIs globally.
+    /// Identifies unknown addresses without re-registering their ABIs globally, and returns
+    /// whether it identified any address.
     ///
     /// The identified ABIs must already be registered in this decoder.
     pub fn identify_scoped(
         &mut self,
         arena: &CallTraceArena,
         identifier: &mut impl TraceIdentifier,
-    ) {
-        self.collect_identified_addresses(self.identify_addresses(arena, identifier), false);
+    ) -> bool {
+        let identified = self.identify_addresses(arena, identifier);
+        let any = !identified.is_empty();
+        self.collect_identified_addresses(identified, false);
+        any
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
