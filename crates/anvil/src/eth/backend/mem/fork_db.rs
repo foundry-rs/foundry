@@ -8,7 +8,7 @@ use crate::eth::backend::db::{
     StateDb, StateSnapshot, StateSnapshots, cache_block_hash,
 };
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256, map::AddressMap};
+use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use evm2::evm::BlockStateAccumulator;
 use foundry_evm_core::evm::ForkCode;
@@ -255,6 +255,7 @@ impl<N: Network> Db for ForkedDatabase<N> {
                         nonce: account.info.nonce,
                         balance: account.info.balance,
                         code: code.original_bytes(),
+                        extension: Bytes::copy_from_slice(&account.info.extension),
                         storage: account
                             .storage
                             .iter()

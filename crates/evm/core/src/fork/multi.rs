@@ -3,7 +3,7 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use super::{CreateFork, Fork, bal};
+use super::{BlobExcessGasAndPrice, BlockEnv, CreateFork, Fork, bal};
 use crate::{evm::EthEvmNetwork, opts::ForkContext};
 use alloy_eips::{BlockNumHash, eip7928::BlockAccessList};
 use alloy_network::AnyNetwork;
@@ -20,7 +20,6 @@ use futures::{
     stream::Fuse,
     task::{Context, Poll},
 };
-use revm::{context::BlockEnv, context_interface::block::BlobExcessGasAndPrice};
 use std::{
     collections::BTreeSet,
     fmt::{self, Write},
@@ -875,7 +874,8 @@ fn create_backend(
 
 /// Returns the block environment recorded in the fork cache's metadata.
 ///
-/// The disk cache keeps REVM's block environment layout, so existing caches stay valid.
+/// The disk cache keeps the block environment layout written before evm2, so existing caches stay
+/// valid.
 /// `excess_blob_gas` is the fork header's, which evm2 only keeps as the blob base fee.
 fn cache_block_env(block: &evm2::env::BlockEnv, excess_blob_gas: Option<u64>) -> BlockEnv {
     let mut env = BlockEnv {
@@ -903,7 +903,10 @@ mod tests {
     use super::*;
     use crate::opts::EvmOpts;
     use alloy_chains::NamedChain;
-    use alloy_eips::eip7928::{AccountChanges, BlockAccessIndex, SlotChanges, StorageChange};
+    use alloy_eips::{
+        eip7691::BLOB_GASPRICE_UPDATE_FRACTION_PECTRA,
+        eip7928::{AccountChanges, BlockAccessIndex, SlotChanges, StorageChange},
+    };
     use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
     use alloy_primitives::{Address, B256, U256, bytes};
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
@@ -915,7 +918,6 @@ mod tests {
         spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
     };
     use futures::{channel::oneshot, task::noop_waker_ref};
-    use revm::primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE;
     use std::sync::mpsc::{Receiver as OneshotReceiver, TryRecvError};
 
     fn context(block_number: u64) -> ForkContext {
@@ -975,7 +977,7 @@ mod tests {
                 NamedChain::Tempo as u64,
                 NetworkConfigs::with_ethereum(),
             ),
-            AccountFetchPolicy::RequireAccountInfo,
+            AccountFetchPolicy::RequireAccountInfoWithExtension,
         );
         assert_eq!(
             crate::backend::account_fetch_policy_for_source(
@@ -986,8 +988,25 @@ mod tests {
         );
         assert_eq!(
             crate::backend::account_fetch_policy_for_source(123_456, NetworkConfigs::with_tempo(),),
-            AccountFetchPolicy::RequireAccountInfo,
+            AccountFetchPolicy::RequireAccountInfoWithExtension,
         );
+        // Local development chain IDs do not identify a family; the endpoint profile does.
+        for chain in [NamedChain::Dev, NamedChain::AnvilHardhat] {
+            assert_eq!(
+                crate::backend::account_fetch_policy_for_source(
+                    chain as u64,
+                    NetworkConfigs::with_tempo(),
+                ),
+                AccountFetchPolicy::RequireAccountInfoWithExtension,
+            );
+            assert_eq!(
+                crate::backend::account_fetch_policy_for_source(
+                    chain as u64,
+                    NetworkConfigs::with_ethereum(),
+                ),
+                AccountFetchPolicy::Auto,
+            );
+        }
     }
 
     #[test]
@@ -1485,9 +1504,10 @@ mod tests {
             cache_block_env(&env.block, block.header.excess_blob_gas)
         };
 
-        // The cache records revm's blob price for the header's excess blob gas.
+        // The cache records the blob price for the header's excess blob gas.
         let mut expected = BlockEnv::default();
-        expected.set_blob_excess_gas_and_price(62_652_416, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE);
+        expected
+            .set_blob_excess_gas_and_price(62_652_416, BLOB_GASPRICE_UPDATE_FRACTION_PECTRA as u64);
         assert_eq!(
             cache_env(&fork_block(Some(62_652_416))).blob_excess_gas_and_price,
             expected.blob_excess_gas_and_price

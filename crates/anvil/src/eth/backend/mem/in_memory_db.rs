@@ -11,7 +11,7 @@ use crate::{
     mem::state::{StateRootCache, state_root},
 };
 use alloy_primitives::{
-    Address, B256, U256,
+    Address, B256, Bytes, U256,
     map::{AddressMap, B256Map, HashSet},
 };
 use alloy_rpc_types::BlockId;
@@ -582,6 +582,7 @@ impl Db for MemDb {
                         nonce: v.info.nonce,
                         balance: v.info.balance,
                         code: code.original_bytes(),
+                        extension: Bytes::copy_from_slice(&v.info.extension),
                         storage: v.storage.into_iter().map(|(k, v)| (k.into(), v.into())).collect(),
                     },
                 ))
@@ -680,7 +681,7 @@ impl MaybeForkedDatabase for MemDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Bytes, KECCAK256_EMPTY, address};
+    use alloy_primitives::{KECCAK256_EMPTY, address};
     use std::collections::BTreeMap;
 
     // verifies that all substantial aspects of a loaded account remain the same after an account
@@ -754,6 +755,7 @@ mod tests {
             SerializableAccountRecord {
                 balance: Default::default(),
                 code: Default::default(),
+                extension: Default::default(),
                 nonce: 1,
                 storage: Default::default(),
             },
@@ -767,6 +769,7 @@ mod tests {
             SerializableAccountRecord {
                 balance: U256::from(100100),
                 code: contract_code.original_bytes(),
+                extension: Default::default(),
                 nonce: 100,
                 storage: new_storage,
             },

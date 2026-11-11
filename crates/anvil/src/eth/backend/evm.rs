@@ -806,7 +806,7 @@ impl<T: evm2::EvmTypes> PrecompileProvider<T> for AnvilPrecompiles<'_, T> {
         };
         if address == EC_RECOVER
             && let Some(cheats) = &self.cheats
-            && let Some(result) = cheat_ecrecover(cheats, &message.input, gas)
+            && let Some(result) = cheat_ecrecover(cheats, evm.message_input(message), gas)
         {
             return Some(result);
         }
@@ -860,7 +860,7 @@ fn execute_extra<T: evm2::EvmTypes>(
     match extra {
         ExtraPrecompile::User(_, precompile) => precompile(
             PrecompileInput {
-                data: &message.input,
+                data: evm.message_input(message),
                 caller: message.caller,
                 value: message.value,
                 target: address,
@@ -868,7 +868,7 @@ fn execute_extra<T: evm2::EvmTypes>(
             gas,
         ),
         ExtraPrecompile::ArbSys(number) => {
-            if message.input.get(..4) != Some(&ARB_BLOCK_NUMBER_SELECTOR) {
+            if evm.message_input(message).get(..4) != Some(&ARB_BLOCK_NUMBER_SELECTOR) {
                 return halt("unsupported ArbSys selector");
             }
             let Some((cost, output)) = arb_block_number_call(gas.remaining(), *number) else {
@@ -879,11 +879,14 @@ fn execute_extra<T: evm2::EvmTypes>(
         }
         ExtraPrecompile::P256 { osaka } => {
             if *osaka {
-                evm2::precompiles::secp256r1::run_osaka(&message.input, gas)
+                evm2::precompiles::secp256r1::run_osaka(evm.message_input(message), gas)
             } else {
-                evm2::precompiles::secp256r1::run(&message.input, gas)
+                evm2::precompiles::secp256r1::run(evm.message_input(message), gas)
             }
         }
-        ExtraPrecompile::CeloTransfer => celo_transfer(evm, &message.input, gas),
+        ExtraPrecompile::CeloTransfer => {
+            let input = Bytes::copy_from_slice(evm.message_input(message));
+            celo_transfer(evm, &input, gas)
+        }
     }
 }

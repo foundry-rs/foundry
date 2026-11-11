@@ -20,7 +20,7 @@ use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use std::sync::Arc;
 use tempo_alloy::{TempoNetwork, primitives::TEMPO_TX_TYPE_ID};
 use tempo_evm::{
-    TempoEvmExt, TempoEvmFactory, TempoEvmTypes, TempoTxEnv, TempoTxResultExt,
+    TempoEvmExt, TempoEvmFactory, TempoEvmTypes, TempoTx, TempoTxEnv, TempoTxResultExt,
     tempo_execution_config, tempo_tx_registry,
 };
 use tempo_hardfork::TempoHardfork;
@@ -72,7 +72,11 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
     type EvmFactory = TempoEvmFactory;
 }
 
-impl FoundryExecutionHooks for TempoEvmTypes {}
+impl FoundryExecutionHooks for TempoEvmTypes {
+    fn tx_call_depth_offset(tx: &TempoTxEnv) -> u16 {
+        u16::from(tx.is_aa())
+    }
+}
 
 impl FoundryTxConversion<TempoNetwork> for TempoEvmTypes {
     fn evm_tx(

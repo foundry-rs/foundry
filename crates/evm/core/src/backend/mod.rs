@@ -32,14 +32,14 @@ use crate::{
         TransactionRequestFor, TxFor, TxResultFor, TypesFor, block_txs, evm_env, full_transactions,
         merge_untracked_nested_changes,
     },
-    fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
+    fork::{BlockEnv, CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
         apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
     },
 };
-use alloy_chains::Chain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{BlockHeader, Transaction as _, Typed2718, transaction::Recovered};
 use alloy_eips::BlockNumHash;
 use alloy_genesis::GenesisAccount;
@@ -94,7 +94,7 @@ mod tests;
 pub type LocalForkId = U256;
 
 /// Backing database of an RPC fork: the shared fork cache, read by evm2.
-pub type RpcForkDb = ForkDb<SharedBackend<AnyNetwork, revm::context::BlockEnv>>;
+pub type RpcForkDb = ForkDb<SharedBackend<AnyNetwork, BlockEnv>>;
 
 /// All accounts that will have persistent storage across fork swaps.
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
@@ -920,7 +920,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             self.networks,
         );
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut env, source_chain_id);
-        env.version.initial_call_depth = depth;
+        env.initial_call_depth = depth - TypesFor::<FEN>::tx_call_depth_offset(&tx);
 
         // Networks with block-position state only replay the transaction that immediately follows
         // the fork's canonical position, and advance the position past it.
@@ -1342,7 +1342,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Returns the position and block cursor at the end of `remote`'s pinned block.
     fn block_end_cursor(
         &self,
-        backend: &SharedBackend<AnyNetwork, revm::context::BlockEnv>,
+        backend: &SharedBackend<AnyNetwork, BlockEnv>,
         remote: &RemoteFork,
         env: &EvmEnvFor<FEN>,
     ) -> eyre::Result<(ForkPosition, ChainFor<FEN>)> {
@@ -1411,10 +1411,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             .ok_or_else(|| eyre::eyre!("fork `{id}` is not backed by an RPC endpoint"))
     }
 
-    fn shared_backend(
-        &self,
-        id: LocalForkId,
-    ) -> eyre::Result<SharedBackend<AnyNetwork, revm::context::BlockEnv>> {
+    fn shared_backend(&self, id: LocalForkId) -> eyre::Result<SharedBackend<AnyNetwork, BlockEnv>> {
         let fork_id = self.fork_info(id)?.id.clone();
         self.forks
             .get_fork(fork_id.clone())?
@@ -1579,7 +1576,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
 /// Returns the transactions of `block` and its two ancestors, fetched through `backend`.
 fn block_context<FEN: FoundryEvmNetwork>(
-    backend: &SharedBackend<AnyNetwork, revm::context::BlockEnv>,
+    backend: &SharedBackend<AnyNetwork, BlockEnv>,
     block: &AnyRpcBlock,
 ) -> eyre::Result<BlockContext<FEN>> {
     let parent = parent_block(backend, block)?;
@@ -1615,7 +1612,7 @@ fn block_cursor<FEN: FoundryEvmNetwork>(
 
 /// Fetches the parent of `block`, or `None` for genesis.
 fn parent_block(
-    backend: &SharedBackend<AnyNetwork, revm::context::BlockEnv>,
+    backend: &SharedBackend<AnyNetwork, BlockEnv>,
     block: &AnyRpcBlock,
 ) -> eyre::Result<Option<AnyRpcBlock>> {
     let parent_hash = block.header.parent_hash();
@@ -1641,13 +1638,22 @@ fn is_contract(account: Option<AccountInfo>) -> bool {
 /// Returns the account-loading policy required by a fork source.
 ///
 /// A recognized source chain ID is authoritative. The endpoint's execution profile is only a
-/// source hint for custom chain IDs, where the chain ID cannot identify the RPC semantics.
+/// source hint for custom chain IDs, where the chain ID cannot identify the RPC semantics, and for
+/// local development chain IDs, which nodes of any family use, such as Anvil and Tempo dev nodes.
+/// A dev node of another family that reports no Anvil node info therefore needs an execution
+/// profile that matches it: selecting Tempo for it requires `eth_getAccountInfo`.
 pub fn account_fetch_policy_for_source(
     source_chain_id: ChainId,
     network_profile: NetworkConfigs,
 ) -> AccountFetchPolicy {
     let source_chain = Chain::from_id(source_chain_id);
-    let is_tempo =
-        source_chain.is_tempo() || (source_chain.named().is_none() && network_profile.is_tempo());
-    if is_tempo { AccountFetchPolicy::RequireAccountInfo } else { AccountFetchPolicy::Auto }
+    let identifies_family = source_chain
+        .named()
+        .is_some_and(|chain| !matches!(chain, NamedChain::Dev | NamedChain::AnvilHardhat));
+    let is_tempo = source_chain.is_tempo() || (!identifies_family && network_profile.is_tempo());
+    if is_tempo {
+        AccountFetchPolicy::RequireAccountInfoWithExtension
+    } else {
+        AccountFetchPolicy::Auto
+    }
 }

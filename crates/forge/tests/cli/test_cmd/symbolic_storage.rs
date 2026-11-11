@@ -636,22 +636,31 @@ Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 }
 
 // A symbolic Keccak compared with a hash computed during the run, or with a symbolic Keccak over a
-// different input length, is decided by its input instead of a free alias.
+// different input length, is decided by its input instead of a free alias. The optimizer folds the
+// slots of `balances[KEY]` and `nested[KEY][1]` into constants. The storage layout and source
+// literals give them their preimages, so a write through a symbolic key still reaches them, also
+// when a proxy delegates to the contract whose code holds the folded slot.
 #[forgetest_init]
 fn symbolic_keccak_known_preimage_bases_do_not_alias(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_keccak_known_preimage_bases_do_not_alias");
 
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_test(
         "SymbolicKeccakPreimage.t.sol",
         r#"
 contract SymbolicKeccakPreimage {
+    address constant KEY = address(0xD00D);
+
     mapping(address => uint256) balances;
     address[] holders;
     mapping(address => uint256[]) deposits;
+    mapping(string => uint256) names;
+    FoldedNested proxy;
 
     constructor() {
         holders.push(address(1));
         holders.push(address(2));
+        proxy = FoldedNested(address(new DelegatingProxy(address(new FoldedNested()))));
     }
 
     function checkArrayElementSurvivesMappingWrite(address who, uint256 amount, uint256 i) public {
@@ -676,6 +685,73 @@ contract SymbolicKeccakPreimage {
     function checkKnownKeccakPreimage(uint256 x) public pure {
         assert(keccak256(abi.encode(x)) != keccak256(abi.encode(uint256(42))));
     }
+
+    // A common offset on two hashes, as in `keccak(key, slot) + 1`, keeps them distinct.
+    function checkKeccakPlusOffsetDiffers(uint256 a, uint256 b) public pure {
+        require(a != b);
+        assert(uint256(keccak256(abi.encode(a))) + 1 != uint256(keccak256(abi.encode(b))) + 1);
+    }
+
+    function checkKeccakPlusOffsetCanCollide(uint256 a, uint256 b) public pure {
+        assert(uint256(keccak256(abi.encode(a))) + 1 != uint256(keccak256(abi.encode(b))) + 1);
+    }
+
+    // The pinned key folds to a constant slot that must still alias the symbolic-key write.
+    function checkPinnedKeyAliasesSymbolicWrite(address who) public {
+        require(who == address(4));
+        balances[who] = 39;
+        assert(balances[who] != 39);
+    }
+
+    // The literal key hashes a 34-byte preimage that must still alias the symbolic-key write.
+    /// forge-config: default.symbolic.default_bytes_lengths = [2]
+    function checkStringKeyAliasesLiteralRead(string memory k) public {
+        names[k] = 5;
+        assert(names["ab"] != 5);
+    }
+
+    function checkFoldedConstantKeySlotAliases(address who) public {
+        balances[who] = 5;
+        assert(balances[KEY] == 0);
+    }
+
+    function checkFoldedNestedConstantKeySlotAliases(address who, uint256 id) public {
+        proxy.write(who, id);
+        assert(proxy.readFolded() == 0);
+    }
+}
+
+contract FoldedNested {
+    address constant KEY = address(0xD00D);
+
+    mapping(address => mapping(uint256 => uint256)) nested;
+
+    function write(address who, uint256 id) external {
+        nested[who][id] = 3;
+    }
+
+    function readFolded() external view returns (uint256) {
+        return nested[KEY][1];
+    }
+}
+
+contract DelegatingProxy {
+    address immutable implementation;
+
+    constructor(address implementation_) {
+        implementation = implementation_;
+    }
+
+    fallback() external {
+        address target = implementation;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let ok := delegatecall(gas(), target, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(ok) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
 }
 "#,
     );
@@ -684,11 +760,17 @@ contract SymbolicKeccakPreimage {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
+Ran 9 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
 [PASS] checkArrayElementSurvivesMappingWrite(address,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x622f5688000000000000000000000000000000000000000000000000000000000000d00d args=[0x000000000000000000000000000000000000D00d]] checkFoldedConstantKeySlotAliases(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[0x000000000000000000000000000000000000D00d, 1]] checkFoldedNestedConstantKeySlotAliases(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkKeccakPlusOffsetCanCollide(uint256,uint256) ([METRICS])
+[PASS] checkKeccakPlusOffsetDiffers(uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x4df8b26f000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkKnownKeccakPreimage(uint256) ([METRICS])
 [PASS] checkNestedArraySurvivesMappingWrite(address,address,uint256,uint256) ([METRICS])
-Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[0x0000000000000000000000000000000000000004]] checkPinnedKeyAliasesSymbolicWrite(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=["ab"]] checkStringKeyAliasesLiteralRead(string) ([METRICS])
+Suite result: FAILED. 3 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

@@ -101,6 +101,7 @@ use tempo_precompiles::{
 };
 use tempo_primitives::{
     AASigned, TempoHeader, TempoSignature, TempoTransaction,
+    account::encode_config_commitment,
     transaction::{
         CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, Call, ConfigurableAccountConfig,
         ConfigurableAccountOwner, ConfigurableAccountSignature, FEE_PAYER_SIGNATURE_MARKER,
@@ -3791,6 +3792,9 @@ const CONFIGURABLE_ACCOUNT_GAS: u64 = 5_000_000;
 const VIEM_CA_ACCOUNT: Address = address!("0xca35691e6caba70cc9ac71a436d97c20f8313455");
 const VIEM_CA_COMMITMENT_V0: B256 =
     b256!("0xe8dcac29bbf08814f137469ec65486e7ba3a64802fd8e6459f5d976eaa7d59f3");
+/// The account extension that stores `VIEM_CA_COMMITMENT_V0`: a format tag, then the commitment.
+const VIEM_CA_EXTENSION: Bytes =
+    bytes!("00e8dcac29bbf08814f137469ec65486e7ba3a64802fd8e6459f5d976eaa7d59f3");
 /// The commitment after `updateConfig` to threshold one over the keys `0x22..22` and `0x44..44`.
 const VIEM_CA_COMMITMENT_V1: B256 =
     b256!("0x842aa9620d9c6703c9f0090711eaaf70008fcd2c28ecb9bbfa94c2571717718f");
@@ -3983,6 +3987,7 @@ async fn test_tempo_configurable_account_matches_viem_reference() {
     let account = TestConfigurableAccount::fixture();
     assert_eq!(account.address, VIEM_CA_ACCOUNT);
     assert_eq!(account.config.commitment().unwrap(), VIEM_CA_COMMITMENT_V0);
+    assert_eq!(encode_config_commitment(VIEM_CA_COMMITMENT_V0), VIEM_CA_EXTENSION);
 
     let inner = B256::repeat_byte(0xab);
     assert_eq!(configurable_account_digest(inner, account.address, 0), VIEM_CA_DIGEST_V0);
@@ -4140,6 +4145,111 @@ async fn test_tempo_t14_configurable_account_lifecycle() {
     let receipt = send_signed_tempo_tx(&provider, tx, signature).await.unwrap();
     assert!(receipt.status(), "the upgraded account's owner should authorize: {receipt:?}");
     assert_eq!(receipt.from, root.address());
+}
+
+/// Registers the fixture configurable account on a T14 node with its first `0x05` transaction, and
+/// asserts that the node reports its configuration commitment in the account extension.
+async fn register_fixture_account(provider: &RetryProvider) -> TestConfigurableAccount {
+    let account = TestConfigurableAccount::fixture();
+    provider
+        .raw_request::<_, ()>(
+            "anvil_dealTIP20".into(),
+            (account.address, ALPHA_USD, U256::from(1_000_000_000_000u64)),
+        )
+        .await
+        .unwrap();
+    let noop = Call {
+        to: TxKind::Call(Address::repeat_byte(0x73)),
+        value: U256::ZERO,
+        input: Bytes::new(),
+    };
+    let tx = configurable_account_tx(provider, 0, vec![noop]).await;
+    let signature = account.sign(&tx).await;
+    let receipt = send_signed_tempo_tx(provider, tx, signature).await.unwrap();
+    assert!(receipt.status(), "registration should succeed: {receipt:?}");
+    assert_eq!(config_commitment(provider, account.address).await, VIEM_CA_COMMITMENT_V0);
+    for method in ["eth_getAccount", "eth_getAccountInfo"] {
+        assert_eq!(account_extension(provider, method, account.address).await, VIEM_CA_EXTENSION);
+    }
+    account
+}
+
+/// Returns the `extension` that `method` reports for `account`.
+async fn account_extension(provider: &RetryProvider, method: &str, account: Address) -> Bytes {
+    let info = provider
+        .raw_request::<_, serde_json::Value>(method.to_string().into(), (account, "latest"))
+        .await
+        .unwrap();
+    serde_json::from_value(info["extension"].clone()).unwrap_or_default()
+}
+
+/// Asserts that `provider`'s node holds the registered fixture `account` with its configuration
+/// commitment, which the account extension stores, and that the account updates its configuration
+/// and authorizes later `0x05` transactions with it.
+async fn assert_registered_account_continues(
+    provider: &RetryProvider,
+    account: &TestConfigurableAccount,
+) {
+    assert_eq!(config_commitment(provider, account.address).await, VIEM_CA_COMMITMENT_V0);
+    assert_eq!(
+        account_extension(provider, "eth_getAccountInfo", account.address).await,
+        VIEM_CA_EXTENSION
+    );
+
+    let (update, rotated) =
+        account.update(&[seeded_key(0x22), seeded_key(0x44)], vec![seeded_key(0x44)]);
+    let tx = configurable_account_tx(provider, 1, vec![update]).await;
+    let signature = account.sign(&tx).await;
+    let receipt = send_signed_tempo_tx(provider, tx, signature).await.unwrap();
+    assert!(receipt.status(), "updateConfig should succeed: {receipt:?}");
+    assert_eq!(config_commitment(provider, account.address).await, VIEM_CA_COMMITMENT_V1);
+
+    let noop = Call {
+        to: TxKind::Call(Address::repeat_byte(0x73)),
+        value: U256::ZERO,
+        input: Bytes::new(),
+    };
+    let tx = configurable_account_tx(provider, 2, vec![noop]).await;
+    let signature = rotated.sign(&tx).await;
+    let receipt = send_signed_tempo_tx(provider, tx, signature).await.unwrap();
+    assert!(receipt.status(), "the rotated owner should authorize: {receipt:?}");
+}
+
+/// A fork of a T14 node reads the account extension, so a configurable account registered before
+/// the fork block keeps its configuration commitment on the fork.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t14_configurable_account_fork_keeps_config_commitment() {
+    let t14 = || NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()));
+    let (_source_api, source_handle) = spawn(t14()).await;
+    let account = register_fixture_account(&source_handle.http_provider()).await;
+
+    let (_api, handle) = spawn(t14().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+    assert_registered_account_continues(&handle.http_provider(), &account).await;
+}
+
+/// State dumps keep the account extension, so a configurable account keeps its configuration
+/// commitment after `anvil_dumpState` and `anvil_loadState`, at the latest block as well as in
+/// preserved historical states.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t14_configurable_account_dump_load_keeps_config_commitment() {
+    let t14 = || NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()));
+    let (source_api, source_handle) = spawn(t14()).await;
+    let account = register_fixture_account(&source_handle.http_provider()).await;
+    let registered = source_api.block_number().unwrap().to::<u64>();
+    source_api.mine_one().await.unwrap();
+    let state = source_api.anvil_dump_state(Some(true)).await.unwrap();
+
+    let (api, handle) = spawn(t14()).await;
+    assert!(api.anvil_load_state(state).await.unwrap());
+    let provider = handle.http_provider();
+    let commitment = IConfigurableAccount::new(CONFIGURABLE_ACCOUNT_ADDRESS, &provider)
+        .getConfigCommitment(account.address)
+        .block(BlockId::number(registered))
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(commitment, VIEM_CA_COMMITMENT_V0);
+    assert_registered_account_continues(&provider, &account).await;
 }
 
 /// From T14 a channel's voucher signer must not be a retired root key: `open` and a nonzero

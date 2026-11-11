@@ -6701,3 +6701,32 @@ Suite result: FAILED. 0 passed; [..] failed; 0 skipped; [ELAPSED]
     ])
     .assert_success();
 }
+
+// Corpus metrics reported during a fuzz campaign go to stderr, so `--json` stdout stays one JSON
+// document.
+#[forgetest_init]
+fn fuzz_corpus_metrics_keep_json_stdout_clean(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.runs = u32::MAX;
+        config.fuzz.timeout = Some(7);
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+    });
+    prj.add_test(
+        "FuzzMetrics.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FuzzMetricsTest is Test {
+    function testFuzz_metrics(uint256) public pure {}
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--json"]).assert_success();
+    serde_json::from_slice::<Value>(&output.get_output().stdout).unwrap();
+    output.stderr_eq(str![[r#"
+...
+{"timestamp":[..],"test":"testFuzz_metrics","metrics":[..]}
+...
+"#]]);
+}

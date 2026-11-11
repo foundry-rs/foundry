@@ -397,6 +397,11 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
         self.persistent.contains(address)
     }
 
+    /// Returns the accounts that persist across fork switches.
+    pub fn persistent_accounts(&self) -> impl Iterator<Item = Address> + '_ {
+        self.persistent.iter().copied()
+    }
+
     /// Merges persistent accounts' accepted state from `source` into `target`.
     ///
     /// Slots of `source` override those of `target`, and other `target` slots are kept unless

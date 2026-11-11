@@ -711,8 +711,8 @@ impl RevertParameters for ExpectedRevert {
 }
 
 impl ExpectedRevert {
-    /// Returns whether a call ending at `depth`, at or above the expectation's depth, consumes
-    /// this expectation.
+    /// Returns whether a call ending `depth` levels below the running transaction's root, at or
+    /// above the expectation's depth, consumes this expectation.
     ///
     /// With `internal_expect_revert` enabled, a same-depth revert can satisfy it, but it must not
     /// be consumed by external calls that succeed (e.g. calls to non-contract addresses that

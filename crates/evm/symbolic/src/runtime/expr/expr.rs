@@ -7,7 +7,7 @@ const MAX_CONSTANT_DIFFERENCE_VISITS: usize = 256;
 // Storage layout keys `keccak(..) + offset` are assumed not to alias fixed slots or other hash
 // bases only while the offset stays below `2^64`, the bound Solidity's `push` enforces on
 // dynamic array lengths.
-const STORAGE_LAYOUT_OFFSET_BITS: usize = 64;
+pub(crate) const STORAGE_LAYOUT_OFFSET_BITS: usize = 64;
 
 impl SymExpr {
     pub(crate) fn select_storage_write(
@@ -1335,6 +1335,38 @@ impl SymExpr {
         }
     }
 
+    /// Evaluates `self` under `model` and records the concrete preimage of every Keccak node it
+    /// folds, so a hash key pinned by path constraints still compares as a hash base.
+    pub(crate) fn eval_model_recording_keccak_preimages<M: SymbolicModelLookup + ?Sized>(
+        &self,
+        cx: &mut SymCx,
+        model: &M,
+    ) -> Result<U256, SymbolicError> {
+        let mut evaluator = ModelEvaluator::new(model);
+        let value = evaluator.eval_word(self)?;
+        let hashes = evaluator
+            .words
+            .iter()
+            .filter(|(expr, _)| matches!(expr.kind(), SymExprKind::Keccak { .. }))
+            .map(|(expr, hash)| (expr.clone(), *hash))
+            .collect::<Vec<_>>();
+        for (expr, hash) in hashes {
+            let SymExprKind::Keccak { len, bytes, .. } = expr.kind() else {
+                unreachable!("filtered keccak node")
+            };
+            let len = usize::try_from(evaluator.eval_word(len)?).expect("checked keccak length");
+            let bytes = bytes[..len]
+                .iter()
+                .map(|byte| {
+                    let byte = evaluator.eval_word(byte)? & U256::from(0xff);
+                    Ok(Self::constant(cx, byte))
+                })
+                .collect::<Result<Arc<[Self]>, SymbolicError>>()?;
+            cx.record_concrete_keccak_preimage(hash, bytes);
+        }
+        Ok(value)
+    }
+
     pub(crate) fn assign_model_value(&self, model: &mut SymbolicModel, value: U256) -> bool {
         match self.kind() {
             SymExprKind::Const(existing) => *existing == value,
@@ -1872,6 +1904,22 @@ impl SymExpr {
         if self == expr {
             return Some(value);
         }
+        // `x - c == v`, `c - x == v`, and `x + c == v` pin `x`, as solc's `iszero(sub(x, c))`
+        // form of `x == c` does.
+        if let SymExprKind::BinOp(op @ (SymBinOp::Sub | SymBinOp::Add), left, right) = self.kind() {
+            if let Some(constant) = right.as_const() {
+                let value = match op {
+                    SymBinOp::Sub => value.wrapping_add(constant),
+                    _ => value.wrapping_sub(constant),
+                };
+                return left.equality_forces_const(value, expr, context);
+            }
+            if *op == SymBinOp::Sub
+                && let Some(constant) = left.as_const()
+            {
+                return right.equality_forces_const(constant.wrapping_sub(value), expr, context);
+            }
+        }
         self.equality_forces_const_inner(value, expr, context)
     }
 
@@ -2333,9 +2381,7 @@ pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: Sym
         && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
     {
         let hash = Into::<U256>::into(keccak256(concrete));
-        if len == 32 || len == 64 {
-            cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
-        }
+        cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
         return SymExpr::constant(cx, hash);
     }
 

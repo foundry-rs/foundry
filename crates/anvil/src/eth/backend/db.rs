@@ -199,6 +199,8 @@ struct SnapshotAccount {
     code_hash: B256,
     #[serde(default, deserialize_with = "deserialize_snapshot_code")]
     code: Option<Bytes>,
+    #[serde(default, skip_serializing_if = "<[u8]>::is_empty")]
+    extension: Bytes,
 }
 
 impl From<&AccountInfo> for SnapshotAccount {
@@ -208,6 +210,7 @@ impl From<&AccountInfo> for SnapshotAccount {
             nonce: info.nonce,
             code_hash: info.code_hash,
             code: info.code.as_ref().map(Bytecode::original_bytes),
+            extension: Bytes::copy_from_slice(&info.extension),
         }
     }
 }
@@ -215,7 +218,9 @@ impl From<&AccountInfo> for SnapshotAccount {
 impl From<SnapshotAccount> for AccountInfo {
     fn from(account: SnapshotAccount) -> Self {
         let code = account.code.filter(|code| !code.is_empty()).map(Bytecode::new_raw);
-        Self::new(account.balance, account.nonce, account.code_hash, code)
+        let mut info = Self::new(account.balance, account.nonce, account.code_hash, code);
+        info.extension = account.extension.into();
+        info
     }
 }
 
@@ -902,16 +907,15 @@ pub trait Db: MaybeFullDatabase + MaybeForkedDatabase + Send + Sync {
             // nonces to prevent collisions
             let nonce = std::cmp::max(old_account_nonce, account.nonce);
 
-            self.insert_account(
-                addr,
-                AccountInfo::new(
-                    account.balance,
-                    nonce,
-                    // set automatically from the code.
-                    KECCAK256_EMPTY,
-                    (!account.code.is_empty()).then(|| Bytecode::new_raw(account.code)),
-                ),
+            let mut info = AccountInfo::new(
+                account.balance,
+                nonce,
+                // set automatically from the code.
+                KECCAK256_EMPTY,
+                (!account.code.is_empty()).then(|| Bytecode::new_raw(account.code)),
             );
+            info.extension = account.extension.into();
+            self.insert_account(addr, info);
 
             for (k, v) in account.storage {
                 self.set_storage_at(addr, k, v)?;
@@ -1363,6 +1367,10 @@ pub struct SerializableAccountRecord {
     pub nonce: u64,
     pub balance: U256,
     pub code: Bytes,
+    /// Chain-specific account payload, such as a Tempo configurable account's configuration
+    /// commitment. Omitted when empty, and empty in states saved by older versions.
+    #[serde(default, skip_serializing_if = "<[u8]>::is_empty")]
+    pub extension: Bytes,
 
     #[serde(deserialize_with = "deserialize_btree")]
     pub storage: BTreeMap<B256, B256>,
@@ -1732,6 +1740,7 @@ mod test {
                     nonce: 3,
                     balance: U256::from(10),
                     code: Bytes::new(),
+                    extension: Bytes::new(),
                     storage: Default::default(),
                 },
             );

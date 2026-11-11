@@ -1,6 +1,11 @@
 use super::*;
 use evm2::evm::{AccountInfo, DbResult};
-use foundry_evm::core::backend::Backend;
+use foundry_common::contracts::ContractsByArtifact;
+use foundry_evm::{
+    core::backend::Backend,
+    fuzz::strategies::LiteralsDictionary,
+    inspectors::cheatcodes::{CheatcodesCore, Prank, RecordAccess},
+};
 
 /// Reads of a backend's accepted state, independent of its network.
 pub(crate) trait AcceptedState {
@@ -9,6 +14,9 @@ pub(crate) trait AcceptedState {
 
     /// Returns a storage slot.
     fn storage(&self, address: Address, slot: U256) -> DbResult<U256>;
+
+    /// Returns the cached storage slots of an account, with their values, in slot order.
+    fn storage_slots(&self, address: Address) -> Vec<(U256, U256)>;
 
     /// Returns a block hash.
     fn block_hash(&self, number: U256) -> DbResult<B256>;
@@ -21,6 +29,21 @@ impl<FEN: FoundryEvmNetwork> AcceptedState for Backend<FEN> {
 
     fn storage(&self, address: Address, slot: U256) -> DbResult<U256> {
         Self::storage(self, address, slot)
+    }
+
+    fn storage_slots(&self, address: Address) -> Vec<(U256, U256)> {
+        let mut slots = self
+            .lifecycle()
+            .active()
+            .cache
+            .as_ref()
+            .and_then(|cache| cache.storage.get(&address))
+            .map(|storage| {
+                storage.slots.iter().map(|(slot, value)| (*slot, *value)).collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        slots.sort_unstable();
+        slots
     }
 
     fn block_hash(&self, number: U256) -> DbResult<B256> {
@@ -37,6 +60,8 @@ pub struct ExecutorView<'a> {
     pub(crate) spec_id: SpecId,
     pub(crate) chain_id: u64,
     pub(crate) memory_limit: u64,
+    /// Gas limit of the calls and deployments the executor runs.
+    pub(crate) gas_limit: u64,
     pub(crate) max_code_size: usize,
     pub(crate) active_fork_id: Option<U256>,
     /// Addresses cached by the active context, including committed-session reads.
@@ -46,12 +71,26 @@ pub struct ExecutorView<'a> {
     pub(crate) isolate: bool,
     /// Whether `vm.expectRevert` may be satisfied by an internal call below the next call.
     pub(crate) internal_expect_revert: bool,
+    /// Whether a failed assertion cheatcode reverts its call instead of setting the fail slot.
+    pub(crate) assertions_revert: bool,
     pub(crate) blob_hashes: Vec<B256>,
     pub(crate) arbitrary_storage_targets: Vec<(Address, bool)>,
     pub(crate) arbitrary_storage_copies: Vec<(Address, Address)>,
     pub(crate) storage_load_hooks: Vec<(Address, SymbolicStorageHook)>,
     pub(crate) storage_store_hooks: Vec<(Address, SymbolicStorageHook)>,
     pub(crate) mapping_storage_store_hooks: Vec<((Address, U256), SymbolicStorageHook)>,
+    /// Cheatcode state that `setUp` left behind, which Forge keeps for the test.
+    pub(crate) cheatcodes: Option<&'a CheatcodesCore>,
+    pub(crate) pranks: Vec<Prank>,
+    pub(crate) accesses: Option<&'a RecordAccess>,
+    pub(crate) recording_accesses: bool,
+    /// Project artifacts, used to find the storage layouts of deployed contracts.
+    pub(crate) known_contracts: Option<&'a ContractsByArtifact>,
+    /// Source literals, used as candidate keys of constant-folded mapping slots.
+    pub(crate) literals: Option<&'a LiteralsDictionary>,
+    pub(crate) expects_safe_memory: bool,
+    /// Accounts the backend marks persistent across fork switches, which `vm.isPersistent` sees.
+    pub(crate) persistent_accounts: Vec<Address>,
 }
 
 /// Block environment values exposed to symbolic execution.
@@ -98,6 +137,7 @@ impl<'a> ExecutorView<'a> {
                 .and_then(|overrides| overrides.chain_id)
                 .unwrap_or(evm_env.chain_id()),
             memory_limit: evm_env.version.memory_limit,
+            gas_limit: executor.gas_limit(),
             max_code_size: evm_env.version.max_code_size,
             active_fork_id: backend.active_fork_id(),
             account_addresses,
@@ -122,6 +162,7 @@ impl<'a> ExecutorView<'a> {
             isolate: cheats.is_some_and(|cheats| cheats.core.config.isolate),
             internal_expect_revert: cheats
                 .is_some_and(|cheats| cheats.core.config.internal_expect_revert),
+            assertions_revert: cheats.is_none_or(|cheats| cheats.core.config.assertions_revert),
             blob_hashes: overrides
                 .and_then(|overrides| overrides.blob_hashes.clone())
                 .unwrap_or_else(|| tx.blob_versioned_hashes().unwrap_or_default().to_vec()),
@@ -172,6 +213,26 @@ impl<'a> ExecutorView<'a> {
                     )
                 })
                 .collect(),
+            cheatcodes: cheats.map(|cheats| &cheats.core),
+            pranks: cheats.into_iter().flat_map(|cheats| cheats.pranks.values().copied()).collect(),
+            accesses: cheats.map(|cheats| &cheats.accesses),
+            recording_accesses: cheats.is_some_and(|cheats| cheats.recording_accesses),
+            known_contracts: None,
+            literals: None,
+            expects_safe_memory: cheats.is_some_and(|cheats| !cheats.allowed_mem_writes.is_empty()),
+            persistent_accounts: backend.lifecycle().forks().persistent_accounts().collect(),
         }
+    }
+
+    /// Attaches the project artifacts and source literals that register the constant-folded
+    /// mapping slots of deployed contracts before a run.
+    pub const fn with_project(
+        mut self,
+        known_contracts: &'a ContractsByArtifact,
+        literals: &'a LiteralsDictionary,
+    ) -> Self {
+        self.known_contracts = Some(known_contracts);
+        self.literals = Some(literals);
+        self
     }
 }

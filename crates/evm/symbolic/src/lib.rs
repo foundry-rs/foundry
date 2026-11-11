@@ -14,7 +14,7 @@ use alloy_signer_local::{
     PrivateKeySigner,
     coins_bip39::{English, Wordlist},
 };
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolInterface};
 use base64::prelude::*;
 use evm2::{
     EvmFeatures, SpecId,
@@ -31,8 +31,9 @@ use foundry_common::FoundryTransactionBuilder;
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
-    core::evm::FoundryEvmNetwork,
+    core::{abi::console, evm::FoundryEvmNetwork},
     executors::Executor,
+    inspectors::cheatcodes::{decode_cheatcode_call, parse_value},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -415,6 +416,7 @@ pub struct SymbolicExecutor {
     deadline: Option<Instant>,
     nested_deferred_mode: DeferredPathMode,
     stateless_retry_safe: bool,
+    folded_slots: runtime::FoldedSlots,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

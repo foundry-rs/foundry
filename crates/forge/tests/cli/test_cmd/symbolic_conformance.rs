@@ -38,6 +38,7 @@ import "forge-std/Test.sol";
 
 contract SymbolicConformanceBlock is Test {
     function checkBlock(uint256 timestamp, uint256 number, uint256 chain) public {
+        vm.assume(chain <= type(uint64).max);
         vm.warp(timestamp);
         vm.roll(number);
         vm.chainId(chain);
