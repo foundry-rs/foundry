@@ -8796,3 +8796,72 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
     cmd.args(["test"]).assert_success().stdout_eq(output.clone());
     cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
 }
+
+// A creation that `vm.transact` replays on the active fork discards the storage at its address
+// only until the call that replayed it reverts.
+#[forgetest]
+async fn fork_transact_reverted_creation_keeps_storage(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    // The fork holds storage at the address the creation writes to.
+    let created = from.create(0);
+    api.anvil_set_balance(created, U256::ONE).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(1), B256::with_last_byte(5)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    // Init code that stores 1 at slot 1 and deploys an empty contract.
+    let tx_hash: B256 = provider
+        .raw_request(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({ "from": from, "data": "0x600160015500" }),),
+        )
+        .await
+        .unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
+    assert_eq!(receipt.contract_address, Some(created));
+
+    prj.add_test(
+        "TransactCreation.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, bytes32 txHash) external returns (uint256);
+    function transact(bytes32 txHash) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
+}
+
+contract TransactCreationForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant CREATED = <created>;
+
+    function replayAndRevert() external {
+        vm.transact(<tx>);
+        require(vm.load(CREATED, bytes32(0)) == 0, "replayed creation");
+        require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(1)), "replayed write");
+        revert("rolled back");
+    }
+
+    function testForkTransactRevertedCreation() public {
+        vm.createSelectFork("<url>", <tx>);
+        vm.store(CREATED, bytes32(0), bytes32(uint256(7)));
+        try this.replayAndRevert() {} catch {}
+        require(CREATED.code.length == 0, "rolled back creation");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "seeded");
+        require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(5)), "fork storage");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<tx>", &tx_hash.to_string())
+        .replace("<created>", &created.to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkTransactRevertedCreation() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}

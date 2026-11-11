@@ -1618,16 +1618,37 @@ fn merge_changes<'c>(
         if !filter(&address) {
             continue;
         }
-        let created = {
+        // An account the running transaction already created keeps the storage it holds.
+        let created = change.created && !state.account(&address)?.is_created();
+        // An account the nested transaction created starts from empty storage, as it did there.
+        // Journaled writes discard it with the creation and zero its loaded slots, including the
+        // ones it writes, which load first so that a revert of the enclosing call restores them.
+        // Untracked writes, a destroyed account, and an account the running transaction holds
+        // with code or a nonce wipe it instead.
+        let tracked = created && persistent.is_none() && change.current.is_some();
+        if tracked {
+            for (key, _) in change.storage.changed_slots() {
+                state.storage_slot(&address, *key)?;
+            }
+        }
+        let discarded = tracked
+            && state.create_account(&address, &address, &U256::ZERO, EvmFeatures::empty())?.is_ok();
+        let zeroed = if discarded {
+            state
+                .loaded_accounts()
+                .find(|(loaded, _)| **loaded == address)
+                .map(|(_, slots)| slots.copied().collect())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        {
             let mut account = state.account(&address)?;
             account.touch();
-            // An account the running transaction already created keeps the storage it holds.
-            let created = change.created && !account.is_created();
-            if created {
+            if created && !discarded {
                 account.mark_created();
             }
-            created
-        };
+        }
         let code = || match (change.code, change.current, source.as_deref_mut()) {
             (Some((_, code)), ..) => Ok(code.clone()),
             (None, Some(info), Some(source)) if !info.is_empty_code_hash() => {
@@ -1635,9 +1656,11 @@ fn merge_changes<'c>(
             }
             _ => Ok(Bytecode::default()),
         };
-        // An account the nested transaction created starts from empty storage, as it did there.
-        let wiped = created || change.current.is_none() || change.storage.wiped;
-        let slots = change.storage.changed_slots().map(|(key, slot)| (*key, slot.current));
+        let wiped = (created && !discarded) || change.current.is_none() || change.storage.wiped;
+        let slots = zeroed
+            .into_iter()
+            .map(|key| (key, U256::ZERO))
+            .chain(change.storage.changed_slots().map(|(key, slot)| (*key, slot.current)));
         apply_account(
             state,
             address,
@@ -1724,6 +1747,8 @@ fn rebase_loaded_accounts(
 ///
 /// A journaled wipe is not undone by a revert of the enclosing call: evm2 does not journal the
 /// wipe marker, and slots the running transaction never loaded cannot be cleared one by one.
+/// [`merge_changes`] discards the storage of tracked creations through the journaled creation
+/// instead.
 fn apply_account(
     state: &mut State<'_>,
     address: Address,
