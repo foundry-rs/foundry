@@ -1149,16 +1149,9 @@ impl WorkerCorpus {
         inputs: &[BasicTxDetails],
         cmp_seq: &[Vec<CmpOperands>],
         new_coverage: bool,
-        optimization: Option<(I256, Vec<BasicTxDetails>)>,
+        optimization: Option<(I256, &[BasicTxDetails])>,
     ) {
-        self.process_inputs_inner(
-            inputs,
-            cmp_seq,
-            new_coverage,
-            optimization,
-            CorpusInsertionMode::Live,
-            true,
-        );
+        self.process_inputs_inner(inputs, cmp_seq, new_coverage, optimization, true);
     }
 
     /// Updates worker-local corpus state and persists interesting inputs immediately, while
@@ -1171,16 +1164,9 @@ impl WorkerCorpus {
         inputs: &[BasicTxDetails],
         cmp_seq: &[Vec<CmpOperands>],
         new_coverage: bool,
-        optimization: Option<(I256, Vec<BasicTxDetails>)>,
+        optimization: Option<(I256, &[BasicTxDetails])>,
     ) {
-        self.process_inputs_inner(
-            inputs,
-            cmp_seq,
-            new_coverage,
-            optimization,
-            CorpusInsertionMode::Live,
-            false,
-        );
+        self.process_inputs_inner(inputs, cmp_seq, new_coverage, optimization, false);
     }
 
     fn process_inputs_inner(
@@ -1188,8 +1174,7 @@ impl WorkerCorpus {
         inputs: &[BasicTxDetails],
         cmp_seq: &[Vec<CmpOperands>],
         new_coverage: bool,
-        optimization: Option<(I256, Vec<BasicTxDetails>)>,
-        insertion_mode: CorpusInsertionMode,
+        optimization: Option<(I256, &[BasicTxDetails])>,
         persist_optimization: bool,
     ) {
         // Check if this run improved the optimization value.
@@ -1221,7 +1206,7 @@ impl WorkerCorpus {
             && improved_optimization
         {
             self.optimization_best_value = Some(value);
-            self.optimization_best_sequence = best_seq;
+            self.optimization_best_sequence = best_seq.to_vec();
             if persist_optimization {
                 self.persist_optimization_state();
             }
@@ -1262,7 +1247,7 @@ impl WorkerCorpus {
             .collect();
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
 
-        self.insert_corpus_entry(corpus, insertion_mode)
+        self.insert_corpus_entry(corpus, CorpusInsertionMode::Live)
     }
 
     fn insert_corpus_entry(&mut self, corpus: CorpusEntry, insertion_mode: CorpusInsertionMode) {
@@ -2841,7 +2826,7 @@ mod tests {
             &sequence,
             &[],
             false,
-            Some((I256::try_from(7).unwrap(), sequence.clone())),
+            Some((I256::try_from(7).unwrap(), &sequence)),
         );
 
         let worker_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
@@ -2952,7 +2937,7 @@ mod tests {
             &worse_sequence,
             &[],
             false,
-            Some((I256::try_from(50).unwrap(), worse_sequence.clone())),
+            Some((I256::try_from(50).unwrap(), &worse_sequence)),
         );
 
         let better_sequence = vec![basic_tx()];
@@ -2960,7 +2945,7 @@ mod tests {
             &better_sequence,
             &[],
             false,
-            Some((I256::try_from(150).unwrap(), better_sequence.clone())),
+            Some((I256::try_from(150).unwrap(), &better_sequence)),
         );
         assert_eq!(manager.optimization_best_value, Some(I256::try_from(150).unwrap()));
     }

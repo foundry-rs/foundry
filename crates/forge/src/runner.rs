@@ -397,8 +397,7 @@ fn can_merge_invariant_suite(
     };
     rest.iter().all(|func| {
         inline_config_for(config, inline_config, contract_name, Some(func))
-            .map(|config| !config.symbolic.enabled && config.invariant == anchor_config)
-            .unwrap_or(false)
+            .is_ok_and(|config| !config.symbolic.enabled && config.invariant == anchor_config)
     })
 }
 
@@ -2365,12 +2364,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             {
                 return false;
             }
-            let selector = call
-                .call_details
-                .calldata
-                .get(..4)
-                .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-                .map(Selector::from);
+            let selector = call.call_details.calldata.get(..4).map(Selector::from_slice);
             !(select_frontier_selectors
                 && selector.is_none_or(|selector| !parsed_selectors.contains(&selector)))
         });
@@ -3372,12 +3366,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                 }
             };
-            let Some(selector) = call
-                .call_details
-                .calldata
-                .get(..4)
-                .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-                .map(Selector::from)
+            let Some(selector) = call.call_details.calldata.get(..4).map(Selector::from_slice)
             else {
                 continue;
             };

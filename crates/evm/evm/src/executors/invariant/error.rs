@@ -317,10 +317,14 @@ impl InvariantFailures {
     }
 
     pub fn has_failure(&self, invariant: &Function) -> bool {
-        self.failures.contains_key(&FailureKey::Invariant(invariant.name.clone()))
+        self.get_failure(invariant).is_some()
     }
 
     pub fn get_failure(&self, invariant: &Function) -> Option<&InvariantFuzzError> {
+        // Most checks run before any invariant fails; skip the key allocation for them.
+        if self.invariant_count == 0 {
+            return None;
+        }
         self.failures.get(&FailureKey::Invariant(invariant.name.clone()))
     }
 

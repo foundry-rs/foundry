@@ -1022,8 +1022,7 @@ fn terminal_failure_site<FEN: FoundryEvmNetwork>(
 }
 
 fn selector_from_calldata(calldata: &Bytes) -> Selector {
-    let selector: [u8; 4] = calldata.get(..4).and_then(|s| s.try_into().ok()).unwrap_or_default();
-    Selector::from(selector)
+    calldata.get(..4).map(Selector::from_slice).unwrap_or_default()
 }
 
 fn call_failure_reason<FEN: FoundryEvmNetwork>(

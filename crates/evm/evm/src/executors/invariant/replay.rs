@@ -91,7 +91,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     )?;
     let fork_block_number = invariant_result.fork_block_number;
     debug_bytecodes.extend(invariant_result.debug_bytecodes);
-    traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
+    traces.push((TraceKind::Execution, invariant_result.traces.unwrap()));
     logs.extend(invariant_result.logs);
     deprecated_cheatcodes.extend(
         invariant_result
@@ -105,7 +105,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
         let (after_invariant_result, _) =
             call_after_invariant_function(&executor, invariant_contract.address)?;
         debug_bytecodes.extend(after_invariant_result.debug_bytecodes);
-        traces.push((TraceKind::Execution, after_invariant_result.traces.clone().unwrap()));
+        traces.push((TraceKind::Execution, after_invariant_result.traces.unwrap()));
         logs.extend(after_invariant_result.logs);
     }
 
