@@ -164,7 +164,8 @@ pub struct InvariantConfig {
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
     pub show_metrics: bool,
-    /// Optional campaign-global timeout (in seconds) for each invariant test.
+    /// Optional campaign-global timeout (in seconds) for each invariant test. Shrinking the
+    /// failures of a timed test stops at most `timeout` seconds after the campaign deadline.
     pub timeout: Option<u32>,
     /// Display counterexample as solidity calls.
     pub show_solidity: bool,
