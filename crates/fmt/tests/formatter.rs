@@ -1226,3 +1226,75 @@ fn fractional_and_wide_number_literals() {
     let expected = "contract C {\n    function f() external {\n        1.25e-2;\n        1e100;\n        1.2e3;\n    }\n}\n";
     assert_eq!(format(source, Path::new("test.sol"), Arc::default()), expected);
 }
+
+#[test]
+fn wrapped_for_header_keeps_body_braces() {
+    let source = "contract C { function f() external { for (uint i = f() + g(); i < n; i += 2) x = g() + b; y(); } }";
+    let expected = r#"contract C {
+    function f() external {
+        for (
+            uint256 i = f() + g(); i < n; i += 2) {
+            x = g() + b;
+        }
+        y();
+    }
+}
+"#;
+    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+        let config = Arc::new(FormatterConfig {
+            line_length: 50,
+            single_line_statement_blocks: style,
+            ..Default::default()
+        });
+        assert_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn body_tail_comments_keep_braces() {
+    for header in ["for (;;)", "if (a)", "while (a)"] {
+        let source = format!(
+            "contract C {{ function f() external {{ {header} {{ x = g() /* tail */; }} y(); }} }}"
+        );
+        let expected = format!(
+            "contract C {{\n    function f() external {{\n        {header} {{\n            x = g(); /* tail */\n        }}\n        y();\n    }}\n}}\n"
+        );
+        let config = Arc::new(FormatterConfig {
+            single_line_statement_blocks: SingleLineBlockStyle::Single,
+            ..Default::default()
+        });
+        assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn nested_for_headers_keep_parent_braces() {
+    for (prefix, line_length, expected_body) in [
+        ("if(a)", 50, "if (a) {\n            for (uint256 i = 0; i < n; ++i) x();\n        }"),
+        (
+            "while(a)",
+            53,
+            "while (a) {\n            for (uint256 i = 0; i < n; ++i) x();\n        }",
+        ),
+        (
+            "if(a)while(b)",
+            61,
+            "if (a) {\n            while (b) {\n                for (uint256 i = 0; i < n; ++i) x();\n            }\n        }",
+        ),
+    ] {
+        let source = format!(
+            "contract C {{ function f() external {{ {prefix}for(uint i=0;i<n;++i)x(); y(); }} }}"
+        );
+        let expected = format!(
+            "contract C {{\n    function f() external {{\n        {expected_body}\n        y();\n    }}\n}}\n"
+        );
+        for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+            let config = Arc::new(FormatterConfig {
+                line_length,
+                single_line_statement_blocks: style,
+                ..Default::default()
+            });
+            assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+        }
+    }
+}

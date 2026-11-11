@@ -45,7 +45,9 @@ contract ForStatement {
             doIt();
         }
 
-        while (c) for (;;) x();
+        while (c) {
+            for (;;) x();
+        }
     }
 
     function bracedTrailingComment() external {

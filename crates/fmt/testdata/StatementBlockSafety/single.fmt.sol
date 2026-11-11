@@ -122,7 +122,9 @@ contract C {
         for (uint256 i; i < n; ++i) if (b) x();
 
         if (a) {
-            while (b) for (;;) if (c) return 1;
+            while (b) {
+                for (;;) if (c) return 1;
+            }
         } else {
             return 2;
         }

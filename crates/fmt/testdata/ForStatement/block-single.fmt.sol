@@ -14,13 +14,17 @@ contract ForStatement {
             i3 < 10 && veryLongVariableName > 999
                 && veryLongVariableName < 1001;
             i3++
-        ) i3++;
+        ) {
+            i3++;
+        }
 
         for (
             uint256 i3;
             i3 < 10 && veryLongVariableName > 900 && veryLongVariableName < 999;
             i3++
-        ) i3++;
+        ) {
+            i3++;
+        }
 
         for (type(uint256).min;;) {}
 
@@ -28,7 +32,9 @@ contract ForStatement {
 
         for (uint256 i4; i4 < 10; i4++) i4++;
 
-        for (uint256 i5;;) for (uint256 i6 = 10; i6 > i5; i6--) i5++;
+        for (uint256 i5;;) {
+            for (uint256 i6 = 10; i6 > i5; i6--) i5++;
+        }
 
         for (;;) doIt();
         for (;;) {
@@ -36,7 +42,9 @@ contract ForStatement {
             doIt();
         }
 
-        while (c) for (;;) x();
+        while (c) {
+            for (;;) x();
+        }
     }
 
     function bracedTrailingComment() external {

@@ -2316,7 +2316,28 @@ impl<'ast> State<'_, 'ast> {
 
         // Print comments and body.
         self.print_comments(body.span.lo(), CommentConfig::skip_ws());
+        let leaf = if let ast::StmtKind::Block(block) = &body.kind {
+            block.stmts.first()
+        } else {
+            Some(&**body)
+        };
+        let inline_assignments = self.inline_assignments;
+        // Only the measured leaf body is certified flat; nested headers may still wrap.
+        if inline.outcome
+            && leaf.is_some_and(|stmt| {
+                matches!(
+                    stmt.kind,
+                    ast::StmtKind::Expr(_)
+                        | ast::StmtKind::Return(_)
+                        | ast::StmtKind::Emit(..)
+                        | ast::StmtKind::Revert(..)
+                )
+            })
+        {
+            self.inline_assignments = true;
+        }
         self.print_stmt_as_block(body, span.hi(), inline.outcome);
+        self.inline_assignments = inline_assignments;
         self.end();
         if set_inline_cache {
             self.single_line_stmt = None;
@@ -2685,19 +2706,7 @@ impl<'ast> State<'_, 'ast> {
             && !matches!(stmts[0].kind, ast::StmtKind::DeclSingle(_) | ast::StmtKind::DeclMulti(..))
         {
             self.neverbreak();
-            let inline_assignments = self.inline_assignments;
-            // Only leaf bodies are certified flat; nested statement headers may still wrap.
-            if matches!(
-                stmts[0].kind,
-                ast::StmtKind::Expr(_)
-                    | ast::StmtKind::Return(_)
-                    | ast::StmtKind::Emit(..)
-                    | ast::StmtKind::Revert(..)
-            ) {
-                self.inline_assignments = true;
-            }
             self.print_block_without_braces(stmts, pos_hi, None);
-            self.inline_assignments = inline_assignments;
         } else {
             // Reset cache for nested (child) stmts within this (parent) block.
             let inline_parent = self.single_line_stmt.take();
@@ -2728,14 +2737,19 @@ impl<'ast> State<'_, 'ast> {
             return Decision { outcome: false, is_cached: false };
         }
 
+        // Block comments can move across statement terminators when printed. Inspect the
+        // whole body before inheriting a parent's decision, so both passes retain its braces.
+        if self.peek_comment_between(stmt.span.lo(), then.span.lo()).is_some()
+            || self.has_comment_before_with(stmt.span.hi(), |comment| {
+                comment.pos() >= stmt.span.lo() && matches!(comment.kind, ast::CommentKind::Block)
+            })
+        {
+            return Decision { outcome: false, is_cached: false };
+        }
+
         // If a decision is already cached from a parent, use it directly.
         if let Some(cached_decision) = self.single_line_stmt {
             return Decision { outcome: cached_decision, is_cached: true };
-        }
-
-        // Comments near cond can break single-line layouts. Print as blocks in this case
-        if self.peek_comment_between(stmt.span.lo(), then.span.lo()).is_some() {
-            return Decision { outcome: false, is_cached: false };
         }
 
         // Multi always keeps braces; Preserve also respects an explicit body line break.
@@ -2754,8 +2768,11 @@ impl<'ast> State<'_, 'ast> {
         let (then_margin, body_len) =
             if let ast::StmtKind::For { init, cond, next, .. } = &stmt.kind {
                 let header_len = self.estimate_for_header_size(init, cond, next);
-                let margin = if header_len <= self.space_left() { header_len } else { 2 };
-                (margin, Some(self.estimate_inline_stmt_size(then)))
+                // A wrapped header can leave clauses beside the closing parenthesis.
+                if header_len >= self.space_left() {
+                    return Decision { outcome: false, is_cached: false };
+                }
+                (header_len, Some(self.estimate_inline_stmt_size(then)))
             } else {
                 // Keep existing condition layout estimates outside `for` loops.
                 let header_len = 6 + self.estimate_size(cond);
@@ -2857,9 +2874,10 @@ impl<'ast> State<'_, 'ast> {
             ast::StmtKind::Block(block) => {
                 self.is_multiline_block(block, empty_as_multiline, false)
             }
-            ast::StmtKind::While(..) | ast::StmtKind::For { .. } => {
-                !self.is_single_line_block(stmt).outcome
-            }
+            ast::StmtKind::While(..) => !self.is_single_line_block(stmt).outcome,
+
+            // A parent's source-width estimate cannot account for normalized loop clauses.
+            ast::StmtKind::For { .. } => true,
 
             ast::StmtKind::If(_, _, Some(_)) => true,
             ast::StmtKind::If(_, then, None) => {
