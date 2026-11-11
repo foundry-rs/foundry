@@ -752,6 +752,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                             &provider_info.provider,
                             self.args.gas_estimate_multiplier,
                             false,
+                            self.script_config.tempo.is_sponsored(),
                         )
                         .await
                         {

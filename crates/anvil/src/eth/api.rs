@@ -114,7 +114,8 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
-use tempo_hardfork::TempoHardfork;
+use tempo_evm::account_access_gas;
+use tempo_hardfork::{TempoHardfork, gas_params};
 use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, transaction::FEE_PAYER_SIGNATURE_MARKER};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
@@ -2003,8 +2004,42 @@ impl EthApi<FoundryNetwork> {
 
     /// Estimates the gas usage of the `request` with the state.
     ///
-    /// This will execute the transaction request and find the best gas limit via binary search.
+    /// From T14 a fee payer signature costs one cold account access: the fee payer's account is
+    /// read to check its root key. Like a Tempo node, a request carrying
+    /// [`FEE_PAYER_SIGNATURE_MARKER`] is sponsored by a fee payer that is not known yet, so it is
+    /// estimated without the marker, plus that access, and the request or block gas limit bounds
+    /// the total.
+    /// Before T14 the marker is not handled and the request is estimated as it is.
     fn do_estimate_gas_with_state(
+        &self,
+        mut request: FoundryTransactionRequest,
+        state: &dyn DatabaseRef,
+        block_env: BlockEnv,
+        monad_context: Option<MonadReplayContext>,
+    ) -> Result<u128> {
+        let mut fee_payer_access = 0;
+        if let FoundryTransactionRequest::Tempo(request) = &mut request
+            && request.fee_payer_signature == Some(FEE_PAYER_SIGNATURE_MARKER)
+            && self.backend.is_tempo_hardfork_active(TempoHardfork::T14)
+        {
+            let hardfork = self.backend.tempo_hardfork();
+            let version = gas_params::version(hardfork.into(), hardfork, false);
+            fee_payer_access = account_access_gas(&version.gas_params, true);
+            request.fee_payer_signature = None;
+            // Reserve the access from the search bound, so the estimate stays within the block
+            // gas limit when the request sets no gas limit.
+            let bound = request.inner.gas.unwrap_or(block_env.gas_limit);
+            request.inner.gas = Some(bound.saturating_sub(fee_payer_access));
+        }
+        let estimate =
+            self.estimate_unsponsored_gas_with_state(request, state, block_env, monad_context)?;
+        Ok(estimate.saturating_add(u128::from(fee_payer_access)))
+    }
+
+    /// Estimates the gas usage of the `request` with the state, charging no fee payer access.
+    ///
+    /// This will execute the transaction request and find the best gas limit via binary search.
+    fn estimate_unsponsored_gas_with_state(
         &self,
         mut request: FoundryTransactionRequest,
         state: &dyn DatabaseRef,
