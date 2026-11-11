@@ -101,7 +101,7 @@ impl BatchMakeTxArgs {
             tempo::resolve_configurable_account::<TempoNetwork>(
                 &tx.tempo,
                 &config,
-                eth.wallet.from,
+                &eth.wallet,
                 &mut signer,
             )
             .await?

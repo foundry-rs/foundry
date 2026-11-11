@@ -1,7 +1,7 @@
 use super::{auth::confirm_and_build, print_result_line};
 use crate::{
     tempo,
-    tx::{CastTxBuilder, read_only_sender},
+    tx::{CastTxBuilder, SenderKind, read_only_sender},
 };
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
@@ -17,7 +17,7 @@ use foundry_cli::{
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 use tempo_alloy::TempoNetwork;
 
 #[cfg(feature = "base")]
@@ -135,9 +135,15 @@ impl EstimateArgs {
         };
         let simulation_wallet = wallet.clone();
         let (sender, is_browser) = read_only_sender::<N>(&browser, wallet, &tx, chain_id).await?;
-        let sender = match tx.tempo.configurable_account {
-            Some(account) if !is_browser => account.into(),
-            _ => sender,
+        // Share the resolved signer with the configurable account lookup.
+        let (sender, signer) = match sender {
+            SenderKind::OwnedSigner(signer) => (None, Some(Arc::new(*signer))),
+            sender => (Some(sender), None),
+        };
+        let mut sender = match (tx.tempo.configurable_account, sender) {
+            (Some(account), _) if !is_browser => account.into(),
+            (_, Some(sender)) => sender,
+            (_, None) => SenderKind::Signer(signer.as_deref().expect("an owned signer")),
         };
         // A configurable account sender is estimated with its owners' approvals.
         let simulation = if is_browser || sender.address().is_zero() {
@@ -148,6 +154,7 @@ impl EstimateArgs {
                 &config,
                 &simulation_wallet,
                 sender.address(),
+                signer.clone(),
             )
             .await?
         };
@@ -176,7 +183,8 @@ impl EstimateArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .raw();
-        if let Some(simulation) = simulation {
+        if let Some((account, simulation)) = simulation {
+            sender = account.into();
             // A `0x05` signature only signs Tempo transactions.
             let tx = builder.tx_mut();
             if tx.nonce_key().is_none() {

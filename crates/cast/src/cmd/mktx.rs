@@ -225,18 +225,16 @@ impl MakeTxArgs {
         // A configurable account sender is signed by its local owners. Unsigned and externally
         // signed transactions take the sender as given, and `--tempo.digest` resolves its owner
         // quorum.
-        let configurable_account =
-            if access_key.is_some() || raw_unsigned || ethsign || signature.is_some() {
-                None
-            } else {
-                tempo::resolve_configurable_account::<N>(
-                    &tx.tempo,
-                    &config,
-                    eth.wallet.from,
-                    &mut signer,
-                )
+        let configurable_account = if access_key.is_some()
+            || raw_unsigned
+            || ethsign
+            || signature.is_some()
+        {
+            None
+        } else {
+            tempo::resolve_configurable_account::<N>(&tx.tempo, &config, &eth.wallet, &mut signer)
                 .await?
-            };
+        };
         if let Some(account) = &configurable_account {
             account.prepare_request::<N>(tx_builder.tx_mut());
         }

@@ -208,6 +208,14 @@ pub struct TempoOpts {
     /// `turnkey://`, or `private-key://KEY`.
     #[arg(long = "tempo.owner", id = "tempo_owner", value_name = "SIGNER")]
     pub owners: Vec<String>,
+
+    /// Send from the key itself instead of the Tempo configurable account linked to its keystore.
+    ///
+    /// On a Tempo chain where T14 is active, a keystore that `cast wallet new` created for a
+    /// configurable account sends from that account unless `--from`, `--sender` or this flag
+    /// names the key.
+    #[arg(long, id = "tempo_eoa", conflicts_with = "tempo_configurable_account")]
+    pub eoa: bool,
 }
 
 impl TempoOpts {

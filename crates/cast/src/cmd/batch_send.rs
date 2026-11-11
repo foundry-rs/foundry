@@ -85,7 +85,7 @@ impl BatchSendArgs {
             tempo::resolve_configurable_account::<TempoNetwork>(
                 &tx.tempo,
                 &config,
-                send_tx.eth.wallet.from,
+                &send_tx.eth.wallet,
                 &mut signer,
             )
             .await?

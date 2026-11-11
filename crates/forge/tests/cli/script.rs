@@ -10248,3 +10248,51 @@ contract CaDeployScript is Script {
         .unwrap();
     assert_eq!(U256::from_be_slice(&number), U256::from(1));
 }
+
+/// On T14, `forge script` with a keystore that `cast wallet new` linked to a configurable account
+/// broadcasts from the account while `vm.sign` signs with the key, and `--sender` with the key
+/// broadcasts from the key.
+#[forgetest_init]
+async fn tempo_t14_script_broadcasts_from_linked_keystore(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "LinkedDeploy.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract LinkedDeployScript is Script {
+    function run() external {
+        // The keystore's key still signs messages for the script.
+        bytes32 digest = keccak256("linked");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
+        require(ecrecover(digest, v, r, s) == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2);
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (keystore, account, owner) = crate::utils::tempo_linked_keystore(prj.root());
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
+    for address in [account, owner] {
+        api.anvil_deal_tip20(address, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
+    }
+    let owner_arg = owner.to_string();
+    for (extra, sender) in [(&[][..], account), (&["--sender", owner_arg.as_str()][..], owner)] {
+        cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token.to_string()]);
+        cmd.args(["--keystore", keystore.to_str().unwrap(), "--password", "keystorepassword"]);
+        cmd.args(extra).assert_success();
+        let block = provider.get_block_number().await.unwrap();
+        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipt.last().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.from(), sender);
+    }
+}

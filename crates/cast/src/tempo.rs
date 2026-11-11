@@ -303,12 +303,13 @@ const CAST_OWNERS_HINT: &str = "Pass the other owner keys with --tempo.owner, or
 /// Detects a Tempo configurable account sender and selects its local owners, taking `signer` when
 /// it is one of them.
 ///
-/// The sender is `--tempo.configurable-account`, `from`, or the signer's address. Detection only
-/// runs on Tempo, and not in `--curl` mode, whose transport answers with placeholders.
+/// The sender is `--tempo.configurable-account`, `--from`, the account linked to the signer's
+/// keystore when T14 is active, or the signer's address. Detection only runs on Tempo, and not in
+/// `--curl` mode, whose transport answers with placeholders.
 pub(crate) async fn resolve_configurable_account<N: Network>(
     tempo: &TempoOpts,
     config: &Config,
-    from: Option<Address>,
+    wallet: &WalletOpts,
     signer: &mut Option<WalletSigner>,
 ) -> Result<Option<ConfigurableAccountSigner>>
 where
@@ -325,8 +326,10 @@ where
     }
     let provider = ProviderBuilder::<TempoNetwork>::from_config(config)?.build()?;
     let signers = signer.take().map(Arc::new).into_iter().collect::<Vec<_>>();
-    let account =
-        tempo.configurable_account_signer(&provider, from, &signers, CAST_OWNERS_HINT).await?;
+    let linked = tempo.linked_account(wallet)?;
+    let account = tempo
+        .configurable_account_signer(&provider, wallet.from, linked, &signers, CAST_OWNERS_HINT)
+        .await?;
     match &account {
         Some(account) => sh_status!("Sending as Tempo configurable account {}", account.account())?,
         // Only a configurable account keeps the signer.
@@ -335,15 +338,17 @@ where
     Ok(account)
 }
 
-/// Returns the owner quorum that gas estimation models for `sender` when it is a Tempo
-/// configurable account: the local owners when they reach the threshold, as `cast send` signs,
-/// otherwise the largest quorum of maximum-size `WebAuthn` approvals.
+/// Returns the Tempo configurable account that sends for `sender`, which is `sender` itself or the
+/// account linked to its keystore, with the owner quorum that gas estimation models: the local
+/// owners when they reach the threshold, as `cast send` signs, otherwise the largest quorum of
+/// maximum-size `WebAuthn` approvals. `signer` is the wallet signer the sender already resolved.
 pub(crate) async fn configurable_account_simulation<N: Network>(
     tempo: &TempoOpts,
     config: &Config,
     wallet: &WalletOpts,
     sender: Address,
-) -> Result<Option<ConfigurableAccountSimulationSpec>>
+    signer: Option<Arc<WalletSigner>>,
+) -> Result<Option<(Address, ConfigurableAccountSimulationSpec)>>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
@@ -356,19 +361,31 @@ where
         return Ok(None);
     }
     let provider = ProviderBuilder::<TempoNetwork>::from_config(config)?.build()?;
-    let mut explicit_wallet = wallet.clone();
-    explicit_wallet.from = None;
-    let signers =
-        explicit_wallet.maybe_signer().await?.0.map(Arc::new).into_iter().collect::<Vec<_>>();
+    // The sender resolves the signer unless `--from` names it, so that a keystore or hardware
+    // wallet is unlocked once.
+    let signer = match signer {
+        Some(signer) => Some(signer),
+        None if wallet.from.is_some() => {
+            let mut explicit_wallet = wallet.clone();
+            explicit_wallet.from = None;
+            explicit_wallet.maybe_signer().await?.0.map(Arc::new)
+        }
+        None => None,
+    };
+    let signers = signer.into_iter().collect::<Vec<_>>();
+    // A sender that is the linked keystore's own key was not named with `--from`.
+    let linked = tempo.linked_account(wallet)?;
+    let from = (!linked.is_some_and(|(_, owner)| owner == sender)).then_some(sender);
     let Some((account, config, keys)) =
-        tempo.configurable_account_owners(&provider, Some(sender), &signers).await?
+        tempo.configurable_account_owners(&provider, from, linked, &signers).await?
     else {
         return Ok(None);
     };
-    Ok(Some(match ConfigurableAccountSigner::new(account, config.clone(), keys, "") {
+    let spec = match ConfigurableAccountSigner::new(account, config.clone(), keys, "") {
         Ok(signer) => signer.simulation_spec(),
         Err(_) => simulation_spec(account, &config, &[]),
-    }))
+    };
+    Ok(Some((account, spec)))
 }
 
 /// Fills a Tempo transaction request that was built outside [`crate::tx::CastTxBuilder`] before

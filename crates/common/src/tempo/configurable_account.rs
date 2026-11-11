@@ -27,9 +27,14 @@ use base64::{
 };
 use eyre::{Context, Result};
 use foundry_wallets::WalletSigner;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tempo_alloy::{
     TempoNetwork,
     accounts::{TempoAccessKey, TempoAccountsStore, TempoAccountsWallet},
@@ -769,6 +774,58 @@ impl ConfigurableAccountSigner {
         signature.verify_approvals(inner).map_err(ca_error)?;
         Ok(TempoTxEnvelope::AA(tx.into_signed(TempoSignature::ConfigurableAccount(signature))))
     }
+}
+
+/// Suffix of the sidecar file that links a keystore to the 1-of-1, salt-0 configurable account
+/// its key owns, next to the keystore as `<keystore>.tempo-account`.
+///
+/// The keystore itself stays a standard Web3 Secret Storage file that other tools read, and the
+/// Tempo Accounts store, whose format belongs to `tempo-alloy`, is not extended.
+pub const LINKED_ACCOUNT_SUFFIX: &str = ".tempo-account";
+
+/// The only linked account sidecar version this release writes and reads.
+const LINKED_ACCOUNT_VERSION: u32 = 1;
+
+/// A keystore's linked account sidecar.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LinkedAccountFile {
+    version: u32,
+    account: Address,
+    owner: Address,
+}
+
+/// Returns the path of the linked account sidecar of `keystore`.
+pub fn linked_account_path(keystore: &Path) -> PathBuf {
+    let mut path = OsString::from(keystore.as_os_str());
+    path.push(LINKED_ACCOUNT_SUFFIX);
+    path.into()
+}
+
+/// Links `keystore`, whose key is `owner`, to the 1-of-1, salt-0 configurable account of
+/// `owner`, and returns that account.
+pub fn link_keystore(keystore: &Path, owner: Address) -> Result<Address> {
+    let account = single_owner_account(owner)?;
+    let file = LinkedAccountFile { version: LINKED_ACCOUNT_VERSION, account, owner };
+    crate::fs::write_pretty_json_file(&linked_account_path(keystore), &file)?;
+    Ok(account)
+}
+
+/// Returns the configurable account linked to `keystore` and its owner key, or `None` when the
+/// keystore has no link.
+pub fn linked_account(keystore: &Path) -> Result<Option<(Address, Address)>> {
+    let path = linked_account_path(keystore);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let file = crate::fs::read_json_file::<LinkedAccountFile>(&path)
+        .wrap_err_with(|| format!("invalid linked account file {}", path.display()))?;
+    eyre::ensure!(
+        file.version == LINKED_ACCOUNT_VERSION && single_owner_account(file.owner)? == file.account,
+        "invalid linked account file {}: unsupported version or account",
+        path.display()
+    );
+    Ok(Some((file.account, file.owner)))
 }
 
 #[cfg(test)]

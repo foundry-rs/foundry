@@ -103,11 +103,11 @@ fn wallet_new_with_env(
     (output.stdout_lossy(), output.stderr_lossy())
 }
 
-/// `cast wallet new` creates an EOA by default. With `--configurable-account` it creates a
-/// configurable account only with a Tempo signal on a chain where T14 is active, and prints the
-/// account and its owner key.
+/// `cast wallet new` creates a configurable account by default with a Tempo signal on a chain where
+/// T14 is active, and prints the account and its owner key. `--eoa` opts out, and
+/// `--configurable-account` also reports a missing Tempo signal.
 #[casttest]
-async fn tempo_t14_wallet_new_configurable_account_opt_in(prj: _, cmd: _) {
+async fn tempo_t14_wallet_new_defaults_to_configurable_account(prj: _, cmd: _) {
     let (_t14_api, t14) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
     let (_t13_api, t13) =
@@ -131,8 +131,23 @@ async fn tempo_t14_wallet_new_configurable_account_opt_in(prj: _, cmd: _) {
         assert_eq!(Address::from_str(account).unwrap(), single_owner_account(owner).unwrap());
     };
 
-    // The default is an EOA, even on a T14 Tempo RPC.
+    // The default on a T14 Tempo RPC is a configurable account.
     let (stdout, stderr) = wallet_new(&mut cmd, &["--rpc-url", &t14_rpc]);
+    assert_account(&stdout);
+    assert_data_eq!(
+        stderr,
+        str![[r#"
+Successfully created new Tempo configurable account.
+Address:     [..]
+Owner key:   [..]
+Private key: [..]
+
+"#]]
+    );
+
+    // No Tempo signal: a plain key, without consulting any RPC. Only `--configurable-account`
+    // says why.
+    let (stdout, stderr) = wallet_new(&mut cmd, &[]);
     assert_eoa(&stdout);
     assert_data_eq!(
         stderr,
@@ -143,8 +158,6 @@ Private key: [..]
 
 "#]]
     );
-
-    // No Tempo signal: a plain key, without consulting any RPC.
     let (stdout, stderr) = wallet_new(&mut cmd, &["--configurable-account"]);
     assert_eoa(&stdout);
     assert_data_eq!(
@@ -172,11 +185,38 @@ Private key: [..]
 "#]]
     );
 
-    // `--eoa` asks for the default explicitly.
-    let (stdout, _) = wallet_new(&mut cmd, &["--chain", "tempo", "--eoa"]);
+    // `--eoa` opts out on a T14 Tempo RPC.
+    let (stdout, stderr) = wallet_new(&mut cmd, &["--rpc-url", &t14_rpc, "--eoa"]);
     assert_eoa(&stdout);
+    assert_data_eq!(
+        stderr,
+        str![[r#"
+Successfully created new keypair.
+Address:     [..]
+Private key: [..]
 
-    // A Tempo RPC before T14, and a non-Tempo RPC.
+"#]]
+    );
+
+    // A Tempo RPC before T14, a non-Tempo RPC and a non-Tempo chain create a plain key; only
+    // `--configurable-account` says why.
+    for args in [
+        &["--rpc-url", &t13.http_endpoint()][..],
+        &["--rpc-url", &eth.http_endpoint()],
+        &["--chain", "1"],
+    ] {
+        let (stdout, stderr) = wallet_new(&mut cmd, args);
+        assert_eoa(&stdout);
+        assert_data_eq!(
+            stderr,
+            str![[r#"
+Successfully created new keypair.
+Address:     [..]
+Private key: [..]
+
+"#]]
+        );
+    }
     let (stdout, stderr) =
         wallet_new(&mut cmd, &["--configurable-account", "--rpc-url", &t13.http_endpoint()]);
     assert_eoa(&stdout);
@@ -758,4 +798,90 @@ async fn tempo_t14_send_configurable_account_sponsored(cmd: _) {
     assert_eq!(receipt["feePayer"], serde_json::json!(sponsor.address()));
     assert!(balance(sponsor.address()).await < sponsor_before);
     assert_eq!(balance(account).await, account_before);
+}
+
+/// `cast wallet new` links a new keystore to its configurable account, and on T14 `--account`
+/// sends from that account. `--from` or `--eoa` sends from the owner key, a bare `--private-key`
+/// stays an EOA, and before T14 the keystore sends from its key.
+// HOME does not override the default keystore directory on Windows.
+#[cfg(not(windows))]
+#[casttest]
+async fn tempo_t14_send_from_linked_keystore(prj: _, cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let (t13_api, t13) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T13.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let home = prj.root();
+    let password = home.join("password");
+    std::fs::write(&password, "secret").unwrap();
+
+    cmd.cast_fuse().env("HOME", home);
+    cmd.args(["wallet", "new", "linked", "--unsafe-password", "secret", "--rpc-url", &rpc]);
+    let stdout = cmd.assert_success().get_output().stdout_lossy();
+    let [account, owner] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
+        panic!("expected a configurable account record, got {stdout}");
+    };
+    let (account, owner) = (Address::from_str(account).unwrap(), Address::from_str(owner).unwrap());
+    assert_eq!(account, single_owner_account(owner).unwrap());
+    let link: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.join(".foundry/keystores/linked.tempo-account")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(link, serde_json::json!({ "version": 1, "account": account, "owner": owner }));
+
+    // The link is not listed as an account.
+    cmd.cast_fuse().env("HOME", home);
+    cmd.args(["wallet", "list"]);
+    assert_eq!(cmd.assert_success().get_output().stdout_lossy(), "linked (Local)\n");
+
+    for address in [account, owner] {
+        for api in [&api, &t13_api] {
+            api.anvil_deal_tip20(address, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+                .await
+                .unwrap();
+        }
+    }
+    cmd.cast_fuse().env("HOME", home);
+    cmd.args(["wallet", "decrypt-keystore", "linked", "--unsafe-password", "secret", "--json"]);
+    let key = json_data(&cmd.assert_success().get_output().stdout_lossy())["private_key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let target = Address::repeat_byte(0x73).to_string();
+    let fee_token = ALPHA_USD_ADDRESS.to_string();
+    let mut send = |rpc: &str, args: &[&str]| {
+        cmd.cast_fuse().env("HOME", home);
+        cmd.args(["send", &target, "--rpc-url", rpc]);
+        cmd.args(["--tempo.fee-token", &fee_token]).args(args);
+        cmd.assert_success().get_output().stderr_lossy()
+    };
+    let password = password.to_str().unwrap();
+    let keystore = ["--account", "linked", "--password-file", password];
+
+    // On T14 the keystore sends from its account, and the gas estimate is exact.
+    let paying = format!("Paying gas in AlphaUSD ({ALPHA_USD_ADDRESS})\n");
+    assert_data_eq!(
+        send(&rpc, &keystore),
+        format!("Sending as Tempo configurable account {account}\n{paying}")
+    );
+    assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(account));
+    let (gas_limit, gas_used) = last_tx_gas(&provider).await;
+    assert_eq!(gas_limit, gas_used);
+
+    // `--from` with the owner key, or `--eoa`, sends from the key.
+    let owner_arg = owner.to_string();
+    for extra in [&["--from", owner_arg.as_str()][..], &["--eoa"]] {
+        assert_data_eq!(send(&rpc, &[&keystore[..], extra].concat()), paying.clone());
+        assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(owner));
+    }
+
+    // A bare private key of the owner stays an EOA.
+    assert_data_eq!(send(&rpc, &["--private-key", &key]), paying.clone());
+    assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(owner));
+
+    // Before T14 the keystore sends from its key.
+    assert_data_eq!(send(&t13.http_endpoint(), &keystore), paying);
+    assert_eq!(last_receipt(&t13.http_provider()).await["from"], serde_json::json!(owner));
 }

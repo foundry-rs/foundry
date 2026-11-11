@@ -314,7 +314,7 @@ impl SendTxArgs {
             tempo::resolve_configurable_account::<N>(
                 &tx.tempo,
                 &config,
-                send_tx.eth.wallet.from,
+                &send_tx.eth.wallet,
                 &mut pre_resolved_signer,
             )
             .await?

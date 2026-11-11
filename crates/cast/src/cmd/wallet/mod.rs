@@ -16,7 +16,13 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::parse_json,
 };
-use foundry_common::{errors::FsPathError, fs, fs::canonicalize_path, sh_println, shell};
+use foundry_common::{
+    errors::FsPathError,
+    fs,
+    fs::canonicalize_path,
+    sh_println, shell,
+    tempo::configurable_account::{LINKED_ACCOUNT_SUFFIX, link_keystore, linked_account_path},
+};
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, RawWalletOpts, WalletOpts, WalletSigner};
 use rand_08::thread_rng;
@@ -47,25 +53,27 @@ use configurable_account::{AssembleArgs, OwnersArgs, UpgradeArgs};
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    /// Create a new random keypair, or a Tempo configurable account
+    /// Create a new random keypair, or a Tempo configurable account on Tempo
     ///
-    /// Creates a plain key (EOA) by default, also on Tempo. With `--configurable-account` and a
-    /// Tempo signal, the new key becomes the only owner of a Tempo configurable account (TIP-1107)
-    /// with threshold 1 and salt 0, and both the account address and the owner key address are
-    /// printed. Send from the account address. A Tempo signal is `--chain`, `chain` or a Tempo
-    /// network in `foundry.toml`, or an RPC (`--rpc-url`, `ETH_RPC_URL` or `foundry.toml`) that
-    /// serves a Tempo chain. The account is only created where the T14 hardfork is active: the RPC
-    /// is asked when one is given, otherwise the compiled Tempo hardfork schedule is read for the
-    /// chain. Without a Tempo signal, or before T14, it creates an EOA. MPP payment channels need
-    /// an EOA.
+    /// With a Tempo signal, the new key becomes the only owner of a Tempo configurable account
+    /// (TIP-1107) with threshold 1 and salt 0, and both the account address and the owner key
+    /// address are printed. Send from the account address. A Tempo signal is `--chain`, `chain`
+    /// or a Tempo network in `foundry.toml`, or an RPC (`--rpc-url`, `ETH_RPC_URL` or
+    /// `foundry.toml`) that serves a Tempo chain. The account is only created where the T14
+    /// hardfork is active: the RPC is asked when one is given, otherwise the compiled Tempo
+    /// hardfork schedule is read for the chain. Without a Tempo signal, or before T14, it creates
+    /// a plain key (EOA). Pass `--eoa` to always create one: MPP payment channels need an EOA.
     ///
-    /// The account needs no saved configuration: it is recomputed from the key.
+    /// The account needs no saved configuration: it is recomputed from the key. A keystore is
+    /// linked to its account in a `<keystore>.tempo-account` file next to it, so that
+    /// `--account <name>` sends from the account on T14; pass `--eoa` there to send from the key.
     ///
     /// Examples:
     /// - cast wallet new (print a new private key and address)
     /// - cast wallet new my-wallet (save to the default keystore directory)
     /// - cast wallet new ~/.foundry/keystores dev (save to an encrypted keystore)
-    /// - cast wallet new --chain tempo --configurable-account (create a Tempo configurable account)
+    /// - cast wallet new --chain tempo (create a Tempo configurable account)
+    /// - cast wallet new --chain tempo --eoa (create a plain key on Tempo)
     #[command(verbatim_doc_comment, visible_alias = "n")]
     New {
         /// If provided, then keypair will be written to an encrypted JSON keystore.
@@ -106,16 +114,17 @@ pub enum WalletSubcommands {
         #[arg(long, hide = !cfg!(all(target_os = "macos", feature = "touch-id")))]
         touch_id: bool,
 
-        /// Create a Tempo configurable account owned by the new key, when a Tempo signal is
-        /// present and T14 is active there.
+        /// Create a Tempo configurable account owned by the new key. This is the default when a
+        /// Tempo signal is present and T14 is active there; the flag also reports when there is
+        /// none.
         #[arg(long)]
         configurable_account: bool,
 
-        /// Create a plain key (EOA). This is the default.
+        /// Create a plain key (EOA) even with a Tempo signal.
         #[arg(long, conflicts_with = "configurable_account")]
         eoa: bool,
 
-        /// The chain to create the wallet for, as a Tempo signal for `--configurable-account`.
+        /// The chain to create the wallet for. A Tempo chain creates a configurable account.
         #[arg(long, env = "CHAIN")]
         chain: Option<Chain>,
 
@@ -462,12 +471,13 @@ impl WalletSubcommands {
                 force,
                 touch_id,
                 configurable_account,
-                eoa: _,
+                eoa,
                 chain,
                 rpc,
             } => {
                 ensure_touch_id_available(touch_id)?;
                 let configurable = configurable_account::new_wallet_is_configurable(
+                    eoa,
                     configurable_account,
                     chain,
                     &rpc,
@@ -767,6 +777,12 @@ flag to set your key via:
                     Some(&account_name),
                 )?;
                 let address = wallet.address();
+                // An imported key is not linked to a configurable account; drop a link that a
+                // removed keystore of the same name left.
+                let link = linked_account_path(&keystore_path);
+                if link.exists() {
+                    fs::remove_file(&link)?;
+                }
 
                 if touch_id {
                     let action = format!("keystore was imported at {}", keystore_path.display());
@@ -818,6 +834,10 @@ flag to set your key via:
                 }
 
                 remove_touch_id_sidecar(&keystore_path)?;
+                let link = linked_account_path(&keystore_path);
+                if link.exists() {
+                    fs::remove_file(&link)?;
+                }
                 std::fs::remove_file(&keystore_path).wrap_err_with(|| {
                     format!("Failed to remove keystore file at {}", keystore_path.display())
                 })?;
@@ -1055,6 +1075,14 @@ fn new_keystores(
 
         let owner = wallet.address().to_checksum(None);
         let account = new_account(wallet.address(), configurable)?;
+        // Link the keystore to its configurable account, so that `--account` sends from it, and
+        // drop a link that an overwritten keystore left.
+        let link = linked_account_path(&keystore_path);
+        if configurable {
+            link_keystore(&keystore_path, wallet.address())?;
+        } else if link.exists() {
+            fs::remove_file(&link)?;
+        }
         if shell::is_json() {
             let mut result = json!({
                 "address": account.as_deref().unwrap_or(&owner),
@@ -1276,8 +1304,10 @@ fn ensure_account_name_available(name: &str) -> Result<()> {
     if name.is_empty() || name.contains('\\') || file_name != Some(name) {
         eyre::bail!("account name must be a single path segment");
     }
-    if name.ends_with(TOUCH_ID_SIDECAR_SUFFIX) {
-        eyre::bail!("account names ending in `{TOUCH_ID_SIDECAR_SUFFIX}` are reserved");
+    for suffix in [TOUCH_ID_SIDECAR_SUFFIX, LINKED_ACCOUNT_SUFFIX] {
+        if name.ends_with(suffix) {
+            eyre::bail!("account names ending in `{suffix}` are reserved");
+        }
     }
     Ok(())
 }

@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256, hex};
 use alloy_signer_local::PrivateKeySigner;
 use std::{
     io::Read,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     thread::{self, JoinHandle},
 };
@@ -223,4 +223,30 @@ pub fn tempo_two_of_three_account() -> (Address, String, Vec<String>) {
     });
     let keys = keys.iter().map(|key| hex::encode_prefixed(key.to_bytes())).collect();
     (config.derive_account().unwrap(), json.to_string(), keys)
+}
+
+/// Writes the keystore of `0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2` (password
+/// `keystorepassword`) to `dir`, linked to its 1-of-1, salt-0 Tempo configurable account as
+/// `cast wallet new` links it. Returns the keystore path, the account and the owner key.
+pub fn tempo_linked_keystore(dir: &Path) -> (PathBuf, Address, Address) {
+    let keystore = dir.join("linked");
+    std::fs::write(
+        &keystore,
+        include_str!(
+            "../../../cast/tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2"
+        ),
+    )
+    .unwrap();
+    let owner = alloy_primitives::address!("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2");
+    let account = ConfigurableAccountConfig {
+        salt: B256::ZERO,
+        version: 0,
+        threshold: 1,
+        owners: vec![ConfigurableAccountOwner { owner, weight: 1 }],
+    }
+    .derive_account()
+    .unwrap();
+    let link = serde_json::json!({ "version": 1, "account": account, "owner": owner });
+    std::fs::write(dir.join("linked.tempo-account"), link.to_string()).unwrap();
+    (keystore, account, owner)
 }

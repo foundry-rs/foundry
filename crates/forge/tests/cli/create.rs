@@ -1,6 +1,9 @@
 //! Contains various tests for checking the `forge create` subcommand
 
-use crate::{constants::*, utils::tempo_two_of_three_account};
+use crate::{
+    constants::*,
+    utils::{tempo_linked_keystore, tempo_two_of_three_account},
+};
 use alloy_consensus::Transaction;
 use alloy_network::ReceiptResponse;
 use alloy_primitives::{U256, hex};
@@ -812,4 +815,40 @@ async fn create_from_tempo_configurable_account(prj: _, cmd: _) {
          {high} (weight 1). forge create needs the owner keys locally: pass the other owners with \
          --tempo.owner, or keep them in the Tempo Accounts store.\n"
     ));
+}
+
+/// On T14, `forge create` with a keystore that `cast wallet new` linked to a configurable account
+/// deploys from the account, and `--eoa` deploys from the key.
+#[forgetest_init]
+async fn create_from_tempo_linked_keystore(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (keystore, account, owner) = tempo_linked_keystore(prj.root());
+    for address in [account, owner] {
+        api.anvil_deal_tip20(address, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+            .await
+            .unwrap();
+    }
+    let contract = format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}");
+    let fee_token = ALPHA_USD_ADDRESS.to_string();
+    for (extra, deployer) in [(&[][..], account), (&["--eoa"][..], owner)] {
+        cmd.forge_fuse()
+            .args(["create", &contract, "--broadcast", "--rpc-url", &rpc])
+            .args(["--keystore", keystore.to_str().unwrap(), "--password", "keystorepassword"])
+            .args(["--tempo.fee-token", &fee_token])
+            .args(extra);
+        let stdout = cmd.assert_success().get_output().stdout_lossy();
+        let block = provider.get_block_number().await.unwrap();
+        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipt.last().unwrap();
+        assert_eq!(receipt.from(), deployer);
+        let deployed = receipt.contract_address().expect("a deployment");
+        assert_data_eq!(
+            stdout,
+            format!("...\nDeployer: {deployer}\nDeployed to: {deployed}\nTransaction hash: [..]\n")
+        );
+    }
 }

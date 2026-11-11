@@ -906,6 +906,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 .configurable_account_signer(
                                     &provider,
                                     Some(scope.sender),
+                                    None,
                                     &wallet_signers,
                                     SCRIPT_OWNERS_HINT,
                                 )

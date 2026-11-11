@@ -1,7 +1,10 @@
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::json::print_json_success;
-use foundry_common::{fs, fs::canonicalize_path, sh_println, shell};
+use foundry_common::{
+    fs, fs::canonicalize_path, sh_println, shell,
+    tempo::configurable_account::LINKED_ACCOUNT_SUFFIX,
+};
 use foundry_config::Config;
 use foundry_wallets::wallet_multi::MultiWalletOptsBuilder;
 use serde::Serialize;
@@ -142,8 +145,10 @@ impl ListArgs {
             if path.is_file()
                 && let Some(file_name) = path.file_name()
                 && let Some(name) = file_name.to_str()
-                // Skip recognized Touch ID sidecars while retaining ambiguous files.
+                // Skip recognized Touch ID sidecars while retaining ambiguous files, and linked
+                // account sidecars.
                 && !matches!(super::is_touch_id_sidecar(&path), Ok(true))
+                && !name.ends_with(LINKED_ACCOUNT_SUFFIX)
             {
                 let account = local_account_name(name);
                 if shell::is_json() {

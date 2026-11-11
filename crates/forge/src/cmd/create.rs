@@ -186,12 +186,14 @@ impl CreateArgs {
             let config = self.load_config()?;
             let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
             let signers = signer.take().map(Arc::new).into_iter().collect::<Vec<_>>();
+            let linked = self.tx.tempo.linked_account(&self.eth.wallet)?;
             let account = self
                 .tx
                 .tempo
                 .configurable_account_signer(
                     &provider,
                     self.eth.wallet.from,
+                    linked,
                     &signers,
                     "forge create needs the owner keys locally: pass the other owners with \
                      --tempo.owner, or keep them in the Tempo Accounts store.",
