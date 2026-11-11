@@ -360,7 +360,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // Tests that invariant exists with success after configured timeout.
 #[forgetest_init]
 fn should_apply_configured_timeout(prj: _, cmd: _) {
-    // Add initial test that breaks invariant.
     prj.add_test(
         "TimeoutTest.t.sol",
         r#"
@@ -385,9 +384,10 @@ contract TimeoutTest is Test {
     /// forge-config: default.invariant.depth = 20000
     /// forge-config: default.invariant.timeout = 1
     function invariant_counter_timeout() public view {
-        // Invariant will fail if more than 10000 increments.
-        // Make sure test timeouts after one second and remaining runs are canceled.
-        require(handler.count() < 10000);
+        // Make sure test timeouts after one second and remaining runs are canceled. The invariant
+        // must hold however many calls a fast machine makes before the timeout, since shrinking a
+        // broken invariant is not bounded by the campaign timeout.
+        require(handler.count() < type(uint256).max);
     }
 }
      "#,
