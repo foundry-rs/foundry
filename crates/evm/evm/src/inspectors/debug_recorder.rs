@@ -463,9 +463,6 @@ fn copy_steps(
 /// Compares whole chunks first, so unchanged memory is skipped without testing each byte.
 fn changed(old: &[u8], new: &[u8]) -> Option<std::ops::Range<usize>> {
     const CHUNK: usize = 256;
-    if old == new {
-        return None;
-    }
     let differs = |(a, b)| a != b;
     let (index, (a, b)) =
         old.chunks(CHUNK).zip(new.chunks(CHUNK)).enumerate().find(|(_, (a, b))| a != b)?;
