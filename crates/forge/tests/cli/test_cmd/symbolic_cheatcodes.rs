@@ -2968,6 +2968,8 @@ contract Vault {
         total += x;
         bal[msg.sender] += x;
     }
+
+    receive() external payable {}
 }
 
 contract SymbolicFreeAddressWrites is Test {
@@ -3049,6 +3051,17 @@ contract SymbolicFreeAddressWrites is Test {
         vault.add(1);
         assert(vault.bal(address(vault)) == 0);
     }
+
+    // A cheatcode call at a symbolic input offset still decides the address.
+    function checkSymbolicOffsetPrank(address a, uint8 n) public {
+        vm.deal(a, 5);
+        assembly {
+            mstore(0x40, add(mload(0x40), mul(n, 32)))
+        }
+        vm.prank(a);
+        (bool ok,) = address(vault).call{value: 5}("");
+        assert(!ok || a != address(vault) || address(vault).balance == 10);
+    }
 }
 "#,
     );
@@ -3083,7 +3096,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 9 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+Ran 10 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealKeepsCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDerivedArgumentDecidesAddress(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDirtyWordKeepsGuard(uint256) ([METRICS])
@@ -3092,8 +3105,9 @@ Ran 9 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankAfterDeal(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreKeepsNonce(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreMayTargetSetUpContract(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicOffsetPrank(address,uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 10 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

@@ -596,43 +596,68 @@ impl SymbolicExecutor {
         kind: CallKind,
     ) -> Result<Vec<(SymExpr, Vec<Address>)>, SymbolicError> {
         let Ok(target) = state.stack.peek(1) else { return Ok(Vec::new()) };
-        let Some(to) = target.as_const().map(word_to_address) else {
-            let target = target.clone();
-            return Ok(self.guarded_words(state, &target, Vec::new()));
+        let to = target.as_const().map(word_to_address);
+        let in_offset_idx = match (kind, to) {
+            (CallKind::Call, Some(CHEATCODE_ADDRESS | SYMBOLIC_VM_COMPAT_ADDRESS)) => 3,
+            (CallKind::StaticCall, Some(CHEATCODE_ADDRESS | SYMBOLIC_VM_COMPAT_ADDRESS)) => 2,
+            _ => {
+                if to.is_none() {
+                    return Ok(self.guarded_words(state, target, Vec::new()));
+                }
+                return Ok(Vec::new());
+            }
         };
-        let in_offset_idx = match kind {
-            CallKind::Call => 3,
-            CallKind::StaticCall => 2,
-            CallKind::CallCode | CallKind::DelegateCall => return Ok(Vec::new()),
-        };
-        if to != CHEATCODE_ADDRESS && to != SYMBOLIC_VM_COMPAT_ADDRESS {
-            return Ok(Vec::new());
-        }
         let (Ok(in_offset), Ok(in_size)) =
             (state.stack.peek(in_offset_idx), state.stack.peek(in_offset_idx + 1))
         else {
             return Ok(Vec::new());
         };
-        let in_size = in_size.clone();
-        let Some(in_offset) = state
+        // A symbolic input size scans up to its bound; extra words only add forks.
+        let in_size = match state.constrained_usize_checked(&mut self.cx, in_size) {
+            Some(Ok(size)) => size,
+            Some(Err(_)) => return Ok(Vec::new()),
+            None => self.solver_upper_bound_usize(
+                state,
+                in_size,
+                self.config.max_calldata_bytes as usize,
+                "symbolic CALL input size",
+            )?,
+        };
+        // Like the dispatcher, read an input at a symbolic offset with the offset bounds into a
+        // scratch memory that holds it at offset 0.
+        let scratch;
+        let (memory, in_offset) = match state
             .constrained_word(&mut self.cx, in_offset)
             .and_then(|offset| usize::try_from(offset).ok())
-        else {
+        {
+            Some(offset) => (&state.memory, offset),
+            None => {
+                let minimum_offset = state.lower_bound_usize(in_offset);
+                let maximum_offset = state.upper_bound_usize(&mut self.cx, in_offset);
+                let input = state.memory.read_bytes_offset_with_bounds(
+                    &mut self.cx,
+                    in_offset.clone(),
+                    in_size,
+                    minimum_offset,
+                    maximum_offset,
+                );
+                let mut memory = SymMemory::default();
+                memory.store_bytes(&mut self.cx, 0, input);
+                scratch = memory;
+                (&scratch, 0)
+            }
+        };
+        let selector =
+            memory.read_bytes(&mut self.cx, in_offset, 4).right_aligned_word(&mut self.cx, 0, 4);
+        let Some(selector) = self.constrained_word_with_solver(state, &selector)? else {
             return Ok(Vec::new());
         };
-        let Some(selector) = state
-            .memory
-            .read_concrete(&mut self.cx, in_offset, 4)
-            .ok()
-            .and_then(|selector| <[u8; 4]>::try_from(selector.as_slice()).ok())
-        else {
-            return Ok(Vec::new());
-        };
+        let selector: [u8; 4] = selector.to_be_bytes::<32>()[28..].try_into().unwrap();
         let args_offset = in_offset + 4;
         let mut words = Vec::new();
         // The first argument to scan for guarded words.
         let mut first_scanned = 0;
-        if to == CHEATCODE_ADDRESS {
+        if to == Some(CHEATCODE_ADDRESS) {
             let store = selector == storeCall::SELECTOR;
             if store
                 || [etchCall::SELECTOR, setNonceCall::SELECTOR, setNonceUnsafeCall::SELECTOR]
@@ -641,7 +666,7 @@ impl SymbolicExecutor {
                 // The target forks here, or `vm.store` writes it under guards; the other
                 // arguments may still be guarded words.
                 first_scanned = 1;
-                let word = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let word = read_abi_word_arg(&mut self.cx, memory, args_offset, 0)?;
                 if state.constrained_word(&mut self.cx, &word).is_none() {
                     let mut candidates = state.world.concrete_alias_candidates(executor);
                     if store {
@@ -665,19 +690,8 @@ impl SymbolicExecutor {
         if !state.world.has_guarded_addresses() {
             return Ok(words);
         }
-        // A symbolic input size scans up to its bound; extra words only add forks.
-        let in_size = match state.constrained_usize_checked(&mut self.cx, &in_size) {
-            Some(Ok(size)) => size,
-            Some(Err(_)) => return Ok(words),
-            None => self.solver_upper_bound_usize(
-                state,
-                &in_size,
-                self.config.max_calldata_bytes as usize,
-                "symbolic CALL input size",
-            )?,
-        };
         for index in first_scanned..in_size.saturating_sub(4) / 32 {
-            let word = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, index)?;
+            let word = read_abi_word_arg(&mut self.cx, memory, args_offset, index)?;
             words = self.guarded_words(state, &word, words);
         }
         Ok(words)
