@@ -2860,9 +2860,10 @@ mod tests {
         stack.collect_failure_identity(false);
         assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
 
-        // Recording failure provenance only steps the instructions that end a frame early.
+        // Recording failure provenance only steps the instructions that end a frame early and the
+        // branches that lead to them.
         stack.collect_failure_provenance(true);
-        assert_eq!(steps(&mut stack), set(&[op::REVERT, op::INVALID]));
+        assert_eq!(steps(&mut stack), set(&[op::JUMPI, op::REVERT, op::INVALID]));
         stack.collect_failure_provenance(false);
         assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
 
