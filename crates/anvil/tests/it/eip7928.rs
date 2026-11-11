@@ -19,7 +19,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use serde_json::{Value, json};
 use std::sync::atomic::Ordering;

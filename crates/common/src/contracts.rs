@@ -29,6 +29,10 @@ use std::{
 const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
     hex!("730000000000000000000000000000000000000000");
 
+/// Immutable holding a library's own address in its runtime code under the IR pipeline, which
+/// replaces the `PUSH20` call protection prefix.
+const LIBRARY_DEPLOY_ADDRESS_IMMUTABLE: &str = "library_deploy_address";
+
 /// Isolated account used to deploy libraries needed only while executing locally.
 ///
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
@@ -46,6 +50,19 @@ pub struct BytecodeData {
 impl BytecodeData {
     fn bytes(&self) -> Option<&Bytes> {
         self.object.as_ref().and_then(|b| b.as_bytes())
+    }
+}
+
+/// Returns whether Solidity deployed code starts with the library call protection prefix.
+///
+/// See <https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries>.
+fn has_call_protection(code: &BytecodeObject) -> bool {
+    match code {
+        BytecodeObject::Bytecode(bytes) => bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX),
+        BytecodeObject::Unlinked(bytes) => bytes
+            .get(..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2)
+            .and_then(|prefix| Bytes::from_str(prefix).ok())
+            .is_some_and(|prefix| prefix.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)),
     }
 }
 
@@ -125,6 +142,14 @@ impl ContractData {
     /// Returns the deployed bytecode without placeholders, if present.
     pub fn deployed_bytecode_without_placeholders(&self) -> Option<Bytes> {
         strip_bytecode_placeholders(self.deployed_bytecode.as_ref()?.object.as_ref()?)
+    }
+
+    /// Returns whether this is a Solidity library, from the call protection the compiler emits:
+    /// a `library_deploy_address` immutable under the IR pipeline, or a `PUSH20` prefix otherwise.
+    pub fn is_library(&self) -> bool {
+        let Some(deployed_bytecode) = &self.deployed_bytecode else { return false };
+        deployed_bytecode.immutable_references.contains_key(LIBRARY_DEPLOY_ADDRESS_IMMUTABLE)
+            || deployed_bytecode.object.as_ref().is_some_and(has_call_protection)
     }
 }
 
@@ -380,23 +405,7 @@ impl ContractsByArtifact {
             // ignore it as it includes library address determined at runtime.
             // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
             // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
-            let has_call_protection = !is_vyper
-                && match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => {
-                        bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
-                    }
-                    BytecodeObject::Unlinked(bytes) => {
-                        if let Ok(bytes) =
-                            Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
-                        {
-                            bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
-                        } else {
-                            false
-                        }
-                    }
-                };
-
-            if has_call_protection {
+            if !is_vyper && has_call_protection(deployed_code) {
                 ignored.push(Offsets { start: 1, length: 20 });
             }
 

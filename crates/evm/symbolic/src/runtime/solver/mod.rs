@@ -1719,14 +1719,81 @@ fn parse_model_values(
     output: &str,
     mut insert_value: impl FnMut(&str, U256),
 ) -> Result<(), SymbolicError> {
-    let mut tokens = output
-        .split(|c: char| c.is_whitespace() || matches!(c, '(' | ')'))
-        .filter(|token| !token.is_empty());
-    while let Some(token) = tokens.next() {
-        if token == "define-fun" {
-            let Some(name) = tokens.next() else { continue };
-            while let Some(value) = tokens.next() {
-                if let Some(hex) = value.strip_prefix("#x") {
+    let mut tokens = Vec::new();
+    let mut atom_start = None;
+    for (idx, c) in output.char_indices() {
+        if c.is_whitespace() || matches!(c, '(' | ')') {
+            if let Some(start) = atom_start.take() {
+                tokens.push(&output[start..idx]);
+            }
+            if !c.is_whitespace() {
+                tokens.push(&output[idx..idx + c.len_utf8()]);
+            }
+        } else if atom_start.is_none() {
+            atom_start = Some(idx);
+        }
+    }
+    if let Some(start) = atom_start {
+        tokens.push(&output[start..]);
+    }
+    let mut tokens = tokens.into_iter();
+    while let Some(sexp) = ModelSexp::parse(&mut tokens) {
+        sexp.visit_definitions(&mut insert_value)?;
+    }
+    Ok(())
+}
+
+/// A model S-expression: solvers print each value as `(define-fun <name> () <sort> <term>)`.
+enum ModelSexp<'a> {
+    Atom(&'a str),
+    List(Vec<Self>),
+}
+
+impl<'a> ModelSexp<'a> {
+    /// Parses one S-expression; returns `None` at the end of the tokens or at a closing paren.
+    fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Option<Self> {
+        match tokens.next()? {
+            "(" => {
+                let mut items = Vec::new();
+                while let Some(item) = Self::parse(tokens) {
+                    items.push(item);
+                }
+                Some(Self::List(items))
+            }
+            ")" => None,
+            atom => Some(Self::Atom(atom)),
+        }
+    }
+
+    /// Inserts the value of each constant definition whose term evaluates to a literal.
+    ///
+    /// Solvers echo the query's helper definitions, whose terms are not literals, and share
+    /// subterms through `let`; neither may take the value of the next definition.
+    fn visit_definitions(
+        &self,
+        insert_value: &mut impl FnMut(&str, U256),
+    ) -> Result<(), SymbolicError> {
+        let Self::List(items) = self else { return Ok(()) };
+        if let [Self::Atom("define-fun"), Self::Atom(name), Self::List(args), _sort, term] =
+            items.as_slice()
+            && args.is_empty()
+        {
+            if let Some(value) = term.value(&mut HashMap::default())? {
+                insert_value(name, value);
+            }
+            return Ok(());
+        }
+        for item in items {
+            item.visit_definitions(insert_value)?;
+        }
+        Ok(())
+    }
+
+    /// Evaluates a literal, a `let`-bound name, or a `let` over such terms.
+    fn value(&self, bindings: &mut HashMap<&'a str, U256>) -> Result<Option<U256>, SymbolicError> {
+        match self {
+            Self::Atom(atom) => {
+                if let Some(hex) = atom.strip_prefix("#x") {
                     if hex.len() > 64 {
                         return Err(SymbolicError::Solver(
                             "solver hex model value exceeds 256 bits".to_string(),
@@ -1738,10 +1805,9 @@ fn parse_model_values(
                     })?;
                     let start = 32usize.saturating_sub(decoded.len());
                     bytes[start..start + decoded.len()].copy_from_slice(&decoded);
-                    insert_value(name, U256::from_be_bytes(bytes));
-                    break;
+                    return Ok(Some(U256::from_be_bytes(bytes)));
                 }
-                if let Some(binary) = value.strip_prefix("#b") {
+                if let Some(binary) = atom.strip_prefix("#b") {
                     if binary.len() > 256 {
                         return Err(SymbolicError::Solver(
                             "solver binary model value exceeds 256 bits".to_string(),
@@ -1750,22 +1816,32 @@ fn parse_model_values(
                     let parsed = U256::from_str_radix(binary, 2).map_err(|err| {
                         SymbolicError::Solver(format!("invalid solver binary model value: {err}"))
                     })?;
-                    insert_value(name, parsed);
-                    break;
+                    return Ok(Some(parsed));
                 }
-                if value == "_"
-                    && let Some(bv) = tokens.next().and_then(|v| v.strip_prefix("bv"))
-                {
-                    let parsed = U256::from_str_radix(bv, 10).map_err(|err| {
+                Ok(bindings.get(atom).copied())
+            }
+            Self::List(items) => match items.as_slice() {
+                [Self::Atom("_"), Self::Atom(bv), _width] if bv.starts_with("bv") => {
+                    let parsed = U256::from_str_radix(&bv[2..], 10).map_err(|err| {
                         SymbolicError::Solver(format!("invalid solver decimal model value: {err}"))
                     })?;
-                    insert_value(name, parsed);
-                    break;
+                    Ok(Some(parsed))
                 }
-            }
+                [Self::Atom("let"), Self::List(pairs), body] => {
+                    for pair in pairs {
+                        if let Self::List(pair) = pair
+                            && let [Self::Atom(name), term] = pair.as_slice()
+                            && let Some(value) = term.value(bindings)?
+                        {
+                            bindings.insert(name, value);
+                        }
+                    }
+                    body.value(bindings)
+                }
+                _ => Ok(None),
+            },
         }
     }
-    Ok(())
 }
 
 fn model_symbols_for_constraints(

@@ -620,8 +620,48 @@ fn symbolic_cli_accepts_zero_init_storage_layout(prj: _, cmd: _) {
     prj.add_test(
         "SymbolicZeroInit.t.sol",
         r#"
+contract SetupMapping {
+    mapping(uint256 => uint256) public m;
+
+    function set() external {
+        m[1] = 5;
+    }
+}
+
 contract SymbolicZeroInit {
+    mapping(uint256 => uint256) own;
+    SetupMapping other;
+
+    function setUp() public {
+        own[1] = 5;
+        other = new SetupMapping();
+        other.set();
+    }
+
     function checkNoop(uint256) public pure {}
+
+    // Unwritten symbolic keys read zero.
+    function checkUnwrittenIsZero(uint256 k) public view {
+        if (k != 1) assert(own[k] == 0 && other.m(k) == 0);
+    }
+
+    // Mapping entries written in setUp stay visible to a symbolic key once the run has
+    // computed the entry's slot hash, so k = 1 breaks these.
+    function checkOwnMapping(uint256 k) public view {
+        require(own[1] == 5);
+        assert(own[k] != 5);
+    }
+
+    function checkOtherContractMapping(uint256 k) public view {
+        require(other.m(1) == 5);
+        assert(other.m(k) != 5);
+    }
+
+    function checkRepeatedRead(uint256 k) public view {
+        uint256 before = own[k];
+        require(own[1] == 5);
+        if (own[k] == before) assert(k != 1);
+    }
 }
 "#,
     );
@@ -633,10 +673,10 @@ contract SymbolicZeroInit {
             "--symbolic-storage-layout",
             "zero_init",
             "--json",
-            "--match-test",
-            "checkNoop",
+            "--match-contract",
+            "SymbolicZeroInit",
         ])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .stdout
         .clone();
@@ -644,6 +684,18 @@ contract SymbolicZeroInit {
     let result = json_test_result(&output, "checkNoop(uint256)");
     assert_eq!(result["symbolic"]["status"], "pass");
     assert_eq!(result["symbolic"]["bounds"]["storage_layout"], "zero_init");
+    let result = json_test_result(&output, "checkUnwrittenIsZero(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    for test in [
+        "checkOwnMapping(uint256)",
+        "checkOtherContractMapping(uint256)",
+        "checkRepeatedRead(uint256)",
+    ] {
+        let result = json_test_result(&output, test);
+        assert_eq!(result["status"], "Failure", "{test}");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{test}");
+        assert_eq!(result["counterexample"]["Single"]["args"], "1", "{test}");
+    }
 }
 
 #[forgetest_init]
@@ -1143,6 +1195,16 @@ contract SymbolicSaturatingMul {
             assert(SaturatingMath.saturatingMul(x, y) == 0);
         }
     }
+
+    // Division on narrow operands runs at their width in the solver.
+    function checkNarrowDivision(uint8 x, uint8 d) public pure {
+        require(d != 0);
+        uint256 z;
+        assembly {
+            z := div(x, d)
+        }
+        assert(z == x / d);
+    }
 }
 "#,
     );
@@ -1162,6 +1224,16 @@ contract SymbolicSaturatingMul {
 
     let output = cmd
         .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNarrowDivision"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNarrowDivision(uint8,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
         .args([
             "test",
             "--symbolic",
@@ -1177,6 +1249,44 @@ contract SymbolicSaturatingMul {
     let result = json_test_result(&output, "checkWrongOverflowResult(uint256,uint256)");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+}
+
+#[forgetest_init]
+fn symbolic_shares_nested_narrow_divisors(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_shares_nested_narrow_divisors");
+
+    let steps = "q := add(1, div(x, q))\n".repeat(12);
+    let source = format!(
+        r#"
+contract SymbolicNestedDivisors {{
+    function checkNestedDivisors(uint8 x, uint8 d) public pure {{
+        uint256 q;
+        assembly {{
+            q := add(d, 1)
+            {steps}
+            q := div(x, q)
+        }}
+        // A divisor of one keeps `x`, and any larger divisor at least halves it. The normalizer
+        // does not decide this, so the property reaches the SMT solver.
+        assert(q == x || q <= x / 2);
+    }}
+}}
+"#
+    );
+    prj.add_test("SymbolicNestedDivisors.t.sol", &source);
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNestedDivisors"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNestedDivisors(uint8,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass", "{result}");
+    let max_query_bytes = result["symbolic"]["solver"]["stats"]["smt_max_query_bytes"]
+        .as_u64()
+        .expect("SMT query size");
+    assert!(max_query_bytes > 0 && max_query_bytes < 100_000, "{result}");
 }
 
 #[forgetest_init]
@@ -1339,22 +1449,51 @@ contract SymbolicLoopBound {
         }
         assert(i <= 2);
     }
+
+    // Internal helper calls are not loop iterations: four checked additions stay in bound.
+    /// forge-config: default.symbolic.loop = 2
+    function checkLoopBoundIgnoresInternalCalls(uint256 x, bool b) public pure {
+        if (b) {
+            uint256 y = x + 1;
+            y = y + 1;
+            y = y + 1;
+            y = y + 1;
+            assert(y != 9);
+        }
+    }
+
+    function down(uint256 n) internal pure returns (uint256) {
+        if (n == 0) return 0;
+        return down(n - 1);
+    }
+
+    // A recursive call pushes the same return address again, so the bound still applies.
+    /// forge-config: default.symbolic.loop = 2
+    function checkLoopBoundLimitsRecursion(uint256 n) public pure {
+        assert(down(n) == 0);
+    }
 }
 "#,
     );
 
-    let stdout =
-        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkLoopBound"]))
-            .success()
-            .stdout_eq(str![[r#"
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicLoopBound",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
+Ran 3 tests for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
 [PASS] checkLoopBound(uint8) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkLoopBoundIgnoresInternalCalls(uint256,bool) ([METRICS])
+[PASS] checkLoopBoundLimitsRecursion(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
-            .get_output()
-            .stdout_lossy();
+    .get_output()
+    .stdout_lossy();
 
     assert!(!stdout.contains("symbolic depth limit exceeded"), "{stdout}");
 }
@@ -1375,18 +1514,54 @@ contract SymbolicAssert {
     function checkRejectsFortyTwo(uint256 x) public pure {
         assert(x != 42);
     }
+
+    // The revert data stays symbolic, but the path pins it to an assertion failure.
+    function checkRejectsSymbolicAssertionMessage(uint256 x) public pure {
+        if (x == 42) revert(string(abi.encodePacked("assertion failed: ", bytes32(x))));
+    }
+
+    function checkRejectsSymbolicPanicCode(uint256 x) public pure {
+        assembly {
+            if eq(x, 1) {
+                mstore(0, shl(224, 0x4e487b71))
+                mstore(4, x)
+                revert(0, 0x24)
+            }
+        }
+    }
+
+    // Like the concrete decoder, the message must be valid UTF-8 within its encoded length.
+    function checkIgnoresInvalidUtf8AssertionMessage(uint256 x) public pure {
+        if (x == 255) revert(string(abi.encodePacked("assertion failed: ", bytes1(uint8(x)))));
+    }
+
+    function checkIgnoresTrailingAssertionMessage(uint256 x) public pure {
+        assembly {
+            if eq(x, 1) {
+                mstore(0, shl(224, 0x08c379a0))
+                mstore(4, 0x20)
+                mstore(36, sub(x, 1))
+                mstore(68, "assertion failed")
+                revert(0, 100)
+            }
+        }
+    }
 }
 "#,
     );
 
     let stderr =
-        assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkRejectsFortyTwo"]))
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicAssert"]))
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicAssert.t.sol:SymbolicAssert
+Ran 5 tests for test/SymbolicAssert.t.sol:SymbolicAssert
+[PASS] checkIgnoresInvalidUtf8AssertionMessage(uint256) ([METRICS])
+[PASS] checkIgnoresTrailingAssertionMessage(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xf24fa427000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkRejectsFortyTwo(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[42]] checkRejectsSymbolicAssertionMessage(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[1]] checkRejectsSymbolicPanicCode(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()
@@ -1841,18 +2016,30 @@ contract SymbolicRiddle {
 
         assert(false);
     }
+
+    // The query shares `add(a, b)` through a solver helper definition, which the model echoes
+    // without a literal value; the model parser must not give it the next variable's value.
+    function check_shared_subterm_model(uint256 a, uint256 b) external pure {
+        uint256 r;
+        assembly {
+            r := add(mod(0, add(a, b)), sub(iszero(a), b))
+        }
+        require(a != 0);
+        assert(r != type(uint256).max - 244);
+    }
 }
 "#,
     );
 
     let stdout =
-        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "check_riddle"]))
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicRiddle"]))
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicRiddle.t.sol:SymbolicRiddle
+Ran 2 tests for test/SymbolicRiddle.t.sol:SymbolicRiddle
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check_riddle(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check_shared_subterm_model(uint256,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()
@@ -1870,7 +2057,21 @@ fn symbolic_requires_successful_path(prj: _, cmd: _) {
         r#"
 import "forge-std/Test.sol";
 
+contract Handler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function assumeNot5(uint256 x) external pure {
+        vm.assume(x != 5);
+    }
+
+    function skipBelow5(uint256 x) external {
+        vm.skip(x < 5);
+    }
+}
+
 contract SymbolicEmptyDomain is Test {
+    Handler handler = new Handler();
+
     function checkConstantAssumption() public {
         vm.assume(false);
     }
@@ -1893,18 +2094,74 @@ contract SymbolicEmptyDomain is Test {
     function checkSkipped() public {
         vm.skip(true);
     }
+
+    // A rejected `vm.assume` reverts only the callee, which the caller catches.
+    function checkAssumeCaught(uint256 x) public {
+        try handler.assumeNot5(x) {} catch {}
+        assert(x != 5);
+    }
+
+    // `vm.skip` below the test level is an error.
+    function checkSkipNested(uint256 x) public {
+        handler.skipBelow5(x);
+    }
+
+    // A caught test-level `vm.skip` continues the test.
+    function checkSkipCaught(uint256 x) public {
+        try vm.skip(x < 5) {} catch {}
+        assert(x >= 5);
+    }
+
+    // The rejected branch of a repeated assumption is infeasible: it neither fails nor passes.
+    function checkCaughtRepeatedAssumption(uint256 x) public {
+        vm.assume(x != 5);
+        try vm.assume(x != 5) { vm.assume(false); } catch { assert(false); }
+    }
+
+    // An infeasible caught rejection never runs, so it cannot make the proof incomplete.
+    function checkInfeasibleCaughtRejection(uint256 x) public {
+        vm.assume(x != 5);
+        try vm.assume(x != 5) {} catch {
+            vm.assertEq(uint256(1), uint256(2));
+        }
+    }
+
+    // The allocation makes the cheatcode input offset symbolic.
+    function checkAssumeAfterSymbolicAlloc(uint8 n) public {
+        new bytes(n);
+        vm.assume(n != 37);
+        assert(n != 37);
+    }
+
+    function checkSkipAfterSymbolicAlloc(uint8 n) public {
+        new bytes(n);
+        vm.skip(n == 37);
+        assert(n != 37);
+    }
 }
 "#,
     );
 
-    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicEmptyDomain"]))
-        .failure()
-        .stdout_eq(str![[r#"
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicEmptyDomain",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+Ran 12 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+[PASS] checkAssumeAfterSymbolicAlloc(uint8) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeCaught(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkCaughtRepeatedAssumption(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkConstantAssumption() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkContradictoryAssumptions(uint256) ([METRICS])
+[PASS] checkInfeasibleCaughtRejection(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkRejectedAndReverted(bool) ([METRICS])
+[PASS] checkSkipAfterSymbolicAlloc(uint8) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSkipCaught(uint256) ([METRICS])
+[FAIL: vm.skip: `skip` can only be used at test level; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSkipNested(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkSkipped() ([METRICS])
 [PASS] checkSomeAccepted(bool) ([METRICS])
 ...
@@ -2357,11 +2614,27 @@ import "forge-std/Test.sol";
 
 /// forge-config: default.evm_version = "cancun"
 
+contract SelfdestructTarget {
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+}
+
 contract SymbolicSelfdestructCancun is Test {
     function checkSelfdestructCancun(uint256) public {
         selfdestruct(payable(address(this)));
 
         assert(false);
+    }
+
+    // The target is created in this transaction, so SELFDESTRUCT takes the legacy path. The
+    // beneficiary may already hold ETH, so its balance is not modeled for a symbolic address.
+    function checkSelfdestructSymbolicBeneficiary(address payable beneficiary) public {
+        SelfdestructTarget target = new SelfdestructTarget();
+        vm.deal(address(target), 7);
+        target.die(beneficiary);
+
+        assert(beneficiary.balance == 7);
     }
 }
 "#,
@@ -2370,15 +2643,16 @@ contract SymbolicSelfdestructCancun is Test {
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkSelfdestructCancun",
+        "--match-contract",
+        "SymbolicSelfdestructCancun",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicSelfdestructCancun.t.sol:SymbolicSelfdestructCancun
+Ran 2 tests for test/SymbolicSelfdestructCancun.t.sol:SymbolicSelfdestructCancun
 [PASS] checkSelfdestructCancun(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic SELFDESTRUCT beneficiary] checkSelfdestructSymbolicBeneficiary(address) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -3717,6 +3991,7 @@ fn symbolic_fuzz_frontier_seeding_ignores_pre_target_counterexamples(prj: _, cmd
         "SymbolicFuzzFrontierTargetGate.t.sol",
         r#"
 /// forge-config: default.symbolic.exploration_order = "dfs"
+/// forge-config: default.fuzz.mutation_weight_cmp = 0
 contract SymbolicFuzzFrontierTargetGate {
     event TargetHit();
 
@@ -7355,6 +7630,44 @@ contract RoundedProductTest {
             assert(rounded - value < 37);
         }
     }
+
+    function checkSymbolicDivisorFacts(uint256 value, uint256 divisor) external pure {
+        if (divisor == 0) return;
+        uint256 rounded;
+        assembly {
+            rounded := mul(div(value, divisor), divisor)
+        }
+        assert(value % divisor < divisor);
+        assert(rounded <= value);
+    }
+
+    function checkEuclideanIdentities(uint256 value) external pure {
+        assert(value / 7 * 7 + value % 7 == value);
+        assert(value - value % 1e18 == value / 1e18 * 1e18);
+    }
+
+    function checkNarrowFloorError(uint128 value) external pure {
+        uint128 rounded = value / 1000 * 1000;
+        assert(rounded <= value);
+    }
+
+    function checkBasisPointsFee(uint64 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        assert(uint256(amount) * bps / 10000 <= amount);
+    }
+
+    mapping(address => uint256) balances;
+
+    function checkTransferConservation(address from, address to, uint256 amount) external {
+        uint256 fromBefore = balances[from];
+        uint256 toBefore = balances[to];
+        require(fromBefore >= amount);
+        balances[from] = fromBefore - amount;
+        balances[to] += amount;
+        unchecked {
+            assert(balances[from] + balances[to] == fromBefore + toBefore);
+        }
+    }
 }
 "#,
     );
@@ -7366,7 +7679,7 @@ contract RoundedProductTest {
             "--symbolic-timeout",
             "30",
             "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip)",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee|TransferConservation)",
         ])
         .assert_success();
         let output = cmd
@@ -7486,6 +7799,11 @@ contract NormalizerBoundariesTest {
             assert(x + y >= x);
         }
     }
+
+    // solc guards checked `x * 2` with `(x * 2) / x == 2`, and `x * 2` is built as `x << 1`.
+    function checkCheckedDoublingGuard(uint256 x) external pure {
+        assert(x * 2 != 30);
+    }
 }
 
 "#,
@@ -7500,6 +7818,7 @@ contract NormalizerBoundariesTest {
         "checkWrappedRoundUpDivision(uint256)",
         "checkRoundTripWithoutRateLowerBound(uint128,uint256)",
         "checkNonnegativeSignedAdditionOverflows(int256,int256)",
+        "checkCheckedDoublingGuard(uint256)",
     ];
     for optimized in [false, true] {
         prj.update_config(|config| config.optimizer = Some(optimized));

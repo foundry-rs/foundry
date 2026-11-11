@@ -3,6 +3,7 @@
 
 use super::RecordedCallSequence;
 use crate::{
+    EVM_THREAD_STACK_SIZE,
     executors::{
         EarlyExit, EvmExecutionCancellation, Executor,
         fuzz::{FuzzBranchFrontier, FuzzFrontierRecorder, comparison_result},
@@ -98,7 +99,8 @@ impl LiveInvariantSolver {
         let cancelled = Arc::clone(&stop);
         let deadline = Instant::now() + Duration::from_secs(config.timeout.unwrap_or(30).into());
         let max_queries = config.max_solver_queries as usize;
-        let thread = thread::Builder::new().name("invariant-symbolic".into()).spawn(move || {
+        let builder = thread::Builder::new().name("invariant-symbolic".into());
+        let thread = builder.stack_size(EVM_THREAD_STACK_SIZE).spawn(move || {
             let mut stats = LiveInvariantStats::default();
             while !cancelled.load(Ordering::Relaxed)
                 && Instant::now() < deadline
@@ -179,7 +181,9 @@ impl LiveInvariantSolver {
             if self.observed.len() >= MAX_OBSERVED_OUTCOMES {
                 break;
             }
-            self.observed.insert(outcome(cmp, comparison_result(cmp)));
+            if let Some(result) = comparison_result(cmp) {
+                self.observed.insert(outcome(cmp, result));
+            }
         }
         self.dispatch();
         let room = (MAX_PENDING - self.pending.len())
@@ -199,7 +203,7 @@ impl LiveInvariantSolver {
                     cmps.iter()
                         .copied()
                         .filter(|cmp| {
-                            let result = comparison_result(cmp);
+                            let Some(result) = comparison_result(cmp) else { return false };
                             let reached = outcome(cmp, result);
                             self.observed.contains(&reached)
                                 && if self.admitted.contains(&reached) {
