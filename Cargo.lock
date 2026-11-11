@@ -6582,6 +6582,7 @@ dependencies = [
  "base-common-rpc-types",
  "base-evm2",
  "evm2",
+ "evm2-macros",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",

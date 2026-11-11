@@ -5,7 +5,7 @@ use super::{
     FoundryExecutionHooks, FoundryTxConversion, FoundryTxResultExt, SendableExt, TxPayload,
     with_eip7702_delegations,
 };
-use crate::constants::SYSTEM_PRECOMPILE_STUB;
+use crate::{constants::SYSTEM_PRECOMPILE_STUB, edgecov};
 use alloy_consensus::transaction::Recovered;
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{Address, Bytes};
@@ -15,8 +15,8 @@ use base_evm2::{
     base_tx_registry, base_version, precompiles::activation_admin_address_for_upgrade_by_chain_id,
 };
 use evm2::{
-    Evm, TxResult, Version, bytecode::Bytecode, evm::precompile::PrecompileProvider,
-    registry::TxRegistry,
+    Evm, ExecutionConfig, TxResult, Version, bytecode::Bytecode,
+    evm::precompile::PrecompileProvider, registry::TxRegistry,
 };
 use foundry_evm_networks::{BASE_CODE_SENTINEL_ADDRESSES, is_base_precompile_active_at};
 
@@ -96,6 +96,14 @@ impl FoundryEvmFactory for BaseEvmFactory {
 
     fn version(&self, spec: BaseSpecId, chain_id: u64) -> Version {
         with_eip7702_delegations(base_version(spec, chain_id))
+    }
+
+    fn execution_config(
+        &self,
+        spec: BaseSpecId,
+        version: Version,
+    ) -> ExecutionConfig<BaseEvmTypes> {
+        edgecov::execution_config(spec, version)
     }
 
     fn tx_registry(&self, spec: BaseSpecId) -> TxRegistry<BaseEvmTypes, TxResult<BaseEvmTypes>> {
