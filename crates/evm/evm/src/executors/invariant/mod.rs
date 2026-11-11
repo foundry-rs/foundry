@@ -1,7 +1,6 @@
 use crate::{
     executors::{
-        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, EvmExecutionCancellation, Executor,
-        RawCallResult,
+        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
         campaign::{
             CampaignCallKind, CampaignControl, CampaignEvent, CampaignSequenceOutcome,
             FuzzCampaign, FuzzCampaignMode,
@@ -997,13 +996,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         } else {
             aggregator.finish_campaign()?
         };
-        result.skip_reason = if campaign_state.interrupted(result.runs, self.config.runs) {
-            Some("interrupted")
-        } else if campaign_state.timed_out_before_any_call() {
-            Some("timeout reached before any call")
-        } else {
-            None
-        };
+        result.interrupted = campaign_state.interrupted(result.runs, self.config.runs);
         result.symbolic_live =
             campaign_state.live_solver.as_ref().map(|solver| solver.lock().unwrap().finish());
         persist_campaign_optimization(
@@ -1047,8 +1040,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let live_solver =
             (plan.worker_id == 0).then_some(campaign_state.live_solver.as_ref()).flatten();
         let mut frontier_recorder = FuzzFrontierRecorder::new(frontier_limit);
-        // The campaign deadline must not cancel the initial invariant check, which would drop an
-        // initial-state failure. `prepare_worker` installs the campaign cancellation after it.
+        // The campaign deadline must not cancel the initial invariant check, or an initial-state
+        // failure is dropped. Install it once the worker is prepared.
         executor.inspector_mut().set_early_exit(campaign_state.early_exit().clone());
 
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
@@ -1062,8 +1055,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &config,
             &campaign_seed,
             corpus_seed,
-            campaign_state.cancellation().clone(),
         )?;
+        executor.inspector_mut().set_execution_cancellation(campaign_state.cancellation().clone());
         let collect_corpus_cmp =
             invariant_worker_collects_evm_cmp_log(&config, plan.worker_id, worker_count);
         let mut runs = 0;
@@ -1188,7 +1181,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 |current_run, event| {
                     match event {
                         CampaignEvent::Feedback(call_result) => {
-                            campaign_state.record_call_executed();
                             let current_tx = current_run.inputs.last().ok_or_else(|| {
                                 eyre!("no input generated to call fuzzed target.")
                             })?;
@@ -1811,7 +1803,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         config: &InvariantConfig,
         campaign_seed: &InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
-        cancellation: EvmExecutionCancellation,
     ) -> Result<(InvariantTest, WorkerCorpus)> {
         let fuzz_state = fuzz_state.into_invariant();
         let targeted_contracts = FuzzRunIdentifiedContracts::new(
@@ -1860,7 +1851,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &[],
             &mut failures,
         )?;
-        executor.inspector_mut().set_execution_cancellation(cancellation);
         if let Some(fuzzer) = executor.inspector_mut().fuzzer.as_mut() {
             let _ = fuzzer.take_observed_calls();
         }

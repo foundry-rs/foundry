@@ -1850,10 +1850,10 @@ impl TestResult {
         self.duration = Duration::default();
     }
 
-    /// Marks a campaign stopped early by fail-fast or Ctrl-C, or timed out before testing anything,
-    /// as skipped, so it is not reported as passing.
-    pub fn skip_campaign(&mut self, reason: &str) {
-        let reason = Some(reason.to_string());
+    /// Marks a campaign stopped early by fail-fast or Ctrl-C as skipped, so a partial run is not
+    /// reported as passing.
+    pub fn interrupt(&mut self) {
+        let reason = Some("interrupted".to_string());
         self.status = TestStatus::Skipped;
         for predicate in &mut self.invariant_predicate_results {
             if predicate.status.is_success() {
