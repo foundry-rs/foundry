@@ -1,5 +1,5 @@
 use foundry_cheatcodes_spec::Vm::*;
-use foundry_common::version::SEMVER_VERSION;
+use foundry_common::{contracts::ContractsByArtifact, version::SEMVER_VERSION};
 use foundry_evm::{
     core::{backend::GLOBAL_FAIL_SLOT, decode::ASSERTION_FAILED_PREFIX},
     inspectors::cheatcodes::current_execution_context,
@@ -2861,10 +2861,11 @@ impl SymbolicExecutor {
 
     pub(super) fn handle_symbolic_vm_cheatcode(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         selector: [u8; 4],
         in_offset: usize,
-    ) -> Result<SymReturnData, SymbolicError> {
+    ) -> Result<CheatcodeOutcome, SymbolicError> {
         let Some(cheatcode) = SymbolicVmCheatcode::from_selector(selector) else {
             return Err(SymbolicError::Unsupported("symbolic VM compatibility cheatcode"));
         };
@@ -2970,15 +2971,14 @@ impl SymbolicExecutor {
                 let bytes = state.fresh_printable_ascii_bytes(&mut self.cx, len);
                 Ok(abi_bytes_return(&mut self.cx, bytes))
             }
-            SymbolicVmCheatcode::CreateCalldata => {
-                let max = self.config.max_calldata_bytes as usize;
-                let len = if max < 4 {
-                    max
-                } else {
-                    (self.config.default_dynamic_length as usize).max(4).min(max)
-                };
-                let bytes = state.fresh_bytes(&mut self.cx, len);
-                Ok(abi_bytes_return(&mut self.cx, bytes))
+            SymbolicVmCheatcode::CreateCalldata { target, view_flag } => {
+                return self.create_calldata_choices(
+                    executor,
+                    state,
+                    target,
+                    view_flag,
+                    args_offset,
+                );
             }
             SymbolicVmCheatcode::EnableSymbolicStorage => {
                 let target =
@@ -2999,6 +2999,100 @@ impl SymbolicExecutor {
                 Ok(SymReturnData::from_words(&mut self.cx, vec![id]))
             }
         }
+        .map(CheatcodeOutcome::ContinueData)
+    }
+
+    /// Returns one choice per calldata shape of the contract that a `createCalldata` call names.
+    fn create_calldata_choices(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        target: CreateCalldataTarget,
+        view_flag: bool,
+        args_offset: usize,
+    ) -> Result<CheatcodeOutcome, SymbolicError> {
+        let known_contracts = executor
+            .known_contracts
+            .ok_or(SymbolicError::Unsupported("symbolic svm.createCalldata project artifacts"))?;
+        let abi = match target {
+            CreateCalldataTarget::Address => {
+                let address = read_abi_constrained_address_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic svm.createCalldata address",
+                )?;
+                let code = state.world.extcode(&mut self.cx, executor, address)?;
+                let code = code.concrete_range(
+                    &mut self.cx,
+                    0,
+                    code.len(),
+                    "symbolic svm.createCalldata code",
+                )?;
+                known_contracts
+                    .find_by_deployed_code_exact(&code)
+                    .map(|(_, contract)| &contract.abi)
+                    .ok_or(SymbolicError::Unsupported(
+                        "symbolic svm.createCalldata unknown contract",
+                    ))?
+            }
+            CreateCalldataTarget::Name => {
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic svm.createCalldata name",
+                )?;
+                contract_abi(known_contracts, None, &name)?
+            }
+            CreateCalldataTarget::FileAndName => {
+                let file = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic svm.createCalldata file name",
+                )?;
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic svm.createCalldata name",
+                )?;
+                contract_abi(known_contracts, Some(&file), &name)?
+            }
+        };
+        let include_view = view_flag
+            && !read_abi_constrained_word_arg(
+                &mut self.cx,
+                state,
+                args_offset,
+                target.words(),
+                "symbolic svm.createCalldata view flag",
+            )?
+            .is_zero();
+
+        let id = state.next_symbol;
+        state.next_symbol += 1;
+        // Positional `array_lengths` entries size the test function's own parameters.
+        let config = SymbolicConfig { array_lengths: Vec::new(), ..self.config.clone() };
+        let choices = SymbolicCalldata::contract_variants(
+            abi,
+            include_view,
+            &config,
+            &mut self.cx,
+            &format!("svm_calldata_{id}"),
+        )?
+        .into_iter()
+        .map(|calldata| {
+            let bytes = calldata.abi_encoded_bytes(&mut self.cx);
+            (calldata.into_constraints(), SymReturnData::from_bytes(&mut self.cx, bytes))
+        })
+        .collect();
+        Ok(CheatcodeOutcome::Choices(choices))
     }
 
     /// Forks off the paths where `invalid` holds, on which the cheatcode call reverts with
@@ -3042,3 +3136,27 @@ impl SymbolicExecutor {
 
 /// Bounds the concrete accounts a cheatcode write through a free symbolic address forks over.
 const MAX_FREE_ADDRESS_ALIAS_CANDIDATES: usize = 32;
+
+/// Returns the ABI of the project contract or interface named `name`, in source file `file` when
+/// given. Artifacts of one name with the same ABI, such as builds for several compiler versions,
+/// are not ambiguous.
+fn contract_abi<'a>(
+    known_contracts: &'a ContractsByArtifact,
+    file: Option<&str>,
+    name: &str,
+) -> Result<&'a JsonAbi, SymbolicError> {
+    let mut abis = known_contracts
+        .iter()
+        .filter(|(id, _)| {
+            (id.name == name || id.identifier() == name)
+                && file.is_none_or(|file| id.source.ends_with(file))
+        })
+        .map(|(_, contract)| &contract.abi);
+    let abi = abis
+        .next()
+        .ok_or(SymbolicError::Unsupported("symbolic svm.createCalldata unknown contract"))?;
+    if abis.any(|other| other != abi) {
+        return Err(SymbolicError::Unsupported("symbolic svm.createCalldata ambiguous contract"));
+    }
+    Ok(abi)
+}

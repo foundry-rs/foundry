@@ -1192,10 +1192,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 }
 
 #[forgetest_init]
-fn symbolic_svm_create_calldata_generates_bounded_dispatch(prj: _, cmd: _) {
+fn symbolic_svm_create_calldata_follows_contract_abi(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
-            "skipping symbolic_svm_create_calldata_generates_bounded_dispatch because z3 is not available"
+            "skipping symbolic_svm_create_calldata_follows_contract_abi because z3 is not available"
         );
         return;
     }
@@ -1205,36 +1205,104 @@ fn symbolic_svm_create_calldata_generates_bounded_dispatch(prj: _, cmd: _) {
         r#"
 interface Svm {
     function createCalldata(string calldata name) external returns (bytes memory);
+    function createCalldata(string calldata name, bool includeViewAndPureFunctions)
+        external
+        returns (bytes memory);
+    function createCalldata(string calldata filename, string calldata name) external returns (bytes memory);
+    function createCalldata(address target) external returns (bytes memory);
 }
 
+interface IEmpty {}
+
 contract OneSelectorTarget {
-    function ping() external pure returns (uint256) {
-        return 1;
+    uint256 value;
+
+    function ping(uint256 newValue, bytes calldata memo) external {
+        value = newValue ^ memo.length;
+    }
+
+    function last() external view returns (uint256) {
+        return value;
+    }
+}
+
+contract BackdoorToken {
+    address public immutable holder;
+    uint256 public holderBalance = 100;
+
+    constructor(address holder_) {
+        holder = holder_;
+    }
+
+    function transfer(address to, uint256 amount) external {
+        require(msg.sender == holder && to != address(0));
+        holderBalance -= amount;
+    }
+
+    function backdoor(address to, uint256 amount) external {
+        require(to != address(0));
+        holderBalance -= amount;
     }
 }
 
 contract SymbolicSvmCreateCalldata {
     address constant SVM_ADDRESS = address(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+    address constant HOLDER = address(0x1001);
     OneSelectorTarget target;
+    BackdoorToken token;
 
     function setUp() public {
         target = new OneSelectorTarget();
+        token = new BackdoorToken(HOLDER);
     }
 
-    /// forge-config: default.symbolic.max_calldata_bytes = 4
-    function checkSvmCreateCalldata() public {
-        bytes memory data = Svm(SVM_ADDRESS).createCalldata("data");
-        assert(data.length <= 4);
+    /// forge-config: default.symbolic.max_calldata_bytes = 132
+    function checkSvmCreateCalldataDispatch() public {
+        bytes memory data = Svm(SVM_ADDRESS).createCalldata("SymbolicSvmCreateCalldata.t.sol", "OneSelectorTarget");
         (bool ok,) = address(target).call(data);
+        assert(ok == (selectorOf(data) == OneSelectorTarget.ping.selector));
+    }
 
-        bytes4 selector;
-        assembly {
-            selector := mload(add(data, 0x20))
-        }
-        if (selector == OneSelectorTarget.ping.selector) {
-            assert(ok);
-        } else {
-            assert(!ok);
+    /// forge-config: default.symbolic.max_calldata_bytes = 132
+    function checkSvmCreateCalldataViewFunctions() public {
+        bytes memory data = Svm(SVM_ADDRESS).createCalldata("OneSelectorTarget", true);
+        (bool ok,) = address(target).call(data);
+        bytes4 selector = selectorOf(data);
+        assert(
+            ok == (selector == OneSelectorTarget.ping.selector || selector == OneSelectorTarget.last.selector)
+        );
+    }
+
+    /// forge-config: default.symbolic.max_calldata_bytes = 100
+    function checkSvmCreateCalldataNoBackdoor() public {
+        checkNoBackdoor(Svm(SVM_ADDRESS).createCalldata("BackdoorToken"));
+    }
+
+    /// forge-config: default.symbolic.max_calldata_bytes = 100
+    function checkSvmCreateCalldataAddressNoBackdoor() public {
+        checkNoBackdoor(Svm(SVM_ADDRESS).createCalldata(address(token)));
+    }
+
+    /// forge-config: default.symbolic.max_calldata_bytes = 100
+    function checkSvmCreateCalldataFallbackNoBackdoor() public {
+        checkNoBackdoor(Svm(SVM_ADDRESS).createCalldata("IEmpty"));
+    }
+
+    function checkSvmCreateCalldataUnknownContract() public {
+        Svm(SVM_ADDRESS).createCalldata("MissingContract");
+    }
+
+    function checkNoBackdoor(bytes memory data) internal {
+        uint256 balance = token.holderBalance();
+        (bool ok,) = address(token).call(data);
+        assert(!ok || token.holderBalance() >= balance);
+    }
+
+    function selectorOf(bytes memory data) internal pure returns (bytes4 selector) {
+        if (data.length >= 4) {
+            assembly {
+                selector := mload(add(data, 0x20))
+            }
         }
     }
 }
@@ -1247,14 +1315,22 @@ contract SymbolicSvmCreateCalldata {
         "--match-test",
         "checkSvmCreateCalldata",
     ]))
-    .success()
-    .stdout_eq(str![[r#"
+    .failure()
+    .stdout_eq(
+        str![[r#"
 ...
-Ran 1 test for test/SymbolicSvmCreateCalldata.t.sol:SymbolicSvmCreateCalldata
-[PASS] checkSvmCreateCalldata() ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Ran 6 tests for test/SymbolicSvmCreateCalldata.t.sol:SymbolicSvmCreateCalldata
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataAddressNoBackdoor() ([METRICS])
+[PASS] checkSvmCreateCalldataDispatch() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataFallbackNoBackdoor() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataNoBackdoor() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic svm.createCalldata unknown contract] checkSvmCreateCalldataUnknownContract() ([METRICS])
+[PASS] checkSvmCreateCalldataViewFunctions() ([METRICS])
+Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
-"#]])
+"#]]
+        .unordered(),
+    )
     .get_output()
     .stdout_lossy();
 

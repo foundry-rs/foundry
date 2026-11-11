@@ -1419,6 +1419,7 @@ mod tests {
             signature: Some(function.signature()),
             args: Some(foundry_common::fmt::format_tokens(&args).format(", ").to_string()),
             raw_args: Some(foundry_common::fmt::format_tokens_raw(&args).format(", ").to_string()),
+            svm_returns: Vec::new(),
         }
     }
 
