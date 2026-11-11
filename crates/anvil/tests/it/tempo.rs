@@ -3739,43 +3739,7 @@ async fn test_tempo_simulate_rejects_expiring_nonce_replay_with_different_fee_pa
     );
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_tempo_simulate_rejects_configurable_account_witness_without_key_type() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
-    let provider = handle.http_provider();
-    let mut accounts = handle.dev_accounts();
-    let from = accounts.next().unwrap();
-    let owner = accounts.next().unwrap();
-    let config = ConfigurableAccountConfig {
-        salt: B256::ZERO,
-        version: 0,
-        threshold: 1,
-        owners: vec![ConfigurableAccountOwner { owner, weight: 1 }],
-    };
-    let witness = serde_json::json!({
-        "config": Bytes::from(alloy_rlp::encode(&config)),
-        "approvals": [{ "owner": owner, "keyType": "secp256k1" }],
-    });
-
-    // Without a keyType hint the witness alone must still reject, instead of estimating with a
-    // primitive placeholder that omits the quorum's verification and registration costs.
-    for field in ["configurableAccountSimulation", "keyAuthorizationSimulation"] {
-        let request = serde_json::json!({ "from": from, "to": Address::random(), field: witness });
-        for method in ["eth_call", "eth_estimateGas"] {
-            let error = provider
-                .raw_request::<_, serde_json::Value>(
-                    method.into(),
-                    serde_json::json!([request.clone()]),
-                )
-                .await
-                .unwrap_err();
-            assert!(
-                error.to_string().contains("not supported for simulation"),
-                "unexpected {method} error for {field}: {error}"
-            );
-        }
-    }
-}
+mod configurable_account;
 
 // ============================================================================
 // T14 Configurable Accounts (TIP-1107, TIP-1111, TIP-1113)

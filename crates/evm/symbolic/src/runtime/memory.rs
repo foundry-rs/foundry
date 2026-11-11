@@ -582,6 +582,19 @@ impl SymMemory {
         self.logical_size.clone().unwrap_or_else(|| SymExpr::zero(cx))
     }
 
+    /// Returns expressions that together identify the whole contents of this memory: equal
+    /// lists mean equal memory.
+    pub(crate) fn identity_exprs(&self, cx: &mut SymCx) -> Vec<SymExpr> {
+        let mut exprs = self.read_bytes(cx, 0, self.materialized_size).materialize(cx);
+        exprs.push(SymExpr::constant(cx, U256::from(self.materialized_size)));
+        for write in &self.symbolic_writes {
+            exprs.push(write.offset.clone());
+            exprs.push(SymExpr::constant(cx, U256::from(write.bytes.len())));
+            exprs.extend(write.bytes.materialize(cx));
+        }
+        exprs
+    }
+
     pub(crate) fn size_after_range_expansion_word(
         &self,
         cx: &mut SymCx,
