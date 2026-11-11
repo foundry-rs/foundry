@@ -1856,17 +1856,27 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.broadcast.is_some()
             || self.gas_metering.paused
             || self.gas_metering.reset
-            || self.gas_metering.touched
             || self.gas_metering.recording
-            || self.recorded_account_diffs_stack.is_some()
-            || !self.allowed_mem_writes.is_empty()
-            || self.core.mapping_slots.is_some()
             || self.core.arbitrary_storage.is_some()
             || self.deploy_code_depth.is_some()
         {
             return OpcodeSet::ALL;
         }
         let mut steps = OpcodeSet::EMPTY;
+        // After a resume or reset, the gas check runs when a frame returns or reverts.
+        if self.gas_metering.touched {
+            steps = steps.union(FRAME_END_OPCODES);
+        }
+        if self.recorded_account_diffs_stack.is_some() {
+            steps = steps.union(STATE_DIFF_OPCODES);
+        }
+        if !self.allowed_mem_writes.is_empty() {
+            steps = steps.union(MEMORY_OPCODES);
+        }
+        // Mapping recording reads the stored slot and the 64-byte hash that derives it.
+        if self.core.mapping_slots.is_some() {
+            steps = steps.union(opcodes([op::SSTORE, op::KECCAK256]));
+        }
         // A log that fails `expectEmit` reverts its frame in the `step_end` of the instruction
         // that emitted it.
         if !self.expected_emits.is_empty() || self.pending_emit_failure.is_some() {
@@ -2015,7 +2025,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // `step_end` runs the PC has already advanced past it. Also peek the
         // BLOBHASH index now (still on top of stack before execution) so we
         // can look up the override later.
-        if !self.env_overrides.is_empty() {
+        if self.has_active_env_overrides() {
             let fork_id = backend.backend().active_fork_id();
             if let Some(env_overrides) =
                 self.env_overrides.get_mut(fork_id).filter(|o| o.is_any_set())
@@ -2124,7 +2134,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         {
             Self::replace_top_of_stack(interp, U256::from(gas_price));
         }
-        if !self.env_overrides.is_empty() {
+        if self.has_active_env_overrides() {
             let fork_id = backend.backend().active_fork_id();
             if self.env_overrides.get(fork_id).is_some_and(|o| o.is_any_set()) {
                 if opcode_failed {
@@ -3682,6 +3692,46 @@ const LOG_EMITTING_OPCODES: OpcodeSet = opcodes([
     op::SELFDESTRUCT,
 ]);
 
+/// The instructions that end a frame with a result its caller reads: a halt discards the gas and
+/// refund of the frame.
+const FRAME_END_OPCODES: OpcodeSet = opcodes([op::STOP, op::RETURN, op::REVERT, op::SELFDESTRUCT]);
+
+/// The instructions that `startStateDiffRecording` records.
+const STATE_DIFF_OPCODES: OpcodeSet = opcodes([
+    op::SELFDESTRUCT,
+    op::SLOAD,
+    op::SSTORE,
+    op::EXTCODECOPY,
+    op::EXTCODESIZE,
+    op::EXTCODEHASH,
+    op::BALANCE,
+]);
+
+/// The instructions that read or write memory, which `expectSafeMemory` checks.
+const MEMORY_OPCODES: OpcodeSet = opcodes([
+    op::MSTORE,
+    op::MSTORE8,
+    op::MLOAD,
+    op::CALL,
+    op::CALLDATACOPY,
+    op::CODECOPY,
+    op::RETURNDATACOPY,
+    op::EXTCODECOPY,
+    op::CALLCODE,
+    op::STATICCALL,
+    op::DELEGATECALL,
+    op::KECCAK256,
+    op::LOG0,
+    op::LOG1,
+    op::LOG2,
+    op::LOG3,
+    op::LOG4,
+    op::CREATE,
+    op::CREATE2,
+    op::RETURN,
+    op::REVERT,
+]);
+
 /// Returns the set of `ops`.
 const fn opcodes<const N: usize>(ops: [u8; N]) -> OpcodeSet {
     let mut set = OpcodeSet::EMPTY;
@@ -3917,9 +3967,25 @@ mod tests {
 
         cheats.recording_accesses = false;
         cheats.gas_metering.touched = true;
-        assert_eq!(cheats.steps(), OpcodeSet::ALL);
+        assert_eq!(cheats.steps(), FRAME_END_OPCODES);
 
         cheats.gas_metering.touched = false;
+        cheats.recorded_account_diffs_stack = Some(Vec::new());
+        assert_eq!(cheats.steps(), STATE_DIFF_OPCODES);
+
+        cheats.recorded_account_diffs_stack = None;
+        cheats.allowed_mem_writes.insert(1, Vec::new());
+        assert_eq!(cheats.steps(), MEMORY_OPCODES);
+
+        cheats.allowed_mem_writes.clear();
+        cheats.core.mapping_slots = Some(Default::default());
+        assert_eq!(cheats.steps(), [op::SSTORE, op::KECCAK256].into_iter().collect());
+
+        cheats.core.mapping_slots = None;
+        cheats.gas_metering.paused = true;
+        assert_eq!(cheats.steps(), OpcodeSet::ALL);
+        cheats.gas_metering.paused = false;
+
         cheats.register_storage_load_hook(Address::ZERO, Address::ZERO, [0; 4]);
         assert_eq!(cheats.steps(), OpcodeSet::ALL);
     }

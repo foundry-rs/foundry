@@ -88,12 +88,6 @@ pub struct EnvOverrideState {
 }
 
 impl EnvOverrideState {
-    /// Returns whether no fork has an override entry, active or not.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.by_fork.is_empty()
-    }
-
     /// Returns whether any fork, not only the active one, has an override set.
     #[inline]
     pub const fn is_any_set(&self) -> bool {
@@ -216,11 +210,11 @@ mod tests {
     #[test]
     fn tracks_overrides_on_every_fork() {
         let mut state = EnvOverrideState::default();
-        assert!(state.is_empty());
+        assert!(state.by_fork.is_empty());
         assert!(!state.is_any_set());
 
         state.update(FORK, |o| o.gas_price = Some(1));
-        assert!(!state.is_empty());
+        assert!(!state.by_fork.is_empty());
         assert!(state.is_any_set());
         assert_eq!(state.get(FORK).and_then(EnvOverrides::gas_price_override), Some(1));
 

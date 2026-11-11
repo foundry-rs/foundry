@@ -324,10 +324,11 @@ macro_rules! call_inspectors {
 /// a different status or a revert with a different message.
 macro_rules! changed {
     ($result:ident, $stop:ident, $call:expr) => {{
-        let previous_output = $result.output.clone();
+        // Only a revert compares its output, so other outcomes skip the copy.
+        let previous_output = ($stop == InstrStop::Revert).then(|| $result.output.clone());
         $call;
         $result.stop != $stop
-            || ($result.stop == InstrStop::Revert && $result.output != previous_output)
+            || previous_output.is_some_and(|previous_output| $result.output != previous_output)
     }};
 }
 
@@ -521,8 +522,6 @@ pub struct InspectorStackRefMut<'a, FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub cheatcodes: Option<&'a mut Cheatcodes<FEN>>,
     pub inner: &'a mut InspectorStackInner,
     /// The backend the execution runs over.
-    ///
-    /// Cheatcodes and call isolation are only active with a backend.
     pub backend: &'a mut dyn CheatcodesBackend<FEN>,
 }
 
@@ -1054,7 +1053,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
-    /// Whether the cheatcodes are active: installed, with a backend to run over.
+    /// Returns the cheatcodes, if installed, with the backend and the other inspectors.
     #[inline]
     fn cheats_and_backend(
         &mut self,
@@ -1121,7 +1120,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         let stop = result.stop;
-        let backend = Some(&mut *self.backend);
+        let backend = &mut *self.backend;
         let cheats = self.cheatcodes.as_deref_mut();
         'inspectors: {
             if let Some(tracer) = &mut self.inner.tracer
@@ -1136,7 +1135,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             if let Some(recorder) = &mut self.inner.debug_recorder {
                 Inspector::<TypesFor<FEN>>::call_end(&mut **recorder, interp, message, result);
             }
-            if let (Some(cheats), Some(backend)) = (cheats, backend)
+            if let Some(cheats) = cheats
                 && changed!(result, stop, cheats.call_end_hook(interp, message, result, backend))
             {
                 break 'inspectors;
@@ -1174,7 +1173,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         {
             self.inner.tx_created.insert(address);
         }
-        let backend = Some(&mut *self.backend);
+        let backend = &mut *self.backend;
         let cheats = self.cheatcodes.as_deref_mut();
         'inspectors: {
             if let Some(line_coverage) = &mut self.inner.line_coverage
@@ -1203,7 +1202,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             if let Some(recorder) = &mut self.inner.debug_recorder {
                 Inspector::<TypesFor<FEN>>::create_end(&mut **recorder, interp, message, result);
             }
-            if let (Some(cheats), Some(backend)) = (cheats, backend)
+            if let Some(cheats) = cheats
                 && changed!(result, stop, cheats.create_end_hook(interp, message, result, backend))
             {
                 break 'inspectors;
@@ -1898,7 +1897,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let state = interp.host().state_mut();
         let Ok(mut account) = state.account(&create2_deployer) else { return false };
         let code_hash = account.code_hash();
-        if code_hash == alloy_primitives::KECCAK256_EMPTY {
+        if account.is_empty_code_hash() {
             self.inner.pending_create2_error =
                 Some(format!("missing CREATE2 deployer: {create2_deployer}").into_bytes().into());
             return false;
@@ -2160,11 +2159,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             return Some(output);
         }
 
-        if let Some(outcome) = handle_arbitrum_system_call::<FEN>(
-            interp,
-            message,
-            self.backend.backend().active_fork_block_number(),
-        ) {
+        if let Some(outcome) = handle_arbitrum_system_call::<FEN>(interp, message, || {
+            self.backend.backend().active_fork_block_number()
+        }) {
             return Some(outcome);
         }
 
@@ -2707,25 +2704,21 @@ fn warm_arbitrum_system_contract<FEN: FoundryEvmNetwork>(interp: &mut Interprete
 fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     interp: &mut InterpreterFor<'_, '_, FEN>,
     message: &MessageFor<FEN>,
-    fork_block_number: Option<u64>,
+    fork_block_number: impl FnOnce() -> Option<u64>,
 ) -> Option<MessageResultFor<FEN>> {
-    let selector = message.input.as_bytes(interp.memory()).get(..4);
-    let is_arb_block_number = selector == Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR[..]);
-    let evm = interp.host();
     if message.destination != arbitrum::ARB_SYS_ADDRESS
         || message.code_address != arbitrum::ARB_SYS_ADDRESS
-        || !arbitrum::is_arbitrum_chain(evm.version().chain_id)
+        || !arbitrum::is_arbitrum_chain(interp.host().version().chain_id)
+        || message.input.as_bytes(interp.memory()).get(..4)
+            != Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR[..])
     {
         return None;
     }
-
-    if !is_arb_block_number {
-        return None;
-    }
+    let evm = interp.host();
 
     // Forks report their L2 block, which the block env lacks on Arbitrum because `NUMBER` returns
     // the L1 block there. Without a fork the block env is read here to follow `vm.roll`.
-    let block_number = fork_block_number.unwrap_or_else(|| evm.block().number.saturating_to());
+    let block_number = fork_block_number().unwrap_or_else(|| evm.block().number.saturating_to());
     let Some((gas_cost, output)) = arbitrum::arb_block_number_call(message.gas_limit, block_number)
     else {
         let mut result = message_result(message, InstrStop::PrecompileOOG, Bytes::new());
@@ -2868,6 +2861,13 @@ mod tests {
                 op::CREATE2,
             ])
         );
+
+        // Edge coverage steps jumps, and the script inspector steps `ADDRESS`.
+        let mut campaign = InspectorStack::<EthEvmNetwork>::new();
+        campaign.collect_edge_coverage(true);
+        assert_eq!(steps(&mut campaign), set(&[op::JUMP, op::JUMPI]));
+        campaign.script(Address::with_last_byte(1));
+        assert_eq!(steps(&mut campaign), set(&[op::JUMP, op::JUMPI, op::ADDRESS]));
 
         // An inspector without its own config steps every opcode.
         stack.print(true);

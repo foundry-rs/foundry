@@ -7,7 +7,7 @@ use core::{
     hash::{Hash, Hasher},
 };
 use evm2::{
-    EvmTypesHost, Inspector,
+    EvmTypesHost, Inspector, InspectorConfig, OpcodeSet,
     interpreter::{Interpreter, op as opcode},
 };
 use foundry_evm_core::edgecov::{
@@ -347,7 +347,6 @@ impl EdgeCovInspector {
         }
     }
 
-    #[cold]
     fn do_step<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
         let address = interp.message().destination;
         // Journal depth of the frame, which counts the top-level frame as 1.
@@ -383,7 +382,6 @@ impl EdgeCovInspector {
         }
     }
 
-    #[cold]
     fn do_cmp_step<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
         if self.cmp_log.is_none() {
             return;
@@ -452,29 +450,50 @@ impl From<EdgeCovInspector> for EdgeCoverage {
 }
 
 impl<T: EvmTypesHost> Inspector<T> for EdgeCovInspector {
+    fn inspector_config(&self) -> InspectorConfig {
+        let mut steps = OpcodeSet::EMPTY;
+        if self.collect_edges {
+            steps = steps.union(EDGE_OPCODES);
+        }
+        if self.cmp_log.is_some() {
+            steps = steps.union(CMP_OPCODES);
+        }
+        InspectorConfig::new().with_steps(steps)
+    }
+
     #[inline]
     fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         let op = interp.opcode();
-        if self.collect_edges && matches!(op, opcode::JUMP | opcode::JUMPI) {
+        if self.collect_edges && EDGE_OPCODES.contains(op) {
             self.do_step(interp);
         }
-        if self.cmp_log.is_some()
-            && matches!(
-                op,
-                opcode::EQ
-                    | opcode::LT
-                    | opcode::GT
-                    | opcode::SLT
-                    | opcode::SGT
-                    | opcode::ISZERO
-                    | opcode::SUB
-                    | opcode::JUMPI
-            )
-        {
+        if self.cmp_log.is_some() && CMP_OPCODES.contains(op) {
             self.do_cmp_step(interp);
         }
     }
 }
+
+/// The instructions at which the inspector records an edge.
+const EDGE_OPCODES: OpcodeSet = {
+    let mut set = OpcodeSet::EMPTY;
+    set.insert(opcode::JUMP);
+    set.insert(opcode::JUMPI);
+    set
+};
+
+/// The instructions at which the inspector records comparison operands.
+const CMP_OPCODES: OpcodeSet = {
+    let mut set = OpcodeSet::EMPTY;
+    set.insert(opcode::EQ);
+    set.insert(opcode::LT);
+    set.insert(opcode::GT);
+    set.insert(opcode::SLT);
+    set.insert(opcode::SGT);
+    set.insert(opcode::ISZERO);
+    set.insert(opcode::SUB);
+    set.insert(opcode::JUMPI);
+    set
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CmpSiteKey {

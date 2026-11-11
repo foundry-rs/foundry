@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 use evm2::{
-    EvmTypesHost, Inspector,
+    EvmTypesHost, Inspector, InspectorConfig, OpcodeSet,
     interpreter::{Interpreter, op},
 };
 
@@ -17,6 +17,12 @@ pub struct ScriptExecutionInspector {
 }
 
 impl<T: EvmTypesHost> Inspector<T> for ScriptExecutionInspector {
+    fn inspector_config(&self) -> InspectorConfig {
+        let mut steps = OpcodeSet::EMPTY;
+        steps.insert(op::ADDRESS);
+        InspectorConfig::new().with_steps(steps)
+    }
+
     fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         // Check if both target and bytecode address are the same as script contract address
         // (allow calling external libraries when bytecode address is different).
