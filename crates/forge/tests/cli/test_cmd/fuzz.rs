@@ -6751,3 +6751,33 @@ contract ConcurrentCorpusTest {
 
     cmd.args(["test", "--mc", "ConcurrentCorpusTest", "--threads", "2"]).assert_success();
 }
+
+// With `instrumented_edges`, every test executor runs the `EDGECOV` and `CMPLOG` probes, so
+// instrumented artifacts also deploy and run outside coverage-guided campaigns.
+#[forgetest_init]
+fn instrumented_edges_run_probes_in_unit_tests(prj: _, cmd: _) {
+    prj.add_test(
+        "Probes.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ProbesTest is Test {
+    address probed = address(0x1234);
+
+    function setUp() public {
+        // PUSH2 1; EDGECOV; PUSH1 2; PUSH1 1; PUSH2 0x0114; CMPLOG; EQ; STOP
+        vm.etch(probed, hex"610001c0600260016101" hex"14c11400");
+    }
+
+    function test_probes() public {
+        (bool ok,) = probed.call("");
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "ProbesTest"]).assert_failure();
+    prj.update_config(|config| config.fuzz.corpus.instrumented_edges = true);
+    cmd.assert_success();
+}

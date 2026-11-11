@@ -445,6 +445,14 @@ pub struct InspectorStackInner {
     pub sancov_edges: bool,
     /// Whether to capture sancov trace-cmp operands for dictionary injection.
     pub sancov_trace_cmp: bool,
+    /// Whether the EVM executes the compiler-instrumented `EDGECOV` and `CMPLOG` opcodes, which
+    /// are undefined otherwise.
+    pub edgecov_opcode: bool,
+    /// Whether to collect `EDGECOV` hits as the call's edge coverage.
+    pub instrumented_edges: bool,
+    /// Whether to collect comparison operands from `CMPLOG` probes instead of the cmp-log
+    /// inspector.
+    pub instrumented_cmp_log: bool,
     pub enable_isolation: bool,
     /// Additional addresses installed and recognized as cheatcode contracts.
     pub extra_cheatcode_addresses: &'static [Address],
@@ -807,7 +815,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
             let include_call_depth = corpus.evm_edge_coverage_include_call_depth();
             EdgeCovInspector::with_config(EdgeCovConfig::new(kind, include_call_depth)).into()
         });
+        self.inner.instrumented_edges = corpus.collect_instrumented_edges();
+        self.inner.instrumented_cmp_log = false;
+        self.inner.edgecov_opcode |= self.inner.instrumented_edges;
         self.refresh_static_step_dispatch();
+    }
+
+    /// Set whether the EVM executes the compiler-instrumented `EDGECOV` and `CMPLOG` opcodes, so
+    /// that instrumented code also runs outside coverage-guided campaigns.
+    #[inline]
+    pub const fn enable_edgecov_opcode(&mut self, yes: bool) {
+        self.inner.edgecov_opcode = yes;
     }
 
     /// Drops the inspectors that only feed fuzz guidance: edge coverage, the fuzzer value
@@ -819,12 +837,20 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.fuzzer = None;
         self.sancov_edges = false;
         self.sancov_trace_cmp = false;
+        self.instrumented_edges = false;
+        self.instrumented_cmp_log = false;
         self.refresh_static_step_dispatch();
     }
 
     /// Set whether to collect EVM comparison operands.
     #[inline]
     pub fn collect_evm_cmp_log(&mut self, yes: bool) {
+        // Instrumented code logs its comparisons through `CMPLOG` probes, without an inspector
+        // stepping every opcode.
+        if self.inner.instrumented_edges {
+            self.inner.instrumented_cmp_log = yes;
+            return;
+        }
         if yes {
             self.edge_coverage
                 .get_or_insert_with(|| EdgeCovInspector::with_cmp_log_only().into())
@@ -1780,7 +1806,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             && let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
             && interp.result().is_err()
         {
-            recorder.end_step_not_run(interp);
+            recorder.end_step_not_run();
         }
     }
 
@@ -2367,6 +2393,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // Warmth carried across fork switches cools too.
         if let Some(prewarm) = self.backend.backend().lifecycle().tx_prewarm() {
             *state.prewarm_set_mut() = prewarm.clone();
+        }
+        // So does the persistent warmth the contexts recorded, which later switches restore.
+        if self.backend.backend().lifecycle().has_persistent_warmth() {
+            self.backend.backend_mut().take_persistent_warmth();
         }
         // The recipient cools like any other account the transaction loaded, unlike the addresses
         // `vm.cool` keeps warm.

@@ -360,7 +360,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // Tests that invariant exists with success after configured timeout.
 #[forgetest_init]
 fn should_apply_configured_timeout(prj: _, cmd: _) {
-    // Add initial test that breaks invariant.
     prj.add_test(
         "TimeoutTest.t.sol",
         r#"
@@ -385,9 +384,10 @@ contract TimeoutTest is Test {
     /// forge-config: default.invariant.depth = 20000
     /// forge-config: default.invariant.timeout = 1
     function invariant_counter_timeout() public view {
-        // Invariant will fail if more than 10000 increments.
-        // Make sure test timeouts after one second and remaining runs are canceled.
-        require(handler.count() < 10000);
+        // Make sure test timeouts after one second and remaining runs are canceled. The invariant
+        // must hold however many calls a fast machine makes before the timeout, since shrinking a
+        // broken invariant is not bounded by the campaign timeout.
+        require(handler.count() < type(uint256).max);
     }
 }
      "#,
@@ -3797,6 +3797,167 @@ contract InvariantMetricsTest is Test {
     output.stderr_eq(str![[r#"
 ...
 {"timestamp":[..],"event":"pulse","contract":"test/InvariantMetrics.t.sol:InvariantMetricsTest",[..]}
+...
+"#]]);
+}
+
+// A handler call whose intrinsic gas or calldata floor is above `call_gas_limit` runs with that
+// amount as its limit instead of aborting the campaign with a transaction validation error.
+#[forgetest_init]
+fn invariant_call_gas_limit_covers_intrinsic_gas(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+        config.invariant.call_gas_limit = Some(40_000);
+    });
+    prj.add_test(
+        "CallGasFloor.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract WideCalldata {
+    function poke(bytes32[1024] calldata) external {}
+}
+
+contract CallGasFloorTest is Test {
+    function setUp() public {
+        targetContract(address(new WideCalldata()));
+    }
+
+    function invariant_wide_calls_run() public {}
+}
+
+contract Ping {
+    function ping() external {}
+}
+
+contract FreshSenderTest is Test {
+    function setUp() public {
+        targetContract(address(new Ping()));
+        targetSender(address(0xBEEF));
+    }
+
+    function invariant_fresh_sender_runs() public {}
+}
+   "#,
+    );
+    // Before Prague there is no calldata floor, and the intrinsic gas alone is above the cap. The
+    // call then runs with exactly its intrinsic gas: nothing is left to execute, so it reverts,
+    // but the campaign goes on.
+    prj.update_config(|config| config.evm_version = "cancun".parse().unwrap());
+    cmd.args(["test", "--mt", "invariant_wide_calls_run"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] invariant_wide_calls_run() (runs: 5, calls: 25, reverts: 25)
+...
+"#]]);
+    // From Prague the calldata floor is the bound, and it leaves the call gas to run.
+    prj.update_config(|config| config.evm_version = "prague".parse().unwrap());
+    cmd.forge_fuse().args(["test", "--mt", "invariant_wide_calls_run"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] invariant_wide_calls_run() (runs: 5, calls: 25, reverts: 0)
+...
+"#]],
+    );
+    // Tempo T1 charges a nonce-zero sender for its account on top of the Ethereum intrinsic gas,
+    // so the bound comes from the network's own validation. As before Prague, the call is left
+    // with no gas to execute and reverts.
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_fresh_sender_runs", "--network", "tempo"])
+        .args(["--hardfork", "tempo:T1"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] invariant_fresh_sender_runs() (runs: 5, calls: 25, reverts: 25)
+...
+"#]]);
+}
+
+// Campaign calls, and the replays and shrinks of a failure, run under `call_gas_limit`, while
+// `setUp` and target discovery keep the project limit.
+#[forgetest_init]
+fn invariant_call_gas_limit_caps_campaign_calls(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 2;
+        config.invariant.call_gas_limit = Some(1_000_000);
+    });
+    prj.add_test(
+        "CallGasReplay.t.sol",
+        r#"
+contract LowGasProbe {
+    bool public lowGas;
+
+    function record() external {
+        require(msg.sender == address(0xBEEF), "wrong sender");
+        lowGas = gasleft() < 2_000_000;
+    }
+}
+
+contract CallGasReplayTest {
+    LowGasProbe probe;
+    uint256[600] pad;
+
+    function setUp() public {
+        require(gasleft() > 2_000_000, "setUp under the cap");
+        probe = new LowGasProbe();
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(probe);
+    }
+
+    // Reads more cold storage than the cap allows, so discovery must keep the project limit.
+    function targetSenders() public view returns (address[] memory senders) {
+        uint256 sum;
+        for (uint256 i; i < pad.length; ++i) {
+            sum += pad[i];
+        }
+        senders = new address[](1 + sum);
+        senders[0] = address(0xBEEF);
+    }
+
+    function invariant_never_low_gas() public view {
+        require(!probe.lowGas(), "low gas");
+    }
+}
+   "#,
+    );
+    // The replayed trace must show the handler under the cap: with the project limit it would
+    // see enough gas, record `false`, and the printed replay would not match the failure.
+    cmd.args(["test", "--mt", "invariant_never_low_gas", "-vvvv"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: low gas]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=0x000000000000000000000000000000000000bEEF addr=[test/CallGasReplay.t.sol:LowGasProbe]0x[..] calldata=record() args=[]
+ invariant_never_low_gas() (runs: 1, calls: 1, reverts: 0)
+...
+  [..] CallGasReplayTest::invariant_never_low_gas()
+    ├─ [..] LowGasProbe::lowGas() [staticcall]
+    │   └─ ← [Return] true
+...
+"#]],
+    );
+    // Corpus replay runs under the cap too: without the persisted failure, the corpus entry that
+    // holds the `record()` call must still break the invariant.
+    prj.update_config(|config| {
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    let failures = prj.root().join("cache").join("invariant").join("failures");
+    std::fs::remove_dir_all(&failures).unwrap();
+    cmd.forge_fuse().args(["test", "--mt", "invariant_never_low_gas"]).assert_failure();
+    std::fs::remove_dir_all(&failures).unwrap();
+    let corpus_dir = prj.root().join("invariant_corpus");
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mt", "invariant_never_low_gas", "--corpus-dir"])
+        .arg(&corpus_dir)
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: corpus replay failed:
+corpus entry [..] failed during replay: invariant `invariant_never_low_gas` broken] invariant_never_low_gas() ([GAS])
 ...
 "#]]);
 }

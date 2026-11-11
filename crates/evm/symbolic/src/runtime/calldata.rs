@@ -13,6 +13,11 @@ impl SymCalldata {
         Self { size_word: SymExpr::constant(cx, U256::from(size)), size, bytes }
     }
 
+    /// Calldata of a symbolic length of at most `bytes.len()`, whose bytes past its end are zero.
+    pub(crate) fn with_size_word(bytes: SymBytes, size_word: SymExpr) -> Self {
+        Self { size: bytes.len(), size_word, bytes }
+    }
+
     pub(crate) fn size_word(&self) -> SymExpr {
         self.size_word.clone()
     }
