@@ -1828,7 +1828,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             && let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
             && interp.result().is_err()
         {
-            recorder.end_step_not_run(interp);
+            recorder.end_step_not_run();
         }
     }
 
@@ -2431,6 +2431,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // Warmth carried across fork switches cools too.
         if let Some(prewarm) = self.backend.backend().lifecycle().tx_prewarm() {
             *state.prewarm_set_mut() = prewarm.clone();
+        }
+        // So does the persistent warmth the contexts recorded, which later switches restore.
+        if self.backend.backend().lifecycle().has_persistent_warmth() {
+            self.backend.backend_mut().take_persistent_warmth();
         }
         // The recipient cools like any other account the transaction loaded, unlike the addresses
         // `vm.cool` keeps warm.

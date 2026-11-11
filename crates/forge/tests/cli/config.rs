@@ -2367,7 +2367,8 @@ fn test_default_config(prj: _, cmd: _) {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
-    "check_interval": 1
+    "check_interval": 1,
+    "call_gas_limit": null
   },
   "symbolic": {
     "enabled": false,
