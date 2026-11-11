@@ -1334,10 +1334,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(call.depth);
-        // A root call has no issuing CREATE frame. Redirects saved theirs separately.
-        if interp.message().depth == call.depth {
-            self.env_handoff_creator = None;
-        }
         let is_root = curr_depth == self.root_depth;
         self.start_created_accounts_frame(is_root, CreatedAccountsFrameKind::Call, curr_depth);
         if is_root {
