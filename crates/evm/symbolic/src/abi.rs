@@ -175,8 +175,12 @@ impl SymbolicCalldata {
                 "symbolic calldata size exceeds configured max",
             ));
         }
-        let empty =
-            Self { bytes: SymBytes::empty(cx), inputs: Vec::new(), constraints: Vec::new() };
+        let empty = Self {
+            bytes: SymBytes::empty(cx),
+            inputs: Vec::new(),
+            constraints: Vec::new(),
+            size: None,
+        };
 
         let mut builder = SymbolicAbiBuilder { config, cx };
         let mut state = SymbolicAbiState::default();
@@ -193,7 +197,8 @@ impl SymbolicCalldata {
             );
             state.constraints.push(selector.not(cx));
         }
-        let fallback = Self { bytes, inputs: Vec::new(), constraints: state.constraints };
+        let fallback =
+            Self { bytes, inputs: Vec::new(), constraints: state.constraints, size: None };
 
         let mut variants = vec![empty, fallback];
         for (idx, function) in abi.functions().enumerate() {
