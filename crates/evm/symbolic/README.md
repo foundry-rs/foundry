@@ -776,9 +776,10 @@ Concrete replay answers each helper call with the return data that the solver
 model gives it, in call order. The counterexample records this data as
 `svm_returns` in the JSON result, the replay artifact, and the generated
 regression test. If a replay makes more helper calls than the failing path did,
-Forge does not confirm the counterexample. Symbolic invariant replay does not
-answer helper calls yet, so an invariant counterexample that uses them reports
-incomplete.
+Forge does not confirm the counterexample. Replay answers helper calls by
+position and does not check which helper a call names. Symbolic invariant replay
+does not answer helper calls yet, so an invariant counterexample that uses them
+reports incomplete.
 
 Forge also treats several `vm.random*` cheatcodes as symbolic value creators when
 running symbolically. Dynamic byte and string creators use the same dynamic ABI
