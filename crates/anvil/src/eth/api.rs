@@ -2007,7 +2007,8 @@ impl EthApi<FoundryNetwork> {
     /// From T14 a fee payer signature costs one cold account access: the fee payer's account is
     /// read to check its root key. Like a Tempo node, a request carrying
     /// [`FEE_PAYER_SIGNATURE_MARKER`] is sponsored by a fee payer that is not known yet, so it is
-    /// estimated without the marker, plus that access, and a request gas limit bounds the total.
+    /// estimated without the marker, plus that access, and the request or block gas limit bounds
+    /// the total.
     /// Before T14 the marker is not handled and the request is estimated as it is.
     fn do_estimate_gas_with_state(
         &self,
@@ -2025,7 +2026,10 @@ impl EthApi<FoundryNetwork> {
             let version = gas_params::version(hardfork.into(), hardfork, false);
             fee_payer_access = account_access_gas(&version.gas_params, true);
             request.fee_payer_signature = None;
-            request.inner.gas = request.inner.gas.map(|gas| gas.saturating_sub(fee_payer_access));
+            // Reserve the access from the search bound, so the estimate stays within the block
+            // gas limit when the request sets no gas limit.
+            let bound = request.inner.gas.unwrap_or(block_env.gas_limit);
+            request.inner.gas = Some(bound.saturating_sub(fee_payer_access));
         }
         let estimate =
             self.estimate_unsponsored_gas_with_state(request, state, block_env, monad_context)?;
