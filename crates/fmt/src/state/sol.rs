@@ -895,26 +895,31 @@ impl<'ast> State<'_, 'ast> {
         ty: Option<&ast::TypeKind<'ast>>,
         cache: bool,
     ) {
-        // Check if the total expression overflows but the RHS would fit alone on a new line.
-        // This helps keep the RHS together on a single line when possible.
-        let rhs_size = if is_binary_expr(&rhs.kind)
-            && !self.has_comment_between(rhs.span.lo(), rhs.span.hi())
-        {
-            self.estimate_binary_size(rhs)
-        } else if assignment_member_depth(rhs) >= 2
-            && self.peek_comment_before(rhs.span.lo()).is_none()
-        {
-            // These chains can break before a member after collapsing their terminal delimiters.
-            // Size that collapsed form before choosing the assignment break instead.
-            self.estimate_assignment_size(rhs.span)
-        } else {
-            self.estimate_size(rhs.span)
-        };
-        let overflows = lhs_size + rhs_size >= space_left;
-        let fits_alone = rhs_size + self.config.tab_width < space_left;
-        let fits_alone_no_cmnts =
-            fits_alone && !self.has_comment_between(rhs.span.lo(), rhs.span.hi());
-        let force_break = overflows && fits_alone_no_cmnts;
+        // Only measure assignments that can break, before printing consumes leading comments.
+        let rhs_layout = (!self.inline_assignments).then(|| {
+            // Check if the total expression overflows but the RHS would fit alone on a new line.
+            // This helps keep the RHS together on a single line when possible.
+            let rhs_size = if is_binary_expr(&rhs.kind)
+                && !self.has_comment_between(rhs.span.lo(), rhs.span.hi())
+            {
+                self.estimate_binary_size(rhs)
+            } else if assignment_member_depth(rhs) >= 2
+                && self.peek_comment_before(rhs.span.lo()).is_none()
+            {
+                // These chains can break before a member after collapsing their terminal
+                // delimiters. Size that collapsed form before choosing the
+                // assignment break instead.
+                self.estimate_assignment_size(rhs.span)
+            } else {
+                self.estimate_size(rhs.span)
+            };
+            let overflows = lhs_size + rhs_size >= space_left;
+            let fits_alone = rhs_size + self.config.tab_width < space_left;
+            let fits_alone_no_cmnts =
+                fits_alone && !self.has_comment_between(rhs.span.lo(), rhs.span.hi());
+            let force_break = overflows && fits_alone_no_cmnts;
+            (rhs_size, fits_alone, fits_alone_no_cmnts, force_break)
+        });
 
         if lhs_size <= space_left {
             self.neverbreak();
@@ -937,13 +942,13 @@ impl<'ast> State<'_, 'ast> {
         }
 
         // A certified inline body must not acquire source-dependent assignment hard breaks.
-        if self.inline_assignments {
+        let Some((rhs_size, fits_alone, fits_alone_no_cmnts, force_break)) = rhs_layout else {
             self.nbsp();
             self.neverbreak();
             self.print_expr(rhs);
             self.var_init = cache;
             return;
-        }
+        };
 
         // Match on expression kind to determine formatting strategy
         match &rhs.kind {

@@ -1289,3 +1289,19 @@ fn nested_for_headers_keep_parent_braces() {
         }
     }
 }
+
+#[test]
+fn assignment_rhs_leading_comment_keeps_member_chain_layout() {
+    let source = "contract C { function f() external { value = /* lead */ factory.first(\na, b\n).second(); } }";
+    let expected = r#"contract C {
+    function f() external {
+        value = /* lead */
+            factory.first(a, b).second();
+    }
+}
+"#;
+    let config =
+        Arc::new(FormatterConfig { line_length: 46, bracket_spacing: true, ..Default::default() });
+    assert_data_eq!(format(source, Path::new("test.sol"), config.clone()), expected);
+    assert_data_eq!(format(expected, Path::new("test.sol"), config), expected);
+}
