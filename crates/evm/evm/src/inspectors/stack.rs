@@ -2181,15 +2181,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             return;
         }
         self.end_snapshot_frame(interp, message, result);
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.leave_frame_access(message.depth);
+        }
 
         // The root frame of a nested transaction duplicates a frame whose hooks run in the
         // surrounding transaction.
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
             self.capture_executed_destructs(interp);
-            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-                cheats.leave_frame_access(message.depth);
-            }
             self.restore_cheat_stepped();
             return;
         }
@@ -2207,9 +2207,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         self.do_call_end(interp, message, result);
-        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            cheats.leave_frame_access(message.depth);
-        }
 
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
@@ -2332,21 +2329,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         self.end_snapshot_frame(interp, message, result);
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.leave_frame_access(message.depth);
+        }
 
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
             self.capture_executed_destructs(interp);
-            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-                cheats.leave_frame_access(message.depth);
-            }
             self.restore_cheat_stepped();
             return;
         }
 
         self.do_create_end(interp, message, result);
-        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            cheats.leave_frame_access(message.depth);
-        }
 
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
