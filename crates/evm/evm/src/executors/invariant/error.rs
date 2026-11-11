@@ -1,6 +1,12 @@
-use super::InvariantContract;
+use super::{
+    InvariantContract,
+    shrink::{
+        CheckSequenceFailureSite, TerminalFailureSite, sequence_call_failure_site,
+        terminal_failure_site,
+    },
+};
 use crate::{
-    executors::RawCallResult,
+    executors::{RawCallResult, RawFailure},
     inspectors::{EdgeCovHit, EdgeCoverage},
 };
 use alloy_json_abi::Function;
@@ -74,15 +80,28 @@ impl<'a> InvariantRunCtx<'a> {
     /// Builds a [`FailedInvariantCaseData`] attributed to `broken_fn`. `fail_on_revert` is
     /// passed in because `assert_invariants` overrides it with the per-invariant flag.
     /// `assertion_failure=true` normalizes empty revert data so output is not blank.
-    pub fn failed_case<FEN: FoundryEvmNetwork>(
+    /// `terminal_site` identifies a predicate or hook call; `None` identifies the last handler.
+    pub(super) fn failed_case<FEN: FoundryEvmNetwork>(
         &self,
         broken_fn: &Function,
         fail_on_revert: bool,
         assertion_failure: bool,
         call_result: RawCallResult<FEN>,
         inner_sequence: &[Option<BasicTxDetails>],
+        terminal_site: Option<TerminalFailureSite>,
     ) -> FailedInvariantCaseData {
         let revert_reason = self.decode_revert_reason(&call_result, assertion_failure);
+        let site = if let Some(terminal_site) = terminal_site {
+            Some(terminal_failure_site(
+                terminal_site,
+                self.contract.address,
+                &broken_fn.selector().into(),
+                &call_result,
+            ))
+        } else {
+            self.calldata.last().map(|call| sequence_call_failure_site(call, &call_result))
+        };
+        let campaign_failure = site.zip(call_result.raw_failure());
         let origin = broken_fn.name.as_str();
         FailedInvariantCaseData {
             test_error: TestError::Fail(
@@ -98,6 +117,7 @@ impl<'a> InvariantRunCtx<'a> {
             fail_on_revert,
             assertion_failure,
             fork_block_number: call_result.fork_block_number,
+            campaign_failure,
         }
     }
 
@@ -432,6 +452,7 @@ impl InvariantFuzzError {
             fail_on_revert,
             assertion_failure,
             fork_block_number: None,
+            campaign_failure: None,
         };
         if is_revert { Self::Revert(failure) } else { Self::BrokenInvariant(failure) }
     }
@@ -500,6 +521,9 @@ pub struct FailedInvariantCaseData {
     pub assertion_failure: bool,
     /// Active fork block when the failure was observed, if any.
     pub fork_block_number: Option<u64>,
+    /// Site and observable outcome of the campaign's failing call, to check that a replay
+    /// reproduced it. `None` when its failure provenance was not recorded.
+    pub campaign_failure: Option<(CheckSequenceFailureSite, RawFailure)>,
 }
 
 #[cfg(test)]

@@ -88,7 +88,8 @@ mod shrink;
 pub use shrink::{
     CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome, HandlerReplayOutcome,
     SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats, check_sequence,
-    check_sequence_value, replay_handler_failure_sequence, shrink_sequence_by_removing,
+    check_sequence_value, replay_handler_failure_sequence, reset_shrink_progress,
+    shrink_sequence_by_removing,
 };
 
 mod snapshot;
@@ -1041,6 +1042,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             (plan.worker_id == 0).then_some(campaign_state.live_solver.as_ref()).flatten();
         let mut frontier_recorder = FuzzFrontierRecorder::new(frontier_limit);
         executor.inspector_mut().set_execution_cancellation(campaign_state.cancellation().clone());
+        // Lets minimization check that a replay reached the campaign's failure.
+        executor.inspector_mut().collect_failure_provenance(config.shrink_run_limit > 0);
 
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
             &mut executor,
@@ -1385,7 +1388,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                         targeted_contracts: &invariant_test.targeted_contracts,
                                         calldata: &current_run.inputs,
                                     }
-                                    .failed_case(anchor, config.fail_on_revert, false, result, &[]);
+                                    .failed_case(
+                                        anchor,
+                                        config.fail_on_revert,
+                                        false,
+                                        result,
+                                        &[],
+                                        None,
+                                    );
                                     invariant_test.test_data.failures.record_failure(
                                         anchor,
                                         InvariantFuzzError::Revert(case_data),

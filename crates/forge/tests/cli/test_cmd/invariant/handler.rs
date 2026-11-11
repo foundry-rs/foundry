@@ -1053,7 +1053,8 @@ contract TwoBranchTest is Test {
 // `GLOBAL_FAIL_SLOT = 1` and that committed slot was never cleared, poisoning every
 // subsequent `handlers_succeeded` check and silently suppressing later `assert_invariants`
 // evaluations. Asserts on call #1, then bumps a counter on call #2/#3 to trip a real
-// predicate — both the handler bug AND the predicate failure must be reported.
+// predicate — both the handler bug AND the predicate failure must be reported. Replays stop at
+// the handler assertion instead of the predicate, so the predicate's sequence is kept unshrunk.
 #[forgetest_init]
 fn handler_vm_assert_global_flag_does_not_poison_invariant_checks(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -1103,7 +1104,9 @@ contract HandlerVmAssertPoisonTest is Test {
 ...
 Ran 1 test for test/HandlerVmAssertPoisonTest.t.sol:HandlerVmAssertPoisonTest
 [FAIL: counter reached 3]
-	[Sequence] (original: 3, shrunk: 1)
+	[Sequence] (original: 3, shrunk: 3)
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
 		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
 
 Assertion Tests: 1 assertion bug(s) found
@@ -1125,7 +1128,9 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 Failing tests:
 Encountered 1 failing test in test/HandlerVmAssertPoisonTest.t.sol:HandlerVmAssertPoisonTest
 [FAIL: counter reached 3]
-	[Sequence] (original: 3, shrunk: 1)
+	[Sequence] (original: 3, shrunk: 3)
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
 		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
 
 Assertion Tests: 1 assertion bug(s) found

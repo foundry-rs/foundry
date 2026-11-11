@@ -50,7 +50,7 @@ use foundry_evm::{
     decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, DynamicTargetCtx, EvmError, Executor, ITest, InvariantReplayOptions,
-        MinimizationReplayInput, RawCallResult, ShowmapOpts, ShowmapReplayTarget,
+        MinimizationReplayInput, RawCallResult, RawFailure, ShowmapOpts, ShowmapReplayTarget,
         StatelessReplayTarget, canonical_replay_dirs,
         fuzz::FuzzedExecutor,
         invariant::{
@@ -59,6 +59,7 @@ use foundry_evm::{
             LiveInvariantSolver, ReplayErrorResult, apply_invariant_call_delay, check_sequence,
             did_fail_on_assert, execute_and_commit_tx, execute_tx, execute_tx_and_register_created,
             handler_edge_fingerprint, replay_error, replay_handler_failure_sequence, replay_run,
+            reset_shrink_progress,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
         replay_sequence_for_minimization, should_ignore_revert,
@@ -1217,6 +1218,8 @@ struct ReplayedInvariantSequence {
     artifact: Option<SymbolicArtifactRef>,
     minimization: Option<SymbolicCounterexampleMinimization>,
     fork_block_number: Option<u64>,
+    /// Failure reasons of replaying the original and the minimized sequence.
+    reasons: Option<SequenceReasons>,
 }
 
 /// An invariant failure confirmed while solving a captured fuzz frontier.
@@ -1234,6 +1237,7 @@ struct SequenceReplay<'a> {
     target_invariant: &'a Function,
     assertion_failure: bool,
     storage: &'a [SymbolicStorageAssignment],
+    campaign_failure: Option<(CheckSequenceFailureSite, &'a RawFailure)>,
 }
 
 /// Metadata for the symbolic artifact persisted with a replayed invariant sequence.
@@ -1243,10 +1247,39 @@ struct SequenceArtifactSpec<'a> {
     failure: Option<SymbolicInvariantArtifactFailure>,
 }
 
+/// Failure reasons of replaying an original sequence and its minimized form.
+type SequenceReasons = (Option<String>, Option<String>);
+
+/// How to report a failing invariant sequence, see
+/// [`FunctionRunner::minimize_invariant_sequence`].
+enum SequenceMinimization {
+    /// The minimized sequence, with the failure reasons of the original and the minimized
+    /// sequence.
+    Minimized(MinimizedSequence, SequenceReasons),
+    /// Replaying the original sequence did not reproduce the campaign's failure, so replays cannot
+    /// tell whether a smaller sequence preserves it.
+    KeepOriginal,
+    /// Leave the original sequence to the shrinker that removes calls, within the shrink budget.
+    RemoveCalls,
+}
+
+/// Returns the reason to show for a minimized sequence, whose values can differ from the
+/// campaign's: the minimized replay's reason when replaying the original sequence reproduced the
+/// campaign reason, otherwise the campaign reason.
+fn minimized_reason(campaign: Option<String>, reasons: Option<SequenceReasons>) -> Option<String> {
+    match reasons {
+        Some((original, minimized)) if original == campaign => minimized,
+        _ => campaign,
+    }
+}
+
 /// Returns `true` if two sequence replays failed in the same way at the same site.
+///
+/// Reasons are not compared because assertion messages embed the values being minimized.
 fn same_sequence_failure(actual: &CheckSequenceOutcome, expected: &CheckSequenceOutcome) -> bool {
     actual.replayed_entirely == expected.replayed_entirely
-        && actual.reason == expected.reason
+        && actual.failure_identity.is_some()
+        && actual.failure_identity == expected.failure_identity
         && actual.failure_site == expected.failure_site
         && actual.sequence_assertion_failure == expected.sequence_assertion_failure
 }
@@ -1445,14 +1478,29 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         progress: Option<&indicatif::ProgressBar>,
         position: Option<(usize, usize)>,
     ) -> Result<ReplayedInvariantSequence> {
-        let minimization = self.minimize_symbolic_invariant_sequence(
+        reset_shrink_progress(
+            replay.invariant_config,
+            progress,
+            &replay.target_invariant.name,
+            position,
+        );
+        let mut replay_config = replay.invariant_config.clone();
+        let (minimization, reasons) = match self.minimize_invariant_sequence(
             replay,
             original_calls,
             identified_contracts,
             current_settings,
-        );
-
-        let mut replay_config = replay.invariant_config.clone();
+            progress,
+        ) {
+            SequenceMinimization::Minimized(minimization, reasons) => {
+                (Some(minimization), Some(reasons))
+            }
+            SequenceMinimization::KeepOriginal => {
+                replay_config.shrink_run_limit = 0;
+                (None, None)
+            }
+            SequenceMinimization::RemoveCalls => (None, None),
+        };
         let minimized_txes;
         let replay_calls = if let Some(minimization) = &minimization {
             minimized_txes = minimization
@@ -1540,6 +1588,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             artifact: artifact_ref,
             minimization,
             fork_block_number,
+            reasons,
         })
     }
 
@@ -1586,15 +1635,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         )
     }
 
-    fn minimize_symbolic_invariant_sequence(
+    /// Minimizes the calls, arguments, senders and values of a failing sequence.
+    ///
+    /// Without a shrink budget, calls, or the campaign's failure to compare with, such as for
+    /// persisted failures, the sequence is not replayed here. It is kept as is when replaying it
+    /// does not reproduce the campaign's failure, and left to the shrinker that removes calls when
+    /// the failure cannot be identified.
+    fn minimize_invariant_sequence(
         &self,
         replay: SequenceReplay<'_>,
         calls: &[BasicTxDetails],
         identified_contracts: &ContractsByAddress,
         current_settings: &InvariantSettings,
-    ) -> Option<MinimizedSequence> {
-        if !self.config.symbolic.enabled || calls.is_empty() {
-            return None;
+        progress: Option<&indicatif::ProgressBar>,
+    ) -> SequenceMinimization {
+        let Some((campaign_site, campaign_failure)) = replay.campaign_failure else {
+            return SequenceMinimization::RemoveCalls;
+        };
+        if replay.invariant_config.shrink_run_limit == 0 || calls.is_empty() {
+            return SequenceMinimization::RemoveCalls;
         }
 
         let original_calls = self.sequence_calls(&base_counterexamples(
@@ -1602,10 +1661,31 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             identified_contracts,
             replay.invariant_config.show_solidity,
         ));
-        let expected = self.symbolic_sequence_failure(replay, &original_calls)?;
-        let preserves = |candidate: &[SymbolicCounterexampleCall]| {
+        // Reproducing some failure is insufficient: it must be the campaign's failure, which the
+        // provenance in the raw failure tells apart from other failures with the same outcome.
+        let Some(expected) =
+            self.symbolic_sequence_failure(replay, &original_calls).filter(|actual| {
+                actual.failure_site == Some(campaign_site)
+                    && actual.raw_failure.as_ref() == Some(campaign_failure)
+            })
+        else {
+            return SequenceMinimization::KeepOriginal;
+        };
+        if expected.failure_identity.is_none() {
+            return SequenceMinimization::RemoveCalls;
+        }
+        let replay_candidate = |candidate: &[SymbolicCounterexampleCall]| {
             self.symbolic_sequence_failure(replay, candidate)
-                .is_some_and(|actual| same_sequence_failure(&actual, &expected))
+                .filter(|actual| same_sequence_failure(actual, &expected))
+        };
+        let preserves = |candidate: &[SymbolicCounterexampleCall]| {
+            if self.tcfg.early_exit.should_stop() {
+                return false;
+            }
+            if let Some(progress) = progress {
+                progress.inc(1);
+            }
+            replay_candidate(candidate).is_some()
         };
 
         let minimization = minimize_sequence_counterexample(
@@ -1613,8 +1693,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &self.symbolic_sequence_sender_candidates(current_settings),
             replay.invariant_config.shrink_run_limit as usize,
             preserves,
-        )?;
-        preserves(&minimization.minimized_calls).then_some(minimization)
+        )
+        .expect("the sequence has calls");
+        let Some(outcome) = replay_candidate(&minimization.minimized_calls) else {
+            return SequenceMinimization::RemoveCalls;
+        };
+        SequenceMinimization::Minimized(minimization, (expected.reason, outcome.reason))
     }
 
     fn symbolic_sequence_sender_candidates(
@@ -1646,8 +1730,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let txes =
             calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect::<Vec<_>>();
         let sequence = (0..txes.len()).collect::<Vec<_>>();
+        let mut executor = self.clone_executor_with_symbolic_storage(replay.storage).ok()?;
+        // Candidate replays must not add steps to the debugger's recording.
+        executor.inspector_mut().debug_recorder = None;
+        executor.inspector_mut().collect_failure_identity(true);
+        executor.inspector_mut().collect_failure_provenance(true);
         let outcome = check_sequence(
-            self.clone_executor_with_symbolic_storage(replay.storage).ok()?,
+            executor,
             &txes,
             &sequence,
             replay.invariant_contract.address,
@@ -4431,6 +4520,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         target_invariant: anchor,
                         assertion_failure: false,
                         storage: &storage,
+                        campaign_failure: None,
                     };
                     let replayed = self
                         .symbolic_sequence_failure(check, &symbolic_calls)
@@ -4492,7 +4582,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         ),
                     };
                     let replayed = match self.replay_invariant_error_sequence(
-                        SequenceReplay { assertion_failure: is_handler, ..check },
+                        SequenceReplay {
+                            assertion_failure: is_handler,
+                            campaign_failure: failure
+                                .failure_site
+                                .zip(failure.raw_failure.as_ref()),
+                            ..check
+                        },
                         &txes,
                         None,
                         identified_contracts,
@@ -4522,6 +4618,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         artifact,
                         minimization,
                         fork_block_number,
+                        reasons,
                     } = replayed;
                     let mut symbolic_result = SymbolicResult::fail_counterexample_sequence(
                         &symbolic_config,
@@ -4534,7 +4631,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     if let Some(minimization) = minimization.clone() {
                         symbolic_result = symbolic_result.with_minimization(minimization);
                     }
-                    let reason = failure.reason.unwrap_or_else(|| {
+                    let reason = minimized_reason(failure.reason, reasons).unwrap_or_else(|| {
                         if is_handler {
                             "symbolic handler counterexample".to_string()
                         } else {
@@ -4878,6 +4975,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             target_invariant: invariant,
                             assertion_failure: case_data.assertion_failure,
                             storage,
+                            campaign_failure: case_data
+                                .campaign_failure
+                                .as_ref()
+                                .map(|(site, failure)| (*site, failure)),
                         },
                         calls,
                         Some(case_data.inner_sequence.clone()),
@@ -4920,17 +5021,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         }
                     }
                 };
-                let (counterexample, artifact, minimization) = match replayed {
+                let (counterexample, artifact, minimization, reasons) = match replayed {
                     Some(replayed) => (
                         Some(CounterExample::Sequence(calls.len(), replayed.call_sequence)),
                         replayed.artifact,
                         replayed.minimization,
+                        replayed.reasons,
                     ),
-                    None => (None, None, None),
+                    None => (None, None, None, None),
                 };
                 invariant_failures.push(InvariantFailure::Predicate {
                     name: invariant.name.clone(),
-                    reason: error.revert_reason().unwrap_or_default(),
+                    reason: minimized_reason(error.revert_reason(), reasons).unwrap_or_default(),
                     counterexample,
                     artifact,
                     minimization,
@@ -6341,26 +6443,33 @@ mod tests {
 
     #[test]
     fn symbolic_sequence_failure_identity_includes_failure_site() {
-        let outcome = |site: CheckSequenceFailureSite| CheckSequenceOutcome {
-            success: false,
-            replayed_entirely: false,
-            reason: Some("same reason".to_string()),
-            calls_count: 1,
-            reverts: 0,
-            failure_site: Some(site),
-            sequence_assertion_failure: true,
-            sequence_reverter: None,
-        };
+        let outcome =
+            |site: CheckSequenceFailureSite, reason: &str, kind: u8| CheckSequenceOutcome {
+                success: false,
+                replayed_entirely: false,
+                reason: Some(reason.to_string()),
+                calls_count: 1,
+                reverts: 0,
+                failure_site: Some(site),
+                sequence_assertion_failure: true,
+                sequence_reverter: None,
+                raw_failure: None,
+                failure_identity: Some(B256::repeat_byte(kind)),
+            };
         let site = |target: u8, fingerprint: u8| CheckSequenceFailureSite::SequenceCall {
             target: Address::with_last_byte(target),
             selector: Selector::from([0, 0, 0, 1]),
             fingerprint: B256::repeat_byte(fingerprint),
         };
-        let expected = outcome(site(1, 1));
+        let expected = outcome(site(1, 1), "1001 != 0", 1);
 
-        assert!(same_sequence_failure(&outcome(site(1, 1)), &expected));
-        assert!(!same_sequence_failure(&outcome(site(2, 1)), &expected));
-        assert!(!same_sequence_failure(&outcome(site(1, 2)), &expected));
+        assert!(same_sequence_failure(&outcome(site(1, 1), "1001 != 0", 1), &expected));
+        assert!(same_sequence_failure(&outcome(site(1, 1), "5 != 0", 1), &expected));
+        assert!(!same_sequence_failure(&outcome(site(1, 1), "1001 != 0", 2), &expected));
+        assert!(!same_sequence_failure(&outcome(site(2, 1), "1001 != 0", 1), &expected));
+        assert!(!same_sequence_failure(&outcome(site(1, 2), "1001 != 0", 1), &expected));
+        let unknown = CheckSequenceOutcome { failure_identity: None, ..expected };
+        assert!(!same_sequence_failure(&unknown, &unknown));
     }
 
     #[test]
