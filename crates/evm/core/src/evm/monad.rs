@@ -153,6 +153,10 @@ impl FoundryTxResultExt for MonadTxResultExt {
         // the consumption retained before that receipt floor, including intrinsic gas.
         result.total_gas_spent
     }
+
+    fn isolated_frame_gas_floor(_result: &TxResult<MonadEvmTypes>, calldata_floor: u64) -> u64 {
+        calldata_floor
+    }
 }
 
 impl FoundryEvmNetwork for MonadEvmNetwork {

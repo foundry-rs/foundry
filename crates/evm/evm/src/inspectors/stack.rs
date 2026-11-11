@@ -29,9 +29,9 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, DestructedAccount, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryExecutionHooks,
-        FoundryTxConversion, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
-        PreparedTx, SnapshotRestores, TransactionRequestFor, TxFor, TxResultFor, TypesFor,
-        cool_loaded, destructed_accounts, evm_env, merge_pending_changes,
+        FoundryTxConversion, FoundryTxResultExt, InterpreterFor, MessageFor, MessageResultFor,
+        PersistentWrite, PreparedTx, SnapshotRestores, TransactionRequestFor, TxFor, TxResultFor,
+        TypesFor, cool_loaded, destructed_accounts, evm_env, merge_pending_changes,
         merge_untracked_pending_changes_with_warmth, put_transient, release_inspector,
         take_transient, warm_accounts, warm_set,
     },
@@ -1520,9 +1520,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             Err(_) => return not_executed(Bytes::new()),
         };
         let mut result = executed.result;
-        // An isolated frame pays the calldata floor, including when validation skipped it
-        // above. A network's receipt charge (such as Monad's full limit) is not frame gas.
-        result.floor_gas = floor;
+        if skip_floor {
+            result.floor_gas = floor;
+        } else {
+            result.floor_gas = FoundryTxResultExt::isolated_frame_gas_floor(&result, floor);
+        }
         self.inner.tx_created.extend(
             executed
                 .pending_state

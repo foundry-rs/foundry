@@ -28,9 +28,10 @@ transactions charge their full gas limit, including on revert. Receipts and bloc
 retain that charge. Access-list RPC results, Forge reports, and Anvil gas estimation use the
 execution family's simulation gas adapter: Monad reports consumption, while other families retain
 receipt gas, including calldata floors and refunds. Anvil verifies the required limit by execution.
-Monad script estimates still cover the required calldata floor. Isolated frames pay their calldata
-floor rather than a full-limit receipt charge. The native Monad factory leaves reserve-balance
-enforcement opt-in.
+Monad script estimates still cover the required calldata floor. Monad's result adapter selects
+the calldata floor for isolated frames; other families retain their settled floor. Isolation still
+restores the calldata floor when validation temporarily skipped it. The native Monad factory
+leaves reserve-balance enforcement opt-in.
 
 ## User-visible output changes
 

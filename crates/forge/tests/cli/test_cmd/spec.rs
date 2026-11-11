@@ -2861,3 +2861,56 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
     }
 }
+
+#[cfg(feature = "monad")]
+#[forgetest_init]
+fn isolated_calls_retain_calldata_floor(prj: _, cmd: _) {
+    prj.add_test(
+        "IsolatedFloor.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract IsolatedFloorTest is Test {
+    address constant TARGET = address(0xBEEF1);
+
+    function setUp() public {
+        vm.etch(TARGET, hex"00");
+    }
+
+    function test_calldata_floor_with_sufficient_gas() public {
+        checkCalldataFloor(100_000);
+    }
+
+    function test_calldata_floor_with_tight_gas() public {
+        checkCalldataFloor(1_000);
+    }
+
+    function checkCalldataFloor(uint256 gasLimit) internal {
+        bytes memory data = new bytes(1_000);
+        for (uint256 i; i < data.length; ++i) data[i] = 0x01;
+        (bool success,) = TARGET.call{gas: gasLimit}(data);
+        assertTrue(success);
+        assertEq(vm.snapshotGasLastCall("calldataFloor"), 61_000);
+    }
+}
+"#,
+    );
+    for (network, hardfork) in [("ethereum", "prague"), ("monad", "monad:MonadTen")] {
+        prj.update_config(|config| {
+            config.evm_version = EvmVersion::Prague;
+            config.hardfork = Some(hardfork.parse().unwrap());
+            config.isolate = true;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--network", network, "--mc", "IsolatedFloorTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/IsolatedFloor.t.sol:IsolatedFloorTest
+[PASS] test_calldata_floor_with_sufficient_gas() ([GAS])
+[PASS] test_calldata_floor_with_tight_gas() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}

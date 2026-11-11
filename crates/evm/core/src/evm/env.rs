@@ -313,6 +313,14 @@ pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
     fn simulation_gas_used(result: &TxResultExt<Self>) -> u64 {
         result.tx_gas_used()
     }
+
+    /// Returns the settled gas floor to apply when an isolated transaction becomes a frame.
+    ///
+    /// Ordinarily the execution family's result keeps its floor. Networks that charge unused
+    /// gas can select the calldata floor instead of treating receipt charges as frame gas.
+    fn isolated_frame_gas_floor(result: &TxResultExt<Self>, _calldata_floor: u64) -> u64 {
+        result.floor_gas
+    }
 }
 
 impl FoundryTxResultExt for () {}
