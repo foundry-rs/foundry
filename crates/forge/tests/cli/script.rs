@@ -27,7 +27,7 @@ use foundry_test_utils::{
         spawn_rpc_proxy_rejecting_method_after_when_enabled,
     },
     snapbox::IntoData,
-    util::{OTHER_SOLC_VERSION, SOLC_VERSION, TestCommand, TestProject},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
 use regex::Regex;
 use serde_json::Value;
@@ -10047,4 +10047,92 @@ Deployed contracts (chain 31337):
                 .stderr_eq(str![""]);
         }
     }
+}
+
+// A local proxy cannot grant forked code cheatcode access, and a rejected call must not interrupt
+// the script's intended broadcast.
+#[forgetest]
+async fn fork_script_rejects_delegated_cheatcodes_before_broadcast(prj: _, cmd: _) {
+    prj.add_script(
+        "AccessBoundary.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+}
+
+contract UnintendedDeployment {
+    uint256 public value = 99;
+}
+
+contract RemoteBroadcaster {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function broadcastDeployment() external {
+        vm.startBroadcast();
+        new UnintendedDeployment();
+        vm.stopBroadcast();
+    }
+}
+
+contract LocalProxy {
+    function probe(address target) external returns (bool, bytes memory) {
+        return target.delegatecall(abi.encodeCall(RemoteBroadcaster.broadcastDeployment, ()));
+    }
+}
+
+contract IntendedDeployment {
+    uint256 public value = 42;
+}
+
+contract AccessBoundaryScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant TARGET = address(0x1234);
+
+    function run() external {
+        LocalProxy proxy = new LocalProxy();
+        (bool success, bytes memory output) = proxy.probe(TARGET);
+        require(!success, "delegated code unexpectedly authorized");
+        bytes memory expected = abi.encodeWithSignature(
+            "CheatcodeError(string)",
+            "cheatcodes are not enabled for 0x0000000000000000000000000000000000001234; see `vm.allowCheatcodes(address)`"
+        );
+        require(keccak256(output) == keccak256(expected), "unexpected authorization error");
+
+        vm.startBroadcast();
+        new IntendedDeployment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["inspect", "script/AccessBoundary.s.sol:RemoteBroadcaster", "deployedBytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let code = output.trim().parse::<Bytes>().unwrap();
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_code(address!("0000000000000000000000000000000000001234"), code).await.unwrap();
+    let sender = handle.dev_accounts().next().unwrap();
+    cmd.forge_fuse().args([
+        "script",
+        "AccessBoundaryScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+    ]);
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+"#]]);
+
+    let sequence = latest_dry_run_sequence(prj.root());
+    assert_eq!(sequence.transactions.len(), 1);
+    assert!(sequence.receipts.is_empty());
 }
