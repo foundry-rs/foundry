@@ -28,6 +28,9 @@ use tempo_primitives::{
     },
 };
 
+#[cfg(unix)]
+use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
 /// Returns the gas limit and the gas used of the last transaction in the latest block, and
 /// checks that it succeeded.
 async fn last_tx_gas(provider: &RetryProvider) -> (u64, u64) {
@@ -163,7 +166,7 @@ Private key: [..]
     assert_data_eq!(
         stderr,
         str![[r#"
-No Tempo chain was given (--chain, an RPC or foundry.toml); creating an EOA.
+No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA.
 Successfully created new keypair.
 Address:     [..]
 Private key: [..]
@@ -184,6 +187,73 @@ Private key: [..]
 
 "#]]
     );
+
+    // A `CHAIN` that is not a chain, such as one an app's `.env` sets, does not break key
+    // generation, but it is still a Tempo signal for `--configurable-account`.
+    let (stdout, _) = wallet_new_with_env(&mut cmd, &[], &[("CHAIN", "local")]);
+    assert_eoa(&stdout);
+    let (stdout, stderr) =
+        wallet_new_with_env(&mut cmd, &["--configurable-account"], &[("CHAIN", "4217")]);
+    assert_eoa(&stdout);
+    assert_data_eq!(
+        stderr,
+        str![[r#"
+Tempo T14 is not active on chain tempo; creating an EOA.
+Successfully created new keypair.
+Address:     [..]
+Private key: [..]
+
+"#]]
+    );
+
+    // A non-Tempo `CHAIN` creates a plain key before a T14 Tempo RPC is asked, as `--chain` does.
+    let (stdout, stderr) = wallet_new_with_env(
+        &mut cmd,
+        &["--configurable-account", "--rpc-url", &t14_rpc],
+        &[("CHAIN", "1")],
+    );
+    assert_eoa(&stdout);
+    assert_data_eq!(
+        stderr,
+        str![[r#"
+Successfully created new keypair.
+Address:     [..]
+Private key: [..]
+
+"#]]
+    );
+
+    // An explicit `--chain` is still validated.
+    cmd.cast_fuse().args(["wallet", "new", "--chain", "locla"]);
+    cmd.unset_env("CHAIN");
+    cmd.assert_failure().stderr_eq(str![[r#"
+error: invalid value 'locla' for '--chain <CHAIN>'
+  [possible values: [..]]
+...
+For more information, try '--help'.
+
+"#]]);
+
+    // With `--configurable-account`, `CHAIN` is validated.
+    cmd.cast_fuse().args(["wallet", "new", "--configurable-account"]);
+    cmd.unset_env("ETH_RPC_URL");
+    cmd.env("CHAIN", "local");
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: invalid CHAIN: `local` is not a chain
+
+"#]]);
+
+    // A `CHAIN` that is not valid UTF-8 is rejected too.
+    #[cfg(unix)]
+    {
+        cmd.cast_fuse().args(["wallet", "new", "--configurable-account"]);
+        cmd.unset_env("ETH_RPC_URL");
+        cmd.env("CHAIN", OsStr::from_bytes(b"\xff"));
+        cmd.assert_failure().stderr_eq(str![[r#"
+Error: invalid CHAIN: environment variable was not valid unicode: [..]
+
+"#]]);
+    }
 
     // `--eoa` opts out on a T14 Tempo RPC.
     let (stdout, stderr) = wallet_new(&mut cmd, &["--rpc-url", &t14_rpc, "--eoa"]);
@@ -236,7 +306,7 @@ Private key: [..]
     assert_data_eq!(
         stderr,
         str![[r#"
-No Tempo chain was given (--chain, an RPC or foundry.toml); creating an EOA.
+No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA.
 Successfully created new keypair.
 Address:     [..]
 Private key: [..]

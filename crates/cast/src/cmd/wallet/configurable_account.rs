@@ -53,19 +53,36 @@ use tempo_primitives::transaction::{
 
 /// Decides whether `cast wallet new` creates a configurable account.
 ///
-/// It does unless `eoa` is set, when a Tempo signal is present and T14 is active there: `--chain`,
-/// `chain` in `foundry.toml`, a Tempo network selected in `foundry.toml`, or an RPC from
-/// `--rpc-url`, `ETH_RPC_URL` or `foundry.toml` that serves a Tempo chain. An RPC is asked for its
-/// active hardfork; otherwise the compiled Tempo hardfork schedule is read for the chain.
-/// A non-Tempo `--chain` creates an EOA without reading the configuration. Without `requested`
-/// (`--configurable-account`), a configuration or RPC URL that cannot be read also creates an EOA;
-/// `requested` fails on it, and reports why it creates an EOA instead of an account.
+/// It does unless `eoa` is set, when a Tempo signal is present and T14 is active there: `--chain`
+/// (or `CHAIN` with `requested`), `chain` in `foundry.toml`, a Tempo network selected in
+/// `foundry.toml`, or an RPC from `--rpc-url`, `ETH_RPC_URL` or `foundry.toml` that serves a Tempo
+/// chain. An RPC is asked for its active hardfork; otherwise the compiled Tempo hardfork schedule
+/// is read for the chain.
+/// A non-Tempo `--chain` (or `CHAIN`) creates an EOA without reading the configuration. Without
+/// `requested` (`--configurable-account`), a configuration or RPC URL that cannot be read also
+/// creates an EOA; `requested` fails on it, and reports why it creates an EOA instead of an
+/// account.
 pub(crate) async fn new_wallet_is_configurable(
     eoa: bool,
     requested: bool,
     chain: Option<Chain>,
     rpc: &RpcOpts,
 ) -> Result<bool> {
+    // `CHAIN` is read only with `--configurable-account`, so a value set for other tools does not
+    // break key generation.
+    let chain = match chain {
+        Some(chain) => Some(chain),
+        None if requested => match std::env::var("CHAIN") {
+            Ok(chain) => Some(
+                chain
+                    .parse()
+                    .map_err(|_| eyre::eyre!("invalid CHAIN: `{chain}` is not a chain"))?,
+            ),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(err) => eyre::bail!("invalid CHAIN: {err}"),
+        },
+        None => None,
+    };
     if eoa || chain.is_some_and(|chain| !chain.is_tempo()) {
         return Ok(false);
     }
@@ -106,7 +123,7 @@ pub(crate) async fn new_wallet_is_configurable(
     let Some((source, hardfork)) = signal else {
         if requested {
             sh_status!(
-                "No Tempo chain was given (--chain, an RPC or foundry.toml); creating an EOA."
+                "No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA."
             )?;
         }
         return Ok(false);

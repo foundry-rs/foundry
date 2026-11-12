@@ -53,6 +53,7 @@ use foundry_evm_core::{
         MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
         TransactionRequestFor, TxFor, TxResultFor, restore_access_warmth,
     },
+    utils::opcodes,
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -1899,17 +1900,27 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.broadcast.is_some()
             || self.gas_metering.paused
             || self.gas_metering.reset
-            || self.gas_metering.touched
             || self.gas_metering.recording
-            || self.recorded_account_diffs_stack.is_some()
-            || !self.allowed_mem_writes.is_empty()
-            || self.core.mapping_slots.is_some()
             || self.core.arbitrary_storage.is_some()
             || self.deploy_code_depth.is_some()
         {
             return OpcodeSet::ALL;
         }
         let mut steps = OpcodeSet::EMPTY;
+        // After a resume or reset, the gas check runs when a frame returns or reverts.
+        if self.gas_metering.touched {
+            steps = steps.union(FRAME_END_OPCODES);
+        }
+        if self.recorded_account_diffs_stack.is_some() {
+            steps = steps.union(STATE_DIFF_OPCODES);
+        }
+        if !self.allowed_mem_writes.is_empty() {
+            steps = steps.union(MEMORY_OPCODES);
+        }
+        // Mapping recording reads the stored slot and the 64-byte hash that derives it.
+        if self.core.mapping_slots.is_some() {
+            steps = steps.union(opcodes([op::SSTORE, op::KECCAK256]));
+        }
         // A log that fails `expectEmit` reverts its frame in the `step_end` of the instruction
         // that emitted it.
         if !self.expected_emits.is_empty() || self.pending_emit_failure.is_some() {
@@ -3037,7 +3048,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     #[cold]
     fn meter_gas_check(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
-        if interp.result().is_err() {
+        // The caller discards the gas and refund of a halting frame, so whichever other hook steps
+        // the halting instruction, its gas stays as the protocol leaves it.
+        if interp.result().is_err_and(|stop| !stop.is_halt()) {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
@@ -3358,8 +3371,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
         curr_depth: usize,
     ) {
-        let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         let opcode = interp.opcode();
+        // Act only on stepped instructions, so that an arm missing from the set fails its test
+        // instead of only working while another cheatcode steps every instruction.
+        if !STATE_DIFF_OPCODES.contains(opcode) {
+            return;
+        }
+        let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         let accessor = interp.message().destination;
         let fork_id = backend.backend().active_fork_id();
         let chain_id = self
@@ -3519,6 +3537,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// within the allowed ranges. If not, revert and fail the test.
     #[cold]
     fn check_mem_opcodes(&self, interpreter: &mut InterpreterFor<'_, '_, FEN>, depth: u64) {
+        // See `record_state_diffs`.
+        if !MEMORY_OPCODES.contains(interpreter.opcode()) {
+            return;
+        }
         let Some(ranges) = self.allowed_mem_writes.get(&depth) else {
             return;
         };
@@ -3745,16 +3767,45 @@ const LOG_EMITTING_OPCODES: OpcodeSet = opcodes([
     op::SELFDESTRUCT,
 ]);
 
-/// Returns the set of `ops`.
-const fn opcodes<const N: usize>(ops: [u8; N]) -> OpcodeSet {
-    let mut set = OpcodeSet::EMPTY;
-    let mut i = 0;
-    while i < N {
-        set.insert(ops[i]);
-        i += 1;
-    }
-    set
-}
+/// The instructions that end a frame with a result its caller reads: a halt discards the gas and
+/// refund of the frame.
+const FRAME_END_OPCODES: OpcodeSet = opcodes([op::STOP, op::RETURN, op::REVERT, op::SELFDESTRUCT]);
+
+/// The instructions that `startStateDiffRecording` records.
+const STATE_DIFF_OPCODES: OpcodeSet = opcodes([
+    op::SELFDESTRUCT,
+    op::SLOAD,
+    op::SSTORE,
+    op::EXTCODECOPY,
+    op::EXTCODESIZE,
+    op::EXTCODEHASH,
+    op::BALANCE,
+]);
+
+/// The instructions that read or write memory, which `expectSafeMemory` checks.
+const MEMORY_OPCODES: OpcodeSet = opcodes([
+    op::MSTORE,
+    op::MSTORE8,
+    op::MLOAD,
+    op::CALL,
+    op::CALLDATACOPY,
+    op::CODECOPY,
+    op::RETURNDATACOPY,
+    op::EXTCODECOPY,
+    op::CALLCODE,
+    op::STATICCALL,
+    op::DELEGATECALL,
+    op::KECCAK256,
+    op::LOG0,
+    op::LOG1,
+    op::LOG2,
+    op::LOG3,
+    op::LOG4,
+    op::CREATE,
+    op::CREATE2,
+    op::RETURN,
+    op::REVERT,
+]);
 
 /// Returns true if the kind of account access is a call.
 const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
@@ -3980,9 +4031,61 @@ mod tests {
 
         cheats.recording_accesses = false;
         cheats.gas_metering.touched = true;
-        assert_eq!(cheats.steps(), OpcodeSet::ALL);
+        assert_eq!(cheats.steps(), opcodes([op::STOP, op::RETURN, op::REVERT, op::SELFDESTRUCT]));
 
         cheats.gas_metering.touched = false;
+        cheats.recorded_account_diffs_stack = Some(Vec::new());
+        assert_eq!(
+            cheats.steps(),
+            opcodes([
+                op::SELFDESTRUCT,
+                op::SLOAD,
+                op::SSTORE,
+                op::EXTCODECOPY,
+                op::EXTCODESIZE,
+                op::EXTCODEHASH,
+                op::BALANCE,
+            ])
+        );
+
+        cheats.recorded_account_diffs_stack = None;
+        cheats.allowed_mem_writes.insert(1, Vec::new());
+        assert_eq!(
+            cheats.steps(),
+            opcodes([
+                op::MSTORE,
+                op::MSTORE8,
+                op::MLOAD,
+                op::CALL,
+                op::CALLDATACOPY,
+                op::CODECOPY,
+                op::RETURNDATACOPY,
+                op::EXTCODECOPY,
+                op::CALLCODE,
+                op::STATICCALL,
+                op::DELEGATECALL,
+                op::KECCAK256,
+                op::LOG0,
+                op::LOG1,
+                op::LOG2,
+                op::LOG3,
+                op::LOG4,
+                op::CREATE,
+                op::CREATE2,
+                op::RETURN,
+                op::REVERT,
+            ])
+        );
+
+        cheats.allowed_mem_writes.clear();
+        cheats.core.mapping_slots = Some(Default::default());
+        assert_eq!(cheats.steps(), [op::SSTORE, op::KECCAK256].into_iter().collect());
+
+        cheats.core.mapping_slots = None;
+        cheats.gas_metering.paused = true;
+        assert_eq!(cheats.steps(), OpcodeSet::ALL);
+        cheats.gas_metering.paused = false;
+
         cheats.register_storage_load_hook(Address::ZERO, Address::ZERO, [0; 4]);
         assert_eq!(cheats.steps(), OpcodeSet::ALL);
     }

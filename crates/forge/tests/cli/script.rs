@@ -7075,6 +7075,19 @@ Script ran successfully.
 [GAS]
 
 "#]]);
+
+    // `--json` keeps stdout for the result, which carries the logs instead.
+    cmd.forge_fuse()
+        .args(["script", "script/Foo.s.sol", "--live-logs", "--json"])
+        .assert_json_stdout(str![[r#"
+{
+  "logs": [
+    "Setup",
+    "Run 1"
+  ],
+  "...": "{...}"
+}
+"#]]);
 }
 
 #[forgetest_init]

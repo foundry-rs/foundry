@@ -120,7 +120,10 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub ffi: bool,
 
-    /// Whether to show `console.log` outputs in realtime during script/test execution
+    /// Whether to show `console.log` outputs in realtime during script/test execution.
+    ///
+    /// Ignored when `--json` or `--junit` writes a report to stdout. Otherwise, logs print live
+    /// instead of being captured, so `forge test --json-file` does not include them.
     #[arg(long)]
     #[serde(skip)]
     pub live_logs: bool,

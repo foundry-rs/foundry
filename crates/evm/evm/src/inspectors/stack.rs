@@ -31,7 +31,7 @@ use foundry_evm_core::{
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryExecutionHooks,
         FoundryTxConversion, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
         PreparedTx, SnapshotRestores, TransactionRequestFor, TxFor, TxResultFor, TypesFor,
-        cool_loaded, destructed_accounts, evm_env, merge_pending_changes,
+        destructed_accounts, evm_env, merge_pending_changes,
         merge_untracked_pending_changes_with_warmth, put_transient, release_inspector,
         take_transient, warm_accounts, warm_set,
     },
@@ -337,10 +337,11 @@ macro_rules! call_inspectors {
 /// a different status or a revert with a different message.
 macro_rules! changed {
     ($result:ident, $stop:ident, $call:expr) => {{
-        let previous_output = $result.output.clone();
+        // Only a revert compares its output, so other outcomes skip the copy.
+        let previous_output = ($stop == InstrStop::Revert).then(|| $result.output.clone());
         $call;
         $result.stop != $stop
-            || ($result.stop == InstrStop::Revert && $result.output != previous_output)
+            || previous_output.is_some_and(|previous_output| $result.output != previous_output)
     }};
 }
 
@@ -2499,7 +2500,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        cool_loaded(state);
+        state.cool_loaded();
         for (address, slots) in arbitrary {
             state.set_account_warm(&address, true);
             for key in slots {
@@ -2785,19 +2786,15 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     message: &MessageFor<FEN>,
     fork_block_number: Option<u64>,
 ) -> Option<MessageResultFor<FEN>> {
-    let selector = message.input.as_bytes(interp.memory()).get(..4);
-    let is_arb_block_number = selector == Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR[..]);
-    let evm = interp.host();
     if message.destination != arbitrum::ARB_SYS_ADDRESS
         || message.code_address != arbitrum::ARB_SYS_ADDRESS
-        || !arbitrum::is_arbitrum_chain(evm.version().chain_id)
+        || !arbitrum::is_arbitrum_chain(interp.host().version().chain_id)
+        || message.input.as_bytes(interp.memory()).get(..4)
+            != Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR[..])
     {
         return None;
     }
-
-    if !is_arb_block_number {
-        return None;
-    }
+    let evm = interp.host();
 
     // Forks report their L2 block, which the block env lacks on Arbitrum because `NUMBER` returns
     // the L1 block there. Without a fork the block env is read here to follow `vm.roll`.
@@ -2944,6 +2941,13 @@ mod tests {
                 op::CREATE2,
             ])
         );
+
+        // Edge coverage steps jumps, and the script inspector steps `ADDRESS`.
+        let mut campaign = InspectorStack::<EthEvmNetwork>::new();
+        campaign.collect_edge_coverage(true);
+        assert_eq!(steps(&mut campaign), set(&[op::JUMP, op::JUMPI]));
+        campaign.script(Address::with_last_byte(1));
+        assert_eq!(steps(&mut campaign), set(&[op::JUMP, op::JUMPI, op::ADDRESS]));
 
         // An inspector without its own config steps every opcode.
         stack.print(true);
