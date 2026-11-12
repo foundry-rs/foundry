@@ -484,8 +484,6 @@ pub struct InspectorStackInner {
     executed_destructs: Option<AddressMap<DestructedAccount>>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
-    /// LIFO stack of the depths of CREATE frames that were redirected to the CREATE2 factory.
-    pending_create2_redirects: Vec<u16>,
     /// LIFO stack tracking the effective address of traced calls delegated to the EVM provider.
     pending_call_traces: Vec<PendingCallTrace>,
     /// Pending CREATE2 deployer validation error, returned after the create hooks of the other
@@ -536,15 +534,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
         let previous = self.synthetic_create_depth;
-        let create2_redirects = self.pending_create2_redirects.len();
         // A `deployCode` create called from the test contract duplicates a top-level deployment,
         // so isolate it as well.
         self.synthetic_create_depth = (message.depth == 2).then_some(2);
         let env = evm_env(evm);
         let result = self.execute_on_frame_evm(Some(cheats), backend, evm, env, message);
         self.synthetic_create_depth = previous;
-        // Drop redirects left behind if nested execution aborted before their frames ended.
-        self.pending_create2_redirects.truncate(create2_redirects);
         result
     }
 
@@ -570,6 +565,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
+        let create2_redirects = cheats.pending_create2_redirects.len();
         // The nested transaction has its own journal.
         let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
         // The nested transaction's persistent writes refer to its own journal, so they are kept
@@ -587,6 +583,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let executed = child.transact(tx).map(ExecutedTx::detach);
         // SAFETY: The nested EVM runs over the lifecycle's owned databases.
         let mut child = unsafe { release_inspector(child) };
+        cheats.pending_create2_redirects.truncate(create2_redirects);
         cheats.applied_access_list = applied_access_list;
         let destructed = mem::replace(&mut self.executed_destructs, outer_destructs);
         let result = match executed {
@@ -1095,12 +1092,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
-        if message.kind != MessageKind::Call
-            || self.inner.pending_create2_redirects.last() != Some(&message.depth)
+        if message.kind != MessageKind::Call {
+            return;
+        }
+        let Some(cheats) = self.cheatcodes.as_deref_mut() else { return };
+        if cheats.pending_create2_redirects.last().map(|(depth, ..)| *depth) != Some(message.depth)
         {
             return;
         }
-        self.inner.pending_create2_redirects.pop();
+        cheats.pending_create2_redirects.pop();
 
         if result.stop.is_success() {
             match Address::try_from(result.output.as_ref()) {
@@ -1244,7 +1244,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Option<MessageResultFor<FEN>> {
-        if message.destination == CHEATCODE_ADDRESS {
+        if message.destination == CHEATCODE_ADDRESS
+            || self.inner.extra_cheatcode_addresses.contains(&message.destination)
+        {
             return None;
         }
         let backend = &mut *self.backend;
@@ -1272,9 +1274,19 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // The frame EVM's hooks see their own interpreter, not the caller's memory the input of
         // a call instruction's message is a range of.
         message.input = message.input.to_bytes(interp.memory()).into();
+        // The new root interpreter describes the CREATE itself, so preserve its issuing code.
+        let creator = (message.kind.is_create() && interp.message().depth < message.depth)
+            .then_some(interp.message().code_address);
+        let previous_creator = self
+            .cheatcodes
+            .as_deref_mut()
+            .map(|cheats| mem::replace(&mut cheats.env_handoff_creator, creator));
         let evm = interp.host();
         let cheatcodes = self.cheatcodes.as_deref_mut();
         let result = self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, message);
+        if let Some((cheats, previous)) = self.cheatcodes.as_deref_mut().zip(previous_creator) {
+            cheats.env_handoff_creator = previous;
+        }
         match result {
             Ok(result) => {
                 // evm2 runs the end hooks right after this hook returns a result.
@@ -1460,7 +1472,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             origin: (origin != message.caller).then_some(origin),
             observe: false,
         });
-        let create2_redirects = self.inner.pending_create2_redirects.len();
+        let create2_redirects =
+            self.cheatcodes.as_deref().map_or(0, |cheats| cheats.pending_create2_redirects.len());
         // The nested transaction has its own journal.
         let snapshot_restores =
             self.cheatcodes.as_deref_mut().map(|cheats| mem::take(&mut cheats.snapshot_restores));
@@ -1493,7 +1506,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let switch_warmth = self.inner.isolated_switch_warmth.take();
 
         self.inner.exit_inner_context(previous_inner);
-        self.inner.pending_create2_redirects.truncate(create2_redirects);
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.pending_create2_redirects.truncate(create2_redirects);
+        }
         // A snapshot restoration that survived the nested transaction replaced its state.
         let restored = self.cheatcodes.as_deref_mut().zip(snapshot_restores).is_some_and(
             |(cheats, restores)| mem::replace(&mut cheats.snapshot_restores, restores).kept(),
@@ -1923,11 +1938,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
         let Ok(code) = account.load_code() else { return false };
         account.warm();
+        drop(account);
 
         let mut input = Vec::with_capacity(32 + initcode.len());
         input.extend_from_slice(&B256::from(salt).0);
         input.extend_from_slice(&initcode);
 
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.start_create2_redirect(interp, message);
+        }
         message.kind = MessageKind::Call;
         message.destination = create2_deployer;
         message.call_target = create2_deployer;
@@ -1935,7 +1954,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         message.code = code;
         message.input = Bytes::from(input).into();
         message.salt = B256::ZERO;
-        self.inner.pending_create2_redirects.push(message.depth);
         true
     }
 
@@ -2512,7 +2530,7 @@ impl InspectorStackInner {
     /// observed by the whole stack, such as for `deployCode` or an in-flight spec change.
     fn execute_on_frame_evm<FEN: FoundryEvmNetwork>(
         &mut self,
-        cheatcodes: Option<&mut Cheatcodes<FEN>>,
+        mut cheatcodes: Option<&mut Cheatcodes<FEN>>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: EvmEnvFor<FEN>,
@@ -2521,10 +2539,20 @@ impl InspectorStackInner {
         // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
         // which only lives for this call; its inspector is released before its state moves back.
         let mut frame = unsafe { backend.backend().lifecycle().begin_frame_evm(evm, env) };
-        frame.set_inspector(InspectorStackRefMut { cheatcodes, inner: self, backend });
+        let create2_redirects =
+            cheatcodes.as_deref().map_or(0, |cheats| cheats.pending_create2_redirects.len());
+        frame.set_inspector(InspectorStackRefMut {
+            cheatcodes: cheatcodes.as_deref_mut(),
+            inner: self,
+            backend,
+        });
         let result = Host::execute_message(&mut frame, message);
         // SAFETY: See above.
         let frame = unsafe { release_inspector(frame) };
+        // Drop redirects left behind if execution aborted before their frames ended.
+        if let Some(cheats) = cheatcodes {
+            cheats.pending_create2_redirects.truncate(create2_redirects);
+        }
         // SAFETY: See above.
         unsafe { backend.backend().lifecycle().end_frame_evm(evm, frame) };
         result
@@ -2581,9 +2609,11 @@ impl InspectorStackInner {
             &mut blob_hashes_override,
         );
         let in_replay = mem::replace(&mut cheats.in_replay, true);
+        let create2_redirects = cheats.pending_create2_redirects.len();
         let mut inspector =
             InspectorStackRefMut { cheatcodes: Some(&mut *cheats), inner: &mut *self, backend };
         let executed = prepared.execute(evm, Some(&mut inspector), untracked);
+        cheats.pending_create2_redirects.truncate(create2_redirects);
         cheats.snapshot_restores = snapshot_restores;
         cheats.in_replay = in_replay;
         cheats.env_overrides.swap_transaction_overrides(

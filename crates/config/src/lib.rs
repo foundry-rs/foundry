@@ -240,6 +240,9 @@ pub struct Config {
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
+    ///
+    /// These addresses are granted cheatcode access in forked tests and scripts, even when not
+    /// referenced by a contract.
     pub libraries: Vec<String>,
     /// Whether to enable the build cache.
     pub cache: bool,

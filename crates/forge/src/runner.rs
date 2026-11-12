@@ -661,6 +661,12 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             cheats.set_pending_account_diffs(pending_account_diffs);
         }
 
+        // Explicitly configured libraries are trusted, even when solc has already resolved their
+        // link references and they are absent from `library_addresses`.
+        for address in self.mcr.libraries.libs.values().flat_map(|libraries| libraries.values()) {
+            self.executor.backend_mut().allow_cheatcode_access(address.parse()?);
+        }
+
         // Configured libraries may already exist and are not present in `libs_to_deploy`.
         for &address in &self.mcr.library_addresses {
             if !self.executor.is_empty_code(address)? {
