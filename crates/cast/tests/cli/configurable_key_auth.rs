@@ -106,6 +106,36 @@ async fn tempo_t14_configurable_account_authorizes_access_keys(cmd: _) {
         .stderr_lossy();
     assert!(stderr.contains("reach weight 1"), "{stderr}");
 
+    // With `--tempo.owner`, both owners approve locally. A lane has its own nonce, which differs
+    // from the account's protocol nonce after its first two transactions.
+    let second_owner = format!("private-key://{}", hex::encode_prefixed(second.to_bytes()));
+    let lanes = tempfile::tempdir().unwrap();
+    let lanes_file = lanes.path().join("tempo.lanes.toml");
+    std::fs::write(&lanes_file, "grants = 7\n").unwrap();
+    let lane_key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x35)).unwrap();
+    cmd.cast_fuse()
+        .args(["keychain", "authorize", &lane_key.address().to_string()])
+        .args(&send_args)
+        .args(["--tempo.owner", &second_owner, "--tempo.lane", "grants"])
+        .args(["--tempo.lanes-file", lanes_file.to_str().unwrap()])
+        .assert_success();
+    assert!(is_provisioned(&mut cmd, &rpc, account, lane_key.address()));
+
+    // A selected access key is rejected even when the owners reach the threshold without it.
+    let first_owner = format!("private-key://{first_key}");
+    let stderr = cmd
+        .cast_fuse()
+        .args(["keychain", "authorize", &inline_key.address().to_string()])
+        .args(["--tempo.configurable-account", &account.to_string(), "--rpc-url", &rpc])
+        .args(["--tempo.owner", &first_owner, "--tempo.owner", &second_owner])
+        .args(["--tempo.access-key", &hex::encode_prefixed(onchain_key.to_bytes())])
+        .args(["--tempo.root-account", &account.to_string(), "--tempo.fee-token", &fee_token])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stderr.contains("not a Tempo access key"), "{stderr}");
+    assert!(!is_provisioned(&mut cmd, &rpc, account, inline_key.address()));
+
     // The second owner approves the owner digest of the account-bound authorization elsewhere.
     let authorization =
         KeyAuthorization::unrestricted(CHAIN_ID, SignatureType::Secp256k1, inline_key.address())

@@ -15,7 +15,7 @@ use crate::{
     tx::{CastTxBuilder, SendTxOpts, apply_poll_interval},
 };
 use alloy_ens::NameOrAddress;
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{Address, U64, hex};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use clap::Args;
@@ -28,10 +28,11 @@ use foundry_common::tempo::configurable_account::{
     combine_approvals, current_config, parse_owner_signature,
 };
 use foundry_wallets::WalletSigner;
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::ACCOUNT_KEYCHAIN_ADDRESS;
 use tempo_primitives::transaction::{
-    KeyAuthorization, PrimitiveSignature, SignedKeyAuthorization, configurable_account_digest,
+    KeyAuthorization, PrimitiveSignature, SignedKeyAuthorization, TEMPO_EXPIRING_NONCE_KEY,
+    configurable_account_digest,
 };
 
 /// Sign a key authorization as a Tempo configurable account's owners (T14, TIP-1111).
@@ -142,7 +143,11 @@ pub(crate) async fn send_keychain_tx_as_configurable_account(
     // `--from` may name the account, so the wallet's own key is resolved without it.
     let mut key_wallet = send_tx.eth.wallet.clone();
     key_wallet.from = None;
-    let mut signer = foundry_common::tempo::maybe_signer(&key_wallet, None).await?.0;
+    let (mut signer, access_key) = foundry_common::tempo::maybe_signer(&key_wallet, None).await?;
+    eyre::ensure!(
+        access_key.is_none(),
+        "configurable account owners approve with their own keys, not a Tempo access key"
+    );
     let account = resolve_configurable_account::<TempoNetwork>(
         &tx.tempo,
         &config,
@@ -155,6 +160,16 @@ pub(crate) async fn send_keychain_tx_as_configurable_account(
     let print_expires_at = tx.tempo.resolve_expires();
     let tempo_sponsor = tx.tempo.sponsor_config().await?;
     let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
+    // The builder fills the protocol nonce; a lane or other nonce key has its own counter.
+    if tx.nonce.is_none()
+        && let Some(nonce_key) = tx.tempo.nonce_key
+        && !nonce_key.is_zero()
+        && nonce_key != TEMPO_EXPIRING_NONCE_KEY
+    {
+        let nonce =
+            provider.get_transaction_count_with_nonce_key(account.account(), nonce_key).await?;
+        tx.nonce = Some(U64::from(nonce));
+    }
     let mut builder = CastTxBuilder::new(&provider, tx, &config)
         .await?
         .with_to(Some(NameOrAddress::Address(ACCOUNT_KEYCHAIN_ADDRESS)))
