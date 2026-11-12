@@ -3165,6 +3165,8 @@ fn symbolic_invariant_keeps_minimization_at_shrink_deadline(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_keeps_minimization_at_shrink_deadline");
     prj.update_config(|config| {
         config.invariant.timeout = Some(1);
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
         // Leave the failure to the timed campaign, whose shrink deadline minimization shares.
         config.symbolic.invariant_depth = 0;
     });
@@ -3206,6 +3208,9 @@ contract SymbolicShrinkDeadline is Test {
         .stdout
         .clone();
     let result = json_test_result(&output, "invariant_notBroken()");
-    let accepted = result["invariant_failures"][0]["minimization"]["accepted"].as_u64();
+    let failure = &result["invariant_failures"][0];
+    let accepted = failure["minimization"]["accepted"].as_u64();
     assert!(accepted.is_some_and(|accepted| accepted > 0), "{result}");
+    // The deadline stops minimization before it reaches the smallest failing value.
+    assert_ne!(failure["counterexample"]["Sequence"][1][0]["args"], "1001", "{result}");
 }
