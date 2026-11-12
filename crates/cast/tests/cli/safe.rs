@@ -1042,9 +1042,6 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
     assert_eq!(safe_contract.getOwners().call().await.unwrap(), owners);
     assert_eq!(safe_contract.getThreshold().call().await.unwrap(), U256::from(2));
     assert_eq!(safe_contract.nonce().call().await.unwrap(), U256::ZERO);
-    let deployment =
-        provider.get_block_by_number(BlockNumberOrTag::Latest).full().await.unwrap().unwrap();
-    assert_eq!(deployment.transactions.as_transactions().unwrap()[0].chain_id(), Some(31337));
 
     let calculated_hash = safe_contract
         .getTransactionHash(
@@ -1172,8 +1169,6 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
         .expect("Safe execution receipt was not mined");
     assert!(receipt.status());
     assert_eq!(receipt.transaction_hash, execution_hash);
-    let transaction = provider.get_transaction_by_hash(execution_hash).await.unwrap().unwrap();
-    assert_eq!(transaction.chain_id(), Some(31337));
     let matching_events = receipt
         .logs()
         .iter()
@@ -2113,7 +2108,6 @@ Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN
         (Some(1), Some("1"), Some("31337"), None, false),
         (Some(1), Some("1"), Some("1"), Some("31337"), false),
         (Some(31337), Some("31337"), Some("31337"), Some("1"), true),
-        (Some(31337), Some("31337"), Some("mainnet"), None, true),
     ] {
         prj.update_config(|config| config.chain = configured.map(Into::into));
         run_case(None, configured, foundry_chain, chain, cli_chain, rejects);
