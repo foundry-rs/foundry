@@ -24,5 +24,29 @@ contract C {
             /* comment */
             x();
         }
+
+        for (; c;) {
+            x();
+        }
+
+        if (c) {
+            if (d) {
+                x();
+            }
+        }
+
+        if (c) {
+            if (d) {
+                x();
+            }
+        }
+
+        while (c) {
+            x(1, 2);
+        }
+
+        while (c) {
+            x(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, -1);
+        }
     }
 }

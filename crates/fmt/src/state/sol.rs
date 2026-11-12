@@ -2899,7 +2899,7 @@ impl<'ast> State<'_, 'ast> {
 
             ast::StmtKind::If(_, _, Some(_)) => true,
             ast::StmtKind::If(_, then, None) => {
-                self.has_comment_between(stmt.span.lo(), then.span.lo())
+                self.has_breakable_comment_between(stmt.span.lo(), then.span.lo())
                     || self.is_multiline_block_stmt(then, empty_as_multiline)
             }
 
@@ -2919,7 +2919,7 @@ impl<'ast> State<'_, 'ast> {
             | ast::StmtKind::Revert(_, _)
             | ast::StmtKind::Placeholder => {
                 // Internal comments can force hard breaks even when the source occupies one line.
-                self.has_comment_between(stmt.span.lo(), stmt.span.hi())
+                self.has_breakable_comment_between(stmt.span.lo(), stmt.span.hi())
             }
         }
     }
@@ -2950,7 +2950,7 @@ impl<'ast> State<'_, 'ast> {
         if (!matches!(
             self.config.single_line_statement_blocks,
             config::SingleLineBlockStyle::Single
-        ) || self.has_comment_between(block.span.lo(), block.span.hi()))
+        ) || self.has_breakable_comment_between(block.span.lo(), block.span.hi()))
             && !self.same_source_line(block.span.lo(), block.span.hi())
             && let Some(snip) = self.snippet(block.span)
         {

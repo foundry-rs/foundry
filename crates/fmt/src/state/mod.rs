@@ -585,6 +585,10 @@ impl<'sess> State<'sess, '_> {
 
             for line in snip.lines() {
                 let line = line.trim();
+                // Blank lines add no width to the single-line form.
+                if line.is_empty() {
+                    continue;
+                }
 
                 if prev_needs_space {
                     size += 1;
