@@ -189,7 +189,9 @@ where
         .gas_limit();
     // The node runs each operation on the state the ones before it leave, with the placeholder
     // quorum of each configurable account.
-    let simulated = match simulate(provider, &requests, block_gas_limit).await {
+    // The gas each call uses, learned by the simulations and kept for the later ones.
+    let mut used = vec![None; requests.len()];
+    let simulated = match simulate(provider, &requests, block_gas_limit, &mut used).await {
         Ok(calls) => Some(calls),
         // Without it, a transaction that depends on an earlier unsent one cannot be estimated, and
         // its owners would approve a gas limit that runs out.
@@ -264,6 +266,7 @@ where
                 gas_limit = least_gas_limit(
                     provider,
                     &requests[..=position],
+                    &mut used[..=position],
                     gas_limit,
                     block_gas_limit,
                     gas_estimate_multiplier,
@@ -308,62 +311,55 @@ where
 /// ones before it leave.
 ///
 /// A node simulates at most 256 blocks, so the calls share blocks of `block_gas_limit` gas, in
-/// order, while the gas they are given fits in the block. A call with a gas limit is given it, and
-/// one without is given the largest share of the block that keeps the blocks within the bound, or
-/// the whole block when it is alone in it. A call that fails with its share, or that the node
-/// rejects with it, is simulated again alone in a block.
+/// order, as a node fits them: a call joins a block while its gas limit fits in the gas that the
+/// calls before it in the block left, and a call without one is given that gas. The gas each call
+/// uses is learned from the simulations, kept in `used`, and taken until then as the most of the
+/// known ones, or as nothing when that needs too many blocks. When the node rejects a call, or a
+/// call without a gas limit fails after other calls, the call starts a new block and the calls are
+/// simulated again.
 async fn simulate<N: Network>(
     provider: &RootProvider<N>,
     requests: &[N::TransactionRequest],
     block_gas_limit: u64,
+    used: &mut [Option<u64>],
 ) -> Result<Vec<SimCallResult>>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
 {
     const MAX_BLOCKS: usize = 256;
-    let mut alone = BTreeSet::new();
+    let mut starts = BTreeSet::new();
     loop {
-        let layout = |share: u64| {
+        let layout = |guess: u64| {
             let mut blocks = Vec::<Vec<usize>>::new();
-            let mut reserved = block_gas_limit;
+            let mut block_used = 0u64;
             for (position, request) in requests.iter().enumerate() {
-                let gas = if alone.contains(&position) {
-                    block_gas_limit
-                } else {
-                    request.gas_limit().unwrap_or(share)
-                };
-                if reserved.saturating_add(gas) > block_gas_limit {
+                let fits = request
+                    .gas_limit()
+                    .is_none_or(|gas| gas <= block_gas_limit.saturating_sub(block_used));
+                if blocks.is_empty() || starts.contains(&position) || !fits {
                     blocks.push(Vec::new());
-                    reserved = 0;
+                    block_used = 0;
                 }
-                reserved = reserved.saturating_add(gas);
+                block_used = block_used.saturating_add(used[position].unwrap_or(guess));
                 blocks.last_mut().expect("a block").push(position);
             }
             blocks
         };
-        // The blocks only grow in number with the share, so the largest share that fits is
-        // searched for.
-        if layout(1).len() > MAX_BLOCKS {
+        // Too much only adds blocks and too little only costs another simulation, as the node
+        // rejects a call that does not fit, so the calls not simulated yet are taken to use
+        // nothing when the most known gas used would need too many blocks.
+        let mut blocks = layout(used.iter().flatten().max().copied().unwrap_or_default());
+        if blocks.len() > MAX_BLOCKS {
+            blocks = layout(0);
+        }
+        if blocks.len() > MAX_BLOCKS {
             bail!(
                 "the transactions need more than {MAX_BLOCKS} blocks of gas limit \
                  {block_gas_limit} to simulate in order"
             );
         }
-        let (mut low, mut high) = (1, block_gas_limit);
-        while low < high {
-            let middle = high - (high - low) / 2;
-            if layout(middle).len() <= MAX_BLOCKS {
-                low = middle;
-            } else {
-                high = middle - 1;
-            }
-        }
-        let share = low;
-        let blocks = layout(share);
+        let starts_block = |position: usize| blocks.iter().any(|block| block[0] == position);
 
-        let shared = |block: &[usize], position: usize| {
-            block.len() > 1 && requests[position].gas_limit().is_none()
-        };
         // Simulates the first `count` calls.
         let run = async |count: usize| {
             let payload = SimulatePayload {
@@ -374,13 +370,7 @@ where
                         calls: block
                             .iter()
                             .filter(|&&position| position < count)
-                            .map(|&position| {
-                                let mut request = requests[position].clone();
-                                if shared(block, position) {
-                                    request.set_gas_limit(share);
-                                }
-                                request
-                            })
+                            .map(|&position| requests[position].clone())
                             .collect(),
                         ..Default::default()
                     })
@@ -393,11 +383,12 @@ where
                     (payload, "latest"),
                 )
                 .await
+                .map(|blocks| blocks.into_iter().flat_map(|block| block.calls).collect::<Vec<_>>())
         };
-        let simulated = match run(requests.len()).await {
-            Ok(simulated) => simulated,
-            // The node rejects every call when one is given less gas than its intrinsic gas, so
-            // the first call it rejects is found by simulating shorter prefixes.
+        let calls = match run(requests.len()).await {
+            Ok(calls) => calls,
+            // The node rejects every call when one does not fit in its block, so the first call it
+            // rejects is found by simulating shorter prefixes.
             Err(error) => {
                 let (mut low, mut high) = (0, requests.len().saturating_sub(1));
                 while low < high {
@@ -408,33 +399,47 @@ where
                         low = middle + 1;
                     }
                 }
-                if !blocks.iter().any(|block| block.contains(&low) && shared(block, low)) {
+                if starts_block(low) {
                     return Err(error.into());
                 }
-                alone.insert(low);
+                let prefix = run(low).await?;
+                if prefix.len() != low {
+                    bail!("eth_simulateV1 returned an unexpected number of results");
+                }
+                for (position, call) in prefix.iter().enumerate() {
+                    used[position] = Some(call.gas_used);
+                }
+                // A call without a gas limit that fails before it in its block used the gas left
+                // in the block, so that call starts a new block instead.
+                let block = blocks.iter().find(|block| block.contains(&low)).expect("a block");
+                let failed = block.iter().copied().find(|&position| {
+                    position < low
+                        && position != block[0]
+                        && requests[position].gas_limit().is_none()
+                        && !prefix[position].status
+                });
+                starts.insert(failed.unwrap_or(low));
                 continue;
             }
         };
-        if simulated.len() != blocks.len()
-            || simulated
-                .iter()
-                .zip(&blocks)
-                .any(|(result, block)| result.calls.len() != block.len())
-        {
+        if calls.len() != requests.len() {
             bail!("eth_simulateV1 returned an unexpected number of results");
         }
-        let calls = simulated.into_iter().flat_map(|block| block.calls).collect::<Vec<_>>();
+        for (position, call) in calls.iter().enumerate() {
+            used[position] = Some(call.gas_used);
+        }
 
-        let retried = blocks
-            .iter()
-            .flat_map(|block| block.iter().filter(|&&position| shared(block, position)))
-            .filter(|&&position| !calls[position].status)
-            .copied()
+        let retried = (0..requests.len())
+            .filter(|&position| {
+                !starts_block(position)
+                    && requests[position].gas_limit().is_none()
+                    && !calls[position].status
+            })
             .collect::<Vec<_>>();
         if retried.is_empty() {
             return Ok(calls);
         }
-        alone.extend(retried);
+        starts.extend(retried);
     }
 }
 
@@ -444,6 +449,7 @@ where
 async fn least_gas_limit<N: Network>(
     provider: &RootProvider<N>,
     requests: &[N::TransactionRequest],
+    used: &mut [Option<u64>],
     gas_limit: u64,
     cap: u64,
     multiplier: u64,
@@ -452,22 +458,25 @@ where
     N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
 {
     let mut requests = requests.to_vec();
-    let succeeds = async |requests: &mut [N::TransactionRequest], gas: u64| -> Result<bool> {
+    let succeeds = async |requests: &mut [N::TransactionRequest],
+                          used: &mut [Option<u64>],
+                          gas: u64|
+           -> Result<bool> {
         requests.last_mut().expect("a request").set_gas_limit(gas);
-        Ok(simulate(provider, requests, cap).await?.last().expect("a result").status)
+        Ok(simulate(provider, requests, cap, used).await?.last().expect("a result").status)
     };
     let gas_limit = gas_limit.min(cap);
-    if succeeds(&mut requests, gas_limit).await? {
+    if succeeds(&mut requests, used, gas_limit).await? {
         return Ok(gas_limit);
     }
-    if gas_limit == cap || !succeeds(&mut requests, cap).await? {
+    if gas_limit == cap || !succeeds(&mut requests, used, cap).await? {
         bail!("it fails after the transactions before it even with the block gas limit {cap}");
     }
     let (mut low, mut high) = (gas_limit, cap);
     // Within 1% of the least gas limit, as `eth_estimateGas` does.
     while high - low > (low / 100).max(1) {
         let middle = low + (high - low) / 2;
-        if succeeds(&mut requests, middle).await? {
+        if succeeds(&mut requests, used, middle).await? {
             high = middle;
         } else {
             low = middle;

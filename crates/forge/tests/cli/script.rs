@@ -11040,18 +11040,20 @@ import {Deep} from "../src/Deep.sol";
 contract CaGasScript is Script {
     function run() external {
         uint256 calls = vm.envUint("CA_CALLS");
+        // Every `fixedEvery`-th call fixes its gas limit.
+        uint256 fixedEvery = vm.envUint("CA_FIXED_EVERY");
         vm.startBroadcast();
         if (calls == 0) {
             new Deep().recurse(100);
         } else {
             for (uint256 i; i < calls; i++) {
-                // Every other call of the long run fixes its gas limit.
                 bool ok;
-                if (calls > 256 && i % 2 == 1) {
+                if (fixedEvery != 0 && i % fixedEvery == fixedEvery - 1) {
                     (ok,) = address(0xC0FFEE).call{gas: 800_000}("");
                 } else {
                     (ok,) = address(0xC0FFEE).call("");
                 }
+                ok;
             }
         }
         vm.stopBroadcast();
@@ -11059,9 +11061,12 @@ contract CaGasScript is Script {
 }
 "#,
     );
-    for (calls, block_gas_limit, sent) in
-        [(16, Some(1_000_000), 16), (0, None, 2), (257, Some(1_000_000), 257)]
-    {
+    for (calls, fixed_every, block_gas_limit, sent) in [
+        (16, 0, Some(1_000_000), 16),
+        (0, 0, None, 2),
+        (257, 2, Some(1_000_000), 257),
+        (257, 1, Some(1_000_000), 257),
+    ] {
         let (api, handle) = spawn(
             NodeConfig::test_tempo()
                 .with_hardfork(Some(TempoHardfork::T14.into()))
@@ -11099,6 +11104,7 @@ contract CaGasScript is Script {
             &keys[0],
         ]);
         cmd.env("CA_CALLS", calls.to_string());
+        cmd.env("CA_FIXED_EVERY", fixed_every.to_string());
         cmd.assert_success();
         let sequence: Value =
             foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
@@ -11126,6 +11132,7 @@ contract CaGasScript is Script {
             "tempo",
         ]);
         cmd.env("CA_CALLS", calls.to_string());
+        cmd.env("CA_FIXED_EVERY", fixed_every.to_string());
         for approval in &approvals {
             cmd.args(["--tempo.owner-signature", approval]);
         }
