@@ -2,7 +2,9 @@ use crate::transaction::TransactionWithMetadata;
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{Address, B256, Bytes, TxHash, hex, map::HashMap};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, fs, shell};
+use foundry_common::{
+    SELECTOR_LEN, TransactionMaybeSigned, fs, shell, tempo::configurable_account::ConfigJson,
+};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -76,18 +78,16 @@ pub struct AwaitingOwners {
     /// The configurable account that sends the transaction.
     pub account: Address,
     /// The account's configuration, as `--tempo.config` takes it.
-    pub config: serde_json::Value,
+    pub config: ConfigJson,
     /// The unsigned Tempo transaction, as `cast mktx --raw-unsigned` prints it.
     pub unsigned_tx: Bytes,
     /// The digest that each owner signs.
     pub digest: B256,
-    /// The owner approvals of `digest` collected so far, as Tempo primitive signatures.
+    /// The owner approvals of `digest` collected so far, as Tempo primitive signatures. Resume
+    /// signs the transaction with them once they reach the threshold, and records it as a
+    /// submission attempt only when it sends it, in order.
     #[serde(default)]
     pub approvals: Vec<Bytes>,
-    /// The transaction signed with the approvals once they reach the threshold. Resume sends it
-    /// in order, recording it as a submission attempt only when it does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub signed: Option<Bytes>,
 }
 
 impl<N: Network> Default for ScriptSequence<N> {

@@ -556,7 +556,7 @@ impl ScriptArgs {
                         bundled.broadcast().await?
                     };
                     // Transactions saved for their owners are deployed and verified on resume.
-                    if owner_approvals::pending(&broadcasted.sequence).next().is_some() {
+                    if owner_approvals::awaits_approvals(&broadcasted.sequence) {
                         return Ok(());
                     }
                     broadcasted.print_deployed_contracts()?;

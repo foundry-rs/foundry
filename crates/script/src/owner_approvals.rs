@@ -1,12 +1,14 @@
 //! Tempo configurable account senders whose owners approve on separate machines.
 //!
 //! When the local owner keys of a configurable account sender do not reach its threshold,
-//! `--broadcast` sends the operations before the account's first transaction, then fixes the
-//! nonce, fees and gas limit of each remaining transaction of the account, approves it with the
-//! local owners and saves it as [`AwaitingOwners`] in the sequence instead of sending it. The
-//! other owners sign the printed digests elsewhere. `--resume` adds the approvals given with
-//! `--tempo.owner-signature` and, once every saved transaction reaches the threshold, assembles
-//! their `0x05` signatures into signed payloads, which the broadcast sends in order.
+//! `--broadcast` first simulates the remaining operations in order up to the account's last
+//! transaction and fixes the gas limit of each of the account's transactions. It then sends the
+//! operations before the account's first transaction, approves the account's remaining
+//! transactions with the local owners and saves them as [`AwaitingOwners`] in the sequence
+//! instead of sending them. The other owners sign the printed digests elsewhere. `--resume` adds
+//! the approvals given with `--tempo.owner-signature` and, once every saved transaction reaches
+//! the threshold, the broadcast sends them in order with `0x05` signatures built from the
+//! approvals.
 
 use crate::{
     broadcast::{
@@ -20,7 +22,7 @@ use alloy_eips::{
     eip2718::{Decodable2718, Encodable2718},
 };
 use alloy_network::{BlockResponse, Network, NetworkTransactionBuilder, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, TxHash, U256, map::HashMap};
+use alloy_primitives::{Address, B256, Bytes, TxHash, map::HashMap};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::simulate::{SimBlock, SimCallResult, SimulatePayload, SimulatedBlock};
 use alloy_signer::Signature;
@@ -33,9 +35,9 @@ use foundry_common::{
     shell,
     tempo::{
         configurable_account::{
-            ConfigurableAccountOwnerKey, combine_approvals, config_json, decode_unsigned_tx,
-            detect_configurable_account, parse_config, parse_owner_signature, reaches_threshold,
-            simulation_spec,
+            ConfigurableAccountOwnerKey, combine_approvals, decode_unsigned_tx,
+            detect_configurable_account, parse_owner_signature, prepare_request, reaches_threshold,
+            simulation_spec, updates_config,
         },
         resolve_and_set_fee_token,
     },
@@ -52,6 +54,14 @@ use tempo_primitives::{
         configurable_account_digest,
     },
 };
+
+/// The most blocks a node simulates in one `eth_simulateV1` request.
+const MAX_SIMULATED_BLOCKS: usize = 256;
+
+/// How to raise a node's limits on one `eth_simulateV1` request.
+const GAS_CAP_HINT: &str = "the node may cap the gas of a whole simulation request, such as \
+     reth's --rpc.gascap (50,000,000 by default), or its number of simulated blocks; raise them \
+     or use an RPC without these limits";
 
 /// A configurable account sender whose local owner keys do not form a quorum that Tempo accepts,
 /// so that the other owners approve its transactions elsewhere.
@@ -81,78 +91,117 @@ impl OfflineOwners {
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        tx.set_from(self.account);
-        if tx.nonce_key().is_none() {
-            tx.set_nonce_key(U256::ZERO);
-        }
-        tx.set_configurable_account_simulation(simulation_spec(self.account, &self.config, &[]));
+        prepare_request::<N>(tx, self.account, simulation_spec(self.account, &self.config, &[]));
     }
 }
 
-/// The saved transactions that still await their owners' approvals, by sequence and position in
-/// `awaiting_owners`.
-pub(crate) fn pending<N: Network>(
-    sequence: &ScriptSequenceKind<N>,
-) -> impl Iterator<Item = (usize, usize)>
+/// Tells whether a saved transaction's approvals do not reach its threshold yet.
+pub(crate) fn awaits_approvals<N: Network>(sequence: &ScriptSequenceKind<N>) -> bool
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
-    sequence.sequences().iter().enumerate().flat_map(|(sequence_index, deployment)| {
-        deployment
-            .awaiting_owners
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.signed.is_none())
-            .map(move |(position, _)| (sequence_index, position))
+    // An entry that does not decode fails when it is sent.
+    sequence.sequences().iter().flat_map(|deployment| &deployment.awaiting_owners).any(|entry| {
+        decode_entry(entry).is_ok_and(|(_, config, _, approvals)| {
+            !reaches_threshold(&config, &approvals.into_keys().collect::<Vec<_>>())
+        })
     })
 }
 
 /// Returns the payload of operation `index` of `deployment` signed with its owners' approvals,
-/// and its hash, once `--resume` has assembled it.
+/// and its hash, when it was saved for its owners. The signature is rebuilt from the saved
+/// approvals, as [`combine_approvals`] selects them the same way every time.
 pub(crate) fn approved_payload<N: Network>(
     deployment: &ScriptSequence<N>,
     index: usize,
 ) -> Result<Option<(Bytes, TxHash)>> {
-    let Some(payload) = deployment
-        .awaiting_owners
-        .iter()
-        .find(|entry| entry.index == index)
-        .and_then(|entry| entry.signed.clone())
-    else {
+    let Some(entry) = deployment.awaiting_owners.iter().find(|entry| entry.index == index) else {
         return Ok(None);
     };
+    let (tx, config, _, approvals) = decode_entry(entry)?;
+    let signature = combine_approvals(
+        entry.account,
+        &config,
+        tx.signature_hash(),
+        approvals.into_values().collect(),
+    )?;
+    let payload = Bytes::from(
+        TempoTxEnvelope::AA(tx.into_signed(TempoSignature::ConfigurableAccount(signature)))
+            .encoded_2718(),
+    );
     let hash = N::TxEnvelope::decode_2718_exact(&payload)
         .wrap_err("invalid transaction signed with owner approvals")?
         .trie_hash();
     Ok(Some((payload, hash)))
 }
 
-/// Saves the transactions of configurable accounts with offline owners for their owners to
-/// approve, instead of sending them.
+/// A transaction of a configurable account with offline owners whose gas limit is fixed, to be
+/// saved for its owners once the operations before it are sent.
+pub(crate) struct Awaiting<'a, N: Network> {
+    request: N::TransactionRequest,
+    index: usize,
+    owners: &'a OfflineOwners,
+}
+
+/// Fixes the gas limits of the transactions of configurable accounts with offline owners, before
+/// anything is sent.
 ///
-/// `transactions` are the remaining operations of sequence `sequence_index`, in order, from the
-/// first one with offline owners. They are simulated in order on top of the chain, so that each
-/// gas limit is the least that succeeds after the operations before it, which are not sent yet.
-/// Other operations are left for `--resume`.
-pub(crate) async fn export<N: Network>(
-    sequence: &mut ScriptSequenceKind<N>,
+/// `transactions` are the remaining operations of sequence `sequence_index`, in order. They are
+/// simulated in order up to the last one with offline owners, one per block, so that each gas
+/// limit succeeds after the operations before it, which are not sent yet. Fails when one of them
+/// fails, when there are more than a node simulates, or when one would change its account's
+/// configuration before another transaction of the account.
+pub(crate) async fn prepare<'a, N: Network>(
+    sequence: &ScriptSequenceKind<N>,
     sequence_index: usize,
     provider: &RootProvider<N>,
-    transactions: &[(SendTransactionKind<'_, N>, bool, usize)],
+    transactions: &[(SendTransactionKind<'a, N>, bool, usize)],
     gas_estimate_multiplier: u64,
-) -> Result<()>
+) -> Result<Vec<Awaiting<'a, N>>>
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
     N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
-    N::UnsignedTx: SignableTransaction<Signature>,
 {
+    let offline = |kind: &SendTransactionKind<'a, N>| match kind {
+        SendTransactionKind::OfflineOwners(_, owners) => Some(*owners),
+        _ => None,
+    };
+    let Some(last) = transactions.iter().rposition(|(kind, ..)| offline(kind).is_some()) else {
+        return Ok(Vec::new());
+    };
+    let transactions = &transactions[..=last];
+    if transactions.len() > MAX_SIMULATED_BLOCKS {
+        bail!(
+            "{} transactions must be simulated in order to fix the gas limits of the transactions \
+             awaiting owner approvals, but a node simulates at most {MAX_SIMULATED_BLOCKS}; split \
+             the script so that at most {MAX_SIMULATED_BLOCKS} operations run up to the last \
+             transaction of a configurable account with offline owners",
+            transactions.len()
+        );
+    }
+
     let mut requests = Vec::with_capacity(transactions.len());
-    for (kind, is_fixed_gas_limit, index) in transactions {
+    for (position, (kind, is_fixed_gas_limit, index)) in transactions.iter().enumerate() {
         let planned = &sequence.sequences()[sequence_index].transactions[*index];
         let mut request = match kind {
             SendTransactionKind::OfflineOwners(tx, owners) => {
                 let mut tx = tx.clone();
                 owners.prepare_request::<N>(&mut tx);
+                // The owners approve with the account's current configuration, which this
+                // transaction would change for the ones after it.
+                if updates_config(tx.to(), tx.input())
+                    && transactions[position + 1..].iter().any(|(kind, ..)| {
+                        offline(kind).is_some_and(|other| other.account == owners.account)
+                    })
+                {
+                    bail!(
+                        "transaction {index} changes the configuration of {}, whose owners \
+                         approve on other machines, before its other transactions: their \
+                         approvals would be void once it is sent, so it must be the account's \
+                         last transaction in the script",
+                        owners.account
+                    );
+                }
                 tx
             }
             SendTransactionKind::ConfigurableAccount(tx, account) => {
@@ -180,50 +229,136 @@ where
         }
         requests.push(request);
     }
+    // The gas limits that the owners approve, which are fixed here.
+    let adjusted = transactions
+        .iter()
+        .map(|(kind, is_fixed_gas_limit, _)| offline(kind).is_some() && !is_fixed_gas_limit)
+        .collect::<Vec<_>>();
 
-    let block_gas_limit = provider
+    // Every simulation runs on the same block, so that the limits fixed stay valid.
+    let latest = provider
         .get_block_by_number(BlockNumberOrTag::Latest)
         .await?
-        .context("the latest block is missing")?
-        .header()
-        .gas_limit();
-    // The node runs each operation on the state the ones before it leave, with the placeholder
-    // quorum of each configurable account.
-    // The gas each call uses, learned by the simulations and kept for the later ones.
-    let mut used = vec![None; requests.len()];
-    let simulated = match simulate(provider, &requests, block_gas_limit, &mut used).await {
-        Ok(calls) => Some(calls),
-        // Without it, a transaction that depends on an earlier unsent one cannot be estimated, and
-        // its owners would approve a gas limit that runs out.
-        Err(error)
-            if transactions[1..]
-                .iter()
-                .any(|(kind, ..)| matches!(kind, SendTransactionKind::OfflineOwners(..))) =>
+        .context("the latest block is missing")?;
+    let (block, block_gas_limit) = (latest.header().number(), latest.header().gas_limit());
+    for (position, request) in requests.iter().enumerate() {
+        if offline(&transactions[position].0).is_some()
+            && let Some(valid_before) = request.valid_before()
+            && latest.header().timestamp() >= valid_before.get()
         {
             bail!(
-                "the RPC cannot simulate the transactions awaiting owner approvals in order \
-                 ({error}), so their gas limits cannot be fixed before the owners approve them"
-            )
-        }
-        Err(_) => None,
-    };
-
-    let mut next_nonces = HashMap::<Address, u64>::default();
-    let mut saved = Vec::new();
-    for (position, (kind, is_fixed_gas_limit, index)) in transactions.iter().enumerate() {
-        let mut request = requests[position].clone();
-        if let Some(call) = simulated.as_ref().map(|calls| &calls[position])
-            && !call.status
-        {
-            bail!(
-                "transaction {index} fails when simulated after the transactions before it, so \
-                 nothing is saved for owners to approve: {}",
-                call.error.as_ref().map_or("reverted", |error| error.message.as_str())
+                "transaction {} would be saved for owners to approve with the deadline \
+                 {valid_before}, which has passed",
+                transactions[position].2
             );
         }
-        let SendTransactionKind::OfflineOwners(_, owners) = kind else { continue };
-        let account = owners.account;
+    }
+    let calls = match simulate(provider, &requests, block).await {
+        Ok(calls) => calls,
+        // A single transaction does not depend on unsent ones, so it can be estimated without
+        // `eth_simulateV1`.
+        Err(_) if requests.len() == 1 => {
+            if adjusted[0] {
+                estimate_gas(&mut requests[0], provider, gas_estimate_multiplier, false, false)
+                    .await?;
+            }
+            return Ok(awaiting(transactions, requests));
+        }
+        Err(error) => bail!(
+            "cannot simulate the transactions in order to fix the gas limits of the ones \
+             awaiting owner approvals, so no more transactions are sent: {error}"
+        ),
+    };
+    // The first call that fails, as an error.
+    let fails = |calls: &[SimCallResult]| {
+        calls.iter().position(|call| !call.status).map(|position| {
+            let message = calls[position].error.as_ref().map_or("reverted", |e| e.message.as_str());
+            // A node can lower the gas limits to its cap for the whole request.
+            let hint = if message.to_lowercase().contains("out of gas") {
+                format!("; {GAS_CAP_HINT}")
+            } else {
+                String::new()
+            };
+            let error = eyre::eyre!(
+                "transaction {} fails when simulated after the transactions before it, so no \
+                 more transactions are sent or saved for owners to approve: {message}{hint}",
+                transactions[position].2
+            );
+            (position, error)
+        })
+    };
+    if let Some((_, error)) = fails(&calls) {
+        return Err(error);
+    }
 
+    // Gas used is not the gas a call needs to start with, as calls keep back 1/64 of their gas,
+    // so the limits are checked together, and the first one that fails is raised to the least
+    // that succeeds until they all do.
+    for (position, call) in calls.iter().enumerate() {
+        if adjusted[position] {
+            let used = call.max_used_gas.unwrap_or_default().max(call.gas_used);
+            let gas_limit = apply_gas_estimate_multiplier(used, Some(gas_estimate_multiplier))?;
+            requests[position].set_gas_limit(gas_limit.min(block_gas_limit));
+        }
+    }
+    // Each fixed limit succeeds after the ones before it, so the first failure moves forward.
+    let mut fixed = None;
+    while let Some((position, error)) = fails(&simulate(provider, &requests, block).await?) {
+        let index = transactions[position].2;
+        if !adjusted[position] || fixed.is_some_and(|fixed| position <= fixed) {
+            return Err(error);
+        }
+        let gas_limit = least_gas_limit(
+            provider,
+            &mut requests[..=position],
+            block,
+            block_gas_limit,
+            gas_estimate_multiplier,
+        )
+        .await
+        .wrap_err_with(|| format!("cannot fix the gas limit of transaction {index}"))?;
+        requests[position].set_gas_limit(gas_limit);
+        fixed = Some(position);
+    }
+    Ok(awaiting(transactions, requests))
+}
+
+/// The transactions with offline owners among `transactions`, with their prepared requests.
+fn awaiting<'a, N: Network>(
+    transactions: &[(SendTransactionKind<'a, N>, bool, usize)],
+    requests: Vec<N::TransactionRequest>,
+) -> Vec<Awaiting<'a, N>> {
+    transactions
+        .iter()
+        .zip(requests)
+        .filter_map(|((kind, _, index), request)| match kind {
+            SendTransactionKind::OfflineOwners(_, owners) => {
+                Some(Awaiting { request, index: *index, owners })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Saves the transactions of configurable accounts with offline owners that [`prepare`] fixed,
+/// approved by their local owners, for the other owners to approve instead of sending them.
+/// Other operations are left for `--resume`.
+pub(crate) async fn export<N: Network>(
+    sequence: &mut ScriptSequenceKind<N>,
+    sequence_index: usize,
+    provider: &RootProvider<N>,
+    awaiting: Vec<Awaiting<'_, N>>,
+) -> Result<()>
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::UnsignedTx: SignableTransaction<Signature>,
+{
+    let mut next_nonces = HashMap::<Address, u64>::default();
+    let mut saved = Vec::with_capacity(awaiting.len());
+    for Awaiting { request, index, owners } in awaiting {
+        let account = owners.account;
+        // The operations before it are sent by now.
         let nonce = request.nonce().context("transaction is missing its planned nonce")?;
         let expected = match next_nonces.get(&account) {
             Some(nonce) => *nonce,
@@ -236,47 +371,6 @@ where
             );
         }
         next_nonces.insert(account, nonce + 1);
-
-        // The owners approve the gas limit, so it is fixed now. The in-order simulation accounts
-        // for the operations before it, which are not sent yet; an estimate on the current state
-        // only does for the first operation, so it is only used then, or without a simulation.
-        // Gas used is not the gas a call needs to start with, as calls keep back 1/64 of their
-        // gas, so the limit is then checked by simulating it after the operations before it.
-        if !is_fixed_gas_limit {
-            let simulated = simulated
-                .as_ref()
-                .map(|calls| {
-                    let call = &calls[position];
-                    apply_gas_estimate_multiplier(
-                        call.max_used_gas.unwrap_or_default().max(call.gas_used),
-                        Some(gas_estimate_multiplier),
-                    )
-                })
-                .transpose()?;
-            let estimated = if position == 0 || simulated.is_none() {
-                let mut estimated = request.clone();
-                estimate_gas(&mut estimated, provider, gas_estimate_multiplier, false, false)
-                    .await?;
-                estimated.gas_limit()
-            } else {
-                None
-            };
-            let mut gas_limit = simulated.max(estimated).expect("estimated or simulated");
-            if simulated.is_some() {
-                gas_limit = least_gas_limit(
-                    provider,
-                    &requests[..=position],
-                    &mut used[..=position],
-                    gas_limit,
-                    block_gas_limit,
-                    gas_estimate_multiplier,
-                )
-                .await
-                .wrap_err_with(|| format!("cannot fix the gas limit of transaction {index}"))?;
-            }
-            request.set_gas_limit(gas_limit);
-            requests[position].set_gas_limit(gas_limit);
-        }
 
         let unsigned = request.build_unsigned().map_err(|error| eyre::eyre!("{}", error.error))?;
         let unsigned_tx = unsigned.encoded_for_signing();
@@ -292,13 +386,12 @@ where
             approvals.push(approval.to_bytes());
         }
         saved.push(AwaitingOwners {
-            index: *index,
+            index,
             account,
-            config: config_json(&owners.config),
+            config: (&owners.config).into(),
             unsigned_tx: unsigned_tx.into(),
             digest,
             approvals,
-            signed: None,
         });
     }
 
@@ -307,194 +400,94 @@ where
     report(sequence)
 }
 
-/// Simulates `requests` in order on top of the latest block, so that each runs on the state the
-/// ones before it leave.
-///
-/// A node simulates at most 256 blocks, so the calls share blocks of `block_gas_limit` gas, in
-/// order, as a node fits them: a call joins a block while its gas limit fits in the gas that the
-/// calls before it in the block left, and a call without one is given that gas. The gas each call
-/// uses is learned from the simulations, kept in `used`, and taken until then as the most of the
-/// known ones, or as nothing when that needs too many blocks. When the node rejects a call, or a
-/// call without a gas limit fails after other calls, the call starts a new block and the calls are
-/// simulated again.
+/// Simulates `requests` in order on top of `block`, one per block, so that each runs on
+/// the state the ones before it leave.
 async fn simulate<N: Network>(
     provider: &RootProvider<N>,
     requests: &[N::TransactionRequest],
-    block_gas_limit: u64,
-    used: &mut [Option<u64>],
+    block: u64,
 ) -> Result<Vec<SimCallResult>>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
 {
-    const MAX_BLOCKS: usize = 256;
-    let mut starts = BTreeSet::new();
-    loop {
-        let layout = |guess: u64| {
-            let mut blocks = Vec::<Vec<usize>>::new();
-            let mut block_used = 0u64;
-            for (position, request) in requests.iter().enumerate() {
-                let fits = request
-                    .gas_limit()
-                    .is_none_or(|gas| gas <= block_gas_limit.saturating_sub(block_used));
-                if blocks.is_empty() || starts.contains(&position) || !fits {
-                    blocks.push(Vec::new());
-                    block_used = 0;
-                }
-                block_used = block_used.saturating_add(used[position].unwrap_or(guess));
-                blocks.last_mut().expect("a block").push(position);
-            }
-            blocks
-        };
-        // Too much only adds blocks and too little only costs another simulation, as the node
-        // rejects a call that does not fit, so the calls not simulated yet are taken to use
-        // nothing when the most known gas used would need too many blocks.
-        let mut blocks = layout(used.iter().flatten().max().copied().unwrap_or_default());
-        if blocks.len() > MAX_BLOCKS {
-            blocks = layout(0);
-        }
-        if blocks.len() > MAX_BLOCKS {
-            bail!(
-                "the transactions need more than {MAX_BLOCKS} blocks of gas limit \
-                 {block_gas_limit} to simulate in order"
-            );
-        }
-        let starts_block = |position: usize| blocks.iter().any(|block| block[0] == position);
-
-        // Simulates the first `count` calls.
-        let run = async |count: usize| {
-            let payload = SimulatePayload {
-                block_state_calls: blocks
-                    .iter()
-                    .filter(|block| block[0] < count)
-                    .map(|block| SimBlock {
-                        calls: block
-                            .iter()
-                            .filter(|&&position| position < count)
-                            .map(|&position| requests[position].clone())
-                            .collect(),
-                        ..Default::default()
-                    })
-                    .collect(),
-                ..Default::default()
-            };
-            provider
-                .raw_request::<_, Vec<SimulatedBlock<Value>>>(
-                    "eth_simulateV1".into(),
-                    (payload, "latest"),
-                )
-                .await
-                .map(|blocks| blocks.into_iter().flat_map(|block| block.calls).collect::<Vec<_>>())
-        };
-        let calls = match run(requests.len()).await {
-            Ok(calls) => calls,
-            // The node rejects every call when one does not fit in its block, so the first call it
-            // rejects is found by simulating shorter prefixes.
-            Err(error) => {
-                let (mut low, mut high) = (0, requests.len().saturating_sub(1));
-                while low < high {
-                    let middle = low + (high - low) / 2;
-                    if run(middle + 1).await.is_err() {
-                        high = middle;
-                    } else {
-                        low = middle + 1;
-                    }
-                }
-                if starts_block(low) {
-                    return Err(error.into());
-                }
-                let prefix = run(low).await?;
-                if prefix.len() != low {
-                    bail!("eth_simulateV1 returned an unexpected number of results");
-                }
-                for (position, call) in prefix.iter().enumerate() {
-                    used[position] = Some(call.gas_used);
-                }
-                // A call without a gas limit that fails before it in its block used the gas left
-                // in the block, so that call starts a new block instead.
-                let block = blocks.iter().find(|block| block.contains(&low)).expect("a block");
-                let failed = block.iter().copied().find(|&position| {
-                    position < low
-                        && position != block[0]
-                        && requests[position].gas_limit().is_none()
-                        && !prefix[position].status
-                });
-                starts.insert(failed.unwrap_or(low));
-                continue;
-            }
-        };
-        if calls.len() != requests.len() {
-            bail!("eth_simulateV1 returned an unexpected number of results");
-        }
-        for (position, call) in calls.iter().enumerate() {
-            used[position] = Some(call.gas_used);
-        }
-
-        let retried = (0..requests.len())
-            .filter(|&position| {
-                !starts_block(position)
-                    && requests[position].gas_limit().is_none()
-                    && !calls[position].status
-            })
-            .collect::<Vec<_>>();
-        if retried.is_empty() {
-            return Ok(calls);
-        }
-        starts.extend(retried);
+    let payload = SimulatePayload {
+        block_state_calls: requests
+            .iter()
+            .map(|request| SimBlock { calls: vec![request.clone()], ..Default::default() })
+            .collect(),
+        ..Default::default()
+    };
+    let calls = provider
+        .raw_request::<_, Vec<SimulatedBlock<Value>>>(
+            "eth_simulateV1".into(),
+            (payload, BlockNumberOrTag::Number(block)),
+        )
+        .await
+        .map_err(|error| match error.as_error_resp() {
+            Some(response) if response.code == -38026 => eyre::eyre!(
+                "eth_simulateV1 failed with -38026 ({}): the transactions use more gas or \
+                 blocks than the RPC allows in one request; {GAS_CAP_HINT}",
+                response.message
+            ),
+            _ => error.into(),
+        })?
+        .into_iter()
+        .flat_map(|block| block.calls)
+        .collect::<Vec<_>>();
+    if calls.len() != requests.len() {
+        bail!("eth_simulateV1 returned an unexpected number of results");
     }
+    Ok(calls)
 }
 
-/// Returns `gas_limit` when the last of `requests` succeeds with it after the ones before it, and
-/// otherwise the least gas limit with which it succeeds, found as `eth_estimateGas` does and raised
-/// by `multiplier` percent, up to `cap`.
+/// Returns the least gas limit with which the last of `requests` succeeds after the ones before
+/// it, found as `eth_estimateGas` does and raised by `multiplier` percent, up to `cap`. The last
+/// request fails with its current gas limit.
 async fn least_gas_limit<N: Network>(
     provider: &RootProvider<N>,
-    requests: &[N::TransactionRequest],
-    used: &mut [Option<u64>],
-    gas_limit: u64,
+    requests: &mut [N::TransactionRequest],
+    block: u64,
     cap: u64,
     multiplier: u64,
 ) -> Result<u64>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
 {
-    let mut requests = requests.to_vec();
-    let succeeds = async |requests: &mut [N::TransactionRequest],
-                          used: &mut [Option<u64>],
-                          gas: u64|
-           -> Result<bool> {
+    let succeeds = async |requests: &mut [N::TransactionRequest], gas: u64| -> Result<bool> {
         requests.last_mut().expect("a request").set_gas_limit(gas);
-        Ok(simulate(provider, requests, cap, used).await?.last().expect("a result").status)
+        Ok(simulate(provider, requests, block).await?.last().expect("a result").status)
     };
-    let gas_limit = gas_limit.min(cap);
-    if succeeds(&mut requests, used, gas_limit).await? {
-        return Ok(gas_limit);
+    let mut low = requests.last().and_then(|request| request.gas_limit()).unwrap_or_default();
+    if low >= cap || !succeeds(requests, cap).await? {
+        bail!(
+            "it fails after the transactions before it even with the block gas limit {cap}; \
+             {GAS_CAP_HINT}"
+        );
     }
-    if gas_limit == cap || !succeeds(&mut requests, used, cap).await? {
-        bail!("it fails after the transactions before it even with the block gas limit {cap}");
-    }
-    let (mut low, mut high) = (gas_limit, cap);
+    let mut high = cap;
     // Within 1% of the least gas limit, as `eth_estimateGas` does.
     while high - low > (low / 100).max(1) {
         let middle = low + (high - low) / 2;
-        if succeeds(&mut requests, used, middle).await? {
+        if succeeds(requests, middle).await? {
             high = middle;
         } else {
             low = middle;
         }
     }
-    Ok(apply_gas_estimate_multiplier(high, Some(multiplier))?.min(cap))
+    Ok(apply_gas_estimate_multiplier(high, Some(multiplier))?.max(high).min(cap))
 }
 
-/// Adds the owner approvals in `signatures` to the transactions awaiting their owners and, once
-/// every one of them reaches its threshold, signs them with the approvals. The broadcast sends
-/// them in order, recording each as a submission attempt only then.
+/// Adds the owner approvals in `signatures` to the transactions awaiting their owners, and checks
+/// that every one of them that was not sent yet reaches its threshold and can still be sent. The
+/// broadcast then sends them in order, signed with the approvals, recording each as a submission
+/// attempt only then.
 ///
-/// The valid approvals are saved first, so that they can be collected over several runs. Fails
-/// before anything is signed or sent when a signature approves none of the transactions, when one
-/// of them lacks approvals, or when one can no longer be sent: the account's configuration
-/// changed, its nonce moved on, its deadline passed, or the base fee rose above the fee the
-/// owners approved. Every run checks again the transactions signed by an earlier run that were not
-/// sent yet, as their accounts may have sent other transactions since.
+/// The valid approvals are saved first, so that they can be collected over several runs, and the
+/// same signatures can be given again. Fails before anything is sent when a signature approves
+/// none of the transactions, when one of them lacks approvals, or when the account spent a planned
+/// nonce. When the account's configuration changed, a deadline passed, or the base fee rose above
+/// the fee the owners approved, the unsent transactions of that sequence are dropped, so that the
+/// broadcast saves them again for the owners to approve with new digests.
 pub(crate) async fn assemble<N: Network>(
     sequence: &mut ScriptSequenceKind<N>,
     signatures: &[String],
@@ -503,12 +496,11 @@ pub(crate) async fn assemble<N: Network>(
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
-    let pending = pending(sequence).collect::<Vec<_>>();
-    if pending.is_empty() {
+    if sequence.sequences().iter().all(|deployment| deployment.awaiting_owners.is_empty()) {
         if !signatures.is_empty() {
             bail!("--tempo.owner-signature is given, but no transaction awaits owner approvals");
         }
-        return check_unsent(sequence, config).await;
+        return Ok(());
     }
     let signatures = signatures
         .iter()
@@ -520,35 +512,21 @@ where
         .collect::<Result<Vec<_>>>()?;
 
     let mut used = vec![false; signatures.len()];
-    let mut complete = true;
-    let mut collected = Vec::with_capacity(pending.len());
-    for &(sequence_index, position) in &pending {
-        let entry = &mut sequence.sequences_mut()[sequence_index].awaiting_owners[position];
-        let (_, owners_config, digest) = decode_entry(entry)?;
-        let mut approvals = BTreeMap::new();
-        for approval in &entry.approvals {
-            let approval = PrimitiveSignature::from_bytes(approval)
-                .map_err(|error| eyre::eyre!("invalid saved approval: {error}"))?;
-            let owner = approval.recover_signer(&digest).map_err(|_| {
-                eyre::eyre!("a saved approval of transaction {} is invalid", entry.index)
-            })?;
-            approvals.insert(owner, approval);
-        }
-        for (signature, used) in signatures.iter().zip(&mut used) {
-            if let Ok(owner) = signature.recover_signer(&digest)
-                && owners_config.owner_weight(owner).is_some()
-            {
-                approvals.insert(owner, signature.clone());
-                *used = true;
+    for deployment in sequence.sequences_mut() {
+        for entry in &mut deployment.awaiting_owners {
+            let (_, owners_config, digest, mut approvals) = decode_entry(entry)?;
+            for (signature, used) in signatures.iter().zip(&mut used) {
+                if let Ok(owner) = signature.recover_signer(&digest)
+                    && owners_config.owner_weight(owner).is_some()
+                {
+                    approvals.insert(owner, signature.clone());
+                    *used = true;
+                }
             }
+            entry.approvals = approvals.values().map(PrimitiveSignature::to_bytes).collect();
         }
-        entry.approvals = approvals.values().map(PrimitiveSignature::to_bytes).collect();
-        complete &=
-            reaches_threshold(&owners_config, &approvals.keys().copied().collect::<Vec<_>>());
-        collected.push(approvals.into_values().collect::<Vec<_>>());
     }
     sequence.save(true, false)?;
-
     if let Some(position) = used.iter().position(|used| !used) {
         bail!(
             "--tempo.owner-signature {} is not an owner's approval of any transaction awaiting \
@@ -557,91 +535,89 @@ where
             describe(sequence)?
         );
     }
-    if !complete {
+
+    // Every transaction left to send is checked, as its account may have sent others since. One
+    // with a recorded submission attempt is recovered like any other sent transaction.
+    for sequence_index in 0..sequence.sequences().len() {
+        let remaining = remaining_operation_indices(sequence, sequence_index);
+        let unsent = sequence.sequences()[sequence_index]
+            .awaiting_owners
+            .iter()
+            .map(|entry| entry.index)
+            .filter(|&index| {
+                remaining.contains(&index)
+                    && sequence.signed_payload(sequence_index, index).is_none()
+            })
+            .collect::<BTreeSet<_>>();
+        if unsent.is_empty() {
+            continue;
+        }
+        let provider = ProviderBuilder::<TempoNetwork>::from_config_with_url(
+            config,
+            sequence.rpc_url(sequence_index),
+        )?
+        .build()?;
+        for entry in &sequence.sequences()[sequence_index].awaiting_owners {
+            if !unsent.contains(&entry.index) {
+                continue;
+            }
+            if let Some(reason) = void_reason(&provider, entry).await? {
+                sh_warn!(
+                    "{reason} after transaction {} was saved for the owners of {}, so their \
+                     approvals are void; the unsent transactions are saved again for the owners \
+                     to approve, with new digests, when --resume is given the local owner keys \
+                     and Tempo options of the original --broadcast",
+                    entry.index,
+                    entry.account
+                )?;
+                sequence.sequences_mut()[sequence_index]
+                    .awaiting_owners
+                    .retain(|entry| !unsent.contains(&entry.index));
+                sequence.save(true, false)?;
+                break;
+            }
+        }
+    }
+
+    if awaits_approvals(sequence) {
         bail!(
             "transactions await more owner approvals, so nothing was sent\n{}",
             describe(sequence)?
         );
     }
-
-    // Every transaction is checked before any is signed, and none is recorded as a submission
-    // attempt until the broadcast sends it in order.
-    check_unsent(sequence, config).await?;
-    let mut signed = Vec::with_capacity(pending.len());
-    for (&(sequence_index, position), approvals) in pending.iter().zip(collected) {
-        let entry = &sequence.sequences()[sequence_index].awaiting_owners[position];
-        let (tx, owners_config, _) = decode_entry(entry)?;
-        let signature =
-            combine_approvals(entry.account, &owners_config, tx.signature_hash(), approvals)?;
-        let payload =
-            TempoTxEnvelope::AA(tx.into_signed(TempoSignature::ConfigurableAccount(signature)))
-                .encoded_2718();
-        signed.push((sequence_index, position, Bytes::from(payload)));
-    }
-    for (sequence_index, position, payload) in signed {
-        sequence.sequences_mut()[sequence_index].awaiting_owners[position].signed = Some(payload);
-    }
-    sequence.save(true, false)
-}
-
-/// Checks that every transaction saved for its owners and not sent yet can still be sent with
-/// their approvals, whether or not an earlier run signed it.
-async fn check_unsent<N: Network>(sequence: &ScriptSequenceKind<N>, config: &Config) -> Result<()>
-where
-    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
-{
-    for (sequence_index, deployment) in sequence.sequences().iter().enumerate() {
-        let remaining = remaining_operation_indices(sequence, sequence_index);
-        for entry in &deployment.awaiting_owners {
-            // A recorded submission attempt is recovered like any other sent transaction.
-            if remaining.contains(&entry.index)
-                && sequence.signed_payload(sequence_index, entry.index).is_none()
-            {
-                check_sendable(sequence, sequence_index, entry, config).await?;
-            }
-        }
-    }
     Ok(())
 }
 
-/// Checks that the configuration, nonce, deadline and fees of a saved transaction are still valid
-/// on chain.
-async fn check_sendable<N: Network>(
-    sequence: &ScriptSequenceKind<N>,
-    sequence_index: usize,
+/// Tells why a saved transaction can no longer be sent with its owners' approvals: its
+/// account's configuration or nonce, its deadline or the base fee changed on chain.
+///
+/// The account's planned nonces cannot change, so a spent nonce fails here.
+async fn void_reason(
+    provider: &RootProvider<TempoNetwork>,
     entry: &AwaitingOwners,
-    config: &Config,
-) -> Result<()>
-where
-    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
-{
-    let (tx, owners_config, _) = decode_entry(entry)?;
+) -> Result<Option<String>> {
+    let (tx, owners_config, ..) = decode_entry(entry)?;
     let account = entry.account;
-    let void = |reason: String| {
-        eyre::eyre!(
-            "{reason} after transaction {} was saved for the owners of {account}, so their \
-             approvals are void; run the script again with --broadcast --start-fresh",
-            entry.index
-        )
-    };
-    let provider = ProviderBuilder::<TempoNetwork>::from_config_with_url(
-        config,
-        sequence.rpc_url(sequence_index),
-    )?
-    .build()?;
-    detect_configurable_account(
-        &provider,
+    if let Err(error) = detect_configurable_account(
+        provider,
         account,
         &[],
-        Some(owners_config.clone()),
+        Some(owners_config),
         true,
         BlockId::latest(),
     )
     .await
-    .map_err(|error| void(format!("the configuration of {account} changed ({error})")))?;
-    let nonce = provider.get_transaction_count(account).await?;
-    if nonce > tx.nonce {
-        return Err(void(format!("{account} sent nonce {}", tx.nonce)));
+    {
+        return Ok(Some(format!("the configuration of {account} changed ({error})")));
+    }
+    if provider.get_transaction_count(account).await? > tx.nonce {
+        bail!(
+            "{account} sent nonce {} after transaction {} was saved for its owners, so their \
+             approvals are void, and the remaining transactions cannot be sent with the nonces \
+             the script planned; broadcast the script anew with --start-fresh",
+            tx.nonce,
+            entry.index
+        );
     }
     let latest = provider
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -650,30 +626,45 @@ where
     if let Some(valid_before) = tx.valid_before
         && latest.header().timestamp() >= valid_before.get()
     {
-        return Err(void(format!("its deadline {valid_before} passed")));
+        return Ok(Some(format!("its deadline {valid_before} passed")));
     }
     if let Some(base_fee) = latest.header().base_fee_per_gas()
         && u128::from(base_fee) > tx.max_fee_per_gas
     {
-        return Err(void(format!(
+        return Ok(Some(format!(
             "the base fee rose to {base_fee}, above its max fee per gas {}",
             tx.max_fee_per_gas
         )));
     }
-    Ok(())
+    Ok(None)
 }
 
-/// Decodes a saved transaction and its configuration, and checks its digest.
+/// Decodes a saved transaction, its configuration and the owners' approvals, and checks its
+/// digest.
 fn decode_entry(
     entry: &AwaitingOwners,
-) -> Result<(TempoTransaction, ConfigurableAccountConfig, B256)> {
+) -> Result<(
+    TempoTransaction,
+    ConfigurableAccountConfig,
+    B256,
+    BTreeMap<Address, PrimitiveSignature>,
+)> {
     let tx = decode_unsigned_tx(&entry.unsigned_tx)?;
-    let config = parse_config(&entry.config.to_string())?;
+    let config = ConfigurableAccountConfig::try_from(entry.config.clone())?;
     let digest = configurable_account_digest(tx.signature_hash(), entry.account, config.version);
     if digest != entry.digest {
         bail!("the saved digest of transaction {} does not match its transaction", entry.index);
     }
-    Ok((tx, config, digest))
+    let mut approvals = BTreeMap::new();
+    for approval in &entry.approvals {
+        let approval = PrimitiveSignature::from_bytes(approval)
+            .map_err(|error| eyre::eyre!("invalid saved approval: {error}"))?;
+        let owner = approval.recover_signer(&digest).map_err(|_| {
+            eyre::eyre!("a saved approval of transaction {} is invalid", entry.index)
+        })?;
+        approvals.insert(owner, approval);
+    }
+    Ok((tx, config, digest, approvals))
 }
 
 /// Prints the transactions awaiting owner approvals and how to approve and send them.
@@ -682,11 +673,13 @@ where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
     if shell::is_json() {
-        let transactions = pending(sequence)
-            .map(|(sequence_index, position)| {
-                let deployment = &sequence.sequences()[sequence_index];
-                let entry = &deployment.awaiting_owners[position];
-                serde_json::json!({ "chain": deployment.chain, "transaction": entry })
+        let transactions = sequence
+            .sequences()
+            .iter()
+            .flat_map(|deployment| {
+                deployment.awaiting_owners.iter().map(
+                    |entry| serde_json::json!({ "chain": deployment.chain, "transaction": entry }),
+                )
             })
             .collect::<Vec<_>>();
         sh_println!(
@@ -708,44 +701,46 @@ where
     let mut lines = vec!["==========================".to_string()];
     // For each account, its configuration and the owners missing from any of its transactions.
     let mut accounts = BTreeMap::<Address, (ConfigurableAccountConfig, Vec<Address>)>::new();
-    for (sequence_index, position) in pending(sequence) {
-        let deployment = &sequence.sequences()[sequence_index];
-        let entry = &deployment.awaiting_owners[position];
-        let (tx, config, digest) = decode_entry(entry)?;
-        let approved = entry
-            .approvals
-            .iter()
-            .filter_map(|approval| PrimitiveSignature::from_bytes(approval).ok())
-            .filter_map(|approval| approval.recover_signer(&digest).ok())
-            .collect::<Vec<_>>();
-        if !accounts.contains_key(&entry.account) {
-            lines.push(format!(
+    for (sequence_index, deployment) in sequence.sequences().iter().enumerate() {
+        let remaining = remaining_operation_indices(sequence, sequence_index);
+        for entry in
+            deployment.awaiting_owners.iter().filter(|entry| remaining.contains(&entry.index))
+        {
+            let (tx, config, digest, approvals) = decode_entry(entry)?;
+            let approved = approvals.into_keys().collect::<Vec<_>>();
+            if !accounts.contains_key(&entry.account) {
+                lines.push(format!(
                 "\nTransactions of the Tempo configurable account {} on chain {} await approvals \
                  from its owners, with threshold {}:",
                 entry.account, deployment.chain, config.threshold
             ));
-        }
-        let (_, missing) =
-            accounts.entry(entry.account).or_insert_with(|| (config.clone(), Vec::new()));
-        missing.extend(
-            config.owners.iter().map(|owner| owner.owner).filter(|owner| !approved.contains(owner)),
-        );
-        let weight = approved
-            .iter()
-            .unique()
-            .filter_map(|owner| config.owner_weight(*owner))
-            .map(u16::from)
-            .sum::<u16>();
-        let approved = if approved.is_empty() {
-            "no approvals yet".to_string()
-        } else {
-            format!("approved by {}", approved.iter().join(", "))
-        };
-        lines.push(format!(
-            "  transaction {} (nonce {}, gas limit {}): digest {digest}, {approved} (weight \
+            }
+            let (_, missing) =
+                accounts.entry(entry.account).or_insert_with(|| (config.clone(), Vec::new()));
+            missing.extend(
+                config
+                    .owners
+                    .iter()
+                    .map(|owner| owner.owner)
+                    .filter(|owner| !approved.contains(owner)),
+            );
+            let weight = approved
+                .iter()
+                .unique()
+                .filter_map(|owner| config.owner_weight(*owner))
+                .map(u16::from)
+                .sum::<u16>();
+            let approved = if approved.is_empty() {
+                "no approvals yet".to_string()
+            } else {
+                format!("approved by {}", approved.iter().join(", "))
+            };
+            lines.push(format!(
+                "  transaction {} (nonce {}, gas limit {}): digest {digest}, {approved} (weight \
              {weight} of {})",
-            entry.index, tx.nonce, tx.gas_limit, config.threshold
-        ));
+                entry.index, tx.nonce, tx.gas_limit, config.threshold
+            ));
+        }
     }
     for (account, (config, missing)) in accounts {
         let missing = missing

@@ -1035,16 +1035,29 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             // Checked before any chain is sent to, with the nonce key that each transaction is
             // sent with: the one of the Tempo options, or else the planned one.
             let tempo = &self.script_config.tempo;
-            let expiring_nonce = tempo.expiring_nonce
-                || self.sequence.sequences().iter().enumerate().any(|(i, sequence)| {
-                    remaining_operation_indices(&self.sequence, i).into_iter().any(|index| {
-                        let tx = sequence.transactions[index].tx();
-                        tx.from().is_some_and(|from| {
-                            offline_owners.contains_key(&SignerScope::new(sequence.chain, from))
-                        }) && matches!(tx, TransactionMaybeSigned::Unsigned(tx)
-                            if tempo.nonce_key.or(tx.nonce_key()) == Some(TEMPO_EXPIRING_NONCE_KEY))
+            let offline_nonce_keys = self
+                .sequence
+                .sequences()
+                .iter()
+                .enumerate()
+                .flat_map(|(i, sequence)| {
+                    remaining_operation_indices(&self.sequence, i).into_iter().filter_map(|index| {
+                        match sequence.transactions[index].tx() {
+                            TransactionMaybeSigned::Unsigned(tx)
+                                if tx.from().is_some_and(|from| {
+                                    offline_owners
+                                        .contains_key(&SignerScope::new(sequence.chain, from))
+                                }) =>
+                            {
+                                Some(tempo.nonce_key.or(tx.nonce_key()).unwrap_or_default())
+                            }
+                            _ => None,
+                        }
                     })
-                });
+                })
+                .collect::<Vec<_>>();
+            let expiring_nonce =
+                tempo.expiring_nonce || offline_nonce_keys.contains(&TEMPO_EXPIRING_NONCE_KEY);
             if !offline_owners.is_empty() && (tempo.sponsor.is_some() || expiring_nonce) {
                 bail!(
                     "the owners of a Tempo configurable account sender approve its transactions \
@@ -1052,6 +1065,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                      the expiring nonce key (--tempo.expiring-nonce, --tempo.expires or \
                      --tempo.nonce-key {TEMPO_EXPIRING_NONCE_KEY:#x}), whose validity window is too \
                      short for them"
+                );
+            }
+            // Their nonces are fixed and checked against the account's protocol nonce.
+            if let Some(key) = offline_nonce_keys.iter().find(|key| !key.is_zero()) {
+                bail!(
+                    "the owners of a Tempo configurable account sender approve its transactions \
+                     on other machines, so its transactions use the protocol nonce, not \
+                     --tempo.nonce-key {key:#x}"
                 );
             }
 
@@ -1093,9 +1114,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 let signed_payloads = (0..self.sequence.sequences()[i].transactions.len())
                     .map(|index| match self.sequence.signed_payload(i, index) {
                         Some(signed) => Ok(Some((signed.payload.clone(), signed.hash))),
-                        None => {
+                        None if remaining_indices.contains(&index) => {
                             owner_approvals::approved_payload(&self.sequence.sequences()[i], index)
                         }
+                        None => Ok(None),
                     })
                     .collect::<Result<Vec<_>>>()?;
                 let rpc_url = self.sequence.rpc_url(i).to_owned();
@@ -1236,14 +1258,25 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         };
                         transactions.push((kind, is_fixed_gas_limit, index));
                     }
-                    // Nothing is sent from the first transaction whose owners approve elsewhere.
+                    // The transactions saved for owners on other machines are checked and their
+                    // gas limits fixed before anything is sent, and nothing is sent from the
+                    // first of them.
+                    let awaiting_owners = owner_approvals::prepare(
+                        &self.sequence,
+                        i,
+                        &provider,
+                        &transactions,
+                        self.args.gas_estimate_multiplier,
+                    )
+                    .await?;
+                    sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                     let offline = transactions
                         .iter()
                         .position(|(kind, ..)| {
                             matches!(kind, SendTransactionKind::OfflineOwners(..))
                         })
                         .unwrap_or(transactions.len());
-                    let (transactions, awaiting_owners) = transactions.split_at(offline);
+                    let transactions = &transactions[..offline];
 
                     let estimate_via_rpc = has_different_gas_calc(sequence.chain)
                         || self.script_config.evm_opts.networks.is_tempo()
@@ -1444,14 +1477,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     if !awaiting_owners.is_empty() {
                         seq_progress.inner.write().set_status("Awaiting owner approvals");
                         seq_progress.inner.write().finish();
-                        owner_approvals::export(
-                            &mut self.sequence,
-                            i,
-                            &provider,
-                            awaiting_owners,
-                            self.args.gas_estimate_multiplier,
-                        )
-                        .await?;
+                        owner_approvals::export(&mut self.sequence, i, &provider, awaiting_owners)
+                            .await?;
                         return Ok(true);
                     }
                 }
