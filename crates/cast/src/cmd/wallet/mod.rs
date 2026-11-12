@@ -52,12 +52,12 @@ pub enum WalletSubcommands {
     /// Creates a plain key (EOA) by default, also on Tempo. With `--configurable-account` and a
     /// Tempo signal, the new key becomes the only owner of a Tempo configurable account (TIP-1107)
     /// with threshold 1 and salt 0, and both the account address and the owner key address are
-    /// printed. Send from the account address. A Tempo signal is `--chain`, `chain` or a Tempo
-    /// network in `foundry.toml`, or an RPC (`--rpc-url`, `ETH_RPC_URL` or `foundry.toml`) that
-    /// serves a Tempo chain. The account is only created where the T14 hardfork is active: the RPC
-    /// is asked when one is given, otherwise the compiled Tempo hardfork schedule is read for the
-    /// chain. Without a Tempo signal, or before T14, it creates an EOA. MPP payment channels need
-    /// an EOA.
+    /// printed. Send from the account address. A Tempo signal is `--chain` or `CHAIN`, `chain` or a
+    /// Tempo network in `foundry.toml`, or an RPC (`--rpc-url`, `ETH_RPC_URL` or `foundry.toml`)
+    /// that serves a Tempo chain. The account is only created where the T14 hardfork is active:
+    /// the RPC is asked when one is given, otherwise the compiled Tempo hardfork schedule is read
+    /// for the chain. Without a Tempo signal, or before T14, it creates an EOA. MPP payment
+    /// channels need an EOA.
     ///
     /// The account needs no saved configuration: it is recomputed from the key.
     ///
@@ -116,8 +116,9 @@ pub enum WalletSubcommands {
         eoa: bool,
 
         /// The chain to create the wallet for, as a Tempo signal for `--configurable-account`.
-        #[arg(long, env = "CHAIN")]
-        chain: Option<String>,
+        /// Defaults to `CHAIN` with `--configurable-account`.
+        #[arg(long)]
+        chain: Option<Chain>,
 
         #[command(flatten)]
         rpc: RpcOpts,

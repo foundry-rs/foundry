@@ -183,6 +183,16 @@ Private key: [..]
 "#]]
     );
 
+    // An explicit `--chain` is still validated.
+    cmd.cast_fuse().args(["wallet", "new", "--chain", "locla"]);
+    cmd.unset_env("CHAIN");
+    cmd.assert_failure().stderr_eq(str![[r#"
+error: invalid value 'locla' for '--chain <CHAIN>': invalid digit found in string
+
+For more information, try '--help'.
+
+"#]]);
+
     // `--eoa` asks for the default explicitly.
     let (stdout, _) = wallet_new(&mut cmd, &["--chain", "tempo", "--eoa"]);
     assert_eoa(&stdout);

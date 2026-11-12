@@ -53,24 +53,31 @@ use tempo_primitives::transaction::{
 
 /// Decides whether `cast wallet new --configurable-account` creates a configurable account.
 ///
-/// It does when `requested` is set, a Tempo signal is present and T14 is active there: `--chain`,
-/// `chain` in `foundry.toml`, a Tempo network selected in `foundry.toml`, or an RPC from
-/// `--rpc-url`, `ETH_RPC_URL` or `foundry.toml` that serves a Tempo chain. An RPC is asked for its
-/// active hardfork; otherwise the compiled Tempo hardfork schedule is read for the chain.
+/// It does when `requested` is set, a Tempo signal is present and T14 is active there: `--chain`
+/// or `CHAIN`, `chain` in `foundry.toml`, a Tempo network selected in `foundry.toml`, or an RPC
+/// from `--rpc-url`, `ETH_RPC_URL` or `foundry.toml` that serves a Tempo chain. An RPC is asked for
+/// its active hardfork; otherwise the compiled Tempo hardfork schedule is read for the chain.
 pub(crate) async fn new_wallet_is_configurable(
     requested: bool,
-    chain: Option<String>,
+    chain: Option<Chain>,
     rpc: &RpcOpts,
 ) -> Result<bool> {
     if !requested {
         return Ok(false);
     }
     let config = rpc.load_config()?;
-    // Parsed only here, so a `CHAIN` set for other tools does not break plain key generation.
-    let chain = chain
-        .map(|chain| chain.parse::<Chain>().map_err(|_| eyre::eyre!("invalid chain `{chain}`")))
-        .transpose()?
-        .or(config.chain);
+    // `CHAIN` is read only here, so a value set for other tools does not break plain key
+    // generation.
+    let chain = match chain {
+        Some(chain) => Some(chain),
+        None => std::env::var("CHAIN")
+            .ok()
+            .map(|chain| {
+                chain.parse::<Chain>().map_err(|_| eyre::eyre!("invalid chain `{chain}` in CHAIN"))
+            })
+            .transpose()?,
+    }
+    .or(config.chain);
 
     let mut signal = None;
     if rpc.url(Some(&config))?.is_some() {
