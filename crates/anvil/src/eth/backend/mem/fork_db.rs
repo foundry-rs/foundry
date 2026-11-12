@@ -90,13 +90,6 @@ fn remote_state_snapshot(remote: &RemoteState, code: &ForkCode) -> StateSnapshot
     }
 }
 
-/// A local snapshot of a [`ForkedDatabase`]: its local changes and the fork cache's contents.
-#[derive(Clone, Debug)]
-struct ForkDbLocalSnapshot<N: Network> {
-    local: CacheDB<RemoteDb<N>>,
-    remote: RemoteState,
-}
-
 /// State forked off another client.
 ///
 /// Missing state is fetched from the remote endpoint through the fork cache (`db`); changes are
@@ -109,8 +102,9 @@ pub struct ForkedDatabase<N: Network> {
     cache_db: CacheDB<RemoteDb<N>>,
     /// Contains all the data already fetched; exclusively the unchanged remote state.
     db: BlockchainDb,
-    /// Holds the state snapshots of a blockchain.
-    state_snapshots: Arc<Mutex<StateSnapshots<ForkDbLocalSnapshot<N>>>>,
+    /// Holds the local changes at each state snapshot. The fork cache only holds unchanged remote
+    /// state, which retained block states read and dump, so reverting keeps it.
+    state_snapshots: Arc<Mutex<StateSnapshots<CacheDB<RemoteDb<N>>>>>,
     /// Records local changes, so each block state shares everything unchanged with the previous.
     history: Mutex<HistoricalStateCache>,
 }
@@ -165,11 +159,7 @@ impl<N: Network> ForkedDatabase<N> {
 
     /// Creates a new snapshot and returns its ID.
     pub fn insert_state_snapshot(&self) -> U256 {
-        let state_snapshot = ForkDbLocalSnapshot {
-            local: self.cache_db.clone(),
-            remote: RemoteState::clone(self.db.db()),
-        };
-        let id = self.state_snapshots.lock().insert(state_snapshot);
+        let id = self.state_snapshots.lock().insert(self.cache_db.clone());
         trace!(target: "backend::forkdb", "Created new snapshot {}", id);
         id
     }
@@ -184,12 +174,7 @@ impl<N: Network> ForkedDatabase<N> {
         if action.is_keep() {
             self.state_snapshots.lock().insert_at(state_snapshot.clone(), id);
         }
-        let ForkDbLocalSnapshot { local, remote } = state_snapshot;
-        let db = self.inner().db();
-        *db.accounts.write() = remote.accounts.into_inner();
-        *db.storage.write() = remote.storage.into_inner();
-        *db.block_hashes.write() = remote.block_hashes.into_inner();
-        self.cache_db = local;
+        self.cache_db = state_snapshot;
         self.invalidate_history();
         trace!(target: "backend::forkdb", "Reverted snapshot {}", id);
         true
@@ -493,6 +478,7 @@ mod tests {
     const ACCOUNT: Address = address!("0x0000000000000000000000000000000000000001");
     const SLOT: U256 = U256::from_limbs([1, 0, 0, 0]);
     const OTHER_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
+    const FETCHED_SLOT: U256 = U256::from_limbs([3, 0, 0, 0]);
     const DELETED: Address = address!("0x0000000000000000000000000000000000000002");
 
     /// Returns a fork whose remote state is cached, so reads never reach the mocked endpoint.
@@ -571,6 +557,15 @@ mod tests {
     #[test]
     fn block_state_restores_with_and_without_fork() {
         let mut db = fork();
+        let snapshot = db.snapshot_state();
+        // Fetched from the fork after the snapshot.
+        db.inner()
+            .db()
+            .storage
+            .write()
+            .get_mut(&ACCOUNT)
+            .unwrap()
+            .insert(FETCHED_SLOT, U256::from(44));
         db.set_storage_at(ACCOUNT, SLOT.into(), B256::with_last_byte(100)).unwrap();
         db.insert_block_hash(U256::from(3), B256::with_last_byte(3));
         db.insert_account(DELETED, AccountInfo::default().with_balance(U256::ONE));
@@ -578,8 +573,10 @@ mod tests {
             AccountState::NotExisting;
         let state = db.current_state();
         assert!(state.maybe_as_full_db().unwrap().contains_key(&DELETED));
-        // Rollback clears the database, which must keep the fork state block states fetched.
+        // Rollback clears the database and `evm_revert` reverts it, which must both keep the fork
+        // state block states fetched.
         db.clear();
+        assert!(db.revert_state(snapshot, RevertStateSnapshotAction::RevertRemove));
 
         // A dumped state restores on the fork and, with the state fetched from it, standalone.
         let standalone = MemDb::default().historical_state(state.read_as_state_snapshot());
@@ -587,6 +584,7 @@ mod tests {
         for restored in [standalone, forked] {
             assert_eq!(restored.storage_ref(ACCOUNT, SLOT).unwrap(), U256::from(100));
             assert_eq!(restored.storage_ref(ACCOUNT, OTHER_SLOT).unwrap(), U256::from(22));
+            assert_eq!(restored.storage_ref(ACCOUNT, FETCHED_SLOT).unwrap(), U256::from(44));
             assert_eq!(restored.basic_ref(DELETED).unwrap(), None);
             assert_eq!(restored.storage_ref(DELETED, SLOT).unwrap(), U256::ZERO);
             assert_eq!(restored.block_hash_ref(3).unwrap(), B256::with_last_byte(3));
