@@ -1503,6 +1503,138 @@ async fn safe_execute_packs_mixed_p256_confirmations(cmd: _) {
 }
 
 #[casttest]
+async fn safe_v1_3_0_execute_reports_inner_outcome(cmd: _) {
+    for (singleton, runtime, runtime_len, runtime_hash) in [
+        (
+            address!("d9Db270c1B5E3Bd161E8c8503c55cEABeE709552"),
+            include_bytes!("../fixtures/safe/v1.3.0/GnosisSafe.runtime.bin").as_slice(),
+            22_958,
+            b256!("bba688fbdb21ad2bb58bc320638b43d94e7d100f6f3ebaab0a4e4de6304b1c2e"),
+        ),
+        (
+            address!("3E5c63644E683549055b9Be8653de26E0B4CD36E"),
+            include_bytes!("../fixtures/safe/v1.3.0/GnosisSafeL2.runtime.bin").as_slice(),
+            23_800,
+            b256!("21842597390c4c6e3c1239e434a682b054bd9548eee5e9b1d6a4482731023c0f"),
+        ),
+    ] {
+        let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+        let rpc = handle.http_endpoint();
+        let provider = handle.http_provider();
+        api.anvil_set_code(singleton, fixture_runtime(runtime, runtime_len, runtime_hash))
+            .await
+            .unwrap();
+        api.anvil_set_code(
+            SAFE_PROXY_FACTORY_V1_4_1,
+            fixture_runtime(
+                include_bytes!("../fixtures/safe/v1.4.1/SafeProxyFactory.runtime.bin"),
+                SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_LEN,
+                SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_HASH,
+            ),
+        )
+        .await
+        .unwrap();
+        let created = cmd
+            .cast_fuse()
+            .args([
+                "safe",
+                "create",
+                &ANVIL_OWNER.to_string(),
+                "--singleton",
+                &singleton.to_string(),
+                "--factory",
+                &SAFE_PROXY_FACTORY_V1_4_1.to_string(),
+                "--fallback-handler",
+                &Address::ZERO.to_string(),
+                "--rpc-url",
+                &rpc,
+                "--private-key",
+                ANVIL_KEY,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let safe = created.trim().parse::<Address>().expect("missing Safe address");
+        let safe_contract = TestSafe::new(safe, &provider);
+        let target = Address::repeat_byte(0x22);
+        assert_eq!(safe_contract.nonce().call().await.unwrap(), U256::ZERO);
+        let signer = ANVIL_KEY.parse::<PrivateKeySigner>().unwrap();
+
+        for (nonce, succeeds, code) in [
+            (0u64, true, bytes!("60005460010160005500")),
+            (1u64, false, bytes!("60005460010160005560006000fd")),
+        ] {
+            // The failure path increments and then reverts, so its counter change must roll back.
+            api.anvil_set_code(target, code).await.unwrap();
+            let safe_tx_gas = if succeeds { U256::ZERO } else { U256::from(100_000) };
+            let hash = safe_contract
+                .getTransactionHash(
+                    target,
+                    U256::ZERO,
+                    Bytes::new(),
+                    0,
+                    safe_tx_gas,
+                    U256::ZERO,
+                    U256::ZERO,
+                    Address::ZERO,
+                    Address::ZERO,
+                    U256::from(nonce),
+                )
+                .call()
+                .await
+                .unwrap();
+            let mut signature = signer.sign_message(hash.as_slice()).await.unwrap().as_bytes();
+            signature[64] += 4;
+            let mut transaction = safe_transaction(safe, 0);
+            transaction["to"] = json!(target);
+            transaction["nonce"] = json!(nonce.to_string());
+            transaction["safeTxGas"] = json!(safe_tx_gas.to_string());
+            transaction["safeTxHash"] = json!(hash);
+            transaction["confirmations"] = json!([{
+                "owner": ANVIL_OWNER,
+                "signature": hex::encode_prefixed(signature),
+            }]);
+            let service = spawn_safe_service(transaction).await;
+            let command = cmd.cast_fuse().args([
+                "safe",
+                "execute",
+                &safe.to_string(),
+                &hash.to_string(),
+                "--service-url",
+                service.endpoint(),
+                "--rpc-url",
+                &rpc,
+                "--private-key",
+                ANVIL_KEY,
+                "--gas-limit",
+                "500000",
+            ]);
+            let execution = if succeeds {
+                command.assert_success()
+            } else {
+                command.assert_failure().stdout_eq("").stderr_eq(str![[r#"
+...
+Error: Safe inner transaction failed
+
+"#]])
+            };
+            let block =
+                provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+            let hashes = block.transactions.as_hashes().unwrap();
+            assert_eq!(hashes.len(), 1);
+            let execution_hash = hashes[0];
+            if succeeds {
+                execution.stdout_eq(format!("{execution_hash}\n"));
+            }
+            let receipt = provider.get_transaction_receipt(execution_hash).await.unwrap().unwrap();
+            assert!(receipt.status());
+            assert_eq!(safe_contract.nonce().call().await.unwrap(), U256::from(nonce + 1));
+            assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::ONE);
+        }
+    }
+}
+
+#[casttest]
 async fn safe_service_mutations_emit_json_envelopes(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();

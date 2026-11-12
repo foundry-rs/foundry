@@ -1,5 +1,5 @@
 use super::{
-    contracts::ISafe,
+    contracts::{ISafe, ISafeV1_3_0},
     rpc_provider,
     service::{SafeServiceOpts, SafeTransaction},
     transaction::SafeSendOpts,
@@ -112,6 +112,16 @@ fn execution_succeeded(logs: &[Log], safe: Address, safe_tx_hash: B256) -> Resul
             {
                 return Some(false);
             }
+            if let Ok(event) = ISafeV1_3_0::ExecutionSuccess::decode_log(&log.inner)
+                && event.txHash == safe_tx_hash
+            {
+                return Some(true);
+            }
+            if let Ok(event) = ISafeV1_3_0::ExecutionFailure::decode_log(&log.inner)
+                && event.txHash == safe_tx_hash
+            {
+                return Some(false);
+            }
             None
         })
         .ok_or_else(|| eyre::eyre!("Safe execution receipt did not emit a matching result event"))
@@ -121,6 +131,7 @@ fn execution_succeeded(logs: &[Log], safe: Address, safe_tx_hash: B256) -> Resul
 mod tests {
     use super::*;
     use alloy_primitives::{LogData, U256};
+    use std::slice;
 
     fn log(safe: Address, data: LogData) -> Log {
         Log { inner: alloy_primitives::Log { address: safe, data }, ..Default::default() }
@@ -130,20 +141,91 @@ mod tests {
     fn uses_last_matching_safe_execution_event() {
         let safe = Address::repeat_byte(1);
         let hash = B256::repeat_byte(2);
-        let success = || {
-            log(
-                safe,
-                ISafe::ExecutionSuccess { txHash: hash, payment: U256::ZERO }.encode_log_data(),
-            )
-        };
-        let failure = || {
-            log(
-                safe,
-                ISafe::ExecutionFailure { txHash: hash, payment: U256::ZERO }.encode_log_data(),
-            )
-        };
+        for (first, first_expected) in execution_events(safe, hash) {
+            for (last, expected) in execution_events(safe, hash) {
+                if first_expected != expected {
+                    assert_eq!(
+                        execution_succeeded(&[first.clone(), last], safe, hash).unwrap(),
+                        expected
+                    );
+                }
+            }
+        }
+    }
 
-        assert!(execution_succeeded(&[failure(), success()], safe, hash).unwrap());
-        assert!(!execution_succeeded(&[success(), failure()], safe, hash).unwrap());
+    #[test]
+    fn ignores_unrelated_execution_events() {
+        let safe = Address::repeat_byte(1);
+        let hash = B256::repeat_byte(2);
+        let [indexed_success, indexed_failure, nonindexed_success, nonindexed_failure] =
+            execution_events(safe, hash);
+        // Pair each unrelated event with the opposite outcome in the same layout.
+        let matching =
+            [&indexed_failure, &indexed_success, &nonindexed_failure, &nonindexed_success];
+        let wrong_hash = execution_events(safe, B256::repeat_byte(4));
+        let [wrong_emitter, ..] = execution_events(Address::repeat_byte(3), hash);
+        for ((unrelated, _), (matching, expected)) in
+            wrong_hash.iter().zip(matching).chain([(&wrong_emitter, &indexed_failure)])
+        {
+            assert!(execution_succeeded(slice::from_ref(unrelated), safe, hash).is_err());
+            assert_eq!(
+                execution_succeeded(&[matching.clone(), unrelated.clone()], safe, hash).unwrap(),
+                *expected
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_execution_events() {
+        let safe = Address::repeat_byte(1);
+        let hash = B256::repeat_byte(2);
+        for (event, expected) in execution_events(safe, hash) {
+            // Clearing the signature makes success and failure identical within each layout.
+            if expected {
+                let mut wrong_signature = event.clone();
+                wrong_signature.inner.data.topics_mut()[0] = B256::ZERO;
+                assert!(execution_succeeded(&[wrong_signature], safe, hash).is_err());
+            }
+
+            let mut truncated = event;
+            let data = &mut truncated.inner.data.data;
+            *data = data.slice(..data.len() - 1);
+            assert!(execution_succeeded(&[truncated], safe, hash).is_err());
+        }
+    }
+
+    fn execution_events(safe: Address, hash: B256) -> [(Log, bool); 4] {
+        [
+            (
+                log(
+                    safe,
+                    ISafe::ExecutionSuccess { txHash: hash, payment: U256::ZERO }.encode_log_data(),
+                ),
+                true,
+            ),
+            (
+                log(
+                    safe,
+                    ISafe::ExecutionFailure { txHash: hash, payment: U256::ZERO }.encode_log_data(),
+                ),
+                false,
+            ),
+            (
+                log(
+                    safe,
+                    ISafeV1_3_0::ExecutionSuccess { txHash: hash, payment: U256::ZERO }
+                        .encode_log_data(),
+                ),
+                true,
+            ),
+            (
+                log(
+                    safe,
+                    ISafeV1_3_0::ExecutionFailure { txHash: hash, payment: U256::ZERO }
+                        .encode_log_data(),
+                ),
+                false,
+            ),
+        ]
     }
 }
