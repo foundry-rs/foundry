@@ -9231,7 +9231,10 @@ impl Backend<FoundryNetwork> {
 
                     let gas_price = tx.effective_tip_per_gas(base_fee).unwrap_or_default();
                     let gas_used = result.tx_gas_used();
+                    #[cfg(feature = "monad")]
                     let gas_fees = U256::from(result.ext.charged_gas) * U256::from(gas_price);
+                    #[cfg(not(feature = "monad"))]
+                    let gas_fees = U256::from(gas_used) * U256::from(gas_price);
                     total_gas_used += gas_used;
                     total_gas_fees += gas_fees;
 

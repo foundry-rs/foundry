@@ -413,7 +413,10 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             }
         };
 
+        #[cfg(feature = "monad")]
         let gas_used = result.ext.charged_gas;
+        #[cfg(not(feature = "monad"))]
+        let gas_used = result.tx_gas_used();
         self.gas_used += gas_used;
         if self.is_cancun {
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
@@ -658,7 +661,10 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                     if gas_config.is_cancun {
                         blob_gas_used = blob_gas_used.saturating_add(declared_blob_gas);
                     }
+                    #[cfg(feature = "monad")]
                     let gas_used = result.ext.charged_gas;
+                    #[cfg(not(feature = "monad"))]
+                    let gas_used = result.tx_gas_used();
                     if result.stop.is_out_of_gas() {
                         warn!(target: "backend", "[{:?}] executed with out of gas", pool_tx.hash());
                     }
@@ -722,7 +728,10 @@ pub(crate) fn transaction_info(
         exit: result.stop,
         out: (!result.stop.is_halt()).then(|| result.output.clone()),
         nonce,
+        #[cfg(feature = "monad")]
         gas_used: result.ext.charged_gas,
+        #[cfg(not(feature = "monad"))]
+        gas_used: result.tx_gas_used(),
     }
 }
 

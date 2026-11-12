@@ -1097,9 +1097,16 @@ async fn access_list_gas_retains_ethereum_floor_and_refunds() {
     let access_list = provider.create_access_list(&request).await.unwrap();
     assert_eq!(access_list.error, None);
     assert_eq!(access_list.gas_used, U256::from(61_000));
+    let balance_before = provider.get_balance(sender).await.unwrap();
     let receipt = provider.send_transaction(request).await.unwrap().get_receipt().await.unwrap();
     assert!(receipt.status());
     assert_eq!(U256::from(receipt.gas_used()), access_list.gas_used);
+    assert_eq!(
+        balance_before - provider.get_balance(sender).await.unwrap(),
+        U256::from(receipt.gas_used()) * U256::from(receipt.effective_gas_price())
+    );
+    let block = provider.get_block_by_hash(receipt.block_hash().unwrap()).await.unwrap().unwrap();
+    assert_eq!(block.header.gas_used, receipt.gas_used());
 
     // Clearing an existing slot refunds 4,800 gas with the generated access list applied.
     api.anvil_set_code(contract, bytes!("5f5f5500")).await.unwrap();
@@ -1110,6 +1117,7 @@ async fn access_list_gas_retains_ethereum_floor_and_refunds() {
     let access_list = provider.create_access_list(&request).await.unwrap();
     assert_eq!(access_list.error, None);
     assert_eq!(access_list.gas_used, U256::from(23_404));
+    let balance_before = provider.get_balance(sender).await.unwrap();
     let receipt = provider
         .send_transaction(request.with_access_list(access_list.access_list))
         .await
@@ -1119,4 +1127,10 @@ async fn access_list_gas_retains_ethereum_floor_and_refunds() {
         .unwrap();
     assert!(receipt.status());
     assert_eq!(U256::from(receipt.gas_used()), access_list.gas_used);
+    assert_eq!(
+        balance_before - provider.get_balance(sender).await.unwrap(),
+        U256::from(receipt.gas_used()) * U256::from(receipt.effective_gas_price())
+    );
+    let block = provider.get_block_by_hash(receipt.block_hash().unwrap()).await.unwrap().unwrap();
+    assert_eq!(block.header.gas_used, receipt.gas_used());
 }
