@@ -51,26 +51,39 @@ use tempo_primitives::transaction::{
     configurable_account_digest,
 };
 
-/// Decides whether `cast wallet new --configurable-account` creates a configurable account.
+/// Decides whether `cast wallet new` creates a configurable account.
 ///
-/// It does when `requested` is set, a Tempo signal is present and T14 is active there: `--chain`
-/// or `CHAIN`, `chain` in `foundry.toml`, a Tempo network selected in `foundry.toml`, or an RPC
-/// from `--rpc-url`, `ETH_RPC_URL` or `foundry.toml` that serves a Tempo chain. An RPC is asked for
-/// its active hardfork; otherwise the compiled Tempo hardfork schedule is read for the chain.
+/// It does unless `eoa` is set, when a Tempo signal is present and T14 is active there: `--chain`
+/// (or `CHAIN` with `requested`), `chain` in `foundry.toml`, a Tempo network selected in
+/// `foundry.toml`, or an RPC from `--rpc-url`, `ETH_RPC_URL` or `foundry.toml` that serves a Tempo
+/// chain. An RPC is asked for its active hardfork; otherwise the compiled Tempo hardfork schedule
+/// is read for the chain.
+/// A non-Tempo `--chain` creates an EOA without reading the configuration. Without `requested`
+/// (`--configurable-account`), a configuration or RPC URL that cannot be read also creates an EOA;
+/// `requested` fails on it, and reports why it creates an EOA instead of an account.
 pub(crate) async fn new_wallet_is_configurable(
+    eoa: bool,
     requested: bool,
     chain: Option<Chain>,
     rpc: &RpcOpts,
 ) -> Result<bool> {
-    if !requested {
+    if eoa || chain.is_some_and(|chain| !chain.is_tempo()) {
         return Ok(false);
     }
-    let config = rpc.load_config()?;
-    // `CHAIN` is read only here, so a value set for other tools does not break plain key
-    // generation.
+    let loaded = rpc.load_config().map_err(Into::into).and_then(|config| {
+        let url = rpc.url(Some(&config))?.is_some();
+        eyre::Ok((config, url))
+    });
+    let (config, url) = match loaded {
+        Ok(loaded) => loaded,
+        Err(_) if !requested => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    // `CHAIN` is read only with `--configurable-account`, so a value set for other tools does not
+    // break key generation.
     let chain = match chain {
         Some(chain) => Some(chain),
-        None => match std::env::var("CHAIN") {
+        None if requested => match std::env::var("CHAIN") {
             Ok(chain) => Some(
                 chain
                     .parse()
@@ -79,11 +92,12 @@ pub(crate) async fn new_wallet_is_configurable(
             Err(std::env::VarError::NotPresent) => None,
             Err(err) => eyre::bail!("invalid CHAIN: {err}"),
         },
+        None => None,
     }
     .or(config.chain);
 
     let mut signal = None;
-    if rpc.url(Some(&config))?.is_some() {
+    if url {
         match rpc_tempo_hardfork(&config).await {
             Ok(rpc_signal) => signal = rpc_signal,
             Err(err) => {
@@ -106,15 +120,19 @@ pub(crate) async fn new_wallet_is_configurable(
     };
 
     let Some((source, hardfork)) = signal else {
-        sh_status!(
-            "No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA."
-        )?;
+        if requested {
+            sh_status!(
+                "No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA."
+            )?;
+        }
         return Ok(false);
     };
     if hardfork.is_some_and(|hardfork| hardfork >= TempoHardfork::T14) {
         return Ok(true);
     }
-    sh_status!("Tempo T14 is not active on {source}; creating an EOA.")?;
+    if requested {
+        sh_status!("Tempo T14 is not active on {source}; creating an EOA.")?;
+    }
     Ok(false)
 }
 
