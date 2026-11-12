@@ -13,7 +13,7 @@ use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::{
     json::{print_json_success, print_scalar},
-    opts::RpcOpts,
+    opts::{ChainValueParser, RpcOpts},
     utils::parse_json,
 };
 use foundry_common::{errors::FsPathError, fs, fs::canonicalize_path, sh_println, shell};
@@ -117,7 +117,7 @@ pub enum WalletSubcommands {
 
         /// The chain to create the wallet for, as a Tempo signal for `--configurable-account`.
         /// Defaults to `CHAIN` with `--configurable-account`.
-        #[arg(long)]
+        #[arg(long, value_parser = ChainValueParser::default())]
         chain: Option<Chain>,
 
         #[command(flatten)]

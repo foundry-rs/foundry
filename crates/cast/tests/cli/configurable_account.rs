@@ -21,6 +21,9 @@ use tempo_primitives::transaction::{
     CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, tt_signature::derive_p256_address,
 };
 
+#[cfg(unix)]
+use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
 /// Returns the gas limit and the gas used of the last transaction in the latest block, and
 /// checks that it succeeded.
 async fn last_tx_gas(provider: &RetryProvider) -> (u64, u64) {
@@ -143,7 +146,7 @@ Private key: [..]
     assert_data_eq!(
         stderr,
         str![[r#"
-No Tempo chain was given (--chain, an RPC or foundry.toml); creating an EOA.
+No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA.
 Successfully created new keypair.
 Address:     [..]
 Private key: [..]
@@ -187,7 +190,10 @@ Private key: [..]
     cmd.cast_fuse().args(["wallet", "new", "--chain", "locla"]);
     cmd.unset_env("CHAIN");
     cmd.assert_failure().stderr_eq(str![[r#"
-error: invalid value 'locla' for '--chain <CHAIN>': invalid digit found in string
+error: invalid value 'locla' for '--chain <CHAIN>'
+  [possible values: [..]]
+
+  tip: a similar value exists: [..]
 
 For more information, try '--help'.
 
@@ -198,9 +204,21 @@ For more information, try '--help'.
     cmd.unset_env("ETH_RPC_URL");
     cmd.env("CHAIN", "local");
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: invalid chain `local` in CHAIN
+Error: invalid CHAIN: `local` is not a chain
 
 "#]]);
+
+    // A `CHAIN` that is not valid UTF-8 is rejected too.
+    #[cfg(unix)]
+    {
+        cmd.cast_fuse().args(["wallet", "new", "--configurable-account"]);
+        cmd.unset_env("ETH_RPC_URL");
+        cmd.env("CHAIN", OsStr::from_bytes(b"\xff"));
+        cmd.assert_failure().stderr_eq(str![[r#"
+Error: invalid CHAIN: environment variable was not valid unicode: [..]
+
+"#]]);
+    }
 
     // `--eoa` asks for the default explicitly.
     let (stdout, _) = wallet_new(&mut cmd, &["--chain", "tempo", "--eoa"]);
@@ -226,7 +244,7 @@ Private key: [..]
     assert_data_eq!(
         stderr,
         str![[r#"
-No Tempo chain was given (--chain, an RPC or foundry.toml); creating an EOA.
+No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA.
 Successfully created new keypair.
 Address:     [..]
 Private key: [..]

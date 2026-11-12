@@ -71,9 +71,11 @@ pub(crate) async fn new_wallet_is_configurable(
     let chain = match chain {
         Some(chain) => Some(chain),
         None => match std::env::var("CHAIN") {
-            Ok(chain) => {
-                Some(chain.parse().map_err(|_| eyre::eyre!("invalid chain `{chain}` in CHAIN"))?)
-            }
+            Ok(chain) => Some(
+                chain
+                    .parse()
+                    .map_err(|_| eyre::eyre!("invalid CHAIN: `{chain}` is not a chain"))?,
+            ),
             Err(std::env::VarError::NotPresent) => None,
             Err(err) => eyre::bail!("invalid CHAIN: {err}"),
         },
@@ -104,7 +106,9 @@ pub(crate) async fn new_wallet_is_configurable(
     };
 
     let Some((source, hardfork)) = signal else {
-        sh_status!("No Tempo chain was given (--chain, an RPC or foundry.toml); creating an EOA.")?;
+        sh_status!(
+            "No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA."
+        )?;
         return Ok(false);
     };
     if hardfork.is_some_and(|hardfork| hardfork >= TempoHardfork::T14) {
