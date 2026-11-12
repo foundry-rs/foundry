@@ -5712,7 +5712,7 @@ async fn test_fork_rollback_past_in_memory_states() {
 async fn test_fork_destroyed_account_past_in_memory_states() {
     // Pre-Cancun, so SELFDESTRUCT removes the account and its storage.
     let hardfork = Some(EthereumHardfork::Shanghai.into());
-    let (origin_api, origin_handle) = spawn(NodeConfig::test().with_hardfork(hardfork)).await;
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let contract = Address::random();
     // CALLER SELFDESTRUCT
     origin_api.anvil_set_code(contract, bytes!("0x33ff")).await.unwrap();

@@ -317,7 +317,7 @@ impl PersistentStateDb {
     }
 
     /// Returns the accounts, including the ones known not to exist only if `with_not_existing`.
-    fn full_db(&self, with_not_existing: bool) -> AddressMap<DbAccount> {
+    pub(crate) fn full_db(&self, with_not_existing: bool) -> AddressMap<DbAccount> {
         self.accounts
             .iter()
             .filter(|(_, account)| {

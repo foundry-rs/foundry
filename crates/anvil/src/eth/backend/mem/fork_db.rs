@@ -428,7 +428,7 @@ impl<N: Network> DatabaseRef for ForkDbStateSnapshot<N> {
 
 impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
-        Some(self.full.get_or_init(|| self.local.to_cache().accounts))
+        Some(self.full.get_or_init(|| self.local.full_db(true)))
     }
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
