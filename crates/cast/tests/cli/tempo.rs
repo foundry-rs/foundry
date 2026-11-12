@@ -2186,3 +2186,34 @@ async fn tempo_nonce_key_auth_uses_protocol_nonce(cmd: _) {
         cmd.cast_fuse().args(["code", &sender, "--rpc-url", &rpc]).assert_success().stdout_eq(code);
     }
 }
+
+/// Before T1 the expiring nonce key is an ordinary lane, so its nonce comes from the Nonce Manager.
+#[casttest]
+async fn tempo_t0_expiring_nonce_key_uses_lane_nonce(cmd: _) {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()))).await;
+    let rpc = handle.http_endpoint();
+    let (sender, key) = dev_account(&handle, 0);
+    let nonce_key = U256::MAX.to_string();
+    let send = ["send", "0x7373737373737373737373737373737373737373", "--private-key", &key];
+
+    // The first transaction advances the lane to 1; the second only mines with that nonce.
+    cmd.cast_fuse()
+        .args(send)
+        .args(["--tempo.nonce-key", &nonce_key, "--nonce", "0", "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(send)
+        .args(["--tempo.nonce-key", &nonce_key, "--timeout", "10", "--rpc-url", &rpc])
+        .assert_success();
+
+    cmd.cast_fuse()
+        .args(["call", &NONCE_PRECOMPILE_ADDRESS.to_string()])
+        .args(["getNonce(address,uint256)(uint64)", &sender.to_string(), &nonce_key])
+        .args(["--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+2
+
+"#]]);
+}

@@ -22,13 +22,16 @@ use foundry_common::{
     get_pretty_receipt_w_reason_attr,
     provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     shell,
-    tempo::{ensure_expiring_nonce_discriminator_active, mark_sponsored_gas_estimation},
+    tempo::{
+        ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
+        mark_sponsored_gas_estimation,
+    },
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
-use tempo_alloy::accounts::TempoAccountsWallet;
+use tempo_alloy::{accounts::TempoAccountsWallet, chainspec::hardfork::TempoHardfork};
 use tempo_contracts::precompiles::{INonce, NONCE_PRECOMPILE_ADDRESS};
 use tempo_primitives::transaction::TEMPO_EXPIRING_NONCE_KEY;
 
@@ -842,8 +845,8 @@ where
     /// Resolves the transaction nonce. Returns the existing nonce or fetches one from the provider.
     ///
     /// A Tempo nonce key other than the protocol key `0` selects a 2D nonce lane with its own
-    /// counter in the Nonce Manager precompile. The expiring nonce key has no counter: its nonce
-    /// is a discriminator that defaults to `0`.
+    /// counter in the Nonce Manager precompile. From T1 on, the expiring nonce key has no counter:
+    /// its nonce is a discriminator that defaults to `0`. Before T1 it is an ordinary lane.
     async fn resolve_nonce(
         provider: &P,
         from: Address,
@@ -854,7 +857,14 @@ where
             return Ok(nonce);
         }
         match nonce_key {
-            Some(TEMPO_EXPIRING_NONCE_KEY) => Ok(0),
+            Some(TEMPO_EXPIRING_NONCE_KEY)
+                if !matches!(
+                    is_tempo_hardfork_active(provider, TempoHardfork::T1).await,
+                    Ok(false)
+                ) =>
+            {
+                Ok(0)
+            }
             Some(nonce_key) if !nonce_key.is_zero() => {
                 let call = INonce::getNonceCall { account: from, nonceKey: nonce_key };
                 let request = N::TransactionRequest::default()
