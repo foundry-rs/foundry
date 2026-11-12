@@ -8848,14 +8848,18 @@ contract TransactCreationForkTest {
     function testForkTransactRevertedCreation() public {
         vm.createSelectFork("<url>", <tx>);
         vm.store(CREATED, bytes32(0), bytes32(uint256(7)));
-        try this.replayAndRevert() {} catch {}
+        try this.replayAndRevert() {} catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("rolled back"), reason);
+        }
         require(CREATED.code.length == 0, "rolled back creation");
         require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "seeded");
         require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(5)), "fork storage");
         require(vm.load(CREATED, bytes32(uint256(2))) == bytes32(uint256(6)), "slot read in replay");
         // A slot loaded before another replay keeps its value after the replay reverts.
         vm.store(CREATED, bytes32(uint256(2)), 0);
-        try this.replayAndRevert() {} catch {}
+        try this.replayAndRevert() {} catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("rolled back"), reason);
+        }
         require(vm.load(CREATED, bytes32(uint256(2))) == 0, "slot stored before replay");
     }
 }
