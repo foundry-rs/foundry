@@ -3879,7 +3879,7 @@ impl EthApi<FoundryNetwork> {
                 // EVM failures (including reverts) are surfaced in the result's `error`
                 // field per the execution-apis `eth_createAccessList` spec, so callers
                 // can still inspect the traced slots when execution fails.
-                let CallOutcome { exit, simulation_gas_used, .. } =
+                let CallOutcome { exit, gas_used, .. } =
                     self.backend.call_with_state_typed_access_list(
                         &cache_db,
                         typed_request,
@@ -3891,7 +3891,7 @@ impl EthApi<FoundryNetwork> {
 
                 Ok(AccessListResult {
                     access_list,
-                    gas_used: U256::from(simulation_gas_used),
+                    gas_used: U256::from(gas_used),
                     error: execution_error(exit),
                 })
             })
@@ -5974,11 +5974,9 @@ impl TryFrom<Result<CallOutcome>> for GasEstimationCallResult {
                 Ok(Self::OutOfGas)
             }
             Err(err) => Err(err),
-            Ok(CallOutcome { exit, output, simulation_gas_used, .. }) => {
+            Ok(CallOutcome { exit, output, gas_used, .. }) => {
                 if exit.is_success() {
-                    // The execution family excludes unused charged gas where needed and
-                    // otherwise preserves its receipt gas as the search's lower bound.
-                    Ok(Self::Success(simulation_gas_used))
+                    Ok(Self::Success(gas_used))
                 } else if exit.is_revert() {
                     Ok(Self::Revert(Some(output)))
                 } else if exit.is_out_of_gas() {
@@ -6025,13 +6023,8 @@ fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        NodeConfig,
-        eth::backend::evm::{Executed, exec_result},
-        spawn,
-    };
-    use evm2::TxResultExt;
-    use foundry_evm_core::{constants::HARDHAT_CONSOLE_ADDRESS, evm::EthEvmNetwork};
+    use crate::{NodeConfig, spawn};
+    use foundry_evm_core::constants::HARDHAT_CONSOLE_ADDRESS;
 
     #[cfg(feature = "base")]
     #[tokio::test(flavor = "multi_thread")]
@@ -6235,32 +6228,5 @@ mod tests {
         drop(db);
         let error = tokio::time::timeout(Duration::from_secs(5), write).await.unwrap().unwrap_err();
         assert!(matches!(error, BlockchainError::RpcError(_)));
-    }
-
-    #[test]
-    fn gas_estimation_preserves_ethereum_receipt_rules() {
-        for (total_gas_spent, refunded, floor_gas, expected) in [
-            // Calldata floors can exceed consumption.
-            (37_000, 0, 61_000, 61_000),
-            // Storage refunds reduce the receipt charge below consumption.
-            (28_204, 4_800, 0, 23_404),
-        ] {
-            let executed = Executed {
-                result: exec_result::<EthEvmNetwork>(TxResultExt {
-                    status: true,
-                    stop: InstrStop::Stop,
-                    total_gas_spent,
-                    refunded,
-                    floor_gas,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            };
-            let result = GasEstimationCallResult::try_from(Ok(executed.into())).unwrap();
-            let GasEstimationCallResult::Success(gas) = result else {
-                panic!("successful execution must seed gas estimation");
-            };
-            assert_eq!(gas, expected);
-        }
     }
 }

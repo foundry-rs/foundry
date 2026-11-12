@@ -405,7 +405,7 @@ async fn monad_run_traces_protocol_system_call(cmd: _) {
 Error: EVM error
 
 Context:
-- invalid Monad protocol transaction: NotLegacy { tx_type: 2 }
+- invalid Monad protocol transaction: expected a legacy envelope, got type 2
 
 "#]]);
 

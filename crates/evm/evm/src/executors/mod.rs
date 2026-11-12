@@ -38,9 +38,8 @@ use foundry_evm_core::{
     },
     evm::{
         ChainFor, EthEvmNetwork, EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmExt,
-        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryTxConversion,
-        FoundryTxResultExt, SpecFor, TransactionRequestFor, TxFor, TxResultFor, TypesFor, evm_env,
-        release_inspector,
+        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryTxConversion, SpecFor,
+        TransactionRequestFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
     },
 };
 use foundry_evm_coverage::HitMaps;
@@ -1748,14 +1747,6 @@ pub fn calculate_stipend<FEN: FoundryEvmNetwork>(
     evm_env: &EvmEnvFor<FEN>,
     tx: &TransactionRequestFor<FEN>,
 ) -> u64 {
-    calculate_intrinsic_and_floor_gas::<FEN>(evm_env, tx).0
-}
-
-/// Returns the intrinsic gas and calldata floor for `tx` in `evm_env`.
-pub fn calculate_intrinsic_and_floor_gas<FEN: FoundryEvmNetwork>(
-    evm_env: &EvmEnvFor<FEN>,
-    tx: &TransactionRequestFor<FEN>,
-) -> (u64, u64) {
     let access_list = tx.access_list();
     evm2::ethereum::intrinsic_and_floor_gas(
         &evm_env.version,
@@ -1766,6 +1757,7 @@ pub fn calculate_intrinsic_and_floor_gas<FEN: FoundryEvmNetwork>(
         access_list.map_or(0, |list| list.iter().map(|item| item.storage_keys.len() as u64).sum()),
         tx.value().unwrap_or_default(),
     )
+    .0
 }
 
 /// Converts the data aggregated in the `inspector` and `execution` to a `RawCallResult`.
@@ -1778,7 +1770,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         execution;
     let exit_reason = tx_result.stop;
     let gas_refunded = if tx_result.status { tx_result.refunded } else { 0 };
-    let gas_used = FoundryTxResultExt::simulation_gas_used(&tx_result);
+    let gas_used = tx_result.tx_gas_used();
     let created_address = tx_result.created_address.filter(|_| tx_result.status);
     let result = if created_address.is_some() { Bytes::new() } else { tx_result.output };
 
@@ -2577,7 +2569,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             error.root_cause().to_string(),
-            "invalid Monad protocol transaction: NonZeroGasLimit(100000)"
+            "invalid Monad protocol transaction: gas limit must be zero, got 100000"
         );
         assert_eq!(executor.get_nonce(system).unwrap(), 3);
     }

@@ -2,10 +2,8 @@
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, fake_exponential};
-use alloy_primitives::{Address, U256, map::AddressMap};
-use evm2::{
-    Evm, EvmFeatures, EvmTypes, EvmTypesHost, TxResultExt, Version, env::BlockEnv, evm::AccountInfo,
-};
+use alloy_primitives::{U256, map::AddressMap};
+use evm2::{Evm, EvmFeatures, EvmTypes, EvmTypesHost, Version, env::BlockEnv, evm::AccountInfo};
 use std::fmt::Debug;
 
 /// The spec, runtime version and block an EVM is built with.
@@ -153,12 +151,6 @@ pub trait FoundryExecutionHooks: EvmTypes {
     fn tx_call_depth_offset(_tx: &Self::Tx) -> u16 {
         0
     }
-
-    /// Sets storage warmth after an out-of-band access or an explicit warmth cheatcode.
-    /// Networks with a larger access unit update that unit alongside the individual slot.
-    fn set_storage_warm(evm: &mut Evm<'_, Self>, address: &Address, slot: U256, warm: bool) {
-        evm.state_mut().set_storage_warm(address, slot, warm);
-    }
 }
 
 /// Per-EVM network state, such as OP L1 block info or Monad's reserve-balance context.
@@ -289,7 +281,7 @@ unsafe impl<E: SendableExt> Send for StoredExt<E> {}
 // SAFETY: see the `Send` implementation.
 unsafe impl<E: SendableExt> Sync for StoredExt<E> {}
 
-/// Network-specific transaction outcome data.
+/// Network-only transaction outcome flags.
 ///
 /// The shared `TxResult::stop` carries the outcome.
 pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
@@ -304,22 +296,6 @@ pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
     /// including EIP-8130 simulations, return `None`.
     fn eip8130_phase_statuses(&self) -> Option<&[u8]> {
         None
-    }
-
-    /// Gas reported by simulations, including access lists, and used to seed gas estimation.
-    ///
-    /// Ordinarily this is receipt gas, including calldata floors and refunds. Networks that
-    /// charge unused gas report consumption here; their receipts retain `tx_gas_used()`.
-    fn simulation_gas_used(result: &TxResultExt<Self>) -> u64 {
-        result.tx_gas_used()
-    }
-
-    /// Returns the settled gas floor to apply when an isolated transaction becomes a frame.
-    ///
-    /// Ordinarily the execution family's result keeps its floor. Networks that charge unused
-    /// gas can select the calldata floor instead of treating receipt charges as frame gas.
-    fn isolated_frame_gas_floor(result: &TxResultExt<Self>, _calldata_floor: u64) -> u64 {
-        result.floor_gas
     }
 }
 

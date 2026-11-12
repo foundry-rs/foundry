@@ -29,9 +29,9 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, DestructedAccount, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryExecutionHooks,
-        FoundryTxConversion, FoundryTxResultExt, InterpreterFor, MessageFor, MessageResultFor,
-        PersistentWrite, PreparedTx, SnapshotRestores, TransactionRequestFor, TxFor, TxResultFor,
-        TypesFor, destructed_accounts, evm_env, merge_pending_changes,
+        FoundryTxConversion, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
+        PreparedTx, SnapshotRestores, TransactionRequestFor, TxFor, TxResultFor, TypesFor,
+        destructed_accounts, evm_env, merge_pending_changes,
         merge_untracked_pending_changes_with_warmth, put_transient, release_inspector,
         take_transient, warm_accounts, warm_set,
     },
@@ -1538,8 +1538,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let mut result = executed.result;
         if skip_floor {
             result.floor_gas = floor;
-        } else {
-            result.floor_gas = FoundryTxResultExt::isolated_frame_gas_floor(&result, floor);
         }
         self.inner.tx_created.extend(
             executed

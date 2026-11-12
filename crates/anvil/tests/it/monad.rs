@@ -22,12 +22,16 @@ use alloy_rpc_types::{
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverride},
     trace::{
-        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
+        geth::{
+            GethDebugBuiltInTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions,
+            GethTrace,
+        },
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{Action, TraceResults, TraceType},
     },
 };
 use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_sol_types::{SolCall, SolEvent};
@@ -2681,4 +2685,145 @@ async fn monad_estimates_consumption_and_receipts_charge_the_limit() {
         assert!(!receipt.status());
         assert_eq!(receipt.gas_used(), 100_000);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_simulate_without_gas_limits_reports_consumption() {
+    let (_api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    for (data, expected) in [(Bytes::new(), 21_000), (Bytes::from(vec![1; 1000]), 61_000)] {
+        let request = TransactionRequest::default()
+            .from(sender)
+            .to(Address::repeat_byte(0x55))
+            .value(U256::ONE)
+            .input(data.into());
+        let blocks = provider
+            .simulate(&SimulatePayload {
+                block_state_calls: vec![SimBlock {
+                    calls: vec![request.clone(), request],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].calls.len(), 2);
+        assert_eq!(blocks[0].inner.header.gas_used, expected * 2);
+        for call in &blocks[0].calls {
+            assert!(call.status);
+            assert_eq!(call.gas_used, expected);
+            assert_eq!(call.max_used_gas, Some(expected));
+        }
+    }
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_call_traces_report_execution_gas() {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    for limit in [100_000, 1_000_000] {
+        for (code, expected) in
+            [(bytes!("5f5000"), 21_004), (bytes!("5f5ffd"), 21_004), (bytes!("fe"), limit)]
+        {
+            api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, code).await.unwrap();
+            let request = storage_gas_probe_call().with_from(sender).with_gas_limit(limit);
+            let trace = provider
+                .debug_trace_call(
+                    request.clone(),
+                    BlockId::latest(),
+                    GethDebugTracingCallOptions::default(),
+                )
+                .await
+                .unwrap();
+            let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
+            assert_eq!(frame.gas, expected);
+            let trace = provider
+                .debug_trace_call(
+                    request,
+                    BlockId::latest(),
+                    GethDebugTracingCallOptions::default().with_tracing_options(
+                        GethDebugTracingOptions::default()
+                            .with_tracer(GethDebugBuiltInTracerType::CallTracer.into()),
+                    ),
+                )
+                .await
+                .unwrap();
+            let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+            assert_eq!(frame.gas_used, U256::from(expected));
+        }
+    }
+    api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, bytes!("5f5000")).await.unwrap();
+    let trace: TraceResults = provider
+        .client()
+        .request(
+            "trace_call",
+            (
+                storage_gas_probe_call().with_from(sender).with_gas_limit(1_000_000),
+                vec![TraceType::Trace],
+                BlockId::latest(),
+            ),
+        )
+        .await
+        .unwrap();
+    // Parity call frames exclude intrinsic transaction gas.
+    assert_eq!(root_trace_gas(&trace), 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_bundle_separates_consumption_from_charged_fees() {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = wallets[1].address();
+    let coinbase = wallets[2].address();
+    let balance = provider.get_balance(coinbase).await.unwrap();
+    let base_fee = api.base_fee().unwrap().unwrap().to::<u64>();
+    let tip = 7;
+    let mut txs = Vec::new();
+    for nonce in 0..2 {
+        let mut tx = TxEip1559 {
+            chain_id: provider.get_chain_id().await.unwrap(),
+            nonce,
+            gas_limit: 100_000,
+            max_fee_per_gas: u128::from(base_fee) + tip,
+            max_priority_fee_per_gas: tip,
+            to: coinbase.into(),
+            value: U256::from(nonce + 1),
+            ..Default::default()
+        };
+        let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+        txs.push(tx.into_signed(signature).encoded_2718().into());
+    }
+    let response: EthCallBundleResponse = provider
+        .client()
+        .request(
+            "eth_callBundle",
+            (EthCallBundle {
+                txs,
+                block_number: 1,
+                state_block_number: BlockNumberOrTag::Latest,
+                coinbase: Some(coinbase),
+                ..Default::default()
+            },),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.total_gas_used, 42_000);
+    assert_eq!(response.gas_fees, U256::from(200_000 * tip));
+    assert_eq!(response.eth_sent_to_coinbase, U256::from(3));
+    assert_eq!(response.coinbase_diff, response.gas_fees + U256::from(3));
+    assert_eq!(response.results.len(), 2);
+    for (index, result) in response.results.iter().enumerate() {
+        assert_eq!(result.from_address, sender);
+        assert_eq!(result.gas_used, 21_000);
+        assert_eq!(result.gas_fees, U256::from(100_000 * tip));
+        assert_eq!(result.eth_sent_to_coinbase, U256::from(index + 1));
+        assert_eq!(result.revert, None);
+    }
+    assert_eq!(provider.get_balance(coinbase).await.unwrap(), balance);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
 }

@@ -4564,9 +4564,24 @@ async fn assert_raw_transaction_access_list(
             // Measure real execution before choosing a tight cap. Missing the access list must
             // make this exact cap insufficient, for both CALL and CREATE and both typed envelopes.
             let transaction = sign(2_000_000, access_list.clone());
-            let request =
-                TransactionRequest::from_transaction_with_sender(transaction, signer.address());
-            let gas_limit = provider.estimate_gas(request.into()).await.unwrap() + 1_000;
+            let gas_limit = if full_gas_charge {
+                // Monad receipts charge the full limit; estimate consumption for this cap.
+                let request =
+                    TransactionRequest::from_transaction_with_sender(transaction, signer.address());
+                provider.estimate_gas(request.into()).await.unwrap() + 1_000
+            } else {
+                let snapshot = api.evm_snapshot().await.unwrap();
+                let receipt = provider
+                    .send_raw_transaction(&transaction.encoded_2718())
+                    .await
+                    .unwrap()
+                    .get_receipt()
+                    .await
+                    .unwrap();
+                assert!(receipt.status());
+                assert!(api.evm_revert(snapshot).await.unwrap());
+                receipt.gas_used() + 1_000
+            };
 
             let snapshot = api.evm_snapshot().await.unwrap();
             let without_list = sign(gas_limit, AccessList::default());

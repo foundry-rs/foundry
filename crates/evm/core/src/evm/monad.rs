@@ -1,4 +1,11 @@
 //! Monad on evm2, using `monad-evm2`.
+//!
+//! Ordinary transactions charge the full gas limit, including on revert. The runtime
+//! keeps that charge in `MonadTxResultExt::charged_gas`; evm2's gas consumption and
+//! calldata floor retain their ordinary meanings for simulations and isolated frames.
+//! Anvil maps the charge into receipts and block totals at its result conversion boundary.
+//! Native reserve-balance enforcement remains opt-in, while tracking stays active.
+//! MIP-8 page warmth derives from native slot warmth, including cheatcode accesses.
 
 use super::{
     EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks,
@@ -21,7 +28,6 @@ use evm2::{
 use monad_evm2::{
     MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
     MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_tx_registry, monad_version,
-    page::set_storage_page_warm,
     protocol_system_call,
     reserve_balance::{reserve_account, sync_reserve_balance},
     staking::constants::SYSTEM_ADDRESS,
@@ -148,17 +154,7 @@ fn block_participants(transactions: &[Recovered<TxEnvelope>]) -> HashSet<Address
     transactions.iter().flat_map(|tx| std::iter::once(tx.signer()).chain(authorities(tx))).collect()
 }
 
-impl FoundryTxResultExt for MonadTxResultExt {
-    fn simulation_gas_used(result: &TxResult<MonadEvmTypes>) -> u64 {
-        // Monad charges the full limit and never refunds gas. Reports and gas searches need
-        // the consumption retained before that receipt floor, including intrinsic gas.
-        result.total_gas_spent
-    }
-
-    fn isolated_frame_gas_floor(_result: &TxResult<MonadEvmTypes>, calldata_floor: u64) -> u64 {
-        calldata_floor
-    }
-}
+impl FoundryTxResultExt for MonadTxResultExt {}
 
 impl FoundryEvmNetwork for MonadEvmNetwork {
     type Network = Ethereum;
@@ -253,10 +249,5 @@ impl FoundryExecutionHooks for MonadEvmTypes {
         ext.reserve_balance.rebase(&chain, |address| {
             views.iter().find(|(tracked, _)| *tracked == address).map(|(_, view)| *view)
         });
-    }
-
-    fn set_storage_warm(evm: &mut Evm<'_, Self>, address: &Address, slot: U256, warm: bool) {
-        evm.state_mut().set_storage_warm(address, slot, warm);
-        set_storage_page_warm(evm, *address, slot, warm);
     }
 }

@@ -551,10 +551,8 @@ pub struct CallOutcome {
     pub exit: InstrStop,
     /// Return or revert data.
     pub output: Bytes,
-    /// Receipt gas charged by the transaction.
+    /// Gas consumed by the call, including calldata floors and refunds.
     pub gas_used: u128,
-    /// Gas reported by simulations under the selected execution family's rules.
-    pub simulation_gas_used: u128,
     /// State changes of the call.
     pub state: PendingState,
 }
@@ -564,7 +562,6 @@ impl From<Executed> for CallOutcome {
         Self {
             exit: result.stop,
             gas_used: result.tx_gas_used() as u128,
-            simulation_gas_used: result.ext.simulation_gas_used as u128,
             output: result.output,
             state,
         }
@@ -3950,7 +3947,7 @@ impl<N: Network> Backend<N> {
             access_list
         };
         let result = executed.result;
-        Ok((result.stop, result.output.clone(), result.ext.simulation_gas_used, access_list))
+        Ok((result.stop, result.output.clone(), result.tx_gas_used(), access_list))
     }
 
     /// Restores the block's base and blob base fees that a zero-fee call env clears. Like geth,
@@ -9234,7 +9231,7 @@ impl Backend<FoundryNetwork> {
 
                     let gas_price = tx.effective_tip_per_gas(base_fee).unwrap_or_default();
                     let gas_used = result.tx_gas_used();
-                    let gas_fees = U256::from(gas_used) * U256::from(gas_price);
+                    let gas_fees = U256::from(result.ext.charged_gas) * U256::from(gas_price);
                     total_gas_used += gas_used;
                     total_gas_fees += gas_fees;
 

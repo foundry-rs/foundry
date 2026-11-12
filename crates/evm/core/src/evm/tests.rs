@@ -399,7 +399,9 @@ fn monad_charges_the_full_gas_limit() {
     assert!(!evm.ext().revert_on_reserve_balance_violation);
     let result = evm.transact(&tx).unwrap().commit();
     assert!(result.status);
-    assert_eq!(result.tx_gas_used(), 50_000);
+    assert_eq!(result.ext.charged_gas, 50_000);
+    assert_eq!(result.tx_gas_used(), 21_000);
+    assert_eq!(result.floor_gas, 21_000);
     assert_eq!(result.total_gas_spent, 21_000);
     // Monad charges the whole 50k gas limit, not the 21k used.
     assert_eq!(balance(&mut evm, caller), U256::from(ETHER - 7 - 50_000 * 7 * GWEI));
@@ -896,40 +898,4 @@ fn from_any_rpc_transaction_for_tempo_aa_without_signature_errors() {
 
     let err = TypesFor::<crate::evm::TempoEvmNetwork>::tx_from_any_rpc(&any_tx).unwrap_err();
     assert_eq!(err.to_string(), "cannot decode Tempo AA transaction: missing field `signature`");
-}
-
-fn assert_isolated_frame_preserves_settled_floor<FEN: FoundryEvmNetwork>() {
-    for floor_gas in [0, 61_000, 80_000] {
-        let result = TxResultFor::<FEN> { floor_gas, ..Default::default() };
-        assert_eq!(FoundryTxResultExt::isolated_frame_gas_floor(&result, 61_000), floor_gas);
-    }
-}
-
-#[test]
-fn isolated_frame_preserves_non_monad_gas_floors() {
-    assert_isolated_frame_preserves_settled_floor::<EthEvmNetwork>();
-    assert_isolated_frame_preserves_settled_floor::<TempoEvmNetwork>();
-    #[cfg(feature = "optimism")]
-    assert_isolated_frame_preserves_settled_floor::<OpEvmNetwork>();
-    #[cfg(feature = "base")]
-    assert_isolated_frame_preserves_settled_floor::<BaseEvmNetwork>();
-}
-
-#[cfg(feature = "monad")]
-#[test]
-fn monad_isolated_frame_uses_calldata_floor_without_changing_receipts() {
-    for gas_limit in [100_000, 1_000_000] {
-        let result = TxResultFor::<MonadEvmNetwork> {
-            total_gas_spent: 37_000,
-            floor_gas: gas_limit,
-            ..Default::default()
-        };
-        for calldata_floor in [0, 61_000] {
-            assert_eq!(
-                FoundryTxResultExt::isolated_frame_gas_floor(&result, calldata_floor),
-                calldata_floor
-            );
-            assert_eq!(result.tx_gas_used(), gas_limit);
-        }
-    }
 }

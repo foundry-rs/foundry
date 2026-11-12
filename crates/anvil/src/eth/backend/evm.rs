@@ -98,8 +98,8 @@ pub struct ResultExt {
     pub failed_deposit: bool,
     /// Per-phase statuses of an included signed Base EIP-8130 transaction.
     pub eip8130_phase_statuses: Option<Vec<u8>>,
-    /// Gas reported by simulations, resolved before erasing the execution family.
-    pub simulation_gas_used: u64,
+    /// Gas charged for fees, receipts and mined block totals.
+    pub charged_gas: u64,
 }
 
 /// Network-neutral transaction result.
@@ -203,6 +203,9 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
     ) -> Result<Recovered<TxFor<Self>>, BlockchainError> {
         evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)
     }
+
+    /// Converts the native result, retaining its receipt charge before erasing its family.
+    fn exec_result(result: TxResult<TypesFor<Self>>) -> ExecResult;
 }
 
 /// Converts `tx` into `N`'s envelope through its exact EIP-2718 encoding.
@@ -282,6 +285,11 @@ impl AnvilEvmNetwork for EthEvmNetwork {
             override_authorities(tx, overrides);
         }
     }
+
+    fn exec_result(result: TxResult<TypesFor<Self>>) -> ExecResult {
+        let charged_gas = result.tx_gas_used();
+        result_with_charge::<Self>(result, charged_gas)
+    }
 }
 
 #[cfg(feature = "monad")]
@@ -312,6 +320,11 @@ impl AnvilEvmNetwork for MonadEvmNetwork {
             && <monad_evm2::MonadEvmExt as FoundryEvmExt<_>>::is_protocol_transaction(tx);
         evm.ext_mut().set_protocol_replay(protocol);
     }
+
+    fn exec_result(result: TxResult<TypesFor<Self>>) -> ExecResult {
+        let charged_gas = result.ext.charged_gas;
+        result_with_charge::<Self>(result, charged_gas)
+    }
 }
 
 #[cfg(feature = "optimism")]
@@ -324,6 +337,11 @@ impl AnvilEvmNetwork for OpEvmNetwork {
         if let op_evm2::OpTypedTx::Eip7702(tx) = &mut tx.tx {
             override_authorities(tx, overrides);
         }
+    }
+
+    fn exec_result(result: TxResult<TypesFor<Self>>) -> ExecResult {
+        let charged_gas = result.tx_gas_used();
+        result_with_charge::<Self>(result, charged_gas)
     }
 }
 
@@ -352,6 +370,11 @@ impl AnvilEvmNetwork for BaseEvmNetwork {
             return Ok(Recovered::new_unchecked(inner, signer));
         }
         Ok(tx)
+    }
+
+    fn exec_result(result: TxResult<TypesFor<Self>>) -> ExecResult {
+        let charged_gas = result.tx_gas_used();
+        result_with_charge::<Self>(result, charged_gas)
     }
 }
 
@@ -413,6 +436,11 @@ impl AnvilEvmNetwork for TempoEvmNetwork {
             ));
         }
         Ok(tx)
+    }
+
+    fn exec_result(result: TxResult<TypesFor<Self>>) -> ExecResult {
+        let charged_gas = result.tx_gas_used();
+        result_with_charge::<Self>(result, charged_gas)
     }
 }
 
@@ -681,10 +709,18 @@ impl<I> MonadInspector for I {}
 
 /// Converts a family result into a network-neutral one.
 pub fn exec_result<N: AnvilEvmNetwork>(result: TxResult<TypesFor<N>>) -> ExecResult {
+    N::exec_result(result)
+}
+
+/// Retains receipt accounting and outcome metadata at the network conversion boundary.
+fn result_with_charge<N: AnvilEvmNetwork>(
+    result: TxResult<TypesFor<N>>,
+    charged_gas: u64,
+) -> ExecResult {
     let ext = ResultExt {
         failed_deposit: result.ext.is_failed_deposit(),
         eip8130_phase_statuses: result.ext.eip8130_phase_statuses().map(<[u8]>::to_vec),
-        simulation_gas_used: FoundryTxResultExt::simulation_gas_used(&result),
+        charged_gas,
     };
     result.with_ext(ext)
 }
