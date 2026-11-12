@@ -10,7 +10,11 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, serde_helpers::WithOtherFields};
 use eyre::Result;
 use std::num::NonZeroU64;
-use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet, rpc::TempoTransactionRequest};
+use tempo_alloy::{
+    TempoNetwork,
+    accounts::TempoAccountsWallet,
+    rpc::{ConfigurableAccountSimulationSpec, TempoTransactionRequest},
+};
 use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
 
 #[cfg(feature = "base")]
@@ -228,6 +232,10 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
         self.set_key_id(key_id);
         self
     }
+
+    /// Set the configurable account owner quorum that gas estimation models for the sender of a
+    /// Tempo transaction signed with a `0x05` signature.
+    fn set_configurable_account_simulation(&mut self, _spec: ConfigurableAccountSimulationSpec) {}
 
     /// Get the valid_before timestamp for a Tempo expiring nonce transaction.
     fn valid_before(&self) -> Option<NonZeroU64> {
@@ -512,6 +520,10 @@ impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
 
     fn set_key_id(&mut self, key_id: Address) {
         self.key_id = Some(key_id);
+    }
+
+    fn set_configurable_account_simulation(&mut self, spec: ConfigurableAccountSimulationSpec) {
+        self.configurable_account_simulation = Some(spec);
     }
 
     fn valid_before(&self) -> Option<NonZeroU64> {

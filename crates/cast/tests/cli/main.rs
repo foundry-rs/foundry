@@ -38,6 +38,7 @@ use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_o
 #[macro_use]
 extern crate foundry_test_utils;
 
+mod configurable_account;
 mod erc20;
 mod erc4626;
 mod keychain;

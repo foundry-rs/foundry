@@ -1,4 +1,7 @@
-use super::auth::{confirm_and_build, confirm_and_build_with_tempo_wallet};
+use super::{
+    auth::{confirm_and_build, confirm_and_build_with_tempo_wallet},
+    wallet::configurable_account,
+};
 use crate::{
     tempo,
     tx::{self, CastTxBuilder},
@@ -7,20 +10,22 @@ use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, EthereumWallet, Network, NetworkTransactionBuilder};
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{Address, U256, hex};
 use alloy_provider::Provider;
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    json::print_scalar,
+    json::{print_json_success, print_scalar},
     opts::{EthereumOpts, TransactionOpts},
     utils::{LoadConfig, resolve_lane},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder, shell};
 use foundry_wallets::WalletSigner;
+use serde_json::json;
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet};
+use tempo_primitives::transaction::configurable_account_digest;
 
 #[cfg(feature = "base")]
 use base_common_network::Base;
@@ -70,6 +75,18 @@ pub struct MakeTxArgs {
     #[arg(long)]
     raw_unsigned: bool,
 
+    /// Also print the digest that the owners of the Tempo configurable account `--from` sign.
+    ///
+    /// Prints the unsigned transaction and the digest, separated by a tab. Each owner signs the
+    /// digest with `cast wallet sign --no-hash <DIGEST>` (or a passkey in a browser), and
+    /// `cast wallet assemble` combines the signatures into the signed transaction.
+    ///
+    /// Gas estimation models the owner quorum, assuming the fewest owners that reach the
+    /// threshold approve with maximum-size WebAuthn signatures. An account that is not registered
+    /// yet needs `--gas-limit`, since only its owners know its configuration.
+    #[arg(long = "tempo.digest", requires_all = ["raw_unsigned", "from"])]
+    tempo_digest: bool,
+
     /// Call `eth_signTransaction` using the `--from` argument or $ETH_FROM as sender
     #[arg(long, requires = "from", conflicts_with = "raw_unsigned")]
     ethsign: bool,
@@ -112,6 +129,16 @@ impl MakeTxArgs {
 
         let (network, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.eth).await?;
+        eyre::ensure!(
+            !self.tempo_digest || network.is_tempo(),
+            "--tempo.digest requires a Tempo network"
+        );
+        // `cast wallet assemble` cannot rebuild a sponsored transaction from its signing encoding,
+        // which omits the sponsor signature.
+        eyre::ensure!(
+            !self.tempo_digest || !self.tx.tempo.has_sponsor_submission(),
+            "--tempo.digest does not support sponsored transactions"
+        );
         if network.is_tempo() {
             return self.run_generic::<TempoNetwork>(signer, access_key).await;
         }
@@ -145,6 +172,7 @@ impl MakeTxArgs {
             path,
             eth,
             raw_unsigned,
+            tempo_digest,
             ethsign,
             signature,
         } = self;
@@ -181,7 +209,7 @@ impl MakeTxArgs {
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
         let lane = resolved_lane.as_ref();
 
-        let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config)
+        let mut tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config)
             .await?
             .with_to(to)
             .await?
@@ -241,13 +269,43 @@ impl MakeTxArgs {
 
             // Use zero address as placeholder for unsigned transactions
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
+            let digest_version = if tempo_digest {
+                let (version, spec) =
+                    configurable_account::digest_context(&eth, from, tx.gas_limit.is_some())
+                        .await?;
+                // A `0x05` signature only signs Tempo transactions.
+                if tx_builder.tx_mut().nonce_key().is_none() {
+                    tx_builder.tx_mut().set_nonce_key(U256::ZERO);
+                }
+                if let Some(spec) = spec {
+                    tx_builder.tx_mut().set_configurable_account_simulation(spec);
+                }
+                Some(version)
+            } else {
+                None
+            };
             let Some(mut tx) = confirm_and_build(tx_builder, from, force, lane, false).await?
             else {
                 return Ok(());
             };
             tempo::apply_fee_payment::<N, _>(tempo_sponsor.as_ref(), fee_provider, &mut tx, from)
                 .await?;
-            return print_scalar(hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing()));
+            let unsigned = tx.build_unsigned()?;
+            let raw = hex::encode_prefixed(unsigned.encoded_for_signing());
+            let Some(version) = digest_version else { return print_scalar(raw) };
+            let digest = configurable_account_digest(unsigned.signature_hash(), from, version);
+            if shell::is_json() {
+                return print_json_success(json!({
+                    "unsigned_tx": raw,
+                    "digest": digest,
+                    "account": from,
+                    "version": version,
+                }));
+            }
+            sh_status!("Owner digest: {digest}")?;
+            sh_status!("Each owner signs it with `cast wallet sign --no-hash {digest}`")?;
+            sh_println!("{raw}\t{digest}")?;
+            return Ok(());
         }
 
         if let Some(signature) = signature {

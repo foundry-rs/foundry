@@ -559,7 +559,7 @@ impl SendOptions {
     }
 
     /// Prints a sync receipt, or the hash / polled receipt of a pending transaction.
-    async fn print_send_result<N: Network, P: Provider<N>>(
+    pub(crate) async fn print_send_result<N: Network, P: Provider<N>>(
         &self,
         provider: P,
         tx_hash: B256,
