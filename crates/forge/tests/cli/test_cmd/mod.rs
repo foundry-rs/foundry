@@ -8805,11 +8805,13 @@ async fn fork_transact_reverted_creation_keeps_storage(prj: _, cmd: _) {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
     let from = handle.dev_accounts().next().unwrap();
-    // The fork holds storage at the address the creation writes to.
+    // The fork holds storage at the address the creation writes to, with a slot for each replay
+    // to read only after the creation.
     let created = from.create(0);
     api.anvil_set_balance(created, U256::ONE).await.unwrap();
     api.anvil_set_storage_at(created, U256::from(1), B256::with_last_byte(5)).await.unwrap();
     api.anvil_set_storage_at(created, U256::from(2), B256::with_last_byte(6)).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(3), B256::with_last_byte(8)).await.unwrap();
     api.anvil_mine(Some(U256::ONE), None).await.unwrap();
     // Init code that stores 1 at slot 1 and deploys an empty contract.
     let tx_hash: B256 = provider
@@ -8837,18 +8839,18 @@ contract TransactCreationForkTest {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     address constant CREATED = <created>;
 
-    function replayAndRevert() external {
+    function replayAndRevert(bytes32 unloaded) external {
         vm.transact(<tx>);
         require(vm.load(CREATED, bytes32(0)) == 0, "replayed creation");
         require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(1)), "replayed write");
-        require(vm.load(CREATED, bytes32(uint256(2))) == 0, "replayed unloaded slot");
+        require(vm.load(CREATED, unloaded) == 0, "replayed unloaded slot");
         revert("rolled back");
     }
 
     function testForkTransactRevertedCreation() public {
         vm.createSelectFork("<url>", <tx>);
         vm.store(CREATED, bytes32(0), bytes32(uint256(7)));
-        try this.replayAndRevert() {} catch Error(string memory reason) {
+        try this.replayAndRevert(bytes32(uint256(2))) {} catch Error(string memory reason) {
             require(keccak256(bytes(reason)) == keccak256("rolled back"), reason);
         }
         require(CREATED.code.length == 0, "rolled back creation");
@@ -8857,7 +8859,7 @@ contract TransactCreationForkTest {
         require(vm.load(CREATED, bytes32(uint256(2))) == bytes32(uint256(6)), "slot read in replay");
         // A slot loaded before another replay keeps its value after the replay reverts.
         vm.store(CREATED, bytes32(uint256(2)), 0);
-        try this.replayAndRevert() {} catch Error(string memory reason) {
+        try this.replayAndRevert(bytes32(uint256(3))) {} catch Error(string memory reason) {
             require(keccak256(bytes(reason)) == keccak256("rolled back"), reason);
         }
         require(vm.load(CREATED, bytes32(uint256(2))) == 0, "slot stored before replay");
