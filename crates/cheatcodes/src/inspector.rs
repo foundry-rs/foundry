@@ -3296,8 +3296,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
         curr_depth: usize,
     ) {
-        let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         let opcode = interp.opcode();
+        // Act only on stepped instructions, so that an arm missing from the set fails its test
+        // instead of only working while another cheatcode steps every instruction.
+        if !STATE_DIFF_OPCODES.contains(opcode) {
+            return;
+        }
+        let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         let accessor = interp.message().destination;
         let fork_id = backend.backend().active_fork_id();
         let chain_id = self
@@ -3457,6 +3462,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// within the allowed ranges. If not, revert and fail the test.
     #[cold]
     fn check_mem_opcodes(&self, interpreter: &mut InterpreterFor<'_, '_, FEN>, depth: u64) {
+        // See `record_state_diffs`.
+        if !MEMORY_OPCODES.contains(interpreter.opcode()) {
+            return;
+        }
         let Some(ranges) = self.allowed_mem_writes.get(&depth) else {
             return;
         };

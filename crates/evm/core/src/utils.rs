@@ -20,17 +20,6 @@ pub const fn cold_path() {
     // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
 }
 
-/// Returns the set of `ops`.
-pub const fn opcodes<const N: usize>(ops: [u8; N]) -> OpcodeSet {
-    let mut set = OpcodeSet::EMPTY;
-    let mut i = 0;
-    while i < N {
-        set.insert(ops[i]);
-        i += 1;
-    }
-    set
-}
-
 /// Constructs a block environment from a block header.
 ///
 /// A header without `mixHash` leaves `prevrandao` at zero.
@@ -226,6 +215,17 @@ pub fn tx_warm_addresses<T: EvmTypesHost>(
         arbitrum::is_arbitrum_chain(env.version.chain_id).then_some(arbitrum::ARB_SYS_ADDRESS);
     let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
     coinbase.into_iter().chain(arb_sys).chain(access_list).collect()
+}
+
+/// Returns the set of `ops`.
+pub const fn opcodes<const N: usize>(ops: [u8; N]) -> OpcodeSet {
+    let mut set = OpcodeSet::EMPTY;
+    let mut i = 0;
+    while i < N {
+        set.insert(ops[i]);
+        i += 1;
+    }
+    set
 }
 
 #[cfg(test)]

@@ -1134,7 +1134,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         let stop = result.stop;
-        let backend = &mut *self.backend;
+        let backend = Some(&mut *self.backend);
         let cheats = self.cheatcodes.as_deref_mut();
         'inspectors: {
             if let Some(tracer) = &mut self.inner.tracer
@@ -1149,7 +1149,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             if let Some(recorder) = &mut self.inner.debug_recorder {
                 Inspector::<TypesFor<FEN>>::call_end(&mut **recorder, interp, message, result);
             }
-            if let Some(cheats) = cheats
+            if let (Some(cheats), Some(backend)) = (cheats, backend)
                 && changed!(result, stop, cheats.call_end_hook(interp, message, result, backend))
             {
                 break 'inspectors;
@@ -1187,7 +1187,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         {
             self.inner.tx_created.insert(address);
         }
-        let backend = &mut *self.backend;
+        let backend = Some(&mut *self.backend);
         let cheats = self.cheatcodes.as_deref_mut();
         'inspectors: {
             if let Some(line_coverage) = &mut self.inner.line_coverage
@@ -1216,7 +1216,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             if let Some(recorder) = &mut self.inner.debug_recorder {
                 Inspector::<TypesFor<FEN>>::create_end(&mut **recorder, interp, message, result);
             }
-            if let Some(cheats) = cheats
+            if let (Some(cheats), Some(backend)) = (cheats, backend)
                 && changed!(result, stop, cheats.create_end_hook(interp, message, result, backend))
             {
                 break 'inspectors;
