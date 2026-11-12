@@ -70,12 +70,13 @@ pub(crate) async fn new_wallet_is_configurable(
     // generation.
     let chain = match chain {
         Some(chain) => Some(chain),
-        None => std::env::var("CHAIN")
-            .ok()
-            .map(|chain| {
-                chain.parse::<Chain>().map_err(|_| eyre::eyre!("invalid chain `{chain}` in CHAIN"))
-            })
-            .transpose()?,
+        None => match std::env::var("CHAIN") {
+            Ok(chain) => {
+                Some(chain.parse().map_err(|_| eyre::eyre!("invalid chain `{chain}` in CHAIN"))?)
+            }
+            Err(std::env::VarError::NotPresent) => None,
+            Err(err) => eyre::bail!("invalid CHAIN: {err}"),
+        },
     }
     .or(config.chain);
 

@@ -193,6 +193,15 @@ For more information, try '--help'.
 
 "#]]);
 
+    // With `--configurable-account`, `CHAIN` is validated.
+    cmd.cast_fuse().args(["wallet", "new", "--configurable-account"]);
+    cmd.unset_env("ETH_RPC_URL");
+    cmd.env("CHAIN", "local");
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: invalid chain `local` in CHAIN
+
+"#]]);
+
     // `--eoa` asks for the default explicitly.
     let (stdout, _) = wallet_new(&mut cmd, &["--chain", "tempo", "--eoa"]);
     assert_eoa(&stdout);
