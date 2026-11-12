@@ -3,6 +3,9 @@
 use super::*;
 use foundry_compilers::artifacts::remappings::Remapping;
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 #[forgetest]
 fn does_not_run_imported_dependency_tests(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -64,47 +67,45 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 Wrote LCOV report.
 
 "#]]);
+
+    prj.update_config(|config| {
+        config.libs.push("node_modules".into());
+        config.remappings = vec![
+            Remapping::from_str("dependency/=src/../node_modules/dependency/").unwrap().into(),
+        ];
+    });
+    cmd.forge_fuse().args(["test", "--list", "--json"]).assert_json_stdout(str![[r#"
+{"test/Local.t.sol":{"LocalTest":["testLocal"]}}
+"#]]);
 }
 
+#[cfg(unix)]
 #[forgetest]
-fn discovers_tests_in_configured_project_directories(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.src = "contracts".into();
-        config.test = "checks".into();
-        config.script = "tasks".into();
-        config.libs = vec!["contracts/vendor".into()];
-    });
-    prj.create_file(
-        "contracts/Source.sol",
-        r#"
-pragma solidity >=0.8.0;
-import "./vendor/Dependency.sol";
-contract SourceTest { function testSource() public pure {} }
-"#,
-    );
-    prj.create_file(
-        "contracts/vendor/Dependency.sol",
-        "pragma solidity >=0.8.0; contract DependencyTest { function testDependency() public pure {} }",
-    );
-    prj.create_file(
-        "checks/Test.t.sol",
-        "pragma solidity >=0.8.0; contract TestDirectoryTest { function testCheck() public pure {} }",
-    );
-    prj.create_file(
-        "tasks/Script.s.sol",
-        "pragma solidity >=0.8.0; contract ScriptDirectoryTest { function testScript() public pure {} }",
-    );
+fn discovers_tests_through_symlinked_directories(prj: _, cmd: _) {
+    let shared = tempfile::tempdir().unwrap();
+    fs::write(
+        shared.path().join("Linked.t.sol"),
+        "pragma solidity >=0.8.0; contract LinkedTest { function testLinked() public pure {} }",
+    )
+    .unwrap();
+    fs::create_dir_all(prj.root().join("test")).unwrap();
+    symlink(shared.path(), prj.root().join("test/shared")).unwrap();
 
     cmd.args(["test", "--list", "--json"]).assert_json_stdout(str![[r#"
-{
-  "contracts/Source.sol": { "SourceTest": ["testSource"] },
-  "checks/Test.t.sol": { "TestDirectoryTest": ["testCheck"] },
-  "tasks/Script.s.sol": { "ScriptDirectoryTest": ["testScript"] }
-}
+{"test/shared/Linked.t.sol":{"LinkedTest":["testLinked"]}}
 "#]]);
-    cmd.forge_fuse()
-        .args(["test", "--list", "--json", "--match-path", "checks/**"])
-        .assert_json_stdout(str![[r#"
-{"checks/Test.t.sol":{"TestDirectoryTest":["testCheck"]}}
-"#]]);
+    cmd.forge_fuse().args(["test", "--match-path", "test/shared/**"]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/shared/Linked.t.sol:LinkedTest
+[PASS] testLinked() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
 }

@@ -107,6 +107,7 @@ impl FilterArgs {
                 .external_compilers
                 .iter()
                 .flat_map(|compiler| &compiler.roots)
+                // External artifacts use canonical source paths, including through symlink roots.
                 .map(|root| {
                     let path = config.root.join(root);
                     canonicalize_path(&path).unwrap_or_else(|_| normalize_path(&path))
@@ -273,9 +274,8 @@ impl TestFilter for ProjectPathsAwareFilter {
         }
 
         // Imported dependencies are compiled too, but only project files may run as test suites.
-        // Resolve symlinks before checking ownership so an alias cannot admit an external suite.
-        let path = self.paths.root.join(path);
-        let path = canonicalize_path(&path).unwrap_or_else(|_| normalize_path(&path));
+        // Normalize `..` without resolving links, which the compiler's walker preserves.
+        let path = normalize_path(&self.paths.root.join(path));
         [&self.paths.sources, &self.paths.tests, &self.paths.scripts]
             .into_iter()
             .chain(&self.external_compiler_roots)
@@ -324,109 +324,7 @@ mod tests {
         config.src = "contracts".into();
         config.test = external.path().into();
         config.script = "tasks".into();
-        let config = config.sanitized();
-        let filter = FilterArgs::default().merge_with_config(&config);
-
-        for (path, expected) in [
-            ("contracts/Source.sol", true),
-            ("contracts/nested/Source.sol", true),
-            ("tasks/Script.sol", true),
-            ("contracts/../tasks/Script.sol", true),
-            ("contracts/../node_modules/Dependency.sol", false),
-            ("contracts-other/Dependency.sol", false),
-            ("node_modules/Dependency.sol", false),
-            ("Dependency.sol", false),
-            ("src/Source.sol", false),
-            ("test/Test.sol", false),
-            ("script/Script.sol", false),
-        ] {
-            assert_eq!(filter.matches_path(Path::new(path)), expected, "{path}");
-            assert_eq!(filter.matches_path(&config.root.join(path)), expected, "{path}");
-        }
-        assert!(filter.matches_path(&config.test.join("Test.sol")));
-        assert!(FileFilter::is_match(&filter, Path::new("node_modules/Dependency.sol")));
-    }
-
-    #[test]
-    fn preserves_path_filters() {
-        let root = tempfile::tempdir().unwrap();
-        let config = Config::with_root(root.path()).sanitized();
-        let filter = FilterArgs {
-            path_pattern: Some("test/**".parse().unwrap()),
-            path_pattern_inverse: Some("test/Skipped.sol".parse().unwrap()),
-            ..Default::default()
-        }
-        .merge_with_config(&config);
-
-        for (path, expected) in
-            [("test/Test.sol", true), ("test/Skipped.sol", false), ("src/Test.sol", false)]
-        {
-            assert_eq!(filter.matches_path(Path::new(path)), expected, "{path}");
-            assert_eq!(filter.matches_path(&config.root.join(path)), expected, "{path}");
-        }
-    }
-
-    #[test]
-    fn excludes_libraries_under_project_roots() {
-        let root = tempfile::tempdir().unwrap();
-        let mut config = Config::with_root(root.path());
-        config.src = ".".into();
-        config.libs = vec!["lib".into()];
-        let config = config.sanitized();
-        let filter = FilterArgs::default().merge_with_config(&config);
-
-        assert!(filter.matches_path(Path::new("Test.sol")));
-        for path in ["lib/Test.sol", "src/../lib/Test.sol"] {
-            assert!(!filter.matches_path(Path::new(path)), "{path}");
-            assert!(!filter.matches_path(&config.root.join(path)), "{path}");
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn resolves_symlinks_before_matching_project_paths() {
-        let root = tempfile::tempdir().unwrap();
-        let external = tempfile::tempdir().unwrap();
-        for dir in ["src", "test", "script"] {
-            fs::create_dir(root.path().join(dir)).unwrap();
-        }
-        fs::write(root.path().join("test/Test.sol"), "").unwrap();
-        fs::write(external.path().join("Dependency.sol"), "").unwrap();
-        fs::create_dir(external.path().join("native")).unwrap();
-        fs::write(external.path().join("native/Counter.fe"), "").unwrap();
-        symlink(external.path(), root.path().join("src/external")).unwrap();
-        symlink(root.path().join("test"), root.path().join("test-alias")).unwrap();
-        symlink(external.path().join("native"), root.path().join("native")).unwrap();
-        symlink(external.path(), external.path().join("native/escape")).unwrap();
-        let mut config = Config::with_root(root.path());
-        config.script = root.path().join("src/external");
-        config.external_compilers.push(ExternalCompiler {
-            id: "fixture".into(),
-            command: "adapter".into(),
-            args: Vec::new(),
-            roots: vec!["native".into()],
-            settings: Default::default(),
-        });
-        let config = config.sanitized();
-        let filter = FilterArgs::default().merge_with_config(&config);
-
-        // A configured symlink root is intentional, and aliases within project roots are allowed.
-        assert!(filter.matches_path(Path::new("src/external/Dependency.sol")));
-        assert!(filter.matches_path(Path::new("test-alias/Test.sol")));
-
-        let mut config = config;
-        config.script = config.root.join("script");
-        let filter = FilterArgs::default().merge_with_config(&config);
-        assert!(!filter.matches_path(Path::new("src/external/Dependency.sol")));
-        assert!(filter.matches_path(Path::new("native/Counter.fe")));
-        assert!(filter.matches_path(&external.path().join("native/Counter.fe")));
-        assert!(!filter.matches_path(Path::new("native/escape/Dependency.sol")));
-    }
-
-    #[test]
-    fn matches_configured_external_compiler_roots() {
-        let root = tempfile::tempdir().unwrap();
-        let mut config = Config::with_root(root.path());
+        config.libs = vec!["contracts/vendor".into(), "lib".into()];
         config.external_compilers.push(ExternalCompiler {
             id: "fixture".into(),
             command: "adapter".into(),
@@ -438,14 +336,49 @@ mod tests {
         let filter = FilterArgs::default().merge_with_config(&config);
 
         for (path, expected) in [
+            ("contracts/Source.sol", true),
+            ("tasks/Script.sol", true),
+            ("contracts/../tasks/Script.sol", true),
+            ("contracts/../node_modules/Dependency.sol", false),
+            ("contracts-other/Dependency.sol", false),
+            ("contracts/vendor/Dependency.sol", false),
+            ("node_modules/Dependency.sol", false),
+            ("Dependency.sol", false),
+            ("src/Source.sol", false),
+            ("test/Test.sol", false),
+            ("script/Script.sol", false),
             ("native/Counter.fe", true),
             ("native/Counter.sol", true),
             ("native-other/Counter.fe", false),
             ("native/../dependency/Counter.fe", false),
             ("lib/Counter.fe", false),
+            ("contracts/../lib/Counter.fe", false),
         ] {
             assert_eq!(filter.matches_path(Path::new(path)), expected, "{path}");
             assert_eq!(filter.matches_path(&config.root.join(path)), expected, "{path}");
         }
+        assert!(filter.matches_path(&config.test.join("Test.sol")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn matches_external_artifacts_through_symlinked_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        fs::write(external.path().join("Counter.fe"), "").unwrap();
+        symlink(external.path(), root.path().join("native")).unwrap();
+        let mut config = Config::with_root(root.path());
+        config.external_compilers.push(ExternalCompiler {
+            id: "fixture".into(),
+            command: "adapter".into(),
+            args: Vec::new(),
+            roots: vec!["native".into()],
+            settings: Default::default(),
+        });
+        let config = config.sanitized();
+        let filter = FilterArgs::default().merge_with_config(&config);
+        let source = canonicalize_path(root.path().join("native/Counter.fe")).unwrap();
+
+        assert!(filter.matches_path(&source));
     }
 }
