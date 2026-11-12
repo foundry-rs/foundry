@@ -8,11 +8,18 @@
 //!
 //! `cast wallet` reads and updates configurations with these helpers and combines owner approvals,
 //! including WebAuthn assertions made in a browser, into `0x05` signatures.
+//!
+//! [`detect_configurable_account`] tells whether a sender is a configurable account, and
+//! [`ConfigurableAccountSigner`] signs its transactions with `0x05` signatures from local owner
+//! keys.
 
-use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, B256, Bytes, hex};
+use crate::FoundryTransactionBuilder;
+use alloy_consensus::BlockHeader;
+use alloy_network::{BlockResponse, Network, TransactionBuilder};
+use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_provider::Provider;
-use alloy_rpc_types::{Filter, Log};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, Log};
+use alloy_signer::Signer;
 use alloy_sol_types::{SolCall, SolEvent};
 use base64::{
     Engine,
@@ -20,10 +27,18 @@ use base64::{
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
 };
 use eyre::{Context, Result};
+use foundry_wallets::WalletSigner;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tempo_alloy::{
     TempoNetwork,
+    accounts::{TempoAccessKey, TempoAccountsStore, TempoAccountsWallet},
     contracts::precompiles::{
         CONFIGURABLE_ACCOUNT_ADDRESS,
         IConfigurableAccount::{
@@ -36,10 +51,13 @@ use tempo_alloy::{
         PrimitiveSignatureType, TempoTransactionRequest,
     },
 };
-use tempo_primitives::transaction::{
-    ConfigurableAccountConfig, ConfigurableAccountOwner, ConfigurableAccountSignature,
-    MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature, configurable_account_digest,
-    tt_signature::WebAuthnSignature,
+use tempo_primitives::{
+    SignatureType, TempoTxEnvelope,
+    transaction::{
+        ConfigurableAccountConfig, ConfigurableAccountOwner, ConfigurableAccountSignature,
+        MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature, TempoSignature,
+        configurable_account_digest, tt_signature::WebAuthnSignature,
+    },
 };
 
 /// Blocks per `eth_getLogs` request when a configuration lookup starts. The window is halved
@@ -71,16 +89,17 @@ pub fn single_owner_account(owner: Address) -> Result<Address> {
     single_owner_config(owner).derive_account().map_err(ca_error)
 }
 
-/// Returns the configuration commitment of `account`, or `None` when the configurable account
-/// precompile is not active: before T14 a call to it returns no data.
+/// Returns the configuration commitment of `account` at `block`, or `None` when the configurable
+/// account precompile is not active there: before T14 a call to it returns no data.
 async fn config_commitment<P: Provider<TempoNetwork>>(
     provider: &P,
     account: Address,
+    block: BlockId,
 ) -> Result<Option<B256>> {
     let request = TempoTransactionRequest::default()
         .with_to(CONFIGURABLE_ACCOUNT_ADDRESS)
         .with_input(IConfigurableAccount::getConfigCommitmentCall { account }.abi_encode());
-    let output = provider.call(request).await?;
+    let output = provider.call(request).block(block).await?;
     if output.is_empty() {
         return Ok(None);
     }
@@ -97,17 +116,89 @@ pub async fn current_config<P: Provider<TempoNetwork>>(
     account: Address,
     keys: &[Address],
 ) -> Result<Option<ConfigurableAccountConfig>> {
-    let commitment =
-        config_commitment(provider, account).await?.ok_or_else(|| eyre::eyre!(T14_REQUIRED))?;
-    config_for_commitment(provider, account, keys, commitment).await
+    let block = BlockId::latest();
+    let commitment = config_commitment(provider, account, block)
+        .await?
+        .ok_or_else(|| eyre::eyre!(T14_REQUIRED))?;
+    config_for_commitment(provider, account, keys, commitment, block).await
 }
 
-/// Returns the configuration of `account` that matches its stored `commitment`.
+/// Tells whether `account` is a configurable account at `block`, and returns its configuration
+/// there.
+///
+/// The account is one when it has a registered configuration commitment (a derived account after
+/// its first transaction, or an upgraded EOA), or when one of the local owner `keys` derives it as
+/// a 1-of-1, salt-0 account. `config` overrides the lookup: it is checked against the commitment,
+/// or against the account address for an account that has not sent its first transaction.
+///
+/// Returns `None` before T14 and for an account that is not a configurable account, unless
+/// `required` is set or `config` is given, which fail instead. A sender that is itself one of
+/// `keys` is also taken as a plain key when the RPC cannot be reached, so that fully specified
+/// transactions still sign offline.
+pub async fn detect_configurable_account<P: Provider<TempoNetwork>>(
+    provider: &P,
+    account: Address,
+    keys: &[Address],
+    config: Option<ConfigurableAccountConfig>,
+    required: bool,
+    block: BlockId,
+) -> Result<Option<ConfigurableAccountConfig>> {
+    let required = required || config.is_some();
+    let commitment = match config_commitment(provider, account, block).await {
+        Err(error) if !required && keys.contains(&account) => {
+            tracing::debug!(%error, %account, "cannot tell whether the sender is a configurable account");
+            return Ok(None);
+        }
+        commitment => commitment?,
+    };
+    let Some(commitment) = commitment else {
+        eyre::ensure!(!required, T14_REQUIRED);
+        return Ok(None);
+    };
+    if let Some(config) = config {
+        check_config(account, &config, commitment)?;
+        return Ok(Some(config));
+    }
+    let config = config_for_commitment(provider, account, keys, commitment, block).await?;
+    eyre::ensure!(
+        config.is_some() || !required,
+        "{account} is not a configurable account: it has no registered configuration, and no \
+         local owner key derives it. Pass its configuration with --tempo.config if it has not \
+         sent its first transaction yet"
+    );
+    Ok(config)
+}
+
+/// Checks that `config` is the current configuration of `account`, whose stored commitment is
+/// `commitment`.
+fn check_config(
+    account: Address,
+    config: &ConfigurableAccountConfig,
+    commitment: B256,
+) -> Result<()> {
+    if commitment.is_zero() {
+        eyre::ensure!(
+            config.version == 0 && config.derive_account().map_err(ca_error)? == account,
+            "the given configuration does not derive {account}, which has no registered \
+             configuration"
+        );
+    } else {
+        eyre::ensure!(
+            config.commitment().map_err(ca_error)? == commitment,
+            "the given configuration does not match the configuration commitment {commitment} \
+             of {account}"
+        );
+    }
+    Ok(())
+}
+
+/// Returns the configuration of `account` that matches its `commitment` stored at `block`.
 async fn config_for_commitment<P: Provider<TempoNetwork>>(
     provider: &P,
     account: Address,
     keys: &[Address],
     commitment: B256,
+    block: BlockId,
 ) -> Result<Option<ConfigurableAccountConfig>> {
     for key in keys {
         let config = single_owner_config(*key);
@@ -123,7 +214,17 @@ async fn config_for_commitment<P: Provider<TempoNetwork>>(
     if commitment.is_zero() {
         return Ok(None);
     }
-    let block = provider.get_block_number().await?;
+    // The log scan starts at `block`, so that a later configuration change is not taken.
+    let block = match block {
+        BlockId::Number(BlockNumberOrTag::Number(number)) => number,
+        BlockId::Number(BlockNumberOrTag::Latest) => provider.get_block_number().await?,
+        block => provider
+            .get_block(block)
+            .await?
+            .ok_or_else(|| eyre::eyre!("block {block} not found"))?
+            .header()
+            .number(),
+    };
     config_from_logs(provider, account, commitment, block).await.map(Some)
 }
 
@@ -307,6 +408,19 @@ fn quorum(owners: &[ConfigurableAccountOwner], threshold: u8, largest: bool) -> 
     quorum
 }
 
+/// Tells whether owners among `keys` can approve for an account with `config`, as
+/// [`ConfigurableAccountSigner::new`] selects them.
+pub fn reaches_threshold(config: &ConfigurableAccountConfig, keys: &[Address]) -> bool {
+    let mut local = config
+        .owners
+        .iter()
+        .filter(|owner| keys.contains(&owner.owner))
+        .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
+        .collect::<Vec<_>>();
+    local.sort_by_key(|owner| owner.owner);
+    !quorum(&local, config.threshold, false).is_empty()
+}
+
 /// Combines owner approvals of `inner` into a `0x05` signature for `account`.
 ///
 /// Approvals are recovered and deduplicated, and the fewest that reach the threshold are kept,
@@ -455,10 +569,368 @@ fn decode_binary(value: &str) -> Result<Vec<u8>> {
     Ok(BASE64URL.decode(value)?)
 }
 
+/// A configuration as `cast wallet owners --json` prints it.
+#[derive(Deserialize)]
+struct ConfigJson {
+    salt: B256,
+    version: u64,
+    threshold: u8,
+    owners: Vec<OwnerJson>,
+}
+
+#[derive(Deserialize)]
+struct OwnerJson {
+    owner: Address,
+    weight: u8,
+}
+
+/// Parses a configuration given as JSON, or as the path of a JSON file: `salt`, `version`,
+/// `threshold` and `owners` (each an `owner` and a `weight`), as `cast wallet owners --json`
+/// prints it, with or without its JSON envelope.
+pub fn parse_config(value: &str) -> Result<ConfigurableAccountConfig> {
+    let value = value.trim();
+    let json = if !value.starts_with('{') && Path::new(value).is_file() {
+        crate::fs::read_to_string(value)?
+    } else {
+        value.to_string()
+    };
+    let mut json = serde_json::from_str::<serde_json::Value>(&json)
+        .wrap_err("invalid configurable account configuration JSON")?;
+    if let Some(data) = json.get_mut("data") {
+        json = data.take();
+    }
+    let ConfigJson { salt, version, threshold, owners } =
+        serde_json::from_value(json).wrap_err("invalid configurable account configuration")?;
+    let mut owners = owners
+        .into_iter()
+        .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
+        .collect::<Vec<_>>();
+    owners.sort_by_key(|owner| owner.owner);
+    let config = ConfigurableAccountConfig { salt, version, threshold, owners };
+    config.validate().map_err(|err| eyre::eyre!("invalid configuration: {err}"))?;
+    Ok(config)
+}
+
+/// A local key that approves the transactions of the configurable accounts it owns.
+#[derive(Clone, Debug)]
+pub enum ConfigurableAccountOwnerKey {
+    /// A Foundry wallet: a private key, keystore, hardware wallet or remote signer.
+    Wallet(Arc<WalletSigner>),
+    /// A locally signable key from the Tempo Accounts store.
+    Accounts(Box<TempoAccessKey>),
+}
+
+impl ConfigurableAccountOwnerKey {
+    /// The owner address of the key.
+    pub fn address(&self) -> Address {
+        match self {
+            Self::Wallet(signer) => signer.address(),
+            Self::Accounts(key) => key.address(),
+        }
+    }
+
+    /// The signature type of the key's approvals.
+    const fn key_type(&self) -> PrimitiveSignatureType {
+        match self {
+            Self::Wallet(_) => PrimitiveSignatureType::Secp256k1,
+            Self::Accounts(key) => match key.signature_type() {
+                SignatureType::P256 => PrimitiveSignatureType::P256,
+                SignatureType::WebAuthn => PrimitiveSignatureType::WebAuthn,
+                _ => PrimitiveSignatureType::Secp256k1,
+            },
+        }
+    }
+
+    async fn sign(&self, digest: &B256) -> Result<PrimitiveSignature> {
+        Ok(match self {
+            Self::Wallet(signer) => PrimitiveSignature::Secp256k1(signer.sign_hash(digest).await?),
+            Self::Accounts(key) => key.sign_hash(digest).await?,
+        })
+    }
+}
+
+impl From<WalletSigner> for ConfigurableAccountOwnerKey {
+    fn from(signer: WalletSigner) -> Self {
+        Self::Wallet(Arc::new(signer))
+    }
+}
+
+/// Returns the locally signable keys of the Tempo Accounts store on `chain_id` that own
+/// `config`. A missing or unreadable store has none.
+pub fn stored_owner_keys(
+    chain_id: u64,
+    config: &ConfigurableAccountConfig,
+) -> Vec<ConfigurableAccountOwnerKey> {
+    let stored = || -> Result<Vec<ConfigurableAccountOwnerKey>> {
+        let Some(store) = TempoAccountsStore::try_open_default()? else { return Ok(Vec::new()) };
+        let wallet = TempoAccountsWallet::from_store(store.path())?;
+        Ok(store
+            .access_keys()?
+            .into_iter()
+            .filter(|key| {
+                key.chain_id() == chain_id
+                    && key.is_locally_signable()
+                    && config.owner_weight(key.address()).is_some()
+            })
+            .filter_map(|key| wallet.access_key(key.account(), chain_id, key.address()).ok())
+            .map(|key| ConfigurableAccountOwnerKey::Accounts(Box::new(key)))
+            .collect())
+    };
+    stored().unwrap_or_else(|error| {
+        tracing::warn!(%error, "failed to read owner keys from the Tempo Accounts store");
+        Vec::new()
+    })
+}
+
+/// Signs the transactions of a configurable account with `0x05` signatures from local owner keys.
+#[derive(Clone, Debug)]
+pub struct ConfigurableAccountSigner {
+    account: Address,
+    config: ConfigurableAccountConfig,
+    /// The approving owners, sorted by address, whose weight reaches the threshold.
+    owners: Vec<ConfigurableAccountOwnerKey>,
+}
+
+impl ConfigurableAccountSigner {
+    /// Selects the owners among `keys` that approve for `account`.
+    ///
+    /// Owners are taken in ascending address order, as the node requires, until their weight
+    /// reaches the threshold; keys that are not owners are ignored. When the local owners do not
+    /// reach the threshold, the error names the owners and ends with `hint`, which says how to
+    /// provide the others.
+    pub fn new(
+        account: Address,
+        config: ConfigurableAccountConfig,
+        keys: impl IntoIterator<Item = ConfigurableAccountOwnerKey>,
+        hint: &str,
+    ) -> Result<Self> {
+        let mut keys = keys
+            .into_iter()
+            .filter(|key| config.owner_weight(key.address()).is_some())
+            .map(|key| (key.address(), key))
+            .collect::<BTreeMap<_, _>>();
+        let local = keys
+            .keys()
+            .map(|&owner| ConfigurableAccountOwner {
+                owner,
+                weight: config.owner_weight(owner).unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
+        // The fewest local owners that the node accepts, as `combine_approvals` selects them.
+        let selected = quorum(&local, config.threshold, false);
+        if selected.is_empty() {
+            let weight = local.iter().map(|owner| u16::from(owner.weight)).sum::<u16>();
+            let local = if local.is_empty() {
+                "no local key is an owner".to_string()
+            } else {
+                let keys = local.iter().map(|owner| owner.owner.to_string()).collect::<Vec<_>>();
+                let keys = keys.join(", ");
+                if weight < u16::from(config.threshold) {
+                    format!("the local owner keys {keys} reach weight {weight}")
+                } else {
+                    format!(
+                        "no {MAX_CONFIGURABLE_ACCOUNT_SIGNATURES} of the local owner keys {keys} \
+                         reach it"
+                    )
+                }
+            };
+            let all = config
+                .owners
+                .iter()
+                .map(|owner| format!("{} (weight {})", owner.owner, owner.weight))
+                .collect::<Vec<_>>();
+            eyre::bail!(
+                "{account} is a Tempo configurable account that needs owner weight {}, but \
+                 {local}. Its owners are {}. {hint}",
+                config.threshold,
+                all.join(", "),
+            );
+        }
+        let owners = selected.iter().filter_map(|owner| keys.remove(owner)).collect();
+        Ok(Self { account, config, owners })
+    }
+
+    /// The configurable account.
+    pub const fn account(&self) -> Address {
+        self.account
+    }
+
+    /// The account's current configuration.
+    pub const fn config(&self) -> &ConfigurableAccountConfig {
+        &self.config
+    }
+
+    /// The owner quorum that gas estimation models: the selected owners with their key types.
+    pub fn simulation_spec(&self) -> ConfigurableAccountSimulationSpec {
+        let approvals =
+            self.owners.iter().map(|key| (key.address(), key.key_type())).collect::<Vec<_>>();
+        simulation_spec(self.account, &self.config, &approvals)
+    }
+
+    /// Makes `tx` a Tempo transaction from the account, whose gas estimate models the owners'
+    /// approvals. A `0x05` signature only signs Tempo (`0x76`) transactions.
+    pub fn prepare_request<N: Network>(&self, tx: &mut N::TransactionRequest)
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        tx.set_from(self.account);
+        if tx.nonce_key().is_none() {
+            tx.set_nonce_key(U256::ZERO);
+        }
+        tx.set_configurable_account_simulation(self.simulation_spec());
+    }
+
+    /// Signs a filled request with the owners' approvals.
+    pub async fn sign_request(&self, request: TempoTransactionRequest) -> Result<TempoTxEnvelope> {
+        if let Some(from) = request.from() {
+            eyre::ensure!(
+                from == self.account,
+                "transaction sender {from} is not the configurable account {}",
+                self.account
+            );
+        }
+        let tx = request.build_aa().map_err(|err| eyre::eyre!("{err}"))?;
+        let inner = tx.signature_hash();
+        let digest = configurable_account_digest(inner, self.account, self.config.version);
+        let mut approvals = Vec::with_capacity(self.owners.len());
+        for owner in &self.owners {
+            approvals.push(owner.sign(&digest).await.wrap_err_with(|| {
+                format!("owner {} failed to approve the transaction", owner.address())
+            })?);
+        }
+        let signature =
+            ConfigurableAccountSignature::try_new(self.account, self.config.clone(), approvals)
+                .map_err(ca_error)?;
+        signature.verify_approvals(inner).map_err(ca_error)?;
+        Ok(TempoTxEnvelope::AA(tx.into_signed(TempoSignature::ConfigurableAccount(signature))))
+    }
+}
+
+/// Suffix of the sidecar file that links a keystore to the 1-of-1, salt-0 configurable account
+/// its key owns, next to the keystore as `<keystore>.tempo-account`.
+///
+/// The keystore itself stays a standard Web3 Secret Storage file that other tools read, and the
+/// Tempo Accounts store, whose format belongs to `tempo-alloy`, is not extended.
+pub const LINKED_ACCOUNT_SUFFIX: &str = ".tempo-account";
+
+/// The only linked account sidecar version this release writes and reads.
+const LINKED_ACCOUNT_VERSION: u32 = 1;
+
+/// A keystore's linked account sidecar.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LinkedAccountFile {
+    version: u32,
+    account: Address,
+    owner: Address,
+}
+
+/// Returns the path of the linked account sidecar of `keystore`.
+pub fn linked_account_path(keystore: &Path) -> PathBuf {
+    let mut path = OsString::from(keystore.as_os_str());
+    path.push(LINKED_ACCOUNT_SUFFIX);
+    path.into()
+}
+
+/// What the file at a linked account sidecar path holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkedAccountFileState {
+    /// There is no file.
+    Missing,
+    /// A link to `account`, the 1-of-1, salt-0 configurable account of `owner`.
+    Linked { account: Address, owner: Address },
+    /// A keystore, such as one an earlier Cast version created under that name.
+    Keystore,
+    /// A file that is neither a link nor a keystore.
+    Unknown,
+}
+
+/// Returns what the file at `path`, a linked account sidecar path, holds.
+pub fn linked_account_file_state(path: &Path) -> Result<LinkedAccountFileState> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LinkedAccountFileState::Missing);
+        }
+        Err(error) => {
+            return Err(error).wrap_err_with(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        return Ok(LinkedAccountFileState::Unknown);
+    };
+    if value.get("crypto").is_some() || value.get("Crypto").is_some() {
+        return Ok(LinkedAccountFileState::Keystore);
+    }
+    Ok(match serde_json::from_value::<LinkedAccountFile>(value) {
+        Ok(file)
+            if file.version == LINKED_ACCOUNT_VERSION
+                && single_owner_account(file.owner).ok() == Some(file.account) =>
+        {
+            LinkedAccountFileState::Linked { account: file.account, owner: file.owner }
+        }
+        _ => LinkedAccountFileState::Unknown,
+    })
+}
+
+/// Fails unless the linked account sidecar path of `keystore` is free or holds a link, which
+/// [`link_keystore`] may replace.
+pub fn ensure_link_available(keystore: &Path) -> Result<()> {
+    let path = linked_account_path(keystore);
+    match linked_account_file_state(&path)? {
+        LinkedAccountFileState::Missing | LinkedAccountFileState::Linked { .. } => Ok(()),
+        LinkedAccountFileState::Keystore => eyre::bail!(
+            "refusing to link {} to its configurable account because {} is an existing keystore",
+            keystore.display(),
+            path.display()
+        ),
+        LinkedAccountFileState::Unknown => eyre::bail!(
+            "refusing to link {} to its configurable account because {} exists and is not a \
+             recognized linked account file",
+            keystore.display(),
+            path.display()
+        ),
+    }
+}
+
+/// Links `keystore`, whose key is `owner`, to the 1-of-1, salt-0 configurable account of
+/// `owner`, and returns that account. Fails when the sidecar path holds another file.
+pub fn link_keystore(keystore: &Path, owner: Address) -> Result<Address> {
+    ensure_link_available(keystore)?;
+    let account = single_owner_account(owner)?;
+    let file = LinkedAccountFile { version: LINKED_ACCOUNT_VERSION, account, owner };
+    crate::fs::write_pretty_json_file(&linked_account_path(keystore), &file)?;
+    Ok(account)
+}
+
+/// Removes the link of `keystore`, and leaves any other file at its sidecar path alone.
+pub fn unlink_keystore(keystore: &Path) -> Result<()> {
+    let path = linked_account_path(keystore);
+    if let LinkedAccountFileState::Linked { .. } = linked_account_file_state(&path)? {
+        std::fs::remove_file(&path)
+            .wrap_err_with(|| format!("failed to remove {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Returns the configurable account linked to `keystore` and its owner key, or `None` when the
+/// keystore has no link. A keystore at the sidecar path is not a link.
+pub fn linked_account(keystore: &Path) -> Result<Option<(Address, Address)>> {
+    let path = linked_account_path(keystore);
+    match linked_account_file_state(&path)? {
+        LinkedAccountFileState::Linked { account, owner } => Ok(Some((account, owner))),
+        LinkedAccountFileState::Missing | LinkedAccountFileState::Keystore => Ok(None),
+        LinkedAccountFileState::Unknown => eyre::bail!(
+            "invalid linked account file {}: unsupported version or account",
+            path.display()
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U256, address, b256};
+    use alloy_primitives::{address, b256};
     use alloy_provider::{ProviderBuilder as AlloyProviderBuilder, mock::Asserter};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
@@ -652,5 +1124,202 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("does not match its commitment"), "{err}");
+    }
+
+    /// The signer takes the fewest local owners that reach the threshold, sorted by address,
+    /// ignores keys that are not owners, and its signature passes the node's quorum check, which
+    /// rejects unsorted or excess approvals.
+    #[tokio::test]
+    async fn signer_selects_sorted_owners_up_to_the_threshold() {
+        let mut keys = [0x51, 0x52, 0x53, 0x54]
+            .map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
+        keys.sort_by_key(|key| key.address());
+        let [low, mid, high, stranger] = keys.clone();
+        // The middle owner weighs two and reaches the threshold of two alone, so the lowest owner,
+        // which comes first in address order, is left out.
+        let mut owners = [(&low, 1), (&mid, 2), (&high, 1)]
+            .map(|(key, weight)| ConfigurableAccountOwner { owner: key.address(), weight })
+            .to_vec();
+        owners.sort_by_key(|owner| owner.owner);
+        let config = ConfigurableAccountConfig {
+            salt: B256::repeat_byte(1),
+            version: 0,
+            threshold: 2,
+            owners,
+        };
+        let account = config.derive_account().unwrap();
+
+        let wallet = |key: &PrivateKeySigner| {
+            ConfigurableAccountOwnerKey::from(WalletSigner::Local(key.clone()))
+        };
+        let signer = ConfigurableAccountSigner::new(
+            account,
+            config.clone(),
+            [&stranger, &high, &mid, &low].map(wallet),
+            "",
+        )
+        .unwrap();
+        let spec = signer.simulation_spec();
+        assert_eq!(
+            spec.approvals.iter().map(|approval| approval.owner).collect::<Vec<_>>(),
+            [mid.address()]
+        );
+        assert!(
+            spec.approvals
+                .iter()
+                .all(|approval| approval.key_type == Some(PrimitiveSignatureType::Secp256k1))
+        );
+
+        let mut request = TempoTransactionRequest::default();
+        request.set_from(account);
+        request.set_chain_id(1);
+        request.set_nonce(0);
+        request.set_gas_limit(100_000);
+        request.set_max_fee_per_gas(2);
+        request.set_max_priority_fee_per_gas(1);
+        request.set_to(Address::repeat_byte(0x73));
+        let TempoTxEnvelope::AA(signed) = signer.sign_request(request).await.unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        let signature = signed.signature().as_configurable_account().unwrap();
+        assert_eq!(signature.signatures().len(), 1);
+        signature.verify_approvals(signed.tx().signature_hash()).unwrap();
+
+        // The highest owner alone does not reach the threshold.
+        let err = ConfigurableAccountSigner::new(account, config, [wallet(&high)], "Pass more.")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            format!(
+                "{account} is a Tempo configurable account that needs owner weight 2, but the \
+                 local owner keys {} reach weight 1. Its owners are {} (weight 1), {} (weight 2), \
+                 {} (weight 1). Pass more.",
+                high.address(),
+                low.address(),
+                mid.address(),
+                high.address()
+            )
+        );
+    }
+
+    /// With eight weight-one owners and a weight-nine owner last in address order, the signer
+    /// takes the heavy owner alone: the first owners in address order would need nine approvals,
+    /// over the node's limit of eight.
+    #[test]
+    fn signer_selects_a_quorum_within_the_signature_limit() {
+        let keys = (1..=9u8)
+            .map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap())
+            .collect::<Vec<_>>();
+        let mut owners = keys
+            .iter()
+            .map(|key| ConfigurableAccountOwner { owner: key.address(), weight: 1 })
+            .collect::<Vec<_>>();
+        owners.sort_by_key(|owner| owner.owner);
+        let heavy = owners.last().unwrap().owner;
+        owners.last_mut().unwrap().weight = 9;
+        let config =
+            ConfigurableAccountConfig { salt: B256::ZERO, version: 1, threshold: 9, owners };
+        let account = Address::repeat_byte(0xaa);
+        let wallet = |key: &PrivateKeySigner| {
+            ConfigurableAccountOwnerKey::from(WalletSigner::Local(key.clone()))
+        };
+
+        let signer =
+            ConfigurableAccountSigner::new(account, config.clone(), keys.iter().map(wallet), "")
+                .unwrap();
+        assert_eq!(
+            signer.simulation_spec().approvals.iter().map(|a| a.owner).collect::<Vec<_>>(),
+            [heavy]
+        );
+
+        // Nine weight-one owners reach the threshold of nine only past the limit.
+        let mut config = config;
+        config.owners.last_mut().unwrap().weight = 1;
+        let owners = config.owners.iter().map(|owner| owner.owner.to_string()).collect::<Vec<_>>();
+        let err = ConfigurableAccountSigner::new(
+            account,
+            config.clone(),
+            keys.iter().map(wallet),
+            "Pass more.",
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            err,
+            format!(
+                "{account} is a Tempo configurable account that needs owner weight 9, but no 8 of \
+                 the local owner keys {} reach it. Its owners are {}. Pass more.",
+                owners.join(", "),
+                owners
+                    .iter()
+                    .map(|owner| format!("{owner} (weight 1)"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        );
+    }
+
+    #[test]
+    fn parses_config_json_with_or_without_envelope() {
+        let config = ConfigurableAccountConfig {
+            salt: B256::repeat_byte(2),
+            version: 3,
+            threshold: 2,
+            owners: vec![
+                ConfigurableAccountOwner { owner: Address::repeat_byte(0x11), weight: 1 },
+                ConfigurableAccountOwner { owner: Address::repeat_byte(0x22), weight: 1 },
+            ],
+        };
+        let data = serde_json::json!({
+            "account": Address::repeat_byte(0xaa),
+            "version": 3,
+            "threshold": 2,
+            "salt": B256::repeat_byte(2),
+            "commitment": config.commitment().unwrap(),
+            // Unsorted owners are sorted.
+            "owners": [
+                { "owner": Address::repeat_byte(0x22), "weight": 1 },
+                { "owner": Address::repeat_byte(0x11), "weight": 1 },
+            ],
+        });
+        assert_eq!(parse_config(&data.to_string()).unwrap(), config);
+        let envelope = serde_json::json!({ "success": true, "data": data });
+        assert_eq!(parse_config(&envelope.to_string()).unwrap(), config);
+        // A threshold above the total weight is rejected.
+        let mut invalid = data;
+        invalid["threshold"] = 3.into();
+        assert!(parse_config(&invalid.to_string()).is_err());
+    }
+
+    #[test]
+    fn link_leaves_a_keystore_with_the_sidecar_name_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = dir.path().join("dev");
+        let owner = Address::repeat_byte(0x31);
+        let account = single_owner_account(owner).unwrap();
+
+        // A link is written, read, replaced and removed.
+        assert_eq!(linked_account(&keystore).unwrap(), None);
+        assert_eq!(link_keystore(&keystore, owner).unwrap(), account);
+        assert_eq!(linked_account(&keystore).unwrap(), Some((account, owner)));
+        link_keystore(&keystore, owner).unwrap();
+        unlink_keystore(&keystore).unwrap();
+        assert!(!linked_account_path(&keystore).exists());
+
+        // An earlier Cast version could create a keystore named `dev.tempo-account`.
+        let other = r#"{"version":3,"id":"x","crypto":{"cipher":"aes-128-ctr"}}"#;
+        std::fs::write(linked_account_path(&keystore), other).unwrap();
+        assert_eq!(linked_account(&keystore).unwrap(), None);
+        assert!(link_keystore(&keystore, owner).is_err());
+        unlink_keystore(&keystore).unwrap();
+        assert_eq!(std::fs::read_to_string(linked_account_path(&keystore)).unwrap(), other);
+
+        // Any other file is neither replaced nor removed, and is not taken as a link.
+        std::fs::write(linked_account_path(&keystore), "notes").unwrap();
+        assert!(ensure_link_available(&keystore).is_err());
+        assert!(linked_account(&keystore).is_err());
+        unlink_keystore(&keystore).unwrap();
+        assert_eq!(std::fs::read_to_string(linked_account_path(&keystore)).unwrap(), "notes");
     }
 }

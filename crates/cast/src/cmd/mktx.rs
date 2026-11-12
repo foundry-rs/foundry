@@ -217,11 +217,27 @@ impl MakeTxArgs {
             .await?
             .with_blob_data(blob_data)?;
         let chain = tx_builder.chain();
-        let (signer, access_key) = if has_session || pre_resolved_access_key.is_some() {
+        let (mut signer, access_key) = if has_session || pre_resolved_access_key.is_some() {
             tempo::resolve_session_or_wallet_signer(&tx.tempo, &eth.wallet, chain.id()).await?
         } else {
             (pre_resolved_signer, None)
         };
+        // A configurable account sender is signed by its local owners. Unsigned and externally
+        // signed transactions take the sender as given, and `--tempo.digest` resolves its owner
+        // quorum.
+        let configurable_account = if access_key.is_some()
+            || raw_unsigned
+            || ethsign
+            || signature.is_some()
+        {
+            None
+        } else {
+            tempo::resolve_configurable_account::<N>(&tx.tempo, &config, &eth.wallet, &mut signer)
+                .await?
+        };
+        if let Some(account) = &configurable_account {
+            account.prepare_request::<N>(tx_builder.tx_mut());
+        }
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
@@ -236,6 +252,13 @@ impl MakeTxArgs {
                     return Ok(());
                 };
                 (tx, prepared.account())
+            } else if let Some(account) = &configurable_account {
+                let Some(tx) =
+                    confirm_and_build(tx_builder, account.account(), force, None, false).await?
+                else {
+                    return Ok(());
+                };
+                (tx, account.account())
             } else {
                 let signer = match signer {
                     Some(signer) => signer,
@@ -363,6 +386,15 @@ impl MakeTxArgs {
             )
             .await?;
             tx.sign_with_tempo_wallet(&prepared).await?
+        } else if let Some(account) = &configurable_account {
+            let from = account.account();
+            let Some(mut tx) = confirm_and_build(tx_builder, from, force, lane, false).await?
+            else {
+                return Ok(());
+            };
+            tempo::apply_fee_payment::<N, _>(tempo_sponsor.as_ref(), fee_provider, &mut tx, from)
+                .await?;
+            tx.sign_with_configurable_account(account).await?
         } else {
             let (signer, from) = tx::resolve_send_signer(signer, &eth).await?;
             let Some(mut tx) = confirm_and_build(tx_builder, &signer, force, lane, false).await?
