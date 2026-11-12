@@ -614,8 +614,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
                     .map(|(.., write)| write)
                     .collect::<Vec<_>>();
                 let applied = PersistentWrite::apply_all(&writes, evm.state_mut())?;
-                persistent
-                    .extend(writes.into_iter().filter(|write| !write.is_delta()).chain(applied));
+                persistent.extend(
+                    writes.into_iter().filter(|write| !write.is_balance_or_nonce()).chain(applied),
+                );
             }
             cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
             Ok(result)

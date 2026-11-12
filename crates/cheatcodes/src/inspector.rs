@@ -735,7 +735,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub frame_rollback: Option<(usize, usize)>,
 
     /// The number of persistent writes recorded when each snapshot of the running transaction
-    /// was taken.
+    /// was taken, capped by the restorations that dropped some of them since, see
+    /// [`Self::restore_persistent_writes`].
     pub persistent_write_snapshots: HashMap<U256, usize>,
 
     /// Message of the first `vm.assert*` cheatcode that failed during the current call.
@@ -2244,6 +2245,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // inspector stack a failing frame reinstates the captured ledger, followed by the writes
         // recorded since, instead; this covers the stackless executor.
         self.persistent_writes.truncate(len);
+        // The writes recorded from here on replace the dropped ones, so a later restoration to a
+        // snapshot that counted those only keeps the writes kept here. The state it restores
+        // already holds the others.
+        let len = self.persistent_writes.len();
+        for stored in self.persistent_write_snapshots.values_mut() {
+            *stored = (*stored).min(len);
+        }
     }
 
     /// Replays the persistent writes made in the frame at `depth` or deeper after the frame
@@ -2279,7 +2287,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     return true;
                 }
                 entry.1 = len;
-                !entry.2.is_delta()
+                !entry.2.is_balance_or_nonce()
             });
             match applied {
                 Ok(applied) => self
