@@ -1374,15 +1374,23 @@ fn body_trailing_block_comment_spacing_keeps_braces() {
 
 #[test]
 fn for_body_assignment_spacing_is_stable() {
-    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
-        for (nested, line_lengths, paddings) in [
-            (false, &[36, 37][..], &[20][..]),
-            (false, &[40][..], &[65_516][..]),
-            (true, &[40][..], &[20, 65_516][..]),
-        ] {
+    for (nested, line_lengths, paddings) in [
+        (false, &[36, 37][..], &[20][..]),
+        (false, &[40][..], &[65_516][..]),
+        (true, &[40][..], &[20, 65_516][..]),
+    ] {
+        let statement = if nested { "g(variable = h() + b);" } else { "variable = g() + b;" };
+        for &padding in paddings {
+            let spacing = " ".repeat(padding);
+            let body = if nested {
+                format!("g(variable = h({spacing}) + b);")
+            } else {
+                format!("variable = g({spacing}) + b;")
+            };
+            let source = format!(
+                "contract C {{ function f(uint256 b) external {{ uint256 variable; for (;;) {body} }} }}"
+            );
             for &line_length in line_lengths {
-                let statement =
-                    if nested { "g(variable = h() + b);" } else { "variable = g() + b;" };
                 let body = if line_length == 36 {
                     format!("for (;;) {{\n            {statement}\n        }}")
                 } else {
@@ -1391,22 +1399,13 @@ fn for_body_assignment_spacing_is_stable() {
                 let expected = format!(
                     "contract C {{\n    function f(uint256 b) external {{\n        uint256 variable;\n        {body}\n    }}\n}}\n"
                 );
-                let config = Arc::new(FormatterConfig {
-                    line_length,
-                    single_line_statement_blocks: style,
-                    ..Default::default()
-                });
-                for &padding in paddings {
-                    let spacing = " ".repeat(padding);
-                    let body = if nested {
-                        format!("g(variable = h({spacing}) + b);")
-                    } else {
-                        format!("variable = g({spacing}) + b;")
-                    };
-                    let source = format!(
-                        "contract C {{ function f(uint256 b) external {{ uint256 variable; for (;;) {body} }} }}"
-                    );
-                    assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
+                for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+                    let config = Arc::new(FormatterConfig {
+                        line_length,
+                        single_line_statement_blocks: style,
+                        ..Default::default()
+                    });
+                    assert_eq!(format(&source, Path::new("test.sol"), config), expected);
                 }
             }
         }
