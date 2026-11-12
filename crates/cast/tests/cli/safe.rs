@@ -1254,69 +1254,9 @@ Error: approved-hash signatures (v = 1) are not supported by `cast safe execute`
 }
 
 #[casttest]
-async fn safe_execute_rejects_future_nonce(cmd: _) {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let rpc = handle.http_endpoint();
-    let safe = Address::repeat_byte(0x11);
-    let mut transaction = safe_transaction(safe, 0);
-    transaction["nonce"] = json!("1");
-    let hash = set_safe_transaction_hash(&mut transaction, 31337);
-    api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, 0)).await.unwrap();
-    let service = spawn_safe_service(transaction).await;
-    cmd.cast_fuse()
-        .args([
-            "safe",
-            "execute",
-            &safe.to_string(),
-            &hash.to_string(),
-            "--service-url",
-            service.endpoint(),
-            "--rpc-url",
-            &rpc,
-            "--private-key",
-            ANVIL_KEY,
-        ])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Error: Safe transaction nonce 1 does not match current Safe nonce 0
-
-"#]]);
-}
-
-#[casttest]
-async fn safe_execute_rejects_stale_nonce(cmd: _) {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let rpc = handle.http_endpoint();
-    let safe = Address::repeat_byte(0x11);
-    let mut transaction = safe_transaction(safe, 0);
-    let hash = set_safe_transaction_hash(&mut transaction, 31337);
-    api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, 1)).await.unwrap();
-    let service = spawn_safe_service(transaction).await;
-    cmd.cast_fuse()
-        .args([
-            "safe",
-            "execute",
-            &safe.to_string(),
-            &hash.to_string(),
-            "--service-url",
-            service.endpoint(),
-            "--rpc-url",
-            &rpc,
-            "--private-key",
-            ANVIL_KEY,
-        ])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Error: Safe transaction nonce 0 does not match current Safe nonce 1
-
-"#]]);
-}
-
-#[casttest]
-async fn safe_execute_rejects_approved_hash_with_stale_or_future_nonce(cmd: _) {
-    // A v = 1 confirmation must not make a transaction with a stale or future nonce
-    // executable. Use a fresh node for each case so the no-broadcast assertions are
-    // independent and a regression cannot hide behind state from the other case.
+async fn safe_execute_rejects_stale_or_future_nonce(cmd: _) {
+    let signer = ANVIL_KEY.parse::<PrivateKeySigner>().unwrap();
+    // Use a fresh node for each case so the no-broadcast assertions are independent.
     for (nonce, current_nonce, expected_error) in [
         (1u64, 0u64, "Error: Safe transaction nonce 1 does not match current Safe nonce 0\n"),
         (0u64, 1u64, "Error: Safe transaction nonce 0 does not match current Safe nonce 1\n"),
@@ -1331,12 +1271,10 @@ async fn safe_execute_rejects_approved_hash_with_stale_or_future_nonce(cmd: _) {
         transaction["nonce"] = json!(nonce.to_string());
         let hash = set_safe_transaction_hash(&mut transaction, 31337);
         api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, current_nonce)).await.unwrap();
-        let mut approved_hash_signature = vec![0u8; 65];
-        approved_hash_signature[..32].copy_from_slice(ANVIL_OWNER.into_word().as_slice());
-        approved_hash_signature[64] = 1;
+        let signature = signer.sign_hash(&hash).await.unwrap().as_bytes();
         transaction["confirmations"] = json!([{
             "owner": ANVIL_OWNER,
-            "signature": hex::encode_prefixed(approved_hash_signature),
+            "signature": hex::encode_prefixed(signature),
         }]);
         let service = spawn_safe_service(transaction).await;
 
@@ -1359,8 +1297,7 @@ async fn safe_execute_rejects_approved_hash_with_stale_or_future_nonce(cmd: _) {
             .stdout_eq("")
             .stderr_eq(expected_error);
 
-        // Nonce validation happens before eth_sendTransaction; prove that no outer transaction
-        // was submitted even though the service supplied an approved-hash confirmation.
+        // Reject the nonce mismatch before broadcasting an outer transaction.
         assert_eq!(provider.get_block_number().await.unwrap(), initial_block);
         assert_eq!(
             provider.get_transaction_count(ANVIL_OWNER).await.unwrap(),
