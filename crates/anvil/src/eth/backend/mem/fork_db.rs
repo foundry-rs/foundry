@@ -360,8 +360,8 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
     }
 
     fn clear(&mut self) {
-        self.flush_cache();
-        self.clear_into_state_snapshot();
+        // Keeps the fork cache: it only holds unchanged remote state, which retained block states
+        // read and dump.
     }
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
@@ -588,6 +588,8 @@ mod tests {
             AccountState::NotExisting;
         let state = db.current_state();
         assert!(state.maybe_as_full_db().unwrap().contains_key(&DELETED));
+        // Rollback clears the database, which must keep the fork state block states fetched.
+        db.clear();
 
         // A dumped state restores on the fork and, with the state fetched from it, standalone.
         let standalone = MemDb::default().historical_state(state.read_as_state_snapshot());
