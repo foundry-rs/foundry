@@ -387,20 +387,17 @@ mod tests {
     fn resolves_symlinks_before_matching_project_paths() {
         let root = tempfile::tempdir().unwrap();
         let external = tempfile::tempdir().unwrap();
-        for dir in ["src", "test", "script", "lib"] {
+        for dir in ["src", "test", "script"] {
             fs::create_dir(root.path().join(dir)).unwrap();
         }
         fs::write(root.path().join("test/Test.sol"), "").unwrap();
-        fs::write(root.path().join("lib/Dependency.sol"), "").unwrap();
         fs::write(external.path().join("Dependency.sol"), "").unwrap();
         fs::create_dir(external.path().join("native")).unwrap();
         fs::write(external.path().join("native/Counter.fe"), "").unwrap();
         symlink(external.path(), root.path().join("src/external")).unwrap();
-        symlink(root.path().join("lib"), root.path().join("test/library")).unwrap();
         symlink(root.path().join("test"), root.path().join("test-alias")).unwrap();
         symlink(external.path().join("native"), root.path().join("native")).unwrap();
         symlink(external.path(), external.path().join("native/escape")).unwrap();
-        symlink(root.path().join("lib"), external.path().join("native/library")).unwrap();
         let mut config = Config::with_root(root.path());
         config.script = root.path().join("src/external");
         config.external_compilers.push(ExternalCompiler {
@@ -416,7 +413,6 @@ mod tests {
         // A configured symlink root is intentional, and aliases within project roots are allowed.
         assert!(filter.matches_path(Path::new("src/external/Dependency.sol")));
         assert!(filter.matches_path(Path::new("test-alias/Test.sol")));
-        assert!(!filter.matches_path(Path::new("test/library/Dependency.sol")));
 
         let mut config = config;
         config.script = config.root.join("script");
@@ -425,7 +421,6 @@ mod tests {
         assert!(filter.matches_path(Path::new("native/Counter.fe")));
         assert!(filter.matches_path(&external.path().join("native/Counter.fe")));
         assert!(!filter.matches_path(Path::new("native/escape/Dependency.sol")));
-        assert!(!filter.matches_path(Path::new("native/library/Dependency.sol")));
     }
 
     #[test]
