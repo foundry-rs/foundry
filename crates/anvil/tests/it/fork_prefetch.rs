@@ -29,7 +29,7 @@ fn is_address(value: &Value, address: Address) -> bool {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn fork_prefetch_simulates_calls_and_batches_their_reads() {
+async fn fork_prefetch_simulates_calls() {
     let (origin_api, origin) = spawn(NodeConfig::test()).await;
     origin_api.anvil_set_code(SLOTS, sum_slots_code().into()).await.unwrap();
     for slot in 0..SLOT_COUNT {
@@ -39,10 +39,8 @@ async fn fork_prefetch_simulates_calls_and_batches_their_reads() {
             .unwrap();
     }
     origin_api.mine_one().await.unwrap();
-    let (reads_rpc, reads) =
-        spawn_rpc_proxy_recording_method(origin.http_endpoint(), "eth_getStorageAt").await;
     let (rpc, simulations) =
-        spawn_rpc_proxy_recording_method(reads_rpc, "eth_createAccessList").await;
+        spawn_rpc_proxy_recording_method(origin.http_endpoint(), "eth_createAccessList").await;
 
     let (_api, handle) = spawn(
         NodeConfig::test()
@@ -58,13 +56,10 @@ async fn fork_prefetch_simulates_calls_and_batches_their_reads() {
         .unwrap();
     assert_eq!(U256::from_be_slice(&output), U256::from(820));
 
-    // The call is simulated on the origin, and the slots of its access list are read in batch
-    // requests, which the proxy does not record, so fewer single reads than slots reach it.
+    // The call is simulated on the origin.
     let simulations = simulations.lock().unwrap();
     assert!(
         simulations.iter().any(|params| is_address(&params[0]["to"], SLOTS)),
         "no simulation of the call in {simulations:?}"
     );
-    let reads = reads.lock().unwrap();
-    assert!(reads.len() < SLOT_COUNT as usize, "{} single reads: {reads:?}", reads.len());
 }

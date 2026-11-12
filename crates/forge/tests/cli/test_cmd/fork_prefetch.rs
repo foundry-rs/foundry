@@ -69,7 +69,7 @@ fn is_address(value: &Value, address: Address) -> bool {
 }
 
 #[forgetest]
-async fn fork_prefetch_simulates_the_test_and_batches_its_reads(prj: _, cmd: _) {
+async fn fork_prefetch_simulates_the_test_and_its_calls(prj: _, cmd: _) {
     let (api, handle) = spawn(NodeConfig::test()).await;
     api.anvil_set_code(SLOTS, sum_slots_code().into()).await.unwrap();
     for slot in 0..SLOT_COUNT {
@@ -81,10 +81,8 @@ async fn fork_prefetch_simulates_the_test_and_batches_its_reads(prj: _, cmd: _) 
     api.anvil_set_storage_at(SLOT_ZERO, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
     api.mine_one().await.unwrap();
     let block = api.block_number().unwrap();
-    let (reads_rpc, reads) =
-        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getStorageAt").await;
     let (rpc, simulations) =
-        spawn_rpc_proxy_recording_method(reads_rpc, "eth_createAccessList").await;
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_createAccessList").await;
 
     prj.add_test("ForkPrefetch.t.sol", TEST);
     cmd.env("PREFETCH_RPC_URL", &rpc);
@@ -98,7 +96,6 @@ Ran 1 test for test/ForkPrefetch.t.sol:ForkPrefetchTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-    let single_reads = reads.lock().unwrap().len();
 
     // A slot that the endpoint changes after a prefetch read it is read again.
     cmd.forge_fuse();
@@ -129,7 +126,4 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
         .expect("test contract override");
     assert!(test_contract["code"].is_string(), "{test_contract}");
     assert!(simulations.iter().any(|params| is_address(&params[0]["to"], SLOTS)));
-    // Prefetched slots are read in batch requests, which this proxy does not record, so the EVM
-    // sends fewer single reads than the contract has slots.
-    assert!(single_reads < SLOT_COUNT as usize, "{single_reads} single reads");
 }

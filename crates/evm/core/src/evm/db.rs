@@ -255,11 +255,8 @@ impl<N: Network, B: ForkBlockEnv> FoundryDatabase for ForkDb<SharedBackend<N, B>
         overrides: bool,
     ) {
         let remote = self.db.data();
-        let overrides = if overrides {
-            prefetch::state_override(&remote, local.unwrap_or(&Cache::default()))
-        } else {
-            None
-        };
+        let overrides =
+            local.filter(|_| overrides).and_then(|local| prefetch::state_override(&remote, local));
         // An account the context holds but never loaded from the endpoint was created locally,
         // so the endpoint can only simulate a call into it with the local state as overrides.
         if overrides.is_none()

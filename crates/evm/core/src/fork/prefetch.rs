@@ -13,7 +13,7 @@ use super::Fork;
 use crate::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use alloy_network::Network;
 use alloy_primitives::{
-    Address, B256, Bytes, U256,
+    Address, B256, Bytes, U256, address,
     map::{B256HashMap, B256Map},
 };
 use alloy_rpc_types::{TransactionRequest, state::StateOverride};
@@ -45,6 +45,9 @@ const MAX_KEYS: usize = 4096;
 /// Runtime code that returns one zero word, standing in for the cheatcode contract in a
 /// simulation on the fork's endpoint: `PUSH1 0x20 PUSH1 0x00 RETURN`.
 const CHEATCODE_STUB: Bytes = Bytes::from_static(&[0x60, 0x20, 0x60, 0x00, 0xf3]);
+
+/// Address of the `P256VERIFY` precompile (EIP-7951), the highest precompile address skipped.
+const P256VERIFY_ADDRESS: Address = address!("0x0000000000000000000000000000000000000100");
 
 /// Largest local state, in storage slots, sent as overrides with a simulated call.
 const MAX_OVERRIDE_SLOTS: usize = 8192;
@@ -176,10 +179,15 @@ impl<'a> StateOverrideBuilder<'a> {
     pub fn account(&mut self, address: Address, info: &AccountInfo, contracts: &B256Map<Bytecode>) {
         let remote_accounts = self.remote.accounts.read();
         let remote = remote_accounts.get(&address);
-        let code = remote.is_none_or(|remote| remote.code_hash != info.code_hash).then(|| {
-            let code = info.code.as_ref().or_else(|| contracts.get(&info.code_hash));
-            code.map(Bytecode::original_bytes).unwrap_or_default()
-        });
+        // Code that is neither inline nor in `contracts` is unknown, so it is not overridden.
+        let code = remote
+            .is_none_or(|remote| remote.code_hash != info.code_hash)
+            .then(|| {
+                let code = info.code.as_ref().or_else(|| contracts.get(&info.code_hash));
+                code.map(Bytecode::original_bytes)
+                    .or_else(|| info.is_empty_code_hash().then(Bytes::new))
+            })
+            .flatten();
         let balance = remote.is_none_or(|remote| remote.balance != info.balance);
         let nonce = remote.is_none_or(|remote| remote.nonce != info.nonce);
         if code.is_some() || balance || nonce {
@@ -247,8 +255,8 @@ pub fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverride> {
 }
 
 /// Simulates a call on the fork's endpoint and prefetches the state it touches, see
-/// [`SharedBackend::prefetch_access_list`]. Calls to precompiles, the cheatcode contract and the
-/// console are skipped.
+/// [`SharedBackend::prefetch_access_list`]. Calls to precompiles, up to `P256VERIFY` at `0x100`,
+/// the cheatcode contract and the console are skipped.
 pub fn prefetch_call<N: Network, B: ForkBlockEnv>(
     backend: &SharedBackend<N, B>,
     caller: Address,
@@ -257,7 +265,7 @@ pub fn prefetch_call<N: Network, B: ForkBlockEnv>(
     input: Bytes,
     overrides: Option<StateOverride>,
 ) {
-    if target <= Address::with_last_byte(0xff)
+    if target <= P256VERIFY_ADDRESS
         || target == CHEATCODE_ADDRESS
         || target == HARDHAT_CONSOLE_ADDRESS
     {
