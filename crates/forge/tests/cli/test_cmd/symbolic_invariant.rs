@@ -3157,3 +3157,54 @@ contract SymbolicSuiteInline is Test {
 "#]],
         );
 }
+
+// Confirming the solver's witness runs cheatcodes as the campaign does, so a handler that reads the
+// clock still confirms it, even with shrinking disabled.
+#[forgetest_init]
+fn symbolic_invariant_confirms_witness_with_host_reads(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_confirms_witness_with_host_reads");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.invariant.shrink_run_limit = 0;
+    });
+
+    prj.add_test(
+        "SymbolicHostReads.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ClockTarget is Test {
+    bool public flag;
+
+    function set(uint256 x) external {
+        uint256 time = vm.unixTime();
+        if (x == 42 && time > 0) flag = true;
+    }
+}
+
+contract SymbolicHostReads is Test {
+    ClockTarget target;
+
+    function setUp() public {
+        target = new ClockTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_flagUnset() public view {
+        assertFalse(target.flag());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "invariant_flagUnset"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] calldata=set(uint256) args=[42]
+...
+"#]]);
+}
