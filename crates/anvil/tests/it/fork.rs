@@ -5710,8 +5710,6 @@ async fn test_fork_rollback_past_in_memory_states() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_destroyed_account_past_in_memory_states() {
-    // Pre-Cancun, so SELFDESTRUCT removes the account and its storage.
-    let hardfork = Some(EthereumHardfork::Shanghai.into());
     let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let contract = Address::random();
     // CALLER SELFDESTRUCT
@@ -5721,7 +5719,8 @@ async fn test_fork_destroyed_account_past_in_memory_states() {
 
     let (api, handle) = spawn(
         NodeConfig::test()
-            .with_hardfork(hardfork)
+            // Pre-Cancun, so SELFDESTRUCT removes the account and its storage.
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
             .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
     )
     .await;
