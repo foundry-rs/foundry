@@ -2050,6 +2050,51 @@ async fn safe_propose_hash_matches_safe_for_all_fields(cmd: _) {
     }
 }
 
+#[casttest]
+async fn safe_sign_rejects_service_fields_for_another_hash(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let safe = Address::repeat_byte(0x11);
+    api.anvil_set_code(
+        safe,
+        fixture_runtime(
+            include_bytes!("../fixtures/safe/v1.4.1/SafeL2.runtime.bin"),
+            SAFE_L2_V1_4_1_RUNTIME_LEN,
+            SAFE_L2_V1_4_1_RUNTIME_HASH,
+        ),
+    )
+    .await
+    .unwrap();
+
+    // The service keeps the requested hash but replaces the target. The honest Safe agrees with
+    // the local hash of the changed fields, leaving the service hash comparison to reject them.
+    let mut transaction = safe_transaction(safe, 0);
+    let requested_hash = set_safe_transaction_hash(&mut transaction, 31337);
+    transaction["to"] = json!(Address::repeat_byte(0x22));
+    let calculated_hash = set_safe_transaction_hash(&mut transaction, 31337);
+    transaction["safeTxHash"] = json!(requested_hash);
+    let (service, submissions) = spawn_safe_service_with_submissions(transaction).await;
+
+    cmd.cast_fuse()
+        .args([
+            "safe",
+            "sign",
+            &safe.to_string(),
+            &requested_hash.to_string(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--service-url",
+            service.endpoint(),
+            "--private-key",
+            ANVIL_KEY,
+        ])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(format!(
+            "Error: Safe transaction hash mismatch: service/file returned {requested_hash}, calculated {calculated_hash}\n"
+        ));
+    assert_eq!(*submissions.lock().unwrap(), 0, "a signature was submitted to the service");
+}
+
 async fn spawn_safe_service_with_submissions(
     response: Value,
 ) -> (TestServerHandle, Arc<Mutex<usize>>) {
