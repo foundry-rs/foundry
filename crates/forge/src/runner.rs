@@ -1636,7 +1636,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             replay.shrink_deadline,
             preserves,
         )?;
-        (!deadline_passed(replay.shrink_deadline) && preserves(&minimization.minimized_calls))
+        let deadline = replay.shrink_deadline;
+        // Every accepted candidate was confirmed before the deadline, so once it passed, a
+        // minimization that accepted one is kept without the confirming replay, which the deadline
+        // would cancel. One that accepted none leaves the original sequence as the only artifact.
+        ((!deadline_passed(deadline) && preserves(&minimization.minimized_calls))
+            || (deadline_passed(deadline) && minimization.accepted > 0))
             .then_some(minimization)
     }
 
