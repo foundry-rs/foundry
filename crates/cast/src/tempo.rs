@@ -251,9 +251,18 @@ pub(crate) async fn resolve_transaction_network_and_signer(
     eth: &EthereumOpts,
 ) -> Result<(NetworkVariant, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     let config = eth.load_config()?;
+    resolve_transaction_network_and_signer_with_config(tempo, eth, &config).await
+}
+
+/// Resolves the transaction network and signer using an already loaded configuration.
+pub(crate) async fn resolve_transaction_network_and_signer_with_config(
+    tempo: &TempoOpts,
+    eth: &EthereumOpts,
+    config: &Config,
+) -> Result<(NetworkVariant, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     let has_session = tempo.session_id()?.is_some();
     let requires_tempo = tempo.is_tempo() || has_session;
-    crate::cmd::validate_tempo_network(&config, requires_tempo)?;
+    crate::cmd::validate_tempo_network(config, requires_tempo)?;
     if has_session {
         return Ok((NetworkVariant::Tempo, None, None));
     }
@@ -262,7 +271,7 @@ pub(crate) async fn resolve_transaction_network_and_signer(
     explicit_wallet.from = None;
     let (signer, access_key) = foundry_common::tempo::maybe_signer(&explicit_wallet, None).await?;
     let network =
-        crate::cmd::resolve_transaction_network(&config, requires_tempo || access_key.is_some())
+        crate::cmd::resolve_transaction_network(config, requires_tempo || access_key.is_some())
             .await?;
     if let (Some(from), Some(access_key)) = (eth.wallet.from, &access_key) {
         eyre::ensure!(
@@ -277,7 +286,7 @@ pub(crate) async fn resolve_transaction_network_and_signer(
     }
 
     // Only consult the Accounts store after selecting Tempo.
-    let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
+    let provider = ProviderBuilder::<Ethereum>::from_config(config)?.build()?;
     let chain = get_chain(config.chain, &provider).await?;
     let (signer, access_key) =
         foundry_common::tempo::maybe_signer(&eth.wallet, Some(chain.id())).await?;

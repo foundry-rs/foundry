@@ -66,7 +66,7 @@ impl ExecuteArgs {
             transaction_nonce == current_nonce,
             "Safe transaction nonce {transaction_nonce} does not match current Safe nonce {current_nonce}"
         );
-        transaction.show_transaction_summary()?;
+        transaction.show_transaction_summary(chain_id)?;
         let signatures = transaction.packed_signatures()?;
 
         sh_status!("Executing Safe transaction {safe_tx_hash}")?;

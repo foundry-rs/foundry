@@ -265,9 +265,10 @@ impl SafeTransaction {
         Ok(signatures.into())
     }
 
-    pub(super) fn show_transaction_summary(&self) -> Result<()> {
+    pub(super) fn show_transaction_summary(&self, chain_id: u64) -> Result<()> {
         let operation = if self.operation == 0 { "CALL" } else { "DELEGATECALL" };
         sh_status!("Safe transaction: {}", self.safe_tx_hash)?;
+        sh_status!("  Chain ID:        {chain_id}")?;
         sh_status!("  Safe:            {}", self.safe)?;
         sh_status!("  To:              {}", self.to)?;
         sh_status!("  Value:           {}", self.value)?;

@@ -1017,8 +1017,9 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
     let owner_1 = ANVIL_OWNER.to_string();
     let owner_2 = ANVIL_OWNER_2.to_string();
     let target_arg = target.to_string();
+    cmd.cast_fuse();
+    cmd.env("FOUNDRY_CHAIN_ID", "1");
     let create_output = cmd
-        .cast_fuse()
         .args([
             "safe",
             "create",
@@ -1036,8 +1037,13 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
             ANVIL_KEY,
             "--rpc-url",
             &rpc,
+            "--chain",
+            "31337",
         ])
         .assert_success()
+        .stderr_eq(format!(
+            "Deploying Safe on chain ID 31337 with singleton {SAFE_L2_V1_4_1}\n[TX_HASH]\n"
+        ))
         .get_output()
         .stdout_lossy();
     let safe: Address = create_output
@@ -1050,6 +1056,9 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
     assert_eq!(safe_contract.getOwners().call().await.unwrap(), owners);
     assert_eq!(safe_contract.getThreshold().call().await.unwrap(), U256::from(2));
     assert_eq!(safe_contract.nonce().call().await.unwrap(), U256::ZERO);
+    let deployment =
+        provider.get_block_by_number(BlockNumberOrTag::Latest).full().await.unwrap().unwrap();
+    assert_eq!(deployment.transactions.as_transactions().unwrap()[0].chain_id(), Some(31337));
 
     let calculated_hash = safe_contract
         .getTransactionHash(
@@ -1084,6 +1093,8 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
         SAFE_SERVICE_API_KEY,
         "--rpc-url",
         rpc.as_str(),
+        "--chain",
+        "31337",
     ];
 
     cmd.cast_fuse()
@@ -1158,8 +1169,9 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
         })));
     assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::ZERO);
 
+    cmd.cast_fuse();
+    cmd.env("FOUNDRY_CHAIN_ID", "1");
     let execution_output = cmd
-        .cast_fuse()
         .args(["safe", "execute", &safe_arg, &safe_tx_hash_arg, "--private-key", ANVIL_KEY])
         .args(service_args)
         .assert_success()
@@ -1174,6 +1186,8 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
         .expect("Safe execution receipt was not mined");
     assert!(receipt.status());
     assert_eq!(receipt.transaction_hash, execution_hash);
+    let transaction = provider.get_transaction_by_hash(execution_hash).await.unwrap().unwrap();
+    assert_eq!(transaction.chain_id(), Some(31337));
     let matching_events = receipt
         .logs()
         .iter()
@@ -1253,6 +1267,7 @@ async fn safe_execute_rejects_approved_hash_confirmation(cmd: _) {
         .assert_failure()
         .stderr_eq(format!(
             r#"Safe transaction: {hash}
+  Chain ID:        31337
   Safe:            0x1111111111111111111111111111111111111111
   To:              0x0000000000000000000000000000000000000000
   Value:           0
@@ -1605,6 +1620,7 @@ async fn safe_v1_3_0_execute_reports_inner_outcome(cmd: _) {
             } else {
                 command.assert_failure().stdout_eq("").stderr_eq(format!(
                     r#"Safe transaction: {hash}
+  Chain ID:        31337
   Safe:            {safe}
   To:              {target}
   Value:           0
@@ -1682,17 +1698,36 @@ async fn safe_service_mutations_emit_json_envelopes(cmd: _) {
     cmd.cast_fuse()
         .args(["--json", "safe", "add-delegate", &safe, &delegate, "--label", "test"])
         .args(signer_args)
-        .assert_json_stdout(json_envelope(json!(delegate)));
+        .assert_json_stdout_with_status(true, json_envelope(json!(delegate)))
+        .stderr_eq("Signing Safe delegate authorization on chain ID 31337\n");
 
     cmd.cast_fuse()
         .args(["--json", "safe", "remove-delegate", &safe, &delegate])
         .args(signer_args)
-        .assert_json_stdout(json_envelope(json!(delegate)));
+        .assert_json_stdout_with_status(true, json_envelope(json!(delegate)))
+        .stderr_eq("Signing Safe delegate authorization on chain ID 31337\n");
 
+    let expected_summary = format!(
+        r#"Safe transaction: {hash}
+  Chain ID:        31337
+  Safe:            {safe}
+  To:              {target}
+  Value:           0
+  Operation:       0 (CALL)
+  Safe tx gas:     0
+  Base gas:        0
+  Gas price:       0
+  Gas token:       0x0000000000000000000000000000000000000000
+  Refund receiver: 0x0000000000000000000000000000000000000000
+  Nonce:           0
+  Data:            0x
+"#
+    );
     cmd.cast_fuse()
         .args(["--json", "safe", "propose", &safe, &target, "--nonce", "0"])
         .args(signer_args)
-        .assert_json_stdout(json_envelope(json!(hash)));
+        .assert_json_stdout_with_status(true, json_envelope(json!(hash)))
+        .stderr_eq(expected_summary.clone());
 
     let signer: PrivateKeySigner = ANVIL_KEY.parse().unwrap();
     let mut signature = signer.sign_message(hash.as_slice()).await.unwrap().as_bytes();
@@ -1701,7 +1736,8 @@ async fn safe_service_mutations_emit_json_envelopes(cmd: _) {
     cmd.cast_fuse()
         .args(["--json", "safe", "sign", &safe, &safe_tx_hash])
         .args(signer_args)
-        .assert_json_stdout(json_envelope(json!(signature)));
+        .assert_json_stdout_with_status(true, json_envelope(json!(signature)))
+        .stderr_eq(expected_summary);
 }
 
 #[casttest]
@@ -1751,6 +1787,10 @@ async fn safe_list_delegates_follows_pagination(cmd: _) {
             &safe.to_string(),
             "--service-url",
             server.endpoint(),
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--chain",
+            "mainnet",
         ])
         .assert_json_stdout(json_envelope(json!([first, second])));
 }
@@ -1907,6 +1947,7 @@ async fn safe_simulation_rejects_reimbursed_transaction(cmd: _) {
         .assert_failure()
         .stdout_eq("")
         .stderr_eq(format!(r#"Safe transaction: {hash}
+  Chain ID:        31337
   Safe:            0x1111111111111111111111111111111111111111
   To:              0x0000000000000000000000000000000000000000
   Value:           0
@@ -2134,28 +2175,154 @@ async fn safe_propose_rejects_configured_chain_mismatch(prj: _, cmd: _) {
         ANVIL_KEY,
     ];
 
-    for from_env in [true, false] {
-        if !from_env {
-            prj.update_config(|config| config.chain = Some(1.into()));
-        }
+    let expected_summary = format!(
+        r#"Safe transaction: {expected_hash}
+  Chain ID:        31337
+  Safe:            {safe}
+  To:              {target}
+  Value:           0
+  Operation:       0 (CALL)
+  Safe tx gas:     0
+  Base gas:        0
+  Gas price:       0
+  Gas token:       0x0000000000000000000000000000000000000000
+  Refund receiver: 0x0000000000000000000000000000000000000000
+  Nonce:           0
+  Data:            0x
+"#
+    );
+    let mut expected_submissions = 0;
+    for (configured, foundry_chain, chain, cli_chain, rejects) in [
+        (None, None, None, None, false),
+        (Some(1u64), None, None, None, true),
+        (None, Some("1"), None, None, true),
+        (Some(1), Some("31337"), None, None, false),
+        (Some(1), Some("1"), Some("31337"), None, false),
+        (Some(1), Some("1"), Some("1"), Some("31337"), false),
+        (Some(31337), Some("31337"), Some("31337"), Some("1"), true),
+        (Some(31337), Some("31337"), Some("1"), None, true),
+        (Some(31337), Some("31337"), Some("mainnet"), None, true),
+        (Some(31337), Some("31337"), Some("31337"), Some("mainnet"), true),
+    ] {
+        prj.update_config(|config| config.chain = configured.map(Into::into));
         cmd.cast_fuse().current_dir(prj.root());
         cmd.unset_env("FOUNDRY_CHAIN_ID");
-        if from_env {
-            cmd.env("FOUNDRY_CHAIN_ID", "1");
+        cmd.unset_env("CHAIN");
+        if let Some(chain) = foundry_chain {
+            cmd.env("FOUNDRY_CHAIN_ID", chain);
         }
-        cmd.args(args).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+        if let Some(chain) = chain {
+            cmd.env("CHAIN", chain);
+        }
+        cmd.args(args);
+        if let Some(chain) = cli_chain {
+            cmd.args(["--chain", chain]);
+        }
+        if rejects {
+            cmd.assert_failure().stdout_eq("").stderr_eq(str![[r#"
 Error: Configured chain ID 1 does not match RPC chain ID 31337.
-Check chain_id in the selected Foundry profile or FOUNDRY_CHAIN_ID.
+Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN_ID.
 
 "#]]);
-        assert_eq!(*submissions.lock().unwrap(), 0, "a signature was submitted to the service");
+        } else {
+            cmd.assert_success()
+                .stdout_eq(format!("{expected_hash}\n"))
+                .stderr_eq(expected_summary.clone());
+            expected_submissions += 1;
+        }
+        assert_eq!(
+            *submissions.lock().unwrap(),
+            expected_submissions,
+            "unexpected proposal submission for configured={configured:?}, FOUNDRY_CHAIN_ID={foundry_chain:?}, CHAIN={chain:?}, --chain={cli_chain:?}"
+        );
     }
 
-    // The environment can override a chain configured in foundry.toml for local testing.
-    cmd.cast_fuse().current_dir(prj.root());
-    cmd.env("FOUNDRY_CHAIN_ID", "31337");
-    cmd.args(args).assert_success().stdout_eq(format!("{expected_hash}\n"));
-    assert_eq!(*submissions.lock().unwrap(), 1, "a proposal was not submitted to the service");
+    prj.create_file(
+        "foundry.toml",
+        "[profile.default]\nchain_id = 31337\n\n[profile.safe_chain]\nchain_id = 1\n",
+    );
+    // CLI and CHAIN also override a selected profile, not just the default profile.
+    for (chain, cli_chain, rejects) in
+        [(None, None, true), (Some("31337"), None, false), (Some("1"), Some("31337"), false)]
+    {
+        cmd.cast_fuse().current_dir(prj.root());
+        cmd.unset_env("FOUNDRY_CHAIN_ID");
+        cmd.unset_env("CHAIN");
+        cmd.env("FOUNDRY_PROFILE", "safe_chain");
+        if let Some(chain) = chain {
+            cmd.env("CHAIN", chain);
+        }
+        cmd.args(args);
+        if let Some(chain) = cli_chain {
+            cmd.args(["--chain", chain]);
+        }
+        if rejects {
+            cmd.assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: Configured chain ID 1 does not match RPC chain ID 31337.
+Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN_ID.
+
+"#]]);
+        } else {
+            cmd.assert_success()
+                .stdout_eq(format!("{expected_hash}\n"))
+                .stderr_eq(expected_summary.clone());
+            expected_submissions += 1;
+        }
+        assert_eq!(*submissions.lock().unwrap(), expected_submissions);
+    }
+}
+
+#[casttest]
+async fn safe_commands_reject_unexpected_chain_before_signing(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let initial_block = provider.get_block_number().await.unwrap();
+    let (service, submissions) = spawn_safe_service_with_submissions(json!({})).await;
+    let safe = Address::repeat_byte(0x11).to_string();
+    let target = Address::repeat_byte(0x22).to_string();
+    let hash = B256::ZERO.to_string();
+    let owner = ANVIL_OWNER.to_string();
+
+    // No wallet is supplied: chain rejection must happen before a signer is loaded.
+    for command in
+        ["create", "add-delegate", "remove-delegate", "propose", "sign", "simulate", "execute"]
+    {
+        cmd.cast_fuse().args(["safe", command]);
+        cmd.arg(if command == "create" { &owner } else { &safe });
+        match command {
+            "add-delegate" => {
+                cmd.args([&target, "--label", "test"]);
+            }
+            "remove-delegate" => {
+                cmd.arg(&target);
+            }
+            "propose" => {
+                cmd.args([&target, "--nonce", "0"]);
+            }
+            "sign" | "execute" => {
+                cmd.arg(&hash);
+            }
+            "simulate" => {
+                cmd.args([&hash, "--from", &owner]);
+            }
+            _ => {}
+        }
+        if command != "create" {
+            cmd.args(["--service-url", service.endpoint()]);
+        }
+        cmd.args(["--rpc-url", &rpc, "--chain", "mainnet"])
+            .assert_failure()
+            .stdout_eq("")
+            .stderr_eq(str![[r#"
+Error: Configured chain ID 1 does not match RPC chain ID 31337.
+Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN_ID.
+
+"#]]);
+        assert_eq!(*submissions.lock().unwrap(), 0, "{command} submitted to the service");
+    }
+    assert_eq!(provider.get_block_number().await.unwrap(), initial_block);
+    assert_eq!(provider.get_transaction_count(ANVIL_OWNER).await.unwrap(), 0);
 }
 
 #[casttest]
@@ -2290,7 +2457,7 @@ async fn spawn_safe_service_with_submissions(
         let captured = Arc::clone(&captured);
         let response = response.clone();
         async move {
-            if request.method() == Method::POST {
+            if request.method() == Method::POST || request.method() == Method::DELETE {
                 *captured.lock().unwrap() += 1;
             }
             Json(response)
