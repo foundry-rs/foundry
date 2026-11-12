@@ -1251,23 +1251,11 @@ async fn safe_execute_rejects_approved_hash_confirmation(cmd: _) {
             ANVIL_KEY,
         ])
         .assert_failure()
-        .stderr_eq(format!(
-            r#"Safe transaction: {hash}
-  Chain ID:        31337
-  Safe:            0x1111111111111111111111111111111111111111
-  To:              0x0000000000000000000000000000000000000000
-  Value:           0
-  Operation:       0 (CALL)
-  Safe tx gas:     0
-  Base gas:        0
-  Gas price:       0
-  Gas token:       0x0000000000000000000000000000000000000000
-  Refund receiver: 0x0000000000000000000000000000000000000000
-  Nonce:           0
-  Data:            0x
+        .stderr_eq(str![[r#"
+...
 Error: approved-hash signatures (v = 1) are not supported by `cast safe execute`
-"#
-        ));
+
+"#]]);
 }
 
 #[casttest]
@@ -1604,24 +1592,11 @@ async fn safe_v1_3_0_execute_reports_inner_outcome(cmd: _) {
             let execution = if succeeds {
                 command.assert_success()
             } else {
-                command.assert_failure().stdout_eq("").stderr_eq(format!(
-                    r#"Safe transaction: {hash}
-  Chain ID:        31337
-  Safe:            {safe}
-  To:              {target}
-  Value:           0
-  Operation:       0 (CALL)
-  Safe tx gas:     100000
-  Base gas:        0
-  Gas price:       0
-  Gas token:       0x0000000000000000000000000000000000000000
-  Refund receiver: 0x0000000000000000000000000000000000000000
-  Nonce:           1
-  Data:            0x
-Executing Safe transaction {hash}
+                command.assert_failure().stdout_eq("").stderr_eq(str![[r#"
+...
 Error: Safe inner transaction failed
-"#
-                ))
+
+"#]])
             };
             let block =
                 provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
@@ -1676,22 +1651,7 @@ async fn safe_service_mutations_emit_json_envelopes(cmd: _) {
         .assert_json_stdout_with_status(true, json_envelope(json!(delegate)))
         .stderr_eq("Signing Safe delegate authorization on chain ID 31337\n");
 
-    let expected_summary = format!(
-        r#"Safe transaction: {hash}
-  Chain ID:        31337
-  Safe:            {safe}
-  To:              {target}
-  Value:           0
-  Operation:       0 (CALL)
-  Safe tx gas:     0
-  Base gas:        0
-  Gas price:       0
-  Gas token:       0x0000000000000000000000000000000000000000
-  Refund receiver: 0x0000000000000000000000000000000000000000
-  Nonce:           0
-  Data:            0x
-"#
-    );
+    let expected_summary = format!("Safe transaction: {hash}\n  Chain ID:        31337\n...\n");
     cmd.cast_fuse()
         .args(["--json", "safe", "propose", &safe, &target, "--nonce", "0"])
         .args(signer_args)
@@ -1915,21 +1875,11 @@ async fn safe_simulation_rejects_reimbursed_transaction(cmd: _) {
         ])
         .assert_failure()
         .stdout_eq("")
-        .stderr_eq(format!(r#"Safe transaction: {hash}
-  Chain ID:        31337
-  Safe:            0x1111111111111111111111111111111111111111
-  To:              0x0000000000000000000000000000000000000000
-  Value:           0
-  Operation:       0 (CALL)
-  Safe tx gas:     0
-  Base gas:        0
-  Gas price:       1
-  Gas token:       0x0000000000000000000000000000000000000000
-  Refund receiver: 0x0000000000000000000000000000000000000000
-  Nonce:           0
-  Data:            0x
+        .stderr_eq(str![[r#"
+...
 Error: cannot simulate reimbursed Safe transactions (gasPrice > 0): SimulateTxAccessor does not enforce safeTxGas
-"#));
+
+"#]]);
 }
 
 #[casttest]
@@ -2126,22 +2076,8 @@ async fn safe_propose_rejects_configured_chain_mismatch(prj: _, cmd: _) {
         ANVIL_KEY,
     ];
 
-    let expected_summary = format!(
-        r#"Safe transaction: {expected_hash}
-  Chain ID:        31337
-  Safe:            {safe}
-  To:              {target}
-  Value:           0
-  Operation:       0 (CALL)
-  Safe tx gas:     0
-  Base gas:        0
-  Gas price:       0
-  Gas token:       0x0000000000000000000000000000000000000000
-  Refund receiver: 0x0000000000000000000000000000000000000000
-  Nonce:           0
-  Data:            0x
-"#
-    );
+    let expected_summary =
+        format!("Safe transaction: {expected_hash}\n  Chain ID:        31337\n...\n");
     let mut expected_submissions = 0;
     let mut run_case = |profile, configured, foundry_chain, chain, cli_chain, rejects| {
         cmd.cast_fuse().current_dir(prj.root());
@@ -2268,7 +2204,8 @@ async fn safe_propose_hash_matches_safe_for_all_fields(cmd: _) {
         let data = bytes!("0x1234567890");
         let service = spawn_safe_service(json!({})).await;
 
-        for (operation, name) in [(0, "call"), (1, "delegate-call")] {
+        for (operation, name, label) in [(0, "call", "CALL"), (1, "delegate-call", "DELEGATECALL")]
+        {
             let expected_hash = contract
                 .getTransactionHash(
                     target,
@@ -2318,7 +2255,23 @@ async fn safe_propose_hash_matches_safe_for_all_fields(cmd: _) {
                 "--private-key",
                 ANVIL_KEY,
             ])
-            .assert_json_stdout(json_envelope(json!(expected_hash)));
+            .assert_json_stdout_with_status(true, json_envelope(json!(expected_hash)))
+            .stderr_eq(format!(
+                r#"Safe transaction: {expected_hash}
+  Chain ID:        {chain_id}
+  Safe:            {safe}
+  To:              {target}
+  Value:           19
+  Operation:       {operation} ({label})
+  Safe tx gas:     12345
+  Base gas:        4567
+  Gas price:       42
+  Gas token:       {gas_token}
+  Refund receiver: {refund_receiver}
+  Nonce:           7
+  Data:            {data}
+"#
+            ));
         }
     }
 }
