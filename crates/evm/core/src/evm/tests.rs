@@ -899,3 +899,30 @@ fn from_any_rpc_transaction_for_tempo_aa_without_signature_errors() {
     let err = TypesFor::<crate::evm::TempoEvmNetwork>::tx_from_any_rpc(&any_tx).unwrap_err();
     assert_eq!(err.to_string(), "cannot decode Tempo AA transaction: missing field `signature`");
 }
+
+#[cfg(feature = "monad")]
+#[test]
+fn monad_fork_refresh_retains_originals_for_later_reserve_reads() {
+    let address = Address::with_last_byte(0xA1);
+    let factory = monad_evm2::MonadEvmFactory;
+    let spec = monad_evm2::MonadHardfork::default();
+    let env = EvmEnv::new(spec, factory.version(spec, 1), Default::default());
+    let mut evm = FoundryEvmFactory::create_evm(&factory, db_with(&[(address, 2 * ETHER)], 0), env);
+    let original = alloy_primitives::map::AddressMap::from_iter([(
+        address,
+        Some(AccountInfo::default().with_balance(U256::from(12 * ETHER))),
+    )]);
+
+    // The account need not have been tracked before the fork switch.
+    monad_evm2::MonadEvmTypes::refresh_switched_transaction(&mut evm, &original);
+    for _ in 0..2 {
+        let view = monad_evm2::reserve_balance::reserve_account(&mut evm, address).unwrap();
+        assert_eq!(view.balance, U256::from(2 * ETHER));
+        assert_eq!(view.original_balance, U256::from(12 * ETHER));
+    }
+
+    // An explicit state refresh starts a new baseline for cheatcode writes.
+    monad_evm2::MonadEvmTypes::refresh_transaction(&mut evm);
+    let view = monad_evm2::reserve_balance::reserve_account(&mut evm, address).unwrap();
+    assert_eq!(view.original_balance, U256::from(2 * ETHER));
+}
