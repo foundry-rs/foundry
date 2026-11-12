@@ -117,7 +117,9 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub ffi: bool,
 
-    /// Whether to show `console.log` outputs in realtime during script/test execution
+    /// Whether to show `console.log` outputs in realtime during script/test execution.
+    ///
+    /// Ignored with `--json` and `--junit`, which keep stdout for the report.
     #[arg(long)]
     #[serde(skip)]
     pub live_logs: bool,

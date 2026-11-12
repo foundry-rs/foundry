@@ -1241,6 +1241,10 @@ impl TestArgs {
                 None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
             });
         }
+        // `--json` and `--junit` keep stdout for the report, so logs are captured into it.
+        if shell::is_json() || self.junit {
+            config.live_logs = false;
+        }
         // The debugger labels slots from the layout, and symbolic execution learns the mapping
         // roots behind constant-folded slots from it.
         if (self.debug || config.symbolic.enabled)
