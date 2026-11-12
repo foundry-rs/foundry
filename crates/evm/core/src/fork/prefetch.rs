@@ -10,10 +10,13 @@
 //! A call is predicted more precisely by simulating it on the endpoint, see [`prefetch_call`].
 
 use super::Fork;
-use crate::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
+use crate::{
+    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    precompiles::P256_VERIFY,
+};
 use alloy_network::Network;
 use alloy_primitives::{
-    Address, B256, Bytes, U256, address,
+    Address, B256, Bytes, U256,
     map::{B256HashMap, B256Map},
 };
 use alloy_rpc_types::{TransactionRequest, state::StateOverride};
@@ -45,9 +48,6 @@ const MAX_KEYS: usize = 4096;
 /// Runtime code that returns one zero word, standing in for the cheatcode contract in a
 /// simulation on the fork's endpoint: `PUSH1 0x20 PUSH1 0x00 RETURN`.
 const CHEATCODE_STUB: Bytes = Bytes::from_static(&[0x60, 0x20, 0x60, 0x00, 0xf3]);
-
-/// Address of the `P256VERIFY` precompile (EIP-7951), the highest precompile address skipped.
-const P256VERIFY_ADDRESS: Address = address!("0x0000000000000000000000000000000000000100");
 
 /// Largest local state, in storage slots, sent as overrides with a simulated call.
 const MAX_OVERRIDE_SLOTS: usize = 8192;
@@ -179,7 +179,8 @@ impl<'a> StateOverrideBuilder<'a> {
     pub fn account(&mut self, address: Address, info: &AccountInfo, contracts: &B256Map<Bytecode>) {
         let remote_accounts = self.remote.accounts.read();
         let remote = remote_accounts.get(&address);
-        // Code that is neither inline nor in `contracts` is unknown, so it is not overridden.
+        // Code that is neither inline nor in `contracts` is unknown and not overridden, unless
+        // its hash is the empty code hash.
         let code = remote
             .is_none_or(|remote| remote.code_hash != info.code_hash)
             .then(|| {
@@ -265,10 +266,7 @@ pub fn prefetch_call<N: Network, B: ForkBlockEnv>(
     input: Bytes,
     overrides: Option<StateOverride>,
 ) {
-    if target <= P256VERIFY_ADDRESS
-        || target == CHEATCODE_ADDRESS
-        || target == HARDHAT_CONSOLE_ADDRESS
-    {
+    if target <= P256_VERIFY || target == CHEATCODE_ADDRESS || target == HARDHAT_CONSOLE_ADDRESS {
         return;
     }
     let tx = TransactionRequest::default().from(caller).to(target).value(value).input(input.into());
