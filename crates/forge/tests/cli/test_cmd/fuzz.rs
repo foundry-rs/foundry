@@ -6752,10 +6752,19 @@ contract Fails {
     function fail() external pure { revert("same"); }
 }
 
+contract Bounded {
+    error TooBig(uint256 x);
+
+    function check(uint256 x) external pure {
+        if (x > 1000) revert TooBig(x);
+    }
+}
+
 contract MinimizeTest is Test {
     Fails cleanup = new Fails();
     Fails early = new Fails();
     Fails intended = new Fails();
+    Bounded bounded = new Bounded();
 
     // Both assertions share the optimized `assertEq` wrapper and differ only by call site.
     function testFuzz_site(uint256 a, uint256 b) public pure {
@@ -6776,6 +6785,11 @@ contract MinimizeTest is Test {
         if (x == 0) early.fail();
         intended.fail();
     }
+
+    // Custom error arguments carry the values being minimized.
+    function testFuzz_custom(uint256 x) public view {
+        bounded.check(x);
+    }
 }
 "#,
     );
@@ -6789,9 +6803,10 @@ contract MinimizeTest is Test {
         cmd.forge_fuse().args(["test", "-j1", "--mc", "MinimizeTest"]).assert_failure().stdout_eq(
             str![[r#"
 ...
-Ran 3 tests for test/Minimize.t.sol:MinimizeTest
+Ran 4 tests for test/Minimize.t.sol:MinimizeTest
 [FAIL: same; counterexample: calldata=[..] args=[1]] testFuzz_caught(uint256) (runs: 0, [AVG_GAS])
 [FAIL: assertion failed: 1001 != 7; counterexample: calldata=0x1e23fbd300000000000000000000000000000000000000000000000000000000000003e9 args=[1001]] testFuzz_ctor(uint256) (runs: 0, [AVG_GAS])
+[FAIL: TooBig(1001); counterexample: calldata=[..] args=[1001]] testFuzz_custom(uint256) (runs: 0, [AVG_GAS])
 [FAIL: assertion failed: 5001 != 0; counterexample: calldata=0x11e5359500000000000000000000000000000000000000000000000000000000000003e90000000000000000000000000000000000000000000000000000000000001389 args=[1001, 5001]] testFuzz_site(uint256,uint256) (runs: 0, [AVG_GAS])
 ...
 "#]],
@@ -6806,7 +6821,7 @@ fn fuzz_minimization_keeps_unidentified_counterexamples(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::ONE);
         config.optimizer = Some(true);
-        config.fs_permissions.add(PathPermission::write(prj.root()));
+        config.fs_permissions.add(PathPermission::read_write(prj.root()));
         config.ffi = true;
     });
     prj.add_test(
@@ -6841,23 +6856,36 @@ contract UnidentifiedTest is Test {
     // Replays fail with the same data as the campaign, which only failed for nonzero inputs,
     // but from another function.
     function testFuzz_replay(uint256 x) public {
-        bool replay = vm.envOr("FOUNDRY_TEST_MINIMIZATION_REPLAY", false);
-        vm.setEnv("FOUNDRY_TEST_MINIMIZATION_REPLAY", "true");
+        string memory marker = string.concat(vm.projectRoot(), "/replayed");
+        bool replay = vm.exists(marker);
+        if (!replay) vm.writeFile(marker, "");
         if (replay) checker.alternate();
         else if (x != 0) checker.first();
     }
 
-    // `fail()` only sets the global failure flag, so both failures look alike.
+    // Both `fail()` calls set the same global failure flag, but are told apart by call site.
     function testFuzz_fail(uint256 x) public {
         if (x == 0) fail();
         if (x >= 1000) fail();
     }
 
     // Replays fail with the same data and gas as the campaign, which only failed for nonzero
-    // inputs, but from another revert.
+    // inputs, but from another revert. Only the campaign creates the marker, through a cheatcode
+    // call that costs as much as the replay's environment read and that the replay never makes.
     function testFuzz_drift(uint256 x) public {
-        bool replay = vm.envOr("FOUNDRY_TEST_MINIMIZATION_DRIFT", false);
-        vm.setEnv("FOUNDRY_TEST_MINIMIZATION_DRIFT", "true");
+        string memory marker = string.concat(vm.projectRoot(), "/drifted");
+        bool replay = vm.exists(marker);
+        bytes4 write = bytes4(keccak256("writeFile(string,string)"));
+        bytes4 read = bytes4(keccak256("envOr(string,string)"));
+        bytes4 selector;
+        assembly {
+            selector := xor(write, mul(replay, xor(write, read)))
+        }
+        bytes memory data = abi.encodeWithSelector(selector, marker, "");
+        address cheats = address(vm);
+        assembly {
+            pop(call(gas(), cheats, 0, add(data, 32), mload(data), 0, 0))
+        }
         bool valid;
         uint256 dest;
         assembly {

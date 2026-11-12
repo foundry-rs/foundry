@@ -467,40 +467,42 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 && call.reverter == original.reverter
                 && call.failure_identity == Some(expected)
         };
+        // The minimized calldata is the last accepted candidate's, so its replay is reused.
+        let mut accepted = None;
         let mut still_fails = |calldata: &Bytes| {
             if stopped() {
                 return false;
             }
             let mut candidate = tx.clone();
             candidate.call_details.calldata = calldata.clone();
-            self.replay_case(address, candidate, run.as_ref())
-                .is_ok_and(|(_, call, success)| fails_same_way(&call, success))
+            let Ok((candidate, call, success)) = self.replay_case(address, candidate, run.as_ref())
+            else {
+                return false;
+            };
+            let fails = fails_same_way(&call, success);
+            if fails {
+                accepted = Some((candidate, call));
+            }
+            fails
         };
         let Some(calldata) = minimize(counterexample, &mut still_fails).filter(|_| !stopped())
         else {
             return;
         };
-
-        let mut minimized = tx;
-        minimized.call_details.calldata = calldata;
-        let Ok((minimized, call, success)) = self.replay_case(address, minimized, run.as_ref())
+        let Some((minimized, call)) =
+            accepted.filter(|(minimized, _)| minimized.call_details.calldata == calldata)
         else {
             return;
         };
-        if !fails_same_way(&call, success) {
-            return;
-        }
+
         let fuzz = counterexample.fuzz;
         let args = minimized
             .call_details
             .calldata
             .get(4..)
             .map_or_else(Vec::new, |data| func.abi_decode_input(data).unwrap_or_default());
-        result.reason = call
-            .skip_reason()
-            .map(|reason| reason.to_string())
-            .or_else(|| rd.maybe_decode(&call.result, call.exit_reason))
-            .filter(|reason| !reason.is_empty());
+        result.reason =
+            rd.maybe_decode(&call.result, call.exit_reason).filter(|reason| !reason.is_empty());
         result.labels.clone_from(&call.labels);
         result.traces.clone_from(&call.traces);
         result.debug_bytecodes.clone_from(&call.debug_bytecodes);

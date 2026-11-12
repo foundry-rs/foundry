@@ -1,6 +1,6 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, B256, Bytes, I256, U256, U512, keccak256, uint};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{Revert, SolCall, SolError};
 use evm2::interpreter::{InstrStop, op, opcode::OpCode};
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
@@ -875,7 +875,9 @@ impl FailureTrace {
             }
         } else {
             // Revert data produced by exactly one failed assertion is identified by that
-            // assertion, without the values in its message. Other revert data is compared in full.
+            // assertion, without the values in its message. Other messages are compared in full,
+            // and other errors by selector, as their arguments carry the values and the failed
+            // frames identify where they were raised.
             let output_hash = keccak256(output);
             let mut sources = events.iter().enumerate().filter(|(_, event)| {
                 matches!(event, FailureEvent::Assertion { revert, .. } if *revert == Some(output_hash))
@@ -887,7 +889,10 @@ impl FailureTrace {
                 }
                 (None, _) => {
                     preimage.push(3);
-                    preimage.extend_from_slice(output_hash.as_slice());
+                    let selector = output.get(..4).filter(|selector| {
+                        *selector != Revert::SELECTOR && *selector != CheatcodeError::SELECTOR
+                    });
+                    preimage.extend_from_slice(selector.unwrap_or(output_hash.as_slice()));
                 }
                 (Some(_), Some(_)) => return None,
             }
