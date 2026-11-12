@@ -1356,11 +1356,10 @@ fn for_header_at_line_limit_keeps_nested_body_stable() {
 }
 
 #[test]
-fn wrapped_body_trailing_comments_keep_braces() {
+fn body_trailing_block_comment_spacing_keeps_braces() {
     let expected = "contract C {\n    function f() external {\n        for (;;) {\n            break; /* aaaaaaaaa bbbbbbbbb */\n        }\n    }\n}\n";
     let config = Arc::new(FormatterConfig {
         line_length: 40,
-        wrap_comments: true,
         single_line_statement_blocks: SingleLineBlockStyle::Single,
         ..Default::default()
     });

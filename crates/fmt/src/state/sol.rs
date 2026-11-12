@@ -2956,12 +2956,8 @@ impl<'ast> State<'_, 'ast> {
         {
             let code_lines = snip.lines().filter(|line| {
                 let trimmed = line.trim();
-                // Ignore empty lines and lines with only '{' or '}'
-                if empty_as_multiline {
-                    !trimmed.is_empty() && trimmed != "{" && trimmed != "}"
-                } else {
-                    !trimmed.is_empty()
-                }
+                // Ignore empty lines and lines with only '{' or '}'.
+                !trimmed.is_empty() && trimmed != "{" && trimmed != "}"
             });
             if code_lines.count() > 1 {
                 return true;
