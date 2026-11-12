@@ -54,11 +54,12 @@ impl<T: EvmTypesHost> fmt::Debug for LifecycleSnapshot<T> {
 ///
 /// The failing frame also keeps the persistent writes made since the restoration, which it
 /// replays over the reinstated state after the writes its rollback undid. They were made on the
-/// state the restoration installed, so balance and nonce writes among them replay as the values
-/// they left rather than as deltas. The writes later restorations in the frame dropped from the
-/// running ledger are kept too, since the failing frame also undoes those restorations. Once a
-/// context switch, which the failing frame keeps, drops them from the running ledger, none of them
-/// are kept.
+/// state the restoration installed, so the ones that set a balance or nonce, such as `deal`,
+/// replay as the values they left, while changes such as a nested transaction's value transfers
+/// keep replaying as deltas, see [`Replay`](super::Replay). The writes later restorations in the
+/// frame dropped from the running ledger are kept too, since the failing frame also undoes those
+/// restorations. Once a context switch, which the failing frame keeps, drops them from the running
+/// ledger, none of them are kept.
 ///
 /// The backend, active fork and environment a restoration installed are kept either way, and the
 /// reinstated state reads from the backing database of the running state it replaces. Retained
@@ -184,14 +185,14 @@ impl SnapshotRestores {
             state.overlay_db_mut().db = db;
             state.rollback(frame.checkpoint.clone(), features);
             // The writes recorded since the restoration were made on the state it installed, so
-            // the frame's rollback did not reach them, and they set the balances and nonces they
-            // left. Marking them past its checkpoint has them replayed after the writes recorded
-            // over the reinstated state.
+            // the frame's rollback did not reach them, and the ones that set a balance or nonce
+            // set the value they left. Marking them past its checkpoint has them replayed after
+            // the writes recorded over the reinstated state.
             let running = mem::replace(ledger, replaced.ledger);
             if let Some(later) = replaced.later {
                 let writes = later.dropped.into_iter().chain(running.into_iter().skip(later.since));
                 ledger.extend(
-                    writes.map(|(depth, _, write)| (depth, usize::MAX, write.into_absolute())),
+                    writes.map(|(depth, _, write)| (depth, usize::MAX, write.reinstated())),
                 );
             }
             // The reinstated ledger holds the writes the restoration and the later ones dropped,

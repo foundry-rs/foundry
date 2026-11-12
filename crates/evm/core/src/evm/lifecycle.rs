@@ -198,7 +198,8 @@ impl<T: EvmTypesHost> ExecutedNested<T> {
 /// A write that must survive reverts of the enclosing calls, such as a cheatcode's state edit. It
 /// is applied as a journaled write, and the owner replays it after each enclosing call that
 /// reverts. Balance and nonce writes replay as deltas, so they compose with value transfers and
-/// nonce bumps undone by the revert, saturating at their bounds, unless they are absolute.
+/// nonce bumps undone by the revert, saturating at their bounds, unless their [`Replay`] mode
+/// says otherwise.
 #[derive(Clone, Debug)]
 pub enum PersistentWrite {
     /// Changes an account's balance.
@@ -209,8 +210,8 @@ pub enum PersistentWrite {
         delta: I512,
         /// The balance the write left.
         balance: U256,
-        /// Whether the write sets `balance` instead of adding `delta`.
-        absolute: bool,
+        /// Whether the write adds `delta` or sets `balance`.
+        replay: Replay,
     },
     /// Changes an account's nonce.
     Nonce {
@@ -224,8 +225,8 @@ pub enum PersistentWrite {
         /// revert that undoes the creation also undoes the write. Unset for the reset of an
         /// account a nested transaction created, which outlives the creation.
         created: bool,
-        /// Whether the write sets `nonce` instead of adding `delta`.
-        absolute: bool,
+        /// Whether the write adds `delta` or sets `nonce`.
+        replay: Replay,
     },
     /// Sets an account's code.
     Code(Address, B256, Bytecode),
@@ -235,6 +236,20 @@ pub enum PersistentWrite {
     Slot(Address, U256, U256),
     /// Marks an account self-destructed, so the running transaction destroys it when it ends.
     Destruct(Address),
+}
+
+/// How a balance or nonce [`PersistentWrite`] replays, ordered by precedence when combined.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Replay {
+    /// Adds its delta.
+    #[default]
+    Delta,
+    /// Adds its delta, except that a failing frame replaying it over the state a snapshot
+    /// restoration it followed replaced sets the value it left instead, see
+    /// [`PersistentWrite::reinstated`]. Writes that set a value, such as `deal`, replay this way.
+    Set,
+    /// Sets the value it left.
+    Absolute,
 }
 
 /// The state a nested transaction left an account in before the transaction ended and destroyed
@@ -274,7 +289,12 @@ impl PersistentWrite {
     /// Returns the write that changes the balance of `address` from `previous` to `balance`.
     pub fn balance(address: Address, previous: U256, balance: U256) -> Self {
         let widen = |value| I512::from_raw(U512::from(value));
-        Self::Balance { address, delta: widen(balance) - widen(previous), balance, absolute: false }
+        Self::Balance {
+            address,
+            delta: widen(balance) - widen(previous),
+            balance,
+            replay: Replay::Delta,
+        }
     }
 
     /// Returns the nonce write that `account`, whose nonce was `previous`, just made.
@@ -284,17 +304,27 @@ impl PersistentWrite {
             delta: i128::from(account.nonce()) - i128::from(previous),
             nonce: account.nonce(),
             created: account.is_created(),
-            absolute: false,
+            replay: Replay::Delta,
         }
     }
 
-    /// Returns the write as one that sets the balance or nonce it left, if it is a balance or
-    /// nonce write.
-    pub const fn into_absolute(mut self) -> Self {
-        if let Self::Balance { absolute, .. } | Self::Nonce { absolute, .. } = &mut self {
-            *absolute = true;
+    /// Returns the write with `replay` as its mode, if it is a balance or nonce write.
+    pub const fn with_replay(mut self, mode: Replay) -> Self {
+        if let Self::Balance { replay, .. } | Self::Nonce { replay, .. } = &mut self {
+            *replay = mode;
         }
         self
+    }
+
+    /// Returns the write to replay over the state a snapshot restoration it followed replaced,
+    /// which sets the value a [`Replay::Set`] write left.
+    pub const fn reinstated(self) -> Self {
+        match self {
+            Self::Balance { replay: Replay::Set, .. } | Self::Nonce { replay: Replay::Set, .. } => {
+                self.with_replay(Replay::Absolute)
+            }
+            write => write,
+        }
     }
 
     /// Applies the write to `state` as a journaled write.
@@ -324,37 +354,42 @@ impl PersistentWrite {
     /// instead of per write.
     ///
     /// Returns the balance and nonce changes the writes made, to record in their place, so that a
-    /// later replay keeps the saturation. A change that includes an absolute write is absolute
-    /// too, so it keeps setting the value it left under enclosing rollbacks.
+    /// later replay keeps the saturation. Each change takes the highest [`Replay`] mode of the
+    /// writes it combines, so a change that includes an absolute write keeps setting the value it
+    /// left under enclosing rollbacks.
     pub fn apply_all<'w>(
         writes: impl IntoIterator<Item = &'w Self>,
         state: &mut State<'_>,
     ) -> DbResult<Vec<Self>> {
-        // The value of the last absolute write, if any, and the deltas since.
-        let mut balances = AddressMap::<(Option<U256>, I512)>::default();
-        let mut nonces = AddressMap::<(Option<u64>, i128)>::default();
+        // The value of the last absolute write, if any, the deltas since, and the mode of the
+        // combined write.
+        let mut balances = AddressMap::<(Option<U256>, I512, Replay)>::default();
+        let mut nonces = AddressMap::<(Option<u64>, i128, Replay)>::default();
         for write in writes {
             match write {
-                Self::Balance { address, delta, balance, absolute } => {
+                Self::Balance { address, delta, balance, replay } => {
                     let entry = balances.entry(*address).or_default();
-                    *entry = if *absolute {
-                        (Some(*balance), I512::ZERO)
+                    *entry = if *replay == Replay::Absolute {
+                        (Some(*balance), I512::ZERO, Replay::Absolute)
                     } else {
-                        (entry.0, entry.1 + *delta)
+                        (entry.0, entry.1 + *delta, entry.2.max(*replay))
                     };
                 }
-                Self::Nonce { address, delta, nonce, created, absolute } => {
+                Self::Nonce { address, delta, nonce, created, replay } => {
                     if !*created || state.account(address)?.is_created() {
                         let entry = nonces.entry(*address).or_default();
-                        *entry =
-                            if *absolute { (Some(*nonce), 0) } else { (entry.0, entry.1 + delta) };
+                        *entry = if *replay == Replay::Absolute {
+                            (Some(*nonce), 0, Replay::Absolute)
+                        } else {
+                            (entry.0, entry.1 + delta, entry.2.max(*replay))
+                        };
                     }
                 }
                 write => write.apply(state)?,
             }
         }
         let mut applied = Vec::new();
-        for (address, (set, delta)) in balances {
+        for (address, (set, delta, replay)) in balances {
             let mut account = state.account(&address)?;
             let previous = account.balance();
             let balance = I512::from_raw(U512::from(set.unwrap_or(previous))) + delta;
@@ -364,17 +399,15 @@ impl PersistentWrite {
                 U256::saturating_from(balance.into_raw())
             };
             account.set_balance(balance);
-            let write = Self::balance(address, previous, balance);
-            applied.push(if set.is_some() { write.into_absolute() } else { write });
+            applied.push(Self::balance(address, previous, balance).with_replay(replay));
         }
-        for (address, (set, delta)) in nonces {
+        for (address, (set, delta, replay)) in nonces {
             let mut account = state.account(&address)?;
             let previous = account.nonce();
             account.touch();
             let nonce = (i128::from(set.unwrap_or(previous)) + delta).max(0);
             account.set_nonce(u64::try_from(nonce).unwrap_or(u64::MAX));
-            let write = Self::nonce(&account, previous);
-            applied.push(if set.is_some() { write.into_absolute() } else { write });
+            applied.push(Self::nonce(&account, previous).with_replay(replay));
         }
         Ok(applied)
     }
@@ -1493,7 +1526,7 @@ pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
                     delta: i128::from(current.nonce) - i128::from(nonce),
                     nonce: current.nonce,
                     created: false,
-                    absolute: false,
+                    replay: Replay::Delta,
                 });
             }
         }
@@ -1592,7 +1625,8 @@ pub fn merge_pending_changes(
         } else {
             let balance = state.account(&address)?.balance();
             // Self-destruction empties the balance whatever it was, so a replay sets it.
-            let write = PersistentWrite::balance(address, balance, U256::ZERO).into_absolute();
+            let write = PersistentWrite::balance(address, balance, U256::ZERO)
+                .with_replay(Replay::Absolute);
             write.apply(state)?;
             if let Some(persistent) = persistent.as_deref_mut() {
                 persistent.push(write);
@@ -1920,7 +1954,7 @@ fn apply_account(
         let emptied = reset && info.is_none();
         if emptied || account.balance() != balance {
             let write = PersistentWrite::balance(address, account.balance(), balance);
-            record(if emptied { write.into_absolute() } else { write });
+            record(if emptied { write.with_replay(Replay::Absolute) } else { write });
             account.set_balance(balance);
         }
         if reset || account.nonce() != nonce {
@@ -1933,7 +1967,7 @@ fn apply_account(
                     delta: i128::from(nonce) - i128::from(previous),
                     nonce,
                     created: false,
-                    absolute: true,
+                    replay: Replay::Absolute,
                 }
             } else {
                 PersistentWrite::nonce(&account, previous)

@@ -37,8 +37,8 @@ use foundry_evm_core::{
     },
     evm::{
         EvmEnvFor, EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork,
-        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, TxEnvelopeFor, TxPayload,
-        TypesFor, evm_env,
+        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, Replay, TxEnvelopeFor,
+        TxPayload, TypesFor, evm_env,
     },
 };
 use foundry_evm_traces::TraceRequirements;
@@ -846,7 +846,8 @@ impl Cheatcode for dealCall {
             old_balance
         };
         // The balance survives reverts of the enclosing calls.
-        let write = PersistentWrite::balance(address, old_balance, new_balance);
+        let write =
+            PersistentWrite::balance(address, old_balance, new_balance).with_replay(Replay::Set);
         ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
@@ -1908,7 +1909,7 @@ fn set_persistent_nonce<FEN: FoundryEvmNetwork>(
     account.warm();
     let previous = account.nonce();
     account.set_nonce(nonce);
-    let write = PersistentWrite::nonce(&account, previous);
+    let write = PersistentWrite::nonce(&account, previous).with_replay(Replay::Set);
     drop(account);
     ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
     Ok(Default::default())
