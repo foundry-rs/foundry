@@ -53,6 +53,7 @@ use foundry_evm_core::{
         MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
         TransactionRequestFor, TxFor, TxResultFor, restore_access_warmth,
     },
+    utils::opcodes,
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -2025,7 +2026,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // `step_end` runs the PC has already advanced past it. Also peek the
         // BLOBHASH index now (still on top of stack before execution) so we
         // can look up the override later.
-        if self.has_active_env_overrides() {
+        if !self.env_overrides.is_empty() {
             let fork_id = backend.backend().active_fork_id();
             if let Some(env_overrides) =
                 self.env_overrides.get_mut(fork_id).filter(|o| o.is_any_set())
@@ -2134,7 +2135,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         {
             Self::replace_top_of_stack(interp, U256::from(gas_price));
         }
-        if self.has_active_env_overrides() {
+        if !self.env_overrides.is_empty() {
             let fork_id = backend.backend().active_fork_id();
             if self.env_overrides.get(fork_id).is_some_and(|o| o.is_any_set()) {
                 if opcode_failed {
@@ -3721,17 +3722,6 @@ const MEMORY_OPCODES: OpcodeSet = opcodes([
     op::RETURN,
     op::REVERT,
 ]);
-
-/// Returns the set of `ops`.
-const fn opcodes<const N: usize>(ops: [u8; N]) -> OpcodeSet {
-    let mut set = OpcodeSet::EMPTY;
-    let mut i = 0;
-    while i < N {
-        set.insert(ops[i]);
-        i += 1;
-    }
-    set
-}
 
 /// Returns true if the kind of account access is a call.
 const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {

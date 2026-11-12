@@ -2713,9 +2713,8 @@ impl TestArgs {
                         // Only a run that identified an address changed the decoder.
                         let mut identified = false;
                         for trace in &result.gas_report_traces {
-                            if identified {
+                            if std::mem::take(&mut identified) {
                                 decoder.restore_address_identities(&identities);
-                                identified = false;
                             }
 
                             for arena in trace {

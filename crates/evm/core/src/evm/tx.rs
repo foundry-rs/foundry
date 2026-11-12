@@ -137,7 +137,7 @@ pub fn eth_tx(envelope: EthereumTxEnvelope<TxEip4844Variant>) -> TxEnvelope {
 }
 
 /// Converts an unsigned Ethereum transaction into evm2's Ethereum transaction.
-pub fn eth_unsigned_tx(tx: EthereumTypedTransaction<TxEip4844Variant>) -> TxEnvelope {
+fn eth_unsigned_tx(tx: EthereumTypedTransaction<TxEip4844Variant>) -> TxEnvelope {
     match tx {
         EthereumTypedTransaction::Legacy(tx) => TxEnvelope::Legacy(tx),
         EthereumTypedTransaction::Eip2930(tx) => TxEnvelope::Eip2930(tx),

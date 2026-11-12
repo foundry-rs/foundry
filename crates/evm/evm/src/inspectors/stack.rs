@@ -523,6 +523,8 @@ pub struct InspectorStackRefMut<'a, FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub cheatcodes: Option<&'a mut Cheatcodes<FEN>>,
     pub inner: &'a mut InspectorStackInner,
     /// The backend the execution runs over.
+    ///
+    /// Cheatcodes and call isolation are only active with a backend.
     pub backend: &'a mut dyn CheatcodesBackend<FEN>,
 }
 
@@ -1065,7 +1067,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
-    /// Returns the cheatcodes, if installed, with the backend and the other inspectors.
+    /// Whether the cheatcodes are active: installed, with a backend to run over.
     #[inline]
     fn cheats_and_backend(
         &mut self,
@@ -1909,7 +1911,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let state = interp.host().state_mut();
         let Ok(mut account) = state.account(&create2_deployer) else { return false };
         let code_hash = account.code_hash();
-        if account.is_empty_code_hash() {
+        if code_hash == alloy_primitives::KECCAK256_EMPTY {
             self.inner.pending_create2_error =
                 Some(format!("missing CREATE2 deployer: {create2_deployer}").into_bytes().into());
             return false;
@@ -2171,9 +2173,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             return Some(output);
         }
 
-        if let Some(outcome) = handle_arbitrum_system_call::<FEN>(interp, message, || {
-            self.backend.backend().active_fork_block_number()
-        }) {
+        if let Some(outcome) = handle_arbitrum_system_call::<FEN>(
+            interp,
+            message,
+            self.backend.backend().active_fork_block_number(),
+        ) {
             return Some(outcome);
         }
 
@@ -2716,7 +2720,7 @@ fn warm_arbitrum_system_contract<FEN: FoundryEvmNetwork>(interp: &mut Interprete
 fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     interp: &mut InterpreterFor<'_, '_, FEN>,
     message: &MessageFor<FEN>,
-    fork_block_number: impl FnOnce() -> Option<u64>,
+    fork_block_number: Option<u64>,
 ) -> Option<MessageResultFor<FEN>> {
     if message.destination != arbitrum::ARB_SYS_ADDRESS
         || message.code_address != arbitrum::ARB_SYS_ADDRESS
@@ -2730,7 +2734,7 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
 
     // Forks report their L2 block, which the block env lacks on Arbitrum because `NUMBER` returns
     // the L1 block there. Without a fork the block env is read here to follow `vm.roll`.
-    let block_number = fork_block_number().unwrap_or_else(|| evm.block().number.saturating_to());
+    let block_number = fork_block_number.unwrap_or_else(|| evm.block().number.saturating_to());
     let Some((gas_cost, output)) = arbitrum::arb_block_number_call(message.gas_limit, block_number)
     else {
         let mut result = message_result(message, InstrStop::PrecompileOOG, Bytes::new());

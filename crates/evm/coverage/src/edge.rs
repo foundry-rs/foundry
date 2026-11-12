@@ -10,8 +10,9 @@ use evm2::{
     EvmTypesHost, Inspector, InspectorConfig, OpcodeSet,
     interpreter::{Interpreter, op as opcode},
 };
-use foundry_evm_core::edgecov::{
-    InstrumentedEdgeHit, MAX_CMP_LOG_SITES, MAX_CMP_OBSERVATIONS_PER_SITE,
+use foundry_evm_core::{
+    edgecov::{InstrumentedEdgeHit, MAX_CMP_LOG_SITES, MAX_CMP_OBSERVATIONS_PER_SITE},
+    utils::opcodes,
 };
 
 pub use foundry_evm_core::edgecov::CmpOperands;
@@ -474,26 +475,19 @@ impl<T: EvmTypesHost> Inspector<T> for EdgeCovInspector {
 }
 
 /// The instructions at which the inspector records an edge.
-const EDGE_OPCODES: OpcodeSet = {
-    let mut set = OpcodeSet::EMPTY;
-    set.insert(opcode::JUMP);
-    set.insert(opcode::JUMPI);
-    set
-};
+const EDGE_OPCODES: OpcodeSet = opcodes([opcode::JUMP, opcode::JUMPI]);
 
 /// The instructions at which the inspector records comparison operands.
-const CMP_OPCODES: OpcodeSet = {
-    let mut set = OpcodeSet::EMPTY;
-    set.insert(opcode::EQ);
-    set.insert(opcode::LT);
-    set.insert(opcode::GT);
-    set.insert(opcode::SLT);
-    set.insert(opcode::SGT);
-    set.insert(opcode::ISZERO);
-    set.insert(opcode::SUB);
-    set.insert(opcode::JUMPI);
-    set
-};
+const CMP_OPCODES: OpcodeSet = opcodes([
+    opcode::EQ,
+    opcode::LT,
+    opcode::GT,
+    opcode::SLT,
+    opcode::SGT,
+    opcode::ISZERO,
+    opcode::SUB,
+    opcode::JUMPI,
+]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CmpSiteKey {

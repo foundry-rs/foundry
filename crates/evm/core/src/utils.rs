@@ -6,7 +6,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
-use evm2::{EvmFeatures, EvmTypesHost, SpecId, env::BlockEnv};
+use evm2::{EvmFeatures, EvmTypesHost, OpcodeSet, SpecId, env::BlockEnv};
 use foundry_config::NamedChain::{
     self, Avalanche, AvalancheFuji, BinanceSmartChain, BinanceSmartChainTestnet, Polygon,
     PolygonAmoy,
@@ -18,6 +18,17 @@ use foundry_evm_networks::{NetworkConfigs, arbitrum};
 #[inline(always)]
 pub const fn cold_path() {
     // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
+}
+
+/// Returns the set of `ops`.
+pub const fn opcodes<const N: usize>(ops: [u8; N]) -> OpcodeSet {
+    let mut set = OpcodeSet::EMPTY;
+    let mut i = 0;
+    while i < N {
+        set.insert(ops[i]);
+        i += 1;
+    }
+    set
 }
 
 /// Constructs a block environment from a block header.
