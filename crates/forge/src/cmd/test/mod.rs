@@ -1241,6 +1241,10 @@ impl TestArgs {
                 None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
             });
         }
+        // `--json` and `--junit` keep stdout for the report, so logs are captured into it.
+        if shell::is_json() || self.junit {
+            config.live_logs = false;
+        }
         // The debugger labels slots from the layout, and symbolic execution learns the mapping
         // roots behind constant-folded slots from it.
         if (self.debug || config.symbolic.enabled)
@@ -2710,11 +2714,15 @@ impl TestArgs {
                         }
                         let identities = decoder.address_identities();
 
+                        // Only a run that identified an address changed the decoder.
+                        let mut identified = false;
                         for trace in &result.gas_report_traces {
-                            decoder.restore_address_identities(&identities);
+                            if std::mem::take(&mut identified) {
+                                decoder.restore_address_identities(&identities);
+                            }
 
                             for arena in trace {
-                                decoder.identify_scoped(arena, &mut identifier);
+                                identified |= decoder.identify_scoped(arena, &mut identifier);
                                 gas_report.analyze([arena], &decoder).await;
                             }
                         }

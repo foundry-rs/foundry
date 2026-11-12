@@ -832,6 +832,43 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#
     ]]);
+
+    // `--json` and `--junit` keep stdout for the report, which carries the logs instead.
+    cmd.forge_fuse().args(["test", "--match-test", "test1", "--json", "-vv"]).assert_json_stdout(
+        str![[r#"
+{
+  "test/Foo.t.sol:Foo": {
+    "test_results": {
+      "test1()": {
+        "decoded_logs": [
+          "Setup",
+          "Test 1"
+        ],
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "test1", "--junit", "-vv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Test run" tests="1" skipped="0" failures="0" errors="0" timestamp="[..]" time="[..]">
+    <testsuite name="test/Foo.t.sol:Foo" tests="1" skipped="0" errors="0" failures="0" time="[..]">
+        <testcase name="test1()" time="[..]">
+            <system-out>[PASS] test1() ([GAS])/nLogs:/n  Setup/n  Test 1/n</system-out>
+        </testcase>
+        <system-out>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</system-out>
+    </testsuite>
+</testsuites>
+
+
+"#]]);
 }
 
 #[forgetest_init]

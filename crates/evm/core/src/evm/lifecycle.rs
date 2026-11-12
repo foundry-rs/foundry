@@ -133,8 +133,7 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
             let persistent = if untracked {
                 merge_untracked_nested_changes(evm.state_mut(), &executed)?
             } else {
-                merge_changes(evm.state_mut(), executed.account_changes(), |_| true, None, None)?;
-                Vec::new()
+                merge_changes(evm.state_mut(), executed.account_changes(), |_| true, None, None)?
             };
             let result = executed.result().clone();
             return Ok(ExecutedNested { result, context: None, cursor, persistent });
@@ -142,7 +141,7 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         // The inactive context's code is not in the running transaction's database.
         let TxResultWithState { result, pending_state, .. } = executed.detach();
         let source = executor.state_mut().overlay_db_mut();
-        merge_changes(
+        let reloads = merge_changes(
             evm.state_mut(),
             pending_state.account_changes(),
             |address| persistent.contains(address),
@@ -153,7 +152,7 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         rebase_loaded_accounts(evm.state_mut(), executor.state_mut(), &persistent)?;
         executor.clear_inspector();
         let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
-        Ok(ExecutedNested { result, context: Some((id, cache)), cursor, persistent: Vec::new() })
+        Ok(ExecutedNested { result, context: Some((id, cache)), cursor, persistent: reloads })
     }
 }
 
@@ -165,7 +164,8 @@ pub struct ExecutedNested<T: EvmTypesHost> {
     context: Option<(Option<U256>, Cache)>,
     /// See [`PreparedTx::set_cursor`].
     cursor: Option<ForkCursor<T>>,
-    /// Writes of an untracked merge, to replay when an enclosing call reverts.
+    /// Writes of an untracked merge, or the storage reloads of a tracked one, to replay when an
+    /// enclosing call reverts.
     persistent: Vec<PersistentWrite>,
 }
 
@@ -175,7 +175,8 @@ impl<T: EvmTypesHost> ExecutedNested<T> {
         self.cursor.take()
     }
 
-    /// Takes the writes of an untracked merge, see [`PersistentWrite`].
+    /// Takes the writes of an untracked merge or the storage reloads of a tracked one, see
+    /// [`PersistentWrite`].
     pub fn take_persistent(&mut self) -> Vec<PersistentWrite> {
         mem::take(&mut self.persistent)
     }
@@ -207,6 +208,11 @@ pub enum PersistentWrite {
     Slot(Address, U256, U256),
     /// Marks an account self-destructed, so the running transaction destroys it when it ends.
     Destruct(Address),
+    /// Reloads the slots that the running transaction read while a merged creation discarded an
+    /// account's storage, other than the listed ones it had loaded before, once a revert undid the
+    /// creation. evm2 keeps the zero those slots read, with a zero original, so they are reread
+    /// from the committed state as both their original and current values.
+    ReloadDiscarded(Address, Vec<U256>),
 }
 
 /// The state a nested transaction left an account in before the transaction ended and destroyed
@@ -286,6 +292,29 @@ impl PersistentWrite {
             Self::Wipe(address) => state.storage(address)?.wipe(),
             Self::Slot(address, key, value) => state.storage_slot(address, *key)?.set(*value),
             Self::Destruct(address) => state.account(address)?.mark_destructed(),
+            Self::ReloadDiscarded(address, loaded) => {
+                let keys = state
+                    .loaded_accounts()
+                    .find(|(account, _)| *account == address)
+                    .map(|(_, slots)| {
+                        slots.filter(|key| !loaded.contains(key)).copied().collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if keys.is_empty()
+                    || state.account(address)?.is_created()
+                    || state.storage(address)?.is_wiped()
+                {
+                    return Ok(());
+                }
+                for key in keys {
+                    // A slot read under the creation holds zero as its original and value.
+                    let slot = state.storage_slot(address, key)?;
+                    if !slot.original().is_zero() || !slot.current().is_zero() {
+                        continue;
+                    }
+                    state.reload_storage_slot(address, &key)?;
+                }
+            }
         }
         Ok(())
     }
@@ -1499,6 +1528,8 @@ pub fn merge_pending_changes(
         .map(|change| (change.address, change.created))
         .collect::<AddressMap<_>>();
     let filter = |address: &Address| !destroyed.contains_key(address);
+    // Its tracked merges, of isolated calls, go into the transaction's root frame, which no
+    // revert outlives, so they need no storage reloads.
     merge_changes(state, pending.account_changes(), filter, persistent.as_deref_mut(), None)?;
     for (address, created) in destroyed {
         if let Some(DestructedAccount { info, code, slots }) = destructed.remove(&address) {
@@ -1545,18 +1576,6 @@ pub fn warm_set(state: &mut State<'_>) -> PrewarmSet {
         prewarm.warm_storage(&address, slots);
     }
     prewarm
-}
-
-/// Cools every account and slot the running transaction in `state` loaded, without journaling.
-/// Pre-warmed ones stay effectively warm.
-pub fn cool_loaded(state: &mut State<'_>) {
-    let loaded = loaded_slots(state);
-    for (address, slots) in loaded {
-        state.set_account_warm(&address, false);
-        for key in slots {
-            state.set_storage_warm(&address, key, false);
-        }
-    }
 }
 
 /// Undoes, without journaling, the warmth that the running transaction in `state` gained since
@@ -1696,23 +1715,53 @@ fn restore_originals(
 /// Changes only carry changed code, so the code of an account whose code hash differs from
 /// `state`'s is read from `source`, the nested transaction's database. Without one, the nested
 /// transaction ran over a copy of `state`, where an unchanged code hash is already `state`'s.
+///
+/// Returns a [`PersistentWrite::ReloadDiscarded`] for each account whose storage a journaled
+/// creation discarded, for the caller to replay when an enclosing call reverts.
 fn merge_changes<'c>(
     state: &mut State<'_>,
     changes: impl Iterator<Item = AccountChanges<'c>>,
     filter: impl Fn(&Address) -> bool,
     mut persistent: Option<&mut Vec<PersistentWrite>>,
     mut source: Option<&mut CacheDB<Box<dyn DynDatabase + '_>>>,
-) -> DbResult<()> {
+) -> DbResult<Vec<PersistentWrite>> {
+    let mut reloads = Vec::new();
     for change in changes.filter(|change| change.is_changed()) {
         let address = change.address;
         if !filter(&address) {
             continue;
         }
+        // An account the running transaction already created keeps the storage it holds.
+        let created = change.created && !state.account(&address)?.is_created();
+        // An account the nested transaction created starts from empty storage, as it did there.
+        // Journaled writes discard it with the creation and zero its loaded slots, including the
+        // ones it writes, which load first so that a revert of the enclosing call restores them.
+        // Slots first read under the creation keep that zero, which the returned reload undoes.
+        // Untracked writes, a destroyed account, and an account the running transaction holds
+        // with code or a nonce wipe it instead.
+        let tracked = created && persistent.is_none() && change.current.is_some();
+        if tracked {
+            for (key, _) in change.storage.changed_slots() {
+                state.storage_slot(&address, *key)?;
+            }
+        }
+        let discarded = tracked
+            && state.create_account(&address, &address, &U256::ZERO, EvmFeatures::empty())?.is_ok();
+        let zeroed = if discarded {
+            let zeroed = state
+                .loaded_accounts()
+                .find(|(loaded, _)| **loaded == address)
+                .map(|(_, slots)| slots.copied().collect::<Vec<_>>())
+                .unwrap_or_default();
+            reloads.push(PersistentWrite::ReloadDiscarded(address, zeroed.clone()));
+            zeroed
+        } else {
+            Vec::new()
+        };
         {
             let mut account = state.account(&address)?;
             account.touch();
-            // An account the running transaction already created keeps the storage it holds.
-            if change.created && !account.is_created() {
+            if created && !discarded {
                 account.mark_created();
             }
         }
@@ -1723,8 +1772,11 @@ fn merge_changes<'c>(
             }
             _ => Ok(Bytecode::default()),
         };
-        let wiped = change.current.is_none() || change.storage.wiped;
-        let slots = change.storage.changed_slots().map(|(key, slot)| (*key, slot.current));
+        let wiped = (created && !discarded) || change.current.is_none() || change.storage.wiped;
+        let slots = zeroed
+            .into_iter()
+            .map(|key| (key, U256::ZERO))
+            .chain(change.storage.changed_slots().map(|(key, slot)| (*key, slot.current)));
         apply_account(
             state,
             address,
@@ -1735,7 +1787,7 @@ fn merge_changes<'c>(
             persistent.as_deref_mut(),
         )?;
     }
-    Ok(())
+    Ok(reloads)
 }
 
 /// Returns the `changes` to accounts and storage slots the running transaction in `state` has not
@@ -1811,6 +1863,8 @@ fn rebase_loaded_accounts(
 ///
 /// A journaled wipe is not undone by a revert of the enclosing call: evm2 does not journal the
 /// wipe marker, and slots the running transaction never loaded cannot be cleared one by one.
+/// [`merge_changes`] discards the storage of tracked creations through the journaled creation
+/// instead.
 fn apply_account(
     state: &mut State<'_>,
     address: Address,
