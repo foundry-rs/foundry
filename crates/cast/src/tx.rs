@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U64, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
 use alloy_signer::Signer;
+use alloy_sol_types::SolCall;
 use alloy_transport::TransportError;
 use clap::Args;
 use eyre::{Result, WrapErr};
@@ -28,6 +29,8 @@ use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
 use tempo_alloy::accounts::TempoAccountsWallet;
+use tempo_contracts::precompiles::{INonce, NONCE_PRECOMPILE_ADDRESS};
+use tempo_primitives::transaction::TEMPO_EXPIRING_NONCE_KEY;
 
 #[derive(Debug, Clone, Args)]
 pub struct SendTxOpts {
@@ -760,7 +763,7 @@ where
             let Self { provider, tx, .. } = &mut self;
             let provider = &*provider;
             let (tx_nonce, (), gas_limit) = tokio::try_join!(
-                Self::resolve_nonce(provider, from, tx.nonce()),
+                Self::resolve_nonce(provider, from, tx.nonce(), tx.nonce_key()),
                 Self::fill_fees(provider, tx, blob, legacy, browser, eip1559_fee_estimate),
                 async {
                     match gas_request {
@@ -781,7 +784,10 @@ where
             }
             Some(tx_nonce)
         } else if fill || !self.auth.is_empty() {
-            Some(Self::resolve_nonce(&self.provider, from, self.tx.nonce()).await?)
+            Some(
+                Self::resolve_nonce(&self.provider, from, self.tx.nonce(), self.tx.nonce_key())
+                    .await?,
+            )
         } else {
             None
         };
@@ -834,10 +840,30 @@ where
     }
 
     /// Resolves the transaction nonce. Returns the existing nonce or fetches one from the provider.
-    async fn resolve_nonce(provider: &P, from: Address, nonce: Option<u64>) -> Result<u64> {
-        match nonce {
-            Some(nonce) => Ok(nonce),
-            None => Ok(provider.get_transaction_count(from).await?),
+    ///
+    /// A Tempo nonce key other than the protocol key `0` selects a 2D nonce lane with its own
+    /// counter in the Nonce Manager precompile. The expiring nonce key has no counter: its nonce
+    /// is a discriminator that defaults to `0`.
+    async fn resolve_nonce(
+        provider: &P,
+        from: Address,
+        nonce: Option<u64>,
+        nonce_key: Option<U256>,
+    ) -> Result<u64> {
+        if let Some(nonce) = nonce {
+            return Ok(nonce);
+        }
+        match nonce_key {
+            Some(TEMPO_EXPIRING_NONCE_KEY) => Ok(0),
+            Some(nonce_key) if !nonce_key.is_zero() => {
+                let call = INonce::getNonceCall { account: from, nonceKey: nonce_key };
+                let request = N::TransactionRequest::default()
+                    .with_to(NONCE_PRECOMPILE_ADDRESS)
+                    .with_input(call.abi_encode());
+                let output = provider.call(request).await?;
+                Ok(INonce::getNonceCall::abi_decode_returns(&output)?)
+            }
+            _ => Ok(provider.get_transaction_count(from).await?),
         }
     }
 
