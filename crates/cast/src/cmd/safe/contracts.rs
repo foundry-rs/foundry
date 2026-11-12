@@ -84,8 +84,8 @@ sol! {
         ) public returns (address proxy);
     }
 
-    /// The result events emitted by Safe v1.3.0, before txHash became indexed.
-    interface ISafeV1_3_0 {
+    /// The result events emitted by Safe v1.1.1 through v1.3.0, before `txHash` became indexed.
+    interface ISafeLegacy {
         event ExecutionSuccess(bytes32 txHash, uint256 payment);
         event ExecutionFailure(bytes32 txHash, uint256 payment);
     }
