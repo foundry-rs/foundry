@@ -7,7 +7,10 @@ use foundry_common::{
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::{Config, filter::GlobMatcher};
 use serde::{Deserialize, Serialize};
-use std::{fmt, path::Path};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 /// A failed test persisted for `forge test --rerun`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -100,6 +103,15 @@ impl FilterArgs {
             args_filter: self,
             paths: config.project_paths(),
             rerun_failures: None,
+            external_compiler_roots: config
+                .external_compilers
+                .iter()
+                .flat_map(|compiler| &compiler.roots)
+                .map(|root| {
+                    let path = config.root.join(root);
+                    canonicalize_path(&path).unwrap_or_else(|_| normalize_path(&path))
+                })
+                .collect(),
         }
     }
 
@@ -170,6 +182,7 @@ pub struct ProjectPathsAwareFilter {
     args_filter: FilterArgs,
     paths: ProjectPathsConfig,
     rerun_failures: Option<Vec<RerunFailure>>,
+    external_compiler_roots: Vec<PathBuf>,
 }
 
 impl ProjectPathsAwareFilter {
@@ -264,7 +277,8 @@ impl TestFilter for ProjectPathsAwareFilter {
         let path = self.paths.root.join(path);
         let path = canonicalize_path(&path).unwrap_or_else(|_| normalize_path(&path));
         [&self.paths.sources, &self.paths.tests, &self.paths.scripts]
-            .iter()
+            .into_iter()
+            .chain(&self.external_compiler_roots)
             .any(|dir| path.starts_with(self.paths.root.join(dir)))
             && !self.paths.has_library_ancestor(&path)
     }
@@ -297,6 +311,7 @@ impl fmt::Display for ProjectPathsAwareFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::ExternalCompiler;
 
     #[cfg(unix)]
     use std::{fs, os::unix::fs::symlink};
@@ -378,11 +393,23 @@ mod tests {
         fs::write(root.path().join("test/Test.sol"), "").unwrap();
         fs::write(root.path().join("lib/Dependency.sol"), "").unwrap();
         fs::write(external.path().join("Dependency.sol"), "").unwrap();
+        fs::create_dir(external.path().join("native")).unwrap();
+        fs::write(external.path().join("native/Counter.fe"), "").unwrap();
         symlink(external.path(), root.path().join("src/external")).unwrap();
         symlink(root.path().join("lib"), root.path().join("test/library")).unwrap();
         symlink(root.path().join("test"), root.path().join("test-alias")).unwrap();
+        symlink(external.path().join("native"), root.path().join("native")).unwrap();
+        symlink(external.path(), external.path().join("native/escape")).unwrap();
+        symlink(root.path().join("lib"), external.path().join("native/library")).unwrap();
         let mut config = Config::with_root(root.path());
         config.script = root.path().join("src/external");
+        config.external_compilers.push(ExternalCompiler {
+            id: "fixture".into(),
+            command: "adapter".into(),
+            args: Vec::new(),
+            roots: vec!["native".into()],
+            settings: Default::default(),
+        });
         let config = config.sanitized();
         let filter = FilterArgs::default().merge_with_config(&config);
 
@@ -395,5 +422,45 @@ mod tests {
         config.script = config.root.join("script");
         let filter = FilterArgs::default().merge_with_config(&config);
         assert!(!filter.matches_path(Path::new("src/external/Dependency.sol")));
+        assert!(filter.matches_path(Path::new("native/Counter.fe")));
+        assert!(filter.matches_path(&external.path().join("native/Counter.fe")));
+        assert!(!filter.matches_path(Path::new("native/escape/Dependency.sol")));
+        assert!(!filter.matches_path(Path::new("native/library/Dependency.sol")));
+    }
+
+    #[test]
+    fn matches_configured_external_compiler_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = Config::with_root(root.path());
+        config.external_compilers.push(ExternalCompiler {
+            id: "fixture".into(),
+            command: "adapter".into(),
+            args: Vec::new(),
+            roots: vec!["native".into(), "lib".into()],
+            settings: Default::default(),
+        });
+        let config = config.sanitized();
+        let filter = FilterArgs::default().merge_with_config(&config);
+
+        for (path, expected) in [
+            ("native/Counter.fe", true),
+            ("native/Counter.sol", true),
+            ("native-other/Counter.fe", false),
+            ("native/../dependency/Counter.fe", false),
+            ("lib/Counter.fe", false),
+        ] {
+            assert_eq!(filter.matches_path(Path::new(path)), expected, "{path}");
+            assert_eq!(filter.matches_path(&config.root.join(path)), expected, "{path}");
+        }
+
+        let filter = FilterArgs {
+            path_pattern: Some("native/**".parse().unwrap()),
+            path_pattern_inverse: Some("native/Skipped.fe".parse().unwrap()),
+            ..Default::default()
+        }
+        .merge_with_config(&config);
+        assert!(filter.matches_path(Path::new("native/Counter.fe")));
+        assert!(!filter.matches_path(Path::new("native/Skipped.fe")));
+        assert!(!filter.matches_path(Path::new("test/Counter.t.sol")));
     }
 }

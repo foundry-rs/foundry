@@ -300,6 +300,37 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]],
     );
+    for filters in [vec![], vec!["--match-path", "native/**"]] {
+        cmd.forge_fuse()
+            .args(["test", "--list", "--json", "--match-contract", "^Counter$"])
+            .args(filters)
+            .assert_json_stdout(str![[r#"
+{"native/src/lib.fe":{"Counter":["testExternalArtifactIsDeployable"]}}
+"#]]);
+    }
+    for filters in [["--match-path", "absent/**"], ["--no-match-path", "native/**"]] {
+        cmd.forge_fuse()
+            .args(["test", "--list", "--json", "--match-contract", "^Counter$"])
+            .args(filters)
+            .assert_json_stdout("{}");
+    }
+    cmd.forge_fuse()
+        .args(["coverage", "--report", "lcov", "--match-contract", "^Counter$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[..]
+Analysing contracts...
+Running tests...
+
+Ran 1 test for native/src/lib.fe:Counter
+[PASS] testExternalArtifactIsDeployable() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Wrote LCOV report.
+
+"#]]);
+    assert!(!fs::read_to_string(prj.root().join("lcov.info")).unwrap().contains("native/"));
     for name in ["Counter.V1", "Counter-V1"] {
         fs::write(&adapter, adapter_script.replace("name=Counter", &format!("name={name}")))
             .unwrap();
