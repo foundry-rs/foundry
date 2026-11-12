@@ -3957,15 +3957,51 @@ mod tests {
 
         cheats.recording_accesses = false;
         cheats.gas_metering.touched = true;
-        assert_eq!(cheats.steps(), FRAME_END_OPCODES);
+        assert_eq!(cheats.steps(), opcodes([op::STOP, op::RETURN, op::REVERT, op::SELFDESTRUCT]));
 
         cheats.gas_metering.touched = false;
         cheats.recorded_account_diffs_stack = Some(Vec::new());
-        assert_eq!(cheats.steps(), STATE_DIFF_OPCODES);
+        assert_eq!(
+            cheats.steps(),
+            opcodes([
+                op::SELFDESTRUCT,
+                op::SLOAD,
+                op::SSTORE,
+                op::EXTCODECOPY,
+                op::EXTCODESIZE,
+                op::EXTCODEHASH,
+                op::BALANCE,
+            ])
+        );
 
         cheats.recorded_account_diffs_stack = None;
         cheats.allowed_mem_writes.insert(1, Vec::new());
-        assert_eq!(cheats.steps(), MEMORY_OPCODES);
+        assert_eq!(
+            cheats.steps(),
+            opcodes([
+                op::MSTORE,
+                op::MSTORE8,
+                op::MLOAD,
+                op::CALL,
+                op::CALLDATACOPY,
+                op::CODECOPY,
+                op::RETURNDATACOPY,
+                op::EXTCODECOPY,
+                op::CALLCODE,
+                op::STATICCALL,
+                op::DELEGATECALL,
+                op::KECCAK256,
+                op::LOG0,
+                op::LOG1,
+                op::LOG2,
+                op::LOG3,
+                op::LOG4,
+                op::CREATE,
+                op::CREATE2,
+                op::RETURN,
+                op::REVERT,
+            ])
+        );
 
         cheats.allowed_mem_writes.clear();
         cheats.core.mapping_slots = Some(Default::default());
