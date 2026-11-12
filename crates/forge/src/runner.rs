@@ -1681,18 +1681,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             identified_contracts,
             replay.invariant_config.show_solidity,
         ));
-        // Reproducing some failure is insufficient: it must be the campaign's failure, which the
-        // provenance in the raw failure tells apart from other failures with the same outcome.
-        let Some(expected) =
-            self.symbolic_sequence_failure(replay, &original_calls).filter(|actual| {
-                actual.failure_site == Some(campaign_site)
-                    && actual.raw_failure.as_ref() == Some(campaign_failure)
-            })
-        else {
+        let Some(expected) = self.symbolic_sequence_failure(replay, &original_calls) else {
             return SequenceMinimization::KeepOriginal;
         };
+        // A replay that skipped effects outside the EVM, such as `vm.setEnv`, can read state the
+        // campaign left behind, so its failure is unidentified and only call removal applies, as
+        // without minimization. The same holds after a snapshot restore: the probe skips host
+        // writes, so it cannot change what call removal replays see.
         if expected.failure_identity.is_none() {
             return SequenceMinimization::RemoveCalls;
+        }
+        // Reproducing some failure is insufficient: it must be the campaign's failure, which the
+        // provenance in the raw failure tells apart from other failures with the same outcome.
+        if expected.failure_site != Some(campaign_site)
+            || expected.raw_failure.as_ref() != Some(campaign_failure)
+        {
+            return SequenceMinimization::KeepOriginal;
         }
         let replay_candidate = |candidate: &[SymbolicCounterexampleCall]| {
             self.symbolic_sequence_failure(replay, candidate)
@@ -1716,10 +1720,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             preserves,
         )
         .expect("the sequence has calls");
-        // A replay after the deadline may be cancelled, so it cannot confirm the minimized form.
+        // A replay that ends after the deadline may have been cancelled, so it cannot confirm the
+        // minimized form.
         let Some(outcome) = (!deadline_passed(replay.shrink_deadline))
             .then(|| replay_candidate(&minimization.minimized_calls))
             .flatten()
+            .filter(|_| !deadline_passed(replay.shrink_deadline))
         else {
             return SequenceMinimization::KeepOriginal;
         };

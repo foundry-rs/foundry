@@ -4238,9 +4238,9 @@ Ran 1 test for test/InvariantMinimize.t.sol:InvariantMinimizeTest
 "#]]);
 }
 
-// Minimization tells failures apart by which isolated calls reverted after their assertions, does
-// not let the empty-sequence probe replace a minimized sequence, and keeps the counterexample
-// unshrunk when its replay differs from the campaign.
+// Minimization tells failures apart by which isolated calls reverted after their assertions, keeps
+// the counterexample unshrunk when its replay differs from the campaign, and only removes calls,
+// which leaves a single call, when a replay skips effects outside the EVM.
 #[forgetest_init]
 fn invariant_minimization_preserves_failure_identity(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -4346,6 +4346,40 @@ contract FinalCheckTest is GateTest {
         revert("first");
     }
 }
+
+contract EnvGate is Test {
+    uint256 public x;
+    function set(uint256 value) external {
+        x = value;
+        vm.setEnv("FOUNDRY_TEST_INVARIANT_HOST_HANDOFF", value >= 1000 ? "true" : "false");
+    }
+}
+
+// Replays skip the handler's `vm.setEnv`, so the invariant reads the campaign's value, which a
+// small input would not have set.
+contract HostHandoffTest is Test {
+    EnvGate gate;
+    function setUp() public {
+        gate = new EnvGate();
+        targetContract(address(gate));
+    }
+    function invariant_handoff() public {
+        bool big = vm.envOr("FOUNDRY_TEST_INVARIANT_HOST_HANDOFF", false);
+        vm.assertFalse(big && gate.x() > 0, "big input");
+    }
+}
+
+// The invariant's skipped `vm.setEnv` runs on a discarded copy of the inspector, and must still
+// leave `afterInvariant` unidentified.
+contract HostAfterInvariantTest is GateTest {
+    function invariant_handoff() public {
+        vm.setEnv("FOUNDRY_TEST_INVARIANT_AFTER_HANDOFF", gate.x() >= 1000 ? "true" : "false");
+    }
+    function afterInvariant() public {
+        bool big = vm.envOr("FOUNDRY_TEST_INVARIANT_AFTER_HANDOFF", false);
+        vm.assertFalse(big && gate.x() > 0, "big input");
+    }
+}
 "#,
     );
 
@@ -4360,9 +4394,10 @@ contract FinalCheckTest is GateTest {
 ...
 "#]]);
 
-    // The replays drifted from the campaign, so the original sequence stays.
+    // The replays drifted from the campaign, or skipped effects outside the EVM so that only call
+    // removal applies, so the original call stays.
     prj.update_config(|config| config.isolate = false);
-    for contract in ["ReplayDriftTest", "ProbeDriftTest"] {
+    for contract in ["ReplayDriftTest", "ProbeDriftTest", "HostHandoffTest"] {
         cmd.forge_fuse()
             .args(["test", "--fuzz-seed", "1", "--mc", contract])
             .assert_failure()
@@ -4373,6 +4408,16 @@ contract FinalCheckTest is GateTest {
 ...
 "#]]);
     }
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "HostAfterInvariantTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: big input]
+	[Sequence] (original: 2, shrunk: 1)
+		sender=[..] calldata=set(uint256) args=[183512565837085403808314893199340347154721310622419012939817433120674 [1.835e68]]
+...
+"#]]);
     cmd.forge_fuse()
         .args(["test", "--fuzz-seed", "1", "--mc", "PhaseProbeTest"])
         .assert_failure()
@@ -4398,8 +4443,8 @@ contract FinalCheckTest is GateTest {
 "#]]);
 }
 
-// A failure that cannot be identified, here because of a snapshot restore, is still shrunk by
-// removing calls.
+// A failure that cannot be identified, here because of a snapshot restore or a replay that skips
+// `vm.unixTime`, is still shrunk by removing calls.
 #[forgetest_init]
 fn invariant_unidentified_failure_still_shrinks(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -4433,16 +4478,31 @@ contract UnidentifiedTest is Test {
         require(!(handler.a() && handler.b()), "both set");
     }
 }
+
+contract ClockTest is Test {
+    Handler handler;
+    function setUp() public {
+        handler = new Handler();
+        targetContract(address(handler));
+    }
+    function invariant_clock() public {
+        require(vm.unixTime() > 0);
+        require(!(handler.a() && handler.b()), "both set");
+    }
+}
 "#,
     );
-    cmd.args(["test", "--fuzz-seed", "1", "--mc", "UnidentifiedTest"]).assert_failure().stdout_eq(
-        str![[r#"
+    for contract in ["UnidentifiedTest", "ClockTest"] {
+        cmd.forge_fuse()
+            .args(["test", "--fuzz-seed", "1", "--mc", contract])
+            .assert_failure()
+            .stdout_eq(str![[r#"
 ...
 [FAIL: both set]
 	[Sequence] (original: [..], shrunk: 2)
 ...
-"#]],
-    );
+"#]]);
+    }
 }
 
 #[forgetest_init]
