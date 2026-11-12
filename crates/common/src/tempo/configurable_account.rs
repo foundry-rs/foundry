@@ -169,6 +169,19 @@ pub async fn detect_configurable_account<P: Provider<TempoNetwork>>(
     Ok(config)
 }
 
+/// Tells whether `config` is still the configuration of `account` at the latest block. Fails when
+/// the commitment cannot be read, so that a failing RPC is not taken for a changed configuration.
+pub async fn has_config<P: Provider<TempoNetwork>>(
+    provider: &P,
+    account: Address,
+    config: &ConfigurableAccountConfig,
+) -> Result<bool> {
+    let commitment = config_commitment(provider, account, BlockId::latest())
+        .await?
+        .ok_or_else(|| eyre::eyre!(T14_REQUIRED))?;
+    Ok(check_config(account, config, commitment).is_ok())
+}
+
 /// Checks that `config` is the current configuration of `account`, whose stored commitment is
 /// `commitment`.
 fn check_config(

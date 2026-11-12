@@ -18,7 +18,7 @@ use crate::{
 };
 use alloy_consensus::{BlockHeader, SignableTransaction};
 use alloy_eips::{
-    BlockId, BlockNumberOrTag,
+    BlockNumberOrTag,
     eip2718::{Decodable2718, Encodable2718},
 };
 use alloy_network::{BlockResponse, Network, NetworkTransactionBuilder, TransactionBuilder};
@@ -35,9 +35,9 @@ use foundry_common::{
     shell,
     tempo::{
         configurable_account::{
-            ConfigurableAccountOwnerKey, combine_approvals, decode_unsigned_tx,
-            detect_configurable_account, parse_owner_signature, prepare_request, reaches_threshold,
-            simulation_spec, updates_config,
+            ConfigurableAccountOwnerKey, combine_approvals, decode_unsigned_tx, has_config,
+            parse_owner_signature, prepare_request, reaches_threshold, simulation_spec,
+            updates_config,
         },
         resolve_and_set_fee_token,
     },
@@ -598,17 +598,8 @@ async fn void_reason(
 ) -> Result<Option<String>> {
     let (tx, owners_config, ..) = decode_entry(entry)?;
     let account = entry.account;
-    if let Err(error) = detect_configurable_account(
-        provider,
-        account,
-        &[],
-        Some(owners_config),
-        true,
-        BlockId::latest(),
-    )
-    .await
-    {
-        return Ok(Some(format!("the configuration of {account} changed ({error})")));
+    if !has_config(provider, account, &owners_config).await? {
+        return Ok(Some(format!("the configuration of {account} changed")));
     }
     if provider.get_transaction_count(account).await? > tx.nonce {
         bail!(

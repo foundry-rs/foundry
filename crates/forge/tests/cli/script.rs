@@ -11103,6 +11103,12 @@ contract CaOnlyScript is Script {
     let before = digests(&prj);
     assert_eq!(before.len(), 2);
 
+    // An RPC that fails to read the configuration does not void the approvals.
+    let failing = rpc::spawn_rpc_proxy_internal_error_after(rpc.clone(), "eth_call", 0).await;
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &failing, "--network"]);
+    cmd.args(["tempo", "--resume"]).assert_failure();
+    assert_eq!(digests(&prj), before);
+
     api.evm_increase_time(U256::from(7200)).await.unwrap();
     api.mine_one().await.unwrap();
 
