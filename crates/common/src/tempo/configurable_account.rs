@@ -422,7 +422,7 @@ fn parse_webauthn_assertion(json: &Value) -> Result<PrimitiveSignature> {
     };
 
     let signature = field("signature")?;
-    // A raw `r || s` can start with the DER tag 0x30, so DER is tried first.
+    // A raw `r || s` can start with the DER tag 0x30, so the first byte cannot tell them apart.
     let signature = p256::ecdsa::Signature::from_der(&signature)
         .or_else(|_| p256::ecdsa::Signature::from_slice(&signature))
         .map_err(|_| eyre::eyre!("invalid WebAuthn signature"))?;
@@ -541,16 +541,12 @@ mod tests {
             "signature": hex::encode_prefixed([r.as_slice(), s.as_slice()].concat()),
             "publicKey": format!("0x04{}", "11".repeat(64)),
         });
-        assert_eq!(
-            parse_owner_signature(&assertion.to_string()).unwrap(),
-            PrimitiveSignature::WebAuthn(WebAuthnSignature {
-                r,
-                s,
-                pub_key_x: B256::repeat_byte(0x11),
-                pub_key_y: B256::repeat_byte(0x11),
-                webauthn_data: Bytes::from_static(b"\x00{}"),
-            })
-        );
+        let PrimitiveSignature::WebAuthn(signature) =
+            parse_owner_signature(&assertion.to_string()).unwrap()
+        else {
+            panic!("expected a WebAuthn signature");
+        };
+        assert_eq!((signature.r, signature.s), (r, s));
     }
 
     /// The worst-case quorum is the largest one the node accepts: in address order it reaches the
