@@ -117,7 +117,7 @@ pub enum WalletSubcommands {
 
         /// The chain to create the wallet for, as a Tempo signal for `--configurable-account`.
         #[arg(long, env = "CHAIN")]
-        chain: Option<Chain>,
+        chain: Option<String>,
 
         #[command(flatten)]
         rpc: RpcOpts,

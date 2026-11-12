@@ -165,6 +165,24 @@ Private key: [..]
 "#]]
     );
 
+    // A `CHAIN` that is not a chain, such as one an app's `.env` sets, does not break key
+    // generation, but it is still a Tempo signal for `--configurable-account`.
+    let (stdout, _) = wallet_new_with_env(&mut cmd, &[], &[("CHAIN", "local")]);
+    assert_eoa(&stdout);
+    let (stdout, stderr) =
+        wallet_new_with_env(&mut cmd, &["--configurable-account"], &[("CHAIN", "4217")]);
+    assert_eoa(&stdout);
+    assert_data_eq!(
+        stderr,
+        str![[r#"
+Tempo T14 is not active on chain tempo; creating an EOA.
+Successfully created new keypair.
+Address:     [..]
+Private key: [..]
+
+"#]]
+    );
+
     // `--eoa` asks for the default explicitly.
     let (stdout, _) = wallet_new(&mut cmd, &["--chain", "tempo", "--eoa"]);
     assert_eoa(&stdout);

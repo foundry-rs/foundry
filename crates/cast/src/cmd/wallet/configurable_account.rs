@@ -59,14 +59,18 @@ use tempo_primitives::transaction::{
 /// active hardfork; otherwise the compiled Tempo hardfork schedule is read for the chain.
 pub(crate) async fn new_wallet_is_configurable(
     requested: bool,
-    chain: Option<Chain>,
+    chain: Option<String>,
     rpc: &RpcOpts,
 ) -> Result<bool> {
     if !requested {
         return Ok(false);
     }
     let config = rpc.load_config()?;
-    let chain = chain.or(config.chain);
+    // Parsed only here, so a `CHAIN` set for other tools does not break plain key generation.
+    let chain = chain
+        .map(|chain| chain.parse::<Chain>().map_err(|_| eyre::eyre!("invalid chain `{chain}`")))
+        .transpose()?
+        .or(config.chain);
 
     let mut signal = None;
     if rpc.url(Some(&config))?.is_some() {
