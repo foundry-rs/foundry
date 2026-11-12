@@ -2143,20 +2143,14 @@ async fn safe_propose_rejects_configured_chain_mismatch(prj: _, cmd: _) {
 "#
     );
     let mut expected_submissions = 0;
-    for (configured, foundry_chain, chain, cli_chain, rejects) in [
-        (None, None, None, None, false),
-        (Some(1u64), None, None, None, true),
-        (None, Some("1"), None, None, true),
-        (Some(1), Some("31337"), None, None, false),
-        (Some(1), Some("1"), Some("31337"), None, false),
-        (Some(1), Some("1"), Some("1"), Some("31337"), false),
-        (Some(31337), Some("31337"), Some("31337"), Some("1"), true),
-        (Some(31337), Some("31337"), Some("mainnet"), None, true),
-    ] {
-        prj.update_config(|config| config.chain = configured.map(Into::into));
+    let mut run_case = |profile, configured, foundry_chain, chain, cli_chain, rejects| {
         cmd.cast_fuse().current_dir(prj.root());
+        cmd.unset_env("FOUNDRY_PROFILE");
         cmd.unset_env("FOUNDRY_CHAIN_ID");
         cmd.unset_env("CHAIN");
+        if let Some(profile) = profile {
+            cmd.env("FOUNDRY_PROFILE", profile);
+        }
         if let Some(chain) = foundry_chain {
             cmd.env("FOUNDRY_CHAIN_ID", chain);
         }
@@ -2182,8 +2176,22 @@ Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN
         assert_eq!(
             *submissions.lock().unwrap(),
             expected_submissions,
-            "unexpected proposal submission for configured={configured:?}, FOUNDRY_CHAIN_ID={foundry_chain:?}, CHAIN={chain:?}, --chain={cli_chain:?}"
+            "unexpected proposal submission for FOUNDRY_PROFILE={profile:?}, configured={configured:?}, FOUNDRY_CHAIN_ID={foundry_chain:?}, CHAIN={chain:?}, --chain={cli_chain:?}"
         );
+    };
+
+    for (configured, foundry_chain, chain, cli_chain, rejects) in [
+        (None, None, None, None, false),
+        (Some(1u64), None, None, None, true),
+        (None, Some("1"), None, None, true),
+        (Some(1), Some("31337"), None, None, false),
+        (Some(1), Some("1"), Some("31337"), None, false),
+        (Some(1), Some("1"), Some("1"), Some("31337"), false),
+        (Some(31337), Some("31337"), Some("31337"), Some("1"), true),
+        (Some(31337), Some("31337"), Some("mainnet"), None, true),
+    ] {
+        prj.update_config(|config| config.chain = configured.map(Into::into));
+        run_case(None, configured, foundry_chain, chain, cli_chain, rejects);
     }
 
     prj.create_file(
@@ -2194,30 +2202,7 @@ Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN
     for (chain, cli_chain, rejects) in
         [(None, None, true), (Some("31337"), None, false), (Some("1"), Some("31337"), false)]
     {
-        cmd.cast_fuse().current_dir(prj.root());
-        cmd.unset_env("FOUNDRY_CHAIN_ID");
-        cmd.unset_env("CHAIN");
-        cmd.env("FOUNDRY_PROFILE", "safe_chain");
-        if let Some(chain) = chain {
-            cmd.env("CHAIN", chain);
-        }
-        cmd.args(args);
-        if let Some(chain) = cli_chain {
-            cmd.args(["--chain", chain]);
-        }
-        if rejects {
-            cmd.assert_failure().stdout_eq("").stderr_eq(str![[r#"
-Error: Configured chain ID 1 does not match RPC chain ID 31337.
-Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN_ID.
-
-"#]]);
-        } else {
-            cmd.assert_success()
-                .stdout_eq(format!("{expected_hash}\n"))
-                .stderr_eq(expected_summary.clone());
-            expected_submissions += 1;
-        }
-        assert_eq!(*submissions.lock().unwrap(), expected_submissions);
+        run_case(Some("safe_chain"), Some(1), None, chain, cli_chain, rejects);
     }
 }
 
