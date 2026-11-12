@@ -585,7 +585,7 @@ impl<'sess> State<'sess, '_> {
 
             for line in snip.lines() {
                 let line = line.trim();
-                // Blank lines add no width to the single-line form.
+                // A blank line must not consume or reset the separator owed by the previous line.
                 if line.is_empty() {
                     continue;
                 }

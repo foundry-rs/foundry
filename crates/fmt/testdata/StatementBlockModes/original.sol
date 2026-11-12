@@ -15,11 +15,6 @@ contract C {
 
         for (; c;) { /* comment */ x(); }
 
-        for (; c;) {
-
-            x();
-        }
-
         if (c) {
 
             if (d) {
@@ -31,14 +26,6 @@ contract C {
             if (d)
 
                 x();
-        }
-
-        while (c) {
-            x(
-                1,
-
-                2
-            );
         }
 
         while (c) {
