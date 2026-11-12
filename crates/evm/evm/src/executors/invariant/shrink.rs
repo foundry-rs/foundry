@@ -1321,14 +1321,9 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
         return Ok(calls.to_vec());
     }
     let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
-    // Every removal the shrinker kept was confirmed before the deadline, so once the deadline
-    // passed the shrunk sequence is kept without the verifying replay, which it would cancel.
-    if deadline_passed(deadline) {
-        return Ok(shrunk);
-    }
 
-    // Verify shrunk repro; fall back to original on any failure, unless the deadline cancelled the
-    // verification.
+    // Verify shrunk repro; fall back to original on any failure. Every removal the shrinker kept
+    // was confirmed before the deadline, so a verification the deadline cancels keeps it.
     sequence.clear();
     sequence.extend(shrinker.current());
     let verified = handler_sequence_still_triggers_bug(
