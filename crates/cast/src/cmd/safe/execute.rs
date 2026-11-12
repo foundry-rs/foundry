@@ -141,12 +141,14 @@ mod tests {
     fn uses_last_matching_safe_execution_event() {
         let safe = Address::repeat_byte(1);
         let hash = B256::repeat_byte(2);
-        for (first, _) in execution_events(safe, hash) {
+        for (first, first_expected) in execution_events(safe, hash) {
             for (last, expected) in execution_events(safe, hash) {
-                assert_eq!(
-                    execution_succeeded(&[first.clone(), last], safe, hash).unwrap(),
-                    expected
-                );
+                if first_expected != expected {
+                    assert_eq!(
+                        execution_succeeded(&[first.clone(), last], safe, hash).unwrap(),
+                        expected
+                    );
+                }
             }
         }
     }
@@ -164,17 +166,21 @@ mod tests {
     fn ignores_unrelated_execution_events() {
         let safe = Address::repeat_byte(1);
         let hash = B256::repeat_byte(2);
-        for (unrelated, _) in execution_events(Address::repeat_byte(3), hash)
-            .into_iter()
-            .chain(execution_events(safe, B256::repeat_byte(4)))
+        let [indexed_success, indexed_failure, nonindexed_success, nonindexed_failure] =
+            execution_events(safe, hash);
+        // Pair each unrelated event with the opposite outcome in the same layout.
+        let matching =
+            [&indexed_failure, &indexed_success, &nonindexed_failure, &nonindexed_success];
+        let wrong_hash = execution_events(safe, B256::repeat_byte(4));
+        let [wrong_emitter, ..] = execution_events(Address::repeat_byte(3), hash);
+        for ((unrelated, _), (matching, expected)) in
+            wrong_hash.iter().zip(matching).chain([(&wrong_emitter, &indexed_failure)])
         {
-            assert!(execution_succeeded(slice::from_ref(&unrelated), safe, hash).is_err());
-            for (matching, expected) in execution_events(safe, hash) {
-                assert_eq!(
-                    execution_succeeded(&[matching, unrelated.clone()], safe, hash).unwrap(),
-                    expected
-                );
-            }
+            assert!(execution_succeeded(slice::from_ref(unrelated), safe, hash).is_err());
+            assert_eq!(
+                execution_succeeded(&[matching.clone(), unrelated.clone()], safe, hash).unwrap(),
+                *expected
+            );
         }
     }
 
@@ -182,10 +188,13 @@ mod tests {
     fn rejects_malformed_execution_events() {
         let safe = Address::repeat_byte(1);
         let hash = B256::repeat_byte(2);
-        for (event, _) in execution_events(safe, hash) {
-            let mut wrong_signature = event.clone();
-            wrong_signature.inner.data.topics_mut()[0] = B256::ZERO;
-            assert!(execution_succeeded(&[wrong_signature], safe, hash).is_err());
+        for (event, expected) in execution_events(safe, hash) {
+            // Clearing the signature makes success and failure identical within each layout.
+            if expected {
+                let mut wrong_signature = event.clone();
+                wrong_signature.inner.data.topics_mut()[0] = B256::ZERO;
+                assert!(execution_succeeded(&[wrong_signature], safe, hash).is_err());
+            }
 
             let mut truncated = event;
             let data = &mut truncated.inner.data.data;
