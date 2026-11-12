@@ -81,7 +81,7 @@ impl StateRootDb {
 }
 
 /// Incrementally maintained, structurally shared state used by block-history snapshots.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct HistoricalStateCache {
     state: Option<PersistentStateDb>,
     dirty: AddressMap<DirtyHistoricalAccount>,
@@ -89,7 +89,7 @@ pub(crate) struct HistoricalStateCache {
     disabled: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 struct DirtyHistoricalAccount {
     storage: HashSet<U256>,
     reset_storage: bool,
@@ -287,29 +287,9 @@ impl PersistentStateDb {
     pub(crate) fn to_cache(&self) -> Cache {
         let mut contracts = Cache::default().contracts;
         contracts.extend(self.contracts.iter().map(|(hash, code)| (*hash, code.clone())));
-        let accounts = self
-            .accounts
-            .iter()
-            .map(|(address, account)| {
-                let mut info = account.info.clone();
-                info.code = None;
-                (
-                    *address,
-                    DbAccount {
-                        info,
-                        account_state: account.account_state.clone(),
-                        storage: account
-                            .storage
-                            .iter()
-                            .map(|(slot, value)| (*slot, *value))
-                            .collect(),
-                    },
-                )
-            })
-            .collect();
         let block_hashes =
             self.block_hashes.iter().map(|(number, hash)| (*number, *hash)).collect();
-        Cache { accounts, contracts, block_hashes }
+        Cache { accounts: self.full_db(true), contracts, block_hashes }
     }
 
     fn state_snapshot(&self) -> StateSnapshot {
@@ -336,10 +316,13 @@ impl PersistentStateDb {
         }
     }
 
-    fn full_db(&self) -> AddressMap<DbAccount> {
+    /// Returns the accounts, including the ones known not to exist only if `with_not_existing`.
+    fn full_db(&self, with_not_existing: bool) -> AddressMap<DbAccount> {
         self.accounts
             .iter()
-            .filter(|(_, account)| account.account_state != AccountState::NotExisting)
+            .filter(|(_, account)| {
+                with_not_existing || account.account_state != AccountState::NotExisting
+            })
             .map(|(address, account)| {
                 (
                     *address,
@@ -386,7 +369,7 @@ impl DatabaseRef for PersistentStateDb {
 
 impl MaybeFullDatabase for PersistentStateDb {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
-        Some(self.full.get_or_init(|| self.full_db()))
+        Some(self.full.get_or_init(|| self.full_db(false)))
     }
 
     fn is_persistent(&self) -> bool {

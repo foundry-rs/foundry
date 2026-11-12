@@ -101,7 +101,7 @@ struct ForkDbLocalSnapshot<N: Network> {
 ///
 /// Missing state is fetched from the remote endpoint through the fork cache (`db`); changes are
 /// kept in a local [`CacheDB`] so the fork cache only ever holds unchanged remote state.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ForkedDatabase<N: Network> {
     /// Responsible for fetching missing data.
     backend: SharedBackend<N>,
@@ -112,17 +112,7 @@ pub struct ForkedDatabase<N: Network> {
     /// Holds the state snapshots of a blockchain.
     state_snapshots: Arc<Mutex<StateSnapshots<ForkDbLocalSnapshot<N>>>>,
     /// Records local changes, so each block state shares everything unchanged with the previous.
-    history: History,
-}
-
-/// The local changes recorded for block states.
-#[derive(Debug)]
-struct History(Mutex<HistoricalStateCache>);
-
-impl Clone for History {
-    fn clone(&self) -> Self {
-        Self(Mutex::new(self.0.lock().clone()))
-    }
+    history: Mutex<HistoricalStateCache>,
 }
 
 impl<N: Network> ForkedDatabase<N> {
@@ -134,13 +124,13 @@ impl<N: Network> ForkedDatabase<N> {
             backend,
             db,
             state_snapshots: Arc::new(Mutex::new(Default::default())),
-            history: History(Mutex::new(HistoricalStateCache::new(track_history))),
+            history: Mutex::new(HistoricalStateCache::new(track_history)),
         }
     }
 
     /// Discards the recorded history, so the next block state is rebuilt from the local state.
     fn invalidate_history(&mut self) {
-        self.history.0.get_mut().invalidate();
+        self.history.get_mut().invalidate();
     }
 
     pub const fn database(&self) -> &CacheDB<RemoteDb<N>> {
@@ -226,18 +216,18 @@ impl<N: Network> DatabaseRef for ForkedDatabase<N> {
 
 impl<N: Network> Db for ForkedDatabase<N> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.history.0.get_mut().record_account(address);
+        self.history.get_mut().record_account(address);
         self.cache_db.insert_account_info(address, account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()> {
-        self.history.0.get_mut().record_storage(address, slot.into());
+        self.history.get_mut().record_storage(address, slot.into());
         // this ensures the account is loaded first
         self.cache_db.insert_account_storage(address, slot.into(), val.into())
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        self.history.0.get_mut().record_block_hash(number, hash, false);
+        self.history.get_mut().record_block_hash(number, hash, false);
         cache_block_hash(&mut self.cache_db.cache.block_hashes, number, hash);
     }
 
@@ -247,7 +237,7 @@ impl<N: Network> Db for ForkedDatabase<N> {
     }
 
     fn commit(&mut self, changes: &BlockStateAccumulator) {
-        self.history.0.get_mut().record_changes(changes);
+        self.history.get_mut().record_changes(changes);
         self.cache_db.commit(changes)
     }
 
@@ -314,7 +304,7 @@ impl<N: Network> Db for ForkedDatabase<N> {
 
     fn current_state(&self) -> StateDb {
         StateDb::new(ForkDbStateSnapshot::new(
-            self.history.0.lock().snapshot(&self.cache_db.cache),
+            self.history.lock().snapshot(&self.cache_db.cache),
             self.cache_db.db.clone(),
         ))
     }
