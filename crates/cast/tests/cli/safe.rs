@@ -1276,6 +1276,65 @@ Error: approved-hash signatures (v = 1) are not supported by `cast safe execute`
 }
 
 #[casttest]
+async fn safe_execute_rejects_future_nonce(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let safe = Address::repeat_byte(0x11);
+    let mut transaction = safe_transaction(safe, 0);
+    transaction["nonce"] = json!("1");
+    let hash = set_safe_transaction_hash(&mut transaction, 31337);
+    api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, 0)).await.unwrap();
+    let service = spawn_safe_service(transaction).await;
+    cmd.cast_fuse()
+        .args([
+            "safe",
+            "execute",
+            &safe.to_string(),
+            &hash.to_string(),
+            "--service-url",
+            service.endpoint(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            ANVIL_KEY,
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Safe transaction nonce 1 does not match current Safe nonce 0
+
+"#]]);
+}
+
+#[casttest]
+async fn safe_execute_rejects_stale_nonce(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let safe = Address::repeat_byte(0x11);
+    let mut transaction = safe_transaction(safe, 0);
+    let hash = set_safe_transaction_hash(&mut transaction, 31337);
+    api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, 1)).await.unwrap();
+    let service = spawn_safe_service(transaction).await;
+    cmd.cast_fuse()
+        .args([
+            "safe",
+            "execute",
+            &safe.to_string(),
+            &hash.to_string(),
+            "--service-url",
+            service.endpoint(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            ANVIL_KEY,
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Safe transaction nonce 0 does not match current Safe nonce 1
+
+"#]]);
+}
+
+#[casttest]
 async fn safe_execute_rejects_approved_hash_with_stale_or_future_nonce(cmd: _) {
     // A v = 1 confirmation must not make a transaction with a stale or future nonce
     // executable. Use a fresh node for each case so the no-broadcast assertions are
@@ -1754,10 +1813,11 @@ Error: delegate pagination URL points outside the Transaction Service endpoint: 
 
 #[casttest]
 async fn safe_sign_rejects_service_selected_safe(cmd: _) {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let expected = Address::repeat_byte(0x11);
     let malicious = Address::repeat_byte(0x22);
+    api.anvil_set_code(malicious, bytes!("0x5f5f5260205ff3")).await.unwrap();
     let service = spawn_safe_service(safe_transaction(malicious, 0)).await;
     let expected_arg = expected.to_string();
     let safe_tx_hash = B256::ZERO.to_string();
@@ -1852,6 +1912,8 @@ async fn safe_simulation_rejects_reimbursed_transaction(cmd: _) {
     let rpc = handle.http_endpoint();
     let safe = Address::repeat_byte(0x11);
     let executor = Address::repeat_byte(0x33);
+    let accessor = Address::repeat_byte(0x44);
+    api.anvil_set_code(accessor, bytes!("0x00")).await.unwrap();
     let mut transaction = safe_transaction(safe, 0);
     transaction["gasPrice"] = json!("1");
     let hash = set_safe_transaction_hash(&mut transaction, 31337);
@@ -1866,6 +1928,8 @@ async fn safe_simulation_rejects_reimbursed_transaction(cmd: _) {
             &hash.to_string(),
             "--from",
             &executor.to_string(),
+            "--accessor",
+            &accessor.to_string(),
             "--service-url",
             service.endpoint(),
             "--rpc-url",
