@@ -494,6 +494,14 @@ fn sign_configurable_account(
     let config = tempo_account_config(config);
     // Owner lookups below assume a valid, sorted owner list.
     config.validate_for_account(account).map_err(|err| fmt_err!("{err}"))?;
+    // An unchanged account still has its initial config, which must derive its address.
+    if config.version == 0 {
+        let derived = config.derive_account().map_err(|err| fmt_err!("{err}"))?;
+        ensure!(
+            derived == account,
+            "configurable account config with version 0 derives {derived}, not {account}"
+        );
+    }
     let mut by_owner = BTreeMap::new();
     for key in keys {
         let owner = owner_key_address(key)?;

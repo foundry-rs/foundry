@@ -3254,9 +3254,10 @@ interface Vm {
     /// using secp256k1 owner keys.
     ///
     /// Signs with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted
-    /// by owner address, the last of which reaches the threshold. Reverts if `config` is invalid, a
-    /// key is not an owner, or no such quorum exists among the keys. Returns
-    /// the `0x05` signature accepted by `SignatureVerifier.verifyConfigurableAccount`.
+    /// by owner address, the last of which reaches the threshold. Reverts if `config` is invalid,
+    /// has version 0 but does not derive `account`, a key is not an owner, or no such quorum exists
+    /// among the keys. Returns the `0x05` signature accepted by
+    /// `SignatureVerifier.verifyConfigurableAccount`.
     #[cheatcode(group = Crypto)]
     function signConfigurableAccount(uint256[] calldata privateKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);
 
@@ -3264,9 +3265,10 @@ interface Vm {
     /// using secp256k1, P-256 or WebAuthn owner keys.
     ///
     /// Signs with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted
-    /// by owner address, the last of which reaches the threshold. Reverts if `config` is invalid, a
-    /// key is not an owner, or no such quorum exists among the keys. Returns
-    /// the `0x05` signature accepted by `SignatureVerifier.verifyConfigurableAccount`.
+    /// by owner address, the last of which reaches the threshold. Reverts if `config` is invalid,
+    /// has version 0 but does not derive `account`, a key is not an owner, or no such quorum exists
+    /// among the keys. Returns the `0x05` signature accepted by
+    /// `SignatureVerifier.verifyConfigurableAccount`.
     #[cheatcode(group = Crypto)]
     function signConfigurableAccount(OwnerKey[] calldata ownerKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);
 

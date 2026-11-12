@@ -182,6 +182,44 @@ contract ConfigurableAccountTest is Test {
         vm.signConfigurableAccount(keys, ACCOUNT, cfg, INNER);
     }
 
+    function testSignConfigurableAccountRejectsConfigOfOtherAccount() public {
+        // A new salt derives another account, so version zero no longer matches `ACCOUNT`.
+        Vm.ConfigurableAccountConfig memory cfg = config();
+        cfg.salt = bytes32(uint256(0x5b));
+        uint256[] memory keys = new uint256[](2);
+        keys[0] = ALICE_PK;
+        keys[1] = BOB_PK;
+        vm._expectCheatcodeRevert(
+            bytes(
+                string.concat(
+                    "vm.signConfigurableAccount: configurable account config with version 0 derives ",
+                    vm.toString(vm.deriveConfigurableAccount(cfg)),
+                    ", not 0xA44c73b3e3d1C015bC17a3be952dd701D6c6E876"
+                )
+            )
+        );
+        vm.signConfigurableAccount(keys, ACCOUNT, cfg, INNER);
+    }
+
+    function testSignKeychainConfigurableAccountRejectsConfigOfOtherAccount() public {
+        // New owner weights derive another account, so version zero no longer matches `ACCOUNT`.
+        Vm.ConfigurableAccountConfig memory cfg = config();
+        cfg.owners[0].weight += 1;
+        Vm.OwnerKey[] memory keys = new Vm.OwnerKey[](2);
+        keys[0] = key(Vm.OwnerKeyType.Secp256k1, ALICE_PK);
+        keys[1] = key(Vm.OwnerKeyType.WebAuthn, WEBAUTHN_PK);
+        vm._expectCheatcodeRevert(
+            bytes(
+                string.concat(
+                    "vm.signKeychainConfigurableAccount: configurable account config with version 0 derives ",
+                    vm.toString(vm.deriveConfigurableAccount(cfg)),
+                    ", not 0xA44c73b3e3d1C015bC17a3be952dd701D6c6E876"
+                )
+            )
+        );
+        vm.signKeychainConfigurableAccount(keys, ACCOUNT, cfg, ROOT, INNER);
+    }
+
     function testSignConfigurableAccountRejectsNonOwner() public {
         uint256[] memory keys = new uint256[](2);
         keys[0] = ALICE_PK;

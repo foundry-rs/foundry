@@ -11580,7 +11580,7 @@
     {
       "func": {
         "id": "signConfigurableAccount_0",
-        "description": "Signs `digest` as the configurable account `account` with its current configuration `config`,\nusing secp256k1 owner keys.\nSigns with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted\nby owner address, the last of which reaches the threshold. Reverts if `config` is invalid, a\nkey is not an owner, or no such quorum exists among the keys. Returns\nthe `0x05` signature accepted by `SignatureVerifier.verifyConfigurableAccount`.",
+        "description": "Signs `digest` as the configurable account `account` with its current configuration `config`,\nusing secp256k1 owner keys.\nSigns with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted\nby owner address, the last of which reaches the threshold. Reverts if `config` is invalid,\nhas version 0 but does not derive `account`, a key is not an owner, or no such quorum exists\namong the keys. Returns the `0x05` signature accepted by\n`SignatureVerifier.verifyConfigurableAccount`.",
         "declaration": "function signConfigurableAccount(uint256[] calldata privateKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);",
         "visibility": "external",
         "mutability": "pure",
@@ -11600,7 +11600,7 @@
     {
       "func": {
         "id": "signConfigurableAccount_1",
-        "description": "Signs `digest` as the configurable account `account` with its current configuration `config`,\nusing secp256k1, P-256 or WebAuthn owner keys.\nSigns with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted\nby owner address, the last of which reaches the threshold. Reverts if `config` is invalid, a\nkey is not an owner, or no such quorum exists among the keys. Returns\nthe `0x05` signature accepted by `SignatureVerifier.verifyConfigurableAccount`.",
+        "description": "Signs `digest` as the configurable account `account` with its current configuration `config`,\nusing secp256k1, P-256 or WebAuthn owner keys.\nSigns with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted\nby owner address, the last of which reaches the threshold. Reverts if `config` is invalid,\nhas version 0 but does not derive `account`, a key is not an owner, or no such quorum exists\namong the keys. Returns the `0x05` signature accepted by\n`SignatureVerifier.verifyConfigurableAccount`.",
         "declaration": "function signConfigurableAccount(OwnerKey[] calldata ownerKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);",
         "visibility": "external",
         "mutability": "pure",
