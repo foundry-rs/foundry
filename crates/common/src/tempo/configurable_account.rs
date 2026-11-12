@@ -91,7 +91,7 @@ pub fn single_owner_account(owner: Address) -> Result<Address> {
 
 /// Returns the configuration commitment of `account` at `block`, or `None` when the configurable
 /// account precompile is not active there: before T14 a call to it returns no data.
-async fn config_commitment<P: Provider<TempoNetwork>>(
+pub async fn config_commitment<P: Provider<TempoNetwork>>(
     provider: &P,
     account: Address,
     block: BlockId,
