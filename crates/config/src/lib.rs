@@ -410,8 +410,8 @@ pub struct Config {
     pub ffi: bool,
     /// Whether to show `console.log` outputs in realtime during script/test execution.
     ///
-    /// Ignored when `--json` or `--junit` writes a report to stdout. With `--json-file`, logs
-    /// print live and are not written to the file.
+    /// Ignored when `--json` or `--junit` writes a report to stdout. Otherwise, logs print live
+    /// instead of being captured, so `forge test --json-file` does not include them.
     pub live_logs: bool,
     /// Whether to allow `expectRevert` for internal functions.
     pub allow_internal_expect_revert: bool,
