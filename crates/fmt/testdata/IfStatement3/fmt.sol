@@ -40,9 +40,7 @@ contract DanglingElse {
 
     function fr(bool a, bool b, uint256 n) external pure returns (uint256) {
         if (a) {
-            for (uint256 i; i < n; ++i) {
-                if (b) return 1;
-            }
+            for (uint256 i; i < n; ++i) if (b) return 1;
         } else {
             return 2;
         }

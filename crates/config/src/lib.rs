@@ -240,6 +240,9 @@ pub struct Config {
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
+    ///
+    /// These addresses are granted cheatcode access in forked tests and scripts, even when not
+    /// referenced by a contract.
     pub libraries: Vec<String>,
     /// Whether to enable the build cache.
     pub cache: bool,
@@ -997,6 +1000,7 @@ impl Config {
         allowed.invariant.max_time_delay = self.invariant.max_time_delay;
         allowed.invariant.max_block_delay = self.invariant.max_block_delay;
         allowed.invariant.check_interval = self.invariant.check_interval;
+        allowed.invariant.call_gas_limit = self.invariant.call_gas_limit;
         allowed.invariant.show_metrics = self.invariant.show_metrics;
         allowed.invariant.show_solidity = self.invariant.show_solidity;
         allowed.allow_internal_expect_revert = self.allow_internal_expect_revert;

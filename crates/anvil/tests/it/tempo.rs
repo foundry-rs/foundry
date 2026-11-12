@@ -6896,6 +6896,42 @@ async fn test_tempo_browser_webauthn_gas_estimation() {
     );
 }
 
+// From T14 a sponsored estimate adds the fee payer access, so the search must reserve it from the
+// block gas limit when the request sets no gas limit.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t14_sponsored_estimate_stays_within_block_gas_limit() {
+    let t14 = || NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()));
+    let request = |from| tempo_alloy::rpc::TempoTransactionRequest {
+        inner: TransactionRequest::default().from(from),
+        fee_token: Some(PATH_USD),
+        nonce_key: Some(U256::ZERO),
+        calls: vec![Call {
+            to: TxKind::Call(address!("0x7373737373737373737373737373737373737373")),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        }],
+        ..Default::default()
+    };
+    let estimate = async |gas_limit: Option<u64>, sponsored: bool| {
+        let (_api, handle) = spawn(t14().with_gas_limit(gas_limit)).await;
+        let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_http(handle.http_endpoint().parse().unwrap());
+        let mut request = request(handle.dev_accounts().next().unwrap());
+        if sponsored {
+            request.fee_payer_signature = Some(FEE_PAYER_SIGNATURE_MARKER);
+        }
+        provider.estimate_gas(request).await
+    };
+
+    let unsponsored = estimate(None, false).await.unwrap();
+    let sponsored = estimate(None, true).await.unwrap();
+    assert_eq!(sponsored, unsponsored + 2_600);
+    // Enough block gas for the sponsored transaction.
+    assert_eq!(estimate(Some(sponsored), true).await.unwrap(), sponsored);
+    // Enough block gas only for the unsponsored transaction.
+    assert!(estimate(Some(unsponsored), true).await.is_err());
+}
+
 // ============================================================================
 // Gas Estimation: Tempo AA with 2D Nonce
 // ============================================================================
@@ -9331,6 +9367,8 @@ async fn test_tempo_call_tracer_with_logs() {
 }
 
 mod subscriptions;
+
+mod create_token;
 
 #[cfg(feature = "cli")]
 mod epoch_warning;

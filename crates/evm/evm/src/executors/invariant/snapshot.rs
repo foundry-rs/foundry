@@ -50,23 +50,31 @@ fn log2_bin(value: U256) -> u16 {
     if value.bit(255) { 512 - (!value).bit_len() as u16 } else { value.bit_len() as u16 }
 }
 
-/// Storage slots held by the executor's backend, and its nonzero computed slots per contract.
-fn storage_stats<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> (usize, AddressMap<u64>) {
+/// Storage slots held by the executor's backend.
+fn storage_slots<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> usize {
     let lifecycle = executor.backend().lifecycle();
     let forks = lifecycle.forks();
     let local = forks.context(None).and_then(|context| context.cache.as_deref());
-    let active = lifecycle.active().cache.as_deref();
-    let fork = forks.active().and(active);
+    let fork = forks.active().and(lifecycle.active().cache.as_deref());
     // Cloning the backend copies the local and the active fork's accepted state.
-    let slots = local
+    local
         .into_iter()
         .chain(fork)
         .flat_map(|cache| cache.storage.values())
         .map(|storage| storage.slots.len())
-        .sum();
+        .sum()
+}
+
+/// Nonzero computed slots per contract in the executor's backend.
+fn computed_cardinality<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> AddressMap<u64> {
     // Calls only read and write the active context, which holds a copy of the persistent
     // accounts, so count entries there alone.
-    let cardinality = active
+    executor
+        .backend()
+        .lifecycle()
+        .active()
+        .cache
+        .as_deref()
         .into_iter()
         .flat_map(|cache| &cache.storage)
         .filter_map(|(address, storage)| {
@@ -77,8 +85,7 @@ fn storage_stats<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> (usize, Ad
                 .count() as u64;
             (computed > 0).then_some((*address, computed))
         })
-        .collect();
-    (slots, cardinality)
+        .collect()
 }
 
 #[derive(Clone, Copy, Default)]
@@ -169,7 +176,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
             setup: Energy::default(),
             snapshots: Vec::new(),
             current: Start::Setup,
-            setup_cardinality: storage_stats(setup).1,
+            setup_cardinality: computed_cardinality(setup),
             cardinality: AddressMap::default(),
             run_found: false,
         }
@@ -253,8 +260,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
             let writes = changes
                 .storage
                 .changed_slots()
-                .map(|(slot, value)| (*slot, value.original, value.current))
-                .collect();
+                .map(|(slot, value)| (*slot, value.original, value.current));
             (changes.address, writes)
         }))
     }
@@ -262,7 +268,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
     /// Compresses each account's `(slot, original, present)` storage writes into features.
     fn observe_writes(
         &mut self,
-        changeset: impl IntoIterator<Item = (Address, Vec<(U256, U256, U256)>)>,
+        changeset: impl IntoIterator<Item = (Address, impl IntoIterator<Item = (U256, U256, U256)>)>,
     ) -> Vec<u64> {
         let mut features = Vec::new();
         for (address, storage) in changeset {
@@ -337,7 +343,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
         if novel.is_empty() || inputs.is_empty() || inputs.len() > self.max_prefix {
             return;
         }
-        let slots = storage_stats(executor).0;
+        let slots = storage_slots(executor);
         let mut total = self.snapshots.iter().map(|snapshot| snapshot.slots).sum::<usize>();
         // Evict the weakest snapshots, except the one the current run started from, until the new
         // one fits the pool and its slot budget.
@@ -513,7 +519,7 @@ mod tests {
             },
         };
         let retained = |pool: &StateSnapshots<EthEvmNetwork>| {
-            pool.snapshots.iter().map(|snapshot| storage_stats(&snapshot.executor).0).sum::<usize>()
+            pool.snapshots.iter().map(|snapshot| storage_slots(&snapshot.executor)).sum::<usize>()
         };
 
         // Runs that keep adding storage: the snapshots never copy more than the worker's share
@@ -562,7 +568,7 @@ mod tests {
                     .into_iter()
                     .zip([U256::from(1000), U256::from(1u64 << 40)])
                     .map(|(i, value)| (entry(i), U256::ZERO, value))
-                    .collect();
+                    .collect::<Vec<_>>();
                 let filled = snapshots.observe_writes(vec![(Address::repeat_byte(0x11), storage)]);
                 let next = snapshots.observe_writes(write(
                     entry(3),
@@ -596,7 +602,8 @@ mod tests {
         backend.park(evm);
 
         // Selecting the fork copied the persistent account, so both databases hold its entries.
-        let (slots, cardinality) = storage_stats(&setup);
+        let slots = storage_slots(&setup);
+        let cardinality = computed_cardinality(&setup);
         assert_eq!(slots, 8);
         assert_eq!(cardinality, AddressMap::from_iter([(persistent, 4)]));
     }

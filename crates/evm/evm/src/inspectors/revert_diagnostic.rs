@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, map::HashMap};
 use evm2::{
-    EvmTypes, Inspector, InspectorConfig,
+    EvmTypes, Inspector, InspectorConfig, OpcodeSet,
     interpreter::{Interpreter, Message, MessageKind, MessageResult, op},
 };
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
@@ -185,7 +185,13 @@ impl RevertDiagnostic {
 
 impl<T: EvmTypes> Inspector<T> for RevertDiagnostic {
     fn inspector_config(&self) -> InspectorConfig {
-        InspectorConfig::new().with_steps([op::REVERT, op::EXTCODESIZE].into_iter().collect())
+        const STEPS: OpcodeSet = {
+            let mut steps = OpcodeSet::EMPTY;
+            steps.insert(op::REVERT);
+            steps.insert(op::EXTCODESIZE);
+            steps
+        };
+        InspectorConfig::new().with_steps(STEPS)
     }
 
     /// Tracks the latest call with non-zero calldata that targets a non-contract address. Excludes
@@ -237,7 +243,7 @@ impl<T: EvmTypes> Inspector<T> for RevertDiagnostic {
 }
 
 /// Checks if the call scheme corresponds to any sort of delegate call
-pub const fn is_delegatecall(kind: MessageKind) -> bool {
+const fn is_delegatecall(kind: MessageKind) -> bool {
     matches!(kind, MessageKind::DelegateCall | MessageKind::CallCode)
 }
 

@@ -32,6 +32,16 @@ contract Dealer {
     }
 }
 
+contract SendThenDealZero {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    fallback() external payable {
+        payable(address(0xA11CE)).transfer(msg.value);
+        vm.deal(address(0xA11CE), 0);
+        revert();
+    }
+}
+
 /// `deal` and nonce cheatcodes survive reverts of the enclosing calls, and compose with the
 /// transfers and nonce bumps those reverts undo.
 contract PersistentWritesTest is Test {
@@ -70,6 +80,37 @@ contract PersistentWritesTest is Test {
     function dealThenTransfer() external {
         vm.deal(A, 100);
         A.transfer(10);
+        revert();
+    }
+
+    function transferThenDealZero() external {
+        A.transfer(10);
+        vm.deal(A, 0);
+        revert();
+    }
+
+    function transferThenDealZeroThenDeal() external {
+        A.transfer(10);
+        vm.deal(A, 0);
+        vm.deal(A, 100);
+        revert();
+    }
+
+    function dealAfterSaturatedChild() external {
+        try this.transferThenDealZero() {} catch {}
+        vm.deal(A, 5);
+        revert();
+    }
+
+    function transferThenExecute() external {
+        A.transfer(200);
+        vm.executeTransaction(RAW_TX);
+        revert();
+    }
+
+    function failedExecuteThenDeal() external {
+        try vm.executeTransaction(RAW_TX) {} catch {}
+        vm.deal(A, 5);
         revert();
     }
 
@@ -179,6 +220,13 @@ contract PersistentWritesTest is Test {
         assertEq(balanceAfter(abi.encodeCall(this.dealTwice, ())), 2, "dealTwice");
         assertEq(balanceAfter(abi.encodeCall(this.transferThenDeal, ())), 90, "transferThenDeal");
         assertEq(balanceAfter(abi.encodeCall(this.dealThenTransfer, ())), 100, "dealThenTransfer");
+        // A change below the balance the revert restores leaves no balance.
+        assertEq(balanceAfter(abi.encodeCall(this.transferThenDealZero, ())), 0, "transferThenDealZero");
+        // The changes add up before saturating, and an enclosing revert keeps the saturated balance.
+        assertEq(
+            balanceAfter(abi.encodeCall(this.transferThenDealZeroThenDeal, ())), 90, "transferThenDealZeroThenDeal"
+        );
+        assertEq(balanceAfter(abi.encodeCall(this.dealAfterSaturatedChild, ())), 5, "dealAfterSaturatedChild");
         assertEq(balanceAfter(abi.encodeCall(this.dealInRevertedChild, ())), 2, "dealInRevertedChild");
         // A snapshot restore keeps the writes made before the snapshot.
         assertEq(balanceAfter(abi.encodeCall(this.dealThenRestoreInChild, ())), 100, "dealThenRestoreInChild");
@@ -198,6 +246,14 @@ contract PersistentWritesTest is Test {
         vm.store(TARGET, 0, bytes32(uint256(1)));
         try vm.executeTransaction(RAW_TX) {} catch {}
         assertEq(A.balance, 100, "failed executeTransaction deal");
+        // The executed transaction's `deal` merges as a change, which saturates the same way.
+        vm.setNonceUnsafe(SENDER, 0);
+        vm.store(TARGET, 0, 0);
+        assertEq(balanceAfter(abi.encodeCall(this.transferThenExecute, ())), 0, "transferThenExecute");
+        // So does a failed executed transaction's `deal`, under an enclosing revert.
+        vm.setNonceUnsafe(SENDER, 0);
+        vm.etch(TARGET, type(SendThenDealZero).runtimeCode);
+        assertEq(balanceAfter(abi.encodeCall(this.failedExecuteThenDeal, ())), 5, "failedExecuteThenDeal");
 
         // A snapshot of an earlier transaction holds none of the writes; last, as it rolls back the
         // rest of the state.

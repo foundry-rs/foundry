@@ -75,7 +75,8 @@ mod bal;
 
 mod error;
 pub use error::{
-    BackendError, BackendResult, DatabaseError, DatabaseResult, handler_error, transaction_error,
+    BackendError, BackendResult, DatabaseError, DatabaseResult, TransactionValidationError,
+    handler_error, transaction_error,
 };
 
 mod cow;

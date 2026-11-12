@@ -16,9 +16,7 @@ use alloy_consensus::{BlockHeader, transaction::Recovered};
 use alloy_dyn_abi::FunctionExt;
 use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
-use alloy_network::{
-    AnyNetwork, BlockResponse, Ethereum, TransactionBuilder, primitives::HeaderResponse,
-};
+use alloy_network::{BlockResponse, Ethereum, TransactionBuilder, primitives::HeaderResponse};
 use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
@@ -30,7 +28,7 @@ use evm2::EvmFeatures;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TracingArgs, TransactionOpts},
-    utils::{TraceResult, load_config_from_provider, parse_ether_value},
+    utils::{TraceResult, get_provider, load_config_from_provider, parse_ether_value},
 };
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -528,7 +526,7 @@ impl CallArgs {
         if debug_trace_call {
             let endpoint_identity = endpoint_identity
                 .ok_or_else(|| eyre::eyre!("remote trace endpoint identity was not captured"))?;
-            let requested_block = block.unwrap_or(BlockId::latest());
+            let requested_block = block.unwrap_or_default();
             let fetched_block = provider.get_block(requested_block).await?;
             let resolved_canonical_block =
                 if matches!(requested_block, BlockId::Number(_)) && !requested_block.is_pending() {
@@ -995,7 +993,7 @@ async fn next_block_ext<FEN: FoundryEvmNetwork>(
     tx: &Recovered<TxFor<FEN>>,
 ) -> Result<ChainFor<FEN>> {
     let fork = executor.backend().fork().ok_or_else(|| eyre::eyre!("the trace is not forked"))?;
-    let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?.build()?;
+    let provider = get_provider(config)?;
     let block = provider
         .get_block_by_hash(fork.hash())
         .full()

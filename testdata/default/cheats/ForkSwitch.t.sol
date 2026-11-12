@@ -456,3 +456,119 @@ contract ForkSwitchTransientStorageTest is Test {
 
 /// forge-config: default.isolate = true
 contract ForkSwitchTransientStorageIsolatedTest is ForkSwitchTransientStorageTest {}
+
+// Persistent warmth carried into a fork survives a visit that does not touch it.
+/// forge-config: default.isolate = false
+contract ForkSwitchPersistentWarmthTest is Test {
+    uint256 value = 1;
+    uint256 forkA;
+    uint256 forkB;
+    uint256 forkC;
+    ForkSwitchBox box;
+
+    function setUp() public {
+        forkA = vm.createSelectFork("mainnet");
+        forkB = vm.createFork("mainnet");
+        forkC = vm.createFork("mainnet");
+        box = new ForkSwitchBox();
+        vm.makePersistent(address(box));
+    }
+
+    function testForkPersistentWarmthSurvivesUntouchedVisit() public {
+        isWarm(address(box));
+        isValueWarm();
+        vm.selectFork(forkB);
+        vm.selectFork(forkC);
+
+        assertTrue(isWarm(address(box)), "account warmth was dropped");
+        assertTrue(isValueWarm(), "slot warmth was dropped");
+    }
+
+    // A contract created in the running transaction has wiped storage, so its untouched slots are
+    // cached only implicitly.
+    function testForkWipedSlotWarmthSurvivesCooledAccount() public {
+        ForkSwitchWipedSlotProbe probe = new ForkSwitchWipedSlotProbe();
+        vm.makePersistent(address(probe));
+
+        assertTrue(probe.readAfterSwitch(forkB), "wiped slot warmth was dropped");
+    }
+
+    function isWarm(address account) internal view returns (bool) {
+        uint256 cost;
+        assembly {
+            cost := gas()
+            let accountBalance := balance(account)
+            cost := sub(cost, gas())
+            if eq(accountBalance, 0xdeadbeef) { revert(0, 0) }
+        }
+        return cost < 2000;
+    }
+
+    function isValueWarm() internal view returns (bool) {
+        uint256 cost;
+        assembly {
+            cost := gas()
+            let current := sload(value.slot)
+            cost := sub(cost, gas())
+            if eq(current, 0xdeadbeef) { revert(0, 0) }
+        }
+        return cost < 2000;
+    }
+}
+
+// An isolated static call cools the accounts it touched. A slot read after it cooled the test
+// contract stays warm across forks, but warmth the call cooled is not carried.
+/// forge-config: default.isolate = true
+contract ForkSwitchPersistentWarmthIsolatedTest is ForkSwitchPersistentWarmthTest {
+    function testForkSlotWarmthSurvivesCooledAccount() public {
+        box.value();
+        isValueWarm();
+        vm.selectFork(forkB);
+        vm.selectFork(forkC);
+
+        assertTrue(isValueWarm(), "slot warmth was dropped");
+        assertTrue(!isWarm(address(this)), "account was warmed");
+    }
+
+    function testForkStaticCallCoolsCarriedWarmth() public {
+        isWarm(address(box));
+        vm.selectFork(forkB);
+        box.value();
+        vm.selectFork(forkC);
+
+        assertTrue(!isWarm(address(box)), "cooled warmth was carried");
+    }
+
+    function testForkStaticCallCoolsRecordedWarmth() public {
+        isWarm(address(box));
+        vm.selectFork(forkB);
+        vm.selectFork(forkA);
+        box.value();
+        vm.selectFork(forkB);
+        vm.selectFork(forkC);
+
+        assertTrue(!isWarm(address(box)), "cooled warmth was carried");
+    }
+}
+
+contract ForkSwitchWipedSlotProbe {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    uint256 untouched;
+
+    // Cools this account, warms an untouched slot of it, and returns whether the slot is still warm
+    // after switching to `fork`.
+    function readAfterSwitch(uint256 fork) external returns (bool) {
+        vm.cool(address(this));
+        uint256 current = untouched;
+        vm.selectFork(fork);
+        uint256 cost;
+        assembly {
+            cost := gas()
+            current := sload(untouched.slot)
+            cost := sub(cost, gas())
+        }
+        require(current == 0);
+        return cost < 2000;
+    }
+}

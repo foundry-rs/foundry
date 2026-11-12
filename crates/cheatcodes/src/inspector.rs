@@ -24,7 +24,7 @@ use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
-    map::{AddressHashMap, AddressMap, HashMap, HashSet},
+    map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_rpc_types::AccessList;
 use alloy_sol_types::{SolCall, SolInterface};
@@ -160,6 +160,7 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
         nonce,
     );
     message.call_target = message.destination;
+    message.code_address = message.destination;
     Ok(executor.exec_message(ccx.state, ccx.backend, ccx.evm, &mut message)?)
 }
 
@@ -736,11 +737,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// was taken.
     pub persistent_write_snapshots: HashMap<U256, usize>,
 
-    /// Whether a `vm.assert*` cheatcode failed during the current call.
+    /// Message of the first `vm.assert*` cheatcode that failed during the current call.
     ///
     /// Unlike the global failure slot, this survives reverts, so callers still see the failure
     /// when the asserting call reverts afterwards.
-    pub assertion_failed: bool,
+    pub failed_assertion: Option<String>,
 
     /// Gas metering state.
     pub gas_metering: GasMetering,
@@ -826,6 +827,13 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Depth of a create that a hook ended with a revert without running its frame.
     pub unrun_create_depth: Option<usize>,
+
+    /// Code that issued the CREATE being handed off to a new frame EVM.
+    pub env_handoff_creator: Option<Address>,
+
+    /// Automatic CREATE2 redirects: factory call depth, original issuing code, and whether the
+    /// original create grants cheatcode access. The grant is resolved after caller overrides.
+    pub pending_create2_redirects: Vec<(u16, Option<Address>, bool)>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -883,7 +891,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             persistent_writes: Default::default(),
             frame_rollback: Default::default(),
             persistent_write_snapshots: Default::default(),
-            assertion_failed: false,
+            failed_assertion: None,
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
             pc: Default::default(),
@@ -912,6 +920,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             deploy_code_output: None,
             applied_access_list: None,
             unrun_create_depth: None,
+            env_handoff_creator: None,
+            pending_create2_redirects: Vec::new(),
         }
     }
 
@@ -1199,7 +1209,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
+        let db = backend.backend();
+        db.ensure_cheatcode_access_forking_mode(&caller)?;
+        if interp.message().depth < message.depth {
+            db.ensure_cheatcode_access_forking_mode(&interp.message().code_address)?;
+        }
 
         apply_dispatch(
             &decoded,
@@ -1229,7 +1243,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
+        let db = backend.backend();
+        db.ensure_cheatcode_access_forking_mode(&caller)?;
+        if interp.message().depth < message.depth {
+            db.ensure_cheatcode_access_forking_mode(&interp.message().code_address)?;
+        }
 
         let input = message.input.to_bytes(interp.memory());
         crate::monad::apply_monad_cheatcode(
@@ -1246,21 +1264,34 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         )
     }
 
-    /// Grants cheat code access for new contracts if the caller also has
-    /// cheatcode access or the new contract is created in top most call.
+    /// Grants cheatcode access for top-level deployments or authorized callers, provided the
+    /// code issuing the CREATE also has access while forked.
     ///
-    /// There may be cheatcodes in the constructor of the new contract, in order to allow them
-    /// automatically we need to determine the new address.
+    /// Constructors need access before the new contract's runtime code has been deployed.
     fn allow_cheatcodes_on_create(
+        &self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         depth: usize,
         caller: Address,
         created_address: Address,
+        creator: Option<Address>,
     ) {
-        let db = backend.backend();
-        if (depth <= 1 || db.has_cheatcode_access(&caller))
-            && !db.has_cheatcode_access(&created_address)
-        {
+        let allowed = self
+            .pending_create2_redirects
+            .last()
+            .filter(|(factory_depth, ..)| usize::from(*factory_depth) + 1 == depth)
+            .map_or_else(
+                || {
+                    Self::can_grant_cheatcodes_on_create(
+                        backend,
+                        depth - self.root_depth,
+                        caller,
+                        creator,
+                    )
+                },
+                |(.., allowed)| *allowed,
+            );
+        if allowed && !backend.backend().has_cheatcode_access(&created_address) {
             backend.backend_mut().allow_cheatcode_access(created_address);
         }
     }
@@ -1660,6 +1691,18 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 depth: curr_depth as u64,
             };
             recorded_account_diffs_stack.push(vec![access]);
+        }
+
+        // The factory call keeps the original create's authorization after caller overrides.
+        if let Some((depth, creator, allowed)) = self.pending_create2_redirects.last_mut()
+            && *depth == call.depth
+        {
+            *allowed = Self::can_grant_cheatcodes_on_create(
+                backend,
+                curr_depth - self.root_depth,
+                call.caller,
+                *creator,
+            );
         }
 
         None
@@ -2209,31 +2252,21 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let undone = |&(write_depth, len, _): &(usize, usize, PersistentWrite)| {
                 write_depth >= depth && rollback.is_none_or(|rollback| len > rollback)
             };
-            // The nonces after the rollback, to collapse each account's replayed nonce writes into
-            // the one change the replay made, so an enclosing replay does not undo the saturation.
-            let mut nonces = AddressMap::<u64>::default();
-            for (.., write) in self.persistent_writes.iter().filter(|entry| undone(entry)) {
-                if let PersistentWrite::Nonce { address, .. } = write
-                    && let Ok(account) = state.account(address)
-                {
-                    nonces.entry(*address).or_insert(account.nonce());
-                }
-            }
             let writes = self.persistent_writes.iter().filter(|entry| undone(entry));
-            failed = PersistentWrite::apply_all(writes.map(|(_, _, write)| write), state).err();
+            let applied = PersistentWrite::apply_all(writes.map(|(_, _, write)| write), state);
             let len = state.checkpoint().journal_len();
             self.persistent_writes.retain_mut(|entry| {
                 if !undone(entry) {
                     return true;
                 }
                 entry.1 = len;
-                !matches!(entry.2, PersistentWrite::Nonce { .. })
+                !entry.2.is_delta()
             });
-            for (address, previous) in nonces {
-                if let Ok(account) = state.account(&address) {
-                    let write = PersistentWrite::nonce(&account, previous);
-                    self.persistent_writes.push((depth, len, write));
-                }
+            match applied {
+                Ok(applied) => self
+                    .persistent_writes
+                    .extend(applied.into_iter().map(|write| (depth, len, write))),
+                Err(err) => failed = Some(err),
             }
         }
         for (write_depth, ..) in &mut self.persistent_writes {
@@ -2533,6 +2566,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(input.depth);
+        let creator = self.take_create_creator(interp, input);
         let is_root = curr_depth == self.root_depth;
         self.start_created_accounts_frame(is_root, CreatedAccountsFrameKind::Create, curr_depth);
         if is_root {
@@ -2642,14 +2676,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             input.call_target = input.destination;
         }
 
-        // Allow cheatcodes from the address of the new contract
+        input.code_address = input.destination;
+
+        // Allow cheatcodes from the address of the new contract.
         let address = input.destination;
-        Self::allow_cheatcodes_on_create(
-            backend,
-            curr_depth - self.root_depth,
-            input.caller,
-            address,
-        );
+        self.allow_cheatcodes_on_create(backend, curr_depth, input.caller, address, creator);
 
         self.record_created_account(backend.backend().active_fork_id(), address);
 
@@ -2904,6 +2935,38 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Returns the CREATE2 deployer address.
     pub fn create2_deployer(&self) -> Address {
         self.core.config.evm_opts.create2_deployer
+    }
+
+    /// Preserves the original CREATE authorization before redirecting it to the factory.
+    pub fn start_create2_redirect(
+        &mut self,
+        interp: &InterpreterFor<'_, '_, FEN>,
+        message: &MessageFor<FEN>,
+    ) {
+        let creator = self.take_create_creator(interp, message);
+        self.pending_create2_redirects.push((message.depth, creator, false));
+    }
+
+    fn take_create_creator(
+        &mut self,
+        interp: &InterpreterFor<'_, '_, FEN>,
+        input: &MessageFor<FEN>,
+    ) -> Option<Address> {
+        self.env_handoff_creator.take().or_else(|| {
+            let message = interp.message();
+            (message.depth < input.depth).then_some(message.code_address)
+        })
+    }
+
+    fn can_grant_cheatcodes_on_create(
+        backend: &dyn CheatcodesBackend<FEN>,
+        depth: usize,
+        caller: Address,
+        creator: Option<Address>,
+    ) -> bool {
+        let db = backend.backend();
+        (depth <= 1 || db.has_cheatcode_access(&caller))
+            && (!db.is_forked_mode() || creator.is_none_or(|code| db.has_cheatcode_access(&code)))
     }
 
     #[cold]

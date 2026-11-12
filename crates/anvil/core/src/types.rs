@@ -1,7 +1,8 @@
 use alloy_eips::eip7840::BlobParams;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
+use foundry_common::serde_helpers::deserialize_number;
 use serde::{Deserialize, Serialize};
 
 /// Represents the options used in `anvil_reorg`
@@ -78,4 +79,36 @@ impl From<NodeBlobParams> for BlobParams {
             blob_base_cost,
         }
     }
+}
+
+/// Parameters for creating a native TIP-20 token at a chosen address on Tempo.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TempoCreateTokenRequest {
+    /// The TIP-20 address to initialize.
+    pub address: Address,
+    /// The token name.
+    pub name: String,
+    /// The token symbol.
+    pub symbol: String,
+    /// The token's currency denomination.
+    pub currency: String,
+    /// The deployed TIP-20 token used as the quote token.
+    pub quote_token: Address,
+    /// The account receiving the default admin and issuer roles.
+    pub admin: Address,
+    /// Initial mints. Omitting this list creates a token with zero supply.
+    #[serde(default)]
+    pub mint: Vec<TempoTokenMint>,
+}
+
+/// An initial mint performed when creating a native TIP-20 token.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TempoTokenMint {
+    /// The account receiving the tokens.
+    pub to: Address,
+    /// The amount in the token's smallest units.
+    #[serde(deserialize_with = "deserialize_number")]
+    pub amount: U256,
 }
