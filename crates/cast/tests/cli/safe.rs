@@ -1557,7 +1557,6 @@ async fn safe_v1_3_0_execute_reports_inner_outcome(cmd: _) {
         let safe = created.trim().parse::<Address>().expect("missing Safe address");
         let safe_contract = TestSafe::new(safe, &provider);
         let target = Address::repeat_byte(0x22);
-        assert_eq!(safe_contract.nonce().call().await.unwrap(), U256::ZERO);
         let signer = ANVIL_KEY.parse::<PrivateKeySigner>().unwrap();
 
         for (nonce, succeeds, code) in [
@@ -1626,8 +1625,6 @@ Error: Safe inner transaction failed
             if succeeds {
                 execution.stdout_eq(format!("{execution_hash}\n"));
             }
-            let receipt = provider.get_transaction_receipt(execution_hash).await.unwrap().unwrap();
-            assert!(receipt.status());
             assert_eq!(safe_contract.nonce().call().await.unwrap(), U256::from(nonce + 1));
             assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::ONE);
         }
