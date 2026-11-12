@@ -735,8 +735,7 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub frame_rollback: Option<(usize, usize)>,
 
     /// The number of persistent writes recorded when each snapshot of the running transaction
-    /// was taken, capped by the restorations that dropped some of them since, see
-    /// [`Self::restore_persistent_writes`].
+    /// was taken, capped by the restorations that dropped some of them since.
     pub persistent_write_snapshots: HashMap<U256, usize>,
 
     /// Message of the first `vm.assert*` cheatcode that failed during the current call.
