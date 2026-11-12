@@ -347,7 +347,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 func,
                 address,
                 rd,
-                early_exit,
+                &shared_state,
                 minimize,
             );
             self.executor_f.inspector_mut().collect_failure_identity(false);
@@ -422,8 +422,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
     /// Replaces the counterexample of a failed `result` with a minimized one that fails the same
     /// way, see [`RawCallResult::failure_identity`]. Keeps the counterexample when the failure
-    /// cannot be identified, a replay errors, or replaying it does not reproduce the campaign's
-    /// failure, see [`RawCallResult::raw_failure`].
+    /// cannot be identified, a replay errors, the test is stopped, or replaying it does not
+    /// reproduce the campaign's failure, see [`RawCallResult::raw_failure`].
     ///
     /// Expects failure identities and provenances to be collected.
     #[expect(clippy::too_many_arguments)]
@@ -435,10 +435,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         func: &Function,
         address: Address,
         rd: &RevertDecoder,
-        early_exit: &EarlyExit,
+        shared_state: &SharedFuzzState,
         minimize: CounterexampleMinimizer<'_>,
     ) {
-        if result.success || result.skipped {
+        // Replays stop on Ctrl-C or fail-fast, and at the test's deadline.
+        let stopped =
+            || shared_state.global_early_exit.should_stop() || shared_state.timer.is_timed_out();
+        if result.success || result.skipped || stopped() {
             return;
         }
         let (Some(CounterExample::Single(counterexample)), Some((tx, run))) =
@@ -465,7 +468,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 && call.failure_identity == Some(expected)
         };
         let mut still_fails = |calldata: &Bytes| {
-            if early_exit.should_stop() {
+            if stopped() {
                 return false;
             }
             let mut candidate = tx.clone();
@@ -473,7 +476,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             self.replay_case(address, candidate, run.as_ref())
                 .is_ok_and(|(_, call, success)| fails_same_way(&call, success))
         };
-        let Some(calldata) = minimize(counterexample, &mut still_fails) else {
+        let Some(calldata) = minimize(counterexample, &mut still_fails).filter(|_| !stopped())
+        else {
             return;
         };
 

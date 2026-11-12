@@ -6806,6 +6806,7 @@ fn fuzz_minimization_keeps_unidentified_counterexamples(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::ONE);
         config.optimizer = Some(true);
+        config.fs_permissions.add(PathPermission::write(prj.root()));
     });
     prj.add_test(
         "Unidentified.t.sol",
@@ -6866,13 +6867,35 @@ contract UnidentifiedTest is Test {
         (bool ok,) = CHECK.call(abi.encode(dest));
         require(ok);
     }
+
+    // Replays skip writes outside the EVM, so later reads would see the campaign's.
+    function testFuzz_writes(uint256 x) public {
+        vm.writeLine(string.concat(vm.projectRoot(), "/fuzz-log.txt"), vm.toString(x));
+        revert();
+    }
+
+    // Replays do not start after the test's deadline.
+    /// forge-config: default.fuzz.timeout = 1
+    function testFuzz_deadline(uint256) public {
+        vm.sleep(1100);
+        revert();
+    }
 }
 "#,
     );
 
     cmd.args(["test", "-j1", "--mc", "UnidentifiedTest", "-q"]).assert_failure();
+    // Only the campaign wrote.
+    let log = std::fs::read_to_string(prj.root().join("fuzz-log.txt")).unwrap();
+    assert_eq!(log.lines().count(), 1);
     // All would be minimized to zero.
-    for function in ["testFuzz_replay", "testFuzz_fail", "testFuzz_drift"] {
+    for function in [
+        "testFuzz_replay",
+        "testFuzz_fail",
+        "testFuzz_drift",
+        "testFuzz_writes",
+        "testFuzz_deadline",
+    ] {
         let path = prj.root().join("cache/fuzz/failures/UnidentifiedTest").join(function);
         let failure = foundry_common::fs::read_json_file::<BaseCounterExample>(&path).unwrap();
         assert!(!U256::from_be_slice(&failure.calldata[4..]).is_zero(), "{function}");
