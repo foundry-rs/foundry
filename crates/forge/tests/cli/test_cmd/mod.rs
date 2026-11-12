@@ -8835,6 +8835,7 @@ interface Vm {
     function transact(bytes32 txHash) external;
     function store(address target, bytes32 slot, bytes32 value) external;
     function load(address target, bytes32 slot) external view returns (bytes32);
+    function etch(address target, bytes calldata code) external;
 }
 
 contract TransactCreationForkTest {
@@ -8859,6 +8860,11 @@ contract TransactCreationForkTest {
         require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "seeded");
         require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(5)), "fork storage");
         require(vm.load(CREATED, bytes32(uint256(2))) == bytes32(uint256(6)), "slot read in replay");
+        // Clearing that slot costs a clean slot's SSTORE, so its original is its fork value.
+        vm.etch(CREATED, hex"5a5f6002555a90035f5260205ff3");
+        (, bytes memory used) = CREATED.call("");
+        require(abi.decode(used, (uint256)) >= 2900, "original of slot read in replay");
+        vm.etch(CREATED, "");
         // A slot loaded before another replay keeps its value after the replay reverts.
         vm.store(CREATED, bytes32(uint256(2)), 0);
         try this.replayAndRevert(bytes32(uint256(3))) {} catch Error(string memory reason) {
