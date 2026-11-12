@@ -6760,11 +6760,23 @@ contract Bounded {
     }
 }
 
+contract Coded {
+    error Failed(uint8 code);
+
+    function check(uint256 x) external pure {
+        uint8 code;
+        if (x > 1e30) code = 1;
+        else if (x > 1000) code = 2;
+        if (code != 0) revert Failed(code);
+    }
+}
+
 contract MinimizeTest is Test {
     Fails cleanup = new Fails();
     Fails early = new Fails();
     Fails intended = new Fails();
     Bounded bounded = new Bounded();
+    Coded coded = new Coded();
 
     // Both assertions share the optimized `assertEq` wrapper and differ only by call site.
     function testFuzz_site(uint256 a, uint256 b) public pure {
@@ -6790,6 +6802,12 @@ contract MinimizeTest is Test {
     function testFuzz_custom(uint256 x) public view {
         bounded.check(x);
     }
+
+    // Custom errors are identified by selector, so a failure code raised from one shared revert
+    // can shrink to another code.
+    function testFuzz_code(uint256 x) public view {
+        coded.check(x);
+    }
 }
 "#,
     );
@@ -6803,8 +6821,9 @@ contract MinimizeTest is Test {
         cmd.forge_fuse().args(["test", "-j1", "--mc", "MinimizeTest"]).assert_failure().stdout_eq(
             str![[r#"
 ...
-Ran 4 tests for test/Minimize.t.sol:MinimizeTest
+Ran 5 tests for test/Minimize.t.sol:MinimizeTest
 [FAIL: same; counterexample: calldata=[..] args=[1]] testFuzz_caught(uint256) (runs: 0, [AVG_GAS])
+[FAIL: Failed(2); counterexample: calldata=[..] args=[1001]] testFuzz_code(uint256) (runs: 0, [AVG_GAS])
 [FAIL: assertion failed: 1001 != 7; counterexample: calldata=0x1e23fbd300000000000000000000000000000000000000000000000000000000000003e9 args=[1001]] testFuzz_ctor(uint256) (runs: 0, [AVG_GAS])
 [FAIL: TooBig(1001); counterexample: calldata=[..] args=[1001]] testFuzz_custom(uint256) (runs: 0, [AVG_GAS])
 [FAIL: assertion failed: 5001 != 0; counterexample: calldata=0x11e5359500000000000000000000000000000000000000000000000000000000000003e90000000000000000000000000000000000000000000000000000000000001389 args=[1001, 5001]] testFuzz_site(uint256,uint256) (runs: 0, [AVG_GAS])

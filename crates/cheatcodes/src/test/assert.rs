@@ -879,7 +879,8 @@ impl FailureTrace {
             // compared in full, and other errors by selector, as their arguments carry the values
             // and the failed frames identify where they were raised. An error whose arguments tell
             // apart checks that share one `REVERT`, such as a failure code, can then shrink to
-            // another of those checks.
+            // another of those checks, and so can a caught error rethrown inside another one, such
+            // as `catch Error(string memory s) { revert Wrapped(s); }`.
             let output_hash = keccak256(output);
             let mut sources = events.iter().enumerate().filter(|(_, event)| {
                 matches!(event, FailureEvent::Assertion { revert, .. } if *revert == Some(output_hash))
