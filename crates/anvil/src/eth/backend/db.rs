@@ -1733,7 +1733,7 @@ mod test {
         );
         let (backend, handler) = SharedBackend::new(provider, remote.clone(), None);
         drop(handler);
-        let mut db = ForkedDatabase::new(backend, remote);
+        let mut db = ForkedDatabase::new(backend, remote, true);
         let cached = Address::with_last_byte(1);
         let uncached = Address::with_last_byte(2);
         let original = AccountInfo { nonce: 7, balance: U256::ONE, ..Default::default() };

@@ -2,8 +2,8 @@
 
 use crate::{
     eth::backend::db::{
-        AccountInfo, AccountState, BLOCKHASH_HISTORY, BlockEnv, BlockchainDb, Bytecode, CacheDB,
-        DatabaseRef, DatabaseResult, Db, DbAccount, EmptyDb, MaybeForkedDatabase,
+        AccountInfo, AccountState, BLOCKHASH_HISTORY, BlockEnv, BlockchainDb, Bytecode, Cache,
+        CacheDB, DatabaseRef, DatabaseResult, Db, DbAccount, EmptyDb, MaybeForkedDatabase,
         MaybeFullDatabase, RevertStateSnapshotAction, SerializableAccountRecord, SerializableBlock,
         SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
         StateSnapshot, StateSnapshots, cache_block_hash,
@@ -65,13 +65,7 @@ impl StateRootDb {
     /// being drained. With tracking disabled, [`Db::current_state`] still returns a correct,
     /// freshly built snapshot.
     pub fn new(track_history: bool) -> Self {
-        Self {
-            history: Mutex::new(HistoricalStateCache {
-                disabled: !track_history,
-                ..Default::default()
-            }),
-            ..Default::default()
-        }
+        Self { history: Mutex::new(HistoricalStateCache::new(track_history)), ..Default::default() }
     }
 
     fn normalize_block_hashes(&mut self) {
@@ -87,22 +81,27 @@ impl StateRootDb {
 }
 
 /// Incrementally maintained, structurally shared state used by block-history snapshots.
-#[derive(Debug, Default)]
-struct HistoricalStateCache {
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HistoricalStateCache {
     state: Option<PersistentStateDb>,
     dirty: AddressMap<DirtyHistoricalAccount>,
     /// Disables recording and snapshot caching; set when historical snapshots are never taken.
     disabled: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct DirtyHistoricalAccount {
     storage: HashSet<U256>,
     reset_storage: bool,
 }
 
 impl HistoricalStateCache {
-    fn record_changes(&mut self, changes: &BlockStateAccumulator) {
+    /// Creates a cache that records changes only if `track_history` is set.
+    pub(crate) fn new(track_history: bool) -> Self {
+        Self { disabled: !track_history, ..Default::default() }
+    }
+
+    pub(crate) fn record_changes(&mut self, changes: &BlockStateAccumulator) {
         if self.disabled {
             return;
         }
@@ -118,21 +117,21 @@ impl HistoricalStateCache {
         }
     }
 
-    fn record_account(&mut self, address: Address) {
+    pub(crate) fn record_account(&mut self, address: Address) {
         if self.disabled {
             return;
         }
         self.dirty.entry(address).or_default();
     }
 
-    fn record_storage(&mut self, address: Address, slot: U256) {
+    pub(crate) fn record_storage(&mut self, address: Address, slot: U256) {
         if self.disabled {
             return;
         }
         self.dirty.entry(address).or_default().storage.insert(slot);
     }
 
-    fn record_block_hash(&mut self, number: U256, hash: B256, is_next: bool) {
+    pub(crate) fn record_block_hash(&mut self, number: U256, hash: B256, is_next: bool) {
         if self.disabled {
             return;
         }
@@ -154,24 +153,25 @@ impl HistoricalStateCache {
         }
     }
 
-    fn invalidate(&mut self) {
+    pub(crate) fn invalidate(&mut self) {
         self.state = None;
         self.dirty.clear();
     }
 
-    fn snapshot(&mut self, db: &MemDb) -> PersistentStateDb {
+    /// Returns a snapshot of `cache`, sharing everything unchanged since the previous snapshot.
+    pub(crate) fn snapshot(&mut self, cache: &Cache) -> PersistentStateDb {
         if self.disabled {
-            return PersistentStateDb::from_mem_db(db);
+            return PersistentStateDb::from_cache(cache);
         }
         let Some(state) = &mut self.state else {
-            let state = PersistentStateDb::from_mem_db(db);
+            let state = PersistentStateDb::from_cache(cache);
             self.state = Some(state.clone());
             self.dirty.clear();
             return state;
         };
 
         for (address, dirty) in std::mem::take(&mut self.dirty) {
-            let Some(account) = db.inner.cache.accounts.get(&address) else {
+            let Some(account) = cache.accounts.get(&address) else {
                 state.accounts.remove(&address);
                 continue;
             };
@@ -195,7 +195,7 @@ impl HistoricalStateCache {
                 }
             }
 
-            let info = account_info_with_code(&account.info, &db.inner.cache.contracts);
+            let info = account_info_with_code(&account.info, &cache.contracts);
             if let Some(code) = &info.code {
                 state.contracts.insert(info.code_hash, code.clone());
             }
@@ -219,7 +219,7 @@ struct PersistentAccount {
 
 /// A read-only historical state whose maps are cheap structural-sharing clones.
 #[derive(Clone, Debug, Default)]
-struct PersistentStateDb {
+pub(crate) struct PersistentStateDb {
     accounts: PersistentMap<Address, PersistentAccount>,
     contracts: PersistentMap<B256, Bytecode>,
     block_hashes: PersistentMap<U256, B256>,
@@ -228,24 +228,21 @@ struct PersistentStateDb {
 }
 
 impl PersistentStateDb {
-    fn from_mem_db(db: &MemDb) -> Self {
-        let contracts = db
-            .inner
-            .cache
+    /// Copies `cache` into a new state.
+    pub(crate) fn from_cache(cache: &Cache) -> Self {
+        let contracts = cache
             .contracts
             .iter()
             .map(|(hash, code)| (*hash, code.clone()))
             .collect::<PersistentMap<_, _>>();
-        let accounts = db
-            .inner
-            .cache
+        let accounts = cache
             .accounts
             .iter()
             .map(|(address, account)| {
                 (
                     *address,
                     PersistentAccount {
-                        info: account_info_with_code(&account.info, &db.inner.cache.contracts),
+                        info: account_info_with_code(&account.info, &cache.contracts),
                         account_state: account.account_state.clone(),
                         storage: account
                             .storage
@@ -257,8 +254,62 @@ impl PersistentStateDb {
             })
             .collect();
         let block_hashes =
-            db.inner.cache.block_hashes.iter().map(|(number, hash)| (*number, *hash)).collect();
+            cache.block_hashes.iter().map(|(number, hash)| (*number, *hash)).collect();
         Self { accounts, contracts, block_hashes, full: OnceLock::new() }
+    }
+
+    /// Returns the cached info of `address`, which is `Some(None)` if it is known not to exist.
+    pub(crate) fn cached_account(&self, address: Address) -> Option<Option<AccountInfo>> {
+        let account = self.accounts.get(&address)?;
+        Some((account.account_state != AccountState::NotExisting).then(|| account.info.clone()))
+    }
+
+    /// Returns the cached storage slot, which is zero if the account's storage is cleared.
+    pub(crate) fn cached_storage(&self, address: Address, index: U256) -> Option<U256> {
+        let account = self.accounts.get(&address)?;
+        match account.storage.get(&index) {
+            Some(value) => Some(*value),
+            None => account.account_state.is_storage_cleared().then_some(U256::ZERO),
+        }
+    }
+
+    /// Returns the cached bytecode for `code_hash`.
+    pub(crate) fn cached_code(&self, code_hash: B256) -> Option<Bytecode> {
+        self.contracts.get(&code_hash).cloned()
+    }
+
+    /// Returns the cached hash of block `number`.
+    pub(crate) fn cached_block_hash(&self, number: u64) -> Option<B256> {
+        self.block_hashes.get(&U256::from(number)).copied()
+    }
+
+    /// Returns the state as a [`Cache`], including the accounts known not to exist.
+    pub(crate) fn to_cache(&self) -> Cache {
+        let mut contracts = Cache::default().contracts;
+        contracts.extend(self.contracts.iter().map(|(hash, code)| (*hash, code.clone())));
+        let accounts = self
+            .accounts
+            .iter()
+            .map(|(address, account)| {
+                let mut info = account.info.clone();
+                info.code = None;
+                (
+                    *address,
+                    DbAccount {
+                        info,
+                        account_state: account.account_state.clone(),
+                        storage: account
+                            .storage
+                            .iter()
+                            .map(|(slot, value)| (*slot, *value))
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        let block_hashes =
+            self.block_hashes.iter().map(|(number, hash)| (*number, *hash)).collect();
+        Cache { accounts, contracts, block_hashes }
     }
 
     fn state_snapshot(&self) -> StateSnapshot {
@@ -317,27 +368,19 @@ fn account_info_with_code(info: &AccountInfo, contracts: &B256Map<Bytecode>) -> 
 
 impl DatabaseRef for PersistentStateDb {
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
-        Ok(match self.accounts.get(&address) {
-            Some(account) if account.account_state == AccountState::NotExisting => None,
-            Some(account) => Some(account.info.clone()),
-            None => Some(AccountInfo::default()),
-        })
+        Ok(self.cached_account(address).unwrap_or_else(|| Some(AccountInfo::default())))
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
-        Ok(self.contracts.get(&code_hash).cloned().unwrap_or_default())
+        Ok(self.cached_code(code_hash).unwrap_or_default())
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
-        Ok(self
-            .accounts
-            .get(&address)
-            .and_then(|account| account.storage.get(&index).copied())
-            .unwrap_or_default())
+        Ok(self.cached_storage(address, index).unwrap_or_default())
     }
 
     fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
-        Ok(self.block_hashes.get(&U256::from(number)).copied().unwrap_or_default())
+        Ok(self.cached_block_hash(number).unwrap_or_default())
     }
 }
 
@@ -481,7 +524,7 @@ impl Db for StateRootDb {
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(self.history.lock().snapshot(&self.inner))
+        StateDb::new(self.history.lock().snapshot(&self.inner.inner.cache))
     }
 }
 

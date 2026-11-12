@@ -5680,3 +5680,83 @@ async fn test_fork_pooled_transaction_receipt_skips_fork() {
     api.mine_one().await.unwrap();
     assert!(provider.get_transaction_receipt(hash).await.unwrap().is_some());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_history_keeps_block_states() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let contract = Address::random();
+    // Code makes the account exist, so its storage is not cleared on first write.
+    origin_api.anvil_set_code(contract, bytes!("0x00")).await.unwrap();
+    origin_api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    origin_api.anvil_set_storage_at(contract, U256::ONE, B256::with_last_byte(2)).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let recipient = Address::random();
+    let fork_block = provider.get_block_number().await.unwrap();
+
+    let transfer = || async {
+        provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(sender).to(recipient).value(U256::ONE),
+            ))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+    };
+    transfer().await;
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(3)).await.unwrap();
+    api.mine_one().await.unwrap();
+    transfer().await;
+
+    // Expected recipient balance and slot 0 at each block; slot 1 is only ever read from the fork.
+    // `anvil_setStorageAt` also updates the state of the latest block.
+    let expected = [(0, 1), (1, 3), (1, 3), (2, 3)];
+    for (offset, (balance, slot)) in expected.into_iter().enumerate() {
+        let block = BlockId::number(fork_block + offset as u64);
+        assert_eq!(
+            provider.get_balance(recipient).block_id(block).await.unwrap(),
+            U256::from(balance)
+        );
+        assert_eq!(
+            provider.get_storage_at(contract, U256::ZERO).block_id(block).await.unwrap(),
+            U256::from(slot)
+        );
+        assert_eq!(
+            provider.get_storage_at(contract, U256::ONE).block_id(block).await.unwrap(),
+            U256::from(2)
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rollback_past_in_memory_states() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let contract = Address::random();
+    origin_api.anvil_set_code(contract, bytes!("0x00")).await.unwrap();
+    origin_api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+    api.mine_one().await.unwrap();
+    let target = provider.get_block_number().await.unwrap();
+    // `anvil_setStorageAt` also changes the latest block's state, so write after the target's.
+    api.mine_one().await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(5)).await.unwrap();
+    // Moves the target's state out of the in-memory history.
+    api.anvil_mine(Some(U256::from(600)), None).await.unwrap();
+
+    let at_target = provider.get_storage_at(contract, U256::ZERO).block_id(target.into());
+    assert_eq!(at_target.await.unwrap(), U256::from(1));
+
+    let depth = provider.get_block_number().await.unwrap() - target;
+    api.anvil_rollback(Some(depth)).await.unwrap();
+    assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), U256::from(1));
+}

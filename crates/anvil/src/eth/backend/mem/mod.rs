@@ -8092,7 +8092,10 @@ where
                 (return_state_or_throw_err(Some(db))?, true)
             } else {
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                (return_state_or_throw_err(write_guard.get_on_disk_state(&hash))?, false)
+                let state = write_guard.get_on_disk_state(&hash);
+                // Structurally shared states stay whole in the secondary tier.
+                let replace_accounts = state.is_some_and(|state| state.is_persistent());
+                (return_state_or_throw_err(state)?, replace_accounts)
             }
         };
 

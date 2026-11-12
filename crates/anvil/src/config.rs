@@ -2508,7 +2508,11 @@ latest block number: {latest_block}"
 
         debug!(target: "node", fork_number=config.block_number, fork_hash=%config.block_hash, "set up fork db");
 
-        let mut db = ForkedDatabase::new(backend, block_chain_db);
+        let mut db = ForkedDatabase::new(
+            backend,
+            block_chain_db,
+            self.prune_history.is_state_history_supported(),
+        );
 
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
