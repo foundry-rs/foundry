@@ -13,7 +13,7 @@ use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::{
     json::{print_json_success, print_scalar},
-    opts::RpcOpts,
+    opts::{ChainValueParser, RpcOpts},
     utils::parse_json,
 };
 use foundry_common::{
@@ -59,12 +59,13 @@ pub enum WalletSubcommands {
     ///
     /// With a Tempo signal, the new key becomes the only owner of a Tempo configurable account
     /// (TIP-1107) with threshold 1 and salt 0, and both the account address and the owner key
-    /// address are printed. Send from the account address. A Tempo signal is `--chain`, `chain`
-    /// or a Tempo network in `foundry.toml`, or an RPC (`--rpc-url`, `ETH_RPC_URL` or
-    /// `foundry.toml`) that serves a Tempo chain. The account is only created where the T14
-    /// hardfork is active: the RPC is asked when one is given, otherwise the compiled Tempo
-    /// hardfork schedule is read for the chain. Without a Tempo signal, or before T14, it creates
-    /// a plain key (EOA). Pass `--eoa` to always create one: MPP payment channels need an EOA.
+    /// address are printed. Send from the account address. A Tempo signal is `--chain` (or
+    /// `CHAIN` with `--configurable-account`), `chain` or a Tempo network in `foundry.toml`, or an
+    /// RPC (`--rpc-url`, `ETH_RPC_URL` or `foundry.toml`) that serves a Tempo chain. The account is
+    /// only created where the T14 hardfork is active: the RPC is asked when one is given,
+    /// otherwise the compiled Tempo hardfork schedule is read for the chain. Without a Tempo
+    /// signal, or before T14, it creates a plain key (EOA). Pass `--eoa` to always create one: MPP
+    /// payment channels need an EOA.
     ///
     /// The account needs no saved configuration: it is recomputed from the key. A keystore is
     /// linked to its account in a `<keystore>.tempo-account` file next to it, so that
@@ -127,7 +128,8 @@ pub enum WalletSubcommands {
         eoa: bool,
 
         /// The chain to create the wallet for. A Tempo chain creates a configurable account.
-        #[arg(long, env = "CHAIN")]
+        /// Defaults to `CHAIN` with `--configurable-account`.
+        #[arg(long, value_parser = ChainValueParser::default())]
         chain: Option<Chain>,
 
         #[command(flatten)]
