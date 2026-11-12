@@ -18,7 +18,7 @@ use foundry_evm_fuzz::{
 };
 use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::TestError;
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, time::Instant};
 
 /// The outcome of an invariant fuzz test
 #[derive(Debug, Default)]
@@ -58,6 +58,8 @@ pub struct InvariantFuzzTestResult {
     pub interrupted: bool,
     /// Counters for the optional live symbolic worker.
     pub symbolic_live: Option<LiveInvariantStats>,
+    /// When shrinking this campaign's failures must stop, for a timed campaign.
+    pub shrink_deadline: Option<Instant>,
 }
 
 impl InvariantFuzzTestResult {
@@ -103,6 +105,7 @@ impl InvariantFuzzTestResult {
             optimization_best_sequence,
             interrupted: false,
             symbolic_live: None,
+            shrink_deadline: None,
         }
     }
 }
@@ -162,7 +165,7 @@ pub fn did_fail_on_assert<FEN: FoundryEvmNetwork>(
     state_changeset: &PendingState,
 ) -> bool {
     is_assertion_failure(call_result)
-        || call_result.assertion_failed
+        || call_result.failed_assertion.is_some()
         || call_result.has_state_snapshot_failure
         || Executor::<FEN>::has_pending_global_failure(state_changeset)
 }

@@ -1048,13 +1048,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     /// Returns whether the in-flight state changeset for the current call sets the global
     /// assertion failure flag.
     pub fn has_pending_global_failure(state_changeset: &PendingState) -> bool {
-        state_changeset.account_changes().any(|change| {
-            change.address == CHEATCODE_ADDRESS
-                && change
-                    .storage
-                    .slots
-                    .get(&GLOBAL_FAIL_SLOT)
-                    .is_some_and(|slot| !slot.value.current.is_zero())
+        state_changeset.account_changes_for(&CHEATCODE_ADDRESS).is_some_and(|change| {
+            change
+                .storage
+                .slots
+                .get(&GLOBAL_FAIL_SLOT)
+                .is_some_and(|slot| !slot.value.current.is_zero())
         })
     }
 
@@ -1463,11 +1462,12 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub skip_payloads: Vec<Bytes>,
     /// Owned post-call backend, excluding `state_changeset`. Adopted only on commit.
     pub(crate) post_execution_backend: Option<Box<Backend<FEN>>>,
-    /// Whether a `vm.assert*` cheatcode failed during this call, even if the call reverted later.
+    /// Message of the first `vm.assert*` cheatcode that failed during this call, even if the call
+    /// reverted later.
     ///
     /// Moved out of the cheatcode state on conversion, like `skip_payloads`, so it resets per
     /// call.
-    pub assertion_failed: bool,
+    pub failed_assertion: Option<String>,
 }
 
 #[cfg(test)]
@@ -1503,7 +1503,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             reverter: None,
             skip_payloads: Vec::new(),
             post_execution_backend: None,
-            assertion_failed: false,
+            failed_assertion: None,
         }
     }
 }
@@ -1819,8 +1819,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         .filter(|txs| !txs.is_empty());
     let skip_payloads =
         cheatcodes.as_mut().map(|c| std::mem::take(&mut c.skip_payloads)).unwrap_or_default();
-    let assertion_failed =
-        cheatcodes.as_mut().is_some_and(|c| std::mem::take(&mut c.assertion_failed));
+    let failed_assertion = cheatcodes.as_mut().and_then(|c| c.failed_assertion.take());
 
     let mut raw = RawCallResult {
         exit_reason: Some(exit_reason),
@@ -1852,7 +1851,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         reverter,
         skip_payloads,
         post_execution_backend: None,
-        assertion_failed,
+        failed_assertion,
     };
     if sancov_edges {
         SancovGuard::append_edges_into(&mut raw);

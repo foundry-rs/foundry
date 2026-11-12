@@ -319,7 +319,7 @@ pub struct FuzzDictionary {
     /// Parsed storage layout identifiers keyed by the layout allocation.
     slot_identifiers: HashMap<usize, SlotIdentifier>,
     /// Cached non-mapping storage slot identification keyed by layout allocation and slot.
-    slot_info_cache: HashMap<(usize, B256), Option<SlotInfo>>,
+    slot_info_cache: HashMap<(usize, B256), Option<Arc<SlotInfo>>>,
 
     misses: usize,
     hits: usize,
@@ -581,20 +581,23 @@ impl FuzzDictionary {
                         self.identify_storage_slot(key, slot)
                             .filter(|slot_info| slot_info.decode(value_word).is_some())
                     });
-                    self.insert_storage_value(slot, &value, slot_info);
+                    self.insert_storage_value(slot, &value, slot_info.as_deref());
                 }
             }
         }
     }
 
-    fn identify_storage_slot(&mut self, key: usize, slot: B256) -> Option<SlotInfo> {
+    fn identify_storage_slot(&mut self, key: usize, slot: B256) -> Option<Arc<SlotInfo>> {
         let cache_key = (key, slot);
         if let Some(slot_info) = self.slot_info_cache.get(&cache_key) {
             return slot_info.clone();
         }
 
-        let slot_info =
-            self.slot_identifiers.get(&key).and_then(|identifier| identifier.identify(&slot, None));
+        let slot_info = self
+            .slot_identifiers
+            .get(&key)
+            .and_then(|identifier| identifier.identify(&slot, None))
+            .map(Arc::new);
         if self.slot_info_cache.len() < MAX_SLOT_INFO_CACHE_ENTRIES {
             self.slot_info_cache.insert(cache_key, slot_info.clone());
         }
@@ -646,7 +649,7 @@ impl FuzzDictionary {
 
     /// Insert values from single storage slot and storage value into fuzz dictionary.
     /// Uses [`SlotIdentifier`] to identify storage slots types.
-    fn insert_storage_value(&mut self, slot: &U256, value: &U256, slot_info: Option<SlotInfo>) {
+    fn insert_storage_value(&mut self, slot: &U256, value: &U256, slot_info: Option<&SlotInfo>) {
         let slot = B256::from(*slot);
         let value_word = B256::from(*value);
 
@@ -659,7 +662,7 @@ impl FuzzDictionary {
                 self.seed_samples();
             }
             self.sample_values
-                .entry(slot_info.slot_type.dyn_sol_type)
+                .entry(slot_info.slot_type.dyn_sol_type.clone())
                 .or_default()
                 .insert(value_word);
         } else {
@@ -810,21 +813,21 @@ impl FuzzDictionary {
             self.seed_samples();
         }
         for sample in sample_values {
-            self.insert_sample_value(sample, limit);
+            self.insert_sample_value(&sample, limit);
         }
     }
 
     /// Inserts one decoded value. Composite values are recorded whole under their canonical type
     /// and their nested values are recorded recursively, so every leaf also feeds its own typed
     /// bucket instead of being dropped.
-    fn insert_sample_value(&mut self, sample: DynSolValue, limit: u32) {
-        match &sample {
+    fn insert_sample_value(&mut self, sample: &DynSolValue, limit: u32) {
+        match sample {
             DynSolValue::Tuple(inner)
             | DynSolValue::Array(inner)
             | DynSolValue::FixedArray(inner)
             | DynSolValue::CustomStruct { tuple: inner, .. } => {
                 for value in inner {
-                    self.insert_sample_value(value.clone(), limit);
+                    self.insert_sample_value(value, limit);
                 }
                 self.insert_composite_value(sample, limit);
             }
@@ -858,7 +861,7 @@ impl FuzzDictionary {
 
     /// Records a whole composite value under its canonical ABI type, evicting the oldest entry
     /// of that type once `limit` entries are stored.
-    fn insert_composite_value(&mut self, value: DynSolValue, limit: u32) {
+    fn insert_composite_value(&mut self, value: &DynSolValue, limit: u32) {
         // A value whose type depends on an empty dynamic array has no element type to key on.
         let Some(ty) = value.as_type().map(canonical_type) else { return };
         let key = keccak256(value.abi_encode());
@@ -869,7 +872,7 @@ impl FuzzDictionary {
         if values.len() >= (limit as usize).max(1) {
             values.shift_remove_index(0);
         }
-        values.insert(key, value);
+        values.insert(key, value.clone());
     }
 
     /// Returns whole composite values previously observed for the given type.

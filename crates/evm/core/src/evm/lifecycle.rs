@@ -38,7 +38,8 @@ use crate::{
 use alloy_consensus::{Typed2718, transaction::Recovered};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{
-    Address, B256, KECCAK256_EMPTY, Log, U256,
+    Address, B256, KECCAK256_EMPTY, Log, U256, U512,
+    aliases::I512,
     map::{AddressMap, AddressSet, Entry, HashMap, HashSet},
 };
 use evm2::{
@@ -184,11 +185,11 @@ impl<T: EvmTypesHost> ExecutedNested<T> {
 /// A write that must survive reverts of the enclosing calls, such as a cheatcode's state edit. It
 /// is applied as a journaled write, and the owner replays it after each enclosing call that
 /// reverts. Balance and nonce writes replay as deltas, so they compose with value transfers and
-/// nonce bumps undone by the revert.
+/// nonce bumps undone by the revert, saturating at their bounds.
 #[derive(Clone, Debug)]
 pub enum PersistentWrite {
-    /// Adds a wrapping delta to an account's balance.
-    Balance(Address, U256),
+    /// Adds a delta to an account's balance, saturating at its bounds.
+    Balance(Address, I512),
     /// Adds a delta to an account's nonce, saturating at its bounds.
     Nonce {
         /// The account.
@@ -249,6 +250,12 @@ pub fn destructed_accounts(state: &mut State<'_>) -> DbResult<AddressMap<Destruc
 }
 
 impl PersistentWrite {
+    /// Returns the write that changes the balance of `address` from `previous` to `balance`.
+    pub fn balance(address: Address, previous: U256, balance: U256) -> Self {
+        let widen = |value| I512::from_raw(U512::from(value));
+        Self::Balance(address, widen(balance) - widen(previous))
+    }
+
     /// Returns the nonce write that `account`, whose nonce was `previous`, just made.
     pub fn nonce(account: &AccountHandle<'_, '_>, previous: u64) -> Self {
         Self::Nonce {
@@ -263,7 +270,12 @@ impl PersistentWrite {
         match self {
             Self::Balance(address, delta) => {
                 let mut account = state.account(address)?;
-                let balance = account.balance().wrapping_add(*delta);
+                let balance = I512::from_raw(U512::from(account.balance())) + *delta;
+                let balance = if balance.is_negative() {
+                    U256::ZERO
+                } else {
+                    U256::saturating_from(balance.into_raw())
+                };
                 account.set_balance(balance);
             }
             Self::Nonce { address, delta, created } => {
@@ -309,15 +321,26 @@ impl PersistentWrite {
         Ok(())
     }
 
-    /// Applies `writes` in order like [`Self::apply`], except that the nonce deltas of each
-    /// account are summed and saturated once, instead of per write.
+    /// Returns whether the write is a balance or nonce delta, which [`Self::apply_all`] sums with
+    /// the account's other ones.
+    pub const fn is_delta(&self) -> bool {
+        matches!(self, Self::Balance(..) | Self::Nonce { .. })
+    }
+
+    /// Applies `writes` in order like [`Self::apply`], except that the balance and nonce deltas
+    /// of each account are summed and saturated once, instead of per write.
+    ///
+    /// Returns the balance and nonce changes the deltas made, to record in their place, so that a
+    /// later replay keeps the saturation.
     pub fn apply_all<'w>(
         writes: impl IntoIterator<Item = &'w Self>,
         state: &mut State<'_>,
-    ) -> DbResult<()> {
+    ) -> DbResult<Vec<Self>> {
+        let mut balances = AddressMap::<I512>::default();
         let mut nonces = AddressMap::<i128>::default();
         for write in writes {
             match write {
+                Self::Balance(address, delta) => *balances.entry(*address).or_default() += *delta,
                 Self::Nonce { address, delta, created } => {
                     if !*created || state.account(address)?.is_created() {
                         *nonces.entry(*address).or_default() += delta;
@@ -326,10 +349,18 @@ impl PersistentWrite {
                 write => write.apply(state)?,
             }
         }
-        for (address, delta) in nonces {
-            Self::Nonce { address, delta, created: false }.apply(state)?;
+        let mut applied = Vec::new();
+        for (address, delta) in balances {
+            let previous = state.account(&address)?.balance();
+            Self::Balance(address, delta).apply(state)?;
+            applied.push(Self::balance(address, previous, state.account(&address)?.balance()));
         }
-        Ok(())
+        for (address, delta) in nonces {
+            let previous = state.account(&address)?.nonce();
+            Self::Nonce { address, delta, created: false }.apply(state)?;
+            applied.push(Self::nonce(&state.account(&address)?, previous));
+        }
+        Ok(applied)
     }
 }
 
@@ -1075,7 +1106,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         }
         let state = evm.state_mut();
         let loaded = loaded_slots(state);
-        let warm = warm_accounts(state);
+        let mut warm = warm_accounts(state);
+        let cold_slots = cold_account_warm_slots(state, &self.forks.persistent);
         let transient = take_transient(state);
         let context = self.active_mut();
         context.transient = transient;
@@ -1094,8 +1126,17 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             }
             context.loaded.entry(address).or_default().extend(slots);
         }
-        // The context keeps the warmth it resumed with, which the running state holds in its
-        // prewarm set rather than in loaded accounts, even if this visit did not touch it.
+        // The running state holds the warmth the context resumed with in its prewarm set rather
+        // than in loaded accounts. The context keeps it, and the next context carries what is
+        // still warm of it, even if this visit did not touch it, but not what was cooled since,
+        // such as by an isolated static call.
+        let prewarm = state.prewarm_set();
+        for (address, slots) in &context.warm {
+            if prewarm.is_warm(address) {
+                let slots = slots.iter().filter(|key| prewarm.is_storage_warm(address, key));
+                warm.entry(*address).or_default().extend(slots);
+            }
+        }
         for (address, slots) in &warm {
             context.warm.entry(*address).or_default().extend(slots);
         }
@@ -1133,6 +1174,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             logs,
             prewarm,
             warm,
+            cold_slots,
         }
     }
 
@@ -1154,6 +1196,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             logs,
             mut prewarm,
             warm: source_warm,
+            cold_slots: source_cold_slots,
         } = suspended;
         if carry {
             self.active_mut().inherit(&source_loaded, &source_created, &source);
@@ -1237,6 +1280,24 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
                 && account.exists()
             {
                 account.mark_created();
+            }
+        }
+        // Persistent slots warm while their account is cold, such as the test contract's after an
+        // isolated static call cooled it, stay warm without warming the account, which the
+        // prewarm set cannot express. Only slots this context caches, including the implicit zeros
+        // of wiped storage, are loaded to warm them, so the switch reads nothing from the fork.
+        let state = evm.state_mut();
+        for (address, slots) in source_cold_slots {
+            for key in slots {
+                let cache = &state.overlay_db().cache;
+                let cached = cache.accounts.contains_key(&address)
+                    && cache
+                        .storage
+                        .get(&address)
+                        .is_some_and(|storage| storage.wiped || storage.slots.contains_key(&key));
+                if cached && state.storage_slot(&address, key).is_ok() {
+                    state.set_storage_warm(&address, key, true);
+                }
             }
         }
         F::Types::refresh_switched_transaction(evm, &self.tx_original);
@@ -1367,6 +1428,8 @@ struct Suspended {
     prewarm: PrewarmSet,
     /// Accounts and slots warm in the running transaction.
     warm: AddressMap<HashSet<U256>>,
+    /// Warm slots of persistent accounts the running transaction holds cold.
+    cold_slots: AddressMap<HashSet<U256>>,
 }
 
 /// Clears `evm`'s inspector and returns the EVM without the borrows the inspector held, such as
@@ -1484,7 +1547,7 @@ pub fn merge_pending_changes(
             )?;
         } else {
             let balance = state.account(&address)?.balance();
-            let write = PersistentWrite::Balance(address, U256::ZERO.wrapping_sub(balance));
+            let write = PersistentWrite::balance(address, balance, U256::ZERO);
             write.apply(state)?;
             if let Some(persistent) = persistent.as_deref_mut() {
                 persistent.push(write);
@@ -1515,18 +1578,6 @@ pub fn warm_set(state: &mut State<'_>) -> PrewarmSet {
         prewarm.warm_storage(&address, slots);
     }
     prewarm
-}
-
-/// Cools every account and slot the running transaction in `state` loaded, without journaling.
-/// Pre-warmed ones stay effectively warm.
-pub fn cool_loaded(state: &mut State<'_>) {
-    let loaded = loaded_slots(state);
-    for (address, slots) in loaded {
-        state.set_account_warm(&address, false);
-        for key in slots {
-            state.set_storage_warm(&address, key, false);
-        }
-    }
 }
 
 /// Undoes, without journaling, the warmth that the running transaction in `state` gained since
@@ -1570,6 +1621,33 @@ pub fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
             .filter(|key| state.storage_slot(&address, *key).is_ok_and(|slot| slot.is_warm()))
             .collect();
         warm.insert(address, slots);
+    }
+    warm
+}
+
+/// Returns the warm slots of the `persistent` accounts the running transaction in `state` loaded
+/// but holds cold, such as the test contract after an isolated static call cooled it.
+fn cold_account_warm_slots(
+    state: &mut State<'_>,
+    persistent: &AddressSet,
+) -> AddressMap<HashSet<U256>> {
+    let loaded = state
+        .loaded_accounts()
+        .filter(|(address, _)| persistent.contains(*address))
+        .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    let mut warm = AddressMap::default();
+    for (address, slots) in loaded {
+        if state.account(&address).is_ok_and(|account| account.is_warm()) {
+            continue;
+        }
+        let slots = slots
+            .into_iter()
+            .filter(|key| state.storage_slot(&address, *key).is_ok_and(|slot| slot.is_warm()))
+            .collect::<HashSet<_>>();
+        if !slots.is_empty() {
+            warm.insert(address, slots);
+        }
     }
     warm
 }
@@ -1809,7 +1887,7 @@ fn apply_account(
             (info.balance, info.nonce, info.code_hash)
         });
         if account.balance() != balance {
-            record(PersistentWrite::Balance(address, balance.wrapping_sub(account.balance())));
+            record(PersistentWrite::balance(address, account.balance(), balance));
             account.set_balance(balance);
         }
         if account.nonce() != nonce {

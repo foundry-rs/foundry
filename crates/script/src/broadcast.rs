@@ -33,13 +33,14 @@ use alloy_provider::{
     transport::{RpcError, TransportError},
     utils::Eip1559Estimation,
 };
-use alloy_rpc_types::TransactionRequest;
-use alloy_signer::Signature;
+use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_signer::{Signature, Signer};
 use eyre::{Context, ContextCompat, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{
-    apply_gas_estimate_multiplier, has_batch_support, has_different_gas_calc,
+use foundry_cli::{
+    opts::TempoOpts,
+    utils::{apply_gas_estimate_multiplier, has_batch_support, has_different_gas_calc},
 };
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
@@ -49,7 +50,9 @@ use foundry_common::{
     },
     shell,
     tempo::{
-        TempoSponsor, active_tempo_hardfork, maybe_print_fee_token, resolve_and_set_fee_token,
+        TempoSponsor, active_tempo_hardfork,
+        configurable_account::{ConfigurableAccountSigner, detect_configurable_account},
+        mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token,
     },
 };
 use foundry_config::Config;
@@ -71,6 +74,13 @@ use tempo_alloy::{
 };
 use tempo_primitives::transaction::{Call, TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};
 
+/// How `forge script` tells the owners of a configurable account sender that are not local how to
+/// sign.
+const SCRIPT_OWNERS_HINT: &str = "forge script needs enough owner keys locally to sign as a \
+     configurable account: pass them with --private-keys, --account, --tempo.owner or other wallet \
+     options, or keep them in the Tempo Accounts store. Signing with owners on separate machines \
+     is not supported yet.";
+
 /// Represents how to send a single transaction.
 #[derive(Clone)]
 pub enum SendTransactionKind<'a, N: Network> {
@@ -79,6 +89,7 @@ pub enum SendTransactionKind<'a, N: Network> {
     Browser(N::TransactionRequest, &'a BrowserSigner<N>),
     Signed(N::TxEnvelope),
     AccessKey(N::TransactionRequest, Box<TempoAccountsWallet>),
+    ConfigurableAccount(N::TransactionRequest, &'a ConfigurableAccountSigner),
     PreparedRaw(Bytes, TxHash),
 }
 
@@ -108,6 +119,11 @@ where
         let (tx, tempo_wallet) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
             Self::AccessKey(tx, wallet) => (tx, Some(wallet)),
+            Self::ConfigurableAccount(tx, account) => {
+                // The estimate models the owners' approvals.
+                account.prepare_request::<N>(tx);
+                (tx, None)
+            }
             Self::Signed(_) | Self::PreparedRaw(..) => return Ok(()),
         };
 
@@ -165,7 +181,8 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier, browser).await?;
+            estimate_gas(tx, provider, estimate_multiplier, browser, tempo_sponsor.is_some())
+                .await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -214,6 +231,11 @@ where
                 let envelope = N::TxEnvelope::decode_2718_exact(&payload)?;
                 PreparedTransaction::Raw(payload, envelope.trie_hash())
             }
+            Self::ConfigurableAccount(tx, account) => {
+                let payload = Bytes::from(tx.sign_with_configurable_account(account).await?);
+                let envelope = N::TxEnvelope::decode_2718_exact(&payload)?;
+                PreparedTransaction::Raw(payload, envelope.trie_hash())
+            }
             Self::PreparedRaw(payload, hash) => PreparedTransaction::Raw(payload, hash),
             Self::Unlocked(request) => PreparedTransaction::Unlocked(request),
             Self::Browser(request, signer) => PreparedTransaction::Browser(request, signer),
@@ -233,7 +255,8 @@ where
             Self::Raw(tx, _)
             | Self::Unlocked(tx)
             | Self::Browser(tx, _)
-            | Self::AccessKey(tx, _) => tx.nonce_key(),
+            | Self::AccessKey(tx, _)
+            | Self::ConfigurableAccount(tx, _) => tx.nonce_key(),
             Self::Signed(tx) => {
                 <N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).nonce_key()
             }
@@ -642,6 +665,7 @@ pub enum SendTransactionsKind<N: Network> {
         eth_wallets: AddressHashMap<EthereumWallet>,
         browser: Option<BrowserSigner<N>>,
         access_keys: HashMap<SignerScope, TempoAccountsWallet>,
+        configurable_accounts: HashMap<SignerScope, ConfigurableAccountSigner>,
     },
 }
 
@@ -662,9 +686,12 @@ impl<N: Network> SendTransactionsKind<N> {
                 }
                 Ok(SendTransactionKind::Unlocked(tx))
             }
-            Self::Raw { eth_wallets, browser, access_keys } => {
-                if let Some(wallet) = access_keys.get(&SignerScope::new(chain, *addr)) {
+            Self::Raw { eth_wallets, browser, access_keys, configurable_accounts } => {
+                let scope = SignerScope::new(chain, *addr);
+                if let Some(wallet) = access_keys.get(&scope) {
                     Ok(SendTransactionKind::AccessKey(tx, Box::new(wallet.clone())))
+                } else if let Some(account) = configurable_accounts.get(&scope) {
+                    Ok(SendTransactionKind::ConfigurableAccount(tx, account))
                 } else if let Some(wallet) = eth_wallets.get(addr) {
                     Ok(SendTransactionKind::Raw(tx, wallet))
                 } else if let Some(b) = browser
@@ -793,6 +820,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 eth_wallets: AddressHashMap::default(),
                 browser: None,
                 access_keys: HashMap::default(),
+                configurable_accounts: HashMap::default(),
             }
         } else if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
@@ -826,7 +854,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .chain(self.browser_wallet.as_ref().map(|b| b.address()))
                 .collect();
 
-            let mut missing_addresses = Vec::new();
             let accounts_wallet = self
                 .script_config
                 .evm_opts
@@ -836,6 +863,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .transpose()?
                 .flatten();
 
+            let mut missing_scopes = Vec::new();
             for tx in &remaining_transactions {
                 let scope = *tx;
                 if !signers.contains(&tx.sender) && !access_keys.contains_key(&scope) {
@@ -844,11 +872,104 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     {
                         access_keys.insert(scope, wallet.clone().with_chain_id(tx.chain));
                     } else {
-                        missing_addresses.push(tx.sender);
+                        missing_scopes.push(scope);
+                    }
+                }
+            }
+            missing_scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
+            missing_scopes.dedup();
+
+            // A sender without its own signer may be a configurable account whose owners are
+            // among the wallets: they sign its transactions together. A sender with its own key
+            // may be an upgraded EOA, whose root key no longer signs once it has owners.
+            let wallet_signers = self
+                .script_wallets
+                .into_multi_wallet()
+                .into_signers()?
+                .into_values()
+                .map(Arc::new)
+                .collect::<Vec<_>>();
+            let mut configurable_accounts = HashMap::default();
+            if self.script_config.evm_opts.networks.is_tempo() {
+                let tempo = &self.script_config.tempo;
+                // `--tempo.configurable-account` and `--tempo.config` describe one account: a
+                // sender with its own key that is not that account is only checked against the
+                // chain, and signs with the owners among the wallets and `--tempo.owner`.
+                let own_key_tempo = TempoOpts {
+                    configurable_account: None,
+                    configurable_account_config: None,
+                    ..tempo.clone()
+                };
+                let mut own_key_scopes = remaining_transactions
+                    .iter()
+                    .copied()
+                    .filter(|scope| {
+                        signers.contains(&scope.sender) && !access_keys.contains_key(scope)
+                    })
+                    .collect::<Vec<_>>();
+                own_key_scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
+                own_key_scopes.dedup();
+                let candidates = std::mem::take(&mut missing_scopes)
+                    .into_iter()
+                    .map(|scope| (scope, true))
+                    .chain(own_key_scopes.into_iter().map(|scope| (scope, false)));
+                for (scope, missing) in candidates {
+                    let rpc_url = (0..self.sequence.sequences().len())
+                        .find(|&i| self.sequence.sequences()[i].chain == scope.chain)
+                        .map(|i| self.sequence.rpc_url(i).to_owned());
+                    let account = match rpc_url {
+                        Some(rpc_url)
+                            if tempo.configurable_account.is_none_or(|a| a == scope.sender) =>
+                        {
+                            let provider = ProviderBuilder::<TempoNetwork>::from_config_with_url(
+                                &self.script_config.config,
+                                &rpc_url,
+                            )?
+                            .build()?;
+                            let explicit =
+                                missing || tempo.configurable_account == Some(scope.sender);
+                            // A sender with its own key signs with it unless the chain says it
+                            // is a configurable account, such as an upgraded EOA.
+                            let own_key_is_account = !explicit
+                                && detect_configurable_account(
+                                    &provider,
+                                    scope.sender,
+                                    &signers,
+                                    None,
+                                    false,
+                                    BlockId::latest(),
+                                )
+                                .await?
+                                .is_some();
+                            if explicit || own_key_is_account {
+                                let tempo = if explicit { tempo } else { &own_key_tempo };
+                                tempo
+                                    .configurable_account_signer(
+                                        &provider,
+                                        Some(scope.sender),
+                                        None,
+                                        &wallet_signers,
+                                        SCRIPT_OWNERS_HINT,
+                                    )
+                                    .await?
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    match account {
+                        Some(account) => {
+                            configurable_accounts.insert(scope, account);
+                        }
+                        None if missing => missing_scopes.push(scope),
+                        None => {}
                     }
                 }
             }
 
+            let mut missing_addresses =
+                missing_scopes.iter().map(|scope| scope.sender).collect::<Vec<_>>();
             missing_addresses.sort_unstable();
             missing_addresses.dedup();
 
@@ -862,11 +983,29 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 eyre::bail!(message);
             }
 
-            let signers = self.script_wallets.into_multi_wallet().into_signers()?;
-            let eth_wallets: AddressHashMap<EthereumWallet> =
-                signers.into_iter().map(|(addr, signer)| (addr, signer.into())).collect();
+            // An owner key that a configurable account holds cannot also send on its own.
+            let mut eth_wallets = AddressHashMap::<EthereumWallet>::default();
+            for signer in wallet_signers {
+                let address = signer.address();
+                match Arc::into_inner(signer) {
+                    Some(signer) => {
+                        eth_wallets.insert(address, signer.into());
+                    }
+                    None if required_addresses.contains(&address) => eyre::bail!(
+                        "{address} signs both as a sender and as an owner of a Tempo \
+                         configurable account in this script, which is not supported; broadcast \
+                         them in separate scripts"
+                    ),
+                    None => {}
+                }
+            }
 
-            SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet, access_keys }
+            SendTransactionsKind::Raw {
+                eth_wallets,
+                browser: self.browser_wallet,
+                access_keys,
+                configurable_accounts,
+            }
         };
         if let Some(error) = &self.resume_script_error {
             sh_warn!("{}", resume_script_failure(error))?;
@@ -1729,8 +1868,14 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         // Estimate gas for the batch transaction
-        estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier, false)
-            .await?;
+        estimate_gas(
+            &mut batch_tx,
+            provider.as_ref(),
+            self.args.gas_estimate_multiplier,
+            false,
+            tempo_sponsor.is_some(),
+        )
+        .await?;
 
         sh_println!("Estimated gas: {}", batch_tx.inner.gas.unwrap_or(0))?;
 
@@ -1964,11 +2109,14 @@ async fn wait_for_batch_receipt<N: Network>(
     }
 }
 
+/// Estimates and sets the gas limit of `tx`, which a Tempo fee payer signs afterwards when
+/// `sponsored`.
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
     browser: bool,
+    sponsored: bool,
 ) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -1977,7 +2125,10 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.reset_gas_limit();
 
-    let request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
+    let mut request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
+    if sponsored {
+        mark_sponsored_gas_estimation(provider, &mut request).await;
+    }
     let estimate =
         provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
     tx.set_gas_limit(apply_gas_estimate_multiplier(estimate, Some(estimate_multiplier))?);
@@ -2134,7 +2285,6 @@ mod tests {
     use alloy_primitives::{B256, Bloom, address, hex};
     use alloy_provider::mock::Asserter;
     use alloy_rpc_types::TransactionReceipt;
-    use alloy_signer::Signer;
     use foundry_common::tempo::PATH_USD_ADDRESS;
     use foundry_evm::{backend::Backend, core::evm::EthEvmNetwork, opts::EvmOpts};
 
@@ -2206,8 +2356,12 @@ mod tests {
             SignerScope::new(4217, root_address),
             TempoAccountsWallet::from_secp256k1(root_address, access_key, None).with_chain_id(4217),
         );
-        let send_kind =
-            SendTransactionsKind::<Ethereum>::Raw { eth_wallets, browser: None, access_keys };
+        let send_kind = SendTransactionsKind::<Ethereum>::Raw {
+            eth_wallets,
+            browser: None,
+            access_keys,
+            configurable_accounts: HashMap::default(),
+        };
 
         let tx = TransactionRequest { from: Some(root_address), ..Default::default() };
         let sender = send_kind.for_sender(4217, &root_address, tx).unwrap();
@@ -2234,8 +2388,12 @@ mod tests {
             SignerScope::new(4217, root_address),
             TempoAccountsWallet::from_secp256k1(root_address, access_key, None).with_chain_id(4217),
         );
-        let send_kind =
-            SendTransactionsKind::<Ethereum>::Raw { eth_wallets, browser: None, access_keys };
+        let send_kind = SendTransactionsKind::<Ethereum>::Raw {
+            eth_wallets,
+            browser: None,
+            access_keys,
+            configurable_accounts: HashMap::default(),
+        };
 
         let tx = TransactionRequest { from: Some(root_address), ..Default::default() };
         let sender = send_kind.for_sender(1, &root_address, tx).unwrap();
@@ -2815,7 +2973,7 @@ mod tests {
             asserter.push_success(&alloy_primitives::U64::from(estimate));
             let mut tx = alloy_rpc_types::TransactionRequest::default();
 
-            let result = estimate_gas(&mut tx, &provider, multiplier, false).await;
+            let result = estimate_gas(&mut tx, &provider, multiplier, false, false).await;
 
             assert_eq!(result.is_ok(), expected.is_some());
             assert_eq!(tx.gas, expected);

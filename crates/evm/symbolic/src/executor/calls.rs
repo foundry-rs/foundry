@@ -12,14 +12,30 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
-        let free_write_target = self.free_address_write_target(state, kind);
+        let free_write_targets = self.free_address_write_targets(executor, state, kind)?;
         let pre_call_state = (!state.function_mocks.is_empty()
-            || free_write_target.is_some()
+            || !free_write_targets.is_empty()
             || !state.expected_calls.is_empty()
             || !state.call_mocks.is_empty()
             || (state.is_static && matches!(kind, CallKind::Call)))
         .then(|| state.clone());
         let call_pc = state.pc.saturating_sub(1);
+        // A word the fork decides in place leaves the remaining words to decide.
+        for (write_target, candidates) in &free_write_targets {
+            if self.branch_free_address_write_if_needed(
+                state,
+                worklist,
+                pre_call_state.as_ref().expect("free address writes require pre-call state"),
+                call_pc,
+                write_target,
+                candidates,
+            )? {
+                return Ok(StepOutcome::Forked);
+            }
+        }
+        if state.prank.has_active() {
+            state.resolve_prank_addresses(&mut self.cx);
+        }
 
         let has_value = matches!(kind, CallKind::Call | CallKind::CallCode);
         let in_offset_idx = if has_value { 3 } else { 2 };
@@ -203,18 +219,6 @@ impl SymbolicExecutor {
                 )? {
                     return Ok(StepOutcome::Forked);
                 }
-            }
-            if let Some(write_target) = &free_write_target
-                && self.branch_free_address_write_if_needed(
-                    executor,
-                    state,
-                    worklist,
-                    pre_call_state.as_ref().expect("free address writes require pre-call state"),
-                    call_pc,
-                    write_target,
-                )?
-            {
-                return Ok(StepOutcome::Forked);
             }
             return self.call_concrete_target(
                 executor,
@@ -1093,11 +1097,16 @@ impl SymbolicExecutor {
                 )
             } else if to == SYMBOLIC_VM_COMPAT_ADDRESS {
                 self.handle_symbolic_vm_cheatcode(
+                    executor,
                     state,
                     selector,
                     concrete_in_offset.expect("symbolic vm input offset is concrete"),
                 )
-                .map(CheatcodeOutcome::ContinueData)
+                .inspect(|outcome| {
+                    if let CheatcodeOutcome::ContinueData(ret) = outcome {
+                        state.svm_returns.push(ret.clone());
+                    }
+                })
             } else {
                 Err(SymbolicError::Unsupported("symbolic cheatcode address"))
             };
@@ -1131,6 +1140,28 @@ impl SymbolicExecutor {
                         }
                         None => SymReturnData::from_words(&mut self.cx, Vec::new()),
                     }
+                }
+                CheatcodeOutcome::Choices(choices) => {
+                    let mut choices = choices.into_iter();
+                    let (constraints, return_data) = choices.next().expect("nonempty choices");
+                    // Only `svm.createCalldata` returns choices, and replay answers it on each
+                    // path with that path's own return data.
+                    for (choice_constraints, choice_return_data) in choices {
+                        let mut choice = state.clone();
+                        choice.constraints.extend(choice_constraints);
+                        choice.svm_returns.push(choice_return_data.clone());
+                        complete_cheatcode_call(
+                            &mut self.cx,
+                            &mut choice,
+                            out_offset.clone(),
+                            &out_size,
+                            choice_return_data,
+                        )?;
+                        worklist.push_back(choice);
+                    }
+                    state.constraints.extend(constraints);
+                    state.svm_returns.push(return_data.clone());
+                    return_data
                 }
             };
 

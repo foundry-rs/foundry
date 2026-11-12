@@ -120,14 +120,17 @@ use alloy_sol_types::{SolCall, SolEvent};
 use alloy_trie::{
     AccountExtension, HashBuilder, Nibbles, proof::ProofRetainer, root::state_root_ref_unhashed,
 };
-use anvil_core::eth::{
-    block::{Block, BlockInfo, canonical_block, create_block},
-    transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
+use anvil_core::{
+    eth::{
+        block::{Block, BlockInfo, canonical_block, create_block},
+        transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
+    },
+    types::TempoCreateTokenRequest,
 };
 use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use evm2::{
-    AccountInfo, Version,
+    AccountInfo, PrecompileError, Version,
     ethereum::{
         access_list_counts, intrinsic_and_floor_gas, validate_floor_gas, validate_intrinsic_gas,
     },
@@ -2152,17 +2155,16 @@ impl<N: Network> Backend<N> {
         let is_fork_root =
             self.get_fork().is_some_and(|fork| fork.block_number() == parent.number());
         if is_fork_root || (!self.is_fork() && parent.number() == self.genesis_number()) {
-            let Some(child) = self.get_block(parent.number() + 1) else {
+            let Some((base_fee, excess_blob_gas)) = self.with_block(parent.number() + 1, |child| {
+                (
+                    child.header.base_fee_per_gas().unwrap_or_default(),
+                    child.header.excess_blob_gas().unwrap_or_default(),
+                )
+            }) else {
                 let fees = self.fees.snapshot();
                 return (fees.base_fee, fees.blob_excess_gas_and_price);
             };
-            return (
-                child.header.base_fee_per_gas().unwrap_or_default(),
-                BlobExcessGasAndPrice::new(
-                    child.header.excess_blob_gas().unwrap_or_default(),
-                    update_fraction,
-                ),
-            );
+            return (base_fee, BlobExcessGasAndPrice::new(excess_blob_gas, update_fraction));
         }
         let base_fee = parent.base_fee_per_gas().unwrap_or_default();
         let excess_blob_gas = parent.excess_blob_gas().unwrap_or_default();
@@ -2337,27 +2339,22 @@ impl<N: Network> Backend<N> {
 
     /// Notifies all `new_block_listeners` about the new block
     fn notify_on_new_block(&self, header: Header, hash: B256) {
-        // cleanup closed notification streams first, if the channel is closed we can remove the
-        // sender half for the set
-        self.new_block_listeners.lock().retain(|tx| !tx.is_closed());
-
-        let notification =
-            ChainNotification::Block(NewBlockNotification { hash, header: Arc::new(header) });
-
-        self.new_block_listeners
-            .lock()
-            .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
+        self.notify_listeners(ChainNotification::Block(NewBlockNotification {
+            hash,
+            header: Arc::new(header),
+        }));
     }
 
     /// Notifies all `new_block_listeners` about the logs that were removed from the canonical
     /// chain due to a reorg.
     fn notify_on_removed_logs(&self, logs: Vec<Log>) {
-        // cleanup closed notification streams first, if the channel is closed we can remove the
-        // sender half for the set
-        self.new_block_listeners.lock().retain(|tx| !tx.is_closed());
+        self.notify_listeners(ChainNotification::RemovedLogs(Arc::new(logs)));
+    }
 
-        let notification = ChainNotification::RemovedLogs(Arc::new(logs));
-
+    /// Sends the notification to all `new_block_listeners`.
+    fn notify_listeners(&self, notification: ChainNotification) {
+        // A send to a closed notification stream fails, which also removes its sender half from
+        // the set.
         self.new_block_listeners
             .lock()
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
@@ -2393,6 +2390,28 @@ impl<N: Network> Backend<N> {
         self.blockchain.hash(BlockId::number(number), self.slots_in_an_epoch)
     }
 
+    /// Returns the canonical hash for the given number if that block is stored locally.
+    pub(crate) fn mined_block_hash_by_number(&self, number: u64) -> Option<B256> {
+        let storage = self.blockchain.storage.read();
+        storage.hashes.get(&number).copied().filter(|hash| storage.blocks.contains_key(hash))
+    }
+
+    /// Calls `f` with the locally stored block for the given id, without cloning the block.
+    ///
+    /// `f` runs under the storage read lock, so it must not take another backend lock.
+    pub(crate) fn with_block<T>(
+        &self,
+        id: impl Into<BlockId>,
+        f: impl FnOnce(&Block) -> T,
+    ) -> Option<T> {
+        let storage = self.blockchain.storage.read();
+        let hash = match id.into() {
+            BlockId::Hash(hash) => hash.block_hash,
+            BlockId::Number(number) => storage.hash(number, self.slots_in_an_epoch)?,
+        };
+        storage.blocks.get(&hash).map(f)
+    }
+
     /// Returns the block and its hash for the given id
     pub(crate) fn get_block_with_hash(&self, id: impl Into<BlockId>) -> Option<(Block, B256)> {
         let hash = self.blockchain.hash(id.into(), self.slots_in_an_epoch)?;
@@ -2416,11 +2435,15 @@ impl<N: Network> Backend<N> {
     pub(crate) async fn fee_history_next_fees(&self, highest: u64) -> Option<(u128, u128)> {
         let _mining_guard = self.mining.lock().await;
         let next_number = highest.checked_add(1)?;
-        if let Some(block) = self.get_block(next_number) {
-            Some((
+        let blob_params = self.blob_params();
+        let next_fees = self.with_block(next_number, |block| {
+            (
                 block.header.base_fee_per_gas.unwrap_or_default() as u128,
-                block.header.blob_fee(self.blob_params()).unwrap_or_default(),
-            ))
+                block.header.blob_fee(blob_params).unwrap_or_default(),
+            )
+        });
+        if next_fees.is_some() {
+            next_fees
         } else if highest == self.best_number() {
             Some((self.fees().base_fee() as u128, self.fees().base_fee_per_blob_gas()))
         } else {
@@ -2541,12 +2564,19 @@ impl<N: Network> Backend<N> {
     ) -> Option<Vec<AnyRpcTransaction>> {
         let mut transactions = Vec::with_capacity(block.body.transactions.len());
         let base_fee = block.header.base_fee_per_gas();
+        let block_hash = block.header.hash_slow();
         let storage = self.blockchain.storage.read();
         for hash in block.body.transactions.iter().map(|tx| tx.hash()) {
-            let info = storage.transactions.get(&hash)?.info.clone();
+            let info = &storage.transactions.get(&hash)?.info;
             let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(Some(hash), tx, Some(block), Some(info), base_fee);
+            let tx = transaction_build_with_block_hash(
+                Some(hash),
+                tx,
+                Some((block, block_hash)),
+                Some(info),
+                base_fee,
+            );
             transactions.push(tx);
         }
         Some(transactions)
@@ -2737,11 +2767,17 @@ impl<N: Network> Backend<N> {
         let current = self.best_number();
         let requested = match block_id.map(Into::into).unwrap_or(BlockId::latest()) {
             BlockId::Hash(hash) => {
-                self.block_by_hash(hash.block_hash)
-                    .await?
-                    .ok_or(BlockchainError::BlockNotFound)?
-                    .header
-                    .number
+                let local = self.with_block(hash.block_hash, |block| block.header.number());
+                match local {
+                    Some(number) => number,
+                    None => {
+                        self.block_by_hash(hash.block_hash)
+                            .await?
+                            .ok_or(BlockchainError::BlockNotFound)?
+                            .header
+                            .number
+                    }
+                }
             }
             BlockId::Number(num) => self.convert_block_number_at(Some(num), current),
         };
@@ -2771,13 +2807,13 @@ impl<N: Network> Backend<N> {
         };
         let known = match block_id {
             BlockId::Hash(hash) => {
-                self.get_block_by_hash(hash.block_hash).is_some()
+                self.blockchain.storage.read().blocks.contains_key(&hash.block_hash)
                     || self.get_fork().is_some_and(|fork| {
                         fork.predates_fork(number) || hash.block_hash == fork.block_hash()
                     })
             }
             BlockId::Number(_) => {
-                self.get_block(number).is_some()
+                self.mined_block_hash_by_number(number).is_some()
                     || self.get_fork().is_some_and(|fork| fork.predates_fork_inclusive(number))
             }
         };
@@ -4017,19 +4053,15 @@ impl<N: Network> Backend<N> {
         block_hash: B256,
         index: Index,
     ) -> Option<AnyRpcTransaction> {
-        let (info, block, tx) = {
-            let storage = self.blockchain.storage.read();
-            let block = storage.blocks.get(&block_hash).cloned()?;
-            let index: usize = index.into();
-            let tx = block.body.transactions.get(index)?.clone();
-            let info = storage.transactions.get(&tx.hash())?.info.clone();
-            (info, block, tx)
-        };
+        let storage = self.blockchain.storage.read();
+        let block = storage.blocks.get(&block_hash)?;
+        let tx = block.body.transactions.get(usize::from(index))?.clone();
+        let info = &storage.transactions.get(&tx.hash())?.info;
 
-        Some(transaction_build(
+        Some(transaction_build_with_block_hash(
             Some(info.transaction_hash),
             tx,
-            Some(&block),
+            Some((block, block_hash)),
             Some(info),
             block.header.base_fee_per_gas(),
         ))
@@ -4055,19 +4087,15 @@ impl<N: Network> Backend<N> {
     }
 
     pub fn mined_transaction_by_hash(&self, hash: B256) -> Option<AnyRpcTransaction> {
-        let (info, block) = {
-            let storage = self.blockchain.storage.read();
-            let MinedTransaction { info, block_hash, .. } =
-                storage.transactions.get(&hash)?.clone();
-            let block = storage.blocks.get(&block_hash).cloned()?;
-            (info, block)
-        };
+        let storage = self.blockchain.storage.read();
+        let MinedTransaction { info, block_hash, .. } = storage.transactions.get(&hash)?;
+        let block = storage.blocks.get(block_hash)?;
         let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
-        Some(transaction_build(
+        Some(transaction_build_with_block_hash(
             Some(info.transaction_hash),
             tx,
-            Some(&block),
+            Some((block, *block_hash)),
             Some(info),
             block.header.base_fee_per_gas(),
         ))
@@ -6041,6 +6069,25 @@ where
             .collect()
     }
 
+    /// Calls `f` with the block with the given hash and its receipts, without cloning them.
+    ///
+    /// `f` runs under the storage read lock, so it must not take another backend lock.
+    pub(crate) fn with_block_and_receipts<T>(
+        &self,
+        hash: B256,
+        f: impl FnOnce(&Block, &[&N::ReceiptEnvelope]) -> T,
+    ) -> Option<T> {
+        let storage = self.blockchain.storage.read();
+        let block = storage.blocks.get(&hash)?;
+        let receipts = block
+            .body
+            .transactions
+            .iter()
+            .map(|transaction| storage.transactions.get(&transaction.hash()).map(|tx| &tx.receipt))
+            .collect::<Option<Vec<_>>>()?;
+        Some(f(block, &receipts))
+    }
+
     /// Returns the EIP-7928 block access list stored for a locally mined block hash.
     pub fn block_access_list_by_hash(&self, hash: B256) -> Option<BlockAccessList> {
         self.blockchain.storage.read().block_access_lists.get(&hash).cloned()
@@ -6483,7 +6530,10 @@ where
                 evm_env.cfg_env.disable_base_fee = true;
             }
 
-            let block_number = self.blockchain.storage.read().best_number.saturating_add(1);
+            let (block_number, best_hash) = {
+                let storage = self.blockchain.storage.read();
+                (storage.best_number.saturating_add(1), storage.best_hash)
+            };
 
             // Advance the EVM number independently of the RPC header number. On Arbitrum
             // forks this preserves the L1 number read by NUMBER while the header tracks L2.
@@ -6491,8 +6541,6 @@ where
 
             evm_env.block_env.basefee = current_base_fee;
             evm_env.block_env.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
-
-            let best_hash = self.blockchain.storage.read().best_hash;
 
             let mut input = [0u8; 40];
             input[..32].copy_from_slice(best_hash.as_slice());
@@ -7433,24 +7481,45 @@ where
             None
         };
 
-        if let Some((block_hash, block)) = self
-            .block_by_number(BlockNumber::Number(block_number))
-            .await?
-            .map(|block| (block.header.hash, block))
-        {
+        if let Some((block_hash, block_env)) = self.block_hash_and_env(block_number).await? {
             let read_guard = self.states.upgradable_read();
             if let Some(state_db) = read_guard.get_state(&block_hash) {
-                return Ok(f(Box::new(state_db), self.block_env_from_header(&block.header)));
+                return Ok(f(Box::new(state_db), block_env));
             }
 
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                return Ok(f(Box::new(state), self.block_env_from_header(&block.header)));
+                return Ok(f(Box::new(state), block_env));
             }
         }
 
         warn!(target: "backend", "Not historic state found for block={}", block_number);
         Err(BlockchainError::BlockOutOfRange(self.best_number(), block_number))
+    }
+
+    /// Returns the hash and the block environment of the block with the given number.
+    ///
+    /// Reads the header of a locally stored block directly. Only a block that is not stored
+    /// locally goes through the RPC block lookup.
+    async fn block_hash_and_env(
+        &self,
+        number: u64,
+    ) -> Result<Option<(B256, BlockEnv)>, BlockchainError> {
+        let local = {
+            let storage = self.blockchain.storage.read();
+            storage
+                .hashes
+                .get(&number)
+                .and_then(|hash| Some((*hash, storage.blocks.get(hash)?.header.clone())))
+        };
+        if let Some((hash, header)) = local {
+            return Ok(Some((hash, self.block_env_from_header(&header))));
+        }
+
+        Ok(self
+            .block_by_number(BlockNumber::Number(number))
+            .await?
+            .map(|block| (block.header.hash, self.block_env_from_header(&block.header))))
     }
 
     /// Executes a closure with both state and network context at a specific block.
@@ -7512,19 +7581,15 @@ where
             None
         };
 
-        if let Some((block_hash, block)) = self
-            .block_by_number(BlockNumber::Number(block_number))
-            .await?
-            .map(|block| (block.header.hash, block))
-        {
+        if let Some((block_hash, block_env)) = self.block_hash_and_env(block_number).await? {
             let read_guard = self.states.upgradable_read();
             if let Some(state_db) = read_guard.get_state(&block_hash) {
-                return f(Box::new(state_db), self.block_env_from_header(&block.header), context);
+                return f(Box::new(state_db), block_env, context);
             }
 
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                return f(Box::new(state), self.block_env_from_header(&block.header), context);
+                return f(Box::new(state), block_env, context);
             }
         }
 
@@ -7880,8 +7945,12 @@ where
 
         let mut headers = Vec::new();
         for ancestor in (number.saturating_sub(BLOCKHASH_HISTORY)..number).rev() {
-            let Some(block) = self.get_block(ancestor) else { break };
-            headers.push(alloy_rlp::encode(&block.header).into());
+            let Some(header) =
+                self.with_block(ancestor, |block| alloy_rlp::encode(&block.header).into())
+            else {
+                break;
+            };
+            headers.push(header);
         }
 
         self.with_database_at(Some(BlockRequest::Number(parent)), |state, _| {
@@ -8488,7 +8557,7 @@ where
             BlockId::Hash(hash) => hash.block_hash,
             BlockId::Number(number) => storage.hash(number, self.slots_in_an_epoch)?,
         };
-        let block = storage.blocks.get(&hash)?.clone();
+        let block = storage.blocks.get(&hash)?;
 
         if block.body.transactions.iter().enumerate().any(|(index, transaction)| {
             storage.transactions.get(&transaction.hash()).is_none_or(|transaction| {
@@ -8496,14 +8565,11 @@ where
                     || transaction.info.transaction_index as usize != index
             })
         }) {
+            let hashes = block.body.transactions.iter().map(|tx| tx.hash()).collect::<Vec<_>>();
             drop(storage);
-            return block
-                .body
-                .transactions
+            return hashes
                 .into_iter()
-                .map(|transaction| {
-                    self.mined_transaction_receipt(transaction.hash()).map(|receipt| receipt.inner)
-                })
+                .map(|hash| self.mined_transaction_receipt(hash).map(|receipt| receipt.inner))
                 .collect();
         }
 
@@ -8517,7 +8583,7 @@ where
                 &transaction.info,
                 transaction.receipt.clone(),
                 transaction.block_hash,
-                &block,
+                block,
                 next_log_index,
             );
             receipts.push(receipt.inner);
@@ -8560,7 +8626,7 @@ where
         block: &Block,
         next_log_index: usize,
     ) -> MinedTransactionReceipt<FoundryNetwork> {
-        let transaction = block.body.transactions[info.transaction_index as usize].clone();
+        let transaction = &block.body.transactions[info.transaction_index as usize];
 
         // Cancun specific
         let blob_gas_used = transaction.blob_gas_used();
@@ -8595,14 +8661,14 @@ where
 
         // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
         let mut inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp());
-        if let FoundryTxEnvelope::Celo(tx) = &*transaction {
+        if let FoundryTxEnvelope::Celo(tx) = transaction.as_ref() {
             inner
                 .0
                 .other
                 .insert("feeCurrency".into(), serde_json::to_value(tx.tx().fee_currency).unwrap());
         }
         if self.is_tempo() {
-            let fee_payer = match &*transaction {
+            let fee_payer = match transaction.as_ref() {
                 FoundryTxEnvelope::Tempo(tx) => match tx.tx().recover_fee_payer(info.from) {
                     Ok(fee_payer) => fee_payer,
                     Err(error) => {
@@ -10190,6 +10256,28 @@ impl Backend<FoundryNetwork> {
         .await
     }
 
+    /// Creates a native TIP-20 at the requested address with optional initial minting.
+    pub async fn create_tempo_token(
+        &self,
+        request: TempoCreateTokenRequest,
+    ) -> Result<Address, BlockchainError> {
+        // Read the context under the database guard so a reset cannot replace it in between.
+        let mut db = self.db.write().await;
+        let hardfork = self.hardfork();
+        let env = self.evm_env.read().clone();
+        crate::eth::backend::tempo::with_tempo_storage(&mut **db, &env, hardfork, || {
+            crate::eth::backend::tempo::create_token(&request).map_err(|error| {
+                match error.into_precompile_result() {
+                    Err(PrecompileError::Revert(data)) => {
+                        InvalidTransactionError::Revert(Some(data)).into()
+                    }
+                    Err(error) => BlockchainError::Internal(error.to_string()),
+                    Ok(output) => InvalidTransactionError::Revert(Some(output.into_bytes())).into(),
+                }
+            })
+        })
+    }
+
     /// Runs `f` inside a Tempo storage context initialized from the current state and writes
     /// its changes back (Tempo-only).
     async fn with_tempo_storage<R>(
@@ -10200,8 +10288,13 @@ impl Backend<FoundryNetwork> {
         let mut db = self.db.write().await;
         let hardfork = self.hardfork();
         let env = self.evm_env.read().clone();
-        crate::eth::backend::tempo::with_tempo_storage(&mut **db, &env, hardfork, f)
-            .map_err(tempo_db_err)?
+        crate::eth::backend::tempo::with_tempo_storage(&mut **db, &env, hardfork, || {
+            f().map_err(Into::into)
+        })
+        .map_err(|error| match error {
+            BlockchainError::DatabaseError(error) => error,
+            error => tempo_db_err(error),
+        })
     }
 }
 
@@ -10803,17 +10896,17 @@ where
 fn build_rpc_transaction(
     envelope: AnyTxEnvelope,
     from: Address,
-    block: Option<&Block>,
+    block: Option<(&Block, B256)>,
     info: Option<&TransactionInfo>,
     effective_gas_price: Option<u128>,
 ) -> AnyRpcTransaction {
     let tx = Transaction {
         inner: Recovered::new_unchecked(envelope, from),
-        block_hash: block.map(|block| block.header.hash_slow()),
-        block_number: block.map(|block| block.header.number()),
+        block_hash: block.map(|(_, hash)| hash),
+        block_number: block.map(|(block, _)| block.header.number()),
         transaction_index: info.map(|info| info.transaction_index),
         effective_gas_price,
-        block_timestamp: block.map(|block| block.header.timestamp()),
+        block_timestamp: block.map(|(block, _)| block.header.timestamp()),
     };
     AnyRpcTransaction::from(WithOtherFields::new(tx))
 }
@@ -10826,7 +10919,25 @@ pub fn transaction_build(
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
-    let mined_from = info.as_ref().map(|info| info.from);
+    transaction_build_with_block_hash(
+        tx_hash,
+        eth_transaction,
+        block.map(|block| (block, block.header.hash_slow())),
+        info.as_ref(),
+        base_fee,
+    )
+}
+
+/// Same as [`transaction_build`], but borrows the transaction info and takes the block together
+/// with its known hash.
+pub(crate) fn transaction_build_with_block_hash(
+    tx_hash: Option<B256>,
+    eth_transaction: MaybeImpersonatedTransaction<FoundryTxEnvelope>,
+    block: Option<(&Block, B256)>,
+    info: Option<&TransactionInfo>,
+    base_fee: Option<u64>,
+) -> AnyRpcTransaction {
+    let mined_from = info.map(|info| info.from);
 
     #[cfg(any(feature = "base", feature = "optimism"))]
     if let FoundryTxEnvelope::Deposit(deposit_tx) = eth_transaction.as_ref() {
@@ -10861,7 +10972,7 @@ pub fn transaction_build(
                     envelope,
                     mined_from.unwrap_or(deposit_tx.from),
                     block,
-                    info.as_ref(),
+                    info,
                     None,
                 );
             }
@@ -10902,7 +11013,7 @@ pub fn transaction_build(
                 memo: Default::default(),
             },
         });
-        return build_rpc_transaction(envelope, from, block, info.as_ref(), None);
+        return build_rpc_transaction(envelope, from, block, info, None);
     }
 
     if let FoundryTxEnvelope::Celo(tx) = eth_transaction.as_ref() {
@@ -10920,7 +11031,7 @@ pub fn transaction_build(
         });
         let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
         let effective_gas_price = block.map(|_| eth_transaction.effective_gas_price(base_fee));
-        return build_rpc_transaction(envelope, from, block, info.as_ref(), effective_gas_price);
+        return build_rpc_transaction(envelope, from, block, info, effective_gas_price);
     }
     if let FoundryTxEnvelope::Tempo(tempo_tx) = eth_transaction.as_ref() {
         let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
@@ -10941,7 +11052,7 @@ pub fn transaction_build(
                     inner,
                 });
 
-                return build_rpc_transaction(envelope, from, block, info.as_ref(), None);
+                return build_rpc_transaction(envelope, from, block, info, None);
             }
             Err(_) => {
                 error!(target: "backend", "failed to serialize tempo transaction");
@@ -10974,7 +11085,7 @@ pub fn transaction_build(
         TxEnvelope::Eip7702(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(rehash(s, hash))),
     };
 
-    build_rpc_transaction(envelope, from, block, info.as_ref(), Some(effective_gas_price))
+    build_rpc_transaction(envelope, from, block, info, Some(effective_gas_price))
 }
 
 /// Prove a storage key's existence or nonexistence in the account's storage trie.
@@ -11283,7 +11394,7 @@ mod tests {
     use crate::{
         NodeConfig,
         config::ForkTransactionReplay,
-        eth::backend::db::{BlockchainDb, BlockchainDbMeta},
+        eth::backend::db::{BlockchainDb, BlockchainDbMeta, DatabaseError},
         spawn,
     };
     use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
@@ -12091,5 +12202,20 @@ mod tests {
         assert_eq!(decoder.hardfork(), Some(BaseUpgrade::Beryl.into()));
         assert!(decoder.labels.values().any(|label| label == "B20Factory"));
         assert!(decoder.labels.values().any(|label| label == "ActivationRegistry"));
+    }
+
+    #[tokio::test]
+    async fn tempo_storage_preserves_database_errors() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        let source = Arc::new(eyre::eyre!("Tempo storage callback failed"));
+        let error = api
+            .backend
+            .with_tempo_storage(|| Err::<(), _>(DatabaseError::AnyRequest(Arc::clone(&source))))
+            .await
+            .unwrap_err();
+        let DatabaseError::AnyRequest(error) = error else {
+            panic!("expected the original AnyRequest error");
+        };
+        assert!(Arc::ptr_eq(&source, &error));
     }
 }

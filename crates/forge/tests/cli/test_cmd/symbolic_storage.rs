@@ -432,7 +432,7 @@ contract SymbolicGenericStorage {
 ...
 Ran 2 tests for test/SymbolicGenericStorage.t.sol:SymbolicGenericStorage
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNativeGenericStorage(address) ([METRICS])
-[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmArbitraryStorage(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSvmArbitraryStorage(address) ([METRICS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
@@ -449,7 +449,9 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 // `isAdmin[user] == true`. That candidate does not replay concretely from the
 // default concrete storage value, so Forge must report Incomplete instead of a
 // user-facing counterexample. The same holds when the candidate's concrete
-// replay stops at the `vm.assume` that the symbolic path satisfied.
+// replay stops at the `vm.assume` that the symbolic path satisfied. An entry that
+// `setUp` wrote is known state, so a symbolic key that hits it reads the written
+// value: a bounded burn proves safe and a real burn replays.
 #[forgetest_init]
 fn symbolic_sload_unwritten_mapping_default_layout(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_sload_unwritten_mapping_default_layout");
@@ -461,10 +463,28 @@ interface Vm {
     function assume(bool condition) external pure;
 }
 
+contract Token {
+    mapping(address => uint256) public balanceOf;
+
+    constructor(address holder, uint256 amount) {
+        balanceOf[holder] = amount;
+    }
+
+    function burn(address from, uint256 amount) external {
+        require(balanceOf[from] >= amount);
+        balanceOf[from] -= amount;
+    }
+}
+
 contract SymbolicSLoadUnwrittenMapping {
     Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
 
     mapping(address => bool) isAdmin;
+    Token token;
+
+    function setUp() public {
+        token = new Token(address(this), 100);
+    }
 
     function checkNoUserIsAdmin(address user) public view {
         assert(!isAdmin[user]);
@@ -474,11 +494,23 @@ contract SymbolicSLoadUnwrittenMapping {
         vm.assume(isAdmin[user]);
         assert(false);
     }
+
+    // A read at a symbolic key that hits the entry `setUp` wrote returns the written balance.
+    function checkBurnFromSetUpHolderIsBounded(address from, uint256 amount) public {
+        (bool ok,) = address(token).call(abi.encodeCall(Token.burn, (from, amount)));
+        if (ok && from == address(this)) assert(amount <= 100);
+    }
+
+    function checkSetUpHolderKeepsBalance(address from, uint256 amount) public {
+        (bool ok,) = address(token).call(abi.encodeCall(Token.burn, (from, amount)));
+        ok;
+        assert(token.balanceOf(address(this)) == 100);
+    }
 }
 "#,
     );
 
-    assert_symbolic(cmd.args([
+    assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-contract",
@@ -488,13 +520,14 @@ contract SymbolicSLoadUnwrittenMapping {
     .stdout_eq(str![[r#"
 ...
 Failing tests:
-Encountered 2 failing tests in test/SymbolicSLoadUnwrittenMapping.t.sol:SymbolicSLoadUnwrittenMapping
+Encountered 3 failing tests in test/SymbolicSLoadUnwrittenMapping.t.sol:SymbolicSLoadUnwrittenMapping
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: rejected by `vm.assume`] checkAssumedAdminIsUnreachable(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNoUserIsAdmin(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetUpHolderKeepsBalance(address,uint256) ([METRICS])
 
-Encountered a total of 2 failing tests, 0 tests succeeded
+Encountered a total of 3 failing tests, 1 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --rerun` to retry only the 3 failed tests
 
 "#]]);
 }
