@@ -119,7 +119,8 @@ pub struct EvmArgs {
 
     /// Whether to show `console.log` outputs in realtime during script/test execution.
     ///
-    /// Ignored with `--json` and `--junit`, which keep stdout for the report.
+    /// Ignored when `--json` or `--junit` writes a report to stdout. With `--json-file`, logs
+    /// print live and are not written to the file.
     #[arg(long)]
     #[serde(skip)]
     pub live_logs: bool,
