@@ -19,7 +19,7 @@ use foundry_evm_fuzz::{
 };
 use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::TestError;
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, time::Instant};
 
 /// The outcome of an invariant fuzz test
 #[derive(Debug, Default)]
@@ -59,6 +59,8 @@ pub struct InvariantFuzzTestResult {
     pub interrupted: bool,
     /// Counters for the optional live symbolic worker.
     pub symbolic_live: Option<LiveInvariantStats>,
+    /// When shrinking this campaign's failures must stop, for a timed campaign.
+    pub shrink_deadline: Option<Instant>,
 }
 
 impl InvariantFuzzTestResult {
@@ -104,6 +106,7 @@ impl InvariantFuzzTestResult {
             optimization_best_sequence,
             interrupted: false,
             symbolic_live: None,
+            shrink_deadline: None,
         }
     }
 }

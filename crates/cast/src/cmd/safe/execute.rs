@@ -1,5 +1,5 @@
 use super::{
-    contracts::ISafe,
+    contracts::{ISafe, ISafeLegacy},
     rpc_provider,
     service::{SafeServiceOpts, SafeTransaction},
     transaction::SafeSendOpts,
@@ -112,6 +112,16 @@ fn execution_succeeded(logs: &[Log], safe: Address, safe_tx_hash: B256) -> Resul
             {
                 return Some(false);
             }
+            if let Ok(event) = ISafeLegacy::ExecutionSuccess::decode_log(&log.inner)
+                && event.txHash == safe_tx_hash
+            {
+                return Some(true);
+            }
+            if let Ok(event) = ISafeLegacy::ExecutionFailure::decode_log(&log.inner)
+                && event.txHash == safe_tx_hash
+            {
+                return Some(false);
+            }
             None
         })
         .ok_or_else(|| eyre::eyre!("Safe execution receipt did not emit a matching result event"))
@@ -121,6 +131,7 @@ fn execution_succeeded(logs: &[Log], safe: Address, safe_tx_hash: B256) -> Resul
 mod tests {
     use super::*;
     use alloy_primitives::{LogData, U256};
+    use alloy_sol_types::SolValue;
 
     fn log(safe: Address, data: LogData) -> Log {
         Log { inner: alloy_primitives::Log { address: safe, data }, ..Default::default() }
@@ -145,5 +156,32 @@ mod tests {
 
         assert!(execution_succeeded(&[failure(), success()], safe, hash).unwrap());
         assert!(!execution_succeeded(&[success(), failure()], safe, hash).unwrap());
+    }
+
+    #[test]
+    fn decodes_nonindexed_tx_hash_result_events() {
+        let safe = Address::repeat_byte(1);
+        let hash = B256::repeat_byte(2);
+        // Safe v1.1.1 through v1.3.0 emit result events without indexed fields.
+        let legacy = |topic0| {
+            log(safe, LogData::new_unchecked(vec![topic0], (hash, U256::ZERO).abi_encode().into()))
+        };
+
+        assert!(
+            execution_succeeded(&[legacy(ISafe::ExecutionSuccess::SIGNATURE_HASH)], safe, hash)
+                .unwrap()
+        );
+        assert!(
+            !execution_succeeded(&[legacy(ISafe::ExecutionFailure::SIGNATURE_HASH)], safe, hash)
+                .unwrap()
+        );
+        assert!(
+            execution_succeeded(
+                &[legacy(ISafe::ExecutionSuccess::SIGNATURE_HASH)],
+                safe,
+                B256::ZERO
+            )
+            .is_err()
+        );
     }
 }

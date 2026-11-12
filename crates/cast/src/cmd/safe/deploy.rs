@@ -148,7 +148,7 @@ fn validate_owners(owners: &[Address], threshold: Option<usize>) -> Result<usize
 }
 
 fn default_salt_nonce(chain_id: u64) -> U256 {
-    U256::from_be_slice(keccak256(format!("{PREDETERMINED_SALT_NONCE}{chain_id}")).as_slice())
+    keccak256(format!("{PREDETERMINED_SALT_NONCE}{chain_id}")).into()
 }
 
 pub(super) async fn ensure_contract<P: Provider<Ethereum>>(

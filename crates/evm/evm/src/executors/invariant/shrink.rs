@@ -16,7 +16,7 @@ use foundry_evm_core::{constants::MAGIC_ASSUME, decode::RevertDecoder, evm::Foun
 use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
-use std::{borrow::Cow, cell::Cell, fmt::Write, hash::Hash, ops::Range};
+use std::{borrow::Cow, cell::Cell, fmt::Write, hash::Hash, ops::Range, time::Instant};
 
 const LIVE_SHRINK_SEQUENCE_EDGE_CALLS: usize = 16;
 
@@ -122,16 +122,28 @@ pub struct ShrinkRunStats {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShrinkRun {
     max_attempts: usize,
+    /// When to stop trying candidates, for a run with a time budget.
+    deadline: Option<Instant>,
     stats: ShrinkRunStats,
 }
 
 impl ShrinkRun {
     pub const fn new(max_attempts: usize) -> Self {
-        Self { max_attempts, stats: ShrinkRunStats { attempts: 0, accepted: 0 } }
+        Self { max_attempts, deadline: None, stats: ShrinkRunStats { attempts: 0, accepted: 0 } }
     }
 
-    pub const fn can_try(&self) -> bool {
-        self.stats.attempts < self.max_attempts
+    /// Also stops trying candidates at `deadline`, if set.
+    pub const fn with_deadline(mut self, deadline: Option<Instant>) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
+    pub fn can_try(&self) -> bool {
+        self.stats.attempts < self.max_attempts && !deadline_passed(self.deadline)
+    }
+
+    pub const fn deadline(&self) -> Option<Instant> {
+        self.deadline
     }
 
     pub const fn remaining_attempts(&self) -> usize {
@@ -158,6 +170,24 @@ impl ShrinkRun {
         }
         Some(accepted)
     }
+}
+
+/// Returns whether `deadline` is set and has passed.
+pub fn deadline_passed(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|deadline| Instant::now() >= deadline)
+}
+
+/// Returns `executor`, or with a `deadline` a copy whose executions stop at it, for replaying
+/// shrink candidates that the deadline must not wait for.
+fn candidate_executor<'a, FEN: FoundryEvmNetwork>(
+    executor: &'a Executor<FEN>,
+    early_exit: &EarlyExit,
+    deadline: Option<Instant>,
+) -> Cow<'a, Executor<FEN>> {
+    let Some(deadline) = deadline else { return Cow::Borrowed(executor) };
+    let mut executor = executor.clone();
+    executor.inspector_mut().set_execution_deadline(early_exit.clone(), deadline);
+    Cow::Owned(executor)
 }
 
 /// Shared key set for shrinkers that need to skip duplicate concrete replays.
@@ -491,19 +521,21 @@ where
 
 /// Shared shrink loop driver. Tries to drop each call; `predicate` returns whether the
 /// candidate still triggers the bug.
+#[expect(clippy::too_many_arguments)]
 fn run_shrink_loop<P>(
     config: &InvariantConfig,
     calls: &[BasicTxDetails],
     progress: &ShrinkProgress<'_>,
     accumulate_warp_roll: bool,
     early_exit: &EarlyExit,
+    deadline: Option<Instant>,
     error_policy: ShrinkErrorPolicy,
     mut predicate: P,
 ) -> SequenceShrink
 where
     P: FnMut(&SequenceShrink, usize) -> eyre::Result<bool>,
 {
-    let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
+    let mut run = ShrinkRun::new(config.shrink_run_limit as usize).with_deadline(deadline);
     let initial = SequenceShrink::new(calls.len());
     progress.update(calls, &initial, accumulate_warp_roll);
 
@@ -515,7 +547,13 @@ where
         || progress.inc(),
         |shrinker, first_removed| {
             progress.update(calls, shrinker, accumulate_warp_roll);
-            match predicate(shrinker, first_removed) {
+            let decision = predicate(shrinker, first_removed);
+            // The deadline can cancel a candidate's execution, so a decision made after it is not
+            // trusted: the candidate is discarded and the last confirmed sequence stays.
+            if deadline_passed(deadline) {
+                return None;
+            }
+            match decision {
                 Ok(bug_still_present) => Some(bug_still_present),
                 Err(_) => Some(matches!(error_policy, ShrinkErrorPolicy::KeepRemoved)),
             }
@@ -543,18 +581,25 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     rd: Option<&RevertDecoder>,
     progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
+    deadline: Option<Instant>,
 ) -> eyre::Result<ShrunkSequence> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
 
-    if config.shrink_run_limit == 0 {
-        return Ok(ShrunkSequence { calls: calls.to_vec(), result: None });
-    }
-
     let target_address = invariant_contract.address;
     let calldata: Bytes = target_invariant.selector().into();
+    // With the budget spent, keep the recorded sequence without starting another replay.
+    let unshrunk = || ShrunkSequence { calls: calls.to_vec(), result: None };
+    if config.shrink_run_limit == 0 || deadline_passed(deadline) {
+        return Ok(unshrunk());
+    }
+    let candidates = candidate_executor(executor, early_exit, deadline);
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
-    let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
+    let (_, success) = call_invariant_function(&candidates, target_address, calldata.clone())?;
+    // A deadline that passed during the check may have cancelled it.
+    if deadline_passed(deadline) {
+        return Ok(unshrunk());
+    }
     if !success {
         return Ok(ShrunkSequence { calls: vec![], result: None });
     }
@@ -564,7 +609,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     let mut last_result = None;
     let mut last_result_matches_shrinker = true;
     let mut replay = PrefixReplay::new(
-        executor,
+        &candidates,
         calls,
         CheckSequencePolicy {
             options: CheckSequenceOptions {
@@ -584,6 +629,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
         progress,
         accumulate_warp_roll,
         early_exit,
+        deadline,
         // Preserve legacy invariant-shrink behavior: errors during candidate evaluation
         // do not roll back the removal.
         ShrinkErrorPolicy::KeepRemoved,
@@ -597,9 +643,10 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
                     return Err(err);
                 }
             };
-            // Bug still present iff the invariant predicate did not pass.
+            // Bug still present iff the invariant predicate did not pass. A result after the
+            // deadline may come from a cancelled replay, and `run_shrink_loop` discards it.
             let bug_still_present = !result.success;
-            if bug_still_present {
+            if bug_still_present && !deadline_passed(deadline) {
                 last_result = Some(result);
                 last_result_matches_shrinker = true;
             }
@@ -610,6 +657,8 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
     let result = if last_result_matches_shrinker {
         last_result
+    } else if deadline_passed(deadline) {
+        None
     } else {
         match check_sequence(
             executor.clone(),
@@ -1046,8 +1095,7 @@ pub(super) fn terminal_failure_site<FEN: FoundryEvmNetwork>(
 }
 
 fn selector_from_calldata(calldata: &Bytes) -> Selector {
-    let selector: [u8; 4] = calldata.get(..4).and_then(|s| s.try_into().ok()).unwrap_or_default();
-    Selector::from(selector)
+    calldata.get(..4).map(Selector::from_slice).unwrap_or_default()
 }
 
 fn call_failure_reason<FEN: FoundryEvmNetwork>(
@@ -1086,32 +1134,43 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     targets: &[Address],
     progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
+    deadline: Option<Instant>,
 ) -> eyre::Result<(Vec<BasicTxDetails>, I256)> {
     trace!(target: "forge::test", "Shrinking optimization sequence of {} calls for target value {}.", calls.len(), target_value);
 
     let target_address = invariant_contract.address;
     let calldata: Bytes = target_invariant.selector().into();
 
+    // With the budget spent, keep the recorded witness and score without another replay.
+    if deadline_passed(deadline) {
+        return Ok((calls.to_vec(), target_value));
+    }
+    let candidates = candidate_executor(executor, early_exit, deadline);
+
     // Candidates replay only up to their last kept call: the returned witness drops the delays of
     // removed trailing calls, so its value must not count them.
     // Campaigns score only after a call, so an empty witness must match the target exactly.
-    if check_sequence_value(
-        executor.clone(),
+    let empty_value = check_sequence_value(
+        candidates.clone().into_owned(),
         &[],
         &[],
         target_address,
         calldata.clone(),
         config.fail_on_revert,
         targets,
-    )? == Some(target_value)
-    {
+    );
+    // A deadline that passed during the check may have cancelled it.
+    if deadline_passed(deadline) {
+        return Ok((calls.to_vec(), target_value));
+    }
+    if empty_value? == Some(target_value) {
         return Ok((vec![], target_value));
     }
 
     let replay_failed = Cell::new(false);
     let mut replay_error = None;
     let mut best = target_value;
-    let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
+    let mut run = ShrinkRun::new(config.shrink_run_limit as usize).with_deadline(deadline);
     let initial = SequenceShrink::new(calls.len());
     progress.update(calls, &initial, true);
     let mut sequence = Vec::with_capacity(calls.len());
@@ -1131,15 +1190,20 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
             if sequence.is_empty() {
                 return Some(false);
             }
-            match check_sequence_value(
-                executor.clone(),
+            let value = check_sequence_value(
+                candidates.clone().into_owned(),
                 &calls[..=sequence[sequence.len() - 1]],
                 &sequence,
                 target_address,
                 calldata.clone(),
                 config.fail_on_revert,
                 targets,
-            ) {
+            );
+            // A replay after the deadline may have been cancelled, so it is discarded.
+            if deadline_passed(deadline) {
+                return None;
+            }
+            match value {
                 Ok(Some(value)) if value >= best => {
                     best = value;
                     Some(true)
@@ -1244,6 +1308,7 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
+    deadline: Option<Instant>,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     if calls.is_empty() {
         return Ok(vec![]);
@@ -1251,14 +1316,19 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
     trace!(target: "forge::test", "Shrinking handler sequence of {} calls.", calls.len());
     let accumulate_warp_roll = config.has_delay();
     let mut sequence = Vec::with_capacity(calls.len());
-    let mut replay =
-        PrefixReplay::new(executor, calls, HandlerReplayPolicy { accumulate_warp_roll, rd: None });
+    let candidates = candidate_executor(executor, early_exit, deadline);
+    let mut replay = PrefixReplay::new(
+        &candidates,
+        calls,
+        HandlerReplayPolicy { accumulate_warp_roll, rd: None },
+    );
     let shrinker = run_shrink_loop(
         config,
         calls,
         progress,
         accumulate_warp_roll,
         early_exit,
+        deadline,
         ShrinkErrorPolicy::RestoreRemoved,
         |shrinker, first_removed| {
             sequence.clear();
@@ -1268,20 +1338,26 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
         },
     );
 
+    // Nothing to verify when no call was removed, and no verification starts once the budget is
+    // spent: the original sequence is the fallback.
+    if shrinker.included_count() == calls.len() || deadline_passed(deadline) {
+        return Ok(calls.to_vec());
+    }
     let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
 
-    // Verify shrunk repro; fall back to original on any failure.
+    // Verify shrunk repro; fall back to original on any failure, including a verification that
+    // the deadline cancelled.
     sequence.clear();
     sequence.extend(shrinker.current());
     let verified = handler_sequence_still_triggers_bug(
-        executor.clone(),
+        candidates.as_ref().clone(),
         calls,
         &sequence,
         accumulate_warp_roll,
         expected_fingerprint,
     )
     .unwrap_or(false);
-    if verified { Ok(shrunk) } else { Ok(calls.to_vec()) }
+    if verified && !deadline_passed(deadline) { Ok(shrunk) } else { Ok(calls.to_vec()) }
 }
 
 /// Shrink predicate: anchor asserts on the same path as the originally recorded bug.
@@ -1561,11 +1637,91 @@ mod tests {
             &progress,
             false,
             &early_exit,
+            None,
             ShrinkErrorPolicy::KeepRemoved,
             |_, _| Err(eyre::eyre!("candidate replay failed")),
         );
 
         assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![1]);
+    }
+
+    #[test]
+    fn shrink_loop_stops_at_deadline() {
+        let calls = vec![tx(None, None); 4];
+        let early_exit = EarlyExit::new(false);
+        let config = InvariantConfig::default();
+        let attempts = |deadline| {
+            let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
+            let mut attempts = 0;
+            run_shrink_loop(
+                &config,
+                &calls,
+                &progress,
+                false,
+                &early_exit,
+                deadline,
+                ShrinkErrorPolicy::RestoreRemoved,
+                |_, _| {
+                    attempts += 1;
+                    Ok(false)
+                },
+            );
+            attempts
+        };
+
+        assert!(attempts(None) > 0);
+        // A passed deadline stops shrinking however many attempts `shrink_run_limit` leaves.
+        assert_eq!(attempts(Some(Instant::now())), 0);
+    }
+
+    #[test]
+    fn shrink_loop_discards_candidate_finished_after_deadline() {
+        let config = InvariantConfig::default();
+        let early_exit = EarlyExit::new(false);
+        let calls = vec![tx(None, None); 4];
+        let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
+        let deadline = Instant::now() + std::time::Duration::from_millis(50);
+
+        // Under `KeepRemoved` an error would accept the removal, like a cancelled replay can.
+        let shrinker = run_shrink_loop(
+            &config,
+            &calls,
+            &progress,
+            false,
+            &early_exit,
+            Some(deadline),
+            ShrinkErrorPolicy::KeepRemoved,
+            |_, _| {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                Err(eyre::eyre!("cancelled replay"))
+            },
+        );
+
+        assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn candidate_executor_cancels_execution_at_deadline() {
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default().gas_limit(1 << 24),
+            Default::default(),
+        );
+        let target = Address::repeat_byte(0x11);
+        // JUMPDEST; PUSH1 0; JUMP loops until gas runs out.
+        executor
+            .set_code(target, Bytecode::new_raw(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])))
+            .unwrap();
+        let early_exit = EarlyExit::new(false);
+
+        let candidates = candidate_executor(&executor, &early_exit, Some(Instant::now()));
+        let result = candidates
+            .call_raw(foundry_evm_core::constants::CALLER, target, Bytes::new(), U256::ZERO)
+            .unwrap();
+        assert!(result.execution_cancelled);
+
+        // Without a deadline candidates run on the executor itself, uncancelled.
+        let candidates = candidate_executor(&executor, &early_exit, None);
+        assert!(matches!(candidates, Cow::Borrowed(_)));
     }
 
     #[test]
@@ -1720,6 +1876,7 @@ mod tests {
             &executor,
             &progress,
             &EarlyExit::new(false),
+            None,
         )
         .unwrap();
         assert_eq!(shrunk, calls);

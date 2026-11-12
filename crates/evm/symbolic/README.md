@@ -806,6 +806,11 @@ interface Svm {
     function createString(uint256 length, string calldata name) external returns (string memory);
     function createBytes4(string calldata name) external returns (bytes4);
     function createCalldata(string calldata name) external returns (bytes memory);
+    function createCalldata(string calldata name, bool includeViewAndPureFunctions) external returns (bytes memory);
+    function createCalldata(string calldata filename, string calldata name) external returns (bytes memory);
+    function createCalldata(string calldata filename, string calldata name, bool includeViewAndPureFunctions) external returns (bytes memory);
+    function createCalldata(address target) external returns (bytes memory);
+    function createCalldata(address target, bool includeViewAndPureFunctions) external returns (bytes memory);
     function enableSymbolicStorage(address target) external;
     function setArbitraryStorage(address target) external;
     function snapshotStorage(address target) external returns (uint256);
@@ -818,6 +823,26 @@ Only a call that names the helper address concretely reaches these helpers, and
 passes. Forge itself leaves the address empty, so a symbolic address that may
 denote it sees an ordinary account, and a symbolic call that may reach a helper
 selector there reports incomplete.
+
+`createCalldata` looks up the ABI of a project contract or interface by name, by
+source file and name, or by the deployed code at a concrete address. Like Halmos,
+it forks one path for each calldata shape: empty calldata, a selector outside the
+ABI followed by 1024 arbitrary bytes for `fallback`, and each function with
+symbolic arguments. View and pure functions are left out unless
+`includeViewAndPureFunctions` is true. Dynamic arguments use the same named and
+default lengths as test parameters. The fallback bytes are cut to fit
+`symbolic.max_calldata_bytes`. An unknown or ambiguous name, a function whose
+calldata does not fit, or an ABI type that symbolic calldata does not support
+makes the result incomplete.
+
+Concrete replay answers each helper call with the return data that the solver
+model gives it, in call order. The counterexample records this data as
+`svm_returns` in the JSON result, the replay artifact, and the generated
+regression test. If a replay makes more helper calls than the failing path did,
+Forge does not confirm the counterexample. Replay answers helper calls by
+position and does not check which helper a call names. Symbolic invariant replay
+does not answer helper calls yet, so an invariant counterexample that uses them
+reports incomplete.
 
 Forge also treats several `vm.random*` cheatcodes as symbolic value creators when
 running symbolically. Dynamic byte and string creators use the same dynamic ABI
@@ -946,6 +971,7 @@ Known incomplete, bounded, or approximate surfaces include:
 | Gas-dependent behavior | The engine does not use gas to prove properties, except precompile costs as described under Precompiles. A raw `GAS` / `gasleft()` value is tolerated only as the direct gas operand to a CALL-family opcode and is not used to model gas availability. Explicit or computed CALL-family gas caps report incomplete, including the caps emitted by Solidity `send` and `transfer`. Branches on observed gas may be explored through local solver witnesses, but they never produce counterexamples: arithmetic, call targets/values, calldata/returndata, memory/log offsets or sizes, `expectCall` gas matching, or counterexample models derived from observed gas report incomplete. Non-observable gas metering helpers are accepted as no-ops; observable gas read/snapshot helpers such as `lastCallGas`, `lastFrameGas`, `snapshotGasLastCall`, `snapshotGasLastFrame`, and `stopSnapshotGas` report incomplete and should not be used as symbolic properties. |
 | `SELFDESTRUCT` | Pre-Cancun deletion is modeled. Cancun/EIP-6780 is modeled for concrete beneficiaries: contracts created in the current top-level symbolic transaction are deleted, while existing contracts transfer balance and halt without deleting code or storage. Unresolved symbolic Cancun beneficiaries report incomplete. |
 | Symbolic account/code queries | `BALANCE`, `EXTCODESIZE`, `EXTCODEHASH`, and `EXTCODECOPY` on symbolic addresses are scoped to the engine's known symbolic/overlay/code-cache candidates plus the documented empty-account fallback. They do not prove quantified properties over every possible fork/backend account. |
+| Cheatcode writes through symbolic addresses | `vm.deal` and `vm.store` through an address that the path does not fix also write each account the run knows, such as the test contract, `setUp` deployments, and the cheatcode address, under the condition that the address names it, so they do not add paths. Later balance, storage, code, and nonce reads through that address see the account it names. A call to the address, or another cheatcode that takes it as an argument, such as `vm.prank`, or as an integer equal to it, first forks once per known account the address may name. `vm.etch`, `vm.setNonce`, and `vm.setNonceUnsafe` need concrete code and nonces, so they fork the same way, up to 32 accounts, and `vm.store` forks over known precompiles, where it reverts. Each fork can multiply the path count, so tests that use such an address in several of these ways may need a larger `--symbolic-max-paths`. Accounts the run has not seen yet are not candidates. |
 | Symbolic CALL targets | Concrete targets and symbolic targets constrained to known deployed contracts or precompiles active on the current hardfork are supported. By default, a feasible symbolic target outside the known candidate set reports incomplete. With `symbolic_call_targets = true`, the outside-candidate branch is modeled as an empty-account/no-code successful call, including value transfer for `CALL`; it does not model arbitrary unknown external code or custom/future precompiles. Symbolic cheatcode addresses/selectors still report incomplete. |
 | Symbolic CREATE / CREATE2 inputs | Concrete initcode and common bounded symbolic CREATE2 address expressions are supported. Symbolic runtime sizes and unsupported symbolic initcode shapes report incomplete. |
 | ABI and calldata shape limits | Primitive ABI types, arrays, tuples, structs, bytes, and strings are supported within configured dynamic length and calldata byte limits. Unsupported ABI types, invalid ABI shapes, or calldata exceeding configured budgets report incomplete or config errors. |

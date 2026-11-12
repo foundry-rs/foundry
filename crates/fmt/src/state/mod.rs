@@ -141,6 +141,8 @@ pub(super) struct State<'sess, 'ast> {
     emit_or_revert: bool,
     // Whether inside a variable initialization expression, or not.
     var_init: bool,
+    // Whether assignments belong to a certified inline body or a normalized sizing probe.
+    inline_assignments: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -238,6 +240,7 @@ impl<'sess> State<'sess, '_> {
             return_bin_expr: false,
             emit_or_revert: false,
             var_init: false,
+            inline_assignments: false,
             block_depth: 0,
             call_stack: CallStack::default(),
         }
@@ -582,6 +585,10 @@ impl<'sess> State<'sess, '_> {
 
             for line in snip.lines() {
                 let line = line.trim();
+                // A blank line must not consume or reset the separator owed by the previous line.
+                if line.is_empty() {
+                    continue;
+                }
 
                 if prev_needs_space {
                     size += 1;
@@ -1208,7 +1215,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn has_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
-        self.comments.iter().filter(|c| c.pos() > start_pos && c.pos() < end_pos).any(|_| true)
+        self.has_comment_before_with(end_pos, |c| c.pos() > start_pos)
     }
 
     fn has_breakable_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {

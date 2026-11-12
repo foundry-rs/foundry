@@ -846,7 +846,7 @@ impl Cheatcode for dealCall {
             old_balance
         };
         // The balance survives reverts of the enclosing calls.
-        let write = PersistentWrite::Balance(address, new_balance.wrapping_sub(old_balance));
+        let write = PersistentWrite::balance(address, old_balance, new_balance);
         ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
@@ -1689,7 +1689,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         // A restore can make a different path look like the recorded one, so its identity is
         // unknown.
         if let Some(trace) = &mut ccx.state.failure_trace {
-            trace.snapshot_restored = true;
+            trace.unidentified = true;
         }
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
@@ -1720,7 +1720,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     ) {
         ccx.state.restore_persistent_writes(snapshot_id, replaced, true);
         if let Some(trace) = &mut ccx.state.failure_trace {
-            trace.snapshot_restored = true;
+            trace.unidentified = true;
         }
         ccx.state.env_overrides.restore_snapshot(snapshot_id, true);
         if let Some(fork_block_number) =

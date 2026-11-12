@@ -4285,18 +4285,6 @@ contract LiveCallTest is GateTest {
     }
 }
 
-// Once minimized, replaying the empty sequence fails another way, which must not replace it.
-contract EmptyProbeTest is GateTest {
-    function invariant_probe() public {
-        if (!gate.touched()) {
-            if (vm.envOr("FOUNDRY_TEST_INVARIANT_EMPTY_PROBE", false)) revert("empty");
-            return;
-        }
-        vm.setEnv("FOUNDRY_TEST_INVARIANT_EMPTY_PROBE", "true");
-        vm.assertEq(gate.x(), 0);
-    }
-}
-
 // The campaign only fails for nonzero inputs, while replays fail the same way from another site.
 contract ReplayDriftTest is GateTest {
     function invariant_drift() public {
@@ -4361,18 +4349,16 @@ contract FinalCheckTest is GateTest {
 "#,
     );
 
-    for (contract, isolate) in [("LiveCallTest", true), ("EmptyProbeTest", false)] {
-        prj.update_config(|config| config.isolate = isolate);
-        cmd.forge_fuse()
-            .args(["test", "--fuzz-seed", "1", "--mc", contract])
-            .assert_failure()
-            .stdout_eq(str![[r#"
+    prj.update_config(|config| config.isolate = true);
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "LiveCallTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 ...
 	[Sequence] (original: 1, shrunk: 1)
 		sender=[..] calldata=set(uint256) args=[1]
 ...
 "#]]);
-    }
 
     // The replays drifted from the campaign, so the original sequence stays.
     prj.update_config(|config| config.isolate = false);

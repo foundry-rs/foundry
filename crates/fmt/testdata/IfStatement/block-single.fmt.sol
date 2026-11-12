@@ -164,7 +164,11 @@ contract IfStatement {
             }
         }
 
-        if (condition) if (condition) execute(); /* comment */
+        if (condition) {
+            if (condition) {
+                execute(); /* comment */
+            }
+        }
 
         if (condition) {
             if (condition) {
@@ -193,7 +197,13 @@ contract IfStatement {
             if (condition) { /* comment */ }
         }
 
-        if (condition) if (condition) if (condition) execute(); /* comment */
+        if (condition) {
+            if (condition) {
+                if (condition) {
+                    execute(); /* comment */
+                }
+            }
+        }
 
         if (condition) {
             if (condition) {

@@ -75,6 +75,8 @@ pub struct InvariantWorkerPlan {
 pub struct InvariantCampaignState {
     started_at: Instant,
     timed: bool,
+    /// When shrinking the campaign's failures must stop: `timeout` after the campaign deadline.
+    shrink_deadline: Option<Instant>,
     total_runs: AtomicU32,
     total_txs: AtomicU64,
     total_gas: AtomicU64,
@@ -93,12 +95,14 @@ struct CampaignFailureMetrics {
 impl InvariantCampaignState {
     pub fn new(early_exit: EarlyExit, timeout: Option<u32>) -> Self {
         let started_at = Instant::now();
-        let deadline = timeout
-            .map(|timeout| Duration::from_secs(timeout.into()))
-            .and_then(|timeout| started_at.checked_add(timeout));
+        let timeout = timeout.map(|timeout| Duration::from_secs(timeout.into()));
+        let deadline = timeout.and_then(|timeout| started_at.checked_add(timeout));
         Self {
             started_at,
             timed: timeout.is_some(),
+            shrink_deadline: deadline
+                .zip(timeout)
+                .and_then(|(deadline, timeout)| deadline.checked_add(timeout)),
             total_runs: AtomicU32::new(0),
             total_txs: AtomicU64::new(0),
             total_gas: AtomicU64::new(0),
@@ -137,6 +141,11 @@ impl InvariantCampaignState {
 
     pub const fn is_timed_campaign(&self) -> bool {
         self.timed
+    }
+
+    /// Returns when shrinking the campaign's failures must stop, for a timed campaign.
+    pub const fn shrink_deadline(&self) -> Option<Instant> {
+        self.shrink_deadline
     }
 
     pub fn should_stop(&self) -> bool {
@@ -647,6 +656,16 @@ mod tests {
         assert_eq!(state.throughput_totals(), (2, 50));
         assert_eq!(state.increment_runs(), 1);
         assert_eq!(state.total_runs(), 1);
+    }
+
+    #[test]
+    fn campaign_state_gives_shrinking_one_timeout_after_the_deadline() {
+        let timed = InvariantCampaignState::new(EarlyExit::new(false), Some(30));
+        assert_eq!(timed.shrink_deadline(), Some(timed.started_at + Duration::from_secs(60)));
+        assert_eq!(
+            InvariantCampaignState::new(EarlyExit::new(false), None).shrink_deadline(),
+            None
+        );
     }
 
     #[test]

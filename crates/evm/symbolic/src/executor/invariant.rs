@@ -346,6 +346,10 @@ impl SymbolicExecutor {
         steps: &[SequenceStepTemplate],
         state: &PathState,
     ) -> Result<(Vec<SymbolicInvariantStep>, Vec<SymbolicStorageAssignment>), SymbolicError> {
+        // Invariant replay does not answer `svm.*` calls, so it cannot reproduce such a sequence.
+        if !state.svm_returns.is_empty() {
+            return Err(SymbolicError::Unsupported("symbolic invariant replay of svm values"));
+        }
         let model = self.witness_model(state)?;
         let sequence = steps
             .iter()
