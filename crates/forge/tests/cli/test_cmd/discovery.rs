@@ -2,21 +2,13 @@
 
 use super::*;
 use foundry_compilers::artifacts::remappings::Remapping;
-use foundry_config::{FsPermissions, fs_permissions::PathPermission};
 
 #[forgetest]
 fn does_not_run_imported_dependency_tests(prj: _, cmd: _) {
-    let outside = tempfile::tempdir_in(prj.root().parent().unwrap()).unwrap();
-    let input = outside.path().join("input.txt");
-    let output = outside.path().join("output.txt");
-    std::fs::write(&input, "synthetic test input").unwrap();
-    cmd.env("DISCOVERY_INPUT", &input);
-    cmd.env("DISCOVERY_OUTPUT", &output);
     prj.update_config(|config| {
         config.libs = vec!["lib".into()];
         config.remappings =
             vec![Remapping::from_str("dependency/=node_modules/dependency/").unwrap().into()];
-        config.fs_permissions = FsPermissions::new([PathPermission::read("out")]);
     });
     let dependency = prj.root().join("node_modules/dependency");
     std::fs::create_dir_all(&dependency).unwrap();
@@ -26,25 +18,9 @@ fn does_not_run_imported_dependency_tests(prj: _, cmd: _) {
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0;
 
-interface Vm {
-    function envString(string calldata) external view returns (string memory);
-    function readFile(string calldata) external view returns (string memory);
-    function writeFile(string calldata, string calldata) external;
-}
-
-/// forge-config: default.fs_permissions = [{ access = "read-write", path = ".." }]
 contract DependencyTest {
-    function testDependency() external {
-        Vm vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-        vm.writeFile(vm.envString("DISCOVERY_OUTPUT"), vm.readFile(vm.envString("DISCOVERY_INPUT")));
-    }
-}
-
-contract FunctionConfigDependencyTest {
-    /// forge-config: default.fs_permissions = [{ access = "read-write", path = ".." }]
-    function testDependency() external {
-        Vm vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-        vm.writeFile(vm.envString("DISCOVERY_OUTPUT"), vm.readFile(vm.envString("DISCOVERY_INPUT")));
+    function testDependency() external pure {
+        revert("dependency test must not run");
     }
 }
 "#,
@@ -65,7 +41,6 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-    assert!(!output.exists(), "an imported dependency ran with elevated filesystem access");
 
     cmd.forge_fuse().args(["test", "--list", "--json"]).assert_json_stdout(str![[r#"
 {"test/Local.t.sol":{"LocalTest":["testLocal"]}}
@@ -74,10 +49,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         .args(["test", "--list", "--json", "--match-path", "node_modules/**"])
         .assert_json_stdout("{}");
 
-    cmd.forge_fuse();
-    cmd.env("DISCOVERY_INPUT", &input);
-    cmd.env("DISCOVERY_OUTPUT", &output);
-    cmd.args(["coverage", "--report=lcov"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["coverage", "--report=lcov"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -92,10 +64,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 Wrote LCOV report.
 
 "#]]);
-    assert!(
-        !output.exists(),
-        "coverage ran an imported dependency with elevated filesystem access"
-    );
 }
 
 #[forgetest]

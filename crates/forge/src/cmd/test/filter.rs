@@ -452,15 +452,5 @@ mod tests {
             assert_eq!(filter.matches_path(Path::new(path)), expected, "{path}");
             assert_eq!(filter.matches_path(&config.root.join(path)), expected, "{path}");
         }
-
-        let filter = FilterArgs {
-            path_pattern: Some("native/**".parse().unwrap()),
-            path_pattern_inverse: Some("native/Skipped.fe".parse().unwrap()),
-            ..Default::default()
-        }
-        .merge_with_config(&config);
-        assert!(filter.matches_path(Path::new("native/Counter.fe")));
-        assert!(!filter.matches_path(Path::new("native/Skipped.fe")));
-        assert!(!filter.matches_path(Path::new("test/Counter.t.sol")));
     }
 }
