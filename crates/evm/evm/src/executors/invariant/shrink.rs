@@ -1733,10 +1733,15 @@ mod tests {
         };
         let sleep = std::time::Duration::from_millis(500);
         let noop = call(vec![]);
-        let arm = call(Vm::sleepCall { duration: U256::from(sleep.as_millis()) }.abi_encode());
+        // A call to the cheatcode address itself runs `vm.sleep` before any cancellation poll.
+        let mut pause =
+            call(Vm::sleepCall { duration: U256::from(sleep.as_millis()) }.abi_encode());
+        pause.call_details.target = CHEATCODE_ADDRESS;
+        let arm = call(Vm::sleepCall { duration: U256::ZERO }.abi_encode());
         let boom = call(Vm::assertTrue_1Call { condition: false, err: "boom".into() }.abi_encode());
         let mut calls = vec![noop; 9];
-        calls[4] = arm;
+        calls[4] = pause;
+        calls[5] = arm;
         calls[8] = boom;
         let all = (0..calls.len()).collect::<Vec<_>>();
         let full =
@@ -1747,6 +1752,7 @@ mod tests {
         // later candidate replays the sleep again and crosses the deadline.
         let config = InvariantConfig::default();
         let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
+        let start = Instant::now();
         let shrunk = shrink_handler_sequence(
             &config,
             &calls,
@@ -1754,10 +1760,12 @@ mod tests {
             &executor,
             &progress,
             &EarlyExit::new(false),
-            Some(Instant::now() + 2 * sleep),
+            Some(start + 2 * sleep),
         )
         .unwrap();
         assert_eq!(shrunk, calls[4..]);
+        // A verifying replay after the deadline would sleep again.
+        assert!(start.elapsed() < 2 * sleep + sleep / 2);
     }
 
     #[test]
