@@ -507,11 +507,15 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     &self.script_config.tempo,
                     &remaining_froms,
                 )?;
-                let has_available_signers = has_available_script_signers(
+                let session_scope = script_session_scope(
                     &self.script_config.tempo,
                     &self.args.wallets,
-                    &self.script_wallets,
                     expected_session_sender,
+                    &remaining_transactions,
+                )?;
+                let has_available_signers = has_available_script_signers(
+                    &self.script_wallets,
+                    session_scope,
                     &remaining_transactions,
                 )?;
                 let has_available_signers = configurable_account_signers_available(
@@ -519,6 +523,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     &sequence,
                     &self.script_wallets,
                     &remaining_transactions,
+                    session_scope,
                     has_available_signers,
                 )
                 .await?;
@@ -639,16 +644,31 @@ fn progress_exists(path: &Path) -> bool {
     path.exists() || path.with_extension("previous").exists()
 }
 
-/// Returns whether every scoped signer needed for resume is already available.
+/// Returns the sender and chain that the selected Tempo session signs for, if any. The session is
+/// not resolved when no transaction remains.
 ///
 /// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
-/// session signer lives in the Accounts store instead, so resume needs to treat the session
-/// root account as available only on the chain covered by the session.
-fn has_available_script_signers(
+/// session signer lives in the Accounts store instead, so resume treats the session root account
+/// as available only on the chain covered by the session.
+fn script_session_scope(
     tempo: &TempoOpts,
     wallets: &MultiWalletOpts,
-    script_wallets: &Wallets,
     expected_sender: Option<Address>,
+    remaining: &[SignerScope],
+) -> Result<Option<SignerScope>> {
+    if remaining.is_empty() {
+        return Ok(None);
+    }
+    Ok(tempo
+        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
+        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account())))
+}
+
+/// Returns whether every scoped signer needed for resume is already available: a wallet of the
+/// sender, or the session in `session_scope`.
+fn has_available_script_signers(
+    script_wallets: &Wallets,
+    session_scope: Option<SignerScope>,
     remaining: &[SignerScope],
 ) -> Result<bool> {
     let signers = script_wallets
@@ -658,27 +678,25 @@ fn has_available_script_signers(
         return Ok(true);
     }
 
-    let session_scope = tempo
-        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account()));
-
     Ok(remaining.iter().all(|tx| signers.contains(&tx.sender) || session_scope == Some(*tx)))
 }
 
 /// Returns whether broadcast can sign every remaining transaction without running the script,
 /// given whether the wallets, sessions and access keys cover every sender (`available`).
 ///
-/// On Tempo, a sender that the chain reports as a configurable account signs with its owners,
-/// even when its own key is among the wallets, as the retired root key of an upgraded EOA is. It
-/// is ready only when its owner keys among the wallets, `--tempo.owner` and the Tempo Accounts
-/// store reach its threshold. Resume only publishes the saved transactions, so it runs the script
-/// again only to collect signers, such as keys from `vm.rememberKey`. When detection fails, resume
-/// runs the script as before.
+/// The session in `session_scope` signs for its sender before any owner keys do, as broadcast
+/// selects it first, even for an upgraded account. On Tempo, any other sender that the chain
+/// reports as a configurable account signs with its owners, even when its own key is among the
+/// wallets, as the retired root key of an upgraded EOA is. It is ready only when its owner keys
+/// among the wallets, `--tempo.owner` and the Tempo Accounts store reach its threshold. Resume
+/// only publishes the saved transactions, so it runs the script again only to collect signers,
+/// such as keys from `vm.rememberKey`. When detection fails, resume runs the script as before.
 async fn configurable_account_signers_available<FEN: FoundryEvmNetwork>(
     script_config: &ScriptConfig<FEN>,
     sequence: &ScriptSequenceKind<FEN::Network>,
     script_wallets: &Wallets,
     remaining: &[SignerScope],
+    session_scope: Option<SignerScope>,
     available: bool,
 ) -> Result<bool> {
     let tempo = &script_config.tempo;
@@ -695,6 +713,7 @@ async fn configurable_account_signers_available<FEN: FoundryEvmNetwork>(
     let mut scopes = remaining.to_vec();
     scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
     scopes.dedup();
+    scopes.retain(|scope| session_scope != Some(*scope));
     for scope in scopes {
         let own_key = signers.contains(&scope.sender);
         // As in broadcast, the configurable account options describe the account they name.
@@ -763,16 +782,19 @@ mod tests {
     }
 
     #[test]
-    fn has_available_script_signers_skips_session_resolution_when_remaining_empty() {
-        let has_available = has_available_script_signers(
+    fn script_session_scope_skips_session_resolution_when_remaining_empty() {
+        let scope = script_session_scope(
             &TempoOpts { session: Some(B256::repeat_byte(0x99)), ..Default::default() },
             &MultiWalletOpts::default(),
-            &Wallets::new(Default::default(), None),
             None,
             &[],
         )
         .unwrap();
 
-        assert!(has_available);
+        assert_eq!(scope, None);
+        assert!(
+            has_available_script_signers(&Wallets::new(Default::default(), None), scope, &[])
+                .unwrap()
+        );
     }
 }
