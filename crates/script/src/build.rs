@@ -513,11 +513,13 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     &self.script_wallets,
                     expected_session_sender,
                     &remaining_transactions,
-                )? || only_configurable_accounts_missing(
+                )?;
+                let has_available_signers = configurable_account_signers_available(
                     &self.script_config,
                     &sequence,
                     &self.script_wallets,
                     &remaining_transactions,
+                    has_available_signers,
                 )
                 .await?;
 
@@ -663,36 +665,43 @@ fn has_available_script_signers(
     Ok(remaining.iter().all(|tx| signers.contains(&tx.sender) || session_scope == Some(*tx)))
 }
 
-/// Returns whether every remaining sender without its own signer is a Tempo configurable account
-/// whose owner keys among the wallets, `--tempo.owner` and the Tempo Accounts store reach its
-/// threshold, so that broadcast signs for it.
+/// Returns whether broadcast can sign every remaining transaction without running the script,
+/// given whether the wallets, sessions and access keys cover every sender (`available`).
 ///
-/// Resume only publishes the saved transactions, so it runs the script again only to collect
-/// signers that the wallet options do not provide. A configurable account has no key of its own
-/// and needs no run once its owners are available. When detection fails, or the script may still
-/// provide owner keys, such as with `vm.rememberKey`, resume runs the script as before.
-async fn only_configurable_accounts_missing<FEN: FoundryEvmNetwork>(
+/// On Tempo, a sender that the chain reports as a configurable account signs with its owners,
+/// even when its own key is among the wallets, as the retired root key of an upgraded EOA is. It
+/// is ready only when its owner keys among the wallets, `--tempo.owner` and the Tempo Accounts
+/// store reach its threshold. Resume only publishes the saved transactions, so it runs the script
+/// again only to collect signers, such as keys from `vm.rememberKey`. When detection fails, resume
+/// runs the script as before.
+async fn configurable_account_signers_available<FEN: FoundryEvmNetwork>(
     script_config: &ScriptConfig<FEN>,
     sequence: &ScriptSequenceKind<FEN::Network>,
     script_wallets: &Wallets,
     remaining: &[SignerScope],
+    available: bool,
 ) -> Result<bool> {
     let tempo = &script_config.tempo;
-    if !script_config.evm_opts.networks.is_tempo() || tempo.eoa {
-        return Ok(false);
+    if !script_config.evm_opts.networks.is_tempo() || tempo.eoa || remaining.is_empty() {
+        return Ok(available);
     }
     let signers = script_wallets
         .signers()
         .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
     let config = tempo.configurable_account_config.as_deref().map(parse_config).transpose()?;
-    let mut missing = remaining.iter().filter(|scope| !signers.contains(&scope.sender)).peekable();
-    if missing.peek().is_none() {
-        return Ok(false);
-    }
     // Broadcast also signs with the `--tempo.owner` keys.
     let Ok(owners) = tempo.owner_addresses().await else { return Ok(false) };
     let keys = signers.iter().chain(&owners).copied().collect::<Vec<_>>();
-    for scope in missing {
+    let mut scopes = remaining.to_vec();
+    scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
+    scopes.dedup();
+    for scope in scopes {
+        let own_key = signers.contains(&scope.sender);
+        // As in broadcast, the configurable account options describe the account they name.
+        let explicit = !own_key || tempo.configurable_account == Some(scope.sender);
+        if !own_key && tempo.configurable_account.is_some_and(|account| account != scope.sender) {
+            return Ok(false);
+        }
         // The endpoint broadcast uses, which honours `--rpc-url` on a single-chain resume.
         let Some(rpc_url) = (0..sequence.sequences().len())
             .find(|&i| sequence.sequences()[i].chain == scope.chain)
@@ -700,9 +709,6 @@ async fn only_configurable_accounts_missing<FEN: FoundryEvmNetwork>(
         else {
             return Ok(false);
         };
-        if tempo.configurable_account.is_some_and(|account| account != scope.sender) {
-            return Ok(false);
-        }
         let provider =
             ProviderBuilder::<TempoNetwork>::from_config_with_url(&script_config.config, rpc_url)?
                 .build()?;
@@ -710,19 +716,25 @@ async fn only_configurable_accounts_missing<FEN: FoundryEvmNetwork>(
             &provider,
             scope.sender,
             &keys,
-            config.clone(),
+            if explicit { config.clone() } else { None },
             false,
             BlockId::latest(),
         )
         .await;
-        let Ok(Some(config)) = detected else { return Ok(false) };
-        let keys = keys
-            .iter()
-            .copied()
-            .chain(stored_owner_keys(scope.chain, &config).iter().map(|key| key.address()))
-            .collect::<Vec<_>>();
-        if !reaches_threshold(&config, &keys) {
-            return Ok(false);
+        match detected {
+            Ok(Some(config)) => {
+                let keys = keys
+                    .iter()
+                    .copied()
+                    .chain(stored_owner_keys(scope.chain, &config).iter().map(|key| key.address()))
+                    .collect::<Vec<_>>();
+                if !reaches_threshold(&config, &keys) {
+                    return Ok(false);
+                }
+            }
+            // Not a configurable account: its own key, a session or an access key signs.
+            Ok(None) if own_key || available => {}
+            _ => return Ok(false),
         }
     }
     Ok(true)

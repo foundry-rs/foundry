@@ -10539,4 +10539,35 @@ contract UpgradeScript is Script {{
         };
         assert!(signed.signature().as_configurable_account().is_some());
     }
+
+    // `--resume` with only the retired root key loaded runs the script again to collect the
+    // owner key it remembers.
+    let resume_script = prj.add_script(
+        "UpgradedResume.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract UpgradedResumeScript is Script {
+    function run() external {
+        vm.rememberKey(vm.envUint("OWNER_KEY"));
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let nonce = provider.get_transaction_count(root.address()).await.unwrap();
+    for resume in [false, true] {
+        cmd.forge_fuse().arg("script").arg(&resume_script).args(["--rpc-url", &rpc]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+        cmd.args(["--sender", &root.address().to_string(), "--private-keys", &root_key]);
+        if resume {
+            cmd.arg("--resume");
+        }
+        cmd.env("OWNER_KEY", &keys[0]);
+        cmd.assert_success();
+    }
+    assert_eq!(provider.get_transaction_count(root.address()).await.unwrap(), nonce + 1);
 }
