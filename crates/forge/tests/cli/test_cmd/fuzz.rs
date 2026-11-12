@@ -6919,6 +6919,7 @@ contract UnidentifiedTest is Test {
 "#,
     );
 
+    // One worker, so only the campaign's first run sees no markers.
     cmd.args(["test", "-j1", "--mc", "UnidentifiedTest", "-q"]).assert_failure();
     // Only the campaign wrote. Windows runners may not have bash.
     let mut logs = vec!["fuzz-log.txt"];

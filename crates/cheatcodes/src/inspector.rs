@@ -3833,7 +3833,7 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
 }
 
 /// Returns whether `call` writes to files or environment variables, runs a command, sends an
-/// arbitrary RPC request, creates or rolls a fork, which can fetch a newer block than the
+/// arbitrary RPC request, creates a fork at the latest block, which can be newer than the
 /// campaign's, prompts for input, or reads the clock, which skipped sleeps would make disagree
 /// with the campaign's.
 const fn has_host_effects(call: &Vm::VmCalls) -> bool {
@@ -3842,11 +3842,7 @@ const fn has_host_effects(call: &Vm::VmCalls) -> bool {
         Vm::VmCalls::copyFile(_)
             | Vm::VmCalls::createDir(_)
             | Vm::VmCalls::createFork_0(_)
-            | Vm::VmCalls::createFork_1(_)
-            | Vm::VmCalls::createFork_2(_)
             | Vm::VmCalls::createSelectFork_0(_)
-            | Vm::VmCalls::createSelectFork_1(_)
-            | Vm::VmCalls::createSelectFork_2(_)
             | Vm::VmCalls::dumpState(_)
             | Vm::VmCalls::eth_getLogs(_)
             | Vm::VmCalls::eth_getProof(_)
@@ -3862,10 +3858,6 @@ const fn has_host_effects(call: &Vm::VmCalls) -> bool {
             | Vm::VmCalls::promptUint(_)
             | Vm::VmCalls::removeDir(_)
             | Vm::VmCalls::removeFile(_)
-            | Vm::VmCalls::rollFork_0(_)
-            | Vm::VmCalls::rollFork_1(_)
-            | Vm::VmCalls::rollFork_2(_)
-            | Vm::VmCalls::rollFork_3(_)
             | Vm::VmCalls::rpcJson_0(_)
             | Vm::VmCalls::rpcJson_1(_)
             | Vm::VmCalls::rpc_0(_)
