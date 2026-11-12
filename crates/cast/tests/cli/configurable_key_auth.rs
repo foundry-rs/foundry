@@ -121,6 +121,32 @@ async fn tempo_t14_configurable_account_authorizes_access_keys(cmd: _) {
         .assert_success();
     assert!(is_provisioned(&mut cmd, &rpc, account, lane_key.address()));
 
+    // Expiring nonce mode overrides the lane: its nonce is the discriminator, 0 by default, not
+    // the lane's counter, which is now 1.
+    let expiring_key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x36)).unwrap();
+    let receipt = cmd
+        .cast_fuse()
+        .args(["keychain", "authorize", &expiring_key.address().to_string()])
+        .args(&send_args)
+        .args(["--tempo.owner", &second_owner, "--tempo.lane", "grants"])
+        .args(["--tempo.lanes-file", lanes_file.to_str().unwrap(), "--tempo.expires", "60"])
+        .arg("--json")
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt = parse_json::<serde_json::Value>(receipt.trim()).unwrap();
+    let hash = receipt["transactionHash"].as_str().unwrap().to_owned();
+    let sent = cmd
+        .cast_fuse()
+        .args(["tx", &hash, "--rpc-url", &rpc, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let sent = parse_json::<serde_json::Value>(sent.trim()).unwrap();
+    assert_eq!(sent["data"]["nonce"], "0x0", "{sent}");
+    assert_eq!(sent["data"]["nonceKey"], format!("{:#x}", U256::MAX), "{sent}");
+    assert!(is_provisioned(&mut cmd, &rpc, account, expiring_key.address()));
+
     // A selected access key is rejected even when the owners reach the threshold without it.
     let first_owner = format!("private-key://{first_key}");
     let stderr = cmd

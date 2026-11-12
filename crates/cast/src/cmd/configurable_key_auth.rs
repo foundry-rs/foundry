@@ -160,8 +160,11 @@ pub(crate) async fn send_keychain_tx_as_configurable_account(
     let print_expires_at = tx.tempo.resolve_expires();
     let tempo_sponsor = tx.tempo.sponsor_config().await?;
     let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
-    // The builder fills the protocol nonce; a lane or other nonce key has its own counter.
+    // The builder fills the protocol nonce; a lane or other nonce key has its own counter. In
+    // expiring nonce mode the builder switches to the expiring key, whose nonce is the
+    // discriminator and defaults to 0.
     if tx.nonce.is_none()
+        && !(tx.tempo.expiring_nonce || tx.tempo.expires.is_some())
         && let Some(nonce_key) = tx.tempo.nonce_key
         && !nonce_key.is_zero()
         && nonce_key != TEMPO_EXPIRING_NONCE_KEY
