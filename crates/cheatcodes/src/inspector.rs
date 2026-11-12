@@ -2975,7 +2975,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     #[cold]
     fn meter_gas_check(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
-        if interp.result().is_err() {
+        // The caller discards the gas and refund of a halting frame, so whichever other hook steps
+        // the halting instruction, its gas stays as the protocol leaves it.
+        if interp.result().is_err_and(|stop| !stop.is_halt()) {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
