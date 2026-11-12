@@ -1,6 +1,7 @@
-use super::contracts::ISafe;
+use super::contracts::{ISafe, SafeTx};
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_sol_types::{SolStruct, eip712_domain};
 use clap::Args;
 use eyre::{Context, Result, ensure};
 use foundry_common::sh_status;
@@ -87,29 +88,56 @@ impl SafeTransaction {
         U256::from_str(value).wrap_err_with(|| format!("invalid {field} in transaction"))
     }
 
-    pub(super) async fn calculate_hash<P>(&self, provider: &P) -> Result<B256>
+    /// Computes the chain-bound Safe v1.3.0+ hash locally and checks that the contract agrees.
+    pub(super) async fn calculate_hash<P>(&self, provider: &P, chain_id: u64) -> Result<B256>
     where
         P: alloy_provider::Provider<Ethereum>,
     {
-        ISafe::new(self.safe, provider)
+        let transaction = SafeTx {
+            to: self.to,
+            value: Self::number(&self.value, "value")?,
+            data: self.data.clone(),
+            operation: self.operation,
+            safeTxGas: Self::number(&self.safe_tx_gas, "safeTxGas")?,
+            baseGas: Self::number(&self.base_gas, "baseGas")?,
+            gasPrice: Self::number(&self.gas_price, "gasPrice")?,
+            gasToken: self.gas_token,
+            refundReceiver: self.refund_receiver,
+            nonce: Self::number(&self.nonce, "nonce")?,
+        };
+        let calculated = transaction.eip712_signing_hash(&eip712_domain! {
+            chain_id: chain_id,
+            verifying_contract: self.safe,
+        });
+        let remote = ISafe::new(self.safe, provider)
             .getTransactionHash(
-                self.to,
-                Self::number(&self.value, "value")?,
-                self.data.clone(),
-                self.operation,
-                Self::number(&self.safe_tx_gas, "safeTxGas")?,
-                Self::number(&self.base_gas, "baseGas")?,
-                Self::number(&self.gas_price, "gasPrice")?,
-                self.gas_token,
-                self.refund_receiver,
-                Self::number(&self.nonce, "nonce")?,
+                transaction.to,
+                transaction.value,
+                transaction.data,
+                transaction.operation,
+                transaction.safeTxGas,
+                transaction.baseGas,
+                transaction.gasPrice,
+                transaction.gasToken,
+                transaction.refundReceiver,
+                transaction.nonce,
             )
             .call()
             .await
-            .wrap_err("failed to calculate Safe transaction hash")
+            .wrap_err("failed to calculate Safe transaction hash")?;
+        ensure!(
+            remote == calculated,
+            "Safe transaction hash mismatch: contract returned {remote}, locally calculated {calculated}"
+        );
+        Ok(calculated)
     }
 
-    pub(super) async fn verify_hash<P>(&self, expected_safe: Address, provider: &P) -> Result<()>
+    pub(super) async fn verify_hash<P>(
+        &self,
+        expected_safe: Address,
+        provider: &P,
+        chain_id: u64,
+    ) -> Result<()>
     where
         P: alloy_provider::Provider<Ethereum>,
     {
@@ -119,7 +147,7 @@ impl SafeTransaction {
             self.safe
         );
         ensure!(self.operation <= 1, "invalid Safe operation: {}", self.operation);
-        let calculated = self.calculate_hash(provider).await?;
+        let calculated = self.calculate_hash(provider, chain_id).await?;
         ensure!(
             calculated == self.safe_tx_hash,
             "Safe transaction hash mismatch: service/file returned {}, calculated {calculated}",

@@ -55,7 +55,7 @@ impl ExecuteArgs {
                 .unwrap_or_default()
         );
 
-        transaction.verify_hash(safe, &provider).await?;
+        transaction.verify_hash(safe, &provider, chain_id).await?;
         let transaction_nonce = SafeTransaction::number(&transaction.nonce, "nonce")?;
         let current_nonce = ISafe::new(safe, &provider)
             .nonce()

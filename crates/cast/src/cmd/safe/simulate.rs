@@ -43,7 +43,7 @@ impl SimulateArgs {
         let Self { safe, safe_tx_hash, from, accessor, service, rpc } = self;
         let (provider, chain_id) = rpc_provider(&rpc).await?;
         let transaction = service.get_transaction(chain_id, "v2", safe_tx_hash).await?;
-        transaction.verify_hash(safe, &provider).await?;
+        transaction.verify_hash(safe, &provider, chain_id).await?;
         transaction.show_transaction_summary()?;
         ensure!(
             SafeTransaction::number(&transaction.gas_price, "gasPrice")?.is_zero(),

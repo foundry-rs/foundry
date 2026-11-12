@@ -1,7 +1,7 @@
 use alloy_network::Ethereum;
 use alloy_provider::Provider;
 use clap::{Parser, ValueEnum};
-use eyre::Result;
+use eyre::{Result, ensure};
 use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 
@@ -79,7 +79,12 @@ impl SafeSubcommand {
 
 /// Builds the read-only provider for `rpc` and returns it together with its chain ID.
 async fn rpc_provider(rpc: &RpcOpts) -> Result<(RetryProvider<Ethereum>, u64)> {
-    let provider = ProviderBuilder::<Ethereum>::from_config(&rpc.load_config()?)?.build()?;
+    let config = rpc.load_config()?;
+    let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
     let chain_id = provider.get_chain_id().await?;
+    ensure!(
+        config.chain.is_none_or(|chain| chain.id() == chain_id),
+        "Configured chain does not match the RPC chain"
+    );
     Ok((provider, chain_id))
 }

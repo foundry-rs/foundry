@@ -133,7 +133,7 @@ impl ProposeArgs {
             is_executed: false,
             transaction_hash: None,
         };
-        transaction.safe_tx_hash = transaction.calculate_hash(&provider).await?;
+        transaction.safe_tx_hash = transaction.calculate_hash(&provider, chain_id).await?;
         transaction.show_transaction_summary()?;
         let signer = wallet.signer().await?;
         let signature = sign_safe_hash(&signer, transaction.safe_tx_hash).await?;
@@ -171,7 +171,7 @@ impl SignArgs {
         let Self { safe, safe_tx_hash, service, rpc, wallet } = self;
         let (provider, chain_id) = rpc_provider(&rpc).await?;
         let transaction = service.get_transaction(chain_id, "v1", safe_tx_hash).await?;
-        transaction.verify_hash(safe, &provider).await?;
+        transaction.verify_hash(safe, &provider, chain_id).await?;
         transaction.show_transaction_summary()?;
         let signature = sign_safe_hash(&wallet.signer().await?, safe_tx_hash).await?;
         let url = service.endpoint(
