@@ -208,15 +208,12 @@ impl SparsedTraceArena {
                 ignored: &HashMap<(usize, usize), (usize, usize)>,
                 cur_ignore_end: &mut Option<(usize, usize)>,
             ) {
-                // Prepend an additional None item to the ordering to handle the beginning of the
-                // trace.
-                let items = std::iter::once(None)
-                    .chain(nodes[node_idx].ordering.clone().into_iter().map(Some))
-                    .enumerate();
-
                 let mut internal_calls = Vec::new();
                 let mut items_to_remove = BTreeSet::new();
-                for (item_idx, item) in items {
+                // Item 0 is an additional None item before the ordering to handle the beginning
+                // of the trace. The ordering of this node only changes after the loop.
+                for item_idx in 0..=nodes[node_idx].ordering.len() {
+                    let item = item_idx.checked_sub(1).map(|idx| nodes[node_idx].ordering[idx]);
                     if let Some(end_node) = ignored.get(&(node_idx, item_idx)) {
                         *cur_ignore_end = Some(*end_node);
                     }
@@ -543,7 +540,7 @@ fn decode_channel_state(value: U256) -> (U256, U256, u32) {
 }
 
 fn format_storage_word(value: U256) -> String {
-    if value < U256::from(1_000_000u64) { value.to_string() } else { format!("0x{value:x}") }
+    if value < U256::from(1_000_000u64) { value.to_string() } else { format!("{value:#x}") }
 }
 
 const fn convert_color_choice(choice: shell::ColorChoice) -> ColorChoice {

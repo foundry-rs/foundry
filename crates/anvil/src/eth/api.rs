@@ -36,7 +36,7 @@ use crate::{
         sign::Signer,
     },
     filter::{EthFilter, Filters, LogsFilter},
-    mem::transaction_build,
+    mem::{transaction_build, transaction_build_with_block_hash},
 };
 use alloy_consensus::{
     Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, Typed2718,
@@ -279,8 +279,8 @@ impl<N: Network> EthApi<N> {
         let cache = self.fee_history_cache.lock();
         let latest_tip = self
             .backend
-            .get_block_with_hash(block_number)
-            .and_then(|(_, hash)| cache.get(&block_number).filter(|item| item.block_hash == hash))
+            .mined_block_hash_by_number(block_number)
+            .and_then(|hash| cache.get(&block_number).filter(|item| item.block_hash == hash))
             .and_then(|item| item.rewards.iter().copied().min());
 
         latest_tip
@@ -288,9 +288,7 @@ impl<N: Network> EthApi<N> {
                 cache
                     .iter()
                     .filter(|(number, item)| {
-                        self.backend
-                            .get_block_with_hash(**number)
-                            .is_some_and(|(_, hash)| item.block_hash == hash)
+                        self.backend.mined_block_hash_by_number(**number) == Some(item.block_hash)
                     })
                     .flat_map(|(_, item)| item.rewards.iter().copied())
                     .min()
@@ -1518,11 +1516,10 @@ impl<N: Network> EthApi<N> {
                 let item = match cached_item {
                     Some(item) if item.block_hash == hash => item,
                     _ => {
-                        let block = self
+                        let header = self
                             .backend
-                            .get_block_by_hash(hash)
+                            .with_block(hash, |block| block.header.clone())
                             .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
-                        let header = block.header;
                         let (item, block_number) = create_fee_history_cache_item(
                             hash,
                             &header,
@@ -5285,17 +5282,18 @@ impl EthApi<FoundryNetwork> {
 
         let mut block_transactions = Vec::with_capacity(block.body.transactions.len());
         let base_fee = self.backend.base_fee();
+        let block_hash = partial_block.header.hash;
 
-        for info in transactions {
+        for info in &transactions {
             let Some(tx) = block.body.transactions.get(info.transaction_index as usize).cloned()
             else {
                 return Ok(None);
             };
 
-            let tx = transaction_build(
+            let tx = transaction_build_with_block_hash(
                 Some(info.transaction_hash),
                 tx,
-                Some(&block),
+                Some((&block, block_hash)),
                 Some(info),
                 Some(base_fee),
             );

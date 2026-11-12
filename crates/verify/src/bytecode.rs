@@ -29,8 +29,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     FoundryTransactionBuilder, SYSTEM_TRANSACTION_TYPE, is_known_system_sender,
-    provider::{ProviderBuilder, RetryProvider},
-    shell,
+    provider::RetryProvider, shell,
 };
 use foundry_compilers::info::ContractInfo;
 use foundry_config::{Chain, Config, figment, impl_figment_convert};
@@ -330,7 +329,7 @@ impl VerifyBytecodeArgs {
         // `AnyNetwork` rather than `FEN::Network`: chains such as Arbitrum and Celo put
         // transaction types the strict Ethereum envelope cannot decode into every block, which
         // would fail the full block fetches below for the whole chain. Execution still uses `FEN`.
-        let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?.build()?;
+        let provider = utils::get_provider(&config)?;
 
         // If chain is not set, we try to get it from the RPC.
         // If RPC is not set, the default chain is used.
@@ -569,11 +568,8 @@ impl VerifyBytecodeArgs {
             tx.set_gas_price(evm_env.block.basefee.saturating_to());
 
             // Seed deployer account with funds
-            let account_info = AccountInfo {
-                balance: U256::from(100 * 10_u128.pow(18)),
-                nonce: 0,
-                ..Default::default()
-            };
+            let account_info =
+                AccountInfo::default().with_balance(U256::from(100 * 10_u128.pow(18)));
             executor.backend_mut().insert_account_info(deployer, account_info);
 
             let fork_address = if maybe_predeploy || deploy_block == 0 {
@@ -686,8 +682,7 @@ impl VerifyBytecodeArgs {
             trace!("mismatch of constructor args with etherscan");
             if maybe_creation_code.len() >= local_bytecode.len() {
                 // If local bytecode is longer than on-chain one, this is probably not a match.
-                constructor_args =
-                    Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
+                constructor_args = maybe_creation_code.slice(local_bytecode.len()..);
                 trace!(
                     target: "forge::verify",
                     "setting constructor args to latest {} bytes of bytecode",
@@ -1051,7 +1046,7 @@ async fn monad_block_context(
     config: &Config,
     block: &AnyRpcBlock,
 ) -> Result<BlockContext<MonadEvmNetwork>> {
-    let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?.build()?;
+    let provider = utils::get_provider(config)?;
     BlockContext::<MonadEvmNetwork>::fetch(&provider, block).await
 }
 

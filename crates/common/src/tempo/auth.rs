@@ -290,7 +290,7 @@ struct CreateCodeRequest {
 }
 
 fn serialize_u64_hex<S: serde::Serializer>(v: &u64, s: S) -> std::result::Result<S::Ok, S::Error> {
-    s.serialize_str(&format!("0x{v:x}"))
+    s.serialize_str(&format!("{v:#x}"))
 }
 
 #[derive(Deserialize)]

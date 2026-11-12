@@ -2959,12 +2959,21 @@ pub(crate) async fn send_keychain_tx(
     let root_signer =
         resolve_keychain_root_signer(send_tx, expected_from, tx_opts.tempo.print_sponsor_hash)
             .await?;
-    send_keychain_tx_with_root_signer(calldata, tx_opts, send_tx, root_signer, force, || Ok(()))
-        .await
+    send_precompile_tx_with_root_signer(
+        ACCOUNT_KEYCHAIN_ADDRESS,
+        calldata,
+        tx_opts,
+        send_tx,
+        root_signer,
+        force,
+        || Ok(()),
+    )
+    .await
 }
 
-/// Send AccountKeychain calldata with an already-resolved root signer.
-pub(crate) async fn send_keychain_tx_with_root_signer(
+/// Send calldata to the Tempo precompile at `to` with an already-resolved root signer.
+pub(crate) async fn send_precompile_tx_with_root_signer(
+    to: Address,
     calldata: Vec<u8>,
     mut tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
@@ -2996,7 +3005,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
 
     let builder = CastTxBuilder::new(&provider, tx_opts, &config)
         .await?
-        .with_to(Some(NameOrAddress::Address(ACCOUNT_KEYCHAIN_ADDRESS)))
+        .with_to(Some(NameOrAddress::Address(to)))
         .await?
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;

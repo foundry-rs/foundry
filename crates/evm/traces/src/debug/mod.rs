@@ -114,23 +114,23 @@ impl<'a> DebugStepsWalker<'a> {
             return false;
         };
 
-        loc.offset() == other_loc.offset()
-            && loc.length() == other_loc.length()
-            && loc.index() == other_loc.index()
+        same_loc(&loc, &other_loc)
     }
 
     /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [Jump::In].
-    fn jump_in(&mut self) {
-        // This usually means that this is a jump into the external function which is an
-        // entrypoint for the current frame. We don't want to include this to avoid
-        // duplicating traces.
-        if self.is_same_loc(self.current_step, self.current_step - 1) {
-            return;
-        }
-
+    ///
+    /// `prev_source_element` is the source element of the JUMP.
+    fn jump_in(&mut self, prev_source_element: &SourceElement) {
         let Some((source_element, source)) = self.src_map(self.current_step) else {
             return;
         };
+
+        // This usually means that this is a jump into the external function which is an
+        // entrypoint for the current frame. We don't want to include this to avoid
+        // duplicating traces.
+        if same_loc(&source_element, prev_source_element) {
+            return;
+        }
 
         if let Some(name) = parse_function_from_loc(source, &source_element) {
             self.stack.push((name, self.current_step - 1));
@@ -189,7 +189,7 @@ impl<'a> DebugStepsWalker<'a> {
         };
 
         match prev_source_element.jump() {
-            Jump::In => self.jump_in(),
+            Jump::In => self.jump_in(&prev_source_element),
             Jump::Out => self.jump_out(),
             _ => {}
         };
@@ -205,6 +205,11 @@ impl<'a> DebugStepsWalker<'a> {
             self.step();
         }
     }
+}
+
+/// Returns whether both source elements refer to the same source location.
+fn same_loc(loc: &SourceElement, other: &SourceElement) -> bool {
+    loc.offset() == other.offset() && loc.length() == other.length() && loc.index() == other.index()
 }
 
 /// Tries to parse the function name from the source code and detect the contract name which

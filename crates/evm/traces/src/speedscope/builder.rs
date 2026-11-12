@@ -4,8 +4,11 @@
 //! Gas consumption is used as the value unit, so flame graph widths represent gas usage.
 
 use super::schema::{EventedProfile, Frame, Profile, SpeedscopeFile, ValueUnit};
-use crate::{CallTraceArena, CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder};
-use alloy_primitives::{hex::ToHexExt, map::HashMap};
+use crate::{
+    CallTraceArena, CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder,
+    folded_stack_trace::call_frame_name,
+};
+use alloy_primitives::map::HashMap;
 use std::borrow::Cow;
 
 struct SpeedscopeBuilder<'a> {
@@ -33,7 +36,7 @@ impl<'a> SpeedscopeBuilder<'a> {
 
     fn process_call_node(&mut self, nodes: &[CallTraceNode], idx: usize) {
         let node = &nodes[idx];
-        let frame_idx = self.frame_idx(call_frame_name(node));
+        let frame_idx = self.frame_idx(&call_frame_name(node));
         let start_gas = self.cumulative_gas;
         // Call gas is gross: refunds are only subtracted from the test's reported gas.
         let gas_used = node.trace.gas_used;
@@ -77,7 +80,7 @@ impl<'a> SpeedscopeBuilder<'a> {
 
         if let Some(DecodedTraceStep::InternalCall(decoded, step_end_idx)) = step.decoded.as_deref()
         {
-            let frame_idx = self.frame_idx(decoded.func_name.clone());
+            let frame_idx = self.frame_idx(&decoded.func_name);
             self.profile.open_frame(frame_idx, self.cumulative_gas);
             step_exits.push(StepExit { step_idx: *step_end_idx, frame_idx });
         }
@@ -94,13 +97,13 @@ impl<'a> SpeedscopeBuilder<'a> {
         }
     }
 
-    fn frame_idx(&mut self, name: String) -> usize {
-        if let Some(idx) = self.frame_cache.get(name.as_str()) {
+    fn frame_idx(&mut self, name: &str) -> usize {
+        if let Some(idx) = self.frame_cache.get(name) {
             return *idx;
         }
 
-        let idx = self.file.add_frame(Frame::new(Cow::Owned(name.clone())));
-        self.frame_cache.insert(name, idx);
+        let idx = self.file.add_frame(Frame::new(Cow::Owned(name.to_owned())));
+        self.frame_cache.insert(name.to_owned(), idx);
         idx
     }
 }
@@ -126,32 +129,6 @@ pub fn build<'a>(
     }
 
     builder.build()
-}
-
-fn call_frame_name(node: &CallTraceNode) -> String {
-    if node.trace.kind.is_any_create() {
-        let contract_name =
-            node.trace.decoded.as_ref().and_then(|dc| dc.label.as_deref()).unwrap_or("Contract");
-        return format!("new {contract_name}");
-    }
-
-    let selector = node
-        .selector()
-        .map(|selector| selector.encode_hex_with_prefix())
-        .unwrap_or_else(|| "fallback".to_string());
-    let signature = node
-        .trace
-        .decoded
-        .as_ref()
-        .and_then(|dc| dc.call_data.as_ref())
-        .map(|dc| &dc.signature)
-        .unwrap_or(&selector);
-
-    if let Some(label) = node.trace.decoded.as_ref().and_then(|dc| dc.label.as_ref()) {
-        format!("{label}.{signature}")
-    } else {
-        signature.clone()
-    }
 }
 
 #[cfg(test)]

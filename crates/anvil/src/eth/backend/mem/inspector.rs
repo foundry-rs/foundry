@@ -1,7 +1,7 @@
 //! Anvil specific [`evm2::Inspector`] implementation.
 
 use crate::eth::macros::node_info;
-use alloy_primitives::{Address, B256, Log, LogData, U256};
+use alloy_primitives::{Address, Log, LogData, U256};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use evm2::{
     EvmTypes, Inspector, InspectorConfig,
@@ -101,11 +101,7 @@ impl SimulationLogCollector {
             Log {
                 address: TRANSFER_LOG_EMITTER,
                 data: LogData::new_unchecked(
-                    vec![
-                        TRANSFER_EVENT_TOPIC,
-                        B256::from_slice(&from.abi_encode()),
-                        B256::from_slice(&to.abi_encode()),
-                    ],
+                    vec![TRANSFER_EVENT_TOPIC, from.into_word(), to.into_word()],
                     value.abi_encode().into(),
                 ),
             },
