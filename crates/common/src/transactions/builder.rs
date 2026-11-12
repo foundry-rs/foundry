@@ -1,3 +1,4 @@
+use crate::tempo::configurable_account::ConfigurableAccountSigner;
 use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
@@ -10,7 +11,11 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, serde_helpers::WithOtherFields};
 use eyre::Result;
 use std::num::NonZeroU64;
-use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet, rpc::TempoTransactionRequest};
+use tempo_alloy::{
+    TempoNetwork,
+    accounts::TempoAccountsWallet,
+    rpc::{ConfigurableAccountSimulationSpec, TempoTransactionRequest},
+};
 use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
 
 #[cfg(feature = "base")]
@@ -229,6 +234,10 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
         self
     }
 
+    /// Set the configurable account owner quorum that gas estimation models for the sender of a
+    /// Tempo transaction signed with a `0x05` signature.
+    fn set_configurable_account_simulation(&mut self, _spec: ConfigurableAccountSimulationSpec) {}
+
     /// Get the valid_before timestamp for a Tempo expiring nonce transaction.
     fn valid_before(&self) -> Option<NonZeroU64> {
         None
@@ -316,6 +325,16 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     ) -> impl Future<Output = Result<Vec<u8>>> + Send {
         std::future::ready(Err(eyre::eyre!(
             "Tempo access-key wallets are not supported for this network"
+        )))
+    }
+
+    /// Sign a prepared request as a Tempo configurable account with its owners' approvals.
+    fn sign_with_configurable_account(
+        self,
+        _signer: &ConfigurableAccountSigner,
+    ) -> impl Future<Output = Result<Vec<u8>>> + Send {
+        std::future::ready(Err(eyre::eyre!(
+            "Tempo configurable accounts are not supported for this network"
         )))
     }
 }
@@ -514,6 +533,10 @@ impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
         self.key_id = Some(key_id);
     }
 
+    fn set_configurable_account_simulation(&mut self, spec: ConfigurableAccountSimulationSpec) {
+        self.configurable_account_simulation = Some(spec);
+    }
+
     fn valid_before(&self) -> Option<NonZeroU64> {
         self.valid_before
     }
@@ -574,5 +597,12 @@ impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
 
     async fn sign_with_tempo_wallet(self, wallet: &TempoAccountsWallet) -> Result<Vec<u8>> {
         wallet.sign_request(self).await.map(|envelope| envelope.encoded_2718()).map_err(Into::into)
+    }
+
+    async fn sign_with_configurable_account(
+        self,
+        signer: &ConfigurableAccountSigner,
+    ) -> Result<Vec<u8>> {
+        signer.sign_request(self).await.map(|envelope| envelope.encoded_2718())
     }
 }

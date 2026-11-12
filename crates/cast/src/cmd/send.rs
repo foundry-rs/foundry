@@ -23,7 +23,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::maybe_print_fee_token,
+    tempo::{configurable_account::ConfigurableAccountSigner, maybe_print_fee_token},
 };
 use foundry_config::Config;
 use foundry_wallets::{WalletSigner, wallet_browser::signer::BrowserSigner};
@@ -192,7 +192,7 @@ impl SendTxArgs {
 
     async fn run_generic_inner<N: Network>(
         self,
-        pre_resolved_signer: Option<WalletSigner>,
+        mut pre_resolved_signer: Option<WalletSigner>,
         mut access_key: Option<TempoAccountsWallet>,
         pre_resolved_browser: Option<BrowserSigner<N>>,
     ) -> Result<()>
@@ -297,7 +297,30 @@ impl SendTxArgs {
             tx.tempo.key_id = Some(ak.key_id()?);
         }
 
-        let builder = CastTxBuilder::new(&provider, tx, &config)
+        // A configurable account sender signs with its owners, which the RPC, a browser wallet or
+        // an access key cannot do.
+        let configurable_account = if access_key.is_some()
+            || unlocked
+            || send_tx.browser.browser
+            || pre_resolved_browser.is_some()
+        {
+            eyre::ensure!(
+                !tx.tempo.has_configurable_account_options(),
+                "Tempo configurable accounts cannot be combined with --unlocked, --browser or an \
+                 access key"
+            );
+            None
+        } else {
+            tempo::resolve_configurable_account::<N>(
+                &tx.tempo,
+                &config,
+                &send_tx.eth.wallet,
+                &mut pre_resolved_signer,
+            )
+            .await?
+        };
+
+        let mut builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_gas_estimate_multiplier(gas_estimate_multiplier)
             .with_to(to)
@@ -306,6 +329,9 @@ impl SendTxArgs {
             .await?
             .with_blob_data(blob_data)?;
         let chain = builder.chain();
+        if let Some(account) = &configurable_account {
+            account.prepare_request::<N>(builder.tx_mut());
+        }
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
@@ -317,6 +343,13 @@ impl SendTxArgs {
                     return Ok(());
                 };
                 (tx, prepared.account())
+            } else if let Some(account) = &configurable_account {
+                let Some(tx) =
+                    confirm_and_build(builder, account.account(), force, None, false).await?
+                else {
+                    return Ok(());
+                };
+                (tx, account.account())
             } else {
                 let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
                     eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
@@ -443,7 +476,43 @@ impl SendTxArgs {
                 cast_send_with_tempo_wallet(&provider, tx_request, &prepared, &fee_send_opts)
                     .await?;
             }
-        // Case 4: a local signer.
+        // Case 4: a Tempo configurable account signed by its local owners.
+        } else if let Some(account) = configurable_account {
+            let from = account.account();
+            let Some(mut tx_request) = confirm_and_build(builder, from, force, lane, false).await?
+            else {
+                return Ok(());
+            };
+            if let Some(sponsor_url) = sponsor_url.as_deref() {
+                // The relay selects the fee token and adds its fee-payer signature.
+                tx_request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
+                let connector = tempo::sponsor_relay_connector(&provider, sponsor_url)?;
+                let sponsor_provider =
+                    AlloyProviderBuilder::<_, _, N>::default().connect_with(&connector).await?;
+                cast_send_with_configurable_account(
+                    &sponsor_provider,
+                    tx_request,
+                    &account,
+                    &send_opts,
+                )
+                .await?;
+            } else {
+                tempo::maybe_attach_sponsor(
+                    tempo_sponsor.as_ref(),
+                    fee_provider,
+                    &mut tx_request,
+                    from,
+                )
+                .await?;
+                cast_send_with_configurable_account(
+                    &provider,
+                    tx_request,
+                    &account,
+                    &fee_send_opts,
+                )
+                .await?;
+            }
+        // Case 5: a local signer.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
         // enough information to sign and we must bail.
         } else {
@@ -559,7 +628,7 @@ impl SendOptions {
     }
 
     /// Prints a sync receipt, or the hash / polled receipt of a pending transaction.
-    async fn print_send_result<N: Network, P: Provider<N>>(
+    pub(crate) async fn print_send_result<N: Network, P: Provider<N>>(
         &self,
         provider: P,
         tx_hash: B256,
@@ -648,6 +717,24 @@ where
 {
     opts.resolve_and_print_fee_token(provider, &mut tx).await?;
     let raw_tx = tx.sign_with_tempo_wallet(wallet).await?;
+    let (tx_hash, receipt) = cast_send_raw(provider, &raw_tx, opts.sync).await?;
+    opts.print_send_result(provider, tx_hash, receipt).await
+}
+
+/// Signs a prepared transaction as a Tempo configurable account with its owners' approvals and
+/// sends it as a raw transaction.
+pub(crate) async fn cast_send_with_configurable_account<N: Network, P: Provider<N>>(
+    provider: &P,
+    mut tx: N::TransactionRequest,
+    account: &ConfigurableAccountSigner,
+    opts: &SendOptions,
+) -> Result<B256>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+{
+    opts.resolve_and_print_fee_token(provider, &mut tx).await?;
+    let raw_tx = tx.sign_with_configurable_account(account).await?;
     let (tx_hash, receipt) = cast_send_raw(provider, &raw_tx, opts.sync).await?;
     opts.print_send_result(provider, tx_hash, receipt).await
 }

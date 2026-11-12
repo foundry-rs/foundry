@@ -31,7 +31,7 @@ use foundry_evm_core::{
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryExecutionHooks,
         FoundryTxConversion, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
         PreparedTx, SnapshotRestores, TransactionRequestFor, TxFor, TxResultFor, TypesFor,
-        cool_loaded, destructed_accounts, evm_env, merge_pending_changes,
+        destructed_accounts, evm_env, merge_pending_changes,
         merge_untracked_pending_changes_with_warmth, put_transient, release_inspector,
         take_transient, warm_accounts, warm_set,
     },
@@ -325,10 +325,11 @@ macro_rules! call_inspectors {
 /// a different status or a revert with a different message.
 macro_rules! changed {
     ($result:ident, $stop:ident, $call:expr) => {{
-        let previous_output = $result.output.clone();
+        // Only a revert compares its output, so other outcomes skip the copy.
+        let previous_output = ($stop == InstrStop::Revert).then(|| $result.output.clone());
         $call;
         $result.stop != $stop
-            || ($result.stop == InstrStop::Revert && $result.output != previous_output)
+            || previous_output.is_some_and(|previous_output| $result.output != previous_output)
     }};
 }
 
@@ -884,6 +885,29 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub const fn collect_sancov_trace_cmp(&mut self, yes: bool) {
         self.inner.sancov_trace_cmp = yes;
+    }
+
+    /// Set whether to record the failure identity of each call, see
+    /// [`RawCallResult::failure_identity`](crate::executors::RawCallResult::failure_identity).
+    ///
+    /// Steps every instruction while set, so it is only meant for replays of a failure.
+    #[inline]
+    pub fn collect_failure_identity(&mut self, yes: bool) {
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.failure_trace = yes.then(Default::default);
+        }
+    }
+
+    /// Set whether to record the failure provenance of each call, see
+    /// [`RawCallResult::failure_provenance`](crate::executors::RawCallResult::failure_provenance).
+    ///
+    /// Only steps `JUMPI`, `REVERT` and `INVALID` and hashes the site of each call, so it can stay
+    /// set during campaigns.
+    #[inline]
+    pub fn collect_failure_provenance(&mut self, yes: bool) {
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.failure_provenance = yes.then(Default::default);
+        }
     }
 
     /// Set whether to enable call isolation.
@@ -2086,6 +2110,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if let Some(result) = self.env_handoff(interp, message) {
             return Some(result);
         }
+        if let Some(provenance) =
+            self.cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut())
+        {
+            provenance.enter_frame::<FEN>(usize::from(message.depth), interp);
+        }
 
         let depth = message.depth;
         // A transaction handler can run the top-level calls below the transaction, such as
@@ -2255,6 +2284,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         self.do_call_end(interp, message, result);
 
+        if let Some(trace) = self.cheatcodes.as_mut().and_then(|c| c.failure_trace.as_mut()) {
+            trace.finish_frame::<FEN>(usize::from(message.depth), result);
+        }
+        if let Some(provenance) =
+            self.cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut())
+        {
+            provenance.finish_frame::<FEN>(usize::from(message.depth), interp, result);
+        }
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
         }
@@ -2276,6 +2313,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // A CREATE redirected to the CREATE2 factory is observed as a call to the factory.
         if self.redirect_create2(interp, message) {
             return self.call(interp, message);
+        }
+        if let Some(provenance) =
+            self.cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut())
+        {
+            provenance.enter_frame::<FEN>(usize::from(message.depth), interp);
         }
 
         let depth = message.depth;
@@ -2386,6 +2428,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         self.do_create_end(interp, message, result);
 
+        if let Some(trace) = self.cheatcodes.as_mut().and_then(|c| c.failure_trace.as_mut()) {
+            trace.finish_frame::<FEN>(usize::from(message.depth), result);
+        }
+        if let Some(provenance) =
+            self.cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut())
+        {
+            provenance.finish_frame::<FEN>(usize::from(message.depth), interp, result);
+        }
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
         }
@@ -2466,7 +2516,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        cool_loaded(state);
+        state.cool_loaded();
         for (address, slots) in arbitrary {
             state.set_account_warm(&address, true);
             for key in slots {
@@ -2752,19 +2802,15 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     message: &MessageFor<FEN>,
     fork_block_number: Option<u64>,
 ) -> Option<MessageResultFor<FEN>> {
-    let selector = message.input.as_bytes(interp.memory()).get(..4);
-    let is_arb_block_number = selector == Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR[..]);
-    let evm = interp.host();
     if message.destination != arbitrum::ARB_SYS_ADDRESS
         || message.code_address != arbitrum::ARB_SYS_ADDRESS
-        || !arbitrum::is_arbitrum_chain(evm.version().chain_id)
+        || !arbitrum::is_arbitrum_chain(interp.host().version().chain_id)
+        || message.input.as_bytes(interp.memory()).get(..4)
+            != Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR[..])
     {
         return None;
     }
-
-    if !is_arb_block_number {
-        return None;
-    }
+    let evm = interp.host();
 
     // Forks report their L2 block, which the block env lacks on Arbitrum because `NUMBER` returns
     // the L1 block there. Without a fork the block env is read here to follow `vm.roll`.
@@ -2848,6 +2894,19 @@ mod tests {
         stack.set_cheatcodes(Cheatcodes::new(Default::default()));
         assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
 
+        // Recording failure identities steps everything, only while set.
+        stack.collect_failure_identity(true);
+        assert_eq!(steps(&mut stack), OpcodeSet::ALL);
+        stack.collect_failure_identity(false);
+        assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
+
+        // Recording failure provenance only steps the instructions that end a frame early and the
+        // branches that lead to them.
+        stack.collect_failure_provenance(true);
+        assert_eq!(steps(&mut stack), set(&[op::JUMPI, op::REVERT, op::INVALID]));
+        stack.collect_failure_provenance(false);
+        assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
+
         // Without other stepping inspectors, the fuzzer steps nothing and cancellation polls at
         // jumps and calls.
         let mut campaign = stack.clone();
@@ -2911,6 +2970,13 @@ mod tests {
                 op::CREATE2,
             ])
         );
+
+        // Edge coverage steps jumps, and the script inspector steps `ADDRESS`.
+        let mut campaign = InspectorStack::<EthEvmNetwork>::new();
+        campaign.collect_edge_coverage(true);
+        assert_eq!(steps(&mut campaign), set(&[op::JUMP, op::JUMPI]));
+        campaign.script(Address::with_last_byte(1));
+        assert_eq!(steps(&mut campaign), set(&[op::JUMP, op::JUMPI, op::ADDRESS]));
 
         // An inspector without its own config steps every opcode.
         stack.print(true);

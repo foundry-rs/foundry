@@ -67,6 +67,7 @@ tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
+sha2 = "0.10"
 
 tempo-contracts.workspace = true
 tempo-primitives.workspace = true

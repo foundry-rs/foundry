@@ -11,7 +11,7 @@ use alloy_primitives::{
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolCall, SolValue};
 use evm2::{
     EvmFeatures, SpecId,
     bytecode::Bytecode,
@@ -29,7 +29,7 @@ use foundry_common::{
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
-    backend::{RevertStateSnapshotAction, transaction_error},
+    backend::{GLOBAL_FAIL_SLOT, RevertStateSnapshotAction, transaction_error},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
         HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
@@ -927,6 +927,15 @@ impl Cheatcode for storeCall {
             .map_err(|e| fmt_err!("failed to store storage slot: {e}"))?
             .set(value.into());
         ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
+        // A `fail()` fails the call where it is made, like an assertion.
+        if target == CHEATCODE_ADDRESS && slot == B256::from(GLOBAL_FAIL_SLOT) && !value.is_zero() {
+            if let Some(trace) = &mut ccx.state.failure_trace {
+                trace.record_assertion(Self::SELECTOR, "", None);
+            }
+            if let Some(provenance) = &mut ccx.state.failure_provenance {
+                provenance.pending_assertion = Some(keccak256(Self::SELECTOR));
+            }
+        }
         Ok(Default::default())
     }
 }
@@ -1680,6 +1689,11 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ) {
         let switched = ccx.active_fork_id() != fork_id;
         ccx.state.restore_persistent_writes(snapshot_id, replaced, false, switched);
+        // A restore can make a different path look like the recorded one, so its identity is
+        // unknown.
+        if let Some(trace) = &mut ccx.state.failure_trace {
+            trace.unidentified = true;
+        }
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         ccx.state.env_overrides.restore_snapshot(snapshot_id, false);
@@ -1710,6 +1724,9 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     ) {
         let switched = ccx.active_fork_id() != fork_id;
         ccx.state.restore_persistent_writes(snapshot_id, replaced, true, switched);
+        if let Some(trace) = &mut ccx.state.failure_trace {
+            trace.unidentified = true;
+        }
         ccx.state.env_overrides.restore_snapshot(snapshot_id, true);
         if let Some(fork_block_number) =
             ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)
