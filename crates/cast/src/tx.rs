@@ -881,13 +881,21 @@ where
         for auth in std::mem::take(&mut self.auth) {
             signed_auths.push(match auth {
                 CliAuthorizationList::Address(address) => {
-                    let auth = Authorization {
-                        chain_id: U256::from(self.chain.id()),
-                        nonce: tx_nonce + 1,
-                        address,
-                    };
                     let signer =
                         sender.as_signer().expect("address-based authorization requires a signer");
+                    let authority = signer.address();
+                    // Authorizations apply after the transaction's nonce. Only a protocol-nonce
+                    // transaction bumps the sender's account nonce first; a Tempo nonce lane or
+                    // expiring nonce leaves it unchanged.
+                    let nonce = if authority == sender.address()
+                        && self.tx.nonce_key().is_none_or(|key| key.is_zero())
+                    {
+                        tx_nonce + 1
+                    } else {
+                        self.provider.get_transaction_count(authority).await?
+                    };
+                    let auth =
+                        Authorization { chain_id: U256::from(self.chain.id()), nonce, address };
                     let signature = signer.sign_hash(&auth.signature_hash()).await?;
                     auth.into_signed(signature)
                 }

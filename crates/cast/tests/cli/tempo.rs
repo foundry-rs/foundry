@@ -2140,3 +2140,49 @@ async fn tempo_nonce_key_lane_uses_lane_nonce(cmd: _) {
         );
     }
 }
+
+/// `--auth` on a Tempo nonce lane or expiring nonce transaction is carried in the AA
+/// authorization list and signed with the sender's protocol nonce, which these transactions do
+/// not bump.
+#[casttest]
+async fn tempo_nonce_key_auth_uses_protocol_nonce(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let (sender, key) = dev_account(&handle, 0);
+    let sender = sender.to_string();
+
+    // A protocol nonce of 3 differs from both the lane nonce plus one and itself plus one.
+    for _ in 0..3 {
+        cmd.cast_fuse()
+            .args(["send", &Address::repeat_byte(0x73).to_string(), "--private-key", &key])
+            .args(["--rpc-url", &rpc])
+            .assert_success();
+    }
+
+    let cases: [(&str, &[&str], _); 2] = [
+        (
+            "0x00000000000000000000000000000000000000aa",
+            &["--tempo.nonce-key", "42"],
+            str![[r#"
+0xef010000000000000000000000000000000000000000aa
+
+"#]],
+        ),
+        (
+            "0x00000000000000000000000000000000000000bb",
+            &["--tempo.expires", "20"],
+            str![[r#"
+0xef010000000000000000000000000000000000000000bb
+
+"#]],
+        ),
+    ];
+    for (delegate, nonce_args, code) in cases {
+        cmd.cast_fuse()
+            .args(["send", &sender, "--auth", delegate, "--private-key", &key, "--force"])
+            .args(nonce_args)
+            .args(["--rpc-url", &rpc])
+            .assert_success();
+        cmd.cast_fuse().args(["code", &sender, "--rpc-url", &rpc]).assert_success().stdout_eq(code);
+    }
+}
