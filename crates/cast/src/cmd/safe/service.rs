@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolStruct, eip712_domain};
 use clap::Args;
 use eyre::{Context, Result, ensure};
-use foundry_common::sh_status;
+use foundry_common::{sh_status, sh_warn};
 use reqwest::{Client, Method, Url, header};
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -88,7 +88,7 @@ impl SafeTransaction {
         U256::from_str(value).wrap_err_with(|| format!("invalid {field} in transaction"))
     }
 
-    /// Computes the chain-bound Safe v1.3.0+ hash locally and checks that the contract agrees.
+    /// Computes a standard Safe transaction hash locally and checks that the contract agrees.
     pub(super) async fn calculate_hash<P>(&self, provider: &P, chain_id: u64) -> Result<B256>
     where
         P: alloy_provider::Provider<Ethereum>,
@@ -109,6 +109,10 @@ impl SafeTransaction {
             chain_id: chain_id,
             verifying_contract: self.safe,
         });
+        // Safe v1.0.0 through v1.2.0 omit the chain ID from the domain.
+        let legacy = transaction.eip712_signing_hash(&eip712_domain! {
+            verifying_contract: self.safe,
+        });
         let remote = ISafe::new(self.safe, provider)
             .getTransactionHash(
                 transaction.to,
@@ -126,10 +130,15 @@ impl SafeTransaction {
             .await
             .wrap_err("failed to calculate Safe transaction hash")?;
         ensure!(
-            remote == calculated,
-            "Safe transaction hash mismatch: contract returned {remote}, locally calculated {calculated}"
+            remote == calculated || remote == legacy,
+            "Safe transaction hash mismatch: contract returned {remote}, locally calculated {calculated} (chain ID {chain_id}) or {legacy} (pre-v1.3.0 Safe)"
         );
-        Ok(calculated)
+        if remote == legacy {
+            sh_warn!(
+                "This Safe uses a pre-v1.3.0 transaction hash without a chain ID. Its signatures can be replayed on other chains."
+            )?;
+        }
+        Ok(remote)
     }
 
     pub(super) async fn verify_hash<P>(

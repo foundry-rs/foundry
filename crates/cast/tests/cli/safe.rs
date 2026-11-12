@@ -1222,7 +1222,7 @@ async fn safe_execute_rejects_approved_hash_confirmation(cmd: _) {
     let rpc = handle.http_endpoint();
     let safe = Address::repeat_byte(0x11);
     let mut transaction = safe_transaction(safe, 0);
-    let hash = set_safe_transaction_hash(&mut transaction, 31337);
+    let hash = set_safe_transaction_hash(&mut transaction, Some(31337));
     api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, 0)).await.unwrap();
     let mut approved_hash_signature = vec![0u8; 65];
     approved_hash_signature[..32].copy_from_slice(ANVIL_OWNER.into_word().as_slice());
@@ -1269,7 +1269,7 @@ async fn safe_execute_rejects_stale_or_future_nonce(cmd: _) {
         let initial_sender_nonce = provider.get_transaction_count(ANVIL_OWNER).await.unwrap();
         let mut transaction = safe_transaction(safe, 0);
         transaction["nonce"] = json!(nonce.to_string());
-        let hash = set_safe_transaction_hash(&mut transaction, 31337);
+        let hash = set_safe_transaction_hash(&mut transaction, Some(31337));
         api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, current_nonce)).await.unwrap();
         let signature = signer.sign_hash(&hash).await.unwrap().as_bytes();
         transaction["confirmations"] = json!([{
@@ -1343,7 +1343,7 @@ async fn safe_execute_packs_mixed_p256_confirmations(cmd: _) {
     contract_signature.extend_from_slice(&contract_payload);
 
     let mut service_transaction = safe_transaction(safe, 0);
-    let hash = set_safe_transaction_hash(&mut service_transaction, 31337);
+    let hash = set_safe_transaction_hash(&mut service_transaction, Some(31337));
     // Emit the matching execution event, then return the requested hash or nonce word.
     let mut code = vec![0x7f];
     code.extend_from_slice(hash.as_slice());
@@ -1544,7 +1544,7 @@ async fn safe_service_mutations_emit_json_envelopes(cmd: _) {
     let target = Address::repeat_byte(0x33);
     let mut transaction = safe_transaction(safe, 0);
     transaction["to"] = json!(target);
-    let hash = set_safe_transaction_hash(&mut transaction, 31337);
+    let hash = set_safe_transaction_hash(&mut transaction, Some(31337));
     api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, 0)).await.unwrap();
     let service = spawn_safe_service(transaction).await;
     let safe = safe.to_string();
@@ -1736,7 +1736,7 @@ async fn safe_simulation_uses_executor_context(cmd: _) {
 
     for operation in [0, 1] {
         let mut transaction = safe_transaction(safe, operation);
-        let hash = set_safe_transaction_hash(&mut transaction, 31337);
+        let hash = set_safe_transaction_hash(&mut transaction, Some(31337));
         api.anvil_set_code(safe, simulation_safe_code(hash)).await.unwrap();
         let safe_tx_hash = hash.to_string();
         let service = spawn_safe_service(transaction).await;
@@ -1775,7 +1775,7 @@ async fn safe_simulation_rejects_reimbursed_transaction(cmd: _) {
     api.anvil_set_code(accessor, bytes!("0x00")).await.unwrap();
     let mut transaction = safe_transaction(safe, 0);
     transaction["gasPrice"] = json!("1");
-    let hash = set_safe_transaction_hash(&mut transaction, 31337);
+    let hash = set_safe_transaction_hash(&mut transaction, Some(31337));
     api.anvil_set_code(safe, simulation_safe_code(hash)).await.unwrap();
     let service = spawn_safe_service(transaction).await;
 
@@ -1936,7 +1936,8 @@ async fn safe_commands_reject_unrelated_onchain_hash(cmd: _) {
 
     let mut transaction = safe_transaction(safe, 0);
     transaction["to"] = json!(target);
-    let local_hash = set_safe_transaction_hash(&mut transaction, 31337);
+    let local_hash = set_safe_transaction_hash(&mut transaction, Some(31337));
+    let legacy_hash = set_safe_transaction_hash(&mut transaction, None);
     let remote_hash = B256::repeat_byte(0x44);
     transaction["safeTxHash"] = json!(remote_hash);
     let (service, submissions) = spawn_safe_service_with_submissions(transaction).await;
@@ -1962,7 +1963,7 @@ async fn safe_commands_reject_unrelated_onchain_hash(cmd: _) {
             .assert_failure()
             .stdout_eq("")
             .stderr_eq(format!(
-                "Error: Safe transaction hash mismatch: contract returned {remote_hash}, locally calculated {local_hash}\n"
+                "Error: Safe transaction hash mismatch: contract returned {remote_hash}, locally calculated {local_hash} (chain ID 31337) or {legacy_hash} (pre-v1.3.0 Safe)\n"
             ));
         assert_eq!(*submissions.lock().unwrap(), 0, "{command} submitted to the service");
     }
@@ -1978,7 +1979,7 @@ async fn safe_propose_rejects_configured_chain_mismatch(prj: _, cmd: _) {
     let target = Address::repeat_byte(0x22);
     let mut transaction = safe_transaction(safe, 0);
     transaction["to"] = json!(target);
-    let expected_hash = set_safe_transaction_hash(&mut transaction, 31337);
+    let expected_hash = set_safe_transaction_hash(&mut transaction, Some(31337));
     let safe_arg = safe.to_string();
     let target_arg = target.to_string();
     let rpc = handle.http_endpoint();
@@ -2205,9 +2206,9 @@ async fn safe_sign_rejects_service_fields_for_another_hash(cmd: _) {
     // The service keeps the requested hash but replaces the target. The honest Safe agrees with
     // the local hash of the changed fields, leaving the service hash comparison to reject them.
     let mut transaction = safe_transaction(safe, 0);
-    let requested_hash = set_safe_transaction_hash(&mut transaction, 31337);
+    let requested_hash = set_safe_transaction_hash(&mut transaction, Some(31337));
     transaction["to"] = json!(Address::repeat_byte(0x22));
-    let calculated_hash = set_safe_transaction_hash(&mut transaction, 31337);
+    let calculated_hash = set_safe_transaction_hash(&mut transaction, Some(31337));
     transaction["safeTxHash"] = json!(requested_hash);
     let (service, submissions) = spawn_safe_service_with_submissions(transaction).await;
 
@@ -2230,6 +2231,113 @@ async fn safe_sign_rejects_service_fields_for_another_hash(cmd: _) {
             "Error: Safe transaction hash mismatch: service/file returned {requested_hash}, calculated {calculated_hash}\n"
         ));
     assert_eq!(*submissions.lock().unwrap(), 0, "a signature was submitted to the service");
+}
+
+#[casttest]
+async fn safe_v1_1_1_propose_sign_and_execute_warn_about_replay(cmd: _) {
+    let singleton = address!("34CfAC646f301356fAa8B21e94227e3583Fe3F5F");
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    api.anvil_set_code(
+        singleton,
+        fixture_runtime(
+            include_bytes!("../fixtures/safe/v1.1.1/GnosisSafe.runtime.bin"),
+            24_040,
+            b256!("56b8be58b5ad629a621593a2e5e5e8e9a28408dc06e95597497b303902772e45"),
+        ),
+    )
+    .await
+    .unwrap();
+    api.anvil_set_code(
+        SAFE_PROXY_FACTORY_V1_4_1,
+        fixture_runtime(
+            include_bytes!("../fixtures/safe/v1.4.1/SafeProxyFactory.runtime.bin"),
+            SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_LEN,
+            SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_HASH,
+        ),
+    )
+    .await
+    .unwrap();
+    let created = cmd
+        .cast_fuse()
+        .args([
+            "safe",
+            "create",
+            &ANVIL_OWNER.to_string(),
+            "--singleton",
+            &singleton.to_string(),
+            "--factory",
+            &SAFE_PROXY_FACTORY_V1_4_1.to_string(),
+            "--fallback-handler",
+            &Address::ZERO.to_string(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            ANVIL_KEY,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let safe = created.trim().parse::<Address>().expect("missing Safe address");
+    let contract = TestSafe::new(safe, &provider);
+    let target = Address::repeat_byte(0x22);
+    api.anvil_set_code(target, bytes!("60005460010160005500")).await.unwrap();
+    let hash = contract
+        .getTransactionHash(
+            target,
+            U256::ZERO,
+            Bytes::new(),
+            0,
+            U256::ZERO,
+            U256::ZERO,
+            U256::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .call()
+        .await
+        .unwrap();
+    let signer = ANVIL_KEY.parse::<PrivateKeySigner>().unwrap();
+    let mut signature = signer.sign_message(hash.as_slice()).await.unwrap().as_bytes();
+    signature[64] += 4;
+    let signature = hex::encode_prefixed(signature);
+    let mut transaction = safe_transaction(safe, 0);
+    transaction["to"] = json!(target);
+    assert_eq!(set_safe_transaction_hash(&mut transaction, None), hash);
+    transaction["confirmations"] = json!([{ "owner": ANVIL_OWNER, "signature": signature }]);
+    let service = spawn_safe_service(transaction).await;
+    let safe_arg = safe.to_string();
+    let hash_arg = hash.to_string();
+    let args = ["--rpc-url", &rpc, "--service-url", service.endpoint(), "--private-key", ANVIL_KEY];
+    let summary = format!(
+        "Warning: This Safe uses a pre-v1.3.0 transaction hash without a chain ID. Its signatures can be replayed on other chains.\nSafe transaction: {hash}\n  Chain ID:        31337\n...\n"
+    );
+    cmd.cast_fuse()
+        .args(["safe", "propose", &safe_arg, &target.to_string(), "--nonce", "0"])
+        .args(args)
+        .assert_success()
+        .stdout_eq(format!("{hash}\n"))
+        .stderr_eq(summary.clone());
+    cmd.cast_fuse()
+        .args(["safe", "sign", &safe_arg, &hash_arg])
+        .args(args)
+        .assert_success()
+        .stdout_eq(format!("{signature}\n"))
+        .stderr_eq(summary.clone());
+    let execution = cmd
+        .cast_fuse()
+        .args(["safe", "execute", &safe_arg, &hash_arg])
+        .args(args)
+        .assert_success()
+        .stderr_eq(summary);
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let hashes = block.transactions.as_hashes().unwrap();
+    assert_eq!(hashes.len(), 1);
+    execution.stdout_eq(format!("{}\n", hashes[0]));
+    assert_eq!(contract.nonce().call().await.unwrap(), U256::ONE);
+    assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::ONE);
 }
 
 async fn spawn_safe_service_with_submissions(
@@ -2255,8 +2363,8 @@ async fn spawn_safe_service_with_submissions(
     (TestServerHandle { endpoint, task }, submissions)
 }
 
-fn set_safe_transaction_hash(transaction: &mut Value, chain_id: u64) -> B256 {
-    let typed_data = serde_json::from_value::<TypedData>(json!({
+fn set_safe_transaction_hash(transaction: &mut Value, chain_id: Option<u64>) -> B256 {
+    let mut typed_data = json!({
         "types": {
             "EIP712Domain": [
                 { "name": "chainId", "type": "uint256" },
@@ -2281,9 +2389,13 @@ fn set_safe_transaction_hash(transaction: &mut Value, chain_id: u64) -> B256 {
             "verifyingContract": transaction["safe"]
         },
         "message": &*transaction
-    }))
-    .unwrap();
-    let hash = typed_data.eip712_signing_hash().unwrap();
+    });
+    if chain_id.is_none() {
+        typed_data["types"]["EIP712Domain"].as_array_mut().unwrap().remove(0);
+        typed_data["domain"].as_object_mut().unwrap().remove("chainId");
+    }
+    let hash =
+        serde_json::from_value::<TypedData>(typed_data).unwrap().eip712_signing_hash().unwrap();
     transaction["safeTxHash"] = json!(hash);
     hash
 }
