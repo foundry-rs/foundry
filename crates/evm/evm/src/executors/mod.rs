@@ -1468,6 +1468,22 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Moved out of the cheatcode state on conversion, like `skip_payloads`, so it resets per
     /// call.
     pub failed_assertion: Option<String>,
+    /// Value-independent identity of how this call failed, recorded only while
+    /// [`InspectorStack::collect_failure_identity`] is set: its failed assertions and failed
+    /// frames, by the sites that failed, in order. Calls with the same identity failed the same
+    /// way, even if their messages report different values.
+    ///
+    /// `None` when not recorded or unknown.
+    pub failure_identity: Option<B256>,
+    /// Where this call failed, recorded only while
+    /// [`InspectorStack::collect_failure_provenance`] is set: its failed assertions, by the calls
+    /// that led to them, and its failed frames, by the sites that failed, in order, with their
+    /// revert data. Unlike
+    /// `failure_identity`, it depends on values, so only runs of the same input are comparable.
+    ///
+    /// `None` when not recorded, or when a frame halted, such as on an invalid jump, at an
+    /// instruction that is not recorded.
+    pub failure_provenance: Option<B256>,
 }
 
 #[cfg(test)]
@@ -1504,6 +1520,8 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             skip_payloads: Vec::new(),
             post_execution_backend: None,
             failed_assertion: None,
+            failure_identity: None,
+            failure_provenance: None,
         }
     }
 }
@@ -1716,6 +1734,38 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         let (new_san, edge_san) = self.merge_sancov_coverage(sancov_history);
         (new_evm || new_san, edge_evm || edge_san)
     }
+
+    /// Returns the outcome of this call, to check that a replay of the same input reproduced it.
+    ///
+    /// `None` when its failure provenance was not recorded.
+    pub fn raw_failure(&self) -> Option<RawFailure> {
+        Some(RawFailure {
+            exit_reason: self.exit_reason,
+            result: self.result.clone(),
+            reverter: self.reverter,
+            gas_used: self.gas_used,
+            provenance: self.failure_provenance?,
+        })
+    }
+}
+
+/// The outcome of a call, see [`RawCallResult::raw_failure`].
+///
+/// A replay that took a different path can return identical data with the same gas, such as when
+/// two `REVERT`s of the same data cost the same, or two instances of a contract fail the same
+/// assertion, so the provenance tells where it failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawFailure {
+    /// See [`RawCallResult::exit_reason`].
+    pub exit_reason: Option<InstrStop>,
+    /// See [`RawCallResult::result`].
+    pub result: Bytes,
+    /// See [`RawCallResult::reverter`].
+    pub reverter: Option<Address>,
+    /// See [`RawCallResult::gas_used`].
+    pub gas_used: u64,
+    /// See [`RawCallResult::failure_provenance`].
+    pub provenance: B256,
 }
 
 /// The result of a call.
@@ -1820,6 +1870,12 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     let skip_payloads =
         cheatcodes.as_mut().map(|c| std::mem::take(&mut c.skip_payloads)).unwrap_or_default();
     let failed_assertion = cheatcodes.as_mut().and_then(|c| c.failed_assertion.take());
+    let failure_identity = cheatcodes
+        .as_mut()
+        .and_then(|c| c.failure_trace.as_mut())
+        .and_then(|trace| trace.take_identity(exit_reason, &result));
+    let failure_provenance =
+        cheatcodes.as_mut().and_then(|c| c.failure_provenance.as_mut()).and_then(|p| p.take());
 
     let mut raw = RawCallResult {
         exit_reason: Some(exit_reason),
@@ -1852,6 +1908,8 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         skip_payloads,
         post_execution_backend: None,
         failed_assertion,
+        failure_identity,
+        failure_provenance,
     };
     if sancov_edges {
         SancovGuard::append_edges_into(&mut raw);
@@ -2048,8 +2106,9 @@ mod tests {
     use foundry_cheatcodes::{
         CheatsConfig,
         Vm::{
-            broadcastRawTransactionCall, loadCall, mockCallRevert_1Call, revertToStateCall,
-            snapshotStateCall, storeCall,
+            assertEq_1Call, assertGt_0Call, assertLt_0Call, assertTrue_1Call,
+            broadcastRawTransactionCall, loadCall, mockCallRevert_1Call,
+            revertToStateAndDeleteCall, revertToStateCall, snapshotStateCall, storeCall,
         },
     };
     use foundry_config::Config;
@@ -3037,5 +3096,438 @@ mod tests {
             .unwrap();
         assert!(!result.reverted);
         assert_eq!(result.gas_used, 61_000);
+    }
+
+    /// Returns code that forwards its calldata to `target` `calls` times and bubbles the error of
+    /// the last call.
+    fn forwarder(target: Address, calls: usize) -> Bytes {
+        // Copy calldata to memory.
+        let mut code = vec![0x36, 0x5f, 0x5f, 0x37];
+        for i in 0..calls {
+            if i > 0 {
+                code.push(0x50);
+            }
+            code.extend_from_slice(&[0x5f, 0x5f, 0x36, 0x5f, 0x5f, 0x73]);
+            code.extend_from_slice(target.as_slice());
+            code.extend_from_slice(&[0x5a, 0xf1]);
+        }
+        // Stop on success, otherwise revert with the returned data.
+        let stop = u8::try_from(code.len() + 10).unwrap();
+        code.extend_from_slice(&[
+            0x60, stop, 0x57, 0x3d, 0x5f, 0x5f, 0x3e, 0x3d, 0x5f, 0xfd, 0x5b, 0x00,
+        ]);
+        code.into()
+    }
+
+    /// Returns code that makes each of `calls` to the cheatcode address, ignoring their results,
+    /// then runs `end`.
+    fn vm_script(calls: &[Vec<u8>], end: &[u8]) -> Bytes {
+        const CALL_LEN: usize = 37;
+        let mut code = Vec::new();
+        let mut data_offset = CALL_LEN * calls.len() + end.len();
+        for call in calls {
+            let len = u8::try_from(call.len()).unwrap();
+            // Copy the embedded calldata to memory, call with it and pop the success flag.
+            code.extend_from_slice(&[0x60, len, 0x61]);
+            code.extend_from_slice(&u16::try_from(data_offset).unwrap().to_be_bytes());
+            code.extend_from_slice(&[0x5f, 0x39, 0x5f, 0x5f, 0x60, len, 0x5f, 0x5f, 0x73]);
+            code.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
+            code.extend_from_slice(&[0x5a, 0xf1, 0x50]);
+            data_offset += call.len();
+        }
+        code.extend_from_slice(end);
+        code.extend(calls.iter().flatten());
+        code.into()
+    }
+
+    fn failure_identity_executor(assertions_revert: bool) -> Executor<EthEvmNetwork> {
+        let config = Config { assertions_revert, ..Default::default() };
+        let cheats_config =
+            Arc::new(CheatsConfig::new(&config, EvmOpts::default(), None, None, false));
+        let mut executor = eth_executor(
+            ExecutorBuilder::default()
+                .inspectors(|stack| stack.cheatcodes(cheats_config))
+                .gas_limit(1_000_000),
+        );
+        executor.inspector_mut().collect_failure_identity(true);
+        executor
+    }
+
+    #[test]
+    fn failure_identity_ignores_only_assertion_values() {
+        let mut executor = failure_identity_executor(true);
+        let [once, twice] = [0x31, 0x32].map(Address::with_last_byte);
+        for (target, calls) in [(once, 1), (twice, 2)] {
+            executor
+                .set_code(target, Bytecode::new_raw(forwarder(CHEATCODE_ADDRESS, calls)))
+                .unwrap();
+        }
+        let identity = |target, call: Vec<u8>| {
+            let result = executor.call_raw(CALLER, target, call.into(), U256::ZERO).unwrap();
+            assert!(result.reverted);
+            result.failure_identity
+        };
+        let gt = |left: u64, right: u64| {
+            assertGt_0Call { left: U256::from(left), right: U256::from(right) }.abi_encode()
+        };
+        let eq = |err: &str| {
+            assertEq_1Call { left: true, right: false, err: err.to_string() }.abi_encode()
+        };
+
+        // The same assertion reporting other values fails the same way.
+        let expected = identity(once, gt(0, 1)).unwrap();
+        assert_eq!(identity(once, gt(2, 3)), Some(expected));
+        // Another assertion from the same site does not.
+        let lt = assertLt_0Call { left: U256::ONE, right: U256::ONE }.abi_encode();
+        assert_ne!(identity(once, lt).unwrap(), expected);
+        // Custom messages are compared in full, even when they look like formatted values.
+        assert_ne!(
+            identity(once, eq("assertion failed: early")).unwrap(),
+            identity(once, eq("assertion failed: intended")).unwrap()
+        );
+        // Either of two identical failures could have produced the revert data.
+        assert_eq!(identity(twice, gt(0, 1)), None);
+    }
+
+    #[test]
+    fn failure_identity_tracks_non_reverting_assertions() {
+        let mut executor = failure_identity_executor(false);
+        let [first, second, parent, a] = [0x31, 0x32, 0x33, 0x34].map(Address::with_last_byte);
+        let assertion = assertTrue_1Call { condition: false, err: "failed".to_string() };
+
+        // The same assertion from another call site fails another way.
+        let identities = [first, second].map(|target| {
+            executor.set_code(target, Bytecode::new_raw(forwarder(CHEATCODE_ADDRESS, 1))).unwrap();
+            let call = assertion.abi_encode().into();
+            let result = executor.call_raw(CALLER, target, call, U256::ZERO).unwrap();
+            assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+            result.failure_identity.unwrap()
+        });
+        assert_ne!(identities[0], identities[1]);
+
+        // Call `a` with 2, then 1, and stop.
+        let mut code = vec![0x60, 0x02, 0x5b, 0x80, 0x5f, 0x52, 0x5f, 0x5f, 0x60, 0x20, 0x5f, 0x5f];
+        code.push(0x73);
+        code.extend_from_slice(a.as_slice());
+        code.extend_from_slice(&[0x5a, 0xf1, 0x50, 0x60, 0x01, 0x90, 0x03, 0x80, 0x60, 0x02]);
+        code.extend_from_slice(&[0x57, 0x00]);
+        executor.set_code(parent, Bytecode::new_raw(code.into())).unwrap();
+        // Assert when called with storage slot zero, then revert when called with slot one.
+        let mut child = vec![0x5f, 0x35, 0x80, 0x5f, 0x54, 0x14, 0x60, 0x16, 0x57, 0x5b, 0x60];
+        child.extend_from_slice(&[0x01, 0x54, 0x14, 0x60, 0x12, 0x57, 0x00, 0x5b, 0x5f, 0x5f]);
+        child.extend_from_slice(&[0xfd, 0x5b]);
+        let mut assert = vm_script(&[assertion.abi_encode()], &[])[..37].to_vec();
+        // Point the calldata copy at the end of the child.
+        assert[4] = 0x3f;
+        child.extend(assert);
+        child.extend_from_slice(&[0x60, 0x09, 0x56]);
+        assert_eq!([child[0x09], child[0x12], child[0x16]], [0x5b; 3]);
+        assert_eq!(child.len(), 0x3f);
+        child.extend(assertion.abi_encode());
+        executor.set_code(a, Bytecode::new_raw(child.into())).unwrap();
+        let identities = [1, 2].map(|reverting| {
+            let account = |slot: u64, value: u64| (a, U256::from(slot), U256::from(value));
+            for (account, slot, value) in [account(0, 2), account(1, reverting)] {
+                executor.backend_mut().insert_account_storage(account, slot, value);
+            }
+            let result = executor.call_raw(CALLER, parent, Bytes::new(), U256::ZERO).unwrap();
+            assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+            result.failure_identity.unwrap()
+        });
+        // The same assertion survives and a later call reverts, or the call that asserted reverts.
+        assert_ne!(identities[0], identities[1]);
+    }
+
+    #[test]
+    fn failure_identity_tells_apart_failure_sites() {
+        let mut executor = failure_identity_executor(true);
+        let [target, reverts, invalid_jump, out_of_gas] =
+            [0x31, 0x32, 0x33, 0x34].map(Address::with_last_byte);
+        for (callee, code) in [
+            (reverts, &[0x5f, 0x5f, 0xfd][..]),
+            (invalid_jump, &[0x5f, 0x56]),
+            (out_of_gas, &[0x5b, 0x5f, 0x56]),
+        ] {
+            executor.set_code(callee, Bytecode::new_raw(Bytes::copy_from_slice(code))).unwrap();
+        }
+        let mut identity = |code: &[u8], calldata: U256| {
+            executor.set_code(target, Bytecode::new_raw(Bytes::copy_from_slice(code))).unwrap();
+            let calldata = Bytes::from(calldata.to_be_bytes_vec());
+            let result = executor.call_raw(CALLER, target, calldata, U256::ZERO).unwrap();
+            assert!(result.reverted);
+            result.failure_identity.unwrap()
+        };
+        let gt = |left: u64, right: u64| {
+            assertGt_0Call { left: U256::from(left), right: U256::from(right) }.abi_encode()
+        };
+
+        // Two `REVERT`s of the same data in one frame.
+        let two_reverts = [0x5f, 0x35, 0x60, 0x08, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x5f, 0xfd];
+        assert_ne!(identity(&two_reverts, U256::ZERO), identity(&two_reverts, U256::ONE));
+        // Two checks that branch to one shared `REVERT`, as optimized code does.
+        let mut shared = vec![0x5f, 0x35, 0x80, 0x60, 0x01, 0x14, 0x60, 0x10, 0x57, 0x60, 0x02];
+        shared.extend_from_slice(&[0x14, 0x60, 0x10, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd]);
+        assert_eq!(shared[0x10], 0x5b);
+        assert_ne!(identity(&shared, U256::ONE), identity(&shared, U256::from(2)));
+
+        // The same `CALL` reaching contracts that halt for different reasons, then reverting.
+        let forward = [0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x35, 0x5a, 0xf1, 0x5f, 0x5f, 0xfd];
+        let [invalid_jump, out_of_gas] =
+            [invalid_jump, out_of_gas].map(|callee| U256::from_be_slice(callee.as_slice()));
+        assert_ne!(identity(&forward, invalid_jump), identity(&forward, out_of_gas));
+
+        // Two invalid `JUMP`s, which halt with the same reason and data.
+        let jumps = [0x5f, 0x35, 0x60, 0x07, 0x57, 0x5f, 0x56, 0x5b, 0x5f, 0x56];
+        assert_ne!(identity(&jumps, U256::ZERO), identity(&jumps, U256::ONE));
+
+        // Initcode reverting at either of two sites, whose failure the creator then replaces.
+        let create = [0x36, 0x5f, 0x5f, 0x37, 0x36, 0x5f, 0x5f, 0xf0, 0x50, 0x5f, 0x5f, 0xfd];
+        let [first, second] = [&[0x5f, 0x5f, 0xfd][..], &[0x60, 0x01, 0x50, 0x5f, 0x5f, 0xfd]]
+            .map(|initcode| U256::from_be_bytes(B256::right_padding_from(initcode).0));
+        assert_ne!(identity(&create, first), identity(&create, second));
+        // Constructor arguments past the executed code are ignored.
+        let args = U256::from_be_bytes(B256::right_padding_from(&[0x5f, 0x5f, 0xfd, 0x01]).0);
+        assert_eq!(identity(&create, first), identity(&create, args));
+        // Even when they change the `CREATE2` address.
+        let create2 =
+            [0x36, 0x5f, 0x5f, 0x37, 0x5f, 0x36, 0x5f, 0x5f, 0xf5, 0x50, 0x5f, 0x5f, 0xfd];
+        assert_eq!(identity(&create2, first), identity(&create2, args));
+
+        // The same contract reverting from two calls, whose failure the caller then replaces.
+        let mut caught = vec![0x5f, 0x35, 0x60, 0x25, 0x57];
+        for jump in [true, false] {
+            caught.extend_from_slice(&[0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x73]);
+            caught.extend_from_slice(reverts.as_slice());
+            caught.extend_from_slice(&[0x5a, 0xf1, 0x50]);
+            if jump {
+                caught.extend_from_slice(&[0x60, 0x43, 0x56, 0x5b]);
+            }
+        }
+        caught.extend_from_slice(&[0x5b, 0x5f, 0x5f, 0xfd]);
+        assert_eq!([caught[0x25], caught[0x43]], [0x5b, 0x5b]);
+        assert_ne!(identity(&caught, U256::ZERO), identity(&caught, U256::ONE));
+
+        // An internal function asserting for two callers, told apart by their return labels. It
+        // copies the asserting calldata at the end of the code to memory, calls the cheatcode
+        // address with it and reverts with its error.
+        let mut wrapper = vec![0x5f, 0x35, 0x60, 0x0c, 0x57];
+        wrapper.extend_from_slice(&[0x60, 0x0a, 0x60, 0x14, 0x56, 0x5b, 0x00]);
+        wrapper.extend_from_slice(&[0x5b, 0x60, 0x12, 0x60, 0x14, 0x56, 0x5b, 0x00, 0x5b]);
+        wrapper.extend_from_slice(&[0x60, 0x44, 0x60, 0x3f, 0x5f, 0x39, 0x5f, 0x5f, 0x60, 0x44]);
+        wrapper.extend_from_slice(&[0x5f, 0x5f, 0x73]);
+        wrapper.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
+        wrapper.extend_from_slice(&[0x5a, 0xf1, 0x3d, 0x5f, 0x5f, 0x3e, 0x3d, 0x5f, 0xfd]);
+        assert_eq!([wrapper[0x0a], wrapper[0x0c], wrapper[0x12], wrapper[0x14]], [0x5b; 4]);
+        assert_eq!(wrapper.len(), 0x3f);
+        wrapper.extend(gt(0, 1));
+        assert_ne!(identity(&wrapper, U256::ZERO), identity(&wrapper, U256::ONE));
+
+        // Rethrowing either of two caught assertions.
+        let mut rethrow = Vec::new();
+        for (offset, ret) in [(0x00, 0x02), (0x44, 0x03)] {
+            // Copy the calldata, then call with it, keeping its error at `ret * 0x100`.
+            rethrow.extend_from_slice(&[0x60, 0x44, 0x60, 0x5f + offset, 0x60, offset, 0x39]);
+            rethrow.extend_from_slice(&[0x60, 0x64, 0x61, ret, 0x00, 0x60, 0x44, 0x60, offset]);
+            rethrow.extend_from_slice(&[0x5f, 0x73]);
+            rethrow.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
+            rethrow.extend_from_slice(&[0x5a, 0xf1, 0x50]);
+        }
+        // Revert with the error at `0x200 + calldata * 0x100`.
+        rethrow.extend_from_slice(&[0x60, 0x64, 0x5f, 0x35, 0x61, 0x01, 0x00, 0x02]);
+        rethrow.extend_from_slice(&[0x61, 0x02, 0x00, 0x01, 0xfd]);
+        assert_eq!(rethrow.len(), 0x5f);
+        rethrow.extend(gt(0, 1));
+        rethrow.extend(gt(2, 3));
+        assert_ne!(identity(&rethrow, U256::ZERO), identity(&rethrow, U256::ONE));
+    }
+
+    #[test]
+    fn failure_identity_needs_a_recorded_origin() {
+        let target = Address::with_last_byte(0x31);
+        let identity = |executor: &mut Executor<EthEvmNetwork>, calls: &[Vec<u8>]| {
+            let code = Bytecode::new_raw(vm_script(calls, &[0x00]));
+            executor.set_code(target, code).unwrap();
+            let mut result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+            assert!(!executor.is_raw_call_mut_success(target, &mut result));
+            result.failure_identity
+        };
+        let assertion = assertTrue_1Call { condition: false, err: "failed".to_string() };
+        let snapshot = snapshotStateCall {}.abi_encode();
+
+        // A restore can make another path look like this one. The first snapshot of a new
+        // executor has id zero.
+        for restore in [
+            revertToStateCall { snapshotId: U256::ZERO }.abi_encode(),
+            revertToStateAndDeleteCall { snapshotId: U256::ZERO }.abi_encode(),
+        ] {
+            let calls = [snapshot.clone(), restore, assertion.abi_encode()];
+            assert_eq!(identity(&mut failure_identity_executor(false), &calls), None);
+        }
+        let mut executor = failure_identity_executor(false);
+        assert!(identity(&mut executor, &[snapshot, assertion.abi_encode()]).is_some());
+
+        // A `fail()` is identified by its call site, even after a caught assertion that reverted
+        // and so did not fail the call.
+        let mut executor = failure_identity_executor(true);
+        let fail = storeCall {
+            target: CHEATCODE_ADDRESS,
+            slot: GLOBAL_FAIL_SLOT.into(),
+            value: B256::with_last_byte(1),
+        }
+        .abi_encode();
+        // Catch the assertion, then call `fail()` at either of two sites chosen by the calldata.
+        let assertion = assertion.abi_encode();
+        let data = 119;
+        let block = |call: &[u8], offset: usize| {
+            let mut block = vm_script(&[call.to_vec()], &[])[..37].to_vec();
+            block[3..5].copy_from_slice(&u16::try_from(offset).unwrap().to_be_bytes());
+            block
+        };
+        let mut code = block(&assertion, data);
+        code.extend_from_slice(&[0x5f, 0x35, 0x60, 0x50, 0x57]);
+        code.extend(block(&fail, data + assertion.len()));
+        code.extend_from_slice(&[0x00, 0x5b]);
+        code.extend(block(&fail, data + assertion.len()));
+        code.push(0x00);
+        assert_eq!((code[0x50], code.len()), (0x5b, data));
+        code.extend_from_slice(&assertion);
+        code.extend(fail);
+        executor.set_code(target, Bytecode::new_raw(code.into())).unwrap();
+        executor.inspector_mut().collect_failure_provenance(true);
+        let [first, second] = [U256::ZERO, U256::ONE].map(|site| {
+            let calldata = site.to_be_bytes_vec().into();
+            let mut result = executor.call_raw(CALLER, target, calldata, U256::ZERO).unwrap();
+            assert!(!executor.is_raw_call_mut_success(target, &mut result));
+            (result.failure_identity.unwrap(), result.failure_provenance.unwrap())
+        });
+        assert_ne!(first.0, second.0);
+        // A replay can check which `fail()` it reached too.
+        assert_ne!(first.1, second.1);
+        // The caught assertion alone is identified too, as it fails invariant handlers.
+        let code = Bytecode::new_raw(vm_script(&[assertion], &[0x00]));
+        executor.set_code(target, code).unwrap();
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(result.failed_assertion.is_some() && result.failure_identity.is_some());
+    }
+
+    #[test]
+    fn failure_provenance_tells_apart_equal_raw_failures() {
+        let mut executor = failure_identity_executor(false);
+        let [
+            check,
+            forward,
+            first,
+            second,
+            halt,
+            wrapper,
+            other_wrapper,
+            callee,
+            sites,
+            branch,
+            checks,
+        ] = [0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b]
+            .map(Address::with_last_byte);
+        // Jump to the calldata and revert empty at pc 6 from 3, or at pc 10 from 7.
+        let code =
+            Bytes::from_static(&[0x5f, 0x35, 0x56, 0x5b, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x5f, 0xfd]);
+        executor.set_code(check, Bytecode::new_raw(code)).unwrap();
+        executor.set_code(forward, Bytecode::new_raw(forwarder(check, 1))).unwrap();
+        // Jump to the calldata, call a reverting callee from pc 0x1f from 3, or from pc 0x3f from
+        // 0x23, at equal cost, then revert empty at a shared pc.
+        executor
+            .set_code(callee, Bytecode::new_raw(Bytes::from_static(&[0x5f, 0x5f, 0xfd])))
+            .unwrap();
+        let mut code = vec![0x5f, 0x35, 0x56];
+        for _ in 0..2 {
+            code.extend_from_slice(&[0x5b, 0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x73]);
+            code.extend_from_slice(callee.as_slice());
+            code.extend_from_slice(&[0x5a, 0xf1, 0x60, 0x43, 0x56]);
+        }
+        code.extend_from_slice(&[0x5b, 0x5f, 0x5f, 0xfd]);
+        executor.set_code(sites, Bytecode::new_raw(code.into())).unwrap();
+        // Jump to the calldata and branch from pc 8 from 3, or from pc 0xf from 0xa, to a shared
+        // block that calls a contract that branches and returns, then reverts empty.
+        let code = Bytes::from_static(&[0x60, 0x01, 0x60, 0x05, 0x57, 0x5b, 0x00]);
+        executor.set_code(branch, Bytecode::new_raw(code)).unwrap();
+        let mut code = vec![0x5f, 0x35, 0x56];
+        for _ in 0..2 {
+            code.extend_from_slice(&[0x5b, 0x60, 0x01, 0x60, 0x11, 0x57, 0x00]);
+        }
+        code.extend_from_slice(&[0x5b, 0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x73]);
+        code.extend_from_slice(branch.as_slice());
+        code.extend_from_slice(&[0x5a, 0xf1, 0x5f, 0x5f, 0xfd]);
+        executor.set_code(checks, Bytecode::new_raw(code.into())).unwrap();
+        // Two instances of a contract failing an assertion that does not revert.
+        for target in [first, second] {
+            executor.set_code(target, Bytecode::new_raw(forwarder(CHEATCODE_ADDRESS, 1))).unwrap();
+        }
+        // Two wrappers making the same assertion through the first contract.
+        for target in [wrapper, other_wrapper] {
+            executor.set_code(target, Bytecode::new_raw(forwarder(first, 1))).unwrap();
+        }
+        let assertion =
+            assertTrue_1Call { condition: false, err: "failed".to_string() }.abi_encode();
+        let runs = [
+            (forward, U256::from(3).to_be_bytes_vec()),
+            (forward, U256::from(7).to_be_bytes_vec()),
+            (sites, U256::from(0x03).to_be_bytes_vec()),
+            (sites, U256::from(0x23).to_be_bytes_vec()),
+            (checks, U256::from(0x03).to_be_bytes_vec()),
+            (checks, U256::from(0x0a).to_be_bytes_vec()),
+            (first, assertion.clone()),
+            (second, assertion.clone()),
+            (wrapper, assertion.clone()),
+            (other_wrapper, assertion),
+        ];
+        let raw_failures = |executor: &mut Executor<EthEvmNetwork>| {
+            runs.clone().map(|(target, calldata)| {
+                let result =
+                    executor.call_raw(CALLER, target, calldata.into(), U256::ZERO).unwrap();
+                result.raw_failure()
+            })
+        };
+
+        // Without provenance, a replay cannot be checked.
+        assert!(raw_failures(&mut executor).iter().all(Option::is_none));
+
+        executor.inspector_mut().collect_failure_provenance(true);
+        let anchors = raw_failures(&mut executor).map(Option::unwrap);
+        let exits = anchors.each_ref().map(|failure| failure.exit_reason.unwrap());
+        assert_eq!(
+            exits,
+            [
+                InstrStop::Revert,
+                InstrStop::Revert,
+                InstrStop::Revert,
+                InstrStop::Revert,
+                InstrStop::Revert,
+                InstrStop::Revert,
+                InstrStop::Stop,
+                InstrStop::Stop,
+                InstrStop::Stop,
+                InstrStop::Stop
+            ]
+        );
+        // Campaigns, which do not record failure identities, record the same provenance as
+        // replays that do.
+        executor.inspector_mut().collect_failure_identity(false);
+        assert_eq!(raw_failures(&mut executor).map(Option::unwrap), anchors);
+
+        // A halt's instruction is not recorded, so replays of a call that halted cannot be
+        // checked.
+        executor.set_code(halt, Bytecode::new_raw(Bytes::from_static(&[0x5f, 0x56]))).unwrap();
+        executor.set_code(forward, Bytecode::new_raw(forwarder(halt, 1))).unwrap();
+        let result = executor.call_raw(CALLER, forward, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Revert));
+        assert_eq!(result.raw_failure(), None);
+
+        // Each pair differs only in where it failed.
+        for [a, b] in anchors.as_chunks::<2>().0 {
+            assert_ne!(a.provenance, b.provenance);
+            assert_eq!(
+                RawFailure { provenance: B256::ZERO, ..a.clone() },
+                RawFailure { provenance: B256::ZERO, ..b.clone() }
+            );
+        }
     }
 }

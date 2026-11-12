@@ -13,6 +13,7 @@ use crate::{
     expected_emit::{self, ExpectedEmitTracker},
     script::Broadcast,
     test::{
+        assert::{FailureProvenance, FailureTrace},
         assume::AssumeNoRevert,
         expect::{self, ExpectedCallTracker, ExpectedCreate, ExpectedRevert, ExpectedRevertKind},
         revert_handlers,
@@ -743,6 +744,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Unlike the global failure slot, this survives reverts, so callers still see the failure
     /// when the asserting call reverts afterwards.
     pub failed_assertion: Option<String>,
+    /// Records failures by call site while set, so minimizers can tell failures apart.
+    pub failure_trace: Option<FailureTrace>,
+    /// Records where each call failed while set, so a replay can check it failed the same way.
+    pub failure_provenance: Option<FailureProvenance>,
 
     /// Gas metering state.
     pub gas_metering: GasMetering,
@@ -893,6 +898,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             frame_rollback: Default::default(),
             persistent_write_snapshots: Default::default(),
             failed_assertion: None,
+            failure_trace: Default::default(),
+            failure_provenance: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
             pc: Default::default(),
@@ -1216,7 +1223,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             db.ensure_cheatcode_access_forking_mode(&interp.message().code_address)?;
         }
 
-        apply_dispatch(
+        let result = apply_dispatch(
             &decoded,
             &mut CheatsCtxt {
                 state: self,
@@ -1228,7 +1235,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 depth: message.depth.into(),
             },
             executor,
-        )
+        );
+        if let Some(provenance) = &mut self.failure_provenance {
+            provenance.finish_assertion();
+        }
+        result
     }
 
     /// Decodes the input data and applies Monad-specific cheatcodes.
@@ -1903,6 +1914,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.gas_metering.recording
             || self.core.arbitrary_storage.is_some()
             || self.deploy_code_depth.is_some()
+            || self.failure_trace.is_some()
         {
             return OpcodeSet::ALL;
         }
@@ -1936,6 +1948,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if self.has_active_env_overrides() {
             steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
         }
+        if self.failure_provenance.is_some() {
+            steps = steps.union(opcodes([op::JUMPI, op::REVERT, op::INVALID]));
+        }
         steps
     }
 
@@ -1966,6 +1981,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(expected) = &mut self.expected_revert {
             expected.max_depth = max(usize::from(interp.message().depth) + 1, expected.max_depth);
         }
+
+        if let Some(trace) = &mut self.failure_trace {
+            trace.enter_frame::<FEN>(interp, usize::from(interp.message().depth) + 1);
+        }
     }
 
     /// Called before each instruction in [`Self::steps`] executes.
@@ -1982,6 +2001,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         let depth = usize::from(interp.message().depth) + 1;
         let opcode = interp.opcode();
+
+        if let Some(trace) = &mut self.failure_trace {
+            trace.step::<FEN>(interp, depth);
+        }
+        if let Some(provenance) = &mut self.failure_provenance {
+            match opcode {
+                op::JUMPI => provenance.record_jumpi(depth, self.pc),
+                op::REVERT | op::INVALID => provenance.record_revert::<FEN>(interp, depth),
+                _ => {}
+            }
+        }
 
         // Marks an `ORIGIN` or `GASPRICE` instruction whose pushed value `step_end` overrides.
         self.pending_origin_override = opcode == op::ORIGIN && self.origin_override.is_some();
@@ -3890,6 +3920,16 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     }
     let result = if ccx.state.core.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
         Err(fmt_err!("disabled during restricted execution"))
+    } else if let Some(trace) = &mut ccx.state.failure_trace
+        && has_host_effects(calls)
+    {
+        // A replay must not repeat these effects and cannot reproduce these reads, so it skips
+        // them and leaves the failure unidentified.
+        trace.unidentified = true;
+        Ok(Default::default())
+    } else if ccx.state.failure_trace.is_some() && matches!(calls, Vm::VmCalls::sleep(_)) {
+        // A replay does not wait, which only `unixTime` could observe.
+        Ok(Default::default())
     } else {
         vm_calls!(dispatch)
     }
@@ -3904,6 +3944,49 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     );
 
     result
+}
+
+/// Returns whether `call` writes to files or environment variables, runs a command, sends an
+/// arbitrary RPC request, creates a fork at the latest block, which can be newer than the
+/// campaign's, prompts for input, or reads the clock, which skipped sleeps would make disagree
+/// with the campaign's.
+const fn has_host_effects(call: &Vm::VmCalls) -> bool {
+    matches!(
+        call,
+        Vm::VmCalls::copyFile(_)
+            | Vm::VmCalls::createDir(_)
+            | Vm::VmCalls::createFork_0(_)
+            | Vm::VmCalls::createSelectFork_0(_)
+            | Vm::VmCalls::dumpState(_)
+            | Vm::VmCalls::eth_getLogs(_)
+            | Vm::VmCalls::eth_getProof(_)
+            | Vm::VmCalls::ffi(_)
+            | Vm::VmCalls::ffiBytes(_)
+            | Vm::VmCalls::ffiString(_)
+            | Vm::VmCalls::ffiUint(_)
+            | Vm::VmCalls::getRawBlockHeader(_)
+            | Vm::VmCalls::prompt(_)
+            | Vm::VmCalls::promptAddress(_)
+            | Vm::VmCalls::promptSecret(_)
+            | Vm::VmCalls::promptSecretUint(_)
+            | Vm::VmCalls::promptUint(_)
+            | Vm::VmCalls::removeDir(_)
+            | Vm::VmCalls::removeFile(_)
+            | Vm::VmCalls::rpcJson_0(_)
+            | Vm::VmCalls::rpcJson_1(_)
+            | Vm::VmCalls::rpc_0(_)
+            | Vm::VmCalls::rpc_1(_)
+            | Vm::VmCalls::setEnv(_)
+            | Vm::VmCalls::tryFfi(_)
+            | Vm::VmCalls::unixTime(_)
+            | Vm::VmCalls::writeFile(_)
+            | Vm::VmCalls::writeFileBinary(_)
+            | Vm::VmCalls::writeJson_0(_)
+            | Vm::VmCalls::writeJson_1(_)
+            | Vm::VmCalls::writeLine(_)
+            | Vm::VmCalls::writeToml_0(_)
+            | Vm::VmCalls::writeToml_1(_)
+    )
 }
 
 /// Returns the gas a frame used, as reported by `lastCallGas` and `lastFrameGas`.
