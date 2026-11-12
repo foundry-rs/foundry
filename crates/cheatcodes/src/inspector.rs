@@ -3809,9 +3809,12 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     } else if let Some(trace) = &mut ccx.state.failure_trace
         && has_host_effects(calls)
     {
-        // A replay cannot undo these effects, and later reads would see the campaign's, so it
-        // skips them and leaves the failure unidentified.
+        // A replay must not repeat these effects and cannot reproduce these reads, so it skips
+        // them and leaves the failure unidentified.
         trace.unidentified = true;
+        Ok(Default::default())
+    } else if ccx.state.failure_trace.is_some() && matches!(calls, Vm::VmCalls::sleep(_)) {
+        // A replay does not wait, which only `unixTime` could observe.
         Ok(Default::default())
     } else {
         vm_calls!(dispatch)
@@ -3829,8 +3832,9 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     result
 }
 
-/// Returns whether `call` writes to files or environment variables, runs a command, or sends an
-/// RPC request.
+/// Returns whether `call` writes to files or environment variables, runs a command, sends an
+/// arbitrary RPC request, prompts for input, or reads the clock, which skipped sleeps would make
+/// disagree with the campaign's.
 const fn has_host_effects(call: &Vm::VmCalls) -> bool {
     matches!(
         call,
@@ -3841,6 +3845,11 @@ const fn has_host_effects(call: &Vm::VmCalls) -> bool {
             | Vm::VmCalls::ffiBytes(_)
             | Vm::VmCalls::ffiString(_)
             | Vm::VmCalls::ffiUint(_)
+            | Vm::VmCalls::prompt(_)
+            | Vm::VmCalls::promptAddress(_)
+            | Vm::VmCalls::promptSecret(_)
+            | Vm::VmCalls::promptSecretUint(_)
+            | Vm::VmCalls::promptUint(_)
             | Vm::VmCalls::removeDir(_)
             | Vm::VmCalls::removeFile(_)
             | Vm::VmCalls::rpcJson_0(_)
@@ -3849,6 +3858,7 @@ const fn has_host_effects(call: &Vm::VmCalls) -> bool {
             | Vm::VmCalls::rpc_1(_)
             | Vm::VmCalls::setEnv(_)
             | Vm::VmCalls::tryFfi(_)
+            | Vm::VmCalls::unixTime(_)
             | Vm::VmCalls::writeFile(_)
             | Vm::VmCalls::writeFileBinary(_)
             | Vm::VmCalls::writeJson_0(_)

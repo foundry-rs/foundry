@@ -5246,6 +5246,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let state = self.build_fuzz_state(false, Some(func));
         let shrink_run_limit = self.config.invariant.shrink_run_limit as usize;
+        // Replays would print live logs again.
+        let minimizes = shrink_run_limit > 0 && !self.config.live_logs;
         let (sender, address) = (self.tcfg.sender, self.address);
         let minimize = |counterexample: &BaseCounterExample,
                         still_fails: &mut dyn FnMut(&Bytes) -> bool| {
@@ -5293,7 +5295,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 progress.as_ref(),
                 &self.tcfg.early_exit,
                 &self.cr.tokio_handle,
-                (shrink_run_limit > 0).then_some(&minimize),
+                minimizes.then_some(&minimize),
             )
         };
         let result = match result {

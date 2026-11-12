@@ -887,8 +887,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Set whether to record the failure provenance of each call, see
     /// [`RawCallResult::failure_provenance`](crate::executors::RawCallResult::failure_provenance).
     ///
-    /// Only steps `REVERT` and `INVALID` and hashes the site of each call, so it can stay set
-    /// during campaigns.
+    /// Only steps `JUMPI`, `REVERT` and `INVALID` and hashes the site of each call, so it can stay
+    /// set during campaigns.
     #[inline]
     pub fn collect_failure_provenance(&mut self, yes: bool) {
         if let Some(cheatcodes) = &mut self.cheatcodes {
