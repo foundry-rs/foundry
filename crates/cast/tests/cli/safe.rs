@@ -1932,7 +1932,7 @@ async fn safe_commands_reject_unrelated_onchain_hash(cmd: _) {
 }
 
 #[casttest]
-async fn safe_propose_rejects_configured_chain_mismatch(cmd: _) {
+async fn safe_propose_rejects_configured_chain_mismatch(prj: _, cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let safe = Address::repeat_byte(0x11);
     api.anvil_set_code(
@@ -1946,30 +1946,50 @@ async fn safe_propose_rejects_configured_chain_mismatch(cmd: _) {
     .await
     .unwrap();
     let (service, submissions) = spawn_safe_service_with_submissions(json!({})).await;
-
-    cmd.cast_fuse();
-    cmd.env("FOUNDRY_CHAIN_ID", "1");
-    cmd.args([
+    let target = Address::repeat_byte(0x22);
+    let mut transaction = safe_transaction(safe, 0);
+    transaction["to"] = json!(target);
+    let expected_hash = set_safe_transaction_hash(&mut transaction, 31337);
+    let safe_arg = safe.to_string();
+    let target_arg = target.to_string();
+    let rpc = handle.http_endpoint();
+    let args = [
         "safe",
         "propose",
-        &safe.to_string(),
-        &Address::repeat_byte(0x22).to_string(),
+        &safe_arg,
+        &target_arg,
         "--nonce",
         "0",
         "--rpc-url",
-        &handle.http_endpoint(),
+        &rpc,
         "--service-url",
         service.endpoint(),
         "--private-key",
         ANVIL_KEY,
-    ])
-    .assert_failure()
-    .stdout_eq("")
-    .stderr_eq(str![[r#"
-Error: Configured chain does not match the RPC chain
+    ];
+
+    for from_env in [true, false] {
+        if !from_env {
+            prj.update_config(|config| config.chain = Some(1.into()));
+        }
+        cmd.cast_fuse().current_dir(prj.root());
+        cmd.unset_env("FOUNDRY_CHAIN_ID");
+        if from_env {
+            cmd.env("FOUNDRY_CHAIN_ID", "1");
+        }
+        cmd.args(args).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: Configured chain ID 1 does not match RPC chain ID 31337.
+Check chain_id in the selected Foundry profile or FOUNDRY_CHAIN_ID.
 
 "#]]);
-    assert_eq!(*submissions.lock().unwrap(), 0, "a signature was submitted to the service");
+        assert_eq!(*submissions.lock().unwrap(), 0, "a signature was submitted to the service");
+    }
+
+    // The environment can override a chain configured in foundry.toml for local testing.
+    cmd.cast_fuse().current_dir(prj.root());
+    cmd.env("FOUNDRY_CHAIN_ID", "31337");
+    cmd.args(args).assert_success().stdout_eq(format!("{expected_hash}\n"));
+    assert_eq!(*submissions.lock().unwrap(), 1, "a proposal was not submitted to the service");
 }
 
 #[casttest]

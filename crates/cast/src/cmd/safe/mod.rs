@@ -82,9 +82,13 @@ async fn rpc_provider(rpc: &RpcOpts) -> Result<(RetryProvider<Ethereum>, u64)> {
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
     let chain_id = provider.get_chain_id().await?;
-    ensure!(
-        config.chain.is_none_or(|chain| chain.id() == chain_id),
-        "Configured chain does not match the RPC chain"
-    );
+    if let Some(chain) = config.chain {
+        let configured_chain_id = chain.id();
+        ensure!(
+            configured_chain_id == chain_id,
+            "Configured chain ID {configured_chain_id} does not match RPC chain ID {chain_id}.\n\
+             Check chain_id in the selected Foundry profile or FOUNDRY_CHAIN_ID."
+        );
+    }
     Ok((provider, chain_id))
 }
