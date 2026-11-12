@@ -53,9 +53,9 @@ impl<T: EvmTypesHost> fmt::Debug for LifecycleSnapshot<T> {
 /// its caller takes over the retained state.
 ///
 /// The failing frame also keeps the persistent writes made since the restoration, which it
-/// replays over the reinstated state along with the writes its rollback undid. Once a later
-/// restoration to an earlier point or a context switch drops some of them from the running ledger,
-/// none of them are kept.
+/// replays over the reinstated state along with the writes its rollback undid. Once a context
+/// switch, or a later restoration to an earlier point that is not undone, drops some of them from
+/// the running ledger, none of them are kept.
 ///
 /// The backend, active fork and environment a restoration installed are kept either way, and the
 /// reinstated state reads from the backing database of the running state it replaces. Retained
@@ -84,6 +84,9 @@ struct ReplacedState {
     /// The length of the running ledger right after the restoration, past which it holds the
     /// writes recorded since, or `None` once some of those were dropped.
     since: Option<usize>,
+    /// The `since` of each earlier retained state when this one was replaced, which reinstating
+    /// this state restores along with its ledger.
+    earlier_since: Vec<Option<usize>>,
 }
 
 #[derive(Clone, Debug)]
@@ -111,25 +114,28 @@ impl SnapshotRestores {
         len: usize,
     ) {
         let len = len.min(ledger.len());
-        for retained in &mut self.replaced {
-            if retained.since.is_some_and(|since| len < since) {
-                retained.since = None;
-            }
-        }
         if self.frames.last().is_some_and(|frame| frame.replaced_len == self.replaced.len()) {
             self.replaced.push(ReplacedState {
                 state: replaced,
                 ledger: ledger.to_vec(),
                 since: Some(len),
+                earlier_since: self.replaced.iter().map(|retained| retained.since).collect(),
             });
+        }
+        for retained in &mut self.replaced {
+            if retained.since.is_some_and(|since| len < since) {
+                retained.since = None;
+            }
         }
     }
 
     /// Stops keeping the persistent writes recorded since each retained restoration, after a
-    /// context switch accepted the running state and dropped them.
+    /// context switch accepted the running state and dropped them. Failing frames keep the switch,
+    /// so reinstating a state does not keep them again.
     pub fn accept_writes(&mut self) {
         for retained in &mut self.replaced {
             retained.since = None;
+            retained.earlier_since.fill(None);
         }
     }
 
@@ -163,6 +169,11 @@ impl SnapshotRestores {
             if let Some(since) = replaced.since {
                 let later = running.into_iter().skip(since);
                 ledger.extend(later.map(|(depth, _, write)| (depth, usize::MAX, write)));
+            }
+            // The reinstated ledger holds the writes that later restorations to earlier points
+            // dropped, so earlier restorations keep them again.
+            for (retained, since) in self.replaced.iter_mut().zip(replaced.earlier_since) {
+                retained.since = since;
             }
         }
         // The caller only needs the first restoration made since it started.

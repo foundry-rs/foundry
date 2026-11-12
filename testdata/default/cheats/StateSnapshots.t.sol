@@ -297,6 +297,26 @@ contract NestedRestoreHelper {
         }
         revert("restore reverted");
     }
+
+    /// Restores `newer` and deals `target` 20, then catches a call that restores `older`, which
+    /// drops that deal until the call reverts, and deals `target` 30.
+    function restoreAroundCaughtRestore(uint256 older, uint256 newer, address target) external {
+        require(vm.revertToState(newer), "restore failed");
+        vm.deal(target, 20);
+        try this.restoreRevert(older) {
+            revert("unexpected success");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("restore reverted"), reason);
+        }
+        require(target.balance == 20, "inner restore kept");
+        vm.deal(target, 30);
+        revert("outer reverted");
+    }
+
+    function restoreRevert(uint256 snapshotId) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        revert("restore reverted");
+    }
 }
 
 contract NestedRestoreConstructor {
@@ -520,6 +540,15 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         assertUndone(20, 1);
         assertEq(target.balance, 100);
         assertEq(vm.getNonce(target), 7);
+    }
+
+    function testRevertedRestoreKeepsWritesAfterCaughtEarlierRestore() public {
+        address target = address(0xDEA1);
+        uint256 older = vm.snapshotState();
+        vm.deal(address(0xDEA2), 10);
+        uint256 newer = vm.snapshotState();
+        expectHelperRevert(abi.encodeCall(helper.restoreAroundCaughtRestore, (older, newer, target)), "outer reverted");
+        assertEq(target.balance, 30);
     }
 
     function testRevertedRestoreKeepsLaterExecutedTransaction() public {
