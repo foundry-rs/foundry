@@ -1,6 +1,9 @@
 use crate::{
     cmd::{
         auth::confirm_and_build,
+        configurable_key_auth::{
+            ConfigurableAccountArgs, send_keychain_tx_as_configurable_account,
+        },
         print_json_or,
         send::{SendOptions, cast_send},
         tempo_policy_args::{parse_period, parse_scope, parse_selector_bytes},
@@ -28,8 +31,9 @@ use foundry_common::{
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, AccountsStoreView, KeyType, active_tempo_hardfork, is_tempo_hardfork_active,
-        read_tempo_accounts_store, tempo_accounts_store_path,
+        self, AccountsStoreView, KeyType, active_tempo_hardfork,
+        configurable_account::{ca_error, config_commitment},
+        is_tempo_hardfork_active, read_tempo_accounts_store, tempo_accounts_store_path,
     },
 };
 use foundry_wallets::{
@@ -143,12 +147,17 @@ pub enum KeychainSubcommand {
     },
 
     /// Authorize a new key on-chain via the AccountKeychain precompile.
+    ///
+    /// With `--tempo.configurable-account`, a configurable account sends the call in a `0x05`
+    /// transaction that its local owners approve (T14): the wallet signer, `--tempo.owner` and the
+    /// Tempo Accounts store, which must reach the account's threshold.
     #[command(visible_alias = "auth")]
     Authorize {
         /// The key address to authorize.
         key_address: Address,
 
-        /// Signature type: secp256k1, p256, or webauthn.
+        /// Signature type: secp256k1, p256, webauthn, or configurable (a configurable account as
+        /// the access key, T14).
         #[arg(default_value = "secp256k1", value_parser = parse_signature_type)]
         key_type: SignatureType,
 
@@ -415,9 +424,19 @@ pub enum KeyAuthorizationSubcommand {
     /// With an admin access-key signer the bound account is the key's root and is derived
     /// automatically; with a direct signer, `--bind-account` binds to another root. A root-signed
     /// `--admin` authorization defaults the account to the signer.
+    ///
+    /// With `--tempo.configurable-account`, the configurable account's owners sign the
+    /// authorization (T14, TIP-1111) and it is bound to the account. Its configuration is read
+    /// from the RPC.
     Sign {
         #[command(flatten)]
         authorization: KeyAuthorizationArgs,
+
+        #[command(flatten)]
+        configurable: ConfigurableAccountArgs,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
 
         /// Bind this authorization to a target (root) account (T6).
         ///
@@ -456,7 +475,8 @@ pub struct KeyAuthorizationArgs {
     /// Key address to authorize.
     key_address: Address,
 
-    /// Type of access key being authorized: secp256k1, p256, or webauthn.
+    /// Type of access key being authorized: secp256k1, p256, webauthn, or configurable (a
+    /// configurable account as the access key, T14).
     /// The root signature type is determined by the configured signer.
     #[arg(long, default_value = "secp256k1", value_parser = parse_auth_signature_type)]
     key_type: AuthSignatureType,
@@ -577,7 +597,10 @@ fn parse_auth_signature_type(s: &str) -> Result<AuthSignatureType, String> {
         "secp256k1" => Ok(AuthSignatureType::Secp256k1),
         "p256" => Ok(AuthSignatureType::P256),
         "webauthn" => Ok(AuthSignatureType::WebAuthn),
-        _ => Err(format!("unknown signature type: {s} (expected secp256k1, p256, or webauthn)")),
+        "configurable" | "configurableaccount" => Ok(AuthSignatureType::ConfigurableAccount),
+        _ => Err(format!(
+            "unknown signature type: {s} (expected secp256k1, p256, webauthn, or configurable)"
+        )),
     }
 }
 
@@ -896,7 +919,23 @@ impl KeyAuthorizationSubcommand {
                     hex::encode_prefixed(&encoded),
                 )
             }
-            Self::Sign { authorization, account, wallet, browser } => {
+            Self::Sign { authorization, configurable, rpc, account, wallet, browser } => {
+                if let Some(configurable_account) = configurable.account() {
+                    eyre::ensure!(
+                        !browser.browser,
+                        "browser wallets cannot sign as a configurable account owner; pass \
+                         browser approvals with --tempo.owner-signature"
+                    );
+                    return sign_configurable_key_authorization(
+                        authorization,
+                        &configurable,
+                        configurable_account,
+                        account,
+                        &wallet,
+                        &rpc,
+                    )
+                    .await;
+                }
                 run_key_auth_sign(authorization, account, *wallet, browser).await
             }
             Self::Inspect { authorization, account } => {
@@ -1471,10 +1510,25 @@ impl Doctor {
                 KeyRegistration::OnChain(info)
             }
             Ok(_) => {
+                // A configurable account's authorization is tied to it by its onchain commitment.
+                let signs_as_configurable_account = subject
+                    .entry
+                    .as_ref()
+                    .and_then(|entry| entry.key_authorization.as_ref())
+                    .is_some_and(|signed| signed.signature().as_configurable_account().is_some());
+                let commitment = if signs_as_configurable_account {
+                    config_commitment(&provider, root_account, BlockId::latest())
+                        .await
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
                 let (signed, detail) = self.attempt(validate_pending_key_authorization(
                     &subject,
                     rpc_chain_id,
                     &chain_timestamp,
+                    commitment,
                 ))?;
                 self.steps.push(DoctorStep::pass(KEY_REGISTRATION, detail));
                 KeyRegistration::Pending(Box::new(signed))
@@ -1761,10 +1815,14 @@ fn check_local_signing_readiness(subject: &DoctorSubject) -> DoctorStep {
 }
 
 /// Validates the local pending `key_authorization`, returning it with its pass detail.
+///
+/// `commitment` is the root account's onchain configuration commitment, which a key authorization
+/// signed by a configurable account's owners must match; it is zero before the account registers.
 fn validate_pending_key_authorization(
     subject: &DoctorSubject,
     rpc_chain_id: u64,
     chain_timestamp: &ChainTimestamp,
+    commitment: Option<B256>,
 ) -> Result<(SignedKeyAuthorization, String), DoctorStep> {
     let fail = |detail: String, hint: &str| DoctorStep::fail(KEY_REGISTRATION, detail, hint);
     let not_registered = || {
@@ -1828,7 +1886,22 @@ fn validate_pending_key_authorization(
             "refresh the access key to get a later key_authorization expiry",
         ));
     }
-    match signed.recover_signer() {
+    let signer = match signed.signature().as_configurable_account() {
+        Some(signature) => commitment
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "could not read the configuration commitment of {}",
+                    signature.account()
+                )
+            })
+            .and_then(|commitment| {
+                signature.validate_account_commitment(commitment).map_err(ca_error)
+            })
+            .and_then(|()| signature.verify_approvals(signed.signature_hash()).map_err(ca_error))
+            .map(|()| signature.account()),
+        None => signed.recover_signer().map_err(ca_error),
+    };
+    match signer {
         Ok(recovered) if recovered == subject.root_account => {}
         Ok(recovered) => {
             return Err(fail(
@@ -2462,6 +2535,20 @@ async fn run_authorize(
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
     let (_, provider) = tempo_provider(&send_tx.eth.rpc)?;
+    if key_type == SignatureType::ConfigurableAccount {
+        require_hardfork(
+            &provider,
+            TempoHardfork::T14,
+            "a configurable account access key requires the Tempo T14 hardfork",
+        )
+        .await?;
+    }
+
+    // TIP-1137 deprecates admin keys from T14, the hardfork that adds configurable accounts.
+    eyre::ensure!(
+        !(admin && tx_opts.tempo.has_configurable_account_options()),
+        "--admin cannot be combined with --tempo.configurable-account"
+    );
 
     // T6 admin keys are key-management only and use a dedicated precompile entrypoint.
     if admin {
@@ -2548,6 +2635,9 @@ async fn run_authorize(
         .abi_encode()
     };
 
+    if tx_opts.tempo.has_configurable_account_options() {
+        return send_keychain_tx_as_configurable_account(calldata, tx_opts, &send_tx, force).await;
+    }
     send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
@@ -2566,6 +2656,12 @@ async fn run_key_auth_sign(
     if browser.browser && (args.witness.is_some() || is_admin || account.is_some()) {
         eyre::bail!(
             "browser key authorization signing does not support T5/T6 fields yet: witness, admin, account"
+        );
+    }
+    // TODO: remove once the browser wallet serializes configurable account key authorizations.
+    if browser.browser && args.key_type == AuthSignatureType::ConfigurableAccount {
+        eyre::bail!(
+            "browser key authorization signing does not support the configurable key type yet"
         );
     }
 
@@ -2623,6 +2719,37 @@ async fn run_key_auth_sign(
     print_signed_key_authorization(&signed, signature_hash, signer_address, key_type)
 }
 
+/// Signs `args` as `account`'s owners, bound to the account, and prints it.
+///
+/// The wallet signer, when given, approves as one owner.
+async fn sign_configurable_key_authorization(
+    args: KeyAuthorizationArgs,
+    configurable: &ConfigurableAccountArgs,
+    account: Address,
+    bind_account: Option<Address>,
+    wallet: &WalletOpts,
+    rpc: &RpcOpts,
+) -> Result<()> {
+    // TIP-1137 deprecates admin keys from T14, the hardfork that adds configurable accounts.
+    eyre::ensure!(!args.admin, "--admin cannot be combined with --tempo.configurable-account");
+    if let Some(bound) = bind_account {
+        eyre::ensure!(
+            bound == account,
+            "--bind-account {bound} does not match the configurable account {account}"
+        );
+    }
+    let (owner, access_key) =
+        foundry_common::tempo::maybe_signer(wallet, Some(args.chain_id)).await?;
+    eyre::ensure!(
+        access_key.is_none(),
+        "configurable account owners sign with their own keys, not a Tempo access key"
+    );
+    let key_type = args.key_type;
+    let authorization = args.into_authorization(Some(account))?;
+    let signed = configurable.sign(rpc, account, owner.as_ref(), authorization).await?;
+    print_signed_key_authorization(&signed, signed.signature_hash(), account, key_type)
+}
+
 fn print_signed_key_authorization(
     signed: &SignedKeyAuthorization,
     signature_hash: B256,
@@ -2659,8 +2786,16 @@ fn decode_and_validate_key_authorization(
     let (auth, signed, signer) =
         match tempo::decode_key_authorization::<SignedKeyAuthorization>(raw) {
             // Signer recovery is best-effort so `inspect` still surfaces fields for a corrupt sig.
+            // A configurable account is the signer only when its owner quorum verifies against
+            // an initial configuration that derives it; a later configuration needs the account's
+            // onchain commitment, which `inspect` does not read.
             Ok(signed) => {
-                let signer = signed.recover_signer().ok();
+                let signer = match signed.signature().as_configurable_account() {
+                    Some(signature) => (signature.validate_account_commitment(B256::ZERO).is_ok()
+                        && signature.verify_approvals(signed.signature_hash()).is_ok())
+                    .then(|| signature.account()),
+                    None => signed.recover_signer().ok(),
+                };
                 (signed.authorization().clone(), true, signer)
             }
             Err(signed_err) => match tempo::decode_key_authorization::<KeyAuthorization>(raw) {
