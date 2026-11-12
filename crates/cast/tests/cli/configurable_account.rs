@@ -206,6 +206,23 @@ Private key: [..]
 "#]]
     );
 
+    // A non-Tempo `CHAIN` creates a plain key before a T14 Tempo RPC is asked, as `--chain` does.
+    let (stdout, stderr) = wallet_new_with_env(
+        &mut cmd,
+        &["--configurable-account", "--rpc-url", &t14_rpc],
+        &[("CHAIN", "1")],
+    );
+    assert_eoa(&stdout);
+    assert_data_eq!(
+        stderr,
+        str![[r#"
+Successfully created new keypair.
+Address:     [..]
+Private key: [..]
+
+"#]]
+    );
+
     // An explicit `--chain` is still validated.
     cmd.cast_fuse().args(["wallet", "new", "--chain", "locla"]);
     cmd.unset_env("CHAIN");

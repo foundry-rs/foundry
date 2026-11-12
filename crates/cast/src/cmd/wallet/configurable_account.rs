@@ -58,27 +58,16 @@ use tempo_primitives::transaction::{
 /// `foundry.toml`, or an RPC from `--rpc-url`, `ETH_RPC_URL` or `foundry.toml` that serves a Tempo
 /// chain. An RPC is asked for its active hardfork; otherwise the compiled Tempo hardfork schedule
 /// is read for the chain.
-/// A non-Tempo `--chain` creates an EOA without reading the configuration. Without `requested`
-/// (`--configurable-account`), a configuration or RPC URL that cannot be read also creates an EOA;
-/// `requested` fails on it, and reports why it creates an EOA instead of an account.
+/// A non-Tempo `--chain` (or `CHAIN`) creates an EOA without reading the configuration. Without
+/// `requested` (`--configurable-account`), a configuration or RPC URL that cannot be read also
+/// creates an EOA; `requested` fails on it, and reports why it creates an EOA instead of an
+/// account.
 pub(crate) async fn new_wallet_is_configurable(
     eoa: bool,
     requested: bool,
     chain: Option<Chain>,
     rpc: &RpcOpts,
 ) -> Result<bool> {
-    if eoa || chain.is_some_and(|chain| !chain.is_tempo()) {
-        return Ok(false);
-    }
-    let loaded = rpc.load_config().map_err(Into::into).and_then(|config| {
-        let url = rpc.url(Some(&config))?.is_some();
-        eyre::Ok((config, url))
-    });
-    let (config, url) = match loaded {
-        Ok(loaded) => loaded,
-        Err(_) if !requested => return Ok(false),
-        Err(err) => return Err(err),
-    };
     // `CHAIN` is read only with `--configurable-account`, so a value set for other tools does not
     // break key generation.
     let chain = match chain {
@@ -93,8 +82,20 @@ pub(crate) async fn new_wallet_is_configurable(
             Err(err) => eyre::bail!("invalid CHAIN: {err}"),
         },
         None => None,
+    };
+    if eoa || chain.is_some_and(|chain| !chain.is_tempo()) {
+        return Ok(false);
     }
-    .or(config.chain);
+    let loaded = rpc.load_config().map_err(Into::into).and_then(|config| {
+        let url = rpc.url(Some(&config))?.is_some();
+        eyre::Ok((config, url))
+    });
+    let (config, url) = match loaded {
+        Ok(loaded) => loaded,
+        Err(_) if !requested => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    let chain = chain.or(config.chain);
 
     let mut signal = None;
     if url {
