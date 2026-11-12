@@ -30,5 +30,7 @@ contract C {
         while (c) x(1, 2);
 
         while (c) x(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, -1);
+
+        while (c) x = a + b;
     }
 }

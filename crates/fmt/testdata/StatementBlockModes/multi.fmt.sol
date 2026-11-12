@@ -52,5 +52,9 @@ contract C {
         while (c) {
             x(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, -1);
         }
+
+        while (c) {
+            x = a + b;
+        }
     }
 }

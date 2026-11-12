@@ -46,5 +46,11 @@ contract C {
 
                 -1);
         }
+
+        while (c) {
+            x = a +
+
+                b;
+        }
     }
 }

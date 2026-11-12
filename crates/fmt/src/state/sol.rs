@@ -1415,7 +1415,10 @@ impl<'ast> State<'_, 'ast> {
     /// printer method, handling all Solidity expression kinds.
     fn print_expr(&mut self, expr: &'ast ast::Expr<'ast>) {
         let ast::Expr { span, ref kind } = *expr;
-        if self.handle_span(span, false) {
+        // Drop blank lines before an expression (not after a comment): they cannot be kept when the
+        // enclosing statement is inlined, which is decided ignoring them.
+        self.print_comments(span.lo(), CommentConfig::skip_leading_ws(false));
+        if self.handle_span(span, true) {
             return;
         }
 
