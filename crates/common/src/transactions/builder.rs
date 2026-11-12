@@ -1,3 +1,4 @@
+use crate::tempo::configurable_account::ConfigurableAccountSigner;
 use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
@@ -326,6 +327,16 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
             "Tempo access-key wallets are not supported for this network"
         )))
     }
+
+    /// Sign a prepared request as a Tempo configurable account with its owners' approvals.
+    fn sign_with_configurable_account(
+        self,
+        _signer: &ConfigurableAccountSigner,
+    ) -> impl Future<Output = Result<Vec<u8>>> + Send {
+        std::future::ready(Err(eyre::eyre!(
+            "Tempo configurable accounts are not supported for this network"
+        )))
+    }
 }
 
 impl FoundryTransactionBuilder<Ethereum> for TransactionRequest {
@@ -586,5 +597,12 @@ impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
 
     async fn sign_with_tempo_wallet(self, wallet: &TempoAccountsWallet) -> Result<Vec<u8>> {
         wallet.sign_request(self).await.map(|envelope| envelope.encoded_2718()).map_err(Into::into)
+    }
+
+    async fn sign_with_configurable_account(
+        self,
+        signer: &ConfigurableAccountSigner,
+    ) -> Result<Vec<u8>> {
+        signer.sign_request(self).await.map(|envelope| envelope.encoded_2718())
     }
 }

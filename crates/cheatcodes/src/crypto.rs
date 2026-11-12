@@ -700,6 +700,7 @@ fn sign_with_wallet(
 ) -> Result<alloy_primitives::Signature> {
     let mut wallets = state.wallets().inner.lock();
     let maybe_provided_sender = wallets.provided_sender;
+    let sender_owner = wallets.sender_owner;
     let signers = wallets.multi_wallet.signers()?;
     if signers.is_empty() {
         bail!("no wallets available");
@@ -708,7 +709,7 @@ fn sign_with_wallet(
     let signer = if let Some(signer) = signer {
         signer
     } else if let Some(provided_sender) = maybe_provided_sender {
-        provided_sender
+        sender_owner.unwrap_or(provided_sender)
     } else if signers.len() == 1 {
         *signers.keys().next().unwrap()
     } else {

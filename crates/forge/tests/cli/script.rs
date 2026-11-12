@@ -7,7 +7,8 @@ use crate::{
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702, TxEnvelope};
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
-    Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync, eip2718::Encodable2718,
+    Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync,
+    eip2718::{Decodable2718, Encodable2718},
 };
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, bytes, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -40,7 +41,7 @@ use std::{
     },
     time::Duration,
 };
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope};
 
 #[cfg(unix)]
 use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
@@ -10135,4 +10136,438 @@ Script ran successfully.
     let sequence = latest_dry_run_sequence(prj.root());
     assert_eq!(sequence.transactions.len(), 1);
     assert!(sequence.receipts.is_empty());
+}
+
+/// `forge script` broadcasts as a 2-of-3 Tempo configurable account whose owners are among the
+/// wallets: it deploys a contract and calls it, each transaction signed with a `0x05` signature
+/// and estimated exactly. Without enough owner keys, it fails clearly before sending anything.
+#[forgetest_init]
+async fn tempo_t14_script_broadcasts_as_configurable_account(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "CaDeploy.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CaDeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        Counter counter = new Counter();
+        counter.increment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    api.anvil_deal_tip20(
+        account,
+        foundry_common::tempo::ALPHA_USD_ADDRESS,
+        U256::from(1_000_000_000_000u64),
+    )
+    .await
+    .unwrap();
+    let account_arg = account.to_string();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
+    let common = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account_arg,
+        "--broadcast",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        // The estimate itself must match the gas used.
+        "--gas-estimate-multiplier",
+        "100",
+    ];
+
+    // One owner does not reach the threshold.
+    cmd.forge_fuse().arg("script").arg(&script).args(common).args(["--private-key", &keys[1]]);
+    let [low, mid, high] = [&keys[0], &keys[1], &keys[2]]
+        .map(|key| key.parse::<alloy_signer_local::PrivateKeySigner>().unwrap().address());
+    cmd.assert_failure().stderr_eq(format!(
+        "...\nError: {account} is a Tempo configurable account that needs owner weight 2, but the \
+         local owner keys {mid} reach weight 1. Its owners are {low} (weight 1), {mid} (weight 1), \
+         {high} (weight 1). forge script needs enough owner keys locally to sign as a \
+         configurable account: pass them with --private-keys, --account, --tempo.owner or other \
+         wallet options, or keep them in the Tempo Accounts store. Signing with owners on \
+         separate machines is not supported yet.\n"
+    ));
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+
+    cmd.forge_fuse().arg("script").arg(&script).args(common).args([
+        "--private-keys",
+        &keys[2],
+        "--private-keys",
+        &keys[0],
+    ]);
+    cmd.assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 2);
+
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 2);
+    let deployed = sequence["transactions"][0]["contractAddress"].as_str().unwrap();
+    let deployed = deployed.parse::<Address>().unwrap();
+    for receipt in receipts {
+        assert_eq!(receipt["status"], "0x1", "{receipt}");
+        assert_eq!(receipt["from"].as_str().unwrap().parse::<Address>().unwrap(), account);
+        let hash = receipt["transactionHash"].as_str().unwrap().parse::<B256>().unwrap();
+        let raw = provider
+            .raw_request::<_, Bytes>("eth_getRawTransactionByHash".into(), (hash,))
+            .await
+            .unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        let signature = signed.signature().as_configurable_account().expect("a 0x05 signature");
+        assert_eq!(signature.signatures().len(), 2);
+        let gas_used =
+            u64::from_str_radix(receipt["gasUsed"].as_str().unwrap().trim_start_matches("0x"), 16)
+                .unwrap();
+        assert_eq!(signed.tx().gas_limit, gas_used);
+    }
+    // `Counter.number()` is one after the increment.
+    let number = provider
+        .raw_request::<_, Bytes>(
+            "eth_call".into(),
+            (serde_json::json!({ "to": deployed, "data": "0x8381f58a" }),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(U256::from_be_slice(&number), U256::from(1));
+
+    // `--tempo.configurable-account` makes the account the sender of a bare
+    // `vm.startBroadcast()`, also when a single owner key would otherwise be the sender, and
+    // conflicts with another `--sender`.
+    let owner = format!("private-key://{}", keys[0]);
+    let explicit = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--broadcast",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--tempo.configurable-account",
+        &account_arg,
+        "--private-key",
+        &keys[2],
+        "--tempo.owner",
+        &owner,
+    ];
+    let high_arg = high.to_string();
+    cmd.forge_fuse().arg("script").arg(&script).args(explicit).args(["--sender", &high_arg]);
+    cmd.assert_failure().stderr_eq(format!(
+        "...\nError: --sender {high} conflicts with --tempo.configurable-account {account}\n"
+    ));
+    cmd.forge_fuse().arg("script").arg(&script).args(explicit);
+    cmd.assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 4);
+    assert_eq!(provider.get_transaction_count(high).await.unwrap(), 0);
+}
+
+/// `--resume` publishes the saved transactions of a configurable account sender with its owner
+/// keys, without running the script again: here a second run would fail in `setUp`.
+#[forgetest_init]
+async fn tempo_t14_script_resumes_configurable_account_without_rerun(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "CaResume.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CaResumeScript is Script {
+    function setUp() public {
+        require(vm.envOr("CA_RESUME_GO", false), "the script ran again");
+    }
+
+    function run() external {
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
+    api.anvil_deal_tip20(account, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
+    let (account_arg, fee_token) = (account.to_string(), fee_token.to_string());
+    // One owner is a wallet and the other a `--tempo.owner`, both of which broadcast signs with.
+    let owner = format!("private-key://{}", keys[1]);
+    let common = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account_arg,
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--private-keys",
+        &keys[0],
+        "--tempo.owner",
+        &owner,
+    ];
+
+    // Simulate only, which saves the transactions for `--resume`.
+    cmd.forge_fuse().arg("script").arg(&script).args(common);
+    cmd.env("CA_RESUME_GO", "true");
+    cmd.assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+
+    cmd.forge_fuse().arg("script").arg(&script).args(common).arg("--resume");
+    cmd.assert_success().stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+Deployed contracts (chain 31337):
+  Counter  0xaE5D79A5D89Cd34393D7c27e598D89C2E3662769
+
+"#]]);
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+}
+
+/// On T14, `forge script` with a keystore that `cast wallet new` linked to a configurable account
+/// broadcasts from the account while `vm.sign` signs with the key, and `--sender` with the key
+/// broadcasts from the key.
+#[forgetest_init]
+async fn tempo_t14_script_broadcasts_from_linked_keystore(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "LinkedDeploy.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract LinkedDeployScript is Script {
+    function run() external {
+        // The keystore's key still signs messages for the script.
+        bytes32 digest = keccak256("linked");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
+        require(ecrecover(digest, v, r, s) == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2);
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (keystore, account, owner) = crate::utils::tempo_linked_keystore(prj.root());
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
+    for address in [account, owner] {
+        api.anvil_deal_tip20(address, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
+    }
+    let owner_arg = owner.to_string();
+    for (extra, sender) in [(&[][..], account), (&["--sender", owner_arg.as_str()][..], owner)] {
+        cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token.to_string()]);
+        cmd.args(["--keystore", keystore.to_str().unwrap(), "--password", "keystorepassword"]);
+        cmd.args(extra).assert_success();
+        let block = provider.get_block_number().await.unwrap();
+        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipt.last().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.from(), sender);
+    }
+}
+
+/// `--resume` runs the script again when the owner keys that the wallet options provide do not
+/// reach a configurable account's threshold, so that the script can provide the others, here with
+/// `vm.rememberKey`.
+#[forgetest_init]
+async fn tempo_t14_script_resume_reruns_for_remembered_owner(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "CaRemember.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CaRememberScript is Script {
+    function run() external {
+        vm.rememberKey(vm.envUint("CA_OWNER_KEY"));
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
+    api.anvil_deal_tip20(account, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
+    let (account_arg, fee_token) = (account.to_string(), fee_token.to_string());
+    let common = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account_arg,
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--private-key",
+        &keys[0],
+    ];
+
+    cmd.forge_fuse().arg("script").arg(&script).args(common);
+    cmd.env("CA_OWNER_KEY", &keys[1]);
+    cmd.assert_success();
+    cmd.forge_fuse().arg("script").arg(&script).args(common).arg("--resume");
+    cmd.env("CA_OWNER_KEY", &keys[1]);
+    cmd.assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+}
+
+/// A script that broadcasts from an upgraded EOA signs with its owners, also when the EOA's
+/// retired root key is among the wallets.
+#[forgetest_init]
+async fn tempo_t14_script_broadcasts_from_upgraded_eoa(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "UpgradedDeploy.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract UpgradedDeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let root = handle.dev_wallets().nth(3).unwrap();
+    let root_key = hex::encode_prefixed(root.to_bytes());
+    let (_, _, keys) = crate::utils::tempo_two_of_three_account();
+    let owner = keys[0].parse::<alloy_signer_local::PrivateKeySigner>().unwrap().address();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
+    let upgrade = prj.add_script(
+        "Upgrade.s.sol",
+        &format!(
+            r#"
+import {{Script}} from "forge-std/Script.sol";
+
+interface IConfigurableAccount {{
+    struct ConfigurableAccountOwner {{
+        address owner;
+        uint8 weight;
+    }}
+
+    function upgradeAccount(uint8 threshold, ConfigurableAccountOwner[] calldata owners) external;
+}}
+
+contract UpgradeScript is Script {{
+    function run() external {{
+        IConfigurableAccount.ConfigurableAccountOwner[] memory owners =
+            new IConfigurableAccount.ConfigurableAccountOwner[](1);
+        owners[0] = IConfigurableAccount.ConfigurableAccountOwner({owner}, 1);
+        vm.startBroadcast();
+        // A low-level call: the precompile has no code for Solidity's code size check.
+        (bool ok,) = address(0xAACC000000000000000000000000000000000000).call(
+            abi.encodeCall(IConfigurableAccount.upgradeAccount, (1, owners))
+        );
+        require(ok, "upgrade failed");
+        vm.stopBroadcast();
+    }}
+}}
+"#
+        ),
+    );
+    cmd.forge_fuse().arg("script").arg(&upgrade).args(["--rpc-url", &rpc, "--broadcast"]);
+    cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+    cmd.args(["--private-key", &root_key, "--skip-simulation"]).assert_success();
+
+    // The owner key is a wallet, then a `--tempo.owner`.
+    let owner_arg = format!("private-key://{}", keys[0]);
+    for owner in [["--private-keys", keys[0].as_str()], ["--tempo.owner", owner_arg.as_str()]] {
+        cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+        cmd.args(["--sender", &root.address().to_string(), "--private-keys", &root_key]);
+        cmd.args(owner).assert_success();
+        let block = provider.get_block_number().await.unwrap();
+        let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipts.last().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.from(), root.address());
+        let raw = provider
+            .raw_request::<_, Bytes>(
+                "eth_getRawTransactionByHash".into(),
+                (receipt.transaction_hash(),),
+            )
+            .await
+            .unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        assert!(signed.signature().as_configurable_account().is_some());
+    }
+
+    // `--resume` with only the retired root key loaded runs the script again to collect the
+    // owner key it remembers.
+    let resume_script = prj.add_script(
+        "UpgradedResume.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract UpgradedResumeScript is Script {
+    function run() external {
+        vm.rememberKey(vm.envUint("OWNER_KEY"));
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let nonce = provider.get_transaction_count(root.address()).await.unwrap();
+    for resume in [false, true] {
+        cmd.forge_fuse().arg("script").arg(&resume_script).args(["--rpc-url", &rpc]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+        cmd.args(["--sender", &root.address().to_string(), "--private-keys", &root_key]);
+        if resume {
+            cmd.arg("--resume");
+        }
+        cmd.env("OWNER_KEY", &keys[0]);
+        cmd.assert_success();
+    }
+    assert_eq!(provider.get_transaction_count(root.address()).await.unwrap(), nonce + 1);
 }
