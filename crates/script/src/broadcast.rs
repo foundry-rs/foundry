@@ -33,7 +33,7 @@ use alloy_provider::{
     transport::{RpcError, TransportError},
     utils::Eip1559Estimation,
 };
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_signer::{Signature, Signer};
 use eyre::{Context, ContextCompat, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
@@ -50,7 +50,8 @@ use foundry_common::{
     },
     shell,
     tempo::{
-        TempoSponsor, active_tempo_hardfork, configurable_account::ConfigurableAccountSigner,
+        TempoSponsor, active_tempo_hardfork,
+        configurable_account::{ConfigurableAccountSigner, detect_configurable_account},
         mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token,
     },
 };
@@ -891,12 +892,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let mut configurable_accounts = HashMap::default();
             if self.script_config.evm_opts.networks.is_tempo() {
                 let tempo = &self.script_config.tempo;
-                // The configurable account options describe one account: a sender with its own
-                // key that is not that account is only checked against the chain.
+                // `--tempo.configurable-account` and `--tempo.config` describe one account: a
+                // sender with its own key that is not that account is only checked against the
+                // chain, and signs with the owners among the wallets and `--tempo.owner`.
                 let own_key_tempo = TempoOpts {
                     configurable_account: None,
                     configurable_account_config: None,
-                    owners: Vec::new(),
                     ..tempo.clone()
                 };
                 let mut own_key_scopes = remaining_transactions
@@ -925,21 +926,35 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 &rpc_url,
                             )?
                             .build()?;
-                            let tempo =
-                                if missing || tempo.configurable_account == Some(scope.sender) {
-                                    tempo
-                                } else {
-                                    &own_key_tempo
-                                };
-                            tempo
-                                .configurable_account_signer(
+                            let explicit =
+                                missing || tempo.configurable_account == Some(scope.sender);
+                            // A sender with its own key signs with it unless the chain says it
+                            // is a configurable account, such as an upgraded EOA.
+                            let own_key_is_account = !explicit
+                                && detect_configurable_account(
                                     &provider,
-                                    Some(scope.sender),
+                                    scope.sender,
+                                    &signers,
                                     None,
-                                    &wallet_signers,
-                                    SCRIPT_OWNERS_HINT,
+                                    false,
+                                    BlockId::latest(),
                                 )
                                 .await?
+                                .is_some();
+                            if explicit || own_key_is_account {
+                                let tempo = if explicit { tempo } else { &own_key_tempo };
+                                tempo
+                                    .configurable_account_signer(
+                                        &provider,
+                                        Some(scope.sender),
+                                        None,
+                                        &wallet_signers,
+                                        SCRIPT_OWNERS_HINT,
+                                    )
+                                    .await?
+                            } else {
+                                None
+                            }
                         }
                         _ => None,
                     };

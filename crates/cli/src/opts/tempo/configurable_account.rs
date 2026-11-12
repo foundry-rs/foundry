@@ -39,6 +39,15 @@ impl TempoOpts {
         }
     }
 
+    /// Resolves the `--tempo.owner` signers and returns their addresses.
+    pub async fn owner_addresses(&self) -> Result<Vec<Address>> {
+        let mut addresses = Vec::with_capacity(self.owners.len());
+        for spec in &self.owners {
+            addresses.push(Box::pin(resolve_tempo_sponsor_signer(spec)).await?.address());
+        }
+        Ok(addresses)
+    }
+
     /// Detects a configurable account sender and selects the local owners that sign for it.
     ///
     /// The sender is `--tempo.configurable-account`, else `from`, else the account `linked` to

@@ -10312,6 +10312,8 @@ contract CaResumeScript is Script {
     let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
     api.anvil_deal_tip20(account, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
     let (account_arg, fee_token) = (account.to_string(), fee_token.to_string());
+    // One owner is a wallet and the other a `--tempo.owner`, both of which broadcast signs with.
+    let owner = format!("private-key://{}", keys[1]);
     let common = [
         "--rpc-url",
         rpc.as_str(),
@@ -10325,8 +10327,8 @@ contract CaResumeScript is Script {
         &config,
         "--private-keys",
         &keys[0],
-        "--private-keys",
-        &keys[1],
+        "--tempo.owner",
+        &owner,
     ];
 
     // Simulate only, which saves the transactions for `--resume`.
@@ -10513,24 +10515,28 @@ contract UpgradeScript is Script {{
     cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
     cmd.args(["--private-key", &root_key, "--skip-simulation"]).assert_success();
 
-    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
-    cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
-    cmd.args(["--sender", &root.address().to_string()]);
-    cmd.args(["--private-keys", &root_key, "--private-keys", &keys[0]]).assert_success();
-    let block = provider.get_block_number().await.unwrap();
-    let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
-    let receipt = receipts.last().unwrap();
-    assert!(receipt.status());
-    assert_eq!(receipt.from(), root.address());
-    let raw = provider
-        .raw_request::<_, Bytes>(
-            "eth_getRawTransactionByHash".into(),
-            (receipt.transaction_hash(),),
-        )
-        .await
-        .unwrap();
-    let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
-        panic!("expected a Tempo transaction");
-    };
-    assert!(signed.signature().as_configurable_account().is_some());
+    // The owner key is a wallet, then a `--tempo.owner`.
+    let owner_arg = format!("private-key://{}", keys[0]);
+    for owner in [["--private-keys", keys[0].as_str()], ["--tempo.owner", owner_arg.as_str()]] {
+        cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+        cmd.args(["--sender", &root.address().to_string(), "--private-keys", &root_key]);
+        cmd.args(owner).assert_success();
+        let block = provider.get_block_number().await.unwrap();
+        let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipts.last().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.from(), root.address());
+        let raw = provider
+            .raw_request::<_, Bytes>(
+                "eth_getRawTransactionByHash".into(),
+                (receipt.transaction_hash(),),
+            )
+            .await
+            .unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        assert!(signed.signature().as_configurable_account().is_some());
+    }
 }

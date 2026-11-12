@@ -688,6 +688,18 @@ async fn tempo_t14_send_detects_configurable_account(cmd: _) {
     assert_eq!(estimate.trim().parse::<u64>().unwrap(), gas_used);
     assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(account));
 
+    // `estimate`, like `send`, rejects a `--tempo.configurable-account` other than `--from`.
+    let other = keys[2].address();
+    cmd.cast_fuse()
+        .args(["estimate", &target, "--from", &other.to_string()])
+        .args(["--tempo.configurable-account", &account_arg])
+        .args(["--private-key", &private_key(&keys[2])])
+        .args(common)
+        .assert_failure()
+        .stderr_eq(format!(
+            "Error: --tempo.configurable-account {account} does not match the sender {other}\n"
+        ));
+
     // `--tempo.configurable-account` names the sender without `--from`.
     let raw = cmd
         .cast_fuse()

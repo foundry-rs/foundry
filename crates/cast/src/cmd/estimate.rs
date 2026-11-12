@@ -133,6 +133,13 @@ impl EstimateArgs {
             Some(chain) => chain.id(),
             None => provider.get_chain_id().await?,
         };
+        // `cast send` rejects the same conflict.
+        if let (Some(account), Some(from)) = (tx.tempo.configurable_account, wallet.from) {
+            eyre::ensure!(
+                account == from,
+                "--tempo.configurable-account {account} does not match the sender {from}"
+            );
+        }
         let simulation_wallet = wallet.clone();
         let (sender, is_browser) = read_only_sender::<N>(&browser, wallet, &tx, chain_id).await?;
         // Share the resolved signer with the configurable account lookup.
