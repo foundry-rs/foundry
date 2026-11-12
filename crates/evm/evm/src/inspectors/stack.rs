@@ -658,7 +658,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats.tx_warm_addresses = tx_warm_addresses;
         cheats.env_overrides.swap(fork_id, &mut overrides);
         drop(replay);
-        let executed = executed.wrap_err("backend: failed committing transaction")?;
+        let mut executed = executed.wrap_err("backend: failed committing transaction")?;
+        cheats.record_persistent(
+            usize::from(depth).saturating_sub(1),
+            evm.state(),
+            executed.take_persistent(),
+        );
         Ok(backend.backend_mut().store_executed(evm, executed))
     }
 
@@ -1613,7 +1618,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 result.status.then(|| nested_warmth(child.state_mut(), &executed.pending_state));
             // Isolated calls never change the running transaction's transient storage.
             let transient = take_transient(evm.state_mut());
-            child.commit_source(&executed.pending_state);
+            child.overlay_db_mut().commit_pending(&executed.pending_state);
             // SAFETY: The nested EVM runs over the lifecycle's owned databases.
             unsafe { backend.backend().lifecycle().end_frame_evm(evm, child) };
             put_transient(evm.state_mut(), transient);
@@ -1628,6 +1633,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                         let _ =
                             evm.state_mut().storage_slot(&address, key).map(|mut slot| slot.warm());
                     }
+                }
+            }
+            // The new transaction overlay does not know which accounts the running transaction
+            // created, so a later isolated call that loads them would merge them as new and wipe
+            // their storage. Its database already holds their storage.
+            for address in &self.inner.tx_created {
+                if let Ok(mut account) = evm.state_mut().account(address)
+                    && account.exists()
+                {
+                    account.mark_created();
                 }
             }
             // Unless the call switched forks, the running transaction's state stays in place: it
