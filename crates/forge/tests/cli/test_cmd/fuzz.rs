@@ -6798,13 +6798,12 @@ contract MinimizeTest is Test {
         intended.fail();
     }
 
-    // Custom error arguments carry the values being minimized.
+    // Custom error arguments are compared in full, so values they carry are not minimized.
     function testFuzz_custom(uint256 x) public view {
         bounded.check(x);
     }
 
-    // Custom errors are identified by selector, so a failure code raised from one shared revert
-    // can shrink to another code.
+    // A failure code raised from one shared revert shrinks only within its own code.
     function testFuzz_code(uint256 x) public view {
         coded.check(x);
     }
@@ -6823,9 +6822,9 @@ contract MinimizeTest is Test {
 ...
 Ran 5 tests for test/Minimize.t.sol:MinimizeTest
 [FAIL: same; counterexample: calldata=[..] args=[1]] testFuzz_caught(uint256) (runs: 0, [AVG_GAS])
-[FAIL: Failed(2); counterexample: calldata=[..] args=[1001]] testFuzz_code(uint256) (runs: 0, [AVG_GAS])
+[FAIL: Failed(1); counterexample: calldata=[..] args=[1000000000000000000000000000001 [1e30]]] testFuzz_code(uint256) (runs: 0, [AVG_GAS])
 [FAIL: assertion failed: 1001 != 7; counterexample: calldata=0x1e23fbd300000000000000000000000000000000000000000000000000000000000003e9 args=[1001]] testFuzz_ctor(uint256) (runs: 0, [AVG_GAS])
-[FAIL: TooBig(1001); counterexample: calldata=[..] args=[1001]] testFuzz_custom(uint256) (runs: 0, [AVG_GAS])
+[FAIL: TooBig(742886487892369547698386939959150855759913659 [7.428e44]); counterexample: calldata=[..] args=[742886487892369547698386939959150855759913659 [7.428e44]]] testFuzz_custom(uint256) (runs: 0, [AVG_GAS])
 [FAIL: assertion failed: 5001 != 0; counterexample: calldata=0x11e5359500000000000000000000000000000000000000000000000000000000000003e90000000000000000000000000000000000000000000000000000000000001389 args=[1001, 5001]] testFuzz_site(uint256,uint256) (runs: 0, [AVG_GAS])
 ...
 "#]],

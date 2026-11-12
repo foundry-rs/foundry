@@ -1,6 +1,6 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, B256, Bytes, I256, U256, U512, keccak256, uint};
-use alloy_sol_types::{Panic, Revert, SolCall, SolError};
+use alloy_sol_types::SolCall;
 use evm2::interpreter::{InstrStop, op, opcode::OpCode};
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
@@ -875,12 +875,9 @@ impl FailureTrace {
             }
         } else {
             // Revert data produced by exactly one failed assertion is identified by that
-            // assertion, without the values in its message. Other messages and panic codes are
-            // compared in full, and other errors by selector, as their arguments carry the values
-            // and the failed frames identify where they were raised. An error whose arguments tell
-            // apart checks that share one `REVERT`, such as a failure code, can then shrink to
-            // another of those checks, and so can a caught error rethrown inside another one, such
-            // as `catch Error(string memory s) { revert Wrapped(s); }`.
+            // assertion, without the values in its message. Other revert data is compared in full,
+            // as custom error arguments can tell apart failures raised from one `REVERT`, such as
+            // a failure code. Errors that carry the minimized values therefore do not shrink.
             let output_hash = keccak256(output);
             let mut sources = events.iter().enumerate().filter(|(_, event)| {
                 matches!(event, FailureEvent::Assertion { revert, .. } if *revert == Some(output_hash))
@@ -892,12 +889,7 @@ impl FailureTrace {
                 }
                 (None, _) => {
                     preimage.push(3);
-                    let selector = output.get(..4).filter(|selector| {
-                        [Revert::SELECTOR, Panic::SELECTOR, CheatcodeError::SELECTOR]
-                            .iter()
-                            .all(|known| known != *selector)
-                    });
-                    preimage.extend_from_slice(selector.unwrap_or(output_hash.as_slice()));
+                    preimage.extend_from_slice(output_hash.as_slice());
                 }
                 (Some(_), Some(_)) => return None,
             }
