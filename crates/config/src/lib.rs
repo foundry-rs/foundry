@@ -534,10 +534,11 @@ pub struct Config {
     pub no_fork_bal: bool,
     /// Prefetches remote fork state before the EVM reads it.
     ///
-    /// Defaults to `false`. Each call into a fork contract is simulated on the endpoint with
-    /// `eth_createAccessList`, and the state it touches is fetched in batches. With storage
-    /// caching, a fork block with an empty disk cache also fetches the keys cached for the newest
-    /// older block on the same chain. Values come from the fork block; extra keys cost requests.
+    /// Defaults to `false`. While reads miss the cache, each call into a fork contract is
+    /// simulated on the endpoint with `eth_createAccessList`, and the state it touches is
+    /// fetched in batches. With storage caching, a fork block with an empty disk cache also
+    /// fetches the keys cached for the newest older block on the same chain. Values come from
+    /// the fork block; extra keys cost requests.
     #[serde(default)]
     pub fork_prefetch: bool,
     /// Disables rate limiting entirely. This overrides any settings made in

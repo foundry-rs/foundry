@@ -6,7 +6,7 @@ use crate::inspectors::{
     Cheatcodes, CmpOperands, EdgeCoverage, EdgeIndexMap, InspectorData, InspectorStack,
     cheatcodes::BroadcastableTransactions,
 };
-use alloy_consensus::{Transaction as _, transaction::Recovered};
+use alloy_consensus::transaction::Recovered;
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_eips::{Typed2718, eip4788::BEACON_ROOTS_ADDRESS, eip7702::SignedAuthorization};
 use alloy_json_abi::Function;
@@ -816,13 +816,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             evm_env.set_feature(evm2::EvmFeatures::BALANCE_CHECK, false);
         }
 
-        let fork_prefetch = self.inspector().inner.fork_prefetch;
         for (tx_hash, tx) in replay {
             let backend = self.backend_mut();
-            // The inspector is off while the prefix replays, so prefetch here.
-            if fork_prefetch && let TxKind::Call(to) = tx.kind() {
-                backend.prefetch_call(tx.signer(), to, tx.value(), tx.input().clone(), true);
-            }
             let mut evm = backend.create_evm();
             install_env::<FEN>(backend, &mut evm, *evm_env);
             prepare(&mut evm, tx);

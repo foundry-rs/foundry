@@ -9,12 +9,9 @@ use crate::eth::backend::db::{
 };
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
-use alloy_rpc_types::{BlockId, state::StateOverride};
+use alloy_rpc_types::BlockId;
 use evm2::evm::BlockStateAccumulator;
-use foundry_evm_core::{
-    evm::ForkCode,
-    fork::prefetch::{self, StateOverrideBuilder},
-};
+use foundry_evm_core::evm::ForkCode;
 use foundry_fork_db::cache::MemDb as RemoteState;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -151,22 +148,6 @@ impl<N: Network> ForkedDatabase<N> {
     /// Returns the database that holds the remote state.
     pub const fn inner(&self) -> &BlockchainDb {
         &self.db
-    }
-
-    /// Returns the local state that differs from the remote as overrides, see
-    /// [`StateOverrideBuilder`].
-    fn state_override(&self) -> Option<StateOverride> {
-        let cache = &self.cache_db.cache;
-        let mut overrides = StateOverrideBuilder::new(self.db.db());
-        for (address, account) in &cache.accounts {
-            if account.account_state == AccountState::NotExisting {
-                continue;
-            }
-            overrides.account(*address, &account.info, &cache.contracts);
-            let cleared = account.account_state.is_storage_cleared();
-            overrides.storage(*address, &account.storage, cleared)?;
-        }
-        Some(overrides.build()).filter(|overrides| !overrides.is_empty())
     }
 
     /// Returns a read-only view of the current state.
@@ -376,11 +357,6 @@ impl<N: Network> MaybeForkedDatabase for ForkedDatabase<N> {
 
     fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
         Ok(self.inner())
-    }
-
-    fn maybe_prefetch_call(&self, caller: Address, target: Address, value: U256, input: Bytes) {
-        let overrides = self.state_override();
-        prefetch::prefetch_call(&self.backend, caller, target, value, input, overrides);
     }
 }
 

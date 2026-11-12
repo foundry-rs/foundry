@@ -16,7 +16,6 @@ mod filter;
 mod fork;
 mod fork_bal;
 mod fork_chains;
-mod fork_prefetch;
 mod gas;
 mod genesis;
 mod ipc;

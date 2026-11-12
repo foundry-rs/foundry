@@ -15,12 +15,9 @@ use crate::{
     precompiles::P256_VERIFY,
 };
 use alloy_network::Network;
-use alloy_primitives::{
-    Address, B256, Bytes, U256,
-    map::{B256HashMap, B256Map},
-};
+use alloy_primitives::{Address, B256, Bytes, U256, map::B256HashMap};
 use alloy_rpc_types::{TransactionRequest, state::StateOverride};
-use evm2::{AccountInfo, bytecode::Bytecode, evm::Cache};
+use evm2::{bytecode::Bytecode, evm::Cache};
 use foundry_config::Config;
 use foundry_fork_db::{
     ForkBlockEnv, SharedBackend,
@@ -49,8 +46,8 @@ const MAX_KEYS: usize = 4096;
 /// simulation on the fork's endpoint: `PUSH1 0x20 PUSH1 0x00 RETURN`.
 const CHEATCODE_STUB: Bytes = Bytes::from_static(&[0x60, 0x20, 0x60, 0x00, 0xf3]);
 
-/// Largest local state, in storage slots, sent as overrides with a simulated call.
-const MAX_OVERRIDE_SLOTS: usize = 8192;
+/// Largest local state, in bytes of code and storage, sent as overrides with a simulated call.
+const MAX_OVERRIDE_BYTES: usize = 512 * 1024;
 
 enum Key {
     Account(Address),
@@ -160,31 +157,27 @@ fn keys(db: &MemDb) -> Vec<Key> {
         .collect()
 }
 
-/// Collects the local state of a fork that differs from what it loaded from the endpoint, as
-/// overrides for a simulation there, such as the test contract and balances set with cheatcodes.
-pub struct StateOverrideBuilder<'a> {
-    remote: &'a MemDb,
-    overrides: StateOverride,
-    slots: usize,
-}
-
-impl<'a> StateOverrideBuilder<'a> {
-    /// Starts overrides against `remote`, the state the fork loaded from its endpoint.
-    pub fn new(remote: &'a MemDb) -> Self {
-        Self { remote, overrides: StateOverride::default(), slots: 0 }
-    }
-
-    /// Adds the fields of `info` that differ from the remote account. The code comes from `info`
-    /// or, by its hash, from `contracts`.
-    pub fn account(&mut self, address: Address, info: &AccountInfo, contracts: &B256Map<Bytecode>) {
-        let remote_accounts = self.remote.accounts.read();
-        let remote = remote_accounts.get(&address);
-        // Code that is neither inline nor in `contracts` is unknown and not overridden, unless
+/// Returns the local state of a fork context that differs from `remote`, the state the fork loaded
+/// from its endpoint, as overrides for a simulation there, with a stub for the cheatcode contract.
+/// Such state is the test contract and balances set with cheatcodes.
+///
+/// Returns `None` when nothing differs, so endpoints without override support still simulate, or
+/// when the state is larger than [`MAX_OVERRIDE_BYTES`].
+pub(crate) fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverride> {
+    let remote_accounts = remote.accounts.read();
+    let remote_storage = remote.storage.read();
+    let mut overrides = StateOverride::default();
+    let mut bytes = 0;
+    for (address, info) in &local.accounts {
+        // An absent account keeps its remote state; the simulation only predicts reads.
+        let Some(info) = info else { continue };
+        let remote = remote_accounts.get(address);
+        // Code that is neither inline nor in the contracts is unknown and not overridden, unless
         // its hash is the empty code hash.
         let code = remote
             .is_none_or(|remote| remote.code_hash != info.code_hash)
             .then(|| {
-                let code = info.code.as_ref().or_else(|| contracts.get(&info.code_hash));
+                let code = info.code.as_ref().or_else(|| local.contracts.get(&info.code_hash));
                 code.map(Bytecode::original_bytes)
                     .or_else(|| info.is_empty_code_hash().then(Bytes::new))
             })
@@ -192,63 +185,33 @@ impl<'a> StateOverrideBuilder<'a> {
         let balance = remote.is_none_or(|remote| remote.balance != info.balance);
         let nonce = remote.is_none_or(|remote| remote.nonce != info.nonce);
         if code.is_some() || balance || nonce {
-            let account = self.overrides.entry(address).or_default();
+            bytes += code.as_ref().map_or(0, |code| code.len());
+            let account = overrides.entry(*address).or_default();
             account.code = code;
             account.balance = balance.then_some(info.balance);
             account.nonce = nonce.then_some(info.nonce);
         }
     }
-
-    /// Adds the slots of `address` that differ from the remote. If the storage was `cleared`,
-    /// `slots` replace the whole remote storage. Returns `None` when the local state is too
-    /// large to send.
-    pub fn storage<'s>(
-        &mut self,
-        address: Address,
-        slots: impl IntoIterator<Item = (&'s U256, &'s U256)>,
-        cleared: bool,
-    ) -> Option<()> {
-        let remote_storage = self.remote.storage.read();
-        let remote = remote_storage.get(&address).filter(|_| !cleared);
-        let slots = slots
-            .into_iter()
+    for (address, storage) in &local.storage {
+        // Wiped storage replaces the whole remote storage.
+        let remote = remote_storage.get(address).filter(|_| !storage.wiped);
+        let slots = storage
+            .slots
+            .iter()
             .filter(|&(slot, value)| remote.and_then(|remote| remote.get(slot)) != Some(value))
             .map(|(slot, value)| (B256::from(*slot), B256::from(*value)))
             .collect::<B256HashMap<_>>();
-        self.slots += slots.len();
-        if self.slots > MAX_OVERRIDE_SLOTS {
+        bytes += slots.len() * 64;
+        if bytes > MAX_OVERRIDE_BYTES {
             return None;
         }
-        if cleared {
-            self.overrides.entry(address).or_default().state = Some(slots);
+        if storage.wiped {
+            overrides.entry(*address).or_default().state = Some(slots);
         } else if !slots.is_empty() {
-            self.overrides.entry(address).or_default().state_diff = Some(slots);
-        }
-        Some(())
-    }
-
-    /// Returns the overrides.
-    pub fn build(self) -> StateOverride {
-        self.overrides
-    }
-}
-
-/// Returns the local state of a fork context as overrides, see [`StateOverrideBuilder`], with a
-/// stub for the cheatcode contract. Returns `None` when nothing differs, so endpoints without
-/// override support still simulate, or when the state is too large to send.
-pub fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverride> {
-    let mut overrides = StateOverrideBuilder::new(remote);
-    for (address, info) in &local.accounts {
-        // An absent account keeps its remote state; the simulation only predicts reads.
-        if let Some(info) = info {
-            overrides.account(*address, info, &local.contracts);
+            overrides.entry(*address).or_default().state_diff = Some(slots);
         }
     }
-    for (address, storage) in &local.storage {
-        overrides.storage(*address, &storage.slots, storage.wiped)?;
-    }
-    let mut overrides = overrides.build();
-    if overrides.is_empty() {
+    if overrides.is_empty() || bytes > MAX_OVERRIDE_BYTES {
         return None;
     }
     overrides.entry(CHEATCODE_ADDRESS).or_default().code = Some(CHEATCODE_STUB);
@@ -256,21 +219,41 @@ pub fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverride> {
 }
 
 /// Simulates a call on the fork's endpoint and prefetches the state it touches, see
-/// [`SharedBackend::prefetch_access_list`]. Calls to precompiles, up to `P256VERIFY` at `0x100`,
-/// the cheatcode contract and the console are skipped.
-pub fn prefetch_call<N: Network, B: ForkBlockEnv>(
+/// [`SharedBackend::prefetch_access_list`]. With `overrides`, the `local` state over the fork goes
+/// along as overrides; without, a call into a local-only account is skipped. Calls to precompiles,
+/// up to `P256VERIFY` at `0x100`, the cheatcode contract and the console are skipped.
+pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
     backend: &SharedBackend<N, B>,
     caller: Address,
     target: Address,
     value: U256,
     input: Bytes,
-    overrides: Option<StateOverride>,
+    local: Option<&Cache>,
+    overrides: bool,
 ) {
     if target <= P256_VERIFY || target == CHEATCODE_ADDRESS || target == HARDHAT_CONSOLE_ADDRESS {
         return;
     }
+    let remote = backend.data();
+    let remote_code = remote.accounts.read().get(&target).map(|account| account.code_hash);
+    let local_account = local.and_then(|local| local.accounts.get(&target)?.as_ref());
+    // Local code tells apart contracts at one address, such as the test contracts of two suites.
+    let code_hash = local_account
+        .map(|account| account.code_hash)
+        .filter(|&code_hash| remote_code != Some(code_hash))
+        .unwrap_or_default();
     let tx = TransactionRequest::default().from(caller).to(target).value(value).input(input.into());
-    backend.prefetch_access_list(tx, overrides);
+    // Checked first, so a call that is not simulated does not build its overrides.
+    if !backend.wants_access_list(&tx, code_hash, overrides) {
+        return;
+    }
+    let overrides = local.filter(|_| overrides).and_then(|local| state_override(&remote, local));
+    // An account the context holds but never loaded from the endpoint was created locally, so the
+    // endpoint can only simulate a call into it with the local state as overrides.
+    if overrides.is_none() && local_account.is_some() && remote_code.is_none() {
+        return;
+    }
+    backend.prefetch_access_list(tx, overrides, code_hash);
 }
 
 #[cfg(test)]

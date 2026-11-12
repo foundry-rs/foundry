@@ -1,7 +1,7 @@
 use super::*;
 use crate::{backend::RevertStateSnapshotAction, fork::ForkId};
-use alloy_consensus::{TxEip1559, transaction::Recovered};
-use alloy_eips::{BlockNumHash, Encodable2718, Typed2718};
+use alloy_consensus::{Transaction as _, TxEip1559, transaction::Recovered};
+use alloy_eips::{BlockNumHash, Encodable2718};
 use alloy_network::{
     AnyRpcTransaction, AnyTxEnvelope, AnyTxType, NetworkTransactionBuilder, TransactionBuilder,
     TransactionResponse, TxSignerSync, UnknownTxEnvelope, UnknownTypedTransaction,

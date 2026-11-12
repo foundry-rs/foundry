@@ -228,17 +228,12 @@ impl<N: Network, B: ForkBlockEnv> FoundryDatabase for ForkDb<SharedBackend<N, B>
         Some(self.source_chain_id)
     }
 
-    // A prefetch may have read the old value before the out-of-band change, so it is dropped too.
     fn evict_account(&self, address: &Address) {
-        self.db.data().accounts.write().remove(address);
-        self.db.drop_prefetched();
+        self.db.evict(*address, None);
     }
 
     fn evict_storage(&self, address: &Address, slot: &U256) {
-        if let Some(storage) = self.db.data().storage.write().get_mut(address) {
-            storage.remove(slot);
-        }
-        self.db.drop_prefetched();
+        self.db.evict(*address, Some(*slot));
     }
 
     fn set_eip161(&self, eip161: bool) {
@@ -254,18 +249,7 @@ impl<N: Network, B: ForkBlockEnv> FoundryDatabase for ForkDb<SharedBackend<N, B>
         local: Option<&Cache>,
         overrides: bool,
     ) {
-        let remote = self.db.data();
-        let overrides =
-            local.filter(|_| overrides).and_then(|local| prefetch::state_override(&remote, local));
-        // An account the context holds but never loaded from the endpoint was created locally,
-        // so the endpoint can only simulate a call into it with the local state as overrides.
-        if overrides.is_none()
-            && local.is_some_and(|local| local.accounts.contains_key(&target))
-            && !remote.accounts.read().contains_key(&target)
-        {
-            return;
-        }
-        prefetch::prefetch_call(&self.db, caller, target, value, input, overrides);
+        prefetch::prefetch_call(&self.db, caller, target, value, input, local, overrides);
     }
 }
 

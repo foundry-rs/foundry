@@ -328,8 +328,6 @@ pub struct NodeConfig {
     pub fork_retry_backoff: Duration,
     /// available CUPS
     pub compute_units_per_second: u64,
-    /// Prefetch the remote state of calls and transactions on a fork.
-    pub fork_prefetch: bool,
     /// The ipc path
     pub ipc_path: Option<Option<String>>,
     /// Enable transaction/call steps tracing for debug calls returning geth-style traces
@@ -694,7 +692,6 @@ impl Default for NodeConfig {
             enable_steps_tracing: false,
             print_logs: true,
             print_traces: false,
-            fork_prefetch: false,
             enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
@@ -1282,13 +1279,6 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether calls and transactions on a fork prefetch the remote state they read.
-    #[must_use]
-    pub const fn with_fork_prefetch(mut self, fork_prefetch: bool) -> Self {
-        self.fork_prefetch = fork_prefetch;
-        self
-    }
-
     /// Sets whether to print traces to stdout.
     #[must_use]
     pub const fn with_print_traces(mut self, print_traces: bool) -> Self {
@@ -1661,7 +1651,6 @@ impl NodeConfig {
             self.enable_steps_tracing,
             self.print_logs,
             self.print_traces,
-            self.fork_prefetch,
             Arc::new(decoder_builder.build()),
             self.prune_history,
             self.max_persisted_states,

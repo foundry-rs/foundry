@@ -97,9 +97,10 @@ pub struct EvmArgs {
 
     /// Prefetch remote fork state before the EVM reads it.
     ///
-    /// Each call into a fork contract is simulated on the endpoint with `eth_createAccessList` and
-    /// the state it touches is fetched in batches. With storage caching, a new fork block also
-    /// fetches the keys cached for an older block on the same chain.
+    /// While reads miss the cache, each call into a fork contract is simulated on the endpoint
+    /// with `eth_createAccessList` and the state it touches is fetched in batches. With
+    /// storage caching, a new fork block also fetches the keys cached for an older block on
+    /// the same chain.
     #[arg(long)]
     #[serde(skip)]
     pub fork_prefetch: bool,
