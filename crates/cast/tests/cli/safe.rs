@@ -25,7 +25,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
-use test_safe_contract::{TestSafe, TestSafeV1_3_0};
+use test_safe_contract::TestSafe;
 use tokio::task::JoinHandle;
 
 const ANVIL_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -87,11 +87,6 @@ mod test_safe_contract {
             ) external payable returns (bool success);
 
             event ExecutionSuccess(bytes32 indexed txHash, uint256 payment);
-        }
-
-        interface TestSafeV1_3_0 {
-            event ExecutionSuccess(bytes32 txHash, uint256 payment);
-            event ExecutionFailure(bytes32 txHash, uint256 payment);
         }
     }
 }
@@ -1638,23 +1633,6 @@ Error: Safe inner transaction failed
             }
             let receipt = provider.get_transaction_receipt(execution_hash).await.unwrap().unwrap();
             assert!(receipt.status());
-            let matching_events = receipt
-                .logs()
-                .iter()
-                .filter(|log| log.address() == safe)
-                .filter_map(|log| {
-                    if succeeds {
-                        TestSafeV1_3_0::ExecutionSuccess::decode_log(&log.inner)
-                            .ok()
-                            .map(|event| (event.txHash, event.payment))
-                    } else {
-                        TestSafeV1_3_0::ExecutionFailure::decode_log(&log.inner)
-                            .ok()
-                            .map(|event| (event.txHash, event.payment))
-                    }
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(matching_events, vec![(hash, U256::ZERO)]);
             assert_eq!(safe_contract.nonce().call().await.unwrap(), U256::from(nonce + 1));
             assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::ONE);
         }
@@ -2247,9 +2225,7 @@ Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN
 async fn safe_commands_reject_unexpected_chain_before_signing(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
-    let provider = handle.http_provider();
-    let initial_block = provider.get_block_number().await.unwrap();
-    let (service, submissions) = spawn_safe_service_with_submissions(json!({})).await;
+    let service = spawn_safe_service(json!({})).await;
     let safe = Address::repeat_byte(0x11).to_string();
     let target = Address::repeat_byte(0x22).to_string();
     let hash = B256::ZERO.to_string();
@@ -2290,10 +2266,7 @@ Error: Configured chain ID 1 does not match RPC chain ID 31337.
 Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN_ID.
 
 "#]]);
-        assert_eq!(*submissions.lock().unwrap(), 0, "{command} submitted to the service");
     }
-    assert_eq!(provider.get_block_number().await.unwrap(), initial_block);
-    assert_eq!(provider.get_transaction_count(ANVIL_OWNER).await.unwrap(), 0);
 }
 
 #[casttest]

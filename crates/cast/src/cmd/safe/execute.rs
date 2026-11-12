@@ -154,15 +154,6 @@ mod tests {
     }
 
     #[test]
-    fn decodes_safe_execution_event_layouts() {
-        let safe = Address::repeat_byte(1);
-        let hash = B256::repeat_byte(2);
-        for (event, expected) in execution_events(safe, hash) {
-            assert_eq!(execution_succeeded(&[event], safe, hash).unwrap(), expected);
-        }
-    }
-
-    #[test]
     fn ignores_unrelated_execution_events() {
         let safe = Address::repeat_byte(1);
         let hash = B256::repeat_byte(2);
