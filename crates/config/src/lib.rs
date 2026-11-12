@@ -240,6 +240,9 @@ pub struct Config {
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
+    ///
+    /// These addresses are granted cheatcode access in forked tests and scripts, even when not
+    /// referenced by a contract.
     pub libraries: Vec<String>,
     /// Whether to enable the build cache.
     pub cache: bool,
@@ -405,7 +408,10 @@ pub struct Config {
     pub tracing: TracingConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
-    /// Whether to show `console.log` outputs in realtime during script/test execution
+    /// Whether to show `console.log` outputs in realtime during script/test execution.
+    ///
+    /// Ignored when `--json` or `--junit` writes a report to stdout. Otherwise, logs print live
+    /// instead of being captured, so `forge test --json-file` does not include them.
     pub live_logs: bool,
     /// Whether to allow `expectRevert` for internal functions.
     pub allow_internal_expect_revert: bool,

@@ -1,6 +1,7 @@
 //! Tempo network utilities.
 
 pub mod auth;
+pub mod configurable_account;
 
 use crate::FoundryTransactionBuilder;
 use alloy_network::{Network, TransactionBuilder};

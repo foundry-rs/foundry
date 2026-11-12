@@ -1547,18 +1547,6 @@ pub fn warm_set(state: &mut State<'_>) -> PrewarmSet {
     prewarm
 }
 
-/// Cools every account and slot the running transaction in `state` loaded, without journaling.
-/// Pre-warmed ones stay effectively warm.
-pub fn cool_loaded(state: &mut State<'_>) {
-    let loaded = loaded_slots(state);
-    for (address, slots) in loaded {
-        state.set_account_warm(&address, false);
-        for key in slots {
-            state.set_storage_warm(&address, key, false);
-        }
-    }
-}
-
 /// Undoes, without journaling, the warmth that the running transaction in `state` gained since
 /// `checkpoint`, keeping all other warmth, including unjournaled changes made since.
 pub fn restore_access_warmth(state: &mut State<'_>, checkpoint: &StateCheckpoint) {

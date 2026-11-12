@@ -3,7 +3,7 @@
 use super::{
     EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks,
     FoundryTxConversion, FoundryTxResultExt, SendableExt, TxPayload, eth_envelope_from_any_rpc,
-    eth_tx, with_eip7702_delegations,
+    eth_tx, eth_tx_from_request, with_eip7702_delegations,
 };
 use alloy_consensus::{TxLegacy, transaction::Recovered};
 use alloy_network::{AnyRpcTransaction, Ethereum};
@@ -11,6 +11,7 @@ use alloy_primitives::{
     Address, KECCAK256_EMPTY, U256,
     map::{AddressMap, HashSet},
 };
+use alloy_rpc_types::TransactionRequest;
 use evm2::{
     Evm, ExecutionConfig, TxResult, Version,
     ethereum::TxEnvelope,
@@ -171,6 +172,10 @@ impl FoundryTxConversion<Ethereum> for MonadEvmTypes {
         _payload: TxPayload,
     ) -> eyre::Result<Recovered<TxEnvelope>> {
         Ok(Recovered::new_unchecked(eth_tx(envelope), sender))
+    }
+
+    fn tx_from_request(request: TransactionRequest) -> eyre::Result<Recovered<TxEnvelope>> {
+        eth_tx_from_request(request)
     }
 
     fn envelope_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<alloy_consensus::TxEnvelope> {
