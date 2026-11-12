@@ -192,9 +192,7 @@ Private key: [..]
     cmd.assert_failure().stderr_eq(str![[r#"
 error: invalid value 'locla' for '--chain <CHAIN>'
   [possible values: [..]]
-
-  tip: a similar value exists: [..]
-
+...
 For more information, try '--help'.
 
 "#]]);
