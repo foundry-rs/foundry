@@ -359,6 +359,56 @@ contract NestedRestoreHelper {
         revert("restore reverted");
     }
 
+    /// Sends `target` 10 wei, then catches a call that restores a snapshot from before and deals
+    /// `target` 20 wei.
+    function transferAroundRestoreDealRevert(uint256 snapshotId, address payable target) external {
+        target.transfer(10);
+        try this.restoreDealRevert(snapshotId, target) {
+            revert("unexpected success");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("restore reverted"), reason);
+        }
+        require(target.balance == 20, "inner deal lost");
+        revert("outer reverted");
+    }
+
+    function restoreDealRevert(uint256 snapshotId, address target) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        vm.deal(target, 20);
+        revert("restore reverted");
+    }
+
+    /// Creates a contract, which bumps this contract's nonce, then catches a call that restores a
+    /// snapshot from before and sets the nonce to 20.
+    function createAroundRestoreSetNonceRevert(uint256 snapshotId) external {
+        new NestedRestoreStore();
+        try this.restoreSetNonceRevert(snapshotId) {
+            revert("unexpected success");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("restore reverted"), reason);
+        }
+        require(vm.getNonce(address(this)) == 20, "inner nonce lost");
+        revert("outer reverted");
+    }
+
+    function restoreSetNonceRevert(uint256 snapshotId) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        vm.setNonceUnsafe(address(this), 20);
+        revert("restore reverted");
+    }
+
+    /// Sends `target` 3 wei, then runs `rawTx`, which creates `target`.
+    function transferCreateRevert(bytes calldata rawTx, address payable target, bool execute) external {
+        target.transfer(3);
+        if (execute) {
+            vm.executeTransaction(rawTx);
+        } else {
+            vm.broadcastRawTransaction(rawTx);
+        }
+        require(target.balance == 3, "transfer lost");
+        revert("outer reverted");
+    }
+
     /// Deals `target`, restores a snapshot if `restore`, then runs `rawTx`, which creates and
     /// destroys `target`.
     function dealCreateDestroyRevert(uint256 snapshotId, bool restore, bytes calldata rawTx, address target) external {
@@ -686,6 +736,44 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         );
         assertEq(target.code, hex"00");
         assertEq(vm.getNonce(target), 1);
+    }
+
+    // A write after a restore keeps setting the value it left when an enclosing call reverts too.
+    function testRevertedCallKeepsBalanceSetAfterRestore() public {
+        address payable target = payable(address(0xDEA1));
+        vm.deal(address(helper), 1 ether);
+        uint256 snapshotId = vm.snapshotState();
+        expectHelperRevert(
+            abi.encodeCall(helper.transferAroundRestoreDealRevert, (snapshotId, target)), "outer reverted"
+        );
+        assertEq(target.balance, 20);
+    }
+
+    function testRevertedCallKeepsNonceSetAfterRestore() public {
+        uint256 snapshotId = vm.snapshotState();
+        expectHelperRevert(abi.encodeCall(helper.createAroundRestoreSetNonceRevert, (snapshotId)), "outer reverted");
+        assertEq(vm.getNonce(address(helper)), 20);
+    }
+
+    // A transaction creating an account keeps its balance, so the revert still undoes a transfer to
+    // it.
+    function testRevertedCallUndoesTransferToRawCreate() public {
+        revertedTransferCreate(false);
+    }
+
+    function testRevertedCallUndoesTransferToExecutedCreate() public {
+        revertedTransferCreate(true);
+    }
+
+    function revertedTransferCreate(bool execute) internal {
+        // Returns the code `STOP`.
+        bytes memory rawTx = signedCreation(hex"600060005360016000f3");
+        address payable target = payable(vm.computeCreateAddress(vm.addr(1), 0));
+        vm.deal(address(helper), 1 ether);
+        expectHelperRevert(abi.encodeCall(helper.transferCreateRevert, (rawTx, target, execute)), "outer reverted");
+        assertEq(target.code, hex"00");
+        assertEq(target.balance, 0);
+        assertEq(address(helper).balance, 1 ether);
     }
 
     // An account a transaction creates and destroys is left empty, with or without a restore.

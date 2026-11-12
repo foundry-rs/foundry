@@ -324,7 +324,8 @@ impl PersistentWrite {
     /// instead of per write.
     ///
     /// Returns the balance and nonce changes the writes made, to record in their place, so that a
-    /// later replay keeps the saturation.
+    /// later replay keeps the saturation. A change that includes an absolute write is absolute
+    /// too, so it keeps setting the value it left under enclosing rollbacks.
     pub fn apply_all<'w>(
         writes: impl IntoIterator<Item = &'w Self>,
         state: &mut State<'_>,
@@ -363,7 +364,8 @@ impl PersistentWrite {
                 U256::saturating_from(balance.into_raw())
             };
             account.set_balance(balance);
-            applied.push(Self::balance(address, previous, balance));
+            let write = Self::balance(address, previous, balance);
+            applied.push(if set.is_some() { write.into_absolute() } else { write });
         }
         for (address, (set, delta)) in nonces {
             let mut account = state.account(&address)?;
@@ -371,7 +373,8 @@ impl PersistentWrite {
             account.touch();
             let nonce = (i128::from(set.unwrap_or(previous)) + delta).max(0);
             account.set_nonce(u64::try_from(nonce).unwrap_or(u64::MAX));
-            applied.push(Self::nonce(&account, previous));
+            let write = Self::nonce(&account, previous);
+            applied.push(if set.is_some() { write.into_absolute() } else { write });
         }
         Ok(applied)
     }
@@ -1886,9 +1889,10 @@ fn rebase_loaded_accounts(
 /// given. Fields that already hold their value are left alone; `code` is only built when the code
 /// hash changes.
 ///
-/// If `reset`, such as for an account the nested transaction created or destroyed, the balance and
-/// nonce are recorded as absolute writes even when they already hold their value, so that a replay
-/// does not bring back the values they replaced.
+/// If `reset`, such as for an account the nested transaction created or destroyed, the nonce is
+/// recorded as an absolute write even when it already holds its value, so that a replay does not
+/// bring back the value it replaced, and so is the emptied balance of a destroyed account. A
+/// created account keeps the balance it had, which may come from transfers a revert undoes.
 ///
 /// A journaled wipe is not undone by a revert of the enclosing call: evm2 does not journal the
 /// wipe marker, and slots the running transaction never loaded cannot be cleared one by one.
@@ -1913,9 +1917,10 @@ fn apply_account(
         let (balance, nonce, code_hash) = info.map_or((U256::ZERO, 0, KECCAK256_EMPTY), |info| {
             (info.balance, info.nonce, info.code_hash)
         });
-        if reset || account.balance() != balance {
+        let emptied = reset && info.is_none();
+        if emptied || account.balance() != balance {
             let write = PersistentWrite::balance(address, account.balance(), balance);
-            record(if reset { write.into_absolute() } else { write });
+            record(if emptied { write.into_absolute() } else { write });
             account.set_balance(balance);
         }
         if reset || account.nonce() != nonce {
