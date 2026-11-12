@@ -21,7 +21,9 @@ use foundry_common::{
     fs,
     fs::canonicalize_path,
     sh_println, shell,
-    tempo::configurable_account::{LINKED_ACCOUNT_SUFFIX, link_keystore, linked_account_path},
+    tempo::configurable_account::{
+        LINKED_ACCOUNT_SUFFIX, ensure_link_available, link_keystore, unlink_keystore,
+    },
 };
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, RawWalletOpts, WalletOpts, WalletSigner};
@@ -779,10 +781,7 @@ flag to set your key via:
                 let address = wallet.address();
                 // An imported key is not linked to a configurable account; drop a link that a
                 // removed keystore of the same name left.
-                let link = linked_account_path(&keystore_path);
-                if link.exists() {
-                    fs::remove_file(&link)?;
-                }
+                unlink_keystore(&keystore_path)?;
 
                 if touch_id {
                     let action = format!("keystore was imported at {}", keystore_path.display());
@@ -834,10 +833,7 @@ flag to set your key via:
                 }
 
                 remove_touch_id_sidecar(&keystore_path)?;
-                let link = linked_account_path(&keystore_path);
-                if link.exists() {
-                    fs::remove_file(&link)?;
-                }
+                unlink_keystore(&keystore_path)?;
                 std::fs::remove_file(&keystore_path).wrap_err_with(|| {
                     format!("Failed to remove keystore file at {}", keystore_path.display())
                 })?;
@@ -1041,6 +1037,12 @@ fn new_keystores(
             ensure_touch_id_sidecar_available(&dir.join(name))?;
         }
     }
+    // A link must not replace a keystore that an earlier version created under its name.
+    if configurable {
+        for name in names.iter().flatten() {
+            ensure_link_available(&dir.join(name))?;
+        }
+    }
 
     // Prevent accidental overwriting: check all target files upfront.
     if !force {
@@ -1077,11 +1079,10 @@ fn new_keystores(
         let account = new_account(wallet.address(), configurable)?;
         // Link the keystore to its configurable account, so that `--account` sends from it, and
         // drop a link that an overwritten keystore left.
-        let link = linked_account_path(&keystore_path);
         if configurable {
             link_keystore(&keystore_path, wallet.address())?;
-        } else if link.exists() {
-            fs::remove_file(&link)?;
+        } else {
+            unlink_keystore(&keystore_path)?;
         }
         if shell::is_json() {
             let mut result = json!({

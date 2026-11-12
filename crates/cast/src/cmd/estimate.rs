@@ -155,6 +155,7 @@ impl EstimateArgs {
                 &simulation_wallet,
                 sender.address(),
                 signer.clone(),
+                block.unwrap_or_default(),
             )
             .await?
         };

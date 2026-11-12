@@ -468,11 +468,23 @@ async fn tempo_t14_wallet_owners_remove_and_threshold(cmd: _) {
     assert_eq!(config["owners"].as_array().unwrap().len(), 2);
     let (gas_limit, gas_used) = last_tx_gas(&provider).await;
     assert_eq!(gas_limit, gas_used);
+    let added = provider.get_block_number().await.unwrap().to_string();
 
     let config = change(&["threshold", &account_arg, "3"]);
     assert_eq!((config["version"].as_u64(), config["threshold"].as_u64()), (Some(2), Some(3)));
     let (gas_limit, gas_used) = last_tx_gas(&provider).await;
     assert_eq!(gas_limit, gas_used);
+
+    // An estimate at an earlier block uses the configuration there, where the key alone still
+    // reaches threshold 1.
+    let estimate = cmd
+        .cast_fuse()
+        .args(["estimate", &other, "--from", &account_arg, "--private-key", &key_arg])
+        .args(["--rpc-url", &rpc, "--tempo.fee-token", &fee_token, "--block", &added])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(estimate.trim().parse::<u64>().unwrap() > 0);
 
     // The key alone no longer reaches threshold 3.
     cmd.cast_fuse()

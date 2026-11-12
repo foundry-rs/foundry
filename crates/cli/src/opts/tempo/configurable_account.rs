@@ -1,4 +1,5 @@
 use super::TempoOpts;
+use alloy_eips::BlockId;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_signer::Signer;
@@ -56,23 +57,25 @@ impl TempoOpts {
         signers: &[Arc<WalletSigner>],
         hint: &str,
     ) -> Result<Option<ConfigurableAccountSigner>> {
-        let Some((account, config, keys)) =
-            self.configurable_account_owners(provider, from, linked, signers).await?
+        let Some((account, config, keys)) = self
+            .configurable_account_owners(provider, from, linked, signers, BlockId::latest())
+            .await?
         else {
             return Ok(None);
         };
         ConfigurableAccountSigner::new(account, config, keys, hint).map(Some)
     }
 
-    /// Detects a configurable account sender as [`Self::configurable_account_signer`] does, and
-    /// returns the account, its configuration and all its local owner keys, which may not reach
-    /// the threshold.
+    /// Detects a configurable account sender as [`Self::configurable_account_signer`] does, at
+    /// `block`, and returns the account, its configuration there and all its local owner keys,
+    /// which may not reach the threshold.
     pub async fn configurable_account_owners<P: Provider<TempoNetwork>>(
         &self,
         provider: &P,
         from: Option<Address>,
         linked: Option<(Address, Address)>,
         signers: &[Arc<WalletSigner>],
+        block: BlockId,
     ) -> Result<Option<(Address, ConfigurableAccountConfig, Vec<ConfigurableAccountOwnerKey>)>>
     {
         if let (Some(account), Some(from)) = (self.configurable_account, from) {
@@ -110,14 +113,15 @@ impl TempoOpts {
         let mut detected = None;
         if let Some(linked) = linked {
             // Before T14 the linked account does not exist yet, and the key sends as before.
-            detected = detect_configurable_account(provider, linked, &keys, config.clone(), false)
-                .await
-                .wrap_err_with(|| {
-                    format!(
-                        "could not check the configurable account {linked} linked to the \
+            detected =
+                detect_configurable_account(provider, linked, &keys, config.clone(), false, block)
+                    .await
+                    .wrap_err_with(|| {
+                        format!(
+                            "could not check the configurable account {linked} linked to the \
                          keystore; pass --from {account} or --eoa to send from the key"
-                    )
-                })?;
+                        )
+                    })?;
             if detected.is_some() {
                 account = linked;
             }
@@ -126,7 +130,8 @@ impl TempoOpts {
             Some(config) => config,
             None => {
                 let Some(config) =
-                    detect_configurable_account(provider, account, &keys, config, required).await?
+                    detect_configurable_account(provider, account, &keys, config, required, block)
+                        .await?
                 else {
                     return Ok(None);
                 };

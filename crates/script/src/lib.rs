@@ -13,6 +13,7 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
+use alloy_eips::BlockId;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{
@@ -423,9 +424,20 @@ impl ScriptArgs {
             }
         }
 
-        // `--batch` signs with one wallet of the sender and does not sign for configurable
-        // accounts.
-        if !args.resume
+        // An explicit configurable account is the sender of a bare `vm.startBroadcast()`, as
+        // `--sender` would make it; its owner keys must not broadcast in its place.
+        if let Some(account) = args.tempo.configurable_account
+            && !args.resume
+        {
+            if let Some(sender) = args.evm.sender {
+                eyre::ensure!(
+                    sender == account,
+                    "--sender {sender} conflicts with --tempo.configurable-account {account}"
+                );
+            }
+            evm_opts.sender = account;
+            script_wallets.inner.lock().provided_sender = Some(account);
+        } else if !args.resume
             && !args.batch
             && args.evm.sender.is_none()
             && !args.tempo.eoa
@@ -783,14 +795,21 @@ impl ScriptArgs {
                     ProviderBuilder::<TempoNetwork>::from_config_with_url(config, fork_url)?
                         .build()?;
                 // Before T14 the linked account does not exist yet, and the key sends as before.
-                let config = detect_configurable_account(&provider, account, &[owner], None, false)
-                    .await
-                    .wrap_err_with(|| {
-                        format!(
-                            "could not check the configurable account {account} linked to the \
+                let config = detect_configurable_account(
+                    &provider,
+                    account,
+                    &[owner],
+                    None,
+                    false,
+                    BlockId::latest(),
+                )
+                .await
+                .wrap_err_with(|| {
+                    format!(
+                        "could not check the configurable account {account} linked to the \
                              keystore; pass --sender {owner} or --eoa to send from the key"
-                        )
-                    })?;
+                    )
+                })?;
                 return Ok(config.map(|_| (account, owner)));
             }
         }

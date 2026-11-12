@@ -14,10 +14,11 @@
 //! keys.
 
 use crate::FoundryTransactionBuilder;
-use alloy_network::{Network, TransactionBuilder};
+use alloy_consensus::BlockHeader;
+use alloy_network::{BlockResponse, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_provider::Provider;
-use alloy_rpc_types::{Filter, Log};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, Log};
 use alloy_signer::Signer;
 use alloy_sol_types::{SolCall, SolEvent};
 use base64::{
@@ -88,16 +89,17 @@ pub fn single_owner_account(owner: Address) -> Result<Address> {
     single_owner_config(owner).derive_account().map_err(ca_error)
 }
 
-/// Returns the configuration commitment of `account`, or `None` when the configurable account
-/// precompile is not active: before T14 a call to it returns no data.
+/// Returns the configuration commitment of `account` at `block`, or `None` when the configurable
+/// account precompile is not active there: before T14 a call to it returns no data.
 async fn config_commitment<P: Provider<TempoNetwork>>(
     provider: &P,
     account: Address,
+    block: BlockId,
 ) -> Result<Option<B256>> {
     let request = TempoTransactionRequest::default()
         .with_to(CONFIGURABLE_ACCOUNT_ADDRESS)
         .with_input(IConfigurableAccount::getConfigCommitmentCall { account }.abi_encode());
-    let output = provider.call(request).await?;
+    let output = provider.call(request).block(block).await?;
     if output.is_empty() {
         return Ok(None);
     }
@@ -114,12 +116,15 @@ pub async fn current_config<P: Provider<TempoNetwork>>(
     account: Address,
     keys: &[Address],
 ) -> Result<Option<ConfigurableAccountConfig>> {
-    let commitment =
-        config_commitment(provider, account).await?.ok_or_else(|| eyre::eyre!(T14_REQUIRED))?;
-    config_for_commitment(provider, account, keys, commitment).await
+    let block = BlockId::latest();
+    let commitment = config_commitment(provider, account, block)
+        .await?
+        .ok_or_else(|| eyre::eyre!(T14_REQUIRED))?;
+    config_for_commitment(provider, account, keys, commitment, block).await
 }
 
-/// Tells whether `account` is a configurable account, and returns its current configuration.
+/// Tells whether `account` is a configurable account at `block`, and returns its configuration
+/// there.
 ///
 /// The account is one when it has a registered configuration commitment (a derived account after
 /// its first transaction, or an upgraded EOA), or when one of the local owner `keys` derives it as
@@ -136,9 +141,10 @@ pub async fn detect_configurable_account<P: Provider<TempoNetwork>>(
     keys: &[Address],
     config: Option<ConfigurableAccountConfig>,
     required: bool,
+    block: BlockId,
 ) -> Result<Option<ConfigurableAccountConfig>> {
     let required = required || config.is_some();
-    let commitment = match config_commitment(provider, account).await {
+    let commitment = match config_commitment(provider, account, block).await {
         Err(error) if !required && keys.contains(&account) => {
             tracing::debug!(%error, %account, "cannot tell whether the sender is a configurable account");
             return Ok(None);
@@ -153,7 +159,7 @@ pub async fn detect_configurable_account<P: Provider<TempoNetwork>>(
         check_config(account, &config, commitment)?;
         return Ok(Some(config));
     }
-    let config = config_for_commitment(provider, account, keys, commitment).await?;
+    let config = config_for_commitment(provider, account, keys, commitment, block).await?;
     eyre::ensure!(
         config.is_some() || !required,
         "{account} is not a configurable account: it has no registered configuration, and no \
@@ -186,12 +192,13 @@ fn check_config(
     Ok(())
 }
 
-/// Returns the configuration of `account` that matches its stored `commitment`.
+/// Returns the configuration of `account` that matches its `commitment` stored at `block`.
 async fn config_for_commitment<P: Provider<TempoNetwork>>(
     provider: &P,
     account: Address,
     keys: &[Address],
     commitment: B256,
+    block: BlockId,
 ) -> Result<Option<ConfigurableAccountConfig>> {
     for key in keys {
         let config = single_owner_config(*key);
@@ -207,7 +214,17 @@ async fn config_for_commitment<P: Provider<TempoNetwork>>(
     if commitment.is_zero() {
         return Ok(None);
     }
-    let block = provider.get_block_number().await?;
+    // The log scan starts at `block`, so that a later configuration change is not taken.
+    let block = match block {
+        BlockId::Number(BlockNumberOrTag::Number(number)) => number,
+        BlockId::Number(BlockNumberOrTag::Latest) => provider.get_block_number().await?,
+        block => provider
+            .get_block(block)
+            .await?
+            .ok_or_else(|| eyre::eyre!("block {block} not found"))?
+            .header()
+            .number(),
+    };
     config_from_logs(provider, account, commitment, block).await.map(Some)
 }
 
@@ -389,6 +406,19 @@ fn quorum(owners: &[ConfigurableAccountOwner], threshold: u8, largest: bool) -> 
     }
     quorum.reverse();
     quorum
+}
+
+/// Tells whether owners among `keys` can approve for an account with `config`, as
+/// [`ConfigurableAccountSigner::new`] selects them.
+pub fn reaches_threshold(config: &ConfigurableAccountConfig, keys: &[Address]) -> bool {
+    let mut local = config
+        .owners
+        .iter()
+        .filter(|owner| keys.contains(&owner.owner))
+        .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
+        .collect::<Vec<_>>();
+    local.sort_by_key(|owner| owner.owner);
+    !quorum(&local, config.threshold, false).is_empty()
 }
 
 /// Combines owner approvals of `inner` into a `0x05` signature for `account`.
@@ -802,30 +832,99 @@ pub fn linked_account_path(keystore: &Path) -> PathBuf {
     path.into()
 }
 
+/// What the file at a linked account sidecar path holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkedAccountFileState {
+    /// There is no file.
+    Missing,
+    /// A link to `account`, the 1-of-1, salt-0 configurable account of `owner`.
+    Linked { account: Address, owner: Address },
+    /// A keystore, such as one an earlier Cast version created under that name.
+    Keystore,
+    /// A file that is neither a link nor a keystore.
+    Unknown,
+}
+
+/// Returns what the file at `path`, a linked account sidecar path, holds.
+pub fn linked_account_file_state(path: &Path) -> Result<LinkedAccountFileState> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LinkedAccountFileState::Missing);
+        }
+        Err(error) => {
+            return Err(error).wrap_err_with(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        return Ok(LinkedAccountFileState::Unknown);
+    };
+    if value.get("crypto").is_some() || value.get("Crypto").is_some() {
+        return Ok(LinkedAccountFileState::Keystore);
+    }
+    Ok(match serde_json::from_value::<LinkedAccountFile>(value) {
+        Ok(file)
+            if file.version == LINKED_ACCOUNT_VERSION
+                && single_owner_account(file.owner).ok() == Some(file.account) =>
+        {
+            LinkedAccountFileState::Linked { account: file.account, owner: file.owner }
+        }
+        _ => LinkedAccountFileState::Unknown,
+    })
+}
+
+/// Fails unless the linked account sidecar path of `keystore` is free or holds a link, which
+/// [`link_keystore`] may replace.
+pub fn ensure_link_available(keystore: &Path) -> Result<()> {
+    let path = linked_account_path(keystore);
+    match linked_account_file_state(&path)? {
+        LinkedAccountFileState::Missing | LinkedAccountFileState::Linked { .. } => Ok(()),
+        LinkedAccountFileState::Keystore => eyre::bail!(
+            "refusing to link {} to its configurable account because {} is an existing keystore",
+            keystore.display(),
+            path.display()
+        ),
+        LinkedAccountFileState::Unknown => eyre::bail!(
+            "refusing to link {} to its configurable account because {} exists and is not a \
+             recognized linked account file",
+            keystore.display(),
+            path.display()
+        ),
+    }
+}
+
 /// Links `keystore`, whose key is `owner`, to the 1-of-1, salt-0 configurable account of
-/// `owner`, and returns that account.
+/// `owner`, and returns that account. Fails when the sidecar path holds another file.
 pub fn link_keystore(keystore: &Path, owner: Address) -> Result<Address> {
+    ensure_link_available(keystore)?;
     let account = single_owner_account(owner)?;
     let file = LinkedAccountFile { version: LINKED_ACCOUNT_VERSION, account, owner };
     crate::fs::write_pretty_json_file(&linked_account_path(keystore), &file)?;
     Ok(account)
 }
 
+/// Removes the link of `keystore`, and leaves any other file at its sidecar path alone.
+pub fn unlink_keystore(keystore: &Path) -> Result<()> {
+    let path = linked_account_path(keystore);
+    if let LinkedAccountFileState::Linked { .. } = linked_account_file_state(&path)? {
+        std::fs::remove_file(&path)
+            .wrap_err_with(|| format!("failed to remove {}", path.display()))?;
+    }
+    Ok(())
+}
+
 /// Returns the configurable account linked to `keystore` and its owner key, or `None` when the
-/// keystore has no link.
+/// keystore has no link. A keystore at the sidecar path is not a link.
 pub fn linked_account(keystore: &Path) -> Result<Option<(Address, Address)>> {
     let path = linked_account_path(keystore);
-    if !path.is_file() {
-        return Ok(None);
+    match linked_account_file_state(&path)? {
+        LinkedAccountFileState::Linked { account, owner } => Ok(Some((account, owner))),
+        LinkedAccountFileState::Missing | LinkedAccountFileState::Keystore => Ok(None),
+        LinkedAccountFileState::Unknown => eyre::bail!(
+            "invalid linked account file {}: unsupported version or account",
+            path.display()
+        ),
     }
-    let file = crate::fs::read_json_file::<LinkedAccountFile>(&path)
-        .wrap_err_with(|| format!("invalid linked account file {}", path.display()))?;
-    eyre::ensure!(
-        file.version == LINKED_ACCOUNT_VERSION && single_owner_account(file.owner)? == file.account,
-        "invalid linked account file {}: unsupported version or account",
-        path.display()
-    );
-    Ok(Some((file.account, file.owner)))
 }
 
 #[cfg(test)]
@@ -1191,5 +1290,36 @@ mod tests {
         let mut invalid = data;
         invalid["threshold"] = 3.into();
         assert!(parse_config(&invalid.to_string()).is_err());
+    }
+
+    #[test]
+    fn link_leaves_a_keystore_with_the_sidecar_name_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = dir.path().join("dev");
+        let owner = Address::repeat_byte(0x31);
+        let account = single_owner_account(owner).unwrap();
+
+        // A link is written, read, replaced and removed.
+        assert_eq!(linked_account(&keystore).unwrap(), None);
+        assert_eq!(link_keystore(&keystore, owner).unwrap(), account);
+        assert_eq!(linked_account(&keystore).unwrap(), Some((account, owner)));
+        link_keystore(&keystore, owner).unwrap();
+        unlink_keystore(&keystore).unwrap();
+        assert!(!linked_account_path(&keystore).exists());
+
+        // An earlier Cast version could create a keystore named `dev.tempo-account`.
+        let other = r#"{"version":3,"id":"x","crypto":{"cipher":"aes-128-ctr"}}"#;
+        std::fs::write(linked_account_path(&keystore), other).unwrap();
+        assert_eq!(linked_account(&keystore).unwrap(), None);
+        assert!(link_keystore(&keystore, owner).is_err());
+        unlink_keystore(&keystore).unwrap();
+        assert_eq!(std::fs::read_to_string(linked_account_path(&keystore)).unwrap(), other);
+
+        // Any other file is neither replaced nor removed, and is not taken as a link.
+        std::fs::write(linked_account_path(&keystore), "notes").unwrap();
+        assert!(ensure_link_available(&keystore).is_err());
+        assert!(linked_account(&keystore).is_err());
+        unlink_keystore(&keystore).unwrap();
+        assert_eq!(std::fs::read_to_string(linked_account_path(&keystore)).unwrap(), "notes");
     }
 }

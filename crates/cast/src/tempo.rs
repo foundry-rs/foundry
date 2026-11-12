@@ -5,6 +5,7 @@ use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_client::BuiltInConnectionString;
+use alloy_rpc_types::BlockId;
 use alloy_transport::{BoxTransport, TransportConnect, TransportError};
 use eyre::Result;
 use foundry_cli::{
@@ -341,13 +342,15 @@ where
 /// Returns the Tempo configurable account that sends for `sender`, which is `sender` itself or the
 /// account linked to its keystore, with the owner quorum that gas estimation models: the local
 /// owners when they reach the threshold, as `cast send` signs, otherwise the largest quorum of
-/// maximum-size `WebAuthn` approvals. `signer` is the wallet signer the sender already resolved.
+/// maximum-size `WebAuthn` approvals. `signer` is the wallet signer the sender already resolved,
+/// and the account's configuration is read at `block`, where the estimate runs.
 pub(crate) async fn configurable_account_simulation<N: Network>(
     tempo: &TempoOpts,
     config: &Config,
     wallet: &WalletOpts,
     sender: Address,
     signer: Option<Arc<WalletSigner>>,
+    block: BlockId,
 ) -> Result<Option<(Address, ConfigurableAccountSimulationSpec)>>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -377,7 +380,7 @@ where
     let linked = tempo.linked_account(wallet)?;
     let from = (!linked.is_some_and(|(_, owner)| owner == sender)).then_some(sender);
     let Some((account, config, keys)) =
-        tempo.configurable_account_owners(&provider, from, linked, &signers).await?
+        tempo.configurable_account_owners(&provider, from, linked, &signers, block).await?
     else {
         return Ok(None);
     };

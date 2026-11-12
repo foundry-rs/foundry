@@ -15,6 +15,7 @@ use crate::{
 use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
@@ -26,7 +27,9 @@ use foundry_common::{
     fs::canonicalize_path,
     namespaced_storage,
     provider::ProviderBuilder,
-    tempo::configurable_account::{detect_configurable_account, parse_config},
+    tempo::configurable_account::{
+        detect_configurable_account, parse_config, reaches_threshold, stored_owner_keys,
+    },
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -660,13 +663,14 @@ fn has_available_script_signers(
     Ok(remaining.iter().all(|tx| signers.contains(&tx.sender) || session_scope == Some(*tx)))
 }
 
-/// Returns whether every remaining sender without its own signer is a Tempo configurable account,
-/// which broadcast signs with its owners' keys.
+/// Returns whether every remaining sender without its own signer is a Tempo configurable account
+/// whose owner keys among the wallets and the Tempo Accounts store reach its threshold, so that
+/// broadcast signs for it.
 ///
 /// Resume only publishes the saved transactions, so it runs the script again only to collect
 /// signers that the wallet options do not provide. A configurable account has no key of its own
-/// and needs no run: broadcast finds its owners among the wallets and fails clearly when they do
-/// not reach the threshold. When detection fails, resume runs the script as before.
+/// and needs no run once its owners are available. When detection fails, or the script may still
+/// provide owner keys, such as with `vm.rememberKey`, resume runs the script as before.
 async fn only_configurable_accounts_missing<FEN: FoundryEvmNetwork>(
     script_config: &ScriptConfig<FEN>,
     sequence: &ScriptSequenceKind<FEN::Network>,
@@ -699,10 +703,22 @@ async fn only_configurable_accounts_missing<FEN: FoundryEvmNetwork>(
         let provider =
             ProviderBuilder::<TempoNetwork>::from_config_with_url(&script_config.config, rpc_url)?
                 .build()?;
-        let detected =
-            detect_configurable_account(&provider, scope.sender, &signers, config.clone(), false)
-                .await;
-        if !matches!(detected, Ok(Some(_))) {
+        let detected = detect_configurable_account(
+            &provider,
+            scope.sender,
+            &signers,
+            config.clone(),
+            false,
+            BlockId::latest(),
+        )
+        .await;
+        let Ok(Some(config)) = detected else { return Ok(false) };
+        let keys = signers
+            .iter()
+            .copied()
+            .chain(stored_owner_keys(scope.chain, &config).iter().map(|key| key.address()))
+            .collect::<Vec<_>>();
+        if !reaches_threshold(&config, &keys) {
             return Ok(false);
         }
     }

@@ -38,8 +38,9 @@ use alloy_signer::{Signature, Signer};
 use eyre::{Context, ContextCompat, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{
-    apply_gas_estimate_multiplier, has_batch_support, has_different_gas_calc,
+use foundry_cli::{
+    opts::TempoOpts,
+    utils::{apply_gas_estimate_multiplier, has_batch_support, has_different_gas_calc},
 };
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
@@ -878,7 +879,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             missing_scopes.dedup();
 
             // A sender without its own signer may be a configurable account whose owners are
-            // among the wallets: they sign its transactions together.
+            // among the wallets: they sign its transactions together. A sender with its own key
+            // may be an upgraded EOA, whose root key no longer signs once it has owners.
             let wallet_signers = self
                 .script_wallets
                 .into_multi_wallet()
@@ -889,7 +891,28 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let mut configurable_accounts = HashMap::default();
             if self.script_config.evm_opts.networks.is_tempo() {
                 let tempo = &self.script_config.tempo;
-                for scope in std::mem::take(&mut missing_scopes) {
+                // The configurable account options describe one account: a sender with its own
+                // key that is not that account is only checked against the chain.
+                let own_key_tempo = TempoOpts {
+                    configurable_account: None,
+                    configurable_account_config: None,
+                    owners: Vec::new(),
+                    ..tempo.clone()
+                };
+                let mut own_key_scopes = remaining_transactions
+                    .iter()
+                    .copied()
+                    .filter(|scope| {
+                        signers.contains(&scope.sender) && !access_keys.contains_key(scope)
+                    })
+                    .collect::<Vec<_>>();
+                own_key_scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
+                own_key_scopes.dedup();
+                let candidates = std::mem::take(&mut missing_scopes)
+                    .into_iter()
+                    .map(|scope| (scope, true))
+                    .chain(own_key_scopes.into_iter().map(|scope| (scope, false)));
+                for (scope, missing) in candidates {
                     let rpc_url = (0..self.sequence.sequences().len())
                         .find(|&i| self.sequence.sequences()[i].chain == scope.chain)
                         .map(|i| self.sequence.rpc_url(i).to_owned());
@@ -902,6 +925,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 &rpc_url,
                             )?
                             .build()?;
+                            let tempo =
+                                if missing || tempo.configurable_account == Some(scope.sender) {
+                                    tempo
+                                } else {
+                                    &own_key_tempo
+                                };
                             tempo
                                 .configurable_account_signer(
                                     &provider,
@@ -918,7 +947,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         Some(account) => {
                             configurable_accounts.insert(scope, account);
                         }
-                        None => missing_scopes.push(scope),
+                        None if missing => missing_scopes.push(scope),
+                        None => {}
                     }
                 }
             }
