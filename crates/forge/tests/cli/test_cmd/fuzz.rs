@@ -6807,6 +6807,7 @@ fn fuzz_minimization_keeps_unidentified_counterexamples(prj: _, cmd: _) {
         config.fuzz.seed = Some(U256::ONE);
         config.optimizer = Some(true);
         config.fs_permissions.add(PathPermission::write(prj.root()));
+        config.ffi = true;
     });
     prj.add_test(
         "Unidentified.t.sol",
@@ -6868,9 +6869,15 @@ contract UnidentifiedTest is Test {
         require(ok);
     }
 
-    // Replays skip writes outside the EVM, so later reads would see the campaign's.
+    // Replays skip writes and commands outside the EVM, so later reads would see the campaign's.
     function testFuzz_writes(uint256 x) public {
-        vm.writeLine(string.concat(vm.projectRoot(), "/fuzz-log.txt"), vm.toString(x));
+        string memory root = vm.projectRoot();
+        vm.writeLine(string.concat(root, "/fuzz-log.txt"), vm.toString(x));
+        string[] memory append = new string[](3);
+        append[0] = "bash";
+        append[1] = "-c";
+        append[2] = string.concat("echo >> '", root, "/ffi-log.txt'");
+        vm.ffi(append);
         revert();
     }
 
@@ -6885,9 +6892,15 @@ contract UnidentifiedTest is Test {
     );
 
     cmd.args(["test", "-j1", "--mc", "UnidentifiedTest", "-q"]).assert_failure();
-    // Only the campaign wrote.
-    let log = std::fs::read_to_string(prj.root().join("fuzz-log.txt")).unwrap();
-    assert_eq!(log.lines().count(), 1);
+    // Only the campaign wrote. Windows runners may not have bash.
+    let mut logs = vec!["fuzz-log.txt"];
+    if cfg!(unix) {
+        logs.push("ffi-log.txt");
+    }
+    for log in logs {
+        let lines = std::fs::read_to_string(prj.root().join(log)).unwrap().lines().count();
+        assert_eq!(lines, 1, "{log}");
+    }
     // All would be minimized to zero.
     for function in [
         "testFuzz_replay",

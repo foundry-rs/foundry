@@ -652,8 +652,8 @@ pub struct FailureTrace {
     frames: Vec<SiteFrame>,
     /// Failed assertions and failed frames, in execution order.
     events: Vec<FailureEvent>,
-    /// Whether a snapshot was restored or a write outside the EVM was skipped, which can make a
-    /// different path look like this one.
+    /// Whether a snapshot was restored or a cheatcode with effects outside the EVM was skipped,
+    /// which can make a different path look like this one.
     pub(crate) unidentified: bool,
 }
 
@@ -845,10 +845,10 @@ impl FailureTrace {
     /// Returns the value-independent identity of the finished call that stopped with `exit` and
     /// returned `output`, and starts recording the next call.
     ///
-    /// The identity is unknown when a snapshot restore discarded part of the history, when a write
-    /// outside the EVM was skipped, when the call succeeded without a failed assertion or `fail()`,
-    /// such as after a legacy DSTest failure that only wrote its own flag, or when several failed
-    /// assertions could have produced the revert data.
+    /// The identity is unknown when a snapshot restore discarded part of the history, when a
+    /// cheatcode with effects outside the EVM was skipped, when the call succeeded without a failed
+    /// assertion or `fail()`, such as after a legacy DSTest failure that only wrote its own flag,
+    /// or when several failed assertions could have produced the revert data.
     pub fn take_identity(&mut self, exit: InstrStop, output: &[u8]) -> Option<B256> {
         let Self { events, unidentified, .. } = std::mem::take(self);
         if unidentified {

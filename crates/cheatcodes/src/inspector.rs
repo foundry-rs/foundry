@@ -3807,10 +3807,10 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     let result = if ccx.state.core.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
         Err(fmt_err!("disabled during restricted execution"))
     } else if let Some(trace) = &mut ccx.state.failure_trace
-        && writes_outside_evm(calls)
+        && has_host_effects(calls)
     {
-        // A replay cannot undo these writes, and later reads would see the campaign's, so it skips
-        // them and leaves the failure unidentified.
+        // A replay cannot undo these effects, and later reads would see the campaign's, so it
+        // skips them and leaves the failure unidentified.
         trace.unidentified = true;
         Ok(Default::default())
     } else {
@@ -3829,16 +3829,26 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     result
 }
 
-/// Returns whether `call` writes to files or environment variables.
-const fn writes_outside_evm(call: &Vm::VmCalls) -> bool {
+/// Returns whether `call` writes to files or environment variables, runs a command, or sends an
+/// RPC request.
+const fn has_host_effects(call: &Vm::VmCalls) -> bool {
     matches!(
         call,
         Vm::VmCalls::copyFile(_)
             | Vm::VmCalls::createDir(_)
             | Vm::VmCalls::dumpState(_)
+            | Vm::VmCalls::ffi(_)
+            | Vm::VmCalls::ffiBytes(_)
+            | Vm::VmCalls::ffiString(_)
+            | Vm::VmCalls::ffiUint(_)
             | Vm::VmCalls::removeDir(_)
             | Vm::VmCalls::removeFile(_)
+            | Vm::VmCalls::rpcJson_0(_)
+            | Vm::VmCalls::rpcJson_1(_)
+            | Vm::VmCalls::rpc_0(_)
+            | Vm::VmCalls::rpc_1(_)
             | Vm::VmCalls::setEnv(_)
+            | Vm::VmCalls::tryFfi(_)
             | Vm::VmCalls::writeFile(_)
             | Vm::VmCalls::writeFileBinary(_)
             | Vm::VmCalls::writeJson_0(_)
