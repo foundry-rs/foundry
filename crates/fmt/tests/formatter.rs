@@ -7,6 +7,7 @@ use solar::{
     sema::Compiler,
 };
 use std::{
+    fmt::Write,
     fs,
     ops::ControlFlow,
     path::{Path, PathBuf},
@@ -1273,7 +1274,7 @@ fn existing_condition_layouts_are_preserved() {
 }
 
 /// Records statement nesting while ignoring braces around a single non-declaration statement.
-fn statement_structure(source: &str) -> Vec<String> {
+fn statement_structure(source: &str) -> String {
     let mut compiler = Compiler::new(
         solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
     );
@@ -1297,7 +1298,7 @@ fn statement_structure(source: &str) -> Vec<String> {
 }
 
 #[derive(Default)]
-struct StatementStructure(Vec<String>);
+struct StatementStructure(String);
 
 impl<'ast> Visit<'ast> for StatementStructure {
     type BreakValue = ();
@@ -1309,9 +1310,9 @@ impl<'ast> Visit<'ast> for StatementStructure {
         {
             return self.visit_stmt(child);
         }
-        self.0.push(format!("{:?}", std::mem::discriminant(&stmt.kind)));
+        write!(self.0, "{:?}", std::mem::discriminant(&stmt.kind)).unwrap();
         self.walk_stmt(stmt)?;
-        self.0.push(")".into());
+        self.0.push(')');
         ControlFlow::Continue(())
     }
 }

@@ -2954,12 +2954,12 @@ impl<'ast> State<'_, 'ast> {
             && !self.same_source_line(block.span.lo(), block.span.hi())
             && let Some(snip) = self.snippet(block.span)
         {
-            let code_lines = snip.lines().filter(|line| {
+            let mut code_lines = snip.lines().filter(|line| {
                 let trimmed = line.trim();
                 // Ignore empty lines and lines with only '{' or '}'.
                 !trimmed.is_empty() && trimmed != "{" && trimmed != "}"
             });
-            if code_lines.count() > 1 {
+            if code_lines.nth(1).is_some() {
                 return true;
             }
         }
