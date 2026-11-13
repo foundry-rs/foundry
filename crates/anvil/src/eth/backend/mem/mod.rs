@@ -7892,13 +7892,12 @@ where
     ) -> Result<TrieAccount, BlockchainError> {
         self.with_database_at(block_request, |block_db, _| {
             let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            let account = db.get(&address).cloned().unwrap_or_default();
-            let storage_root = storage_root(&account.storage);
-            let code_hash = account.info.code_hash;
-            let balance = account.info.balance;
-            let nonce = account.info.nonce;
-            Ok(TrieAccount::new(nonce, balance, storage_root, code_hash)
-                .with_extension(AccountExtension::copy_from_slice(&account.info.extension)))
+            let storage_root =
+                db.get(&address).map_or(EMPTY_ROOT_HASH, |account| storage_root(&account.storage));
+            // Read through the database so fork state not yet cached locally resolves.
+            let info = block_db.basic_ref(address)?.unwrap_or_default();
+            Ok(TrieAccount::new(info.nonce, info.balance, storage_root, info.code_hash)
+                .with_extension(AccountExtension::copy_from_slice(&info.extension)))
         })
         .await?
     }
@@ -8006,6 +8005,21 @@ where
         self.with_database_at(block_request, |block_db, _| {
             trace!(target: "backend", "get proof for {:?} at {:?}", address, block_number);
             let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+            // Fork state is only partially cached locally, so add the account and requested slots
+            // read through the database, keeping uncached values consistent with their proof.
+            if self.get_fork().is_some()
+                && let Some(info) = block_db.basic_ref(address)?
+                && (db.contains_key(&address) || !info.is_empty())
+            {
+                let mut accounts = db.clone();
+                let account = accounts.entry(address).or_default();
+                account.info = info;
+                for key in &keys {
+                    let slot: U256 = (*key).into();
+                    account.storage.insert(slot, block_db.storage_ref(address, slot)?);
+                }
+                return Ok(prove_account(&accounts, address, &keys));
+            }
             Ok(prove_account(db, address, &keys))
         })
         .await?
