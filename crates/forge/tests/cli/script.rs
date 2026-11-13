@@ -1951,6 +1951,39 @@ Deployed contracts (chain 31337):
     ));
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
     assert_eq!(archives().len(), 1);
+
+    // Without its snapshot, an unreadable export, including a dangling link, blocks until
+    // `--start-fresh` archives it.
+    let export = prj.root().join("broadcast/StartFresh.s.sol/31337/run-latest.json");
+    let refused = str![[r#"
+Error: the previous broadcast `[..]/broadcast/StartFresh.s.sol/31337/run-latest.json` is unreadable and its recovery snapshot `[..]/cache/StartFresh.s.sol/31337/run-latest.json.recovery.json` is missing, so forge cannot tell whether it left unfinished operations; pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending, or restore the snapshot and finish with `--resume`
+
+Context:
+- [..]
+
+"#]];
+    fs::remove_file(&recovery_path).unwrap();
+    fs::write(&export, r#"{"transactions":["#).unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args(args);
+    cmd.assert_failure().stderr_eq(refused.clone());
+    #[cfg(unix)]
+    {
+        fs::remove_file(&export).unwrap();
+        std::os::unix::fs::symlink(prj.root().join("missing.json"), &export).unwrap();
+        cmd.assert_failure().stderr_eq(refused);
+    }
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
+
+    cmd.arg("--start-fresh");
+    cmd.assert_success().stderr_eq(format!(
+        "Archived `{0}/broadcast/StartFresh.s.sol/31337/run-latest.json` to `{0}/broadcast/StartFresh.s.sol/31337/run-latest.[..].json`\nArchived `{0}/cache/StartFresh.s.sol/31337/run-latest.json` to `{0}/cache/StartFresh.s.sol/31337/run-latest.[..].json`\n\nDeployed contracts (chain 31337):\n  StartFreshTarget  {1}\n  StartFreshTarget  {2}\n",
+        "[..]",
+        sender.create(5),
+        sender.create(6),
+    ));
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 7);
+    assert!(!prj.root().join("missing.json").exists());
+    assert!(!fs::symlink_metadata(&export).unwrap().is_symlink());
 }
 
 #[forgetest_init]
