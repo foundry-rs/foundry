@@ -152,6 +152,7 @@ impl<'a> AnchorIndex<'a> {
         let mut fallen_into = Vec::new();
         let mut run_start = 0;
         let mut straight_start = 0;
+        let mut prev = opcode::STOP;
         for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
             if inst.opcode.get() == opcode::JUMPDEST && straight_start < ic {
                 fallen_into.push((ic, straight_start));
@@ -172,14 +173,17 @@ impl<'a> AnchorIndex<'a> {
                     reverting_runs.push(run_start..ic + 1);
                     run_start = ic + 1;
                 }
+                // A JUMPDEST begins a basic block, so a failure stub led by one is part of its run.
+                // Adjacent JUMPDESTs share the run started by the first.
+                opcode::JUMPDEST if prev != opcode::JUMPDEST => run_start = ic,
                 opcode::JUMP
                 | opcode::JUMPI
-                | opcode::JUMPDEST
                 | opcode::STOP
                 | opcode::RETURN
                 | opcode::SELFDESTRUCT => run_start = ic + 1,
                 _ => {}
             }
+            prev = inst.opcode.get();
             if (opcode::PUSH1..=opcode::PUSH32).contains(&inst.opcode.get()) {
                 // Stop where the source map ends.
                 if source_map.get(ic).is_none() {
@@ -405,6 +409,48 @@ mod tests {
                 ],
                 0,
             ),
+            // A JUMPDEST-led failure stub before the real code is skipped.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::RETURN,
+                ],
+                4,
+            ),
+            // Code falling through into the stub's JUMPDEST is not part of the failure run.
+            (
+                vec![
+                    opcode::PUSH0,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                ],
+                0,
+            ),
+            // Adjacent JUMPDESTs lead the same failure stub.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                ],
+                5,
+            ),
+            // A JUMPDEST-led failure stub is still the fallback when it is the only candidate.
+            (vec![opcode::JUMPDEST, opcode::PUSH0, opcode::PUSH0, opcode::REVERT], 0),
         ] {
             let count = InstIter::new(&bytecode).count();
             let source_map =
