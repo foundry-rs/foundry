@@ -1,5 +1,6 @@
 use super::*;
 use foundry_compilers::artifacts::EvmVersion;
+use foundry_config::fs_permissions::PathPermission;
 
 #[forgetest]
 fn invariant_after_invariant(prj: _, cmd: _) {
@@ -4177,4 +4178,443 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+}
+
+// Failing invariant sequences report the smallest argument values that still break the invariant
+// the same way, with the failure reason of the minimized sequence. Smaller values that fail another
+// assertion through the same wrapper, which the optimizer compiles to one call, are rejected.
+#[forgetest_init]
+fn invariant_minimizes_counterexample_values(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.invariant.runs = 64;
+        config.invariant.depth = 32;
+    });
+    prj.add_test(
+        "InvariantMinimize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Gate {
+    uint256 public a;
+    uint256 public b;
+
+    function setA(uint256 x) external {
+        a = x;
+    }
+
+    function setB(uint256 x) external {
+        b = x;
+    }
+}
+
+contract InvariantMinimizeTest is Test {
+    Gate gate;
+
+    function setUp() public {
+        gate = new Gate();
+    }
+
+    function invariant_gate() public view {
+        if (gate.a() > 1000) {
+            if (gate.b() > 5000) assertEq(gate.b(), 0);
+            else assertEq(gate.a(), 7);
+        }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fuzz-seed", "1"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantMinimize.t.sol:InvariantMinimizeTest
+[FAIL: assertion failed: 5001 != 0]
+	[Sequence] (original: 10, shrunk: 2)
+		sender=0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 addr=[test/InvariantMinimize.t.sol:Gate]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setB(uint256) args=[5001]
+		sender=0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 addr=[test/InvariantMinimize.t.sol:Gate]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setA(uint256) args=[1001]
+...
+"#]]);
+}
+
+// Minimization tells failures apart by which isolated calls reverted after their assertions, keeps
+// the counterexample unshrunk when its replay differs from the campaign, and only removes calls,
+// which leaves a single call, when a replay skips effects outside the EVM.
+#[forgetest_init]
+fn invariant_minimization_preserves_failure_identity(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.assertions_revert = false;
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.dictionary.dictionary_weight = 0;
+    });
+    prj.add_test(
+        "FailureIdentity.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Gate {
+    uint256 public x;
+    bool public touched;
+    function set(uint256 value) external { x = value; touched = true; }
+}
+
+abstract contract GateTest is Test {
+    Gate gate;
+    function setUp() public {
+        gate = new Gate();
+        targetContract(address(gate));
+    }
+}
+
+contract Probe is Test {
+    function check(uint256 x, bool a) public {
+        assertEq(uint256(1), uint256(0), a ? "A" : "B");
+        if ((x == 0) == a) revert();
+    }
+}
+
+// Both assertions fail for every input, but zero would revert the frame of B instead of A.
+contract LiveCallTest is GateTest {
+    Probe probe = new Probe();
+    function invariant_live() public {
+        if (!gate.touched()) return;
+        try probe.check(gate.x(), true) {} catch {}
+        try probe.check(gate.x(), false) {} catch {}
+    }
+}
+
+// The campaign only fails for nonzero inputs, while replays fail the same way from another site.
+contract ReplayDriftTest is GateTest {
+    function invariant_drift() public {
+        if (!gate.touched()) return;
+        if (!vm.envOr("FOUNDRY_TEST_INVARIANT_REPLAY_DRIFT", false)) {
+            vm.setEnv("FOUNDRY_TEST_INVARIANT_REPLAY_DRIFT", "true");
+            if (gate.x() != 0) vm.assertEq(uint256(1), uint256(0), "same");
+        } else {
+            vm.assertEq(uint256(1), uint256(0), "same");
+        }
+    }
+}
+
+contract ExpectProbe is Test {
+    function check(uint256 x, uint256 expected) public { vm.assertTrue(x == expected, "probe"); }
+}
+
+contract ExpectWrapper {
+    ExpectProbe probe;
+    uint256 expected;
+    constructor(ExpectProbe target, uint256 value) { probe = target; expected = value; }
+    function check(uint256 x) external { probe.check(x, expected); }
+}
+
+// Replays fail the same assertion of the probe through another wrapper with the same outcome.
+contract ProbeDriftTest is GateTest {
+    ExpectProbe probe = new ExpectProbe();
+    ExpectWrapper[2] wrappers = [new ExpectWrapper(probe, 0), new ExpectWrapper(probe, 1)];
+    function invariant_probe_drift() public {
+        if (!gate.touched()) return;
+        uint256 i = vm.envOr("FOUNDRY_TEST_INVARIANT_PROBE_DRIFT", uint256(0));
+        vm.setEnv("FOUNDRY_TEST_INVARIANT_PROBE_DRIFT", "1");
+        wrappers[i].check(gate.x());
+    }
+}
+
+// Replays fail another way, and once they did, so does the empty sequence.
+contract PhaseProbeTest is GateTest {
+    function invariant_phase() public {
+        uint256 phase = vm.envOr("FOUNDRY_TEST_INVARIANT_PHASE", uint256(0));
+        if (phase >= 2) revert("phase");
+        if (!gate.touched()) return;
+        vm.setEnv("FOUNDRY_TEST_INVARIANT_PHASE", phase == 0 ? "1" : "2");
+        revert(phase == 0 ? "first" : "second");
+    }
+}
+
+// Only the first replay fails like the campaign, and once later ones did not, the empty sequence
+// fails as well.
+contract FinalCheckTest is GateTest {
+    function invariant_final_check() public {
+        uint256 phase = vm.envOr("FOUNDRY_TEST_INVARIANT_FINAL_CHECK", uint256(0));
+        if (!gate.touched()) {
+            if (phase >= 3) revert("phase");
+            return;
+        }
+        vm.setEnv("FOUNDRY_TEST_INVARIANT_FINAL_CHECK", vm.toString(phase + 1));
+        if (phase >= 2) revert("later");
+        revert("first");
+    }
+}
+
+contract EnvGate is Test {
+    uint256 public x;
+    function set(uint256 value) external {
+        x = value;
+        vm.setEnv("FOUNDRY_TEST_INVARIANT_HOST_HANDOFF", value >= 1000 ? "true" : "false");
+    }
+}
+
+// Replays skip the handler's `vm.setEnv`, so the invariant reads the campaign's value, which a
+// small input would not have set.
+contract HostHandoffTest is Test {
+    EnvGate gate;
+    function setUp() public {
+        gate = new EnvGate();
+        targetContract(address(gate));
+    }
+    function invariant_handoff() public {
+        bool big = vm.envOr("FOUNDRY_TEST_INVARIANT_HOST_HANDOFF", false);
+        vm.assertFalse(big && gate.x() > 0, "big input");
+    }
+}
+
+// The invariant's skipped `vm.setEnv` runs on a discarded copy of the inspector, and must still
+// leave `afterInvariant` unidentified.
+contract HostAfterInvariantTest is GateTest {
+    function invariant_handoff() public {
+        vm.setEnv("FOUNDRY_TEST_INVARIANT_AFTER_HANDOFF", gate.x() >= 1000 ? "true" : "false");
+    }
+    function afterInvariant() public {
+        bool big = vm.envOr("FOUNDRY_TEST_INVARIANT_AFTER_HANDOFF", false);
+        vm.assertFalse(big && gate.x() > 0, "big input");
+    }
+}
+"#,
+    );
+
+    prj.update_config(|config| config.isolate = true);
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "LiveCallTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] calldata=set(uint256) args=[1]
+...
+"#]]);
+
+    // The replays drifted from the campaign, or skipped effects outside the EVM so that only call
+    // removal applies, so the original call stays.
+    prj.update_config(|config| config.isolate = false);
+    for contract in ["ReplayDriftTest", "ProbeDriftTest", "HostHandoffTest"] {
+        cmd.forge_fuse()
+            .args(["test", "--fuzz-seed", "1", "--mc", contract])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+...
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] calldata=set(uint256) args=[580941973555059668566857299413718168208629078518665098370115901368133 [5.809e68]]
+...
+"#]]);
+    }
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "HostAfterInvariantTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: big input]
+	[Sequence] (original: 2, shrunk: 1)
+		sender=[..] calldata=set(uint256) args=[183512565837085403808314893199340347154721310622419012939817433120674 [1.835e68]]
+...
+"#]]);
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "PhaseProbeTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: first]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] calldata=set(uint256) args=[580941973555059668566857299413718168208629078518665098370115901368133 [5.809e68]]
+...
+"#]]);
+
+    // The final check of the minimized sequence fails another way, so the original stays.
+    prj.update_config(|config| config.invariant.shrink_run_limit = 1);
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "FinalCheckTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: first]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] calldata=set(uint256) args=[580941973555059668566857299413718168208629078518665098370115901368133 [5.809e68]]
+...
+"#]]);
+}
+
+// A failure that cannot be identified, here because of a snapshot restore or a replay that skips
+// `vm.unixTime`, even where that makes it fail elsewhere, is still shrunk by removing calls.
+#[forgetest_init]
+fn invariant_unidentified_failure_still_shrinks(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 50;
+    });
+    prj.add_test(
+        "Unidentified.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Handler {
+    bool public a;
+    bool public b;
+    function setA() external { a = true; }
+    function setB() external { b = true; }
+    function noise1() external {}
+    function noise2() external {}
+    function noise3() external {}
+    function noise4() external {}
+}
+
+contract UnidentifiedTest is Test {
+    Handler handler;
+    function setUp() public {
+        handler = new Handler();
+        targetContract(address(handler));
+    }
+    function invariant_unidentified() public {
+        vm.revertToState(vm.snapshotState());
+        require(!(handler.a() && handler.b()), "both set");
+    }
+}
+
+contract ClockTest is Test {
+    Handler handler;
+    function setUp() public {
+        handler = new Handler();
+        targetContract(address(handler));
+    }
+    function invariant_clock() public {
+        require(vm.unixTime() > 0);
+        require(!(handler.a() && handler.b()), "both set");
+    }
+}
+
+contract ClockHandler is Handler, Test {
+    function setClockA() external {
+        require(vm.unixTime() > 0);
+        this.setA();
+    }
+}
+
+// Replays revert in the handler that reads the clock, before the invariant fails.
+contract ClockHandlerTest is Test {
+    ClockHandler handler;
+    function setUp() public {
+        handler = new ClockHandler();
+        targetContract(address(handler));
+        bytes4[] memory selectors = new bytes4[](6);
+        selectors[0] = ClockHandler.setClockA.selector;
+        selectors[1] = Handler.setB.selector;
+        selectors[2] = Handler.noise1.selector;
+        selectors[3] = Handler.noise2.selector;
+        selectors[4] = Handler.noise3.selector;
+        selectors[5] = Handler.noise4.selector;
+        targetSelector(FuzzSelector(address(handler), selectors));
+    }
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_clock_handler() public view {
+        require(!(handler.a() && handler.b()), "both set");
+    }
+}
+"#,
+    );
+    for contract in ["UnidentifiedTest", "ClockTest", "ClockHandlerTest"] {
+        cmd.forge_fuse()
+            .args(["test", "--fuzz-seed", "1", "--mc", contract])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+...
+[FAIL: both set]
+	[Sequence] (original: [..], shrunk: 2)
+...
+"#]]);
+    }
+}
+
+#[forgetest_init]
+fn invariant_minimizes_handler_revert_with_hash_coverage(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.fail_on_revert = true;
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.corpus.show_edge_coverage = true;
+        config.invariant.corpus.evm_edge_coverage_collision_free = false;
+    });
+    prj.add_test(
+        "HandlerRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Handler {
+    function step(uint256 x) external { require(x == 0, "nonzero"); }
+}
+contract HandlerRevertTest is Test {
+    function setUp() public { targetContract(address(new Handler())); }
+    function invariant_noop() public pure {}
+}
+contract ValueHandler {
+    uint256 public x;
+    function step(uint256 value) external { x = value; }
+}
+contract PredicateRevertTest is Test {
+    ValueHandler handler;
+    function setUp() public {
+        handler = new ValueHandler();
+        targetContract(address(handler));
+    }
+    function invariant_value() public view { require(handler.x() == 0, "nonzero"); }
+}
+"#,
+    );
+    for contract in ["HandlerRevertTest", "PredicateRevertTest"] {
+        cmd.forge_fuse()
+            .args(["test", "--fuzz-seed", "1", "--mc", contract])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+...
+[FAIL: nonzero]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] calldata=step(uint256) args=[1]
+...
+"#]]);
+    }
+}
+
+// Without a shrink budget, the failing sequence is only replayed once to report it.
+#[forgetest_init]
+fn invariant_minimization_respects_shrink_budget(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fs_permissions.add(PathPermission::read_write("./"));
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.shrink_run_limit = 0;
+    });
+    prj.add_test(
+        "ShrinkBudget.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Gate {
+    bool public touched;
+    function set(uint256) external { touched = true; }
+}
+
+contract ShrinkBudgetTest is Test {
+    Gate gate;
+    function setUp() public { gate = new Gate(); }
+    function invariant_write() public {
+        if (!gate.touched()) return;
+        vm.writeLine("runs.txt", "run");
+        assertTrue(false);
+    }
+}
+"#,
+    );
+
+    // The campaign and the reported replay.
+    cmd.args(["test", "--fuzz-seed", "1"]).assert_failure();
+    assert_eq!(std::fs::read_to_string(prj.root().join("runs.txt")).unwrap(), "run\nrun\n");
 }

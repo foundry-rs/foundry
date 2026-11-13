@@ -66,7 +66,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
     ops::Range,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, atomic::Ordering},
 };
 
 mod env_overrides;
@@ -1915,7 +1915,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.gas_metering.recording
             || self.core.arbitrary_storage.is_some()
             || self.deploy_code_depth.is_some()
-            || self.failure_trace.is_some()
+            || self.failure_trace.as_ref().is_some_and(|trace| !trace.paused)
         {
             return OpcodeSet::ALL;
         }
@@ -3950,8 +3950,8 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
         && has_host_effects(calls)
     {
         // A replay must not repeat these effects and cannot reproduce these reads, so it skips
-        // them and leaves the failure unidentified.
-        trace.unidentified = true;
+        // them and leaves this and later failures unidentified.
+        trace.skipped_host_effects.store(true, Ordering::Relaxed);
         Ok(Default::default())
     } else if ccx.state.failure_trace.is_some() && matches!(calls, Vm::VmCalls::sleep(_)) {
         // A replay does not wait, which only `unixTime` could observe.

@@ -475,6 +475,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             }
             let mut candidate = tx.clone();
             candidate.call_details.calldata = calldata.clone();
+            // Each candidate runs alone, so host effects skipped by earlier ones do not affect it.
+            self.executor_f.inspector_mut().collect_failure_identity(true);
             let Ok((candidate, call, success)) = self.replay_case(address, candidate, run.as_ref())
             else {
                 return false;

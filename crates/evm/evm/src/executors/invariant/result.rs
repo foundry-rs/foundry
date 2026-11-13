@@ -2,6 +2,8 @@ use super::{
     InvariantFailures, InvariantFuzzError, InvariantMetrics, InvariantTest, InvariantTestRun,
     LiveInvariantStats, call_after_invariant_function, call_invariant_function,
     error::{InvariantRunCtx, record_handler_assertion_bug},
+    failure_provenance,
+    shrink::TerminalFailureSite,
 };
 use crate::executors::{Executor, RawCallResult};
 use alloy_json_abi::Function;
@@ -198,19 +200,29 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
             continue;
         }
 
-        let (call_result, success) = call_invariant_function(
-            executor,
-            invariant_contract.address,
-            invariant_contract.invariant_calldata(idx),
-        )?;
+        let calldata = invariant_contract.invariant_calldata(idx);
+        let (mut call_result, success) =
+            call_invariant_function(executor, invariant_contract.address, calldata.clone())?;
         if call_result.execution_cancelled {
             return Ok((first_broken, true));
         }
         if !success {
+            call_result.failure_provenance =
+                failure_provenance(executor, invariant_config, |executor| {
+                    call_invariant_function(executor, invariant_contract.address, calldata)
+                        .ok()
+                        .map(|(result, _)| result)
+                });
             let inner_sequence =
                 inner_sequence.get_or_insert_with(|| invariant_inner_sequence(executor));
-            let case =
-                ctx.failed_case(invariant, *fail_on_revert, false, call_result, inner_sequence);
+            let case = ctx.failed_case(
+                invariant,
+                *fail_on_revert,
+                false,
+                call_result,
+                inner_sequence,
+                Some(TerminalFailureSite::Invariant),
+            );
             invariant_failures.record_failure(invariant, InvariantFuzzError::BrokenInvariant(case));
             if first_broken.is_none() {
                 first_broken = Some(*invariant);
@@ -389,6 +401,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 is_assert_failure,
                 call_result,
                 &[],
+                None,
             );
 
             for (invariant, fail_on_revert) in failing_invariants {
@@ -435,8 +448,9 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
     invariant_run: &InvariantTestRun<FEN>,
     invariant_config: &InvariantConfig,
 ) -> Result<(Option<&'a Function>, bool)> {
-    let (call_result, success) =
-        call_after_invariant_function(&invariant_run.executor, invariant_contract.address)?;
+    let executor = &invariant_run.executor;
+    let (mut call_result, success) =
+        call_after_invariant_function(executor, invariant_contract.address)?;
     if call_result.execution_cancelled {
         return Ok((None, true));
     }
@@ -444,6 +458,11 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
     if success {
         return Ok((None, false));
     }
+    call_result.failure_provenance = failure_provenance(executor, invariant_config, |executor| {
+        call_after_invariant_function(executor, invariant_contract.address)
+            .ok()
+            .map(|(result, _)| result)
+    });
     // `afterInvariant` failures are contract-wide (no specific invariant body executed),
     // so attribute to the campaign anchor.
     let anchor = invariant_contract.anchor();
@@ -453,7 +472,14 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
         targeted_contracts: &invariant_test.targeted_contracts,
         calldata: &invariant_run.inputs,
     }
-    .failed_case(anchor, invariant_config.fail_on_revert, false, call_result, &[]);
+    .failed_case(
+        anchor,
+        invariant_config.fail_on_revert,
+        false,
+        call_result,
+        &[],
+        Some(TerminalFailureSite::AfterInvariant),
+    );
     invariant_test
         .test_data
         .failures

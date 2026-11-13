@@ -1,5 +1,5 @@
 use crate::executors::{
-    EarlyExit, EvmError, Executor, RawCallResult,
+    EarlyExit, EvmError, Executor, RawCallResult, RawFailure,
     campaign::{CampaignCallKind, apply_block_delay, execute_invariant_replay_tx},
     invariant::{
         IInvariantTest, call_after_invariant_function, call_invariant_function,
@@ -237,6 +237,10 @@ pub struct CheckSequenceOutcome {
     pub sequence_assertion_failure: bool,
     /// Innermost reverter for a sequence assertion, used to recognize legacy handler identities.
     pub sequence_reverter: Option<Address>,
+    /// Observable outcome of the failing call, see [`RawCallResult::raw_failure`].
+    pub raw_failure: Option<RawFailure>,
+    /// Value-independent identity of the failing call, see [`RawCallResult::failure_identity`].
+    pub failure_identity: Option<B256>,
 }
 
 pub struct ShrunkSequence {
@@ -261,7 +265,7 @@ pub struct HandlerReplayOutcome {
 
 /// Resets the progress bar before each shrink. `position = Some((i, N))` renders
 /// `[i/N] Shrink: <label>` for multi-invariant campaigns.
-pub(crate) fn reset_shrink_progress(
+pub fn reset_shrink_progress(
     config: &InvariantConfig,
     progress: Option<&ProgressBar>,
     label: &str,
@@ -585,7 +589,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     let calldata: Bytes = target_invariant.selector().into();
     // With the budget spent, keep the recorded sequence without starting another replay.
     let unshrunk = || ShrunkSequence { calls: calls.to_vec(), result: None };
-    if deadline_passed(deadline) {
+    if config.shrink_run_limit == 0 || deadline_passed(deadline) {
         return Ok(unshrunk());
     }
     let candidates = candidate_executor(executor, early_exit, deadline);
@@ -617,6 +621,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
             },
             test_address: target_address,
             calldata: calldata.clone(),
+            identify: None,
         },
     );
     let shrinker = run_shrink_loop(
@@ -698,8 +703,64 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     calldata: Bytes,
     options: CheckSequenceOptions<'_>,
 ) -> eyre::Result<CheckSequenceOutcome> {
-    let policy = CheckSequencePolicy { options, test_address, calldata };
+    let policy = CheckSequencePolicy { options, test_address, calldata, identify: None };
     PrefixReplay::new(&executor, calls, policy).check(sequence, 0)
+}
+
+/// Replays the candidates of a failing sequence's minimizer, reusing the state after the calls a
+/// candidate shares with the previous one.
+///
+/// Every call skips cheatcodes with effects outside the EVM, as when recording failure identities,
+/// but recording them steps every instruction, so only the call that failed at the expected site
+/// records its identity and provenance: the last call for a sequence call, or the final checks.
+pub struct CandidateReplay<'a, FEN: FoundryEvmNetwork> {
+    replay: PrefixReplay<'a, FEN, CheckSequencePolicy<'a>>,
+    /// Whether the latest replay skipped a cheatcode with effects outside the EVM.
+    pub skipped_host_effects: bool,
+}
+
+impl<'a, FEN: FoundryEvmNetwork> CandidateReplay<'a, FEN> {
+    pub fn new(
+        executor: &'a mut Executor<FEN>,
+        test_address: Address,
+        calldata: Bytes,
+        options: CheckSequenceOptions<'a>,
+        site: CheckSequenceFailureSite,
+    ) -> Self {
+        executor.inspector_mut().collect_failure_identity(true);
+        executor.inspector_mut().pause_failure_identity(true);
+        let policy = CheckSequencePolicy { options, test_address, calldata, identify: Some(site) };
+        Self { replay: PrefixReplay::new(executor, &[], policy), skipped_host_effects: false }
+    }
+
+    /// Replays `calls` from the first call that differs from the previous candidate.
+    pub fn check(&mut self, calls: Vec<BasicTxDetails>) -> eyre::Result<CheckSequenceOutcome> {
+        let replay = &mut self.replay;
+        // The last call records its identity, so it never comes from the cached state.
+        let first_changed = replay
+            .calls
+            .iter()
+            .zip(&calls)
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(calls.len().saturating_sub(1));
+        replay.calls = Cow::Owned(calls);
+        let outcome = replay.check(&(0..replay.calls.len()).collect::<Vec<_>>(), first_changed);
+        // Copies of the executor share whether a replay skipped such an effect, which leaves later
+        // calls unidentified, so after one did, the next candidate starts over without it.
+        self.skipped_host_effects = replay.initial.inspector().take_skipped_host_effects();
+        if self.skipped_host_effects {
+            replay.reset();
+        }
+        outcome
+    }
+}
+
+/// Records the failure identity, paused by [`CandidateReplay::new`], and the provenance of the
+/// calls `executor` runs next.
+fn identify_failure<FEN: FoundryEvmNetwork>(executor: &mut Executor<FEN>) {
+    executor.inspector_mut().pause_failure_identity(false);
+    executor.inspector_mut().collect_failure_provenance(true);
 }
 
 /// Counters carried across the calls of one sequence replay.
@@ -719,6 +780,9 @@ trait ReplayPolicy<FEN: FoundryEvmNetwork> {
     /// Whether warp/roll of removed calls is folded into the next kept call.
     fn accumulate_warp_roll(&self) -> bool;
 
+    /// Prepares `executor` to run the kept call `idx` of `sequence`.
+    fn before_call(&self, _executor: &mut Executor<FEN>, _sequence: &[usize], _idx: usize) {}
+
     /// Classifies one replayed call of `sequence`. Returns the outcome when the call stops the
     /// replay. The decision for a call that is not the last kept call must not depend on the
     /// calls after it, because [`PrefixReplay`] reuses it for later candidates.
@@ -734,7 +798,7 @@ trait ReplayPolicy<FEN: FoundryEvmNetwork> {
     /// Builds the outcome once every kept call ran.
     fn finish(
         &self,
-        executor: &Executor<FEN>,
+        executor: &mut Executor<FEN>,
         counters: &ReplayCounters,
     ) -> eyre::Result<Self::Outcome>;
 }
@@ -754,6 +818,7 @@ fn replay_kept_calls<FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>>(
     // `&calls[idx]` directly to skip the per-call `BasicTxDetails` clone.
     if !policy.accumulate_warp_roll() {
         for &idx in kept {
+            policy.before_call(executor, sequence, idx);
             let (_, call_result) = execute_invariant_replay_tx(executor, &calls[idx])?;
             if let Some(outcome) = policy.on_call(calls, sequence, idx, call_result, counters) {
                 return Ok(Some(outcome));
@@ -775,6 +840,7 @@ fn replay_kept_calls<FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>>(
         kept.next();
 
         let executed = apply_warp_roll(tx.clone(), counters.warp, counters.roll);
+        policy.before_call(executor, sequence, idx);
         let (_, call_result) = execute_invariant_replay_tx(executor, &executed)?;
         counters.warp = U256::ZERO;
         counters.roll = U256::ZERO;
@@ -793,7 +859,7 @@ fn replay_kept_calls<FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>>(
 /// a call before the cached position starts again from the initial executor.
 struct PrefixReplay<'a, FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>> {
     initial: &'a Executor<FEN>,
-    calls: &'a [BasicTxDetails],
+    calls: Cow<'a, [BasicTxDetails]>,
     policy: P,
     executor: Executor<FEN>,
     /// Calls before this index are replayed on `executor`.
@@ -807,7 +873,7 @@ impl<'a, FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>> PrefixReplay<'a, FEN, P> 
     fn new(initial: &'a Executor<FEN>, calls: &'a [BasicTxDetails], policy: P) -> Self {
         Self {
             initial,
-            calls,
+            calls: Cow::Borrowed(calls),
             policy,
             executor: initial.clone(),
             position: 0,
@@ -835,7 +901,7 @@ impl<'a, FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>> PrefixReplay<'a, FEN, P> 
             let end = sequence.partition_point(|&idx| idx < shared_end);
             let advanced = replay_kept_calls(
                 &mut self.executor,
-                self.calls,
+                &self.calls,
                 sequence,
                 &sequence[start..end],
                 self.position..shared_end,
@@ -863,7 +929,7 @@ impl<'a, FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>> PrefixReplay<'a, FEN, P> 
         let rest = &sequence[sequence.partition_point(|&idx| idx < self.position)..];
         if let Some(outcome) = replay_kept_calls(
             &mut executor,
-            self.calls,
+            &self.calls,
             sequence,
             rest,
             self.position..self.calls.len(),
@@ -872,7 +938,7 @@ impl<'a, FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>> PrefixReplay<'a, FEN, P> 
         )? {
             return Ok(outcome);
         }
-        self.policy.finish(&executor, &counters)
+        self.policy.finish(&mut executor, &counters)
     }
 }
 
@@ -882,6 +948,9 @@ struct CheckSequencePolicy<'a> {
     options: CheckSequenceOptions<'a>,
     test_address: Address,
     calldata: Bytes,
+    /// Site whose failing call records its failure identity and provenance, see
+    /// [`CandidateReplay`].
+    identify: Option<CheckSequenceFailureSite>,
 }
 
 impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
@@ -889,6 +958,14 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
 
     fn accumulate_warp_roll(&self) -> bool {
         self.options.accumulate_warp_roll
+    }
+
+    fn before_call(&self, executor: &mut Executor<FEN>, sequence: &[usize], idx: usize) {
+        if matches!(self.identify, Some(CheckSequenceFailureSite::SequenceCall { .. }))
+            && sequence.last() == Some(&idx)
+        {
+            identify_failure(executor);
+        }
     }
 
     fn on_call(
@@ -918,6 +995,8 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                 handler_edge_fingerprint(snapshot_edge_fingerprint(&call_result), target, selector);
             let sequence_reverter = call_result.reverter.or(Some(target));
             let site = CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint };
+            let (raw_failure, failure_identity) =
+                (call_result.raw_failure(), call_result.failure_identity);
             return Some(CheckSequenceOutcome {
                 success: false,
                 replayed_entirely: false,
@@ -927,6 +1006,8 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                 failure_site: Some(site),
                 sequence_assertion_failure: true,
                 sequence_reverter,
+                raw_failure,
+                failure_identity,
             });
         }
         if call_result.reverted && options.fail_on_revert {
@@ -940,9 +1021,13 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                     failure_site: None,
                     sequence_assertion_failure: false,
                     sequence_reverter: None,
+                    raw_failure: None,
+                    failure_identity: None,
                 });
             }
             let site = sequence_call_failure_site(&calls[idx], &call_result);
+            let (raw_failure, failure_identity) =
+                (call_result.raw_failure(), call_result.failure_identity);
             return Some(CheckSequenceOutcome {
                 success: false,
                 replayed_entirely: false,
@@ -952,6 +1037,8 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                 failure_site: Some(site),
                 sequence_assertion_failure: false,
                 sequence_reverter: None,
+                raw_failure,
+                failure_identity,
             });
         }
         None
@@ -959,27 +1046,27 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
 
     fn finish(
         &self,
-        executor: &Executor<FEN>,
+        executor: &mut Executor<FEN>,
         counters: &ReplayCounters,
     ) -> eyre::Result<CheckSequenceOutcome> {
+        match self.identify {
+            // The checks after the failing call only skip effects outside the EVM.
+            Some(CheckSequenceFailureSite::SequenceCall { .. }) => {
+                executor.inspector_mut().pause_failure_identity(true);
+                executor.inspector_mut().collect_failure_provenance(false);
+            }
+            Some(_) => identify_failure(executor),
+            None => {}
+        }
         // Unlike optimization mode we intentionally do not apply trailing warp/roll before the
         // invariant call: those delays would not be representable in the final shrunk sequence.
-        let (success, replayed_entirely, reason, failure_site) = finish_sequence_check(
+        finish_sequence_check(
             executor,
             self.test_address,
             self.calldata.clone(),
             &self.options,
-        )?;
-        Ok(CheckSequenceOutcome {
-            success,
-            replayed_entirely,
-            reason,
-            calls_count: counters.calls_executed,
-            reverts: counters.reverts,
-            failure_site,
-            sequence_assertion_failure: false,
-            sequence_reverter: None,
-        })
+            counters,
+        )
     }
 }
 
@@ -988,7 +1075,21 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
     test_address: Address,
     calldata: Bytes,
     options: &CheckSequenceOptions<'_>,
-) -> eyre::Result<(bool, bool, Option<String>, Option<CheckSequenceFailureSite>)> {
+    counters: &ReplayCounters,
+) -> eyre::Result<CheckSequenceOutcome> {
+    let outcome =
+        |success, reason, failure_site, raw_failure, failure_identity| CheckSequenceOutcome {
+            success,
+            replayed_entirely: true,
+            reason,
+            calls_count: counters.calls_executed,
+            reverts: counters.reverts,
+            failure_site,
+            sequence_assertion_failure: false,
+            sequence_reverter: None,
+            raw_failure,
+            failure_identity,
+        };
     let handle_terminal_failure =
         |call_result: RawCallResult<FEN>, site_kind: TerminalFailureSite| {
             let should_ignore_failure = options.expect_assertion_failure
@@ -996,16 +1097,18 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
                 && !did_fail_on_assert(&call_result, &call_result.state_changeset);
 
             if should_ignore_failure {
-                return (true, true, None, None);
+                return outcome(true, None, None, None, None);
             }
 
             let site = terminal_failure_site(site_kind, test_address, &calldata, &call_result);
+            let (raw_failure, failure_identity) =
+                (call_result.raw_failure(), call_result.failure_identity);
             // Terminal calls follow the live rule: a revert after a caught assertion wins.
             let reason = call_failure_reason(call_result, options.rd).or_else(|| {
                 options.expect_assertion_failure.then(|| "assertion failed".to_string())
             });
 
-            (false, true, reason, Some(site))
+            outcome(false, reason, Some(site), raw_failure, failure_identity)
         };
 
     let (invariant_result, mut success) =
@@ -1028,16 +1131,16 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
         }
     }
 
-    Ok((success, true, None, None))
+    Ok(outcome(success, None, None, None, None))
 }
 
 #[derive(Clone, Copy)]
-enum TerminalFailureSite {
+pub(super) enum TerminalFailureSite {
     Invariant,
     AfterInvariant,
 }
 
-fn sequence_call_failure_site<FEN: FoundryEvmNetwork>(
+pub(super) fn sequence_call_failure_site<FEN: FoundryEvmNetwork>(
     call: &BasicTxDetails,
     call_result: &RawCallResult<FEN>,
 ) -> CheckSequenceFailureSite {
@@ -1048,7 +1151,7 @@ fn sequence_call_failure_site<FEN: FoundryEvmNetwork>(
     CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint }
 }
 
-fn terminal_failure_site<FEN: FoundryEvmNetwork>(
+pub(super) fn terminal_failure_site<FEN: FoundryEvmNetwork>(
     kind: TerminalFailureSite,
     target: Address,
     calldata: &Bytes,
@@ -1271,7 +1374,7 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for HandlerReplayPolicy<'_> {
 
     fn finish(
         &self,
-        _executor: &Executor<FEN>,
+        _executor: &mut Executor<FEN>,
         _counters: &ReplayCounters,
     ) -> eyre::Result<HandlerReplayOutcome> {
         Ok(HandlerReplayOutcome::default())
