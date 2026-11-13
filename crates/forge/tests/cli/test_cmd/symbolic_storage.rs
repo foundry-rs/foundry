@@ -807,3 +807,49 @@ Suite result: FAILED. 3 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+// The solver model takes the `assert(false)` branch with a nonzero unwritten balance, but the
+// concrete replay reads zero and runs out of gas in the loop. The engine does not model gas, so
+// that halt does not confirm the model and the run must report incomplete.
+#[forgetest_init]
+fn symbolic_replay_out_of_gas_is_incomplete(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_replay_out_of_gas_is_incomplete");
+
+    prj.add_test(
+        "SymbolicReplayOutOfGas.t.sol",
+        r#"
+contract SymbolicReplayOutOfGas {
+    mapping(address => uint256) balanceOf;
+
+    function checkReplayOutOfGas(address owner) public view {
+        if (balanceOf[owner] == 0) {
+            uint256 acc;
+            for (uint256 i; i < 5000; i++) {
+                acc += i;
+            }
+            require(acc != 1);
+            return;
+        }
+        assert(false);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicReplayOutOfGas",
+        "--gas-limit",
+        "300000",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicReplayOutOfGas.t.sol:SymbolicReplayOutOfGas
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplayOutOfGas(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

@@ -34,7 +34,7 @@ use alloy_primitives::{
 use evm2::{
     bytecode::Bytecode,
     evm::{Cache, InMemoryDB},
-    interpreter::op as opcode,
+    interpreter::{InstrStop, op as opcode},
 };
 use eyre::Result;
 use foundry_common::{
@@ -1427,6 +1427,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if svm_returns_exhausted(&call.svm_returns, &raw) {
             return Err("candidate replay ran out of `svm` values".to_string());
         }
+        if raw.exit_reason == Some(InstrStop::OutOfGas) {
+            return Err("candidate replay ran out of gas".to_string());
+        }
         if executor.is_raw_call_success(self.address, Cow::Borrowed(&raw.state_changeset), &raw) {
             return Err("candidate replay succeeded".to_string());
         }
@@ -2589,8 +2592,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // A replay that runs out of `svm` values left the solver path, so its failure proves
         // nothing.
         let svm_exhausted = svm_returns_exhausted(&svm_returns, &raw);
+        // The symbolic engine does not model gas, so running out of gas is not the failure the
+        // solver model was found for.
+        let out_of_gas = raw.exit_reason == Some(InstrStop::OutOfGas);
         if rejected_by_assume
             || svm_exhausted
+            || out_of_gas
             || self.executor.is_raw_call_success(
                 self.address,
                 Cow::Borrowed(&raw.state_changeset),
@@ -2605,6 +2612,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 "symbolic counterexample did not replay: rejected by `vm.assume`"
             } else if svm_exhausted {
                 "symbolic counterexample did not replay: ran out of `svm` values"
+            } else if out_of_gas {
+                "symbolic counterexample did not replay: ran out of gas"
             } else {
                 "symbolic counterexample did not replay"
             }
