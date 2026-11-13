@@ -1423,32 +1423,6 @@ mod tests {
     #[test]
     fn dependency_remappings_are_scoped_to_their_owner() {
         let temp = tempdir().unwrap();
-        let root = temp.path();
-        fs::create_dir_all(root.join("lib/a-helper/src")).unwrap();
-        fs::create_dir_all(root.join("lib/victim/src")).unwrap();
-        fs::write(root.join("lib/a-helper/src/Helper.sol"), "contract Helper {}\n").unwrap();
-        fs::write(root.join("lib/victim/src/Victim.sol"), "contract Victim {}\n").unwrap();
-        fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
-        fs::write(
-            root.join("lib/a-helper/foundry.toml"),
-            "[profile.default]\nremappings = [\"victim/=src/\"]\n",
-        )
-        .unwrap();
-
-        let config = Config::load_with_root(root).unwrap();
-        assert_eq!(
-            config.get_all_remappings().map(|remapping| remapping.to_string()).collect::<Vec<_>>(),
-            [
-                "lib/a-helper/:victim/=lib/a-helper/src/",
-                "a-helper/=lib/a-helper/src/",
-                "victim/=lib/victim/src/",
-            ]
-        );
-    }
-
-    #[test]
-    fn dependency_contexts_cannot_escape_their_owner() {
-        let temp = tempdir().unwrap();
         let root = dunce::canonicalize(temp.path()).unwrap();
         let owner = root.join("lib/a-helper");
         fs::create_dir_all(owner.join("src")).unwrap();
@@ -1457,21 +1431,19 @@ mod tests {
         fs::write(root.join("lib/victim/src/Victim.sol"), "contract Victim {}\n").unwrap();
         fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
 
-        for (context, scoped) in [
-            ("../../src/".to_string(), None),
-            ("../a-helper-other/".to_string(), None),
-            ("../../".to_string(), Some("lib/a-helper/")),
+        for (remapping, scoped) in [
+            ("victim/=src/".to_string(), Some("lib/a-helper/")),
+            ("../../src/:victim/=src/".to_string(), None),
+            ("../a-helper-other/:victim/=src/".to_string(), None),
+            ("../../:victim/=src/".to_string(), Some("lib/a-helper/")),
             // The parser treats a Windows drive letter's colon as the context separator.
             #[cfg(unix)]
-            (root.display().to_string(), Some("lib/a-helper/")),
-            ("src/../src/Pre".to_string(), Some("lib/a-helper/src/Pre")),
+            (format!("{}:victim/=src/", root.display()), Some("lib/a-helper/")),
+            ("src/../src/Pre:victim/=src/".to_string(), Some("lib/a-helper/src/Pre")),
         ] {
             fs::write(
                 owner.join(Config::FILE_NAME),
-                format!(
-                    "[profile.default]\nremappings = [{:?}]\n",
-                    format!("{context}:victim/=src/")
-                ),
+                format!("[profile.default]\nremappings = [{remapping:?}]\n"),
             )
             .unwrap();
             let config = Config::load_with_root(&root).unwrap();
@@ -1489,7 +1461,7 @@ mod tests {
                     .map(|remapping| remapping.to_string())
                     .collect::<Vec<_>>(),
                 expected,
-                "context: {context}"
+                "remapping: {remapping}"
             );
         }
     }
