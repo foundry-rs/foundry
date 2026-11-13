@@ -170,7 +170,8 @@ contract InvariantAfterInvariantCallsTest {
         .stdout_eq(empty_sequence);
 }
 
-// Tests that an empty `afterInvariant` counterexample is persisted after the anchor already broke.
+// Tests that an empty `afterInvariant` counterexample is persisted after the anchor already broke,
+// including when the hook reverts with an error the campaign cannot decode.
 #[forgetest]
 fn invariant_after_invariant_empty_sequence_after_anchor_failure(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -188,11 +189,26 @@ contract Counter {
     }
 }
 
+contract Helper {
+    error BadCount(uint256);
+
+    function check() external pure {
+        revert BadCount(7);
+    }
+}
+
 contract InvariantAnchorThenHookTest {
     Counter counter;
+    Helper helper;
 
     function setUp() public {
         counter = new Counter();
+        helper = new Helper();
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(counter);
     }
 
     // Breaks in run 1, so the hook only runs in run 2.
@@ -202,8 +218,8 @@ contract InvariantAnchorThenHookTest {
 
     function invariant_b() public view {}
 
-    function afterInvariant() public pure {
-        revert("hook");
+    function afterInvariant() public view {
+        helper.check();
     }
 }
 "#,
@@ -213,7 +229,7 @@ contract InvariantAnchorThenHookTest {
     cmd.forge_fuse().args(["fuzz", "replay", "--mt", "invariant_a"]).assert_failure().stdout_eq(
         str![[r#"
 ...
-[FAIL: hook]
+[FAIL: BadCount(7)]
 	[Sequence] (original: 0, shrunk: 0)
 ...
 "#]],

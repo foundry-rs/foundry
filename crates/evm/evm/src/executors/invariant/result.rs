@@ -447,13 +447,14 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
     // `afterInvariant` failures are contract-wide (no specific invariant body executed),
     // so attribute to the campaign anchor.
     let anchor = invariant_contract.anchor();
-    let case_data = InvariantRunCtx {
+    let mut case_data = InvariantRunCtx {
         contract: invariant_contract,
         config: invariant_config,
         targeted_contracts: &invariant_test.targeted_contracts,
         calldata: &invariant_run.inputs,
     }
     .failed_case(anchor, invariant_config.fail_on_revert, false, call_result, &[]);
+    case_data.after_invariant = true;
     invariant_test
         .test_data
         .failures
