@@ -172,7 +172,6 @@ dependencies = [
  "alloy-serde",
  "alloy-trie",
  "alloy-tx-macros",
- "arbitrary",
  "auto_impl",
  "borsh",
  "c-kzg",
@@ -199,7 +198,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
- "arbitrary",
  "serde",
 ]
 
@@ -268,9 +266,7 @@ checksum = "741bdd7499908b3aa0b159bba11e71c8cddd009a2c2eb7a06e825f1ec87900a5"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
- "arbitrary",
  "crc",
- "rand 0.8.8",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -283,9 +279,7 @@ checksum = "e64579d931b3f8eacc7c9ab0b220e87e9c4816e5c724ede1947b55c2f8e92ae5"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
- "arbitrary",
  "borsh",
- "rand 0.8.8",
  "serde",
 ]
 
@@ -309,10 +303,8 @@ checksum = "2919c5a56a1007492da313e7a3b6d45ef5edc5d33416fdec63c0d7a2702a0d20"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
- "arbitrary",
  "borsh",
  "k256 0.13.4",
- "rand 0.8.8",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -325,7 +317,6 @@ checksum = "6a12e1dc70236cfb8e79b96dd8544aed47c39e2f45dc6b51c3703e969e052faa"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
- "arbitrary",
  "borsh",
  "once_cell",
  "serde",
@@ -340,7 +331,6 @@ checksum = "36422c14bd57dcd638e276c8c9d7ac09eb16598e3a9dbd34e4b55267d4565b5e"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
- "arbitrary",
  "borsh",
  "serde",
  "thiserror 2.0.21",
@@ -360,7 +350,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
- "arbitrary",
  "auto_impl",
  "borsh",
  "c-kzg",
@@ -534,7 +523,7 @@ dependencies = [
  "keccak-asm",
  "paste",
  "proptest",
- "proptest-derive 0.8.0",
+ "proptest-derive",
  "rand 0.9.5",
  "rapidhash",
  "ruint",
@@ -769,7 +758,6 @@ dependencies = [
  "alloy-serde",
  "alloy-sol-types",
  "alloy-trie",
- "arbitrary",
  "itertools 0.14.0",
  "serde",
  "serde_json",
@@ -825,7 +813,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f44f297d3b9e3ca2c3039e3c0ed69acde9b35edda15381cf78f725b7263fbe2"
 dependencies = [
  "alloy-primitives",
- "arbitrary",
  "serde",
  "serde_json",
 ]
@@ -1138,12 +1125,8 @@ checksum = "70c7c04b6e5a7a2325f53d38c319a47d01c3609b44845ac2801bac9643fe26b9"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
- "arbitrary",
- "derive_arbitrary",
  "derive_more",
  "nybbles",
- "proptest",
- "proptest-derive 0.7.0",
  "serde",
  "smallvec",
  "thiserror 2.0.21",
@@ -1447,7 +1430,6 @@ dependencies = [
  "commonware-cryptography",
  "commonware-math",
  "commonware-parallel",
- "commonware-utils",
  "evm2",
  "rand_chacha 0.10.0",
  "reth-evm",
@@ -1459,7 +1441,6 @@ dependencies = [
  "tempo-hardfork 1.16.0",
  "tempo-precompiles",
  "tempo-primitives 1.16.0",
- "tempo-validator-config",
  "tokio",
 ]
 
@@ -3321,7 +3302,6 @@ version = "2.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38d04308254695569fdb9bfe3bacc1c91837a670d0806605eb82d63748fbd3a6"
 dependencies = [
- "arbitrary",
  "blst",
  "cc",
  "glob",
@@ -4830,7 +4810,6 @@ version = "6.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
 dependencies = [
- "arbitrary",
  "cfg-if",
  "crossbeam-utils",
  "hashbrown 0.14.5",
@@ -7330,12 +7309,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hash-db"
-version = "0.15.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d23bd4e7b5eda0d0f3a307e8b381fdc8ba9000f26fbe912250c0a4cc3956364a"
-
-[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8588,16 +8561,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "metrics"
-version = "0.24.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89550ee9f79e88fef3119de263694973a8adb26c21d75322164fb8c493039fe2"
-dependencies = [
- "portable-atomic",
- "rapidhash",
-]
-
-[[package]]
 name = "miette"
 version = "7.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9112,7 +9075,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d49ff0c0d00d4a502b39df9af3a525e1efeb14b9dabb5bb83335284c1309210"
 dependencies = [
  "alloy-rlp",
- "arbitrary",
  "cfg-if",
  "proptest",
  "ruint",
@@ -9845,15 +9807,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
-name = "plain_hasher"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e19e6491bdde87c2c43d70f4c194bc8a758f2eb732df00f61e43f7362e3b4cc"
-dependencies = [
- "crunchy",
-]
-
-[[package]]
 name = "plotters"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10151,27 +10104,6 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
-]
-
-[[package]]
-name = "proptest-arbitrary-interop"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1981e49bd2432249da8b0e11e5557099a8e74690d6b94e721f7dc0bb7f3555f"
-dependencies = [
- "arbitrary",
- "proptest",
-]
-
-[[package]]
-name = "proptest-derive"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb6dc647500e84a25a85b100e76c85b8ace114c209432dc174f20aac11d4ed6c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -10934,14 +10866,12 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "alloy-trie",
- "arbitrary",
  "bytes",
  "modular-bitfield",
  "parity-scale-codec",
  "reth-codecs-derive 0.8.2",
  "reth-zstd-compressors 0.8.2",
  "serde",
- "visibility",
 ]
 
 [[package]]
@@ -11004,42 +10934,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-db-api"
-version = "2.10.1"
-source = "git+https://github.com/paradigmxyz/reth?rev=467449357b6d0aca6c1fb7cc2d87a304bb8fbff5#467449357b6d0aca6c1fb7cc2d87a304bb8fbff5"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "arbitrary",
- "arrayvec",
- "bytes",
- "derive_more",
- "metrics",
- "modular-bitfield",
- "proptest",
- "reth-codecs 0.8.2",
- "reth-db-models",
- "reth-ethereum-primitives",
- "reth-primitives-traits 0.8.2",
- "reth-prune-types",
- "reth-stages-types",
- "reth-storage-errors",
- "reth-trie-common",
- "roaring",
- "serde",
-]
-
-[[package]]
 name = "reth-db-models"
 version = "2.10.1"
 source = "git+https://github.com/paradigmxyz/reth?rev=467449357b6d0aca6c1fb7cc2d87a304bb8fbff5#467449357b6d0aca6c1fb7cc2d87a304bb8fbff5"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
- "arbitrary",
  "bytes",
- "modular-bitfield",
  "reth-codecs 0.8.2",
  "reth-primitives-traits 0.8.2",
  "serde",
@@ -11242,16 +11143,11 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-eth",
  "alloy-trie",
- "arbitrary",
- "byteorder",
  "bytes",
  "dashmap",
  "derive_more",
  "evm2",
- "modular-bitfield",
  "once_cell",
- "proptest",
- "proptest-arbitrary-interop",
  "quanta 0.13.0",
  "reth-codecs 0.8.2",
  "secp256k1 0.30.0",
@@ -11265,9 +11161,7 @@ version = "2.10.1"
 source = "git+https://github.com/paradigmxyz/reth?rev=467449357b6d0aca6c1fb7cc2d87a304bb8fbff5#467449357b6d0aca6c1fb7cc2d87a304bb8fbff5"
 dependencies = [
  "alloy-primitives",
- "arbitrary",
  "derive_more",
- "modular-bitfield",
  "reth-codecs 0.8.2",
  "serde",
  "strum 0.27.2",
@@ -11296,9 +11190,7 @@ version = "2.10.1"
 source = "git+https://github.com/paradigmxyz/reth?rev=467449357b6d0aca6c1fb7cc2d87a304bb8fbff5#467449357b6d0aca6c1fb7cc2d87a304bb8fbff5"
 dependencies = [
  "alloy-primitives",
- "arbitrary",
  "bytes",
- "modular-bitfield",
  "reth-codecs 0.8.2",
  "reth-primitives-traits 0.8.2",
  "reth-trie-common",
@@ -11369,15 +11261,12 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-serde",
  "alloy-trie",
- "arbitrary",
  "arrayvec",
  "bytes",
  "derive_more",
  "evm2",
- "hash-db",
  "itertools 0.14.0",
  "nybbles",
- "plain_hasher",
  "reth-codecs 0.8.2",
  "reth-primitives-traits 0.8.2",
  "serde",
@@ -11876,16 +11765,6 @@ checksum = "bb919243f34364b6bd2fc10ef797edbfa75f33c252e7998527479c6d6b47e1ec"
 dependencies = [
  "bytes",
  "rustc-hex",
-]
-
-[[package]]
-name = "roaring"
-version = "0.11.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18bd8a37d17a58532776dcdf6041ce64929adca78e8489d5cacbafe99229d3e1"
-dependencies = [
- "bytemuck",
- "byteorder",
 ]
 
 [[package]]
@@ -12864,7 +12743,6 @@ version = "1.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 dependencies = [
- "arbitrary",
  "serde",
 ]
 
@@ -13987,14 +13865,12 @@ version = "1.18.3"
 source = "git+https://github.com/tempoxyz/tempo?rev=4008a2986ad18fa3bf55838d2d63bbb878ee7da7#4008a2986ad18fa3bf55838d2d63bbb878ee7da7"
 dependencies = [
  "alloy",
- "alloy-json-abi",
  "alloy-primitives",
  "bitflags 2.13.2",
  "commonware-codec",
  "commonware-cryptography",
  "derive_more",
  "evm2",
- "itertools 0.14.0",
  "keccak-const",
  "paste",
  "scoped-tls",
@@ -14061,27 +13937,12 @@ dependencies = [
  "once_cell",
  "p256 0.13.2",
  "reth-codecs 0.8.2",
- "reth-db-api",
  "reth-ethereum-primitives",
- "reth-evm",
  "reth-primitives-traits 0.8.2",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempo-contracts 1.16.0",
-]
-
-[[package]]
-name = "tempo-validator-config"
-version = "1.18.3"
-source = "git+https://github.com/tempoxyz/tempo?rev=4008a2986ad18fa3bf55838d2d63bbb878ee7da7#4008a2986ad18fa3bf55838d2d63bbb878ee7da7"
-dependencies = [
- "alloy-primitives",
- "commonware-codec",
- "commonware-cryptography",
- "tempo-contracts 1.16.0",
- "tempo-precompiles",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -15036,17 +14897,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "visibility"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d674d135b4a8c1d7e813e2f8d1c9a58308aee4a680323066025e53132218bd91"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
 
 [[package]]
 name = "vsimd"

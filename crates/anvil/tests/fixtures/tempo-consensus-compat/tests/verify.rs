@@ -5,30 +5,46 @@
 use alloy_consensus::{
     Sealable, Typed2718, proofs::calculate_transaction_root, transaction::TxHashRef,
 };
-use alloy_primitives::{B256, Bytes, U256, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
 use alloy_provider::Provider;
-use anvil::{NodeConfig, NodeHandle, spawn};
+use anvil::{NodeConfig, NodeHandle, eth::backend::db::EvmDb, spawn};
 use commonware_codec::{DecodeExt, Encode};
 use commonware_consensus::{
     simplex::{scheme::bls12381_threshold::vrf::Scheme, types::Finalization},
     types::{Epoch, Round, View},
 };
 use commonware_cryptography::{
+    Signer,
     bls12381::primitives::{
         group::Private,
         ops,
         variant::{MinSig, Variant},
     },
-    ed25519::PublicKey,
+    ed25519::{PrivateKey, PublicKey},
     sha256::Digest,
 };
 use commonware_math::algebra::Random;
 use commonware_parallel::Sequential;
+use evm2::{
+    SpecId,
+    evm::{DynDatabase, EmptyDB, precompile::NoPrecompiles},
+};
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng};
+use reth_evm::{BlockExecutor, BlockExecutorFactory, ConfigureEvm};
+use reth_primitives_traits::SealedBlock;
 use serde::Deserialize;
 use std::num::NonZeroU64;
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
+use tempo_evm::{
+    TempoBlockEnv, TempoEvmConfig, TempoEvmExt, TempoStateAccess, build_tempo_evm,
+    tempo_execution_config,
+};
 use tempo_hardfork::TempoHardfork;
+use tempo_precompiles::{
+    storage::StorageCtx,
+    validator_config::{IValidatorConfig, ValidatorConfig},
+    validator_config_v2::{IValidatorConfigV2, ValidatorConfigV2},
+};
 
 type NativeCertificate = Finalization<Scheme<PublicKey, MinSig>, Digest>;
 
@@ -312,5 +328,128 @@ async fn native_fork_inherits_skipped_views() {
         assert_eq!((context.epoch, context.view, context.parent_view), round);
         assert_eq!(header.inner.parent_hash, parent_hash);
         parent_hash = finalized.digest;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn native_t15_checks_anvil_boundary_against_parent_state() {
+    let factory = TempoEvmConfig::moderato();
+    let chain_id = factory.chain_spec().inner.chain.id();
+    let (api, _handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_no_mining(true)
+            .with_chain_id(Some(chain_id))
+            .with_hardfork(Some(TempoHardfork::T15.into()))
+            .with_tempo_epoch_length(NonZeroU64::new(3)),
+    )
+    .await;
+    let identity = api.anvil_tempo_consensus_identity().await.unwrap();
+
+    let owner = Address::repeat_byte(0xAA);
+    api.anvil_set_coinbase(Address::ZERO).await.unwrap();
+    let mut registry = build_tempo_evm(
+        TempoHardfork::T15,
+        chain_id,
+        TempoBlockEnv::default(),
+        EmptyDB::default(),
+        NoPrecompiles::default(),
+        TempoEvmExt::default(),
+    );
+    StorageCtx::enter_evm(&mut registry, || {
+        let mut legacy = ValidatorConfig::new();
+        legacy.initialize(owner)?;
+        legacy.add_validator(
+            owner,
+            IValidatorConfig::addValidatorCall {
+                publicKey: identity.proposer,
+                newValidatorAddress: Address::repeat_byte(0x11),
+                active: true,
+                inboundAddress: "192.168.1.1:8000".into(),
+                outboundAddress: "192.168.1.1:8000".into(),
+            },
+        )?;
+        let mut config = ValidatorConfigV2::new();
+        config.migrate_validator(owner, IValidatorConfigV2::migrateValidatorCall { idx: 0 })?;
+        config.initialize_if_migrated(owner)
+    })
+    .unwrap();
+    registry.state_mut().commit_transaction();
+    // Install native API-generated storage before mining, rather than deriving it from an outcome.
+    for (&address, storage) in &registry.overlay_db().cache.storage {
+        for (&slot, &value) in &storage.slots {
+            assert!(api.anvil_set_storage_at(address, slot, value.into()).await.unwrap());
+        }
+    }
+    api.mine_one().await.unwrap();
+    assert_eq!(api.backend.best_number(), 1);
+    let parent_hash = api.backend.best_hash();
+    let parent_db = api.backend.get_db().read().await.current_state();
+    let config = (&mut EvmDb::new(&parent_db, SpecId::OSAKA, None) as &mut dyn DynDatabase)
+        .dkg_ceremony_config(TempoHardfork::T15, 2)
+        .unwrap()
+        .expect("initialized parent V2 must enable native boundary validation");
+    assert_eq!(config.active_validators.len(), 1);
+    assert_eq!(config.active_validators[0].publicKey, identity.proposer);
+    api.mine_one().await.unwrap();
+    let certified = api.backend.tempo_finalization(Some(2)).await.unwrap();
+    assert_eq!(certified.block.header.inner.number, 2);
+    assert_eq!(certified.block.header.inner.parent_hash, parent_hash);
+    let outcome = OnchainDkgOutcome::decode(commonware_codec::Copying(
+        certified.block.header.inner.extra_data.as_ref(),
+    ))
+    .unwrap();
+    let expected = config.boundary_outcome(1, outcome.output.clone());
+    assert_eq!(outcome, expected);
+    let native_pre_execution = |block: &SealedBlock<tempo_primitives::Block>, hardfork| {
+        let mut env = factory.evm_env(block.header()).unwrap();
+        env.spec = hardfork;
+        env.version = *tempo_execution_config(hardfork, chain_id).version();
+        env.block.ext.epoch_length = NonZeroU64::new(3).unwrap();
+        let context = factory.context_for_block(block).unwrap();
+        let evm = BlockExecutorFactory::evm_with_env(
+            &factory,
+            EvmDb::new(&parent_db, SpecId::OSAKA, None),
+            env,
+        );
+        factory.create_executor(evm, context).apply_pre_execution_changes()
+    };
+    let block = SealedBlock::new_unhashed(certified.block);
+    native_pre_execution(&block, TempoHardfork::T15).unwrap();
+
+    let mut missing = block.clone_block();
+    missing.header.inner.extra_data = Bytes::new();
+    let missing = SealedBlock::new_unhashed(missing);
+    let error = native_pre_execution(&missing, TempoHardfork::T15).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "failed decoding boundary block extra data as DKG outcome: Unexpected End-of-Buffer: Not enough bytes remaining to read data",
+    );
+
+    let mut wrong_epoch = outcome.clone();
+    wrong_epoch.epoch += 1;
+    let mut wrong_players = outcome.clone();
+    let mut rng = ChaCha20Rng::from_seed([0x42; 32]);
+    wrong_players.next_players = [PrivateKey::random(&mut rng).public_key()].try_into().unwrap();
+    let mut wrong_flag = outcome;
+    wrong_flag.is_next_full_dkg = !wrong_flag.is_next_full_dkg;
+    for wrong in [wrong_epoch, wrong_players, wrong_flag] {
+        let mut invalid = block.clone_block();
+        invalid.header.inner.extra_data = wrong.encode().into();
+        let invalid = SealedBlock::new_unhashed(invalid);
+        let error = native_pre_execution(&invalid, TempoHardfork::T15).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "boundary block DKG outcome does not match the parent state:                 epoch {} (expected {}), next players {:?} (expected {:?}),                 full DKG {} (expected {})",
+                wrong.epoch,
+                expected.epoch,
+                wrong.next_players(),
+                expected.next_players(),
+                wrong.is_next_full_dkg,
+                expected.is_next_full_dkg,
+            ),
+        );
+        // Before T15, consensus checks these fields; the execution pre-stage does not.
+        native_pre_execution(&invalid, TempoHardfork::T14).unwrap();
     }
 }
