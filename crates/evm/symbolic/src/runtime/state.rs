@@ -591,6 +591,7 @@ impl PathState {
                 | SymExprKind::Keccak { .. }
                 | SymExprKind::Hash { .. } => None,
                 SymExprKind::Not(_) => None,
+                SymExprKind::TernOp(SymTernOp::MulDiv, _, _, _) => None,
                 SymExprKind::TernOp(_, _, _, modulus) => match modulus.as_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
                     Some(modulus) => usize::try_from(modulus - U256::ONE).ok(),
@@ -688,7 +689,8 @@ impl PathState {
                     | SymBinOp::SRem
                     | SymBinOp::Or
                     | SymBinOp::Xor
-                    | SymBinOp::Sar => None,
+                    | SymBinOp::Sar
+                    | SymBinOp::MulHigh => None,
                 },
             }
         });

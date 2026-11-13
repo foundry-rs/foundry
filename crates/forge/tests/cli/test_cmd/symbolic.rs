@@ -8114,3 +8114,317 @@ contract SymbolicSqrt {
         "{result}"
     );
 }
+
+// Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
+// 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
+// its exact quotient, and a false rounding claim must still reach a replayed counterexample.
+#[forgetest_init]
+fn symbolic_proves_full_precision_mul_div(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_full_precision_mul_div");
+    prj.add_source(
+        "FullMath.sol",
+        r#"
+library FullMath {
+    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        unchecked {
+            uint256 prod0 = a * b;
+            uint256 prod1;
+            assembly ("memory-safe") {
+                let mm := mulmod(a, b, not(0))
+                prod1 := sub(sub(mm, prod0), lt(mm, prod0))
+            }
+            require(denominator > prod1);
+            if (prod1 == 0) {
+                assembly ("memory-safe") {
+                    result := div(prod0, denominator)
+                }
+                return result;
+            }
+            uint256 remainder;
+            assembly ("memory-safe") {
+                remainder := mulmod(a, b, denominator)
+            }
+            assembly ("memory-safe") {
+                prod1 := sub(prod1, gt(remainder, prod0))
+                prod0 := sub(prod0, remainder)
+            }
+            uint256 twos = (0 - denominator) & denominator;
+            assembly ("memory-safe") {
+                denominator := div(denominator, twos)
+            }
+            assembly ("memory-safe") {
+                prod0 := div(prod0, twos)
+            }
+            assembly ("memory-safe") {
+                twos := add(div(sub(0, twos), twos), 1)
+            }
+            prod0 |= prod1 * twos;
+            uint256 inv = (3 * denominator) ^ 2;
+            inv *= 2 - denominator * inv;
+            inv *= 2 - denominator * inv;
+            inv *= 2 - denominator * inv;
+            inv *= 2 - denominator * inv;
+            inv *= 2 - denominator * inv;
+            inv *= 2 - denominator * inv;
+            result = prod0 * inv;
+            return result;
+        }
+    }
+
+    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        unchecked {
+            result = mulDiv(a, b, denominator);
+            if (mulmod(a, b, denominator) != 0) {
+                require(++result > 0);
+            }
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Math.sol",
+        r#"
+library Math {
+    function mul512(uint256 a, uint256 b) internal pure returns (uint256 high, uint256 low) {
+        assembly ("memory-safe") {
+            let mm := mulmod(a, b, not(0))
+            low := mul(a, b)
+            high := sub(sub(mm, low), lt(mm, low))
+        }
+    }
+
+    function ternary(bool condition, uint256 a, uint256 b) internal pure returns (uint256) {
+        unchecked {
+            return b ^ ((a ^ b) * toUint(condition));
+        }
+    }
+
+    function toUint(bool b) internal pure returns (uint256 u) {
+        assembly ("memory-safe") {
+            u := iszero(iszero(b))
+        }
+    }
+
+    function panic(uint256 code) internal pure {
+        assembly ("memory-safe") {
+            mstore(0x00, 0x4e487b71)
+            mstore(0x20, code)
+            revert(0x1c, 0x24)
+        }
+    }
+
+    function mulDiv(uint256 x, uint256 y, uint256 denominator) internal pure returns (uint256 result) {
+        unchecked {
+            (uint256 high, uint256 low) = mul512(x, y);
+            if (high == 0) {
+                return low / denominator;
+            }
+            if (denominator <= high) {
+                panic(ternary(denominator == 0, 0x12, 0x11));
+            }
+            uint256 remainder;
+            assembly ("memory-safe") {
+                remainder := mulmod(x, y, denominator)
+                high := sub(high, gt(remainder, low))
+                low := sub(low, remainder)
+            }
+            uint256 twos = denominator & (0 - denominator);
+            assembly ("memory-safe") {
+                denominator := div(denominator, twos)
+                low := div(low, twos)
+                twos := add(div(sub(0, twos), twos), 1)
+            }
+            low |= high * twos;
+            uint256 inverse = (3 * denominator) ^ 2;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            result = low * inverse;
+            return result;
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "FixedPointMathLib.sol",
+        r#"
+library FixedPointMathLib {
+    function fullMulDiv(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            z := mul(x, y)
+            for {} 1 {} {
+                if iszero(mul(or(iszero(x), eq(div(z, x), y)), d)) {
+                    let mm := mulmod(x, y, not(0))
+                    let p1 := sub(mm, add(z, lt(mm, z)))
+                    let r := mulmod(x, y, d)
+                    let t := and(d, sub(0, d))
+                    if iszero(gt(d, p1)) {
+                        mstore(0x00, 0xae47f702)
+                        revert(0x1c, 0x04)
+                    }
+                    d := div(d, t)
+                    let inv := xor(2, mul(3, d))
+                    inv := mul(inv, sub(2, mul(d, inv)))
+                    inv := mul(inv, sub(2, mul(d, inv)))
+                    inv := mul(inv, sub(2, mul(d, inv)))
+                    inv := mul(inv, sub(2, mul(d, inv)))
+                    inv := mul(inv, sub(2, mul(d, inv)))
+                    z := mul(
+                        or(mul(sub(p1, gt(r, z)), add(div(sub(0, t), t), 1)), div(sub(z, r), t)),
+                        mul(sub(2, mul(d, inv)), inv)
+                    )
+                    break
+                }
+                z := div(z, d)
+                break
+            }
+        }
+    }
+
+    function fullMulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        z = fullMulDiv(x, y, d);
+        assembly {
+            if mulmod(x, y, d) {
+                z := add(z, 1)
+                if iszero(z) {
+                    mstore(0x00, 0xae47f702)
+                    revert(0x1c, 0x04)
+                }
+            }
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "FullPrecisionMulDiv.t.sol",
+        r#"
+import {FullMath} from "../src/FullMath.sol";
+import {Math} from "../src/Math.sol";
+import {FixedPointMathLib} from "../src/FixedPointMathLib.sol";
+
+contract FullPrecisionMulDivTest {
+    function proveV4Identity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(FullMath.mulDiv(x, d, d) == x);
+    }
+
+    function proveV4Monotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FullMath.mulDiv(x1, y, d) <= FullMath.mulDiv(x2, y, d));
+    }
+
+    function proveV4Floor(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        assertFloor(FullMath.mulDiv(x, y, d), x, y, d);
+    }
+
+    function proveV4RoundsUpRemainder(uint256 x, uint256 y, uint256 d) external pure {
+        uint256 up = FullMath.mulDivRoundingUp(x, y, d);
+        assert(up == FullMath.mulDiv(x, y, d) + (mulmod(x, y, d) == 0 ? 0 : 1));
+    }
+
+    function proveV4RoundingUpIsFloor(uint256 x, uint256 y, uint256 d) external pure {
+        assert(FullMath.mulDivRoundingUp(x, y, d) == FullMath.mulDiv(x, y, d));
+    }
+
+    function proveOzIdentity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(Math.mulDiv(x, d, d) == x);
+    }
+
+    function proveOzMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(Math.mulDiv(x1, y, d) <= Math.mulDiv(x2, y, d));
+    }
+
+    function proveOzFloor(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        assertFloor(Math.mulDiv(x, y, d), x, y, d);
+    }
+
+    function proveSoladyIdentity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(FixedPointMathLib.fullMulDiv(x, d, d) == x);
+    }
+
+    function proveSoladyMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FixedPointMathLib.fullMulDiv(x1, y, d) <= FixedPointMathLib.fullMulDiv(x2, y, d));
+    }
+
+    function proveSoladyFloor(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        assertFloor(FixedPointMathLib.fullMulDiv(x, y, d), x, y, d);
+    }
+
+    function proveSoladyRoundsUpRemainder(uint256 x, uint256 y, uint256 d) external pure {
+        uint256 up = FixedPointMathLib.fullMulDivUp(x, y, d);
+        assert(up == FixedPointMathLib.fullMulDiv(x, y, d) + (mulmod(x, y, d) == 0 ? 0 : 1));
+    }
+
+    function proveSoladyRoundingUpIsFloor(uint256 x, uint256 y, uint256 d) external pure {
+        assert(FixedPointMathLib.fullMulDivUp(x, y, d) == FixedPointMathLib.fullMulDiv(x, y, d));
+    }
+
+    function assertFloor(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
+        (uint256 zdHi, uint256 zdLo) = mul512(z, d);
+        (uint256 xyHi, uint256 xyLo) = mul512(x, y);
+        assert(zdHi < xyHi || (zdHi == xyHi && zdLo <= xyLo));
+    }
+
+    function high(uint256 a, uint256 b) internal pure returns (uint256 hi) {
+        (hi,) = mul512(a, b);
+    }
+
+    function mul512(uint256 a, uint256 b) internal pure returns (uint256 hi, uint256 lo) {
+        assembly ("memory-safe") {
+            let mm := mulmod(a, b, not(0))
+            lo := mul(a, b)
+            hi := sub(sub(mm, lo), lt(mm, lo))
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--symbolic-timeout", "60"])
+            .args(["--match-contract", "FullPrecisionMulDivTest"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for (name, args) in [
+            ("proveV4Identity", "uint256,uint256"),
+            ("proveV4Monotone", "uint256,uint256,uint256,uint256"),
+            ("proveV4Floor", "uint256,uint256,uint256"),
+            ("proveV4RoundsUpRemainder", "uint256,uint256,uint256"),
+            ("proveOzIdentity", "uint256,uint256"),
+            ("proveOzMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveOzFloor", "uint256,uint256,uint256"),
+            ("proveSoladyIdentity", "uint256,uint256"),
+            ("proveSoladyMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveSoladyFloor", "uint256,uint256,uint256"),
+            ("proveSoladyRoundsUpRemainder", "uint256,uint256,uint256"),
+        ] {
+            let result = json_test_result(&output, &format!("{name}({args})"));
+            assert_eq!(result["symbolic"]["status"], "pass", "{name}, optimized={optimized}");
+        }
+        for name in ["proveV4RoundingUpIsFloor", "proveSoladyRoundingUpIsFloor"] {
+            let result = json_test_result(&output, &format!("{name}(uint256,uint256,uint256)"));
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{name}, optimized={optimized}"
+            );
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{name}");
+        }
+    }
+}

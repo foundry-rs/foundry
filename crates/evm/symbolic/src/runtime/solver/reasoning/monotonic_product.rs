@@ -18,7 +18,14 @@ pub(crate) fn product_monotonic_unsat_normalized(constraints: &[SymBoolExpr]) ->
 
     constraints.iter().any(|constraint| {
         reversed_strict_comparison(constraint)
-            .is_some_and(|(left, right)| expr_less_or_equal(right, left, &facts, &bounds))
+            .is_some_and(|(left, right)| chained_less_or_equal(right, left, &facts, &bounds))
+            || wide_term_lower_bound(constraint, constraints, &bounds).is_some_and(
+                |(large, lower)| wide_term_below(large, lower, constraints, &facts, &bounds),
+            )
+            || disequality(constraint).is_some_and(|(left, right)| {
+                expr_less_or_equal(left, right, &facts, &bounds)
+                    && expr_less_or_equal(right, left, &facts, &bounds)
+            })
             || product_less_than_negation(constraint).is_some_and(
                 |(left_a, left_b, right_a, right_b)| {
                     product_less_than_known(
@@ -156,6 +163,88 @@ fn reversed_strict_comparison(expr: &SymBoolExpr) -> Option<(&SymExpr, &SymExpr)
     }
 }
 
+/// Returns whether `left <= right` follows directly or through one asserted ordering.
+fn chained_less_or_equal<'a>(
+    left: &'a SymExpr,
+    right: &'a SymExpr,
+    facts: &OrderFacts<'a>,
+    bounds: &ConstraintContext,
+) -> bool {
+    expr_less_or_equal(left, right, facts, bounds)
+        || facts.less_or_equal.iter().any(|(small, large)| {
+            (*small == left && *large != left && expr_less_or_equal(large, right, facts, bounds))
+                || (*large == right
+                    && *small != right
+                    && expr_less_or_equal(left, small, facts, bounds))
+        })
+}
+
+/// Returns a high word or quotient and the lower bound this constraint asserts for it.
+///
+/// A negated conjunction counts as its one conjunct that is not asserted elsewhere.
+fn wide_term_lower_bound<'a>(
+    constraint: &'a SymBoolExpr,
+    constraints: &[SymBoolExpr],
+    bounds: &ConstraintContext,
+) -> Option<(&'a SymExpr, U256)> {
+    if let Some((small, large)) = less_or_equal_comparison(constraint) {
+        return is_wide_term(large).then(|| Some((large, bounds.word_range(small)?.0))).flatten();
+    }
+    let SymBoolExprKind::Not(value) = constraint.kind() else { return None };
+    let value = match value.kind() {
+        SymBoolExprKind::And(terms) => {
+            let mut open = terms.iter().filter(|term| !constraints.contains(term));
+            let term = open.next()?;
+            open.next().is_none().then_some(term)?
+        }
+        _ => value,
+    };
+    let large = nonzero_expr(value)?;
+    is_wide_term(large).then_some((large, U256::ONE))
+}
+
+/// Returns whether a high word or quotient `large` is below `lower` because it is at most a
+/// term whose range ends below `lower`.
+fn wide_term_below<'a>(
+    large: &'a SymExpr,
+    lower: U256,
+    constraints: &'a [SymBoolExpr],
+    facts: &OrderFacts<'a>,
+    bounds: &ConstraintContext,
+) -> bool {
+    let below = |term: &SymExpr| bounds.word_range(term).is_some_and(|(_, upper)| upper < lower);
+    below(large)
+        || constraints.iter().any(|constraint| {
+            constraint
+                .visit_exprs(&mut |term| {
+                    if term != large
+                        && is_wide_term(term)
+                        && below(term)
+                        && expr_less_or_equal(large, term, facts, bounds)
+                    {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                })
+                .is_break()
+        })
+}
+
+fn is_wide_term(expr: &SymExpr) -> bool {
+    matches!(
+        expr.kind(),
+        SymExprKind::BinOp(SymBinOp::MulHigh, _, _) | SymExprKind::TernOp(SymTernOp::MulDiv, ..)
+    )
+}
+
+/// Returns the operands of a disequality, which antisymmetry contradicts.
+fn disequality(expr: &SymBoolExpr) -> Option<(&SymExpr, &SymExpr)> {
+    let SymBoolExprKind::Not(value) = expr.kind() else { return None };
+    let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = value.kind() else { return None };
+    Some((left, right))
+}
+
 /// Returns the unsigned weak ordering asserted by this constraint.
 fn less_or_equal_comparison(expr: &SymBoolExpr) -> Option<(&SymExpr, &SymExpr)> {
     match expr.kind() {
@@ -194,8 +283,84 @@ fn expr_less_or_equal<'a>(
         {
             product_less_or_equal_known(left_a, left_b, right_a, right_b, facts, bounds)
         }
+        // Equal high words order the full products by their low words.
+        (
+            SymExprKind::BinOp(SymBinOp::Mul, left_a, left_b),
+            SymExprKind::BinOp(SymBinOp::Mul, right_a, right_b),
+        ) if facts.less_or_equal.iter().any(|(small, large)| {
+            is_mul_high_of(small, right_a, right_b) && is_mul_high_of(large, left_a, left_b)
+        }) =>
+        {
+            wide_product_less_or_equal(left_a, left_b, right_a, right_b, facts, bounds)
+        }
+        (
+            SymExprKind::BinOp(SymBinOp::MulHigh, left_a, left_b),
+            SymExprKind::BinOp(SymBinOp::MulHigh, right_a, right_b),
+        ) => wide_product_less_or_equal(left_a, left_b, right_a, right_b, facts, bounds),
+        _ if let Some((left_a, left_b, left_den)) = quotient_operands(left, bounds)
+            && let Some((right_a, right_b, right_den)) = quotient_operands(right, bounds)
+            && left_den == right_den =>
+        {
+            quotient_fits(right, facts)
+                && wide_product_less_or_equal(left_a, left_b, right_a, right_b, facts, bounds)
+        }
         _ => false,
     }
+}
+
+/// Returns whether `left_a * left_b <= right_a * right_b` over the unbounded integers.
+fn wide_product_less_or_equal<'a>(
+    left_a: &'a SymExpr,
+    left_b: &'a SymExpr,
+    right_a: &'a SymExpr,
+    right_b: &'a SymExpr,
+    facts: &OrderFacts<'a>,
+    bounds: &ConstraintContext,
+) -> bool {
+    product_less_or_equal_known(left_a, left_b, right_a, right_b, facts, bounds)
+        || [(left_a, left_b), (left_b, left_a)].into_iter().any(|(quotient, divisor)| {
+            // `floor(x * y / d) * d <= x * y`.
+            quotient_operands(quotient, bounds).is_some_and(|(x, y, denominator)| {
+                denominator == divisor
+                    && ((x == right_a && y == right_b) || (x == right_b && y == right_a))
+            })
+        })
+}
+
+/// Returns `(x, y, d)` when `expr` is `floor(x * y / d)` truncated to a word, or zero for `d == 0`.
+fn quotient_operands<'a>(
+    expr: &'a SymExpr,
+    bounds: &ConstraintContext,
+) -> Option<(&'a SymExpr, &'a SymExpr, &'a SymExpr)> {
+    match expr.kind() {
+        SymExprKind::TernOp(SymTernOp::MulDiv, left, right, denominator) => {
+            Some((left, right, denominator))
+        }
+        SymExprKind::BinOp(SymBinOp::UDiv, product, denominator) => {
+            let (left, right) = mul_operands(product)?;
+            bounds.mul_cannot_overflow_256(left, right).then_some((left, right, denominator))
+        }
+        _ => None,
+    }
+}
+
+/// Returns whether a quotient is known not to be truncated to a word.
+fn quotient_fits(expr: &SymExpr, facts: &OrderFacts<'_>) -> bool {
+    match expr.kind() {
+        SymExprKind::TernOp(SymTernOp::MulDiv, left, right, denominator) => facts
+            .less_than
+            .iter()
+            .any(|(high, bound)| *bound == denominator && is_mul_high_of(high, left, right)),
+        _ => true,
+    }
+}
+
+fn is_mul_high_of(expr: &SymExpr, left: &SymExpr, right: &SymExpr) -> bool {
+    matches!(
+        expr.kind(),
+        SymExprKind::BinOp(SymBinOp::MulHigh, a, b)
+            if (a == left && b == right) || (a == right && b == left)
+    )
 }
 
 fn product_less_or_equal_known<'a>(

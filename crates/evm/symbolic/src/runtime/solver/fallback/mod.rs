@@ -25,7 +25,7 @@ impl SymExpr {
 
 fn is_hard_arith_node(expr: &SymExpr) -> bool {
     match expr.kind() {
-        SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+        SymExprKind::BinOp(SymBinOp::Mul | SymBinOp::MulHigh, left, right) => {
             left.contains_var() && right.contains_var()
         }
         SymExprKind::BinOp(

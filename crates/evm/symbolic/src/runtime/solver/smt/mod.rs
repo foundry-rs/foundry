@@ -284,11 +284,20 @@ impl SmtCseWriter<'_> {
                     self.write_narrow_division(out, *op, left, right, *width);
                     return;
                 }
+                if *op == SymBinOp::MulHigh {
+                    out.push_str("((_ extract 511 256) ");
+                    self.write_wide_product(out, left, right);
+                    out.push(')');
+                    return;
+                }
                 let _ = write!(out, "({} ", op.smt());
                 self.write_expr(out, left, skip_expr, skip_bool);
                 out.push(' ');
                 self.write_expr(out, right, skip_expr, skip_bool);
                 out.push(')');
+            }
+            SymExprKind::TernOp(SymTernOp::MulDiv, left, right, denominator) => {
+                self.write_mul_div(out, left, right, denominator);
             }
             SymExprKind::TernOp(op, left, right, modulus) => {
                 self.write_wide_modular_arithmetic(out, op.smt(), left, right, modulus);
@@ -361,6 +370,34 @@ impl SmtCseWriter<'_> {
         out.push_str(")) ((_ zero_extend 256) ");
         self.write_expr(out, modulus, None, None);
         out.push_str("))))");
+    }
+
+    fn write_mul_div(
+        &self,
+        out: &mut String,
+        left: &SymExpr,
+        right: &SymExpr,
+        denominator: &SymExpr,
+    ) {
+        // if denominator == 0:
+        //   0
+        // else:
+        //   low_256((zext(left) * zext(right)) udiv zext(denominator))
+        out.push_str("(ite (= ");
+        self.write_expr(out, denominator, None, None);
+        out.push_str(" (_ bv0 256)) (_ bv0 256) ((_ extract 255 0) (bvudiv ");
+        self.write_wide_product(out, left, right);
+        out.push_str(" ((_ zero_extend 256) ");
+        self.write_expr(out, denominator, None, None);
+        out.push_str("))))");
+    }
+
+    fn write_wide_product(&self, out: &mut String, left: &SymExpr, right: &SymExpr) {
+        out.push_str("(bvmul ((_ zero_extend 256) ");
+        self.write_expr(out, left, None, None);
+        out.push_str(") ((_ zero_extend 256) ");
+        self.write_expr(out, right, None, None);
+        out.push_str("))");
     }
 
     fn write_bool(
