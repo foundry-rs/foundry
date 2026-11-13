@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(index.function(0, &loc).unwrap().instruction, 3);
 
         // Without an exact entry, fall back to the lowest instruction in the span.
-        let source_map = sourcemap::parse("15:5:0;;;16:5:0;;").unwrap();
+        let source_map = sourcemap::parse("15:5:0;;;10:5:0;;").unwrap();
         let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
         assert_eq!(index.function(0, &loc).unwrap().instruction, 0);
 
