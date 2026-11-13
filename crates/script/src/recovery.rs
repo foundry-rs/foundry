@@ -1054,12 +1054,12 @@ where
         }
         (data, false)
     };
+    // Transactions saved for owners on other machines hold the approvals collected so far.
     let submitted = attempted
-        || data
-            .sequences()
-            .iter()
-            .flat_map(|sequence| &sequence.transactions)
-            .any(|tx| tx.hash.is_some());
+        || data.sequences().iter().any(|sequence| {
+            !sequence.awaiting_owners.is_empty()
+                || sequence.transactions.iter().any(|tx| tx.hash.is_some())
+        });
     Ok(submitted && incomplete(&data))
 }
 
