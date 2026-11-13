@@ -543,8 +543,13 @@ impl RemappingsProvider<'_> {
                 && let Some(name) = entry.path.file_name().and_then(|name| name.to_str())
             {
                 let mut source = entry.path.join(&config.src);
-                if config.src.is_absolute() {
-                    let absolute = foundry_compilers::utils::canonicalized(&config.src);
+                let owner_source = entry.canonical.join(&config.src);
+                // Relative imports collapse `..`, so sources outside the owner need the same
+                // identity recovery whether configured as absolute or relative paths.
+                if config.src.is_absolute()
+                    || !normalize_remapping_context(&owner_source).starts_with(&entry.canonical)
+                {
+                    let absolute = foundry_compilers::utils::canonicalized(owner_source);
                     if let Ok(relative) = absolute.strip_prefix(&entry.canonical) {
                         source = entry.path.join(relative);
                     } else if let Some((anchored, anchored_root)) =

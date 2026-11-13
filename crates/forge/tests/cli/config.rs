@@ -3849,16 +3849,8 @@ fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) 
 }
 
 #[forgetest]
-fn dependency_remappings_apply_to_absolute_source(prj: _, cmd: _) {
+fn dependency_remappings_apply_to_external_source(prj: _, cmd: _) {
     prj.add_lib("a/src/internal/Inner.sol", "contract Inner {}\n");
-    prj.create_file(
-        "lib/a/foundry.toml",
-        &format!(
-            "[profile.default]\nsrc = {:?}\nremappings = [\"private-alias/=src/internal/\"]\n",
-            prj.root().join("external").display().to_string()
-        ),
-    );
-    prj.create_file("external/A.sol", "import {B} from \"./B.sol\"; contract A is B {}\n");
     prj.create_file(
         "external/B.sol",
         "import {Inner} from \"private-alias/Inner.sol\"; contract B is Inner {}\n",
@@ -3873,16 +3865,26 @@ fn dependency_remappings_apply_to_absolute_source(prj: _, cmd: _) {
         "import {A} from \"a/A.sol\"; import {GlobalInner} from \"private-alias/Inner.sol\"; import {Sibling} from \"sibling/Sibling.sol\"; contract Root is A, Sibling {} contract Direct is GlobalInner {}\n",
     );
 
-    cmd.arg("build").assert_success();
-
-    cmd.forge_fuse().arg("build").assert_success();
-
     prj.create_file(
         "common/B.sol",
         &fs::read_to_string(prj.root().join("external/B.sol")).unwrap(),
     );
-    prj.create_file("external/A.sol", "import {B} from \"../common/B.sol\"; contract A is B {}\n");
-    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    for source in [prj.root().join("external").display().to_string(), "../../external".into()] {
+        prj.create_file(
+            "lib/a/foundry.toml",
+            &format!(
+                "[profile.default]\nsrc = {source:?}\nremappings = [\"private-alias/=src/internal/\"]\n"
+            ),
+        );
+        for import in ["./B.sol", "../common/B.sol"] {
+            prj.create_file(
+                "external/A.sol",
+                &format!("import {{B}} from {import:?}; contract A is B {{}}\n"),
+            );
+            cmd.forge_fuse().args(["build", "--force"]).assert_success();
+            cmd.forge_fuse().arg("build").assert_success();
+        }
+    }
 
     let external = tempfile::tempdir().unwrap();
     fs::create_dir_all(external.path().join("source")).unwrap();
@@ -3906,5 +3908,28 @@ fn dependency_remappings_apply_to_absolute_source(prj: _, cmd: _) {
         fs::rename(prj.root().join("lib/a"), &physical).unwrap();
         symlink(&physical, prj.root().join("lib/a")).unwrap();
         cmd.forge_fuse().args(["build", "--force"]).assert_success();
+
+        let parent = physical.parent().unwrap();
+        fs::create_dir_all(parent.join("source")).unwrap();
+        fs::create_dir_all(parent.join("common")).unwrap();
+        fs::copy(external.path().join("source/A.sol"), parent.join("source/A.sol")).unwrap();
+        fs::copy(external.path().join("common/B.sol"), parent.join("common/B.sol")).unwrap();
+        prj.create_file(
+            "lib/a/foundry.toml",
+            "[profile.default]\nsrc = \"../source\"\nremappings = [\"private-alias/=src/internal/\"]\n",
+        );
+        cmd.forge_fuse().args(["build", "--force"]).assert_success();
+        cmd.forge_fuse().arg("build").assert_success();
+
+        fs::create_dir_all(physical.join("common")).unwrap();
+        fs::copy(parent.join("common/B.sol"), physical.join("common/B.sol")).unwrap();
+        fs::write(parent.join("common/B.sol"), "contract UnexpectedPhysicalB {}\n").unwrap();
+        symlink(parent.join("source"), physical.join("linked-source")).unwrap();
+        prj.create_file(
+            "lib/a/foundry.toml",
+            "[profile.default]\nsrc = \"linked-source\"\nremappings = [\"private-alias/=src/internal/\"]\n",
+        );
+        cmd.forge_fuse().args(["build", "--force"]).assert_success();
+        cmd.forge_fuse().arg("build").assert_success();
     }
 }
