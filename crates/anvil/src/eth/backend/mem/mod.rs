@@ -7330,7 +7330,7 @@ where
 
                         Ok(tracing_inspector
                             .into_geth_builder()
-                            .geth_call_traces(call_config, executed.result.tx_gas_used())
+                            .geth_call_traces(call_config, executed.result.ext.charged_gas)
                             .into())
                     }
                     GethDebugBuiltInTracerType::PreStateTracer => {
@@ -7427,12 +7427,15 @@ where
 
         trace!(target: "backend", ?exit_reason, out = ?result.output, %gas_used, %block_number, "trace call");
 
-        let res = tracing_inspector
-            .into_geth_builder()
-            .geth_traces_with_result_gas(&result, result.output.clone(), config)
-            .into();
+        let mut res = tracing_inspector.into_geth_builder().geth_traces_with_result_gas(
+            &result,
+            result.output.clone(),
+            config,
+        );
+        // Only the root summary reports the charge; opcode and multidimensional gas stay intact.
+        res.gas = result.ext.charged_gas;
 
-        Ok(res)
+        Ok(res.into())
     }
 
     /// Helper function to execute a closure with the database at a specific block
@@ -9771,8 +9774,9 @@ impl Backend<FoundryNetwork> {
                         state.account_changes().map(|changes| changes.address),
                     );
 
-                    rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
-                    cumulative_gas_used = cumulative_gas_used.saturating_add(result.tx_gas_used());
+                    rpc_gas_budget = rpc_gas_budget.saturating_sub(result.ext.charged_gas);
+                    cumulative_gas_used =
+                        cumulative_gas_used.saturating_add(result.ext.charged_gas);
                     block_regular_gas_used =
                         block_regular_gas_used.saturating_add(result.execution_gas_spent());
                     block_state_gas_used =
@@ -9862,7 +9866,7 @@ impl Backend<FoundryNetwork> {
                         if result.status { result.output.clone() } else { Bytes::new() };
                     let sim_res = SimCallResult {
                         return_data,
-                        gas_used: result.tx_gas_used(),
+                        gas_used: result.ext.charged_gas,
                         max_used_gas: Some(result.total_gas_spent.max(result.floor_gas)),
                         status: result.status,
                         error: if result.status {

@@ -2907,3 +2907,29 @@ async fn test_simulate_amsterdam_state_gas_reservoir() {
     // The cap bounds regular gas, out of which the call pays 15,000 intrinsic gas and 2 for `GAS`.
     assert_eq!(U256::from_be_slice(&call.return_data), U256::from(TX_GAS_LIMIT_CAP - 15_002));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_reports_consumed_gas() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let request = TransactionRequest::default().from(sender).to(Address::repeat_byte(0x55));
+    let blocks = provider
+        .simulate(&SimulatePayload {
+            block_state_calls: vec![SimBlock {
+                calls: vec![request.clone().gas_limit(100_000), request.gas_limit(200_000)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(blocks[0].inner.header.gas_used, 42_000);
+    assert_eq!(blocks[0].calls.len(), 2);
+    for call in &blocks[0].calls {
+        assert!(call.status);
+        assert_eq!(call.gas_used, 21_000);
+        assert_eq!(call.max_used_gas, Some(21_000));
+    }
+}

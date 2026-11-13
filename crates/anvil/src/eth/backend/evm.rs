@@ -98,7 +98,7 @@ pub struct ResultExt {
     pub failed_deposit: bool,
     /// Per-phase statuses of an included signed Base EIP-8130 transaction.
     pub eip8130_phase_statuses: Option<Vec<u8>>,
-    /// Gas charged for fees, receipts and mined block totals; see
+    /// Gas charged for fees, receipts and block totals; see
     /// [`AnvilEvmNetwork::charged_gas`].
     pub charged_gas: u64,
 }
@@ -205,7 +205,7 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
         evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)
     }
 
-    /// Returns the gas `result` charges for fees, receipts and mined block totals.
+    /// Returns the gas `result` charges for fees, receipts and block totals.
     fn charged_gas(result: &TxResult<TypesFor<Self>>) -> u64 {
         result.tx_gas_used()
     }
