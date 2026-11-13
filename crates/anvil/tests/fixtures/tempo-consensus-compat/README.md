@@ -20,12 +20,11 @@ Snapshot replay must restore both announcements and activation without trusting
 a fresh identity RPC response for each block.
 
 The T15 boundary test initializes `ValidatorConfigV2` with Anvil's development
-validator, freezes the parent state, and passes Anvil's next boundary block to
-Tempo's native execution pre-stage. The generated outcome passes; missing data
-and mismatched epoch, next players or full-DKG flag fail. A T14 execution control
-accepts those field mismatches, demonstrating the T15 rule change. This checks
+validator, freezes the parent state, and checks that Tempo's native execution
+pre-stage accepts Anvil's next, unrotated boundary block. This checks
 compatibility with a matching development registry, not full block execution or
-native consensus acceptance.
+native consensus acceptance. Under T15, rotation boundaries and forked registries
+do not match `ValidatorConfigV2`, because Anvil does not update it.
 
 The package shares the root workspace lockfile and target directory. Its
 one-way dependency on Anvil keeps `commonware-consensus` and its runtime out of

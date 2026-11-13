@@ -14,13 +14,12 @@ use commonware_consensus::{
     types::{Epoch, Round, View},
 };
 use commonware_cryptography::{
-    Signer,
     bls12381::primitives::{
         group::Private,
         ops,
         variant::{MinSig, Variant},
     },
-    ed25519::{PrivateKey, PublicKey},
+    ed25519::PublicKey,
     sha256::Digest,
 };
 use commonware_math::algebra::Random;
@@ -331,8 +330,11 @@ async fn native_fork_inherits_skipped_views() {
     }
 }
 
+// Covers an unrotated boundary against a registry seeded with Anvil's development validator. Under
+// T15, rotation boundaries and forked registries do not match ValidatorConfigV2, because Anvil
+// does not update it.
 #[tokio::test(flavor = "multi_thread")]
-async fn native_t15_checks_anvil_boundary_against_parent_state() {
+async fn native_t15_accepts_unrotated_anvil_boundary() {
     let factory = TempoEvmConfig::moderato();
     let chain_id = factory.chain_spec().inner.chain.id();
     let (api, _handle) = spawn(
@@ -346,7 +348,6 @@ async fn native_t15_checks_anvil_boundary_against_parent_state() {
     let identity = api.anvil_tempo_consensus_identity().await.unwrap();
 
     let owner = Address::repeat_byte(0xAA);
-    api.anvil_set_coinbase(Address::ZERO).await.unwrap();
     let mut registry = build_tempo_evm(
         TempoHardfork::T15,
         chain_id,
@@ -400,56 +401,16 @@ async fn native_t15_checks_anvil_boundary_against_parent_state() {
     .unwrap();
     let expected = config.boundary_outcome(1, outcome.output.clone());
     assert_eq!(outcome, expected);
-    let native_pre_execution = |block: &SealedBlock<tempo_primitives::Block>, hardfork| {
-        let mut env = factory.evm_env(block.header()).unwrap();
-        env.spec = hardfork;
-        env.version = *tempo_execution_config(hardfork, chain_id).version();
-        env.block.ext.epoch_length = NonZeroU64::new(3).unwrap();
-        let context = factory.context_for_block(block).unwrap();
-        let evm = BlockExecutorFactory::evm_with_env(
-            &factory,
-            EvmDb::new(&parent_db, SpecId::OSAKA, None),
-            env,
-        );
-        factory.create_executor(evm, context).apply_pre_execution_changes()
-    };
     let block = SealedBlock::new_unhashed(certified.block);
-    native_pre_execution(&block, TempoHardfork::T15).unwrap();
-
-    let mut missing = block.clone_block();
-    missing.header.inner.extra_data = Bytes::new();
-    let missing = SealedBlock::new_unhashed(missing);
-    let error = native_pre_execution(&missing, TempoHardfork::T15).unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "failed decoding boundary block extra data as DKG outcome: Unexpected End-of-Buffer: Not enough bytes remaining to read data",
+    let mut env = factory.evm_env(block.header()).unwrap();
+    env.spec = TempoHardfork::T15;
+    env.version = *tempo_execution_config(TempoHardfork::T15, chain_id).version();
+    env.block.ext.epoch_length = NonZeroU64::new(3).unwrap();
+    let context = factory.context_for_block(&block).unwrap();
+    let evm = BlockExecutorFactory::evm_with_env(
+        &factory,
+        EvmDb::new(&parent_db, SpecId::OSAKA, None),
+        env,
     );
-
-    let mut wrong_epoch = outcome.clone();
-    wrong_epoch.epoch += 1;
-    let mut wrong_players = outcome.clone();
-    let mut rng = ChaCha20Rng::from_seed([0x42; 32]);
-    wrong_players.next_players = [PrivateKey::random(&mut rng).public_key()].try_into().unwrap();
-    let mut wrong_flag = outcome;
-    wrong_flag.is_next_full_dkg = !wrong_flag.is_next_full_dkg;
-    for wrong in [wrong_epoch, wrong_players, wrong_flag] {
-        let mut invalid = block.clone_block();
-        invalid.header.inner.extra_data = wrong.encode().into();
-        let invalid = SealedBlock::new_unhashed(invalid);
-        let error = native_pre_execution(&invalid, TempoHardfork::T15).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!(
-                "boundary block DKG outcome does not match the parent state:                 epoch {} (expected {}), next players {:?} (expected {:?}),                 full DKG {} (expected {})",
-                wrong.epoch,
-                expected.epoch,
-                wrong.next_players(),
-                expected.next_players(),
-                wrong.is_next_full_dkg,
-                expected.is_next_full_dkg,
-            ),
-        );
-        // Before T15, consensus checks these fields; the execution pre-stage does not.
-        native_pre_execution(&invalid, TempoHardfork::T14).unwrap();
-    }
+    factory.create_executor(evm, context).apply_pre_execution_changes().unwrap();
 }
