@@ -1,8 +1,10 @@
 use super::symbolic_helpers::{
     assert_symbolic, assert_symbolic_witness, json_test_result, read_artifact_ref, z3_available,
 };
+use alloy_primitives::{U256, address};
+use anvil::{NodeConfig, spawn};
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, snapbox::IntoData, str, util::OutputExt};
+use foundry_test_utils::{forgetest_init, rpc, snapbox::IntoData, str, util::OutputExt};
 
 use crate::skip_unless_z3;
 
@@ -401,6 +403,45 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
+}
+
+// A balance the fork backend fails to read makes the run incomplete instead of reading zero.
+#[forgetest_init]
+async fn symbolic_fork_balance_read_error_is_incomplete(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_fork_balance_read_error_is_incomplete");
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let account = address!("0x000000000000000000000000000000000000bEEF");
+    api.anvil_set_balance(account, U256::from(10).pow(U256::from(18))).await.unwrap();
+    let endpoint = rpc::spawn_rpc_proxy_failing_account(handle.http_endpoint(), account).await;
+
+    prj.add_test(
+        "SymbolicForkBalance.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicForkBalance is Test {
+    function checkForkBalance() public view {
+        assertEq(address(0xBEEF).balance, 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--fork-url",
+        &endpoint,
+        "--match-contract",
+        "SymbolicForkBalance",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+[FAIL: incomplete symbolic execution (Error): backend error: failed to get account for 0x000000000000000000000000000000000000bEEF: server returned an error response: error code -32000: account unavailable] checkForkBalance() (block: 0) ([METRICS])
+...
+"#]]);
 }
 
 #[forgetest_init]
