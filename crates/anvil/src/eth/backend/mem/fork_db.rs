@@ -502,12 +502,19 @@ mod tests {
         take(&db);
 
         db.set_storage_at(ACCOUNT, SLOT.into(), B256::with_last_byte(200)).unwrap();
-        db.set_balance(ACCOUNT, U256::from(9)).unwrap();
         // Evicts the local hash of block 1, so it reads from the fork again.
         db.insert_block_hash(U256::from(300), B256::with_last_byte(0xbb));
         take(&db);
 
+        // Changes only the account info.
+        db.set_balance(ACCOUNT, U256::from(9)).unwrap();
+        take(&db);
+
         assert!(db.revert_state(before_revert, RevertStateSnapshotAction::RevertRemove));
+        take(&db);
+
+        // Replaces the cached block hashes, as loading a state does.
+        db.set_block_hashes(vec![(U256::ONE, B256::with_last_byte(0xcc))]);
         take(&db);
 
         // Direct account access bypasses change recording.
@@ -531,7 +538,9 @@ mod tests {
                 );
             }
         }
-        let [_, (second, _), (reverted, _), (deleted, _)] = &states[..] else { unreachable!() };
+        let [_, (second, _), _, (reverted, _), _, (deleted, _)] = &states[..] else {
+            unreachable!()
+        };
         assert_eq!(second.storage_ref(ACCOUNT, SLOT).unwrap(), U256::from(200));
         assert_eq!(reverted.storage_ref(ACCOUNT, SLOT).unwrap(), U256::from(100));
         assert_eq!(deleted.basic_ref(ACCOUNT).unwrap(), None);

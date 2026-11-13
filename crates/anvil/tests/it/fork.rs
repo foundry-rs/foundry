@@ -5712,7 +5712,7 @@ async fn test_fork_rollback_past_in_memory_states() {
 async fn test_fork_destroyed_account_past_in_memory_states() {
     let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let contract = Address::random();
-    // CALLER SELFDESTRUCT
+    // CALLER SELFDESTRUCT.
     origin_api.anvil_set_code(contract, bytes!("0x33ff")).await.unwrap();
     origin_api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
     origin_api.mine_one().await.unwrap();
