@@ -17,7 +17,7 @@ use evm2::evm::BlockStateAccumulator;
 use foundry_evm_core::evm::ForkCode;
 use foundry_fork_db::cache::MemDb as RemoteState;
 use parking_lot::Mutex;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 /// Reads remote state through the RPC-backed fork cache.
 #[derive(Clone, Debug)]
@@ -96,15 +96,13 @@ fn remote_state_snapshot(remote: &RemoteState, code: &ForkCode) -> StateSnapshot
 /// kept in a local [`CacheDB`] so the fork cache only ever holds unchanged remote state.
 #[derive(Debug)]
 pub struct ForkedDatabase<N: Network> {
-    /// Responsible for fetching missing data.
-    backend: SharedBackend<N>,
     /// Local changes over the remote state.
     cache_db: CacheDB<RemoteDb<N>>,
     /// Contains all the data already fetched; exclusively the unchanged remote state.
     db: BlockchainDb,
     /// Holds the local changes at each state snapshot. The fork cache only holds unchanged remote
     /// state, which retained block states read and dump, so reverting keeps it.
-    state_snapshots: Arc<Mutex<StateSnapshots<CacheDB<RemoteDb<N>>>>>,
+    state_snapshots: Mutex<StateSnapshots<CacheDB<RemoteDb<N>>>>,
     /// Records local changes, so each block state shares everything unchanged with the previous.
     history: Mutex<HistoricalStateCache>,
 }
@@ -114,10 +112,9 @@ impl<N: Network> ForkedDatabase<N> {
     /// `track_history` is set, as in [`StateRootDb::new`](super::in_memory_db::StateRootDb::new).
     pub fn new(backend: SharedBackend<N>, db: BlockchainDb, track_history: bool) -> Self {
         Self {
-            cache_db: CacheDB::new(RemoteDb::new(backend.clone(), ForkCode::default())),
-            backend,
+            cache_db: CacheDB::new(RemoteDb::new(backend, ForkCode::default())),
             db,
-            state_snapshots: Arc::new(Mutex::new(Default::default())),
+            state_snapshots: Default::default(),
             history: Mutex::new(HistoricalStateCache::new(track_history)),
         }
     }
@@ -129,22 +126,6 @@ impl<N: Network> ForkedDatabase<N> {
 
     pub const fn database(&self) -> &CacheDB<RemoteDb<N>> {
         &self.cache_db
-    }
-
-    /// Reset the fork to a fresh forked state, and optionally update the fork config.
-    pub fn reset(
-        &mut self,
-        _urls: Vec<String>,
-        block_number: impl Into<BlockId>,
-    ) -> Result<(), String> {
-        self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
-        // wipe the storage retrieved from remote.
-        self.inner().db().clear();
-        // create a fresh `CacheDB`, effectively wiping modified state.
-        self.cache_db = CacheDB::new(RemoteDb::new(self.backend.clone(), ForkCode::default()));
-        self.invalidate_history();
-        trace!(target: "backend::forkdb", "Cleared database");
-        Ok(())
     }
 
     /// Flushes the cache to disk if configured.
@@ -348,8 +329,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 }
 
 impl<N: Network> MaybeForkedDatabase for ForkedDatabase<N> {
-    fn maybe_reset(&mut self, urls: Vec<String>, block_number: BlockId) -> Result<(), String> {
-        self.reset(urls, block_number)
+    // Retained block states read through the pinned backend, so a fork reset replaces the
+    // database instead of re-pinning it.
+    fn maybe_reset(&mut self, _urls: Vec<String>, _block_number: BlockId) -> Result<(), String> {
+        Err("not supported".to_string())
     }
 
     fn maybe_flush_cache(&self) -> Result<(), String> {

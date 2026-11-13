@@ -344,7 +344,7 @@ pub struct NodeConfig {
     ///
     /// If set to `Some(num)` keep latest num state in memory only.
     pub prune_history: PruneStateHistoryConfig,
-    /// Max number of states cached on disk.
+    /// Max number of older states to keep, beyond the most recent ones.
     pub max_persisted_states: Option<usize>,
     /// The initial state to apply and consume during startup.
     pub init_state: Option<SerializableState>,
@@ -942,7 +942,7 @@ impl NodeConfig {
         self
     }
 
-    /// Sets max number of states to cache on disk.
+    /// Sets max number of older states to keep, beyond the most recent ones.
     #[must_use]
     pub fn with_max_persisted_states<U: Into<usize>>(
         mut self,
