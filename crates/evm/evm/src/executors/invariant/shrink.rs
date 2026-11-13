@@ -1338,15 +1338,19 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
         },
     );
 
-    // Nothing to verify when no call was removed, and no verification starts once the budget is
-    // spent: the original sequence is the fallback.
-    if shrinker.included_count() == calls.len() || deadline_passed(deadline) {
+    if shrinker.included_count() == calls.len() {
         return Ok(calls.to_vec());
     }
     let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
+    // Every removal the shrinker kept was confirmed before the deadline, so once it passed the
+    // shrunk sequence is kept without starting the verifying replay, which would not be cancelled
+    // before its first poll.
+    if deadline_passed(deadline) {
+        return Ok(shrunk);
+    }
 
-    // Verify shrunk repro; fall back to original on any failure, including a verification that
-    // the deadline cancelled.
+    // Verify shrunk repro; fall back to original on any failure, unless the deadline cancelled the
+    // verification.
     sequence.clear();
     sequence.extend(shrinker.current());
     let verified = handler_sequence_still_triggers_bug(
@@ -1357,7 +1361,7 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
         expected_fingerprint,
     )
     .unwrap_or(false);
-    if verified && !deadline_passed(deadline) { Ok(shrunk) } else { Ok(calls.to_vec()) }
+    if verified || deadline_passed(deadline) { Ok(shrunk) } else { Ok(calls.to_vec()) }
 }
 
 /// Shrink predicate: anchor asserts on the same path as the originally recorded bug.
@@ -1722,6 +1726,67 @@ mod tests {
         // Without a deadline candidates run on the executor itself, uncancelled.
         let candidates = candidate_executor(&executor, &early_exit, None);
         assert!(matches!(candidates, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn handler_shrink_keeps_candidate_confirmed_before_deadline() {
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default()
+                .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
+                .gas_limit(1 << 24),
+            Default::default(),
+        );
+        let handler = Address::repeat_byte(0x11);
+        // Empty calldata is a no-op. Otherwise the calldata is forwarded to the cheatcode address
+        // when it is 36 bytes long (`vm.sleep`) or slot zero is set, and a 36-byte call then sets
+        // slot zero.
+        let mut code =
+            hex!("3615604557366024146000541715604557366000600037600060003660006000").to_vec();
+        code.push(0x73);
+        code.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
+        code.extend_from_slice(&hex!("5af150366024141560455760016000555b00"));
+        executor.set_code(handler, Bytecode::new_raw(code.into())).unwrap();
+        let call = |calldata: Vec<u8>| {
+            let mut call = tx(None, None);
+            call.call_details.target = handler;
+            call.call_details.calldata = calldata.into();
+            call
+        };
+        let sleep = std::time::Duration::from_millis(500);
+        let noop = call(vec![]);
+        // A call to the cheatcode address itself runs `vm.sleep` before any cancellation poll.
+        let mut pause =
+            call(Vm::sleepCall { duration: U256::from(sleep.as_millis()) }.abi_encode());
+        pause.call_details.target = CHEATCODE_ADDRESS;
+        let arm = call(Vm::sleepCall { duration: U256::ZERO }.abi_encode());
+        let boom = call(Vm::assertTrue_1Call { condition: false, err: "boom".into() }.abi_encode());
+        let mut calls = vec![noop; 9];
+        calls[4] = pause;
+        calls[5] = arm;
+        calls[8] = boom;
+        let all = (0..calls.len()).collect::<Vec<_>>();
+        let full =
+            replay_handler_failure_sequence(executor.clone(), &calls, &all, false, None).unwrap();
+        assert!(full.anchor_asserted);
+
+        // Dropping the first four calls replays one sleep and is confirmed before the deadline. A
+        // later candidate replays the sleep again and crosses the deadline.
+        let config = InvariantConfig::default();
+        let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
+        let start = Instant::now();
+        let shrunk = shrink_handler_sequence(
+            &config,
+            &calls,
+            full.anchor_fingerprint,
+            &executor,
+            &progress,
+            &EarlyExit::new(false),
+            Some(start + 2 * sleep),
+        )
+        .unwrap();
+        assert_eq!(shrunk, calls[4..]);
+        // A verifying replay after the deadline would sleep again.
+        assert!(start.elapsed() < 2 * sleep + sleep / 2);
     }
 
     #[test]

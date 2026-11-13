@@ -86,6 +86,8 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
+    /// Whether to prefetch the remote state of calls into fork contracts.
+    pub fork_prefetch: bool,
     /// Concrete Tempo label inspector selected by the Tempo executor builder.
     tempo_labels: Option<Box<TempoLabels>>,
     /// Explicitly resolved additional cheatcode addresses.
@@ -110,6 +112,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             print: None,
             chisel_state: None,
             enable_isolation: false,
+            fork_prefetch: false,
             tempo_labels: None,
             extra_cheatcode_addresses: &[],
             wallets: None,
@@ -210,6 +213,13 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
+    /// Set whether to prefetch the remote state of calls into fork contracts.
+    #[inline]
+    pub const fn fork_prefetch(mut self, yes: bool) -> Self {
+        self.fork_prefetch = yes;
+        self
+    }
+
     /// Installs the Tempo label inspector.
     #[inline]
     pub(crate) fn tempo_labels(mut self, inspector: TempoLabels) -> Self {
@@ -247,6 +257,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             print,
             chisel_state,
             enable_isolation,
+            fork_prefetch,
             tempo_labels,
             extra_cheatcode_addresses,
             wallets,
@@ -281,6 +292,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         stack.tracing_requirements(trace_requirements);
 
         stack.enable_isolation(enable_isolation);
+        stack.fork_prefetch(fork_prefetch);
         stack.inner.tempo_labels = tempo_labels;
         stack.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
         stack.set_create2_deployer(create2_deployer);
@@ -456,6 +468,9 @@ pub struct InspectorStackInner {
     /// inspector.
     pub instrumented_cmp_log: bool,
     pub enable_isolation: bool,
+    /// Whether calls into fork contracts prefetch the remote state they are about to read, see
+    /// [`Backend::prefetch_call`](foundry_evm_core::backend::Backend::prefetch_call).
+    pub fork_prefetch: bool,
     /// Additional addresses installed and recognized as cheatcode contracts.
     pub extra_cheatcode_addresses: &'static [Address],
     pub create2_deployer: Address,
@@ -603,15 +618,21 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         };
         drop(child);
         // The merged changes include the writes of a successful transaction; a failed one rolled
-        // them back, so they are replayed over its merged changes.
+        // them back, so they are replayed over its merged changes. The writes it accepted
+        // outside its journal are dropped with its state.
         let writes = mem::replace(&mut cheats.persistent_writes, outer_writes);
         cheats.frame_rollback = frame_rollback;
         let result = result.and_then(|(result, mut persistent)| {
             if !result.is_success() {
-                let writes = writes.into_iter().map(|(.., write)| write).collect::<Vec<_>>();
+                let writes = writes
+                    .into_iter()
+                    .filter(|&(_, len, _)| len != 0)
+                    .map(|(.., write)| write)
+                    .collect::<Vec<_>>();
                 let applied = PersistentWrite::apply_all(&writes, evm.state_mut())?;
-                persistent
-                    .extend(writes.into_iter().filter(|write| !write.is_delta()).chain(applied));
+                persistent.extend(
+                    writes.into_iter().filter(|write| !write.is_balance_or_nonce()).chain(applied),
+                );
             }
             cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
             Ok(result)
@@ -652,7 +673,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats.tx_warm_addresses = tx_warm_addresses;
         cheats.env_overrides.swap(fork_id, &mut overrides);
         drop(replay);
-        let executed = executed.wrap_err("backend: failed committing transaction")?;
+        let mut executed = executed.wrap_err("backend: failed committing transaction")?;
+        cheats.record_persistent(
+            usize::from(depth).saturating_sub(1),
+            evm.state(),
+            executed.take_persistent(),
+        );
         Ok(backend.backend_mut().store_executed(evm, executed))
     }
 
@@ -670,11 +696,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
         let mut executed = self.replay(cheats, &mut replay, evm, depth, prepared, true)?;
         drop(replay);
-        cheats.record_persistent(
-            usize::from(depth).saturating_sub(1),
-            evm.state(),
-            executed.take_persistent(),
-        );
+        let caller_depth = usize::from(depth).saturating_sub(1);
+        cheats.record_persistent(caller_depth, evm.state(), executed.take_persistent());
+        cheats.record_accepted(caller_depth, executed.take_accepted());
         Ok(backend.backend_mut().store_executed(evm, executed))
     }
 
@@ -910,6 +934,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub const fn enable_isolation(&mut self, yes: bool) {
         self.inner.enable_isolation = yes;
+    }
+
+    /// Set whether calls into fork contracts prefetch the remote state they are about to read.
+    #[inline]
+    pub const fn fork_prefetch(&mut self, yes: bool) {
+        self.inner.fork_prefetch = yes;
     }
 
     /// Returns additional addresses installed and recognized as cheatcode contracts.
@@ -1609,7 +1639,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 result.status.then(|| nested_warmth(child.state_mut(), &executed.pending_state));
             // Isolated calls never change the running transaction's transient storage.
             let transient = take_transient(evm.state_mut());
-            child.commit_source(&executed.pending_state);
+            child.overlay_db_mut().commit_pending(&executed.pending_state);
             // SAFETY: The nested EVM runs over the lifecycle's owned databases.
             unsafe { backend.backend().lifecycle().end_frame_evm(evm, child) };
             put_transient(evm.state_mut(), transient);
@@ -1624,6 +1654,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                         let _ =
                             evm.state_mut().storage_slot(&address, key).map(|mut slot| slot.warm());
                     }
+                }
+            }
+            // The new transaction overlay does not know which accounts the running transaction
+            // created, so a later isolated call that loads them would merge them as new and wipe
+            // their storage. Its database already holds their storage.
+            for address in &self.inner.tx_created {
+                if let Ok(mut account) = evm.state_mut().account(address)
+                    && account.exists()
+                {
+                    account.mark_created();
                 }
             }
             // Unless the call switched forks, the running transaction's state stays in place: it
@@ -1992,17 +2032,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             let failed = !result.stop.is_success();
             let end = cheats.snapshot_restores.frame_end(
                 evm.state_mut(),
+                &mut cheats.persistent_writes,
                 message.depth,
                 failed,
                 features,
             );
             // A frame ends here once per hook layer, and only the layer that opened it returns
             // its checkpoint.
-            if let Some((checkpoint, ledger)) = end {
-                // The reinstated state holds the persistent writes recorded over it.
-                if let Some(ledger) = ledger {
-                    cheats.persistent_writes = ledger;
-                }
+            if let Some(checkpoint) = end {
                 cheats.frame_rollback =
                     Some((usize::from(message.depth), checkpoint.journal_len()));
             }
@@ -2125,6 +2162,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_start();
+        }
+
+        // Delegate calls run inside a call that was already simulated.
+        if self.inner.fork_prefetch
+            && matches!(message.kind, MessageKind::Call | MessageKind::StaticCall)
+        {
+            self.backend.backend().prefetch_call(
+                message.caller,
+                message.destination,
+                message.value,
+                message.input.to_bytes(interp.memory()),
+                depth == root && !self.inner.in_inner_context,
+            );
         }
 
         let storage_hook_callback = self

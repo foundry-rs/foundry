@@ -1702,6 +1702,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.symbolic_sequence_failure(replay, candidate, true)
                 .filter(|actual| same_sequence_failure(actual, &expected))
         };
+        let deadline = replay.shrink_deadline;
+        // How many candidate replays preserved the failure before the deadline, and the reason of
+        // the last one.
+        let mut preserved = (0, None);
         let preserves = |candidate: &[SymbolicCounterexampleCall]| {
             if self.tcfg.early_exit.should_stop() {
                 return false;
@@ -1709,7 +1713,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if let Some(progress) = progress {
                 progress.inc(1);
             }
-            replay_candidate(candidate).is_some()
+            let Some(outcome) = replay_candidate(candidate).filter(|_| !deadline_passed(deadline))
+            else {
+                return false;
+            };
+            preserved = (preserved.0 + 1, Some(outcome.reason));
+            true
         };
 
         let minimization = minimize_sequence_counterexample(
@@ -1722,14 +1731,23 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         .expect("the sequence has calls");
         // A replay that ends after the deadline may have been cancelled, so it cannot confirm the
         // minimized form.
-        let Some(outcome) = (!deadline_passed(replay.shrink_deadline))
+        let confirmed = (!deadline_passed(deadline))
             .then(|| replay_candidate(&minimization.minimized_calls))
             .flatten()
-            .filter(|_| !deadline_passed(replay.shrink_deadline))
-        else {
+            .filter(|_| !deadline_passed(deadline))
+            .map(|outcome| outcome.reason);
+        // Every accepted candidate was confirmed before the deadline, so once it passed, a
+        // minimization that accepted one is kept with the reason of its last accepted replay,
+        // without the confirming replay, which the deadline would cancel. One that accepted none
+        // leaves the original sequence as the only artifact. The last preserving replay is the
+        // last accepted one unless the minimizer rejected a replay at the deadline.
+        let (preserved_count, last_reason) = preserved;
+        let last_accepted = last_reason
+            .filter(|_| deadline_passed(deadline) && preserved_count == minimization.accepted);
+        let Some(reason) = confirmed.or(last_accepted) else {
             return SequenceMinimization::KeepOriginal;
         };
-        SequenceMinimization::Minimized(minimization, (expected.reason, outcome.reason))
+        SequenceMinimization::Minimized(minimization, (expected.reason, reason))
     }
 
     fn symbolic_sequence_sender_candidates(

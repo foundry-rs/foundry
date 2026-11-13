@@ -1,9 +1,16 @@
 use alloy_network::Ethereum;
 use alloy_provider::Provider;
-use clap::{Parser, ValueEnum};
-use eyre::Result;
-use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
+use clap::{Args, Parser, ValueEnum};
+use eyre::{Result, ensure};
+use foundry_cli::{
+    opts::{ChainValueParser, RpcOpts},
+    utils::LoadConfig,
+};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
+use foundry_config::{
+    Chain,
+    figment::{Figment, providers::Serialized},
+};
 
 mod contracts;
 mod delegates;
@@ -78,8 +85,40 @@ impl SafeSubcommand {
 }
 
 /// Builds the read-only provider for `rpc` and returns it together with its chain ID.
-async fn rpc_provider(rpc: &RpcOpts) -> Result<(RetryProvider<Ethereum>, u64)> {
-    let provider = ProviderBuilder::<Ethereum>::from_config(&rpc.load_config()?)?.build()?;
+async fn rpc_provider(rpc: &SafeRpcOpts) -> Result<(RetryProvider<Ethereum>, u64)> {
+    let config = rpc.load_config()?;
+    let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
     let chain_id = provider.get_chain_id().await?;
+    if let Some(chain) = config.chain {
+        let configured_chain_id = chain.id();
+        ensure!(
+            configured_chain_id == chain_id,
+            "Configured chain ID {configured_chain_id} does not match RPC chain ID {chain_id}.\n\
+             Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN_ID."
+        );
+    }
     Ok((provider, chain_id))
+}
+
+/// RPC options with an optional expected chain for Safe operations.
+#[derive(Args, Debug)]
+pub(super) struct SafeRpcOpts {
+    #[command(flatten)]
+    rpc: RpcOpts,
+
+    /// Expected chain name or EIP-155 chain ID. Must match the RPC chain.
+    ///
+    /// Overrides `FOUNDRY_CHAIN_ID` and the selected profile's `chain_id`.
+    #[arg(short = 'c', long, alias = "chain-id", env = "CHAIN", value_parser = ChainValueParser::default())]
+    chain: Option<Chain>,
+}
+
+impl LoadConfig for SafeRpcOpts {
+    fn figment(&self) -> Figment {
+        let mut figment = self.rpc.figment();
+        if let Some(chain) = self.chain {
+            figment = figment.merge(Serialized::global("chain_id", chain.id()));
+        }
+        figment
+    }
 }

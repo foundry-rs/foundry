@@ -5,8 +5,9 @@ use serde::Deserialize;
 use std::env;
 
 use crate::FoundryTransactionBuilder;
+use alloy_eips::eip7702::Authorization;
 use alloy_network::{Ethereum, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, address};
 use alloy_provider::mock::Asserter;
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
@@ -250,6 +251,28 @@ async fn contract_creation_does_not_stamp_stored_fee_token() -> eyre::Result<()>
         None
     );
     assert_eq!(tx.fee_token, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn eip7702_request_does_not_stamp_inferred_fee_token() -> eyre::Result<()> {
+    let authorization =
+        Authorization { chain_id: U256::ONE, address: Address::repeat_byte(0x01), nonce: 0 }
+            .into_signed(Signature::new(U256::ONE, U256::ONE, false));
+    let mut tx = TempoTransactionRequest {
+        inner: TransactionRequest {
+            authorization_list: Some(vec![authorization]),
+            ..TransactionRequest::default().with_to(ALPHA_USD_ADDRESS).with_input(
+                ITIP20::transferCall { to: Address::repeat_byte(0x02), amount: U256::ONE }
+                    .abi_encode(),
+            )
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(resolve_and_set_fee_token::<TempoNetwork>(None, &mut tx, None).await?, None);
+    assert_eq!(tx.fee_token, None);
+    assert!(!tx.is_tempo_aa());
     Ok(())
 }
 

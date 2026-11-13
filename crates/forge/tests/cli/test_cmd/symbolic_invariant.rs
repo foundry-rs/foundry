@@ -3208,3 +3208,63 @@ contract SymbolicHostReads is Test {
 ...
 "#]]);
 }
+
+// A timed campaign's shrink deadline passes during minimization, which must keep the candidates it
+// confirmed before then. Minimization replays skip `vm.sleep`, so the handler spends its time in the
+// EVM instead.
+#[forgetest_init]
+fn symbolic_invariant_keeps_minimization_at_shrink_deadline(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_keeps_minimization_at_shrink_deadline");
+    prj.update_config(|config| {
+        config.invariant.timeout = Some(1);
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        // Leave the failure to the timed campaign, whose shrink deadline minimization shares.
+        config.symbolic.invariant_depth = 0;
+    });
+
+    prj.add_test(
+        "SymbolicShrinkDeadline.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SlowTarget {
+    bool public broken;
+    uint256 public acc;
+
+    function step(uint256 x) external {
+        uint256 a = acc;
+        for (uint256 i; i < 10000; ++i) a = uint256(keccak256(abi.encode(a, i)));
+        acc = a;
+        if (x > 1000) broken = true;
+    }
+}
+
+contract SymbolicShrinkDeadline is Test {
+    SlowTarget target;
+
+    function setUp() public {
+        target = new SlowTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--fuzz-seed", "1"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_notBroken()");
+    let failure = &result["invariant_failures"][0];
+    let accepted = failure["minimization"]["accepted"].as_u64();
+    assert!(accepted.is_some_and(|accepted| accepted > 0), "{result}");
+    // The deadline stops minimization before it reaches the smallest failing value.
+    assert_ne!(failure["counterexample"]["Sequence"][1][0]["args"], "1001", "{result}");
+}
