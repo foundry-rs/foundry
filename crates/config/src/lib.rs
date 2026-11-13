@@ -153,6 +153,9 @@ mod external_compiler;
 pub use external_compiler::ExternalCompiler;
 
 pub mod extend;
+
+#[cfg(test)]
+mod reference;
 use extend::Extends;
 use foundry_evm_networks::NetworkConfigs;
 
@@ -215,442 +218,1559 @@ pub struct Config {
     #[serde(default = "root_default", skip_serializing)]
     pub root: PathBuf,
 
-    /// Configuration for extending from another foundry.toml (base) file.
+    // Never serialized: inheritance is resolved by the TOML provider (providers/ext.rs) before
+    // extraction, so this value is informational only.
+    /// Base config file that the active profile inherits settings from.
     ///
-    /// Can be either a string path or an object with path and strategy.
-    /// Base files cannot extend (inherit) other files.
+    /// The value is either a path or a table with a `path` and a merge `strategy`:
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// extends = "../shared/base.toml"
+    ///
+    /// [profile.ci]
+    /// extends = { path = "../shared/base.toml", strategy = "replace-arrays" }
+    /// ```
+    ///
+    /// The path is relative to the directory of the `foundry.toml` that declares it. Only the
+    /// active profile's `extends` is used: the whole base file, including standalone sections such
+    /// as `[fuzz]`, is loaded first and this file is merged on top of it. A profile without its
+    /// own `extends` does not inherit from the base file. Strategies:
+    ///
+    /// - `extend-arrays` (the default): arrays from both files are concatenated, base entries
+    ///   first; other values in this file replace those in the base file.
+    /// - `replace-arrays`: arrays and all other values in this file replace those in the base
+    ///   file.
+    /// - `no-collision`: loading fails if the active profile sets a key that the same profile in
+    ///   the base file also sets.
+    ///
+    /// The base file cannot use `extends` in the same profile, and a file cannot extend itself.
+    /// `extends` takes a file path, not a profile name: every profile already inherits from
+    /// `[profile.default]`.
     #[serde(default, skip_serializing)]
     pub extends: Option<Extends>,
 
-    /// Path of the sources directory.
+    /// Directory containing the project's contract sources, relative to the project root.
     ///
-    /// Defaults to `src`.
+    /// When `src` is not set and the `src` directory does not exist but `contracts` does, Foundry
+    /// uses `contracts` (the Hardhat layout). Foundry also adds a `src/=src/` style remapping for
+    /// this directory, so imports such as `import "src/Counter.sol";` resolve. The `--contracts`
+    /// (`-C`) flag overrides this setting, and `--hardhat` sets it to `contracts`.
     pub src: PathBuf,
-    /// Path of the tests directory.
+    /// Directory containing the project's test contracts, relative to the project root.
+    ///
+    /// Test files are compiled together with the sources. When the directory exists, Foundry adds
+    /// a `test/=test/` style remapping for it, so imports such as `import "test/Utils.sol";`
+    /// resolve.
     pub test: PathBuf,
-    /// Path of the scripts directory.
+    /// Directory containing the project's Solidity scripts, relative to the project root.
+    ///
+    /// Script files are compiled together with the sources. When the directory exists, Foundry
+    /// adds a `script/=script/` style remapping for it, so imports such as
+    /// `import "script/Base.s.sol";` resolve.
     pub script: PathBuf,
-    /// Path to the artifacts directory.
+    /// Directory where compiled contract artifacts are written, relative to the project root.
+    ///
+    /// Each contract gets a JSON artifact such as `out/Counter.sol/Counter.json`, and build info
+    /// files go to `<out>/build-info` unless `build_info_path` is set. When `out` is not set and
+    /// the `out` directory does not exist but `artifacts` does, Foundry uses `artifacts`. The
+    /// `--out` (`-o`) flag overrides this setting.
     pub out: PathBuf,
-    /// Paths to all library folders, such as `lib`, or `node_modules`.
+    /// Directories containing dependency libraries, relative to the project root.
+    ///
+    /// When `auto_detect_remappings` is enabled, these directories are scanned for remappings, and
+    /// solc is always allowed to read files from them. `forge install` installs into the first
+    /// entry that is not `node_modules` (or `lib` when there is none). When `libs` is not set,
+    /// Foundry uses `lib`, `node_modules`, or both, depending on which of them exist. The
+    /// `--lib-paths` flag overrides this setting, and `--hardhat` uses `node_modules`.
     pub libs: Vec<PathBuf>,
-    /// Remappings to use for this repo
+    /// Import remappings used to resolve Solidity imports.
+    ///
+    /// Each entry has the form `[<context>:]<name>=<target>`. An import path that starts with
+    /// `<name>` has that prefix replaced with `<target>`, a path relative to the project root. The
+    /// optional `<context>` limits the remapping to imports made by source units whose paths start
+    /// with it.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// remappings = [
+    ///     "@openzeppelin/=lib/openzeppelin-contracts/",
+    ///     "lib/dep/:forge-std/=lib/dep/lib/forge-std/src/",
+    /// ]
+    /// ```
+    ///
+    /// With the first entry, `import "@openzeppelin/contracts/utils/Context.sol";` resolves to
+    /// `lib/openzeppelin-contracts/contracts/utils/Context.sol`.
+    ///
+    /// These entries are merged with remappings from `remappings.txt` in the project root, the
+    /// `FOUNDRY_REMAPPINGS` environment variable, `--remappings` on the command line, and those
+    /// detected automatically (see `auto_detect_remappings`). For the same name, command-line
+    /// remappings win over the environment, the environment over `remappings.txt`,
+    /// `remappings.txt` over this key, and all of them over auto-detected ones. Run
+    /// `forge remappings` to print the final list.
     #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
-    /// Whether to autodetect remappings.
-    pub auto_detect_remappings: bool,
-    /// Library addresses to link.
+    /// Whether to detect remappings automatically by scanning the `libs` directories.
     ///
-    /// These addresses are granted cheatcode access in forked tests and scripts, even when not
-    /// referenced by a contract.
+    /// When enabled, Forge looks through each library directory for dependencies (including their
+    /// own `foundry.toml` and `remappings.txt` files) and generates remappings for them, including
+    /// contextual remappings for nested dependencies. Remappings you configure explicitly always
+    /// take precedence over detected ones.
+    ///
+    /// When disabled, only the remappings from `remappings`, `remappings.txt`, the
+    /// `FOUNDRY_REMAPPINGS` environment variable and `--remappings` are used.
+    pub auto_detect_remappings: bool,
+    /// Addresses of already deployed Solidity libraries to link against.
+    ///
+    /// Each entry has the form `<file>:<library>:<address>`:
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// libraries = ["src/MyLibrary.sol:MyLibrary:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4"]
+    /// ```
+    ///
+    /// Remappings apply to `<file>`. Contracts that call external functions of a listed library
+    /// are linked to the given address instead of having Forge deploy the library. These addresses
+    /// are also granted cheatcode access in tests and scripts (useful on forks), even when no
+    /// contract references them.
+    ///
+    /// The `--libraries` flag and the `FOUNDRY_LIBRARIES` environment variable (a list, or a
+    /// single comma-separated string) set the same value. While `allow_linked_libraries` is
+    /// `false`, these addresses are withheld from solc; see that setting.
     pub libraries: Vec<String>,
-    /// Whether to enable the build cache.
+    /// Whether to cache compiler output so that unchanged sources are not recompiled.
+    ///
+    /// The cache is stored in `cache_path`. When disabled, every build compiles all sources. The
+    /// `--no-cache` flag disables the cache for one run, and `force` (or `--force`) clears it
+    /// before building. The cache is also bypassed while `deny` is `warnings` or `notes`, so that
+    /// warnings are reported on every build.
     pub cache: bool,
-    /// The path to the cache store.
+    /// Directory for the compiler cache and other project caches, relative to the project root.
+    ///
+    /// It holds the compiler cache file (`solidity-files-cache.json`), the `forge coverage` and
+    /// external compiler caches, and the sensitive parts of `forge script` broadcast logs, such as
+    /// RPC URLs, which are kept out of `broadcast`. `test_failures_file` and `mutation_dir`
+    /// default to paths under `cache` but are set separately, so changing `cache_path` does not
+    /// move them. The `--cache-path` flag overrides this setting.
     pub cache_path: PathBuf,
-    /// Whether to dynamically link tests.
+    /// Whether to compile tests and scripts with dynamic test linking.
+    ///
+    /// Dynamic test linking rewrites eligible `new Contract(...)` expressions in test and script
+    /// sources to `vm.deployCode` and `vm.getCode` calls. Tests that deploy a contract then don't
+    /// depend on its bytecode at compile time, so changing a contract doesn't recompile every test
+    /// that deploys it.
+    ///
+    /// As a result, test and script artifacts no longer contain the `linkReferences` of libraries
+    /// used by the contracts they deploy. Tools that link libraries from artifacts should read
+    /// `linkReferences` from the deployed contract's own artifact, or disable this setting.
+    /// Disable it as well for external tools that don't support the generated cheatcode calls.
+    ///
+    /// If a build with rewritten sources fails with an error the rewrite can cause (such as "stack
+    /// too deep"), Forge warns and compiles again without it. `--no-dynamic-test-linking` disables
+    /// it for one invocation; it cannot be combined with `--no-cache`. Mutation testing always
+    /// enables it. It does not create Solidity library link references, so it works with
+    /// `allow_linked_libraries = false`.
     pub dynamic_test_linking: bool,
     /// Whether compiled contracts may depend on externally linked Solidity libraries.
     ///
-    /// Defaults to `true`. Internal libraries and dynamic test linking remain available when
-    /// disabled. Configured library addresses are withheld from solc so actual dependencies
-    /// remain visible in its link references.
+    /// Library functions declared `public` or `external` are called on a separately deployed
+    /// library, while `internal` ones are compiled into their callers. When set to `false`,
+    /// `forge build`, `forge test`, `forge script`, `forge create` and `forge coverage` fail if
+    /// the creation or runtime bytecode of any compiled contract requires an external library. The
+    /// check covers cached artifacts and the compilation used by mutation testing, and lists each
+    /// contract with the library it links. To fix a violation, make the called library functions
+    /// `internal`.
+    ///
+    /// Internal libraries, unused public library functions and dynamic test linking remain
+    /// available. While disallowed, addresses configured in `libraries` are withheld from solc so
+    /// that actual dependencies stay visible in its link references; an unused address alone does
+    /// not fail the build.
+    ///
+    /// The policy applies only to the artifacts selected for compilation, not to arbitrary
+    /// existing artifacts or code loaded at runtime through cheatcodes.
+    /// `--disallow-linked-libraries` enforces it for one invocation and overrides both the profile
+    /// and `FOUNDRY_ALLOW_LINKED_LIBRARIES`.
     pub allow_linked_libraries: bool,
-    /// Where the gas snapshots are stored.
+    /// Directory where gas snapshots recorded by the snapshot cheatcodes are stored.
+    ///
+    /// `forge test` writes one `<group>.json` file per group recorded with cheatcodes such as
+    /// `vm.startSnapshotGas`, `vm.snapshotGasLastFrame` and `vm.snapshotValue`; see
+    /// `gas_snapshot_check` and `gas_snapshot_emit`. The path is relative to the project root.
+    /// This is separate from the `.gas-snapshot` file written by `forge snapshot`.
     pub snapshots: PathBuf,
-    /// Whether to check for differences against previously stored gas snapshots.
+    /// Whether `forge test` fails when recorded gas snapshots differ from those stored in
+    /// `snapshots`.
+    ///
+    /// After the tests run, each snapshot group is compared with its stored file; groups without a
+    /// file are skipped. Changed values are printed and the command fails without writing new
+    /// snapshots. The `--gas-snapshot-check` flag or the `FORGE_SNAPSHOT_CHECK` environment
+    /// variable overrides this setting, so `--gas-snapshot-check=false` disables a check enabled
+    /// here.
     pub gas_snapshot_check: bool,
-    /// Whether to emit gas snapshots to disk.
+    /// Whether `forge test` writes the gas snapshots recorded by cheatcodes to `snapshots`.
+    ///
+    /// Each group is written to `<snapshots>/<group>.json`, replacing its previous values. Nothing
+    /// is written when `gas_snapshot_check` finds differences. The `--gas-snapshot-emit` flag or
+    /// the `FORGE_SNAPSHOT_EMIT` environment variable overrides this setting.
     pub gas_snapshot_emit: bool,
-    /// The path to store broadcast logs at.
+    /// Directory where `forge script` writes broadcast transaction logs, relative to the project
+    /// root.
+    ///
+    /// Each run is written to `<broadcast>/<script file>/<chain id>/<function>-latest.json`, with
+    /// a timestamped `run-<timestamp>.json` copy, under an extra `dry-run` directory when the
+    /// script is only simulated. Sensitive values such as RPC URLs are written to the same
+    /// relative path under `cache_path` instead. Cheatcodes such as `vm.getBroadcast` and
+    /// `vm.getDeployment` read the logs from this directory.
     pub broadcast: PathBuf,
-    /// Additional paths passed to `solc --allow-paths`.
+    /// Additional directories that solc may read sources from, passed to `solc --allow-paths`.
+    ///
+    /// Paths are relative to the project root. The project root and `libs` are always allowed, so
+    /// this is only needed for imports from outside the project, for example in workspaces managed
+    /// by pnpm or similar tools. See
+    /// <https://docs.soliditylang.org/en/latest/path-resolution.html#allowed-paths>.
     pub allow_paths: Vec<PathBuf>,
-    /// Additional paths passed to `solc --include-path`.
+    /// Additional source directories for import resolution, passed to `solc --include-path`.
+    ///
+    /// Solc resolves imports against these directories in addition to its base path, which Foundry
+    /// sets to the project root. Use them to import contracts whose location is not fixed relative
+    /// to the project, such as packages installed by a package manager. Paths are relative to the
+    /// project root. See [solc path
+    /// resolution](https://docs.soliditylang.org/en/latest/path-resolution.html).
     pub include_paths: Vec<PathBuf>,
-    /// Glob patterns for file paths to skip when building and executing contracts.
+    /// Glob patterns of source files to leave out of the build.
+    ///
+    /// Each pattern is matched against the file's absolute path and its path relative to the
+    /// project root, and also matches any file whose name contains the pattern, so `.t.sol` skips
+    /// all tests. Skipped files produce no artifacts, though solc still compiles them when a built
+    /// file imports them. `forge lint` ignores them too. The `--skip` flag of build commands adds
+    /// patterns, with `test` and `script` as shortcuts for `.t.sol` and `.s.sol`.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// skip = ["test/invariant/**/*", "script/**/*"]
+    /// ```
     pub skip: Vec<GlobMatcher>,
-    /// Whether to forcefully clean all project artifacts before running commands.
+    /// Whether to delete all build artifacts and caches before compiling.
+    ///
+    /// This has the same effect as passing `--force` to every command. Before building, Forge
+    /// removes the artifacts in `out`, the compiler cache, the coverage and external compiler
+    /// caches, `test_failures_file`, `mutation_dir`, and the fuzz and invariant failure and corpus
+    /// directories, then compiles everything from scratch.
+    ///
+    /// **Warning:** this also discards persisted fuzz failures and corpora on every run.
     pub force: bool,
-    /// The EVM version to use when building contracts.
+    /// The EVM version to compile contracts for and, unless `hardfork` is set, to execute them
+    /// with.
+    ///
+    /// The value is an Ethereum hardfork name: `homestead`, `tangerineWhistle`, `spuriousDragon`,
+    /// `byzantium`, `constantinople`, `petersburg`, `istanbul`, `berlin`, `london`, `paris`,
+    /// `shanghai`, `cancun`, `prague`, `osaka` or `amsterdam` (case-insensitive). It is passed to
+    /// the compiler and, when `hardfork` is unset and a fork doesn't determine the hardfork,
+    /// selects the EVM rules used by `forge test` and `forge script`.
+    ///
+    /// If the selected compiler version doesn't support the configured EVM version, the newest one
+    /// it supports is used for compilation. Pin the version if you rely on it for compatibility,
+    /// since the default follows new hardforks:
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// evm_version = "paris"
+    /// ```
+    ///
+    /// `--evm-version` overrides it for one invocation.
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
-    /// The runtime hardfork to use when executing tests and scripts.
+    /// The EVM hardfork used to execute tests, scripts and other local EVM runs.
+    ///
+    /// Accepts a plain Ethereum hardfork name, such as `osaka` or `cancun`, or a hardfork
+    /// namespaced by network, such as `optimism:holocene`, `base:Beryl` or `tempo:T6`. The
+    /// namespaces are `ethereum` (`eth`), `optimism` (`op`), `base`, `tempo` (`t`) and `monad`
+    /// (`m`); the non-Ethereum namespaces other than `tempo` are only available in builds compiled
+    /// with the matching network feature.
+    ///
+    /// A namespaced hardfork also selects the matching network. A hardfork that conflicts with an
+    /// explicitly configured network, such as `hardfork = "shanghai"` with `network = "tempo"`, is
+    /// rejected.
+    ///
+    /// When unset, execution follows `evm_version`, or the forked endpoint's own hardfork when
+    /// forking. This setting only changes execution: contracts are still compiled for
+    /// `evm_version`. The `--hardfork` flag overrides it.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// hardfork = "tempo:T6"
+    /// ```
+    ///
+    /// For Tempo projects, prefer `network = "tempo"` or a live Tempo fork for current behavior,
+    /// and pin a Tempo hardfork only when you need deterministic behavior at a specific activation
+    /// point.
     pub hardfork: Option<FoundryHardfork>,
-    /// List of contracts to generate gas reports for.
+    /// The contracts to include in gas reports generated by `forge test --gas-report`.
+    ///
+    /// Entries are exact contract names, without the source path. `"*"`, or an empty list, reports
+    /// every contract. A contract listed here is reported even if it also appears in
+    /// `gas_reports_ignore`, and Forge prints a warning about the double listing.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// gas_reports = ["Counter", "Token"]
+    /// ```
     pub gas_reports: Vec<String>,
-    /// List of contracts to ignore for gas reports.
+    /// The contracts to leave out of gas reports.
+    ///
+    /// Entries are exact contract names, without the source path; patterns are not supported. A
+    /// contract that is also listed in `gas_reports` is still reported, with a warning.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// gas_reports_ignore = ["CounterTest", "Deploy"]
+    /// ```
     pub gas_reports_ignore: Vec<String>,
-    /// Whether to include gas reports for tests.
+    /// Whether gas reports include calls to test functions, such as `setUp` and `test*`.
+    ///
+    /// By default, gas reports skip calls to functions Forge recognizes as test functions
+    /// (`setUp`, `test*`, `invariant*`, `afterInvariant`, fixtures and similar), so they only show
+    /// the functions under test. Enable this to report those calls too. Contracts are still
+    /// selected by `gas_reports` and `gas_reports_ignore`.
     pub gas_reports_include_tests: bool,
-    /// The Solc instance to use if any.
+    // For backwards compatibility this also accepts `solc_version` from the toml file, see
+    // `BackwardsCompatTomlProvider`.
+    // Avoid using this field directly; call the related `solc` methods instead.
+    /// The Solidity compiler to use for the whole project, instead of detecting versions per file.
     ///
-    /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
-    /// auto-detection.
+    /// The value can be:
     ///
-    /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
-    /// file, see `BackwardsCompatTomlProvider`.
+    /// - an exact version, such as `"0.8.28"`, which is installed if it's missing (unless
+    ///   `offline` is set, in which case the build fails);
+    /// - `"solar:<version>"`, which pins an exact [Solar](https://github.com/paradigmxyz/solar)
+    ///   release, 0.2.0 or later without pre-release or build metadata;
+    /// - a path to a local compiler binary, or the name of an executable on `PATH`.
     ///
-    /// Avoid using this field directly; call the related `solc` methods instead.
+    /// ```toml
+    /// [profile.default]
+    /// solc = "0.8.28"
+    /// # solc = "solar:0.3.0"
+    /// # solc = "custom-solc"
+    /// ```
+    ///
+    /// Version requirements such as `"^0.8.0"` are not supported. When set, version auto-detection
+    /// is off and `auto_detect_solc` is ignored.
+    ///
+    /// A Solar release is used from `~/.foundry/solar/<version>`. If it's missing, Forge downloads
+    /// it from the Solar GitHub release, checks it against the release's SHA-256 checksum file and
+    /// the version it reports, and installs it there. Releases are published for macOS, x86_64
+    /// Linux, aarch64 Linux with glibc, and x86_64 Windows; on other platforms, set `solc` to the
+    /// path of a `solar` binary instead.
+    ///
+    /// The legacy key `solc_version` is still accepted and is used only when `solc` is not set.
+    /// The `FOUNDRY_SOLC_VERSION` environment variable overrides both, and `--use` overrides it
+    /// for one invocation (accepting the same values, plus a `solc:` prefix).
     #[doc(hidden)]
     pub solc: Option<SolcReq>,
-    /// Whether to autodetect the solc compiler version to use.
+    // Only `Config::is_auto_detect` reads this; `Config::solc_compiler` auto-detects whenever
+    // `solc` is unset, regardless of this value.
+    /// Whether to detect the Solidity compiler versions to use from each file's `pragma solidity`.
+    ///
+    /// With detection, Forge picks a compatible compiler version for each set of sources,
+    /// installing it if needed (unless `offline` is set). Setting `solc` turns detection off and
+    /// this key is then ignored.
+    ///
+    /// `--no-auto-detect` sets this key to `false` for one invocation. Setting it to `false`
+    /// doesn't pin a compiler by itself: compilation still auto-detects when `solc` is unset, so
+    /// set `solc` to use a single version.
     pub auto_detect_solc: bool,
-    /// Offline mode, if set, network access (downloading solc) is disallowed.
+    /// Whether to disallow network access for downloads and external lookups.
     ///
-    /// Relationship with `auto_detect_solc`:
-    ///    - if `auto_detect_solc = true` and `offline = true`, the required solc version(s) will
-    ///      be auto detected but if the solc version is not installed, it will _not_ try to
-    ///      install it
+    /// When enabled:
+    ///
+    /// - missing solc versions and Solar releases are not installed; a build that needs one fails;
+    /// - traces don't look up contract names on Etherscan or function signatures in online
+    ///   signature databases;
+    /// - `forge script` skips verifying external contracts, and `--verify-external` fails.
+    ///
+    /// With `auto_detect_solc` enabled, the required compiler versions are still detected, but
+    /// only installed ones are used. `--offline` enables it for one invocation.
     pub offline: bool,
-    /// Whether to activate optimizer
+    /// Whether to enable the Solidity optimizer.
+    ///
+    /// When unset, the optimizer is enabled if `optimizer_runs` is set to a value greater than 0,
+    /// and disabled otherwise. Setting it explicitly always wins over that inference.
+    /// `optimizer_details` can switch individual optimizer components on or off independently of
+    /// this setting.
+    ///
+    /// `--optimize` (or `--optimize=false`) overrides it for one invocation. `forge coverage`
+    /// disables the optimizer unless `--ir-minimum` is used.
     pub optimizer: Option<bool>,
-    /// The number of runs specifies roughly how often each opcode of the deployed code will be
-    /// executed across the life-time of the contract. This means it is a trade-off parameter
-    /// between code size (deploy cost) and code execution cost (cost after deployment).
-    /// An `optimizer_runs` parameter of `1` will produce short but expensive code. In contrast, a
-    /// larger `optimizer_runs` parameter will produce longer but more gas efficient code. The
-    /// maximum value of the parameter is `2**32-1`.
+    /// How many times each opcode of the deployed code is expected to run over the contract's
+    /// lifetime.
     ///
-    /// A common misconception is that this parameter specifies the number of iterations of the
-    /// optimizer. This is not true: The optimizer will always run as many times as it can
-    /// still improve the code.
+    /// This is a trade-off between code size (deployment cost) and execution cost after
+    /// deployment. A value of `1` produces short but expensive code; larger values produce longer
+    /// but more gas-efficient code. The maximum is `2**32-1`; larger values are rejected.
+    ///
+    /// It does not set how many times the optimizer runs: the optimizer always runs as many times
+    /// as it can still improve the code.
+    ///
+    /// If `optimizer` is not set explicitly, a value greater than 0 enables the optimizer. When
+    /// neither is set, 200 is used. `--optimizer-runs` overrides it for one invocation.
     pub optimizer_runs: Option<usize>,
-    /// Switch optimizer components on or off in detail.
-    /// The "enabled" switch above provides two defaults which can be
-    /// tweaked here. If "details" is given, "enabled" can be omitted.
+    /// Switches individual Solidity optimizer components on or off.
+    ///
+    /// The table is passed to solc as `settings.optimizer.details` and uses solc's camelCase key
+    /// names. Each key is a boolean; omitted keys keep solc's default:
+    ///
+    /// - `peephole`: the peephole optimizer.
+    /// - `inliner`: the inliner (solc 0.8.5 or later).
+    /// - `jumpdestRemover`: removes unused jump destinations.
+    /// - `orderLiterals`: sometimes reorders literals in commutative operations.
+    /// - `deduplicate`: removes duplicate code blocks.
+    /// - `cse`: common subexpression elimination.
+    /// - `constantOptimizer`: optimizes the representation of literal numbers and strings.
+    /// - `yul`: the Yul optimizer, which mostly operates on ABI coder v2 code and inline assembly.
+    /// - `simpleCounterForLoopUncheckedIncrement`: unchecked increments of simple loop counters.
+    ///
+    /// The `yulDetails` subtable tunes the Yul optimizer:
+    ///
+    /// - `stackAllocation`: improves the allocation of stack slots by freeing them up earlier.
+    /// - `optimizerSteps`: the sequence of optimizer steps to apply.
+    ///
+    /// ```toml
+    /// [profile.default.optimizer_details]
+    /// constantOptimizer = true
+    /// yul = true
+    ///
+    /// [profile.default.optimizer_details.yulDetails]
+    /// stackAllocation = true
+    /// optimizerSteps = "dhfoDgvulfnTUtnIf"
+    /// ```
+    ///
+    /// The details apply even when `optimizer` is unset. If compiling with `via_ir` fails, try
+    /// enabling `optimizer` and setting `optimizerSteps` to an empty string. See
+    /// <https://docs.soliditylang.org/en/latest/using-the-compiler.html#input-description> for the
+    /// defaults.
     pub optimizer_details: Option<OptimizerDetails>,
-    /// Model checker settings.
+    /// Settings for the Solidity SMTChecker, a formal verification module built into solc.
+    ///
+    /// When set, the model checker runs during `forge build` and its findings are reported as
+    /// compiler warnings. It is available in solc 0.8.7 or later on macOS and Linux, and needs the
+    /// SMT solvers it uses (such as z3) to be installed.
+    ///
+    /// The table uses solc's keys:
+    ///
+    /// - `contracts`: the contracts to check, as a table from source path to contract names.
+    ///   Without it every contract is checked, which can take a long time.
+    /// - `engine`: `chc` (constrained Horn clauses, recommended), `bmc` (bounded model checker),
+    ///   `all` (both) or `none`. solc runs no engine unless one is set.
+    /// - `timeout`: the solver timeout per query, in milliseconds.
+    /// - `targets`: what to check: `assert`, `underflow`, `overflow`, `divByZero`,
+    ///   `constantCondition`, `popEmptyArray`, `outOfBounds` and `balance`. When omitted, Forge
+    ///   checks only `assert`, unlike solc, which checks all targets.
+    /// - `invariants`: invariants to report: `contract` and `reentrancy` (solc 0.8.10 or later).
+    /// - `solvers`: `cvc4`, `eld` (solc 0.8.18 or later), `smtlib2` and `z3`.
+    /// - `showUnproved`, `showUnsupported` and `showProvedSafe`: whether to report unproved
+    ///   targets, unsupported language features and targets proved safe (the last two need solc
+    ///   0.8.20).
+    /// - `divModWithSlacks`: whether to encode division and modulo with slack variables.
+    ///
+    /// The `show*` and `divModWithSlacks` keys also accept snake_case names.
+    ///
+    /// ```toml
+    /// [profile.default.model_checker]
+    /// contracts = { "src/Contract.sol" = ["Contract"] }
+    /// engine = "chc"
+    /// timeout = 10000
+    /// targets = ["assert"]
+    /// ```
+    ///
+    /// See the [SMTChecker documentation](https://docs.soliditylang.org/en/latest/smtchecker.html).
     pub model_checker: Option<ModelCheckerSettings>,
-    /// Verbosity to use for global output.
+    /// Default verbosity for test and script output, as if passed with `-v` flags.
+    ///
+    /// - `2` (`-vv`): logs emitted during tests are displayed.
+    /// - `3` (`-vvv`): execution traces of failing tests are displayed.
+    /// - `4` (`-vvvv`): execution traces of all tests, and setup traces of failing tests, are
+    ///   displayed.
+    /// - `5` (`-vvvvv`): execution and setup traces are always displayed, including storage
+    ///   changes and backtraces with line numbers.
+    ///
+    /// `-v` flags on the command line replace this value. Trace rendering uses the higher of this
+    /// value and `verbosity` in the `tracing` section.
     pub verbosity: u8,
-    /// url of the rpc server that should be used for any rpc calls
+    /// URL or alias of the RPC endpoint used for RPC calls and for the main fork in tests and
+    /// scripts.
+    ///
+    /// Accepts an HTTP(S) or WebSocket URL, an IPC socket path, or an alias. An alias is resolved
+    /// in this order: a key of `rpc_endpoints`, an endpoint known to MESC (queried under the
+    /// `foundry` profile), then the built-in `tempo` and `moderato` aliases. Any other value is
+    /// used as-is. `${VAR}` placeholders are only expanded through an `rpc_endpoints` alias, not
+    /// in a URL written here directly.
+    ///
+    /// When set, `forge test` and `forge script` run against a fork of this endpoint, pinned to
+    /// `fork_block_number` or to the latest block. Commands such as `cast` that need an endpoint
+    /// fall back to `http://localhost:8545` when it is unset. The value also selects the
+    /// `etherscan` entry of the same name when `etherscan_api_key` names none.
+    ///
+    /// The `--rpc-url` (`--fork-url`) flag overrides it. `cast` also reads the `ETH_RPC_URL`
+    /// environment variable; `forge` does not, so exporting it does not fork every test run.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// eth_rpc_url = "mainnet"
+    ///
+    /// [rpc_endpoints]
+    /// mainnet = "https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}"
+    /// ```
     pub eth_rpc_url: Option<String>,
-    /// Whether to accept invalid certificates for the rpc server.
+    /// Whether to accept invalid TLS certificates from the RPC endpoint.
+    ///
+    /// Applies to HTTP(S) transports, including fork providers. Enabling it disables certificate
+    /// validation, so only use it for endpoints you trust, such as a local node with a self-signed
+    /// certificate. The `-k`/`--insecure` flag enables it for a single run.
     pub eth_rpc_accept_invalid_certs: bool,
-    /// Whether to disable automatic proxy detection for the rpc server.
+    /// Whether to disable automatic proxy detection for the RPC endpoint.
     ///
-    /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
-    /// where system proxy detection via SCDynamicStore causes crashes.
+    /// When enabled, the `HTTP_PROXY`/`HTTPS_PROXY` environment variables and system proxy
+    /// settings are ignored. This helps in sandboxed environments (such as the Cursor IDE sandbox
+    /// or the macOS App Sandbox) where system proxy detection through SCDynamicStore crashes. The
+    /// `--no-proxy` flag enables it for a single run.
     pub eth_rpc_no_proxy: bool,
-    /// JWT secret that should be used for any rpc calls
+    /// Hex-encoded JWT secret used to authenticate RPC calls.
+    ///
+    /// For each connection Foundry signs a fresh token with this secret (with an `iat` claim set
+    /// to the current time) and sends it as an `Authorization: Bearer` header, as the Engine API
+    /// of execution clients expects. An invalid hex secret makes the connection fail. It also
+    /// applies to fork providers. The `cast` flag `--jwt-secret` (or the `ETH_RPC_JWT_SECRET`
+    /// environment variable) overrides it.
+    ///
+    /// Avoid committing the secret; prefer setting it from the environment.
     pub eth_rpc_jwt: Option<String>,
-    /// Timeout that should be used for any rpc calls
+    /// Timeout in seconds for each RPC request.
+    ///
+    /// The timeout runs from when a request starts connecting until its response body has been
+    /// read. When unset, requests time out after 45 seconds. It also applies to fork providers.
+    /// The `--rpc-timeout` flag or the `ETH_RPC_TIMEOUT` environment variable overrides it.
     pub eth_rpc_timeout: Option<u64>,
-    /// Headers that should be used for any rpc calls
+    /// Extra HTTP headers sent with every RPC request, each written as `name:value`.
     ///
-    /// # Example
+    /// Each entry is split at its first `:`, and the name and value are trimmed; an entry without
+    /// a `:` or with an invalid header name is an error. The headers also apply to forks, except a
+    /// cheatcode fork whose `rpc_endpoints` entry sets `auth`, which sends only its
+    /// `Authorization` header. The `cast` flag `--rpc-headers` (or the `ETH_RPC_HEADERS`
+    /// environment variable, with comma-separated entries) overrides it.
     ///
-    /// rpc_headers = ["x-custom-header:value", "x-another-header:another-value"]
-    ///
-    /// You can also the ETH_RPC_HEADERS env variable like so:
-    /// `ETH_RPC_HEADERS="x-custom-header:value x-another-header:another-value"`
+    /// ```toml
+    /// [profile.default]
+    /// eth_rpc_headers = ["x-custom-header:value", "x-another-header:another-value"]
+    /// ```
     pub eth_rpc_headers: Option<Vec<String>>,
-    /// Print the equivalent curl command instead of making the RPC request.
+    /// Whether to print the equivalent `curl` command for each RPC request instead of sending it.
+    ///
+    /// No request reaches the endpoint: Foundry prints the command, including headers and any JWT,
+    /// and continues with a placeholder response, so output that depends on the response is not
+    /// meaningful. It is not supported with multiple fork URLs. The `cast` flag `--curl` enables
+    /// it for a single run.
     pub eth_rpc_curl: bool,
-    /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
+    /// Etherscan API key, or the name of an entry in the `etherscan` table.
+    ///
+    /// If the value names an `etherscan` entry, that entry is used. Otherwise Foundry uses the
+    /// first `etherscan` entry whose chain matches the current chain, with this value replacing
+    /// the entry's key, and with no matching entry it builds a config for the current chain from
+    /// this key and the chain's known explorer URL. With Etherscan API V2, one Etherscan key works
+    /// for every chain that Etherscan serves (such as BscScan, BaseScan or Polygonscan).
+    ///
+    /// The key is used for contract verification, fetching verified sources and identifying
+    /// contracts in traces. The `--etherscan-api-key` flag and the `ETHERSCAN_API_KEY` environment
+    /// variable (ignored when empty) override it. Avoid committing the key; prefer the environment
+    /// or an `etherscan` entry with a `${VAR}` placeholder.
     pub etherscan_api_key: Option<String>,
-    /// Multiple etherscan api configs and their aliases
+    /// Named Etherscan (or compatible block explorer) configurations.
+    ///
+    /// Each key is an alias and each value is a table with:
+    ///
+    /// - `key` (required): the API key. May contain `${VAR}` placeholders, resolved from the
+    ///   environment when the entry is used.
+    /// - `chain`: the chain name or EIP-155 chain ID. When omitted, the alias itself is parsed as
+    ///   a chain name, so `mainnet` or `optimism` need no `chain`.
+    /// - `url`: the explorer API URL. May contain `${VAR}` placeholders. When omitted, the chain's
+    ///   known Etherscan URL is used.
+    ///
+    /// Every entry needs a `url` or a chain (explicit or derived from the alias). Foundry picks
+    /// the entry named by `etherscan_api_key` or by an `eth_rpc_url` alias, otherwise the first
+    /// entry whose chain matches the current chain. An entry that cannot be resolved, such as one
+    /// with an unset variable or an unknown chain, can make chain lookups fail, so keep every
+    /// entry valid.
+    ///
+    /// The table can be written at the top level as `[etherscan]` or inside a profile.
+    ///
+    /// ```toml
+    /// [etherscan]
+    /// mainnet = { key = "${ETHERSCAN_API_KEY}" }
+    /// mainnet2 = { key = "ABCDEFG", chain = "mainnet" }
+    /// optimism = { key = "1234567" }
+    /// unknown_chain = { key = "ABCDEFG", url = "https://api.example.com/api" }
+    /// ```
     #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
     pub etherscan: EtherscanConfigs,
-    /// List of solidity error codes to always silence in the compiler output.
+    /// Solidity compiler warning codes to silence.
+    ///
+    /// Each entry is a numeric code or one of these names:
+    ///
+    /// - `license` (1878), `code-size` (5574), `init-code-size` (3860)
+    /// - `func-mutability` (2018), `unused-var` (2072), `unused-param` (5667), `unused-return`
+    ///   (9302)
+    /// - `virtual-interfaces` (5815), `missing-receive-ether` (3628), `shadowing` (2519)
+    /// - `same-varname` (8760), `unnamed-return` (6321), `unreachable` (5740)
+    /// - `pragma-solidity` (3420), `constructor-visibility` (2462), `transient-storage` (2394)
+    /// - `too-many-warnings` (4591), `transfer-deprecated` (9207)
+    /// - `natspec-memory-safe-assembly-deprecated` (2424)
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// ignored_error_codes = ["license", "code-size", 2394]
+    /// ```
+    ///
+    /// Only warnings are silenced; errors are always reported. Silenced warnings don't fail the
+    /// build when `deny` is set. Setting this key replaces the default list. The SPDX license
+    /// (1878) and contract size (5574) warnings are always silenced in test files.
+    /// `--ignored-error-codes` replaces the list for one invocation. To silence codes only for
+    /// some paths, use `ignored_error_codes_from`.
     pub ignored_error_codes: Vec<SolidityErrorCode>,
-    /// List of (path prefix, solidity error codes) to silence in the compiler output.
+    /// Solidity compiler warning codes to silence only in files under given paths.
+    ///
+    /// Each entry is a pair of a path prefix, relative to the project root, and a list of codes
+    /// (numbers or the names accepted by `ignored_error_codes`):
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// ignored_error_codes_from = [
+    ///     ["src/generated", [1878, 5574]],
+    ///     ["test/legacy", ["unused-var"]],
+    /// ]
+    /// ```
+    ///
+    /// A warning is silenced when the file it points to starts with the prefix and its code is
+    /// listed. Only warnings are silenced, and silenced warnings don't fail the build when `deny`
+    /// is set.
     pub ignored_error_codes_from: Vec<(PathBuf, Vec<SolidityErrorCode>)>,
-    /// List of file paths to ignore.
+    /// Paths whose compiler warnings are silenced.
+    ///
+    /// Each entry is a file or directory path relative to the project root; a warning is silenced
+    /// when the file it points to starts with one of them. This hides known warnings from vendored
+    /// or generated code without affecting others:
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// ignored_warnings_from = ["lib/legacy", "src/Generated.sol"]
+    /// ```
+    ///
+    /// Only warnings are silenced; errors are always reported. Silenced warnings don't fail the
+    /// build when `deny` is set. To silence only some codes, use `ignored_error_codes_from`.
     #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
-    /// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
+    /// The lowest diagnostic level that makes a command fail.
+    ///
+    /// Valid values:
+    ///
+    /// - `never`: only errors fail; warnings and notes are reported.
+    /// - `warnings`: warnings also fail.
+    /// - `notes`: warnings and notes both fail.
+    ///
+    /// This applies to compiler warnings (except those silenced by `ignored_error_codes`,
+    /// `ignored_error_codes_from` and `ignored_warnings_from`), and to lint warnings and notes in
+    /// `forge lint` and the lint pass of `forge build`. Compiler notes never fail a build. While
+    /// warnings are denied, a failing build writes no artifacts, and the compilation cache is not
+    /// used, so warnings are reported on every build.
+    ///
+    /// Values are case-insensitive. For compatibility, `true` means `warnings` and `false` means
+    /// `never`. `--deny` (`-D`) overrides it for one invocation.
     pub deny: DenyLevel,
-    /// DEPRECATED: use `deny` instead.
+    // Not serialized; `BackwardsCompatTomlProvider` moves it to `deny` when that key is unset.
+    /// Deprecated: use `deny = "warnings"` instead.
+    ///
+    /// `deny_warnings = true` is read as `deny = "warnings"` and `false` as `deny = "never"`,
+    /// unless `deny` is also set in the same profile, in which case `deny` wins. The
+    /// `--deny-warnings` flag is deprecated in the same way in favor of `--deny warnings`.
     #[serde(default, skip_serializing)]
     pub deny_warnings: bool,
-    /// Only run test functions matching the specified regex pattern.
+    /// Only run test functions whose signature matches this regular expression.
+    ///
+    /// The pattern is searched for anywhere in the full function signature, such as
+    /// `test_transfer(uint256)`; anchor it with `^` and `$` to match exactly. It applies to
+    /// `forge test` and to the commands built on it, such as `forge coverage` and
+    /// `forge snapshot`. The `--match-test` (`--mt`) flag replaces this value.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// match_test = "^test_transfer"
+    /// ```
     #[serde(rename = "match_test")]
     pub test_pattern: Option<RegexWrapper>,
-    /// Only run test functions that do not match the specified regex pattern.
+    /// Skip test functions whose signature matches this regular expression.
+    ///
+    /// The pattern is searched for anywhere in the full function signature, such as
+    /// `test_transfer(uint256)`. It applies to `forge test` and to the commands built on it, such
+    /// as `forge coverage` and `forge snapshot`. The `--no-match-test` (`--nmt`) flag replaces
+    /// this value.
     #[serde(rename = "no_match_test")]
     pub test_pattern_inverse: Option<RegexWrapper>,
-    /// Only run tests in contracts matching the specified regex pattern.
+    /// Only run tests in contracts whose name matches this regular expression.
+    ///
+    /// The pattern is searched for anywhere in the contract name; anchor it with `^` and `$` to
+    /// match exactly. It applies to `forge test` and to the commands built on it, such as
+    /// `forge coverage` and `forge snapshot`. The `--match-contract` (`--mc`) flag replaces this
+    /// value.
     #[serde(rename = "match_contract")]
     pub contract_pattern: Option<RegexWrapper>,
-    /// Only run tests in contracts that do not match the specified regex pattern.
+    /// Skip tests in contracts whose name matches this regular expression.
+    ///
+    /// The pattern is searched for anywhere in the contract name. It applies to `forge test` and
+    /// to the commands built on it, such as `forge coverage` and `forge snapshot`. The
+    /// `--no-match-contract` (`--nmc`) flag replaces this value.
     #[serde(rename = "no_match_contract")]
     pub contract_pattern_inverse: Option<RegexWrapper>,
-    /// Only run tests in source files matching the specified glob pattern.
+    /// Only run tests in source files whose path matches this glob pattern.
+    ///
+    /// Paths are matched relative to the project root, such as `test/unit/Counter.t.sol`. A file
+    /// also matches when its file name contains the pattern text. It applies to `forge test` and
+    /// to the commands built on it, such as `forge coverage` and `forge snapshot`. The
+    /// `--match-path` (`--mp`) flag replaces this value.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// match_path = "test/unit/*"
+    /// ```
     #[serde(rename = "match_path", with = "from_opt_glob")]
     pub path_pattern: Option<globset::Glob>,
-    /// Only run tests in source files that do not match the specified glob pattern.
+    /// Skip tests in source files whose path matches this glob pattern.
+    ///
+    /// Paths are matched relative to the project root, such as `test/fork/Counter.t.sol`. A file
+    /// also matches when its file name contains the pattern text. It applies to `forge test` and
+    /// to the commands built on it, such as `forge coverage` and `forge snapshot`. The
+    /// `--no-match-path` (`--nmp`) flag replaces this value.
     #[serde(rename = "no_match_path", with = "from_opt_glob")]
     pub path_pattern_inverse: Option<globset::Glob>,
-    /// Only show coverage for files that do not match the specified regex pattern.
+    /// Leave source files whose path matches this regular expression out of `forge coverage`
+    /// reports.
+    ///
+    /// Paths are relative to the project root, and the pattern is searched for anywhere in the
+    /// path. It only filters the report; it does not change which tests run. The
+    /// `--no-match-coverage` (`--nmco`) flag replaces this value.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// no_match_coverage = "^(test|script)/"
+    /// ```
     #[serde(rename = "no_match_coverage")]
     pub coverage_pattern_inverse: Option<RegexWrapper>,
-    /// Path where last test run failures are recorded.
-    pub test_failures_file: PathBuf,
-    /// Path where mutation tests are cached, to resume running them
-    pub mutation_dir: PathBuf,
-    /// Max concurrent threads to use.
-    pub threads: Option<usize>,
-    /// Whether to show test execution progress.
-    pub show_progress: bool,
-    /// Configuration for fuzz testing
-    pub fuzz: FuzzConfig,
-    /// Configuration for invariant testing
-    pub invariant: InvariantConfig,
-    /// Configuration for symbolic testing
-    pub symbolic: SymbolicConfig,
-    /// Configuration for `forge coverage`
-    pub coverage: CoverageConfig,
-    /// Configuration for mutation testing
-    pub mutation: MutationConfig,
-    /// Configuration for trace rendering.
-    pub tracing: TracingConfig,
-    /// Whether to allow ffi cheatcodes in test
-    pub ffi: bool,
-    /// Whether to show `console.log` outputs in realtime during script/test execution.
+    /// File where `forge test` records the tests that failed in the last run.
     ///
-    /// Ignored when `--json` or `--junit` writes a report to stdout. Otherwise, logs print live
-    /// instead of being captured, so `forge test --json-file` does not include them.
+    /// `forge test --rerun` reads it to run only those tests again. It is rewritten after each run
+    /// and removed when every test passes, by `forge clean`, and by `force`. The path is relative
+    /// to the project root and does not follow `cache_path`.
+    pub test_failures_file: PathBuf,
+    // Not rebased by `canonic_at`; joined with `root` where it is used.
+    /// Directory where mutation testing caches mutants and results, so interrupted runs can
+    /// resume.
+    ///
+    /// `forge test --mutate` stores generated mutants and their results here, keyed by build and
+    /// mutation settings. The path is relative to the project root and does not follow
+    /// `cache_path`. `forge clean` and `force` delete it.
+    pub mutation_dir: PathBuf,
+    // Not read anywhere: the thread pool is sized from `GlobalArgs::threads` (`--threads`/`-j`).
+    /// Number of threads for parallel work such as running tests; `0` uses all logical cores.
+    ///
+    /// **Note:** Forge currently sizes its thread pool only from the global `--threads` (`-j`,
+    /// `--jobs`) flag, so this setting has no effect.
+    pub threads: Option<usize>,
+    /// Whether `forge test` shows live progress for the run and each test suite while tests
+    /// execute.
+    ///
+    /// The `--show-progress` flag enables it for one run.
+    pub show_progress: bool,
+    /// Settings for fuzz tests, which run test functions that take parameters with generated
+    /// inputs.
+    ///
+    /// Declare them in a `[profile.<name>.fuzz]` table, or in a standalone `[fuzz]` table that
+    /// applies to every profile; a profile's own table takes precedence. Individual tests can
+    /// override them with inline `forge-config` comments. The `invariant` section falls back to
+    /// these values for the settings both sections share.
+    pub fuzz: FuzzConfig,
+    /// Settings for invariant tests, which check `invariant_*` functions after random call
+    /// sequences.
+    ///
+    /// Declare them in a `[profile.<name>.invariant]` table, or in a standalone `[invariant]`
+    /// table that applies to every profile; a profile's own table takes precedence. Individual
+    /// tests can override them with inline `forge-config` comments.
+    ///
+    /// Any key set in the standalone `[fuzz]` table that the standalone `[invariant]` table
+    /// doesn't set also applies to invariant tests, such as `runs`, `dictionary_weight`, the
+    /// `include_*` keys and the `corpus_*` keys. Invariant tests have no seed of their own:
+    /// they use `fuzz.seed`.
+    pub invariant: InvariantConfig,
+    /// Settings for symbolic testing, which explores test inputs with an SMT solver.
+    ///
+    /// Declare them in a `[profile.<name>.symbolic]` table, or in a standalone `[symbolic]` table
+    /// that applies to every profile; a profile's own table takes precedence.
+    pub symbolic: SymbolicConfig,
+    /// Settings for `forge coverage`.
+    ///
+    /// Declare them in a `[profile.<name>.coverage]` table, or in a standalone `[coverage]` table
+    /// that applies to every profile; a profile's own table takes precedence. Command-line flags
+    /// take precedence over these values.
+    pub coverage: CoverageConfig,
+    /// Settings for mutation testing with `forge test --mutate`.
+    ///
+    /// Declare them in a `[profile.<name>.mutation]` table, or in a standalone `[mutation]` table
+    /// that applies to every profile; a profile's own table takes precedence. Mutation results are
+    /// cached in `mutation_dir`.
+    pub mutation: MutationConfig,
+    /// Settings for decoding and rendering execution traces in Forge and Cast.
+    ///
+    /// Declare them in a `[profile.<name>.tracing]` table, or in a standalone `[tracing]` table
+    /// that applies to every profile; a profile's own table takes precedence. Command-line trace
+    /// options override or extend them for one command.
+    pub tracing: TracingConfig,
+    /// Whether to allow the `vm.ffi` and `vm.tryFfi` cheatcodes to run external commands.
+    ///
+    /// **Warning:** enabling this lets tests and scripts run arbitrary programs on your machine
+    /// with your user's permissions. Only enable it for code you trust, including its
+    /// dependencies.
+    ///
+    /// Commands run from the project root, and `vm.ffi` returns their standard output, hex-decoded
+    /// when it is valid hex. Enable it here, with inline config, or for one run with `--ffi`; the
+    /// `FOUNDRY_FFI` and `DAPP_FFI` environment variables are ignored. Mutation testing refuses to
+    /// run while it is enabled.
+    pub ffi: bool,
+    /// Whether to print `console.log` output while tests and scripts run instead of after they
+    /// finish.
+    ///
+    /// Ignored when `--json`, or `--junit` for `forge test`, writes a report to stdout; logs are
+    /// then captured into the report. Otherwise logs print live instead of being captured, so
+    /// `forge test --json-file` does not include them. The `--live-logs` flag enables it for one
+    /// run.
     pub live_logs: bool,
-    /// Whether to allow `expectRevert` for internal functions.
+    /// Whether `vm.expectRevert` can be satisfied by a revert at the cheatcode's own call depth,
+    /// such as one from an internal function.
+    ///
+    /// By default, `expectRevert` applies to the next external call, and expecting a revert from
+    /// an internal function fails with
+    /// `call didn't revert at a lower depth than cheatcode call depth`. Enabling this lets a
+    /// revert at the same depth satisfy the expectation. It is often enabled for a single test
+    /// with inline config: `/// forge-config: default.allow_internal_expect_revert = true`.
     pub allow_internal_expect_revert: bool,
-    /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
+    /// Whether to route salted `CREATE2` deployments through the CREATE2 deployer in tests and
+    /// non-broadcasting scripts too.
+    ///
+    /// By default, Forge routes `new C{salt: s}()` through the `create2_deployer` contract only
+    /// while a script broadcasts. With this enabled, the same routing applies in tests and
+    /// simulations, so addresses match the ones a broadcast produces. Only deployments made
+    /// directly by the test or script contract, or at the depth of an active prank or broadcast,
+    /// are routed. The `--always-use-create-2-factory` flag enables it for one run.
     pub always_use_create_2_factory: bool,
-    /// Controls how EIP-1559 fees are estimated for `forge script` broadcasts
-    /// (`low` / `market` / `aggressive`). Defaults to `market`, which preserves
-    /// the historical behavior (`base_fee * 2 + 20th-percentile priority fee`).
+    /// How to estimate EIP-1559 fees for the transactions Foundry sends.
+    ///
+    /// Used when `forge script` broadcasts and when `forge create`, `cast send` and `cast mktx`
+    /// fill in fees. The preset picks the `eth_feeHistory` reward percentile for the priority fee
+    /// and the base-fee multiplier for `maxFeePerGas`:
+    ///
+    /// - `low`: 10th-percentile priority fee and `base_fee * 1.5`. This lowers only the tip and
+    ///   the fee cap, not the base fee actually paid, and the transaction may stall if the base
+    ///   fee rises.
+    /// - `market`: 20th-percentile priority fee and `base_fee * 2`, Foundry's historical behavior.
+    /// - `aggressive`: 50th-percentile priority fee and `base_fee * 2`, a larger tip for faster
+    ///   inclusion.
+    ///
+    /// Ignored for legacy transactions (`--legacy`). `--with-gas-price` and `--priority-gas-price`
+    /// override `maxFeePerGas` and `maxPriorityFeePerGas` respectively, and
+    /// `forge script --estimate` overrides the preset.
     #[serde(default)]
     pub eip1559_fee_estimate: Eip1559FeeEstimatePreset,
-    /// Sets a timeout in seconds for vm.prompt cheatcodes
+    /// How many seconds `vm.prompt` and the related prompt cheatcodes wait for input before
+    /// reverting.
+    ///
+    /// The timeout keeps unattended runs, such as CI, from hanging on a prompt.
     pub prompt_timeout: u64,
-    /// The address which will be executing all tests
+    /// The address that deploys test contracts and calls test functions, and the default script
+    /// sender.
+    ///
+    /// In `forge test`, this address deploys each test contract and calls `setUp` and the test
+    /// functions, so it is `msg.sender` for those calls; its balance is set to `initial_balance`.
+    /// In `forge script`, it is the sender unless `--sender`, a private key, or a single
+    /// configured wallet determines another. The `--sender` flag overrides it.
     pub sender: Address,
-    /// The tx.origin value during EVM execution
+    // Parsed into EvmOpts::env.tx_origin (also from --tx-origin), but nothing reads it: local and
+    // fork transaction requests take their caller, and therefore tx.origin, from EvmOpts::sender.
+    /// The `tx.origin` value for EVM execution.
+    ///
+    /// Foundry currently does not apply this value: in tests and scripts, `tx.origin` is the
+    /// account that sends each top-level call, which is `sender` unless a prank or broadcast
+    /// changes it. Use `vm.prank(sender, origin)` or `vm.startPrank(sender, origin)` to set
+    /// `tx.origin` for specific calls.
     pub tx_origin: Address,
-    /// the initial balance of each deployed test contract
+    /// The balance, in wei, given to each test contract and to the accounts that deploy and call
+    /// it.
+    ///
+    /// Forge sets it on the test contract before deployment, so it is available in the
+    /// constructor, and then resets the test `sender` and Forge's internal caller and library
+    /// deployer accounts to it. Accepts an integer or a string; write values above 64 bits as a
+    /// string, such as `"0xffffffffffffffffffffffff"`. The `--initial-balance` flag overrides it.
     pub initial_balance: U256,
-    /// the block.number value during EVM execution
+    /// The `block.number` value during local EVM execution.
+    ///
+    /// When forking, the fork block's number is used instead. The `--block-number` flag overrides
+    /// it.
     #[serde(
         deserialize_with = "crate::deserialize_u64_to_u256",
         serialize_with = "crate::serialize_u64_or_u256"
     )]
     pub block_number: U256,
-    /// pins the block number for the state fork
+    /// Block number to pin the fork created from `eth_rpc_url` to.
+    ///
+    /// When unset, the fork starts at the endpoint's latest block. It has no effect without
+    /// `eth_rpc_url`, and forks created by cheatcodes such as `vm.createFork` take their own block
+    /// instead. A pinned block reuses its disk cache across runs and is never warmed by
+    /// `fork_prefetch`. The `--fork-block-number` flag, which requires `--rpc-url`, overrides it.
     pub fork_block_number: Option<u64>,
-    /// Fetch fork state by block number for RPCs that cannot serve it by hash.
+    /// Whether to read fork state by block number instead of block hash.
+    ///
+    /// Use it when the RPC serves state by number but rejects block-hash selectors or cannot serve
+    /// older state by hash. It does not restore historical state the RPC no longer has. It covers
+    /// `forge test`, forks created or rolled to a block number by cheatcodes, and the state reads
+    /// of `forge script`. It is a profile setting, not an `rpc_endpoints` option, so scope it to a
+    /// named profile alongside that profile's `eth_rpc_url` when only one network needs it.
+    ///
+    /// Number-based reads cannot guarantee the same state if the remote chain reorganizes.
+    /// Number-mode forks keep their state cache in memory and neither read nor write the disk
+    /// cache. Forks created or rolled to a transaction hash, and `cast run`, still require
+    /// hash-addressed state, and `vm.transact` rejects number-mode forks. `fork_block_number`
+    /// alone selects the fork block without enabling this mode. The `--fork-state-by-number` flag
+    /// enables it for a single run and takes precedence over configuration.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// fork_state_by_number = true
+    /// ```
     #[serde(default)]
     pub fork_state_by_number: bool,
-    /// The chain name or EIP-155 chain ID.
+    /// The chain Foundry targets, as a chain name or EIP-155 chain ID.
+    ///
+    /// Accepts a name such as `"mainnet"` or `"sepolia"`, or a number such as `1`. It sets the
+    /// `chainid` value during EVM execution: when unset, local execution uses 31337 and forks use
+    /// the chain ID reported by the RPC, and when set it overrides the fork's chain ID. Commands
+    /// also use it to choose the block explorer settings and API key from `[etherscan]`, and
+    /// `cast` commands use it as the transaction chain. The key can also be written as `chain`.
+    /// The `--chain` (`--chain-id`) flag overrides it.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// chain_id = "sepolia"
+    /// ```
     #[serde(rename = "chain_id", alias = "chain")]
     pub chain: Option<Chain>,
-    /// Block gas limit.
-    pub gas_limit: GasLimit,
-    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
-    pub code_size_limit: Option<usize>,
-    /// `tx.gasprice` value during EVM execution.
+    /// The gas limit for each top-level call in tests and scripts, also used as `block.gaslimit`.
     ///
-    /// This is an Option, so we can determine in fork mode whether to use the config's gas price
-    /// (if set by user) or the remote client's gas price.
+    /// Forge gives every top-level call this much gas and sets `block.gaslimit` to the same value.
+    /// When `block_gas_limit` is set, it replaces this value for both. Accepts an integer, a
+    /// numeric string, or `"max"` for the largest 64-bit value. TOML integers are signed 64-bit,
+    /// so write larger values as a string:
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// gas_limit = "max"
+    /// ```
+    ///
+    /// The CLI flag `--gas-limit` is an alias of `--block-gas-limit` and sets `block_gas_limit`,
+    /// not this key.
+    pub gas_limit: GasLimit,
+    /// The maximum deployed contract size, in bytes, enforced during local execution (EIP-170).
+    ///
+    /// When unset, tests and simulations enforce no contract size limit, so oversized contracts
+    /// still deploy. Setting it enforces this runtime code limit and an initcode limit of twice
+    /// the value. `forge script` also uses it for its pre-broadcast size check, which otherwise
+    /// uses the network's limit (24,576 bytes on Ethereum) and which `--disable-code-size-limit`
+    /// skips. The `--code-size-limit` flag overrides it.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// code_size_limit = 49152
+    /// ```
+    pub code_size_limit: Option<usize>,
+    // An Option so fork mode can tell whether to use the configured gas price (if set by the user)
+    // or the remote client's gas price.
+    /// The `tx.gasprice` value, in wei, during EVM execution.
+    ///
+    /// When unset, local execution uses 0 and forks use the RPC's current gas price. This only
+    /// affects simulated execution; the price of broadcast transactions is set by fee estimation
+    /// and flags such as `--with-gas-price`. The `--gas-price` flag overrides it.
     pub gas_price: Option<u64>,
-    /// The base fee in a block.
+    /// The `block.basefee` value, in wei, during local EVM execution.
+    ///
+    /// When forking, the fork block's base fee is used instead. The `--block-base-fee-per-gas`
+    /// (`--base-fee`) flag overrides it.
     pub block_base_fee_per_gas: u64,
-    /// The `block.coinbase` value during EVM execution.
+    /// The `block.coinbase` value during local EVM execution.
+    ///
+    /// When forking, the fork block's beneficiary is used instead. The `--block-coinbase` flag
+    /// overrides it.
     pub block_coinbase: Address,
-    /// The `block.timestamp` value during EVM execution.
+    /// The `block.timestamp` value, in seconds, during local EVM execution.
+    ///
+    /// When forking, the fork block's timestamp is used instead. The `--block-timestamp` flag
+    /// overrides it.
     #[serde(
         deserialize_with = "crate::deserialize_u64_to_u256",
         serialize_with = "crate::serialize_u64_or_u256"
     )]
     pub block_timestamp: U256,
-    /// The `block.difficulty` value during EVM execution.
+    /// The `block.difficulty` value during local EVM execution.
+    ///
+    /// Since the Merge (Paris), the `DIFFICULTY` opcode returns `block.prevrandao` instead, so
+    /// this value only applies to pre-Paris EVM versions; set `block_prevrandao` otherwise. When
+    /// forking, the fork block's difficulty is used instead. The `--block-difficulty` flag
+    /// overrides it.
     pub block_difficulty: u64,
-    /// Before merge the `block.max_hash`, after merge it is `block.prevrandao`.
+    /// The `block.prevrandao` value during local EVM execution, as a 32-byte hex string.
+    ///
+    /// Before the Merge, this field held the block's mix hash. When forking, the fork block's
+    /// value is used instead. The `--block-prevrandao` flag overrides it.
     pub block_prevrandao: B256,
-    /// The `block.gaslimit` value during EVM execution.
+    /// The `block.gaslimit` value and per-call gas limit, overriding `gas_limit` when set.
+    ///
+    /// When unset, `gas_limit` is used for both. Accepts an integer, a numeric string, or `"max"`.
+    /// The `--block-gas-limit` flag, also spelled `--gas-limit`, overrides it.
     pub block_gas_limit: Option<GasLimit>,
-    /// The memory limit per EVM execution in bytes.
-    /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
+    /// The maximum memory, in bytes, that a single EVM execution may use.
     ///
-    /// The default is 128MiB.
+    /// An execution that exceeds it halts with a `MemoryLimitOOG` error. The `--memory-limit` flag
+    /// overrides it.
     pub memory_limit: u64,
-    /// Additional output selection for all contracts, such as "ir", "devdoc", "storageLayout",
-    /// etc.
+    /// Additional compiler output to include in each contract's artifact.
     ///
-    /// See the [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api) for more information.
+    /// Values are solc output selectors, such as `devdoc`, `userdoc`, `storageLayout`,
+    /// `transientStorageLayout`, `ir`, `irOptimized`, `irOptimizedAst`, `evm.assembly`,
+    /// `evm.legacyAssembly`, `evm.gasEstimates` or `ewasm.wasm`. See the [Solidity compiler
+    /// API](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api) for the
+    /// full list.
     ///
-    /// The following values are always set because they're required by `forge`:
-    /// ```json
-    /// {
-    ///   "*": [
-    ///       "abi",
-    ///       "evm.bytecode",
-    ///       "evm.deployedBytecode",
-    ///       "evm.methodIdentifiers"
-    ///     ]
-    /// }
+    /// Forge always requests what it needs, whatever this is set to: `abi`, the bytecode and
+    /// deployed bytecode objects, source maps and link references, immutable references, method
+    /// identifiers and `metadata`.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// extra_output = ["storageLayout", "devdoc"]
     /// ```
+    ///
+    /// `--extra-output` replaces it for one invocation. To write output to separate files instead,
+    /// use `extra_output_files`.
     #[serde(default)]
     pub extra_output: Vec<ContractOutputSelection>,
-    /// If set, a separate JSON file will be emitted for every contract depending on the
-    /// selection, eg. `extra_output_files = ["metadata"]` will create a `metadata.json` for
-    /// each contract in the project.
+    /// Compiler output to write as separate files next to each contract's artifact.
     ///
-    /// See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html) for more information.
+    /// Supported values and the files they produce:
     ///
-    /// The difference between `extra_output = ["metadata"]` and
-    /// `extra_output_files = ["metadata"]` is that the former will include the
-    /// contract's metadata in the contract's json artifact, whereas the latter will emit the
-    /// output selection as separate files.
+    /// - `abi`: `<Contract>.abi.json`
+    /// - `metadata`: `<Contract>.metadata.json`
+    /// - `ir`: `<Contract>.ir`
+    /// - `irOptimized`: `<Contract>.iropt`
+    /// - `ewasm`: `<Contract>.ewasm`
+    /// - `evm.assembly`: `<Contract>.asm`
+    /// - `evm.legacyAssembly`: `<Contract>.legacyAssembly.json`
+    /// - `evm.bytecode.object`: `<Contract>.bin`
+    /// - `evm.deployedBytecode.object`: `<Contract>.deployed-bin`
+    /// - `evm.bytecode.sourceMap`: `<Contract>.sourcemap`
+    /// - `evm.bytecode.generatedSources`: `<Contract>.gensources`
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// extra_output_files = ["metadata"]
+    /// ```
+    ///
+    /// `extra_output = ["metadata"]` puts the metadata in the contract's JSON artifact, while
+    /// `extra_output_files = ["metadata"]` writes it to its own file. See [Contract
+    /// Metadata](https://docs.soliditylang.org/en/latest/metadata.html). `--extra-output-files`
+    /// replaces it for one invocation.
     #[serde(default)]
     pub extra_output_files: Vec<ContractOutputSelection>,
-    /// Whether to print the names of the compiled contracts.
+    // Not read anywhere: `forge build` uses `BuildArgs::names` (the `--names` flag) directly.
+    /// Whether `forge build` prints the names of the compiled contracts, grouped by compiler
+    /// version.
+    ///
+    /// **Note:** `forge build` currently reads only its `--names` flag, so this setting has no
+    /// effect.
     pub names: bool,
-    /// Whether to print the sizes of the compiled contracts.
+    // Not read anywhere: `forge build` uses `BuildArgs::sizes` (the `--sizes` flag) directly.
+    /// Whether `forge build` prints the runtime and initcode sizes of the compiled contracts.
+    ///
+    /// With `--sizes`, the build also fails when a contract exceeds the runtime size limit
+    /// (EIP-170, or `code_size_limit`) or the initcode size limit (EIP-3860, unless
+    /// `--ignore-eip-3860` is passed).
+    ///
+    /// **Note:** `forge build` currently reads only its `--sizes` flag, so this setting has no
+    /// effect.
     pub sizes: bool,
-    /// If set to true, changes compilation pipeline to go through the Yul intermediate
-    /// representation.
+    /// Whether to compile through the Yul intermediate representation (IR) pipeline.
+    ///
+    /// The IR pipeline can optimize across functions and avoid some "stack too deep" errors, but
+    /// compiles more slowly. It requires solc 0.7.5 or later and is ignored for older versions. It
+    /// is also enabled when `via_ssa_cfg` is set.
+    ///
+    /// `--via-ir` enables it for one invocation. `forge coverage` disables it unless
+    /// `--ir-minimum` is used. Per-file overrides are possible with `additional_compiler_profiles`
+    /// and `compilation_restrictions`.
     pub via_ir: bool,
-    /// Whether to turn on SSA CFG-based code generation via the IR.
-    /// This is an experimental feature (as of 0.8.35) that requires `experimental` to be enabled.
-    /// Enabling this option will also enable `via_ir` if it is not already enabled.
+    /// Whether to generate code with solc's experimental SSA control-flow-graph backend.
+    ///
+    /// This sets `viaSSACFG` in the compiler settings and always enables `via_ir` as well. It
+    /// requires solc 0.8.35 or later, where it is an experimental feature, so `experimental` must
+    /// also be enabled; for older compilers it is ignored.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// experimental = true
+    /// via_ssa_cfg = true
+    /// ```
+    ///
+    /// `--via-ssa-cfg` enables it for one invocation.
     pub via_ssa_cfg: bool,
-    /// Whether to enable Solidity's experimental mode.
+    /// Whether to enable solc's experimental mode, required for experimental compiler features.
     ///
-    /// This passes `--experimental` to solc, which is required by Solidity 0.8.35+ for
-    /// experimental features.
+    /// This sets `experimental` in the compiler's standard JSON settings. Solidity 0.8.35 and
+    /// later require it for experimental features such as `via_ssa_cfg`; for older compilers it is
+    /// ignored. `--experimental` enables it for one invocation.
     pub experimental: bool,
-    /// Whether to include the AST as JSON in the compiler output.
+    /// Whether to include each source's AST as JSON in the compiler output and artifacts.
+    ///
+    /// The AST is also included when `build_info` is enabled. `--ast` enables it for one
+    /// invocation.
     pub ast: bool,
-    /// RPC storage caching settings determines what chains and endpoints to cache
+    /// Which chains and RPC endpoints have their fork state cached on disk.
+    ///
+    /// Fork data (accounts, storage and block data) is cached per chain and block under
+    /// `~/.foundry/cache/rpc/<chain>/<block>/`, so later runs of the same fork block reuse it
+    /// instead of fetching it again. A fork is cached only if both `chains` and `endpoints` match
+    /// it. Local development chains (chain IDs 99, 1337 and 31337) are never cached.
+    /// `no_storage_caching` disables caching regardless of this table, and `forge cache clean`
+    /// removes the cache.
+    ///
+    /// ```toml
+    /// [profile.default.rpc_storage_caching]
+    /// chains = ["mainnet", "optimism"]
+    /// endpoints = "remote"
+    /// ```
     pub rpc_storage_caching: StorageCachingConfig,
-    /// Disables storage caching entirely. This overrides any settings made in
-    /// `rpc_storage_caching`
+    /// Whether to disable on-disk caching of fork state entirely.
+    ///
+    /// When enabled, every account and storage slot is fetched from the endpoint and nothing is
+    /// read from or written to `~/.foundry/cache/rpc`, overriding `rpc_storage_caching`. This also
+    /// applies to forks created by cheatcodes, and stops `fork_prefetch` from warming a new fork
+    /// block from an older cache. The `--no-storage-caching` flag enables it for a single run.
     pub no_storage_caching: bool,
-    /// Disables parent-block BAL cache prewarming for transaction-hash forks.
+    /// Whether to disable prewarming the fork cache from the parent block's access list (BAL) for
+    /// forks created at a transaction hash.
     ///
-    /// Defaults to `false`. Independent of disk storage caching; preceding transactions are
-    /// still replayed when prewarming is enabled.
+    /// When a fork is created or rolled to a transaction, Foundry by default tries to fetch the
+    /// EIP-7928 block access list of the parent block to prewarm the fork's cache. This is
+    /// independent of disk storage caching, and the preceding transactions of the block are still
+    /// replayed when prewarming is enabled. Disable it for endpoints that serve BALs slowly or
+    /// incorrectly. The `--no-fork-bal` flag enables it for a single run.
     ///
-    /// Each fork retains the value set at creation, including for subsequent transaction-hash
+    /// Each fork keeps the value set when it was created, including for later transaction-hash
     /// rolls. Contract-level inline configuration applies to forks created in `setUp`.
     /// Function-level inline configuration applies to forks created in that test, but does not
     /// change forks already created by `setUp`.
     #[serde(default)]
     pub no_fork_bal: bool,
-    /// Prefetches remote fork state before the EVM reads it.
+    /// Whether to prefetch remote fork state before the EVM reads it.
     ///
-    /// Defaults to `false`. While reads miss the cache, each call into a fork contract is
-    /// simulated on the endpoint with `eth_createAccessList`, and the state it touches is
-    /// fetched in batches. With storage caching, a fork block with an empty disk cache also
-    /// fetches the keys cached for the newest older block on the same chain. Values come from
-    /// the fork block; extra keys cost requests.
+    /// Prefetching works in two ways:
+    ///
+    /// - While reads miss the cache, each call into a fork contract is first simulated on the
+    ///   endpoint with `eth_createAccessList`, and the accounts and slots it touches are fetched
+    ///   in batches.
+    /// - A fork of the latest block whose storage cache is empty is warmed in the background with
+    ///   the accounts and slots cached for the newest older block on the same chain. This speeds
+    ///   up forks of `latest`, which start cold on each new head, for example in CI. It needs
+    ///   storage caching, so it does not run with `no_storage_caching`, for endpoints or chains
+    ///   that `rpc_storage_caching` excludes, with a pinned `fork_block_number`, or with
+    ///   `fork_state_by_number`.
+    ///
+    /// Results do not change, because every value comes from the fork block; keys the run does not
+    /// read only cost extra RPC requests. The `--fork-prefetch` flag enables it for a single run.
+    ///
+    /// ```toml
+    /// [profile.ci]
+    /// fork_prefetch = true
+    /// ```
     #[serde(default)]
     pub fork_prefetch: bool,
-    /// Disables rate limiting entirely. This overrides any settings made in
-    /// `compute_units_per_second`
+    /// Whether to disable client-side rate limiting of fork RPC requests.
+    ///
+    /// Fork providers normally throttle requests to an assumed budget of compute units per second
+    /// (`compute_units_per_second`, falling back to 330, Alchemy's free tier). Enabling this
+    /// removes the limit and overrides `compute_units_per_second`, including values set on
+    /// `rpc_endpoints` entries. The `--no-rpc-rate-limit` (`--no-rate-limit`) flag enables it for
+    /// a single run.
     pub no_rpc_rate_limit: bool,
-    /// Multiple rpc endpoints and their aliases
+    /// Named RPC endpoints that can be referenced by alias.
+    ///
+    /// Aliases work in `eth_rpc_url`, in `--rpc-url`/`--fork-url`, and in cheatcodes such as
+    /// `vm.createFork`, `vm.createSelectFork`, `vm.rpcUrl` and `vm.rpcUrls`. The table can be
+    /// written at the top level as `[rpc_endpoints]` or inside a profile.
+    ///
+    /// Each value is either a URL string or a table with:
+    ///
+    /// - `endpoint` (alias `url`): the endpoint URL.
+    /// - `endpoints`: an array of URLs, instead of `endpoint`. `anvil --fork-url <alias>`
+    ///   load-balances across all of them with failover; other users take the first.
+    /// - `auth`: a value sent as the `Authorization` header, such as `"Bearer <token>"`, to forks
+    ///   created by cheatcodes and to `chisel` forks.
+    /// - `retries`: number of retries for forks created by cheatcodes, overriding
+    ///   `--fork-retries`.
+    /// - `retry_backoff`: initial retry backoff in milliseconds for forks created by cheatcodes,
+    ///   overriding `--fork-retry-backoff`.
+    /// - `compute_units_per_second`: assumed compute units per second for forks created by
+    ///   cheatcodes, used only when the run sets none.
+    ///
+    /// Exactly one of `endpoint` and `endpoints` is required. URLs and `auth` may contain `${VAR}`
+    /// placeholders, which are resolved from the environment when the endpoint is used, so an
+    /// unset variable only fails where that endpoint is needed.
+    ///
+    /// ```toml
+    /// [rpc_endpoints]
+    /// optimism = "https://optimism.example.com/v2/${API_KEY}"
+    /// mainnet = "${RPC_MAINNET}"
+    /// fallback = { endpoints = ["${MAINNET_RPC_URL}", "${FALLBACK_RPC_URL}"], retries = 5 }
+    /// private = { endpoint = "https://rpc.example.com", auth = "Bearer ${RPC_TOKEN}" }
+    /// ```
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
-    /// Whether to store the referenced sources in the metadata as literal data.
-    pub use_literal_content: bool,
-    /// The hash method used for the metadata hash appended to the bytecode.
+    /// Whether to store the source code itself in the contract metadata instead of only
+    /// references.
     ///
-    /// Defaults to [BytecodeHash::Ipfs], matching solc. The hash depends on the source contents,
-    /// source paths, and compiler settings. Set to [BytecodeHash::None] to omit the hash without
-    /// disabling the CBOR metadata trailer.
-    /// See: <https://docs.soliditylang.org/en/latest/metadata.html>
+    /// When enabled, solc embeds the literal content of each source in the metadata instead of
+    /// URLs to it, so the metadata is self-contained. `--use-literal-content` enables it for one
+    /// invocation.
+    pub use_literal_content: bool,
+    /// The hash of the contract metadata that solc appends to the bytecode.
+    ///
+    /// Valid values:
+    ///
+    /// - `ipfs`: an IPFS hash of the metadata, as solc does by default.
+    /// - `bzzr1`: a Swarm hash of the metadata.
+    /// - `none`: no hash.
+    ///
+    /// The hash depends on source contents, source paths and compiler settings, so the same
+    /// contract can produce different bytecode on different machines. Set `none` for bytecode that
+    /// doesn't depend on these, for example for deterministic deployments. This keeps the CBOR
+    /// metadata trailer; to omit it entirely, also set `cbor_metadata = false`, or pass
+    /// `--no-metadata` to do both. See <https://docs.soliditylang.org/en/latest/metadata.html>.
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
-    /// Whether to append CBOR-encoded metadata to the bytecode. Defaults to `true`.
+    /// Whether to append the CBOR-encoded metadata trailer to the bytecode.
     ///
-    /// If this is `false` and the `bytecode_hash` option above is not `None` solc will issue a
-    /// warning.
+    /// The trailer holds the compiler version and the metadata hash chosen by `bytecode_hash`.
+    /// Because the hash is part of the trailer, also set `bytecode_hash = "none"` when disabling
+    /// it; `--no-metadata` does both. It requires solc 0.8.18 or later and is ignored for older
+    /// versions.
     pub cbor_metadata: bool,
-    /// How to treat revert (and require) reason strings.
+    /// How solc handles revert and require reason strings.
+    ///
+    /// Valid values:
+    ///
+    /// - `default`: keeps reason strings you write and doesn't add any generated by the compiler.
+    /// - `strip`: removes all reason strings where possible (when they are literals), keeping side
+    ///   effects.
+    /// - `debug`: adds strings for compiler-generated internal reverts (implemented for ABI
+    ///   encoders V1 and V2).
+    /// - `verboseDebug`: also appends further information to reason strings you write (not yet
+    ///   implemented by solc).
+    ///
+    /// When unset, nothing is passed to solc and its default applies. `--revert-strings` overrides
+    /// it for one invocation.
     #[serde(with = "serde_helpers::display_from_str_opt")]
     pub revert_strings: Option<RevertStrings>,
-    /// Whether to compile in sparse mode
+    // Nothing reads this field; sparse output is selected from `skip` in
+    // `create_project_with_compiler`.
+    /// Has no effect; kept so that existing configuration files still load.
     ///
-    /// If this option is enabled, only the required contracts/files will be selected to be
-    /// included in solc's output selection, see also [`OutputSelection`].
+    /// Sparse output selection, which asks solc only for the output of the contracts a command
+    /// needs, is applied automatically when `skip` patterns are set.
     pub sparse_mode: bool,
-    /// Generates additional build info json files for every new build, containing the
-    /// `CompilerInput` and `CompilerOutput`.
+    /// Whether to write build info files containing the complete compiler input and output.
+    ///
+    /// A build info file is written for each compiler run to `build_info_path`, or
+    /// `<out>/build-info` when that is unset. For compatibility with Hardhat-based tools the files
+    /// always include the AST, which makes them large. The `--build-info` flag enables this for
+    /// one run.
     pub build_info: bool,
-    /// The path to the `build-info` directory that contains the build info json files.
+    /// Directory where build info files are written when `build_info` is enabled.
+    ///
+    /// When unset, build info files go to `<out>/build-info`. Relative paths are resolved against
+    /// the project root. Setting this path does not enable `build_info` on its own. The
+    /// `--build-info-path` flag overrides it and requires `--build-info`.
     pub build_info_path: Option<PathBuf>,
     /// Whether build infos leave out the AST, set by [`Config::enable_debug_build_info`].
     #[serde(skip)]
     pub build_info_without_ast: bool,
-    /// Configuration for `forge fmt`
-    pub fmt: FormatterConfig,
-    /// Configuration for `forge lint`
-    pub lint: LinterConfig,
-    /// Configuration for `forge doc`
-    pub doc: DocConfig,
-    /// Configuration for `forge bind-json`
-    pub bind_json: BindJsonConfig,
-    /// Configures the permissions of cheat codes that touch the file system.
+    /// Settings for the Solidity formatter, `forge fmt`.
     ///
-    /// This includes what operations can be executed (read, write)
+    /// Declare them in a `[profile.<name>.fmt]` table, or in a standalone `[fmt]` table that
+    /// applies to every profile; a profile's own table takes precedence.
+    pub fmt: FormatterConfig,
+    /// Settings for the Solidity linter, `forge lint`, which also runs during `forge build`.
+    ///
+    /// Declare them in a `[profile.<name>.lint]` table, or in a standalone `[lint]` table that
+    /// applies to every profile; a profile's own table takes precedence.
+    pub lint: LinterConfig,
+    /// Settings for the documentation generator, `forge doc`.
+    ///
+    /// Declare them in a `[profile.<name>.doc]` table, or in a standalone `[doc]` table that
+    /// applies to every profile; a profile's own table takes precedence.
+    pub doc: DocConfig,
+    /// Settings for `forge bind-json`, which generates Solidity JSON bindings for project structs.
+    ///
+    /// Declare them in a `[profile.<name>.bind_json]` table, or in a standalone `[bind_json]`
+    /// table that applies to every profile; a profile's own table takes precedence.
+    pub bind_json: BindJsonConfig,
+    /// Which paths cheatcodes that read or write files, such as `vm.readFile`, may access.
+    ///
+    /// Each entry grants an `access` level to a `path` and everything below it:
+    ///
+    /// - `path`: a file or directory, relative to the project root.
+    /// - `access`: `read`, `write`, `read-write` (also `readwrite` or `true`), or `none` (or
+    ///   `false`).
+    ///
+    /// Paths not covered by any entry cannot be accessed. When several entries cover a path, the
+    /// entry with the longest path applies; entries for the same path combine, so `read` and
+    /// `write` together grant both. Paths are normalized before the check, so `..` cannot escape
+    /// an allowed directory. Cheatcodes can never modify the project's `foundry.toml`. Setting
+    /// this key replaces the default, which only allows reading `out`.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// fs_permissions = [
+    ///     { access = "read", path = "./out" },
+    ///     { access = "read-write", path = "./tmp" },
+    /// ]
+    /// ```
     pub fs_permissions: FsPermissions,
 
-    /// Whether to enable call isolation.
+    /// Whether to execute each top-level call made by a test or script as its own transaction.
     ///
-    /// Useful for more correct gas accounting and EVM behavior in general.
+    /// In isolation mode, every top-level external call runs as a separate transaction in a
+    /// separate EVM context, which gives more precise gas accounting and per-call transaction
+    /// state changes. A test function is therefore not equivalent to one transaction: repeated
+    /// calls to the same contract can be charged as cold again. Disable it for tests that depend
+    /// on warm accounts or storage carrying across calls.
+    ///
+    /// The `--isolate` and `--no-isolate` flags override it, and `forge test --gas-report` always
+    /// enables isolation. Tests can read the resolved value with `vm.isIsolateMode()`.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// isolate = false
+    /// ```
     pub isolate: bool,
 
-    /// Whether to disable the block gas limit checks.
+    /// Whether to skip the check that a transaction's gas limit fits within the block gas limit.
+    ///
+    /// The `--disable-block-gas-limit` flag, also spelled `--no-block-gas-limit` or
+    /// `--no-gas-limit`, enables it for one run.
     pub disable_block_gas_limit: bool,
 
-    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    /// Whether to enforce the per-transaction gas limit cap introduced in Osaka (EIP-7825).
+    ///
+    /// The cap is off by default, so tests and scripts can run calls that need more gas. Enable it
+    /// to catch transactions that a chain enforcing the cap would reject. The
+    /// `--enable-tx-gas-limit` (`--tx-gas-limit`) flag enables it for one run.
     pub enable_tx_gas_limit: bool,
 
-    /// Deprecated address-label alias; use [`TracingConfig::labels`].
+    // Legacy alias kept for backwards compatibility. LegacyLabelsProvider and
+    // normalize_legacy_labels_in_profile fold it into tracing.labels; read tracing.labels instead.
+    /// Deprecated: use `tracing.labels` instead.
+    ///
+    /// Address labels shown in traces. Foundry still reads a top-level `[labels]` table and a
+    /// profile-level `labels` table, merges them into `tracing.labels`, where existing
+    /// `tracing.labels` entries win for duplicate addresses, and prints a deprecation warning.
+    ///
+    /// ```toml
+    /// [profile.default.tracing.labels]
+    /// "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" = "vitalik.eth"
+    /// ```
     #[serde(default, skip_serializing_if = "AddressHashMap::is_empty")]
     pub labels: AddressHashMap<String>,
 
-    /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
-    /// If disabled, it is possible to access artifacts which were not recompiled or cached.
+    /// Whether to let `vm.getCode` and `vm.getDeployedCode` read artifacts the current build did
+    /// not produce.
+    ///
+    /// By default these cheatcodes only accept artifacts from the current compilation, so they
+    /// never return stale bytecode. When enabled, they can also load artifact files that were not
+    /// recompiled or are only present in the cache or output directory.
     pub unchecked_cheatcode_artifacts: bool,
 
-    /// Whether to decode the storage layouts of contracts outside the local project in state
-    /// diffs, by compiling the verified source a block explorer has for them.
+    /// Whether to decode the storage of contracts outside the local project in state diffs, using
+    /// the verified source a block explorer has for them.
     ///
-    /// Resolved layouts are cached under the explorer cache directory; `forge cache clean`
-    /// clears them.
+    /// When enabled, `vm.getStateDiff()` and `vm.getStateDiffJson()` label the storage slots of
+    /// such contracts. For each one written to during recording, Forge fetches the verified source
+    /// from the block explorer configured for the chain, compiles it for its storage layout, and
+    /// decodes the slots with that layout. For a `delegatecall`, the layout of the implementation
+    /// that executed the write is used. Sourcify is not consulted, since its responses lack the
+    /// sources needed to compile.
+    ///
+    /// Lookups require an `[etherscan]` entry or `etherscan_api_key` for the forked chain, and are
+    /// bounded by `tracing.external_identification_timeout`. Resolved layouts are cached under the
+    /// block explorer cache directory, so later runs skip the fetch and the compile;
+    /// `forge cache clean` removes them. `forge test --decode-external-storage` enables it for one
+    /// run.
     pub decode_external_storage: bool,
 
-    /// CREATE2 salt to use for the library deployment in scripts.
+    /// The salt used to deploy linked libraries with CREATE2.
+    ///
+    /// When Forge links external libraries through the CREATE2 deployer, each library is deployed
+    /// at an address derived from `create2_deployer`, this salt and the library's bytecode.
+    /// `forge script` does this when the deployer is available and skips libraries already
+    /// deployed at the computed address; `forge test` does it when running without a fork and with
+    /// the default deployer. Otherwise libraries are linked at CREATE addresses derived from the
+    /// sender's nonces. Addresses configured in `libraries` are always used as given.
+    ///
+    /// **Warning:** changing the salt changes library addresses, which changes the bytecode of
+    /// every contract that links to those libraries.
     pub create2_library_salt: B256,
 
-    /// The CREATE2 deployer address to use.
+    /// The address of the CREATE2 deployer contract used for salted deployments and library
+    /// linking.
+    ///
+    /// Forge routes `new C{salt: s}()` through this contract while a script broadcasts, or in
+    /// tests and simulations when `always_use_create_2_factory` is enabled, and uses it to deploy
+    /// libraries with `create2_library_salt`. The address must hold the runtime bytecode of the
+    /// deterministic deployment proxy
+    /// (<https://github.com/Arachnid/deterministic-deployment-proxy>); Forge rejects automatic
+    /// routing when it has no code or different code. For a factory with another interface, such
+    /// as CreateX, call it explicitly instead. Local runs without a fork install the default
+    /// deployer automatically, but not one at a custom address. The `--create2-deployer` flag
+    /// overrides it.
     pub create2_deployer: Address,
 
-    /// Configuration for Vyper compiler
+    /// Settings for compiling Vyper sources.
+    ///
+    /// Declare them in a `[profile.<name>.vyper]` table, or in a standalone `[vyper]` table that
+    /// applies to every profile; a profile's own table takes precedence.
     pub vyper: VyperConfig,
 
-    /// Explicitly configured external compiler adapters.
+    /// External compiler adapters that build compiler-native EVM projects as part of the build.
+    ///
+    /// Adapters let Forge compile languages other than Solidity and Vyper through an executable
+    /// that speaks Foundry's adapter protocol. Each entry configures one adapter:
+    ///
+    /// - `id` (required): a unique identifier that namespaces the adapter's artifacts and cache
+    ///   entries; ASCII letters, digits, `.`, `-` and `_`, but not `.` or `..`.
+    /// - `command` (required): the adapter executable, absolute or relative to the project root.
+    ///   It is run directly, without a shell or `PATH` lookup.
+    /// - `args`: arguments passed to the executable.
+    /// - `roots` (required): the compiler-native project roots, relative to the project root.
+    /// - `settings`: a table passed to the adapter as JSON, without interpretation.
+    ///
+    /// ```toml
+    /// [[profile.default.external_compilers]]
+    /// id = "contracts"
+    /// command = "/opt/toolchains/fe-foundry-adapter"
+    /// roots = ["contracts"]
+    ///
+    /// [profile.default.external_compilers.settings]
+    /// compiler = "/opt/toolchains/fe"
+    /// ```
+    ///
+    /// Artifacts are written under `<out>/.external/<id>/` and compile results are cached under
+    /// `<cache_path>/external-compilers/`, so the contracts are available to `forge build`,
+    /// `forge test`, `forge script`, `forge inspect` and other commands.
+    ///
+    /// **Warning:** a configured adapter runs with your privileges whenever Forge compiles. Forge
+    /// clears its environment and starts it in the project root, but this is not a sandbox.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_compilers: Vec<ExternalCompiler>,
 
-    /// Soldeer dependencies
+    // Soldeer reads the `[dependencies]` table from the config file itself; this field lets the
+    // table round-trip through `Config` (e.g. `forge config`).
+    /// Soldeer dependencies, declared in a top-level `[dependencies]` table.
+    ///
+    /// Each key is a dependency name and each value is either a version requirement string or a
+    /// table with these fields:
+    ///
+    /// - `version` (required): the version requirement. Without an operator, an HTTP dependency's
+    ///   version is pinned exactly.
+    /// - `url`: the zip archive to download. Without `url` or `git`, the download URL is looked up
+    ///   in the Soldeer registry by name and version.
+    /// - `git`: a Git repository to clone instead; conflicts with `url`, and `version` may not
+    ///   contain `=`.
+    /// - `rev`, `branch` or `tag`: at most one, selecting the Git revision; ignored without `git`.
+    ///   Without any of them, the default branch is used.
+    /// - `project_root`: the path inside the archive or repository to the directory containing its
+    ///   `foundry.toml` or `soldeer.toml`.
+    ///
+    /// ```toml
+    /// [dependencies]
+    /// forge-std = "1.9.7"
+    /// my-lib = { version = "1.0.0", git = "https://github.com/example/lib.git", tag = "v1.0.0" }
+    /// ```
+    ///
+    /// `forge soldeer install` installs them into the `dependencies` directory, and other
+    /// `forge soldeer` commands update this table. See also the `soldeer` table.
     pub dependencies: Option<SoldeerDependencyConfig>,
 
-    /// Soldeer custom configs
+    // Soldeer reads the `[soldeer]` table from the config file itself; this field lets the table
+    // round-trip through `Config`.
+    /// Settings for the Soldeer package manager, declared in a top-level `[soldeer]` table.
+    ///
+    /// - `remappings_generate`: whether Soldeer generates remappings for dependencies (on by
+    ///   default); when off, remappings are left untouched.
+    /// - `remappings_regenerate`: whether to regenerate all remappings each time, discarding
+    ///   existing ones (off by default).
+    /// - `remappings_version`: whether to append the version requirement to each remapping name,
+    ///   as in `forge-std-1.9.7/` (on by default).
+    /// - `remappings_prefix`: a prefix added to each remapping name, such as `@`.
+    /// - `remappings_location`: `txt` (the default) writes `remappings.txt`; `config` writes the
+    ///   `remappings` key of `foundry.toml`. Ignored when the Soldeer config is `soldeer.toml`.
+    /// - `recursive_deps`: whether to also install the dependencies of dependencies, running
+    ///   `soldeer install` for Soldeer projects and cloning submodules of Git dependencies (off by
+    ///   default).
+    ///
+    /// ```toml
+    /// [soldeer]
+    /// remappings_prefix = "@"
+    /// remappings_location = "config"
+    /// ```
     pub soldeer: Option<SoldeerConfig>,
 
-    /// Whether failed assertions should revert.
+    /// Whether a failed `vm.assert*` cheatcode assertion reverts.
     ///
-    /// Note that this only applies to native (cheatcode) assertions, invoked on Vm contract.
+    /// When enabled, a failing assertion reverts and stops the test. When disabled, Forge logs the
+    /// failure message, marks the test as failed, and lets execution continue. This only applies
+    /// to assertions implemented as cheatcodes on the `Vm` contract, such as `vm.assertEq`; recent
+    /// forge-std `assert*` helpers call these.
     pub assertions_revert: bool,
 
-    /// Whether `failed()` should be invoked to check if the test have failed.
+    /// Whether to also call the test contract's `failed()` function to decide whether a test
+    /// failed.
+    ///
+    /// Older DSTest-style assertion libraries record failures in storage instead of reverting.
+    /// When enabled, Forge calls `failed()` after a test that did not revert and treats `true` as
+    /// a failure. Otherwise a test fails only by reverting or through a failed cheatcode
+    /// assertion.
     pub legacy_assertions: bool,
 
-    /// Optional additional CLI arguments to pass to `solc` binary.
+    /// Extra command-line arguments to pass to the solc binary.
+    ///
+    /// The arguments are added to every compiler invocation, and changing them invalidates the
+    /// build cache. Use them for compiler options Foundry doesn't expose as settings. When
+    /// building with Solar, a `--threads`, `--jobs` or `-j` argument here replaces the thread
+    /// count Forge would otherwise pass.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// extra_args = ["--some-solc-flag"]
+    /// ```
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
 
@@ -658,22 +1778,90 @@ pub struct Config {
     #[serde(flatten)]
     pub networks: NetworkConfigs,
 
-    /// Timeout for transactions in seconds.
+    /// How many seconds to wait for a sent transaction's receipt before giving up.
+    ///
+    /// Used by `forge script` broadcasts, `forge create`, `cast send` and `cast safe`. Their
+    /// `--timeout` flag, or the `ETH_TIMEOUT` environment variable, overrides it.
     pub transaction_timeout: u64,
 
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information.
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
 
-    /// Additional settings profiles to use when compiling.
+    /// Extra compiler settings profiles that sources can be compiled with besides the main
+    /// settings.
+    ///
+    /// Each entry starts from the active profile's compiler settings and overrides only the fields
+    /// it sets:
+    ///
+    /// - `name` (required): the profile's name, used in artifact names.
+    /// - `via_ir`: whether to compile through the IR pipeline.
+    /// - `evm_version`: the target EVM version, also applied to Vyper sources.
+    /// - `optimizer`: whether to enable the optimizer.
+    /// - `optimizer_runs`: the optimizer runs; a value above `0` also enables the optimizer unless
+    ///   `optimizer` is set.
+    /// - `bytecode_hash`: the metadata hash method: `ipfs`, `bzzr1` or `none`.
+    ///
+    /// For each source file Forge uses the first profile, starting with the main settings, that
+    /// satisfies the `compilation_restrictions` of the file and of all its imports. A file
+    /// compiled with several profiles gets one artifact per profile, such as `Counter.json` for
+    /// the main settings and `Counter.via-ir.json` for a profile named `via-ir`.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// additional_compiler_profiles = [{ name = "via-ir", via_ir = true }]
+    /// compilation_restrictions = [{ paths = "src/Heavy.sol", via_ir = true }]
+    /// ```
     #[serde(default)]
     pub additional_compiler_profiles: Vec<SettingsOverrides>,
 
-    /// Restrictions on compilation of certain files.
+    /// Restrictions on the compiler settings that matching source files may be compiled with.
+    ///
+    /// A restriction applies to the files matched by `paths` and to every file that imports them.
+    /// Forge compiles each file with the first settings profile (the main settings, then
+    /// `additional_compiler_profiles` in order) that satisfies all restrictions that apply to it.
+    /// Fields:
+    ///
+    /// - `paths` (required): a glob matched against source paths, absolute or relative to the
+    ///   project root, such as `src/Counter.sol`, `src/{Counter,Factory}.sol` or `src/v1/**`.
+    /// - `version`: a solc version requirement with an explicit operator, such as `=0.8.11`,
+    ///   `>=0.8.11` or `>=0.8.11 <0.9.0`; bare versions such as `0.8.11` are rejected.
+    /// - `via_ir`: the required `via_ir` setting.
+    /// - `bytecode_hash`: the required metadata hash method.
+    /// - `optimizer_runs`, or a range with `min_optimizer_runs` and/or `max_optimizer_runs`.
+    /// - `evm_version`, or a range with `min_evm_version` and/or `max_evm_version`.
+    ///
+    /// An exact value cannot be combined with a minimum or maximum for the same setting. When
+    /// several entries match a file, their restrictions are merged; if they conflict, Forge warns
+    /// and keeps the first.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// additional_compiler_profiles = [{ name = "via-ir", via_ir = true }]
+    /// compilation_restrictions = [
+    ///     { paths = "test/**", via_ir = false },
+    ///     { paths = "src/Counter.sol", via_ir = true },
+    /// ]
+    /// ```
+    ///
+    /// Because restrictions extend to importing files, a test that imports a restricted contract
+    /// must satisfy the same restrictions unless it deploys the contract without importing it, for
+    /// example with `vm.deployCode`.
     #[serde(default)]
     pub compilation_restrictions: Vec<CompilationRestrictions>,
 
-    /// Whether to enable script execution protection.
+    /// Whether `forge script` guards against relying on the script contract's address and caller.
+    ///
+    /// When enabled, Forge reverts:
+    ///
+    /// - any use of `address(this)` inside the script contract, since script contracts are
+    ///   ephemeral and their address should not be relied upon;
+    /// - a read of `msg.sender` in the script's broadcasting frame when it differs from the
+    ///   broadcast sender. Pass the deployer address explicitly, or set it with `--sender`.
+    ///
+    /// These are runtime opcode checks: they do not track values captured before broadcasting, and
+    /// compiler optimizations can move a read out of the guarded frame. Disabling the protection
+    /// does not make the addresses equal.
     pub script_execution_protection: bool,
 
     /// Whether inline config can only lower the runs, depth, and rejects of fuzz and invariant
@@ -833,6 +2021,14 @@ impl Config {
         "vyper",
         "bind_json",
     ];
+
+    /// Keys that `FOUNDRY_` prefixed environment variables don't set directly.
+    pub const FOUNDRY_ENV_IGNORED: &'static [&'static str] =
+        &["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"];
+
+    /// Keys that `DAPP_` prefixed environment variables don't set directly.
+    pub const DAPP_ENV_IGNORED: &'static [&'static str] =
+        &["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"];
 
     pub(crate) fn is_standalone_section<T: ?Sized + PartialEq<str>>(section: &T) -> bool {
         section == Self::PROFILE_SECTION
@@ -1155,12 +2351,7 @@ impl Config {
 
         // merge environment variables
         figment = figment
-            .merge(
-                Env::prefixed("DAPP_")
-                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global()
-                    .legacy_labels(),
-            )
+            .merge(Env::prefixed("DAPP_").ignore(Self::DAPP_ENV_IGNORED).global().legacy_labels())
             .merge(
                 Env::prefixed("DAPP_TEST_")
                     .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
@@ -1171,7 +2362,7 @@ impl Config {
             .merge(EtherscanEnvProvider::default())
             .merge(
                 Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .ignore(Self::FOUNDRY_ENV_IGNORED)
                     .map(|key| {
                         let key = key.as_str();
                         if Self::STANDALONE_SECTIONS.iter().any(|section| {
