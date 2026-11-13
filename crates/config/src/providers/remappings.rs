@@ -212,7 +212,7 @@ impl RemappingsProvider<'_> {
     /// - CLI parameters
     fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<RemappingsOutput, Error> {
         trace!("get all remappings from {:?}", self.root);
-        /// Prioritizes packages by installation depth and lexical origin, then their source target.
+        /// Prioritizes installation depth, then target depth, a `src` target, and lexical target.
         ///
         /// grouped by remapping context
         fn insert_closest(
@@ -226,14 +226,17 @@ impl RemappingsProvider<'_> {
             match context_mappings.entry(key) {
                 Entry::Occupied(mut entry) => {
                     let existing = entry.get();
-                    if (origin.components().count(), &origin, !path.ends_with("src"), &path)
-                        < (
-                            existing.0.components().count(),
-                            &existing.0,
-                            !existing.1.ends_with("src"),
-                            &existing.1,
-                        )
-                    {
+                    if (
+                        origin.components().count(),
+                        path.components().count(),
+                        !path.ends_with("src"),
+                        &path,
+                    ) < (
+                        existing.0.components().count(),
+                        existing.1.components().count(),
+                        !existing.1.ends_with("src"),
+                        &existing.1,
+                    ) {
                         entry.insert((origin, path));
                     }
                 }
@@ -1618,5 +1621,39 @@ mod tests {
         let reanchored = anchored_root.join(relative_import.strip_prefix(normalized_root).unwrap());
         assert!(reanchored.starts_with(&owner));
         assert_eq!(dunce::canonicalize(reanchored).unwrap(), sibling);
+    }
+
+    #[test]
+    fn equally_deep_packages_preserve_source_precedence() {
+        for (source_a, source_b) in [("custom-source", "src"), ("custom/src", "src")] {
+            let temp = tempdir().unwrap();
+            let root = temp.path();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            for (name, source) in [("a", source_a), ("b", source_b)] {
+                let owner = root.join("lib").join(name);
+                let package = owner.join("lib/shared");
+                fs::create_dir_all(owner.join("src")).unwrap();
+                fs::create_dir_all(package.join(source)).unwrap();
+                fs::write(owner.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+                fs::write(owner.join("src/Owner.sol"), "contract Owner {}\n").unwrap();
+                fs::write(
+                    package.join(Config::FILE_NAME),
+                    format!("[profile.default]\nsrc = {source:?}\n"),
+                )
+                .unwrap();
+                fs::write(package.join(source).join("Shared.sol"), "contract Shared {}\n").unwrap();
+            }
+
+            let config = Config::load_with_root(root).unwrap();
+            let shared = config
+                .get_all_remappings()
+                .find(|remapping| remapping.context.is_none() && remapping.name == "shared/")
+                .unwrap();
+            assert_eq!(
+                Path::new(&shared.path),
+                Path::new("lib/b/lib/shared").join(source_b),
+                "{source_a} vs {source_b}"
+            );
+        }
     }
 }
