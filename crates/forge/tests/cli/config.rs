@@ -1507,20 +1507,14 @@ fn explicit_context_precedes_nested_auto_remapping(prj: _, cmd: _) {
 fn slashless_context_is_a_lexical_prefix(prj: _, cmd: _) {
     let abc = prj.root().join("lib/abc");
     let shared = abc.join("lib/shared/src");
-    pretty_err(&abc, fs::create_dir_all(abc.join("src/pinned")));
+    pretty_err(&abc, fs::create_dir_all(abc.join("src")));
     pretty_err(&shared, fs::create_dir_all(&shared));
     pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/override")));
-    pretty_err(
-        &abc,
-        fs::write(
-            abc.join("foundry.toml"),
-            "[profile.default]\nremappings = [\"shared/=src/pinned/\"]\n",
-        ),
+    prj.create_file(
+        "lib/abc/foundry.toml",
+        "[profile.default]\nremappings = [\"shared/=src/pinned/\"]\n",
     );
-    pretty_err(
-        &abc,
-        fs::write(abc.join("src/pinned/Version.sol"), "contract DependencySelected {}\n"),
-    );
+    prj.create_file("lib/abc/src/pinned/Version.sol", "contract DependencySelected {}\n");
     pretty_err(
         prj.root(),
         fs::write(prj.root().join("src/override/Version.sol"), "contract Selected {}\n"),
@@ -3712,34 +3706,27 @@ fn dependency_remappings_only_affect_their_owner(prj: _, cmd: _) {
         ("lib/victim/src/File.sol", "FileValue", 3),
         ("lib/helper/src/File.sol", "FileValue", 4),
     ] {
-        let path = prj.root().join(path);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
+        prj.create_file(
             path,
-            format!(
+            &format!(
                 "pragma solidity >=0.8.0; library {name} {{ function value() internal pure returns (uint256) {{ return {value}; }} }}\n"
             ),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
-        prj.root().join("lib/helper/foundry.toml"),
+    prj.create_file(
+        "lib/helper/foundry.toml",
         "[profile.default]\nremappings = [\"victim/=src/alternate/\"]\n",
-    )
-    .unwrap();
-    fs::write(prj.root().join("lib/helper/remappings.txt"), "victim/File.sol=src/File.sol\n")
-        .unwrap();
+    );
+    prj.create_file("lib/helper/remappings.txt", "victim/File.sol=src/File.sol\n");
 
     for (path, name) in [
         ("src/Root.sol", "Root"),
         ("lib/helper/src/Owner.sol", "Owner"),
         ("lib/helper-other/src/Sibling.sol", "Sibling"),
     ] {
-        let path = prj.root().join(path);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
+        prj.create_file(
             path,
-            format!(
+            &format!(
                 r#"
 pragma solidity >=0.8.0;
 import {{DirectoryValue}} from "victim/Directory.sol";
@@ -3751,8 +3738,7 @@ contract {name} {{
 }}
 "#
             ),
-        )
-        .unwrap();
+        );
     }
 
     // Root TOML and CLI aliases remain authoritative inside dependencies.
@@ -3803,11 +3789,10 @@ fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) 
         "import {OnlyGood} from \"private-alias/OnlyGood.sol\"; contract Good is OnlyGood {}\n",
     );
     prj.add_lib("good/src/internal/OnlyGood.sol", "contract OnlyGood {}\n");
-    fs::write(
-        prj.root().join("lib/good/foundry.toml"),
+    prj.create_file(
+        "lib/good/foundry.toml",
         "[profile.default]\nremappings = [\"private-alias/=src/internal/\"]\n",
-    )
-    .unwrap();
+    );
 
     prj.create_file(
         "shared/Shared.sol",
@@ -3824,11 +3809,7 @@ fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) 
         ("a-helper/lib/nested", "src/Base.sol=src/Substitute.sol"),
     ] {
         for dependency in ["a-helper", "a-helper/lib/nested"] {
-            fs::write(
-                prj.root().join(format!("lib/{dependency}/foundry.toml")),
-                "[profile.default]\n",
-            )
-            .unwrap();
+            prj.create_file(format!("lib/{dependency}/foundry.toml"), "[profile.default]\n");
         }
         for source in [None, Some("src"), Some("lib/good/src"), Some("shared")] {
             let source = source
@@ -3836,13 +3817,12 @@ fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) 
                     format!("src = {:?}\n", prj.root().join(source).display().to_string())
                 })
                 .unwrap_or_default();
-            fs::write(
-                prj.root().join(format!("lib/{owner}/foundry.toml")),
-                format!(
+            prj.create_file(
+                format!("lib/{owner}/foundry.toml"),
+                &format!(
                     "[profile.default]\n{source}remappings = [{root_alias:?}, \"private-alias/=src/\"]\n"
                 ),
-            )
-            .unwrap();
+            );
             cmd.forge_fuse().args(["build", "--force"]).assert_success();
         }
     }
@@ -3851,10 +3831,12 @@ fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) 
 #[forgetest]
 fn dependency_remappings_apply_to_external_source(prj: _, cmd: _) {
     prj.add_lib("a/src/internal/Inner.sol", "contract Inner {}\n");
-    prj.create_file(
-        "external/B.sol",
-        "import {Inner} from \"private-alias/Inner.sol\"; contract B is Inner {}\n",
-    );
+    for path in ["external/B.sol", "common/B.sol"] {
+        prj.create_file(
+            path,
+            "import {Inner} from \"private-alias/Inner.sol\"; contract B is Inner {}\n",
+        );
+    }
     prj.add_lib("private-alias/src/Inner.sol", "contract GlobalInner {}\n");
     prj.add_lib(
         "sibling/src/Sibling.sol",
@@ -3865,10 +3847,6 @@ fn dependency_remappings_apply_to_external_source(prj: _, cmd: _) {
         "import {A} from \"a/A.sol\"; import {GlobalInner} from \"private-alias/Inner.sol\"; import {Sibling} from \"sibling/Sibling.sol\"; contract Root is A, Sibling {} contract Direct is GlobalInner {}\n",
     );
 
-    prj.create_file(
-        "common/B.sol",
-        &fs::read_to_string(prj.root().join("external/B.sol")).unwrap(),
-    );
     for source in [prj.root().join("external").display().to_string(), "../../external".into()] {
         prj.create_file(
             "lib/a/foundry.toml",

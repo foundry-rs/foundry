@@ -286,7 +286,7 @@ pub fn configure_pcx_from_solc(
                 let path = PathBuf::from(solar_slash_path(path));
                 #[cfg(not(windows))]
                 let path = path.to_path_buf();
-                pcx.sess.source_map().new_source_file(path, source.content.as_str()).ok()
+                pcx.sess.source_map().new_source_file_shared(path, source.content.clone()).ok()
             })
             .collect::<Vec<_>>();
         pcx.add_files(sources);

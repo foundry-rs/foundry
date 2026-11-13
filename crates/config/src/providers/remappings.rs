@@ -334,16 +334,17 @@ impl RemappingsProvider<'_> {
                         .iter()
                         .any(|(_, auto)| remapping_name_is_prefix(&auto.name, &remapping.name))
             });
-            let mut targets_by_alias = BTreeMap::<_, BTreeSet<_>>::new();
+            let mut targets_by_alias = BTreeMap::new();
             for remapping in global.iter().map(|(_, remapping)| remapping).chain(&contextual) {
+                let path = Path::new(&remapping.path);
                 targets_by_alias
                     .entry(remapping.name.as_str())
-                    .or_default()
-                    .insert(Path::new(&remapping.path));
+                    .and_modify(|(first, ambiguous)| *ambiguous |= *first != path)
+                    .or_insert((path, false));
             }
             let ambiguous_aliases = targets_by_alias
                 .into_iter()
-                .filter(|(_, targets)| targets.len() > 1)
+                .filter(|(_, (_, ambiguous))| *ambiguous)
                 .map(|(name, _)| name.to_owned())
                 .collect::<BTreeSet<_>>();
             let mut lib_remappings = BTreeMap::new();
