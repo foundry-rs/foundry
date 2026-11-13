@@ -7,19 +7,18 @@ use core::{
     hash::{Hash, Hasher},
 };
 use evm2::{
-    EvmTypesHost, Inspector,
+    EvmTypesHost, Inspector, InspectorConfig, OpcodeSet,
     interpreter::{Interpreter, op as opcode},
 };
+use foundry_evm_core::{
+    edgecov::{InstrumentedEdgeHit, MAX_CMP_LOG_SITES, MAX_CMP_OBSERVATIONS_PER_SITE},
+    utils::opcodes,
+};
+
+pub use foundry_evm_core::edgecov::CmpOperands;
 
 /// Default capacity for the hitcount buffer.
 pub const MAX_EDGE_COUNT: usize = 65536;
-
-// Maximum number of unique comparison sites to track for CmpLog-style feedback.
-const MAX_CMP_LOG_SITES: usize = 1024;
-
-// Maximum number of comparison operand pairs to track per site. This matches the downstream loop
-// detection threshold so a hot loop can be classified without filling the whole log.
-const MAX_CMP_OBSERVATIONS_PER_SITE: u8 = 8;
 
 /// Edge coverage collection kind.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -56,21 +55,6 @@ impl Default for EdgeCovConfig {
     fn default() -> Self {
         Self::new(EdgeCovKind::CollisionFree, false)
     }
-}
-
-/// A comparison operand pair captured during execution.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CmpOperands {
-    /// First operand of the comparison.
-    pub op1: U256,
-    /// Second operand of the comparison.
-    pub op2: U256,
-    /// Program counter where the comparison occurred.
-    pub pc: usize,
-    /// Contract address where the comparison occurred.
-    pub address: Address,
-    /// EVM opcode that performed the comparison.
-    pub opcode: u8,
 }
 
 /// Identity of a control-flow edge: the jump at `pc` in the code running at `address` to
@@ -149,6 +133,8 @@ pub struct EdgeCovHit {
 pub enum EdgeCoverage {
     Hash(Vec<u8>),
     CollisionFree(Vec<EdgeCovHit>),
+    /// Hits of compiler-instrumented edges, keyed by their dense compiler-assigned IDs.
+    Instrumented(Vec<InstrumentedEdgeHit>),
 }
 
 impl EdgeCoverage {
@@ -156,6 +142,7 @@ impl EdgeCoverage {
         match self {
             Self::Hash(hitcount) => hitcount.iter().all(|&count| count == 0),
             Self::CollisionFree(hits) => hits.is_empty(),
+            Self::Instrumented(hits) => hits.is_empty(),
         }
     }
 }
@@ -361,7 +348,6 @@ impl EdgeCovInspector {
         }
     }
 
-    #[cold]
     fn do_step<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
         let address = interp.message().destination;
         // Journal depth of the frame, which counts the top-level frame as 1.
@@ -397,7 +383,6 @@ impl EdgeCovInspector {
         }
     }
 
-    #[cold]
     fn do_cmp_step<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
         if self.cmp_log.is_none() {
             return;
@@ -466,29 +451,43 @@ impl From<EdgeCovInspector> for EdgeCoverage {
 }
 
 impl<T: EvmTypesHost> Inspector<T> for EdgeCovInspector {
+    fn inspector_config(&self) -> InspectorConfig {
+        let mut steps = OpcodeSet::EMPTY;
+        if self.collect_edges {
+            steps = steps.union(EDGE_OPCODES);
+        }
+        if self.cmp_log.is_some() {
+            steps = steps.union(CMP_OPCODES);
+        }
+        InspectorConfig::new().with_steps(steps)
+    }
+
     #[inline]
     fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         let op = interp.opcode();
-        if self.collect_edges && matches!(op, opcode::JUMP | opcode::JUMPI) {
+        if self.collect_edges && EDGE_OPCODES.contains(op) {
             self.do_step(interp);
         }
-        if self.cmp_log.is_some()
-            && matches!(
-                op,
-                opcode::EQ
-                    | opcode::LT
-                    | opcode::GT
-                    | opcode::SLT
-                    | opcode::SGT
-                    | opcode::ISZERO
-                    | opcode::SUB
-                    | opcode::JUMPI
-            )
-        {
+        if self.cmp_log.is_some() && CMP_OPCODES.contains(op) {
             self.do_cmp_step(interp);
         }
     }
 }
+
+/// The instructions at which the inspector records an edge.
+const EDGE_OPCODES: OpcodeSet = opcodes([opcode::JUMP, opcode::JUMPI]);
+
+/// The instructions at which the inspector records comparison operands.
+const CMP_OPCODES: OpcodeSet = opcodes([
+    opcode::EQ,
+    opcode::LT,
+    opcode::GT,
+    opcode::SLT,
+    opcode::SGT,
+    opcode::ISZERO,
+    opcode::SUB,
+    opcode::JUMPI,
+]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CmpSiteKey {

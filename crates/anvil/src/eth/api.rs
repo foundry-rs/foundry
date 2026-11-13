@@ -36,7 +36,7 @@ use crate::{
         sign::Signer,
     },
     filter::{EthFilter, Filters, LogsFilter},
-    mem::transaction_build,
+    mem::{transaction_build, transaction_build_with_block_hash},
 };
 use alloy_consensus::{
     Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, Typed2718,
@@ -90,7 +90,7 @@ use anvil_core::{
         block::{Block, BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
-    types::{NodeBlobParams, ReorgOptions, TransactionData},
+    types::{NodeBlobParams, ReorgOptions, TempoCreateTokenRequest, TransactionData},
 };
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
@@ -114,7 +114,8 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
-use tempo_hardfork::TempoHardfork;
+use tempo_evm::account_access_gas;
+use tempo_hardfork::{TempoHardfork, gas_params};
 use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, transaction::FEE_PAYER_SIGNATURE_MARKER};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
@@ -278,8 +279,8 @@ impl<N: Network> EthApi<N> {
         let cache = self.fee_history_cache.lock();
         let latest_tip = self
             .backend
-            .get_block_with_hash(block_number)
-            .and_then(|(_, hash)| cache.get(&block_number).filter(|item| item.block_hash == hash))
+            .mined_block_hash_by_number(block_number)
+            .and_then(|hash| cache.get(&block_number).filter(|item| item.block_hash == hash))
             .and_then(|item| item.rewards.iter().copied().min());
 
         latest_tip
@@ -287,9 +288,7 @@ impl<N: Network> EthApi<N> {
                 cache
                     .iter()
                     .filter(|(number, item)| {
-                        self.backend
-                            .get_block_with_hash(**number)
-                            .is_some_and(|(_, hash)| item.block_hash == hash)
+                        self.backend.mined_block_hash_by_number(**number) == Some(item.block_hash)
                     })
                     .flat_map(|(_, item)| item.rewards.iter().copied())
                     .min()
@@ -1517,11 +1516,10 @@ impl<N: Network> EthApi<N> {
                 let item = match cached_item {
                     Some(item) if item.block_hash == hash => item,
                     _ => {
-                        let block = self
+                        let header = self
                             .backend
-                            .get_block_by_hash(hash)
+                            .with_block(hash, |block| block.header.clone())
                             .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
-                        let header = block.header;
                         let (item, block_number) = create_fee_history_cache_item(
                             hash,
                             &header,
@@ -2003,8 +2001,42 @@ impl EthApi<FoundryNetwork> {
 
     /// Estimates the gas usage of the `request` with the state.
     ///
-    /// This will execute the transaction request and find the best gas limit via binary search.
+    /// From T14 a fee payer signature costs one cold account access: the fee payer's account is
+    /// read to check its root key. Like a Tempo node, a request carrying
+    /// [`FEE_PAYER_SIGNATURE_MARKER`] is sponsored by a fee payer that is not known yet, so it is
+    /// estimated without the marker, plus that access, and the request or block gas limit bounds
+    /// the total.
+    /// Before T14 the marker is not handled and the request is estimated as it is.
     fn do_estimate_gas_with_state(
+        &self,
+        mut request: FoundryTransactionRequest,
+        state: &dyn DatabaseRef,
+        block_env: BlockEnv,
+        monad_context: Option<MonadReplayContext>,
+    ) -> Result<u128> {
+        let mut fee_payer_access = 0;
+        if let FoundryTransactionRequest::Tempo(request) = &mut request
+            && request.fee_payer_signature == Some(FEE_PAYER_SIGNATURE_MARKER)
+            && self.backend.is_tempo_hardfork_active(TempoHardfork::T14)
+        {
+            let hardfork = self.backend.tempo_hardfork();
+            let version = gas_params::version(hardfork.into(), hardfork, false);
+            fee_payer_access = account_access_gas(&version.gas_params, true);
+            request.fee_payer_signature = None;
+            // Reserve the access from the search bound, so the estimate stays within the block
+            // gas limit when the request sets no gas limit.
+            let bound = request.inner.gas.unwrap_or(block_env.gas_limit);
+            request.inner.gas = Some(bound.saturating_sub(fee_payer_access));
+        }
+        let estimate =
+            self.estimate_unsponsored_gas_with_state(request, state, block_env, monad_context)?;
+        Ok(estimate.saturating_add(u128::from(fee_payer_access)))
+    }
+
+    /// Estimates the gas usage of the `request` with the state, charging no fee payer access.
+    ///
+    /// This will execute the transaction request and find the best gas limit via binary search.
+    fn estimate_unsponsored_gas_with_state(
         &self,
         mut request: FoundryTransactionRequest,
         state: &dyn DatabaseRef,
@@ -2750,6 +2782,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::TempoRotateConsensusIdentity(()) => {
                 self.anvil_tempo_rotate_consensus_identity().await.to_rpc_result()
             }
+            EthRequest::TempoCreateToken(request) => {
+                self.anvil_tempo_create_token(request).await.to_rpc_result()
+            }
         }
     }
 
@@ -3226,7 +3261,7 @@ impl EthApi<FoundryNetwork> {
 
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
-            let transaction = typed_tx.into_impersonated();
+            let transaction = self.backend.impersonated_transaction(typed_tx, from).await?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
@@ -3274,7 +3309,7 @@ impl EthApi<FoundryNetwork> {
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
         let pending_transaction = if self.is_impersonated(from) {
-            let transaction = typed_tx.into_impersonated();
+            let transaction = self.backend.impersonated_transaction(typed_tx, from).await?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_resend: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
@@ -4779,7 +4814,8 @@ impl EthApi<FoundryNetwork> {
                         if let Some(pending) = protocol_pending {
                             pending
                         } else if self.is_impersonated(from) {
-                            let transaction = typed_tx.into_impersonated();
+                            let transaction =
+                                self.backend.impersonated_transaction(typed_tx, from).await?;
                             self.ensure_typed_transaction_supported(&transaction)?;
                             PendingTransaction::with_impersonated(transaction, from)
                         } else {
@@ -5246,17 +5282,18 @@ impl EthApi<FoundryNetwork> {
 
         let mut block_transactions = Vec::with_capacity(block.body.transactions.len());
         let base_fee = self.backend.base_fee();
+        let block_hash = partial_block.header.hash;
 
-        for info in transactions {
+        for info in &transactions {
             let Some(tx) = block.body.transactions.get(info.transaction_index as usize).cloned()
             else {
                 return Ok(None);
             };
 
-            let tx = transaction_build(
+            let tx = transaction_build_with_block_hash(
                 Some(info.transaction_hash),
                 tx,
-                Some(&block),
+                Some((&block, block_hash)),
                 Some(info),
                 Some(base_fee),
             );
@@ -5761,6 +5798,19 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_tempo_rotate_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
         node_info!("anvil_tempoRotateConsensusIdentity");
         self.backend.tempo_rotate_consensus_identity().await
+    }
+
+    /// Creates a native TIP-20 token with optional initial mints at a chosen address.
+    ///
+    /// Handler for `anvil_tempoCreateToken`; unavailable on non-Tempo networks.
+    pub async fn anvil_tempo_create_token(
+        &self,
+        request: TempoCreateTokenRequest,
+    ) -> Result<Address> {
+        node_info!("anvil_tempoCreateToken");
+        self.ensure_tempo_mode()?;
+        let _mining = self.backend.lock_mining().await;
+        self.backend.create_tempo_token(request).await
     }
 }
 

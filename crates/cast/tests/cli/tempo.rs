@@ -17,7 +17,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tempo_contracts::precompiles::{
     CONFIGURABLE_ACCOUNT_ADDRESS, CURRENT_COMMITTEE_ADDRESS, IConfigurableAccount,
     ICurrentCommittee, IReceivePolicyGuard, IRolesAuth, ITIP20, ITIP20Factory, ITIP403Registry,
-    TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    NONCE_PRECOMPILE_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+    TIP403_REGISTRY_ADDRESS,
 };
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::{
@@ -2027,4 +2028,192 @@ async fn tempo_t14_configurable_account_run_fork_replay_matches_node(cmd: _) {
             .unwrap_or_else(|| panic!("`cast run` printed no gas for {hash}:\n{stdout}"));
         assert_eq!(gas, receipt.gas_used, "replayed {hash}:\n{stdout}");
     }
+}
+
+// From T14 a sponsored transaction pays to load its fee payer's account, which checks the fee
+// payer's root key, so its gas estimate must include that access. Before T14 it must not.
+#[casttest]
+async fn tempo_sponsored_send_estimate_covers_fee_payer_access(cmd: _) {
+    for hardfork in [TempoHardfork::T13, TempoHardfork::T14] {
+        let (_, handle) =
+            anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+        let rpc = handle.http_endpoint();
+        let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
+        let sponsor_key =
+            format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
+
+        let receipt = cmd
+            .cast_fuse()
+            .args([
+                "send",
+                "0x7373737373737373737373737373737373737373",
+                "--private-key",
+                &hex::encode_prefixed(wallets[0].credential().to_bytes()),
+                "--tempo.sponsor",
+                &wallets[1].address().to_string(),
+                "--tempo.sponsor-signer",
+                &sponsor_key,
+                "--json",
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let hash = serde_json::from_str::<serde_json::Value>(&receipt).unwrap()["transactionHash"]
+            .as_str()
+            .unwrap()
+            .parse::<B256>()
+            .unwrap();
+
+        let provider = handle.http_provider();
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status(), "{hardfork:?}: {receipt:?}");
+        let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        assert!(signed.tx().fee_payer_signature.is_some());
+        assert_eq!(signed.tx().gas_limit, receipt.gas_used, "{hardfork:?}");
+    }
+}
+
+/// Transactions on a Tempo 2D nonce lane take the lane's own nonce, not the protocol nonce, for
+/// an EOA, an access key and a configurable account sender.
+#[casttest]
+async fn tempo_nonce_key_lane_uses_lane_nonce(cmd: _) {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let target = Address::repeat_byte(0x73).to_string();
+    let (eoa, eoa_key) = dev_account(&handle, 0);
+    let (root, root_key) = dev_account(&handle, 1);
+    let (account, account_key) = dev_account(&handle, 2);
+    let access_key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x51)).unwrap();
+    let owner = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x52)).unwrap();
+
+    // Each sender's first transaction advances its protocol nonce to 1, so a lane nonce taken
+    // from it is 1 instead of 0.
+    cmd.cast_fuse()
+        .args(["send", &target, "--private-key", &eoa_key, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["keychain", "authorize", &access_key.address().to_string()])
+        .args(["--private-key", &root_key, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["wallet", "upgrade", "--owner", &owner.address().to_string(), "--threshold", "1"])
+        .args(["--private-key", &account_key, "--rpc-url", &rpc, "--force"])
+        .assert_success();
+
+    let access_key = hex::encode_prefixed(access_key.to_bytes());
+    let owner = hex::encode_prefixed(owner.to_bytes());
+    let (eoa, root, account) = (eoa.to_string(), root.to_string(), account.to_string());
+    let senders: [(&str, &[&str]); 3] = [
+        (&eoa, &["--private-key", &eoa_key]),
+        (&root, &["--tempo.access-key", &access_key, "--tempo.root-account", &root]),
+        (&account, &["--from", &account, "--private-key", &owner]),
+    ];
+    for (sender, signer) in senders {
+        // Without the lane nonce the first transaction is never mined, so time out early.
+        for command in [&["send", &target][..], &["batch-send", "--call", &target]] {
+            cmd.cast_fuse()
+                .args(command)
+                .args(signer)
+                .args(["--tempo.nonce-key", "42", "--timeout", "10", "--rpc-url", &rpc])
+                .assert_success();
+        }
+
+        cmd.cast_fuse()
+            .args(["call", &NONCE_PRECOMPILE_ADDRESS.to_string()])
+            .args(["getNonce(address,uint256)(uint64)", sender, "42", "--rpc-url", &rpc])
+            .assert_success()
+            .stdout_eq(str![[r#"
+2
+
+"#]]);
+        cmd.cast_fuse().args(["nonce", sender, "--rpc-url", &rpc]).assert_success().stdout_eq(
+            str![[r#"
+1
+
+"#]],
+        );
+    }
+}
+
+/// `--auth` on a Tempo nonce lane or expiring nonce transaction is carried in the AA
+/// authorization list and signed with the sender's protocol nonce, which these transactions do
+/// not bump.
+#[casttest]
+async fn tempo_nonce_key_auth_uses_protocol_nonce(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let (sender, key) = dev_account(&handle, 0);
+    let sender = sender.to_string();
+
+    // A protocol nonce of 3 differs from both the lane nonce plus one and itself plus one.
+    for _ in 0..3 {
+        cmd.cast_fuse()
+            .args(["send", &Address::repeat_byte(0x73).to_string(), "--private-key", &key])
+            .args(["--rpc-url", &rpc])
+            .assert_success();
+    }
+
+    let cases: [(&str, &[&str], _); 2] = [
+        (
+            "0x00000000000000000000000000000000000000aa",
+            &["--tempo.nonce-key", "42"],
+            str![[r#"
+0xef010000000000000000000000000000000000000000aa
+
+"#]],
+        ),
+        (
+            "0x00000000000000000000000000000000000000bb",
+            &["--tempo.expires", "20"],
+            str![[r#"
+0xef010000000000000000000000000000000000000000bb
+
+"#]],
+        ),
+    ];
+    for (delegate, nonce_args, code) in cases {
+        cmd.cast_fuse()
+            .args(["send", &sender, "--auth", delegate, "--private-key", &key, "--force"])
+            .args(nonce_args)
+            .args(["--rpc-url", &rpc])
+            .assert_success();
+        cmd.cast_fuse().args(["code", &sender, "--rpc-url", &rpc]).assert_success().stdout_eq(code);
+    }
+}
+
+/// Before T1 the expiring nonce key is an ordinary lane, so its nonce comes from the Nonce Manager.
+#[casttest]
+async fn tempo_t0_expiring_nonce_key_uses_lane_nonce(cmd: _) {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()))).await;
+    let rpc = handle.http_endpoint();
+    let (sender, key) = dev_account(&handle, 0);
+    let nonce_key = U256::MAX.to_string();
+    let send = ["send", "0x7373737373737373737373737373737373737373", "--private-key", &key];
+
+    // The first transaction advances the lane to 1; the second only mines with that nonce.
+    cmd.cast_fuse()
+        .args(send)
+        .args(["--tempo.nonce-key", &nonce_key, "--nonce", "0", "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(send)
+        .args(["--tempo.nonce-key", &nonce_key, "--timeout", "10", "--rpc-url", &rpc])
+        .assert_success();
+
+    cmd.cast_fuse()
+        .args(["call", &NONCE_PRECOMPILE_ADDRESS.to_string()])
+        .args(["getNonce(address,uint256)(uint64)", &sender.to_string(), &nonce_key])
+        .args(["--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+2
+
+"#]]);
 }

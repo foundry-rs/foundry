@@ -341,7 +341,7 @@ foundry-primitives = { path = "crates/primitives", default-features = false }
 foundry-tui = { path = "crates/tui", default-features = false }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.24.0", default-features = false }
+foundry-block-explorers = { version = "0.25.0", default-features = false }
 foundry-compilers = { version = "0.21.0", default-features = false, features = [
     "rustls",
     "svm-solc",
@@ -358,20 +358,21 @@ svm = { package = "svm-rs", version = "0.5.30", default-features = false, featur
 
 ## evm2
 # alloy-rs/evm2 main; see the patch sections below.
-evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "66687c18b34d3bdbb899f5eb7605070615c03475", default-features = false, features = [
+evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8", default-features = false, features = [
     "account-ext",
     "std",
 ] }
-evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "66687c18b34d3bdbb899f5eb7605070615c03475", features = [
+evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8", features = [
     "serde",
 ] }
+evm2-macros = { git = "https://github.com/alloy-rs/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8" }
 # Tempo at `23ea582`, using upstream reth and evm2.
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "f099fd9eae15aeea6f61cd1733c748ea4af063d8", default-features = false }
-tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "f099fd9eae15aeea6f61cd1733c748ea4af063d8", default-features = false, features = [
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "3e5d8fd24d210468569e3a182e035beb61569340", default-features = false }
+tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "3e5d8fd24d210468569e3a182e035beb61569340", default-features = false, features = [
     "serde",
     "std",
 ] }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "f099fd9eae15aeea6f61cd1733c748ea4af063d8", default-features = false }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "3e5d8fd24d210468569e3a182e035beb61569340", default-features = false }
 # Op, Base and Monad evm2 type families, on foundry-rs/evm2-networks at `b6116c7`.
 op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b6116c79df5f3c14de93e4350357beb0fe31cae7", default-features = false }
 base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b6116c79df5f3c14de93e4350357beb0fe31cae7", default-features = false }
@@ -541,12 +542,12 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "fa51e6ae93197aadc16cb
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "f099fd9eae15aeea6f61cd1733c748ea4af063d8", default-features = false, features = [
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "3e5d8fd24d210468569e3a182e035beb61569340", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "f099fd9eae15aeea6f61cd1733c748ea4af063d8", default-features = false }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "f099fd9eae15aeea6f61cd1733c748ea4af063d8" }
-tempo-dkg-onchain-artifacts = { git = "https://github.com/tempoxyz/tempo", rev = "f099fd9eae15aeea6f61cd1733c748ea4af063d8", default-features = false }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "3e5d8fd24d210468569e3a182e035beb61569340", default-features = false }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "3e5d8fd24d210468569e3a182e035beb61569340" }
+tempo-dkg-onchain-artifacts = { git = "https://github.com/tempoxyz/tempo", rev = "3e5d8fd24d210468569e3a182e035beb61569340", default-features = false }
 
 # Tempo consensus certificate primitives.
 commonware-codec = { version = "=2026.10.0", default-features = false }
@@ -586,10 +587,10 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "943bdd3b6eac14fe206d9d64034767245c8e3122" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "943bdd3b6eac14fe206d9d64034767245c8e3122" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "943bdd3b6eac14fe206d9d64034767245c8e3122" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "c5176b4519c5d85b5938b470fd7c2c8a1fb1a960" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "b178bd8ace2720f9ff6e6a795d34f7308be576cd" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "b178bd8ace2720f9ff6e6a795d34f7308be576cd" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "b178bd8ace2720f9ff6e6a795d34f7308be576cd" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "b178bd8ace2720f9ff6e6a795d34f7308be576cd" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
@@ -651,11 +652,11 @@ reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 
-# The single evm2 revision for the whole graph: alloy-rs/evm2 main at `66687c1`. Tempo, reth,
+# The single evm2 revision for the whole graph: alloy-rs/evm2 main at `0b5a72e`. Tempo, reth,
 # reth-core and evm2-networks all pin `alloy-rs/evm2`, at different revisions. Cargo rejects a
 # patch from the same source, so this goes through `DaniPopes/evm2`, the pre-transfer URL of
 # alloy-rs/evm2, which GitHub redirects to it.
 [patch."https://github.com/alloy-rs/evm2"]
-evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "66687c18b34d3bdbb899f5eb7605070615c03475" }
-evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "66687c18b34d3bdbb899f5eb7605070615c03475" }
-evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "66687c18b34d3bdbb899f5eb7605070615c03475" }
+evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8" }
+evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8" }
+evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8" }

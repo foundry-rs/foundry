@@ -31,6 +31,7 @@ pub mod buffer;
 pub mod bytecode;
 pub mod constants;
 pub mod decode;
+pub mod edgecov;
 pub mod eip2935;
 pub mod evm;
 pub mod fork;

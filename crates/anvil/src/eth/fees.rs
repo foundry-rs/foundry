@@ -601,7 +601,6 @@ pub(crate) fn create_fee_history_cache_item<N: Network>(
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
-    let mut block_number: Option<u64> = None;
     let base_fee = header.base_fee_per_gas().unwrap_or_default();
     let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
     let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
@@ -618,12 +617,7 @@ where
         blob_gas_used,
     };
 
-    let current_block = storage_info.block(hash);
-    let current_receipts = storage_info.receipts(hash);
-
-    if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
-        block_number = Some(block.header.number());
-
+    let block_number = storage_info.with_block_and_receipts(hash, |block, receipts| {
         let gas_used = block.header.gas_used() as f64;
         let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
         let gas_limit = block.header.gas_limit() as f64;
@@ -658,7 +652,9 @@ where
         transactions.sort_by_key(|(_, reward)| *reward);
 
         item.rewards = reward_percentiles(&transactions, gas_used);
-    } else {
+        block.header.number()
+    });
+    if block_number.is_none() {
         item.rewards = vec![0; REWARD_PERCENTILES.len()];
     }
     (item, block_number)

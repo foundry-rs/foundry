@@ -149,6 +149,11 @@ contract NestedStorer {
         slots[bytes32("nested_storer 3")]++;
         slots[bytes32("nested_storer 4")]++;
     }
+
+    function runThenWrite() external payable {
+        this.run();
+        slots[bytes32("nested_storer 5")]++;
+    }
 }
 
 /// @notice Helper contract that directly reads from and writes to storage
@@ -1008,6 +1013,33 @@ contract RecordAccountAccessesTest is Test {
                 depth: 2
             }),
             false
+        );
+    }
+
+    /// @notice Test that storage accesses after a nested call that resumed are recorded in the
+    ///         caller's own resume record
+    function testNestedStorageAfterResume() public {
+        vm.startStateDiffRecording();
+        nestedStorer.runThenWrite();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+        assertEq(called.length, 5, "incorrect account access length");
+
+        assertResumeEq(called[3], called[1]);
+        assertEq(called[3].storageAccesses.length, 2, "incorrect run resume storage length");
+
+        assertResumeEq(called[4], called[0]);
+        assertEq(called[4].storageAccesses.length, 2, "incorrect runThenWrite resume storage length");
+        assertIncrementEq(
+            called[4].storageAccesses[0],
+            called[4].storageAccesses[1],
+            Vm.StorageAccess({
+                account: address(nestedStorer),
+                slot: keccak256(abi.encodePacked(bytes32("nested_storer 5"), bytes32(0))),
+                isWrite: true,
+                previousValue: bytes32(uint256(0)),
+                newValue: bytes32(uint256(1)),
+                reverted: false
+            })
         );
     }
 

@@ -1149,7 +1149,6 @@ contract StatelessPayableValueTest {
     assert_eq!(corpus_tx["value"], "0x7");
     assert_eq!(corpus_tx["sender"].as_str().unwrap().parse(), Ok(sender));
     assert_eq!(corpus_tx["target"].as_str().unwrap().parse(), Ok(target));
-    assert_eq!(corpus_tx["calldata"], failure.calldata.to_string());
 
     let frontier_path =
         frontier_root.join("StatelessPayableValueTest/testFuzz_payable/branch-frontiers.json");
@@ -1159,7 +1158,9 @@ contract StatelessPayableValueTest {
     assert_eq!(frontier_tx["value"], "0x7");
     assert_eq!(frontier_tx["sender"].as_str().unwrap().parse(), Ok(sender));
     assert_eq!(frontier_tx["target"].as_str().unwrap().parse(), Ok(target));
-    assert_eq!(frontier_tx["calldata"], failure.calldata.to_string());
+    assert_eq!(frontier_tx["calldata"], corpus_tx["calldata"]);
+    // The failure keeps the value while its argument is minimized.
+    assert_eq!(failure.calldata[4..], [0; 32]);
 
     let replay = cmd
         .forge_fuse()
@@ -5256,17 +5257,17 @@ contract CounterTest is Test {
 }
    "#,
     );
-    // Tests should fail and record counterexample with value 200.
+    // Tests should fail and record the minimized counterexample with value 0.
     cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/Counter.t.sol:CounterTest
-[FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d700000000000000000000000000000000000000000000000000000000000000c8 args=[200]] testFuzz_SetNumber(uint256) (runs: 6, [AVG_GAS])
+[FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d70000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzz_SetNumber(uint256) (runs: 6, [AVG_GAS])
 ...
 
 "#]]);
 
-    // Change test to assume counterexample 2 is discarded.
+    // Change test to assume counterexample 0 is discarded.
     prj.add_test(
         "Counter.t.sol",
         r#"
@@ -5274,7 +5275,7 @@ import {Test} from "forge-std/Test.sol";
 
 contract CounterTest is Test {
     function testFuzz_SetNumber(uint256 x) public pure {
-        vm.assume(x != 200);
+        vm.assume(x != 0);
     }
 }
    "#,
@@ -5332,12 +5333,12 @@ contract CounterTest is Test {
 }
    "#,
     );
-    // Test should fail with replayed counterexample 200 (0 runs).
+    // Test should fail with replayed counterexample 0 (0 runs).
     cmd.forge_fuse().args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/Counter.t.sol:CounterTest
-[FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d700000000000000000000000000000000000000000000000000000000000000c8 args=[200]] testFuzz_SetNumber(uint256) (runs: 0, [AVG_GAS])
+[FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d70000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzz_SetNumber(uint256) (runs: 0, [AVG_GAS])
 ...
 
 "#]]);
@@ -5469,6 +5470,8 @@ fn fuzz_failure_persist(prj: _, cmd: _) {
     assert!(!persist_dir.exists());
     prj.update_config(|config| {
         config.fuzz.failure_persist_dir = Some(persist_dir.clone());
+        // Minimized counterexamples of fresh campaigns are equal, so keep the raw ones.
+        config.invariant.shrink_run_limit = 0;
     });
 
     prj.add_test(
@@ -6729,6 +6732,285 @@ contract FuzzMetricsTest is Test {
 {"timestamp":[..],"test":"testFuzz_metrics","metrics":[..]}
 ...
 "#]]);
+}
+
+// Failing fuzz inputs are minimized to the smallest values that fail the same way.
+#[forgetest_init]
+fn fuzz_minimizes_counterexample_values(prj: _, cmd: _) {
+    prj.add_test(
+        "Minimize.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Checker is Test {
+    constructor(uint256 x) {
+        assertEq(x, 7);
+    }
+}
+
+contract Fails {
+    function fail() external pure { revert("same"); }
+}
+
+contract Bounded {
+    error TooBig(uint256 x);
+
+    function check(uint256 x) external pure {
+        if (x > 1000) revert TooBig(x);
+    }
+}
+
+contract Coded {
+    error Failed(uint8 code);
+
+    function check(uint256 x) external pure {
+        uint8 code;
+        if (x > 1e30) code = 1;
+        else if (x > 1000) code = 2;
+        if (code != 0) revert Failed(code);
+    }
+}
+
+contract MinimizeTest is Test {
+    Fails cleanup = new Fails();
+    Fails early = new Fails();
+    Fails intended = new Fails();
+    Bounded bounded = new Bounded();
+    Coded coded = new Coded();
+
+    // Both assertions share the optimized `assertEq` wrapper and differ only by call site.
+    function testFuzz_site(uint256 a, uint256 b) public pure {
+        if (a > 1000) {
+            if (b > 5000) assertEq(b, 0);
+            else assertEq(a, 7);
+        }
+    }
+
+    // Constructor arguments must not keep the assertion from minimizing.
+    function testFuzz_ctor(uint256 x) public {
+        if (x > 1000) new Checker(x);
+    }
+
+    // Every input first reverts in `cleanup`, and zero would fail in `early` instead.
+    function testFuzz_caught(uint256 x) public {
+        try cleanup.fail() {} catch {}
+        if (x == 0) early.fail();
+        intended.fail();
+    }
+
+    // Custom error arguments are compared in full, so values they carry are not minimized.
+    function testFuzz_custom(uint256 x) public view {
+        bounded.check(x);
+    }
+
+    // A failure code raised from one shared revert shrinks only within its own code.
+    function testFuzz_code(uint256 x) public view {
+        coded.check(x);
+    }
+}
+"#,
+    );
+
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.isolate = isolate;
+            config.optimizer = Some(true);
+            config.fuzz.seed = Some(U256::ONE);
+        });
+        cmd.forge_fuse().args(["test", "-j1", "--mc", "MinimizeTest"]).assert_failure().stdout_eq(
+            str![[r#"
+...
+Ran 5 tests for test/Minimize.t.sol:MinimizeTest
+[FAIL: same; counterexample: calldata=[..] args=[1]] testFuzz_caught(uint256) (runs: 0, [AVG_GAS])
+[FAIL: Failed(1); counterexample: calldata=[..] args=[1000000000000000000000000000001 [1e30]]] testFuzz_code(uint256) (runs: 0, [AVG_GAS])
+[FAIL: assertion failed: 1001 != 7; counterexample: calldata=0x1e23fbd300000000000000000000000000000000000000000000000000000000000003e9 args=[1001]] testFuzz_ctor(uint256) (runs: 0, [AVG_GAS])
+[FAIL: TooBig(742886487892369547698386939959150855759913659 [7.428e44]); counterexample: calldata=[..] args=[742886487892369547698386939959150855759913659 [7.428e44]]] testFuzz_custom(uint256) (runs: 0, [AVG_GAS])
+[FAIL: assertion failed: 5001 != 0; counterexample: calldata=0x11e5359500000000000000000000000000000000000000000000000000000000000003e90000000000000000000000000000000000000000000000000000000000001389 args=[1001, 5001]] testFuzz_site(uint256,uint256) (runs: 0, [AVG_GAS])
+...
+"#]],
+        );
+    }
+}
+
+// Counterexamples are kept when their failure cannot be identified or their replay fails
+// differently from the campaign.
+#[forgetest_init]
+fn fuzz_minimization_keeps_unidentified_counterexamples(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::ONE);
+        config.optimizer = Some(true);
+        config.fs_permissions.add(PathPermission::read_write(prj.root()));
+        config.ffi = true;
+    });
+    prj.add_test(
+        "Unidentified.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+// Jumps to the calldata and reverts empty from either 3 or 7, at the same cost.
+address constant CHECK = address(0x12345);
+
+contract Checker is Test {
+    uint256 public marker;
+
+    function first() external {
+        marker = 1;
+        assertEq(uint256(1), uint256(0));
+    }
+
+    function alternate() external {
+        marker = 2;
+        assertEq(uint256(1), uint256(0));
+    }
+}
+
+contract UnidentifiedTest is Test {
+    Checker checker = new Checker();
+
+    function setUp() public {
+        vm.etch(CHECK, hex"5f35565b5f5ffd5b5f5ffd");
+    }
+
+    // Replays fail with the same data as the campaign, which only failed for nonzero inputs,
+    // but from another function.
+    function testFuzz_replay(uint256 x) public {
+        string memory marker = string.concat(vm.projectRoot(), "/replayed");
+        bool replay = vm.exists(marker);
+        if (!replay) vm.writeFile(marker, "");
+        if (replay) checker.alternate();
+        else if (x != 0) checker.first();
+    }
+
+    // Both `fail()` calls set the same global failure flag, but are told apart by call site.
+    function testFuzz_fail(uint256 x) public {
+        if (x == 0) fail();
+        if (x >= 1000) fail();
+    }
+
+    // Replays fail with the same data and gas as the campaign, which only failed for nonzero
+    // inputs, but from another revert. Only the campaign creates the marker, through a cheatcode
+    // call that costs as much as the replay's environment read and that the replay never makes.
+    function testFuzz_drift(uint256 x) public {
+        string memory marker = string.concat(vm.projectRoot(), "/drifted");
+        bool replay = vm.exists(marker);
+        bytes4 write = bytes4(keccak256("writeFile(string,string)"));
+        bytes4 read = bytes4(keccak256("envOr(string,string)"));
+        bytes4 selector;
+        assembly {
+            selector := xor(write, mul(replay, xor(write, read)))
+        }
+        bytes memory data = abi.encodeWithSelector(selector, marker, "");
+        address cheats = address(vm);
+        assembly {
+            pop(call(gas(), cheats, 0, add(data, 32), mload(data), 0, 0))
+        }
+        bool valid;
+        uint256 dest;
+        assembly {
+            valid := or(replay, iszero(iszero(x)))
+            dest := add(3, mul(replay, 4))
+        }
+        vm.assume(valid);
+        (bool ok,) = CHECK.call(abi.encode(dest));
+        require(ok);
+    }
+
+    // Replays skip writes and commands outside the EVM, so later reads would see the campaign's.
+    function testFuzz_writes(uint256 x) public {
+        string memory root = vm.projectRoot();
+        vm.writeLine(string.concat(root, "/fuzz-log.txt"), vm.toString(x));
+        string[] memory append = new string[](3);
+        append[0] = "bash";
+        append[1] = "-c";
+        append[2] = string.concat("echo >> '", root, "/ffi-log.txt'");
+        vm.ffi(append);
+        revert();
+    }
+
+    // Replays do not start after the test's deadline.
+    /// forge-config: default.fuzz.timeout = 1
+    function testFuzz_deadline(uint256) public {
+        vm.sleep(1100);
+        revert();
+    }
+}
+"#,
+    );
+
+    // One worker, so only the campaign's first run sees no markers.
+    cmd.args(["test", "-j1", "--mc", "UnidentifiedTest", "-q"]).assert_failure();
+    // Only the campaign wrote. Windows runners may not have bash.
+    let mut logs = vec!["fuzz-log.txt"];
+    if cfg!(unix) {
+        logs.push("ffi-log.txt");
+    }
+    for log in logs {
+        let lines = std::fs::read_to_string(prj.root().join(log)).unwrap().lines().count();
+        assert_eq!(lines, 1, "{log}");
+    }
+    // All would be minimized to zero.
+    for function in [
+        "testFuzz_replay",
+        "testFuzz_fail",
+        "testFuzz_drift",
+        "testFuzz_writes",
+        "testFuzz_deadline",
+    ] {
+        let path = prj.root().join("cache/fuzz/failures/UnidentifiedTest").join(function);
+        let failure = foundry_common::fs::read_json_file::<BaseCounterExample>(&path).unwrap();
+        assert!(!U256::from_be_slice(&failure.calldata[4..]).is_zero(), "{function}");
+    }
+}
+
+// Concurrent corpus-enabled fuzz tests must finish when their workers outnumber rayon threads.
+#[forgetest_init]
+fn concurrent_corpus_fuzz_tests_finish(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.corpus.corpus_dir = Some(prj.root().join("fuzz_corpus"));
+    });
+    prj.add_test(
+        "ConcurrentCorpus.t.sol",
+        r#"
+contract ConcurrentCorpusTest {
+    function testFuzz_a(uint256) public pure {}
+    function testFuzz_b(uint256) public pure {}
+    function testFuzz_c(uint256) public pure {}
+    function testFuzz_d(uint256) public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ConcurrentCorpusTest", "--threads", "2"]).assert_success();
+}
+
+// With `instrumented_edges`, every test executor runs the `EDGECOV` and `CMPLOG` probes, so
+// instrumented artifacts also deploy and run outside coverage-guided campaigns.
+#[forgetest_init]
+fn instrumented_edges_run_probes_in_unit_tests(prj: _, cmd: _) {
+    prj.add_test(
+        "Probes.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ProbesTest is Test {
+    address probed = address(0x1234);
+
+    function setUp() public {
+        // PUSH2 1; EDGECOV; PUSH1 2; PUSH1 1; PUSH2 0x0114; CMPLOG; EQ; STOP
+        vm.etch(probed, hex"610001c0600260016101" hex"14c11400");
+    }
+
+    function test_probes() public {
+        (bool ok,) = probed.call("");
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "ProbesTest"]).assert_failure();
+    prj.update_config(|config| config.fuzz.corpus.instrumented_edges = true);
+    cmd.assert_success();
 }
 
 // Cmp mutations solve `balance == value`, where the balance is the input plus a large balance

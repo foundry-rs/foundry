@@ -5,6 +5,8 @@ pub(super) struct SymbolicCalldata {
     bytes: SymBytes,
     inputs: Vec<SymbolicInput>,
     constraints: Vec<SymBoolExpr>,
+    /// Symbolic length of the calldata, at most `bytes.len()`, when it is not fixed.
+    size: Option<SymExpr>,
 }
 
 impl SymbolicCalldata {
@@ -30,7 +32,31 @@ impl SymbolicCalldata {
             bytes: SymBytes::concrete(cx, function.selector().to_vec()),
             inputs: Vec::new(),
             constraints: Vec::new(),
+            size: None,
         })
+    }
+
+    /// Builds `len` bytes of unconstrained raw calldata that is not tied to any ABI.
+    pub(super) fn raw(cx: &mut SymCx, len: usize, prefix: &str) -> Self {
+        let words = (0..len.div_ceil(32))
+            .map(|idx| {
+                let word = SymExpr::var(cx, &format!("{prefix}_raw{len}_{idx}"));
+                SymBytes::word(cx, word)
+            })
+            .collect::<Vec<_>>();
+        let bytes = SymBytes::concat(cx, words);
+        let bytes = bytes.slice_concrete(cx, 0, len);
+        Self { bytes, inputs: Vec::new(), constraints: Vec::new(), size: None }
+    }
+
+    /// Builds unconstrained raw calldata of a symbolic length of at most `max` bytes, whose
+    /// bytes past its end read as zero.
+    pub(super) fn symbolic_size(cx: &mut SymCx, max: usize, prefix: &str) -> Self {
+        let Self { bytes, .. } = Self::raw(cx, max, prefix);
+        let size = SymExpr::var(cx, &format!("{prefix}_size"));
+        let fits = SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, &size, U256::from(max));
+        let bytes = SymBytes::sized(cx, bytes, size.clone(), max);
+        Self { bytes, inputs: Vec::new(), constraints: vec![fits], size: Some(size) }
     }
 
     pub(super) fn variants_with_prefix(
@@ -127,13 +153,86 @@ impl SymbolicCalldata {
                 ));
             }
 
-            out.push(Self { bytes, inputs, constraints: state.constraints });
+            out.push(Self { bytes, inputs, constraints: state.constraints, size: None });
         }
         Ok(out)
     }
 
+    /// Builds the calldata shapes of a contract ABI, as Halmos `createCalldata` does: empty
+    /// calldata for `receive` and `fallback`, a selector outside the ABI with arbitrary bytes for
+    /// `fallback`, and each function with symbolic arguments. View and pure functions are left
+    /// out unless `include_view` is set.
+    pub(super) fn contract_variants(
+        abi: &JsonAbi,
+        include_view: bool,
+        config: &SymbolicConfig,
+        cx: &mut SymCx,
+        prefix: &str,
+    ) -> Result<Vec<Self>, SymbolicError> {
+        let max_len = config.max_calldata_bytes as usize;
+        if max_len < 4 {
+            return Err(SymbolicError::Unsupported(
+                "symbolic calldata size exceeds configured max",
+            ));
+        }
+        let empty = Self {
+            bytes: SymBytes::empty(cx),
+            inputs: Vec::new(),
+            constraints: Vec::new(),
+            size: None,
+        };
+
+        let mut builder = SymbolicAbiBuilder { config, cx };
+        let mut state = SymbolicAbiState::default();
+        let bytes = (0..CREATE_CALLDATA_FALLBACK_LEN.min(max_len))
+            .map(|idx| builder.fresh_byte(&mut state, &format!("{prefix}_fallback_{idx}"), false))
+            .collect();
+        let bytes = SymBytes::exprs(cx, bytes);
+        let selector = bytes.right_aligned_word(cx, 0, 4);
+        for function in abi.functions() {
+            let selector = SymBoolExpr::eq_word_const(
+                cx,
+                &selector,
+                U256::from_be_slice(function.selector().as_slice()),
+            );
+            state.constraints.push(selector.not(cx));
+        }
+        let fallback =
+            Self { bytes, inputs: Vec::new(), constraints: state.constraints, size: None };
+
+        let mut variants = vec![empty, fallback];
+        for (idx, function) in abi.functions().enumerate() {
+            if include_view
+                || !matches!(
+                    function.state_mutability,
+                    StateMutability::Pure | StateMutability::View
+                )
+            {
+                variants.extend(Self::variants_with_prefix(
+                    function,
+                    config,
+                    cx,
+                    &format!("{prefix}_{idx}"),
+                )?);
+            }
+        }
+        Ok(variants)
+    }
+
     pub(super) fn call_data(&self, cx: &mut SymCx) -> SymCalldata {
-        SymCalldata::from_bytes(cx, self.bytes.clone())
+        match &self.size {
+            Some(size) => SymCalldata::with_size_word(self.bytes.clone(), size.clone()),
+            None => SymCalldata::from_bytes(cx, self.bytes.clone()),
+        }
+    }
+
+    /// Returns this calldata ABI-encoded as a single `bytes` value.
+    pub(super) fn abi_encoded_bytes(&self, cx: &mut SymCx) -> SymBytes {
+        let value = SymbolicAbiValue::Bytes {
+            len: SymExpr::constant(cx, U256::from(self.bytes.len())),
+            bytes: self.bytes.clone(),
+        };
+        encode_sequence(cx, [&value])
     }
 
     /// Returns symbolic calldata constraints.
@@ -152,6 +251,20 @@ impl SymbolicCalldata {
         model: &(impl SymbolicModelLookup + ?Sized),
     ) -> Result<Vec<DynSolValue>, SymbolicError> {
         self.inputs.iter().map(|input| input.value.model_value(cx, model)).collect()
+    }
+
+    /// Evaluates the full calldata bytes under a solver model.
+    pub(super) fn model_to_bytes(
+        &self,
+        cx: &mut SymCx,
+        model: &(impl SymbolicModelLookup + ?Sized),
+    ) -> Result<Vec<u8>, SymbolicError> {
+        let mut bytes = self.bytes.eval_model(cx, model)?;
+        if let Some(size) = &self.size {
+            let size = size.eval_model(model)?;
+            bytes.truncate(usize::try_from(size).unwrap_or(usize::MAX));
+        }
+        Ok(bytes)
     }
 
     pub(super) fn seed_model(
@@ -223,7 +336,6 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
         &mut self,
         state: &mut SymbolicAbiState,
         name: String,
-        aliases: Vec<String>,
         ty: &DynSolType,
     ) -> Result<SymbolicAbiValue, SymbolicError> {
         Ok(match ty {
@@ -258,71 +370,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
                 self.constrain_uint(state, &word, 160);
                 SymbolicAbiValue::Address { word }
             }
-            DynSolType::Function => {
-                return Err(SymbolicError::UnsupportedAbi("function".to_string()));
-            }
-            DynSolType::Bytes => {
-                let len = self.next_dynamic_length(state, &name, &aliases, DynamicKind::Bytes)?;
-                let bytes = (0..len)
-                    .map(|idx| self.fresh_byte(state, &format!("{name}_{idx}"), false))
-                    .collect();
-                SymbolicAbiValue::Bytes {
-                    len: SymExpr::constant(self.cx, U256::from(len)),
-                    bytes: SymBytes::exprs(self.cx, bytes),
-                }
-            }
-            DynSolType::String => {
-                let len = self.next_dynamic_length(state, &name, &aliases, DynamicKind::String)?;
-                let bytes = (0..len)
-                    .map(|idx| self.fresh_byte(state, &format!("{name}_{idx}"), true))
-                    .collect();
-                SymbolicAbiValue::String { bytes: SymBytes::exprs(self.cx, bytes) }
-            }
-            DynSolType::Array(inner) => {
-                let len = self.next_dynamic_length(state, &name, &aliases, DynamicKind::Array)?;
-                SymbolicAbiValue::Array {
-                    elements: (0..len)
-                        .map(|idx| {
-                            self.value(
-                                state,
-                                format!("{name}_{idx}"),
-                                child_aliases(&aliases, idx),
-                                inner,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                }
-            }
-            DynSolType::FixedArray(inner, len) => SymbolicAbiValue::FixedArray {
-                elements: (0..*len)
-                    .map(|idx| {
-                        self.value(
-                            state,
-                            format!("{name}_{idx}"),
-                            child_aliases(&aliases, idx),
-                            inner,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            },
-            DynSolType::Tuple(types) => SymbolicAbiValue::Tuple {
-                elements: types
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, ty)| {
-                        self.value(state, format!("{name}_{idx}"), child_aliases(&aliases, idx), ty)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            },
-            DynSolType::CustomStruct { tuple, .. } => SymbolicAbiValue::Tuple {
-                elements: tuple
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, ty)| {
-                        self.value(state, format!("{name}_{idx}"), child_aliases(&aliases, idx), ty)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            },
+            _ => return Err(SymbolicError::UnsupportedAbi(ty.to_string())),
         })
     }
 
@@ -424,7 +472,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
                 .collect(),
             _ => {
                 let mut state = state;
-                let value = self.value(&mut state, name, aliases, ty)?;
+                let value = self.value(&mut state, name, ty)?;
                 vec![(state, value)]
             }
         })
@@ -521,19 +569,6 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
             ));
         }
         word
-    }
-
-    pub(super) fn next_dynamic_length(
-        &self,
-        state: &mut SymbolicAbiState,
-        name: &str,
-        aliases: &[String],
-        kind: DynamicKind,
-    ) -> Result<usize, SymbolicError> {
-        Ok(first_dynamic_length(
-            &self.next_dynamic_length_options(state, name, aliases, kind)?,
-            "symbolic dynamic length",
-        )? as usize)
     }
 
     pub(super) fn next_dynamic_length_options(
@@ -698,13 +733,6 @@ impl DynamicKind {
             _ => None,
         }
     }
-}
-
-pub(super) fn first_dynamic_length(lengths: &[u32], field: &str) -> Result<u32, SymbolicError> {
-    lengths
-        .first()
-        .copied()
-        .ok_or_else(|| SymbolicError::UnsupportedAbi(format!("{field} must not be empty")))
 }
 
 pub(super) fn child_aliases(aliases: &[String], idx: usize) -> Vec<String> {

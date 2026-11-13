@@ -11,7 +11,7 @@ use alloy_primitives::{
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolCall, SolValue};
 use evm2::{
     EvmFeatures, SpecId,
     bytecode::Bytecode,
@@ -29,7 +29,7 @@ use foundry_common::{
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
-    backend::{RevertStateSnapshotAction, transaction_error},
+    backend::{GLOBAL_FAIL_SLOT, RevertStateSnapshotAction, transaction_error},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
         HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
@@ -37,8 +37,8 @@ use foundry_evm_core::{
     },
     evm::{
         EvmEnvFor, EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork,
-        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, TxEnvelopeFor, TxPayload,
-        TypesFor, evm_env,
+        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, Replay, TxEnvelopeFor,
+        TxPayload, TypesFor, evm_env,
     },
 };
 use foundry_evm_traces::TraceRequirements;
@@ -846,7 +846,8 @@ impl Cheatcode for dealCall {
             old_balance
         };
         // The balance survives reverts of the enclosing calls.
-        let write = PersistentWrite::Balance(address, new_balance.wrapping_sub(old_balance));
+        let write =
+            PersistentWrite::balance(address, old_balance, new_balance).with_replay(Replay::Set);
         ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
@@ -926,6 +927,15 @@ impl Cheatcode for storeCall {
             .map_err(|e| fmt_err!("failed to store storage slot: {e}"))?
             .set(value.into());
         ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
+        // A `fail()` fails the call where it is made, like an assertion.
+        if target == CHEATCODE_ADDRESS && slot == B256::from(GLOBAL_FAIL_SLOT) && !value.is_zero() {
+            if let Some(trace) = &mut ccx.state.failure_trace {
+                trace.record_assertion(Self::SELECTOR, "", None);
+            }
+            if let Some(provenance) = &mut ccx.state.failure_provenance {
+                provenance.pending_assertion = Some(keccak256(Self::SELECTOR));
+            }
+        }
         Ok(Default::default())
     }
 }
@@ -1669,6 +1679,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    let fork_id = ccx.active_fork_id();
     let (evm, db) = ccx.evm_db_mut();
     if let Some(replaced) = db.revert_state(
         snapshot_id,
@@ -1676,7 +1687,13 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertKeep,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.restore_persistent_writes(snapshot_id, replaced, false);
+        let switched = ccx.active_fork_id() != fork_id;
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, false, switched);
+        // A restore can make a different path look like the recorded one, so its identity is
+        // unknown.
+        if let Some(trace) = &mut ccx.state.failure_trace {
+            trace.unidentified = true;
+        }
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         ccx.state.env_overrides.restore_snapshot(snapshot_id, false);
@@ -1697,6 +1714,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    let fork_id = ccx.active_fork_id();
     let (evm, db) = ccx.evm_db_mut();
     if let Some(replaced) = db.revert_state(
         snapshot_id,
@@ -1704,7 +1722,11 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertRemove,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.restore_persistent_writes(snapshot_id, replaced, true);
+        let switched = ccx.active_fork_id() != fork_id;
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, true, switched);
+        if let Some(trace) = &mut ccx.state.failure_trace {
+            trace.unidentified = true;
+        }
         ccx.state.env_overrides.restore_snapshot(snapshot_id, true);
         if let Some(fork_block_number) =
             ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)
@@ -1904,7 +1926,7 @@ fn set_persistent_nonce<FEN: FoundryEvmNetwork>(
     account.warm();
     let previous = account.nonce();
     account.set_nonce(nonce);
-    let write = PersistentWrite::nonce(&account, previous);
+    let write = PersistentWrite::nonce(&account, previous).with_replay(Replay::Set);
     drop(account);
     ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
     Ok(Default::default())
@@ -2139,13 +2161,17 @@ pub(crate) fn append_storage_access(
         // Three cases to consider:
         // 1. If there hasn't been a context switch since the start of this context, then add the
         //    storage access to the current context record.
-        // 2. If there's an existing Resume record, then add the storage access to it.
+        // 2. If there's an existing Resume record for this context, then add the storage access to
+        //    it. A deeper Resume record belongs to a subcall that already returned.
         // 3. Otherwise, create a new Resume record based on the current context.
         if last.len() == 1 {
             last.first_mut().unwrap().storageAccesses.push(storage_access);
         } else {
+            let depth = last.first().unwrap().depth;
             let last_record = last.last_mut().unwrap();
-            if last_record.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8 {
+            if last_record.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8
+                && last_record.depth == depth
+            {
                 last_record.storageAccesses.push(storage_access);
             } else {
                 let entry = last.first().unwrap();

@@ -7,7 +7,7 @@ use crate::{
         FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
     },
 };
-use alloy_dyn_abi::{JsonAbiExt, abi::AbiDecoderConfig};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt, abi::AbiDecoderConfig};
 use alloy_json_abi::Function;
 use alloy_primitives::{U256, map::HashSet};
 use eyre::{Result, eyre};
@@ -18,6 +18,7 @@ use rand::{
     Rng,
     distr::{Distribution, weighted::WeightedIndex},
 };
+use std::mem::replace;
 
 /// A neutral borrowed view of one corpus entry.
 #[derive(Clone, Copy)]
@@ -656,12 +657,9 @@ impl SequenceMutator {
         };
         while rounds > 0 {
             let index = indices[rounds - 1];
-            inputs[index] = mutate_param_value(
-                &function.inputs[index].selector_type().parse()?,
-                inputs[index].clone(),
-                runner,
-                state,
-            );
+            let param = function.inputs[index].selector_type().parse()?;
+            let value = replace(&mut inputs[index], DynSolValue::Bool(false));
+            inputs[index] = mutate_param_value(&param, value, runner, state);
             rounds -= 1;
         }
         let inputs = inputs
@@ -824,7 +822,6 @@ mod tests {
         invariant::{TargetedContract, TargetedContracts},
         strategies::EvmFuzzState,
     };
-    use alloy_dyn_abi::DynSolValue;
     use alloy_json_abi::JsonAbi;
     use alloy_primitives::{Address, Bytes, I256};
     use evm2::evm::InMemoryDB;

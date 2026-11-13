@@ -151,6 +151,20 @@ pub struct FuzzCorpusConfig {
     /// Whether to capture comparison operands from sancov-instrumented crates
     /// and inject them into the fuzz dictionary. Independent of `sancov_edges`.
     pub sancov_trace_cmp: bool,
+    /// Whether EVM edge coverage comes from compiler instrumentation instead of the
+    /// `JUMP`/`JUMPI` edge inspector.
+    ///
+    /// Coverage builds of a compiler emit `PUSHn <id>; EDGECOV` (opcode `0xC0`) on every
+    /// control-flow edge, with dense IDs starting at 1. When enabled, the EVM executes that
+    /// opcode, which records a hit for the edge and costs no gas (it also refunds its `PUSH`),
+    /// and these hits replace the inspector's EVM edges as the corpus guidance signal.
+    /// Comparison operands then come from the compiler's `CMPLOG` (`0xC1`) probes instead of the
+    /// cmp-log inspector. Instrumented artifacts only run with this on: on any other EVM `0xC0`
+    /// and `0xC1` are undefined opcodes.
+    ///
+    /// Hits are keyed by ID alone, so IDs must be unique across all instrumented code: build it
+    /// in one compiler invocation.
+    pub instrumented_edges: bool,
     /// Percent chance of generating fresh transaction input instead of continuing from corpus
     /// input during coverage-guided campaigns.
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
@@ -177,19 +191,31 @@ impl FuzzCorpusConfig {
         }
     }
 
-    /// Whether any edge coverage (EVM or sancov) should be collected.
+    /// Whether any edge coverage (EVM, instrumented or sancov) should be collected.
     pub const fn collect_edge_coverage(&self) -> bool {
-        self.corpus_dir.is_some() || self.show_edge_coverage || self.sancov_edges
+        self.corpus_dir.is_some()
+            || self.show_edge_coverage
+            || self.sancov_edges
+            || self.instrumented_edges
     }
 
     /// Whether the EVM `EdgeCovInspector` should be enabled.
     ///
     /// Disabled when sancov edge coverage is active — sancov provides the
     /// coverage signal and EVM hits from the Solidity handler would dilute it.
+    /// Also disabled when instrumented edges are on, since compiler instrumentation then
+    /// provides the EVM edges.
     /// Trace-cmp-only mode keeps EVM edges enabled since trace-cmp only
     /// contributes dictionary entries, not edge coverage.
     pub const fn collect_evm_edge_coverage(&self) -> bool {
-        !self.sancov_edges && (self.corpus_dir.is_some() || self.show_edge_coverage)
+        !self.sancov_edges
+            && !self.instrumented_edges
+            && (self.corpus_dir.is_some() || self.show_edge_coverage)
+    }
+
+    /// Whether EVM edge coverage comes from the compiler-instrumented `EDGECOV` opcode.
+    pub const fn collect_instrumented_edges(&self) -> bool {
+        self.instrumented_edges
     }
 
     /// Whether EVM comparison operand capture is enabled.
@@ -259,6 +285,7 @@ impl Default for FuzzCorpusConfig {
             evm_edge_coverage_include_call_depth: false,
             sancov_edges: false,
             sancov_trace_cmp: false,
+            instrumented_edges: false,
             corpus_random_sequence_weight: Self::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT,
             payable_value_weight: 15,
             mutation_weights: FuzzCorpusMutationWeights::default(),
@@ -324,4 +351,27 @@ where
         return Err(D::Error::custom("`fuzz.runs` must be greater than 0"));
     }
     Ok(runs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instrumented_edges_replace_evm_edge_coverage() {
+        let corpus = FuzzCorpusConfig {
+            corpus_dir: Some("corpus".into()),
+            instrumented_edges: true,
+            ..Default::default()
+        };
+        assert!(corpus.collect_edge_coverage());
+        assert!(corpus.collect_instrumented_edges());
+        assert!(!corpus.collect_evm_edge_coverage());
+        // Cmp-log is configured independently of the edge source.
+        assert!(corpus.collect_evm_cmp_log());
+
+        let default = FuzzCorpusConfig { corpus_dir: Some("corpus".into()), ..Default::default() };
+        assert!(!default.collect_instrumented_edges());
+        assert!(default.collect_evm_edge_coverage());
+    }
 }

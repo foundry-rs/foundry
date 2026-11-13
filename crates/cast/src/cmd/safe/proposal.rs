@@ -1,5 +1,5 @@
 use super::{
-    SafeOperation,
+    SafeOperation, SafeRpcOpts,
     contracts::ISafe,
     rpc_provider,
     service::{SafeServiceOpts, SafeTransaction},
@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer::Signer;
 use clap::Args;
 use eyre::Result;
-use foundry_cli::{json::print_scalar, opts::RpcOpts, utils::parse_ether_value};
+use foundry_cli::{json::print_scalar, utils::parse_ether_value};
 use foundry_common::abi::{encode_function_args, get_func};
 use foundry_wallets::WalletOpts;
 use reqwest::Method;
@@ -75,7 +75,7 @@ pub struct ProposeArgs {
     service: Box<SafeServiceOpts>,
 
     #[command(flatten)]
-    rpc: Box<RpcOpts>,
+    rpc: Box<SafeRpcOpts>,
 
     #[command(flatten)]
     wallet: Box<WalletOpts>,
@@ -133,8 +133,8 @@ impl ProposeArgs {
             is_executed: false,
             transaction_hash: None,
         };
-        transaction.safe_tx_hash = transaction.calculate_hash(&provider).await?;
-        transaction.show_transaction_summary()?;
+        transaction.safe_tx_hash = transaction.calculate_hash(&provider, chain_id).await?;
+        transaction.show_transaction_summary(chain_id)?;
         let signer = wallet.signer().await?;
         let signature = sign_safe_hash(&signer, transaction.safe_tx_hash).await?;
         let url = service.endpoint(
@@ -160,7 +160,7 @@ pub struct SignArgs {
     service: Box<SafeServiceOpts>,
 
     #[command(flatten)]
-    rpc: Box<RpcOpts>,
+    rpc: Box<SafeRpcOpts>,
 
     #[command(flatten)]
     wallet: Box<WalletOpts>,
@@ -171,8 +171,8 @@ impl SignArgs {
         let Self { safe, safe_tx_hash, service, rpc, wallet } = self;
         let (provider, chain_id) = rpc_provider(&rpc).await?;
         let transaction = service.get_transaction(chain_id, "v1", safe_tx_hash).await?;
-        transaction.verify_hash(safe, &provider).await?;
-        transaction.show_transaction_summary()?;
+        transaction.verify_hash(safe, &provider, chain_id).await?;
+        transaction.show_transaction_summary(chain_id)?;
         let signature = sign_safe_hash(&wallet.signer().await?, safe_tx_hash).await?;
         let url = service.endpoint(
             chain_id,

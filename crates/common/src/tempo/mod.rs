@@ -1,6 +1,7 @@
 //! Tempo network utilities.
 
 pub mod auth;
+pub mod configurable_account;
 
 use crate::FoundryTransactionBuilder;
 use alloy_network::{Network, TransactionBuilder};
@@ -39,6 +40,7 @@ pub(crate) use auth::is_known_tempo_endpoint;
 pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
 pub use hardfork::{
     active_tempo_hardfork, ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
+    mark_sponsored_gas_estimation,
 };
 pub use keystore::*;
 pub use lane::{PaymentLane, PaymentLaneClassification, PaymentLaneReason, classify_payment_lane};
@@ -293,10 +295,14 @@ where
     let is_aa = tx.is_tempo_aa();
     let tx_from = tx.from();
 
-    // A stored fee-token preference would classify a contract creation as Tempo AA, but AA
-    // transactions require a non-empty call list. Leave CREATE requests as Ethereum transactions;
-    // the protocol still applies the account's stored fee-token preference when charging fees.
-    if !has_call_list && calls.iter().any(|(to, _)| to.is_create()) {
+    // A resolved fee token would classify the request as Tempo AA. AA transactions require a
+    // non-empty call list, which a contract creation lacks, and carry authorizations in their own
+    // list, so an EIP-7702 request would silently lose its Ethereum authorization list. Leave both
+    // as Ethereum transactions; the protocol selects the same fee token for them when charging
+    // fees.
+    if (!has_call_list && calls.iter().any(|(to, _)| to.is_create()))
+        || (!is_aa && tx.authorization_list().is_some_and(|auths| !auths.is_empty()))
+    {
         return Ok(None);
     }
 
