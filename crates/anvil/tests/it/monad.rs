@@ -2766,6 +2766,7 @@ async fn monad_debug_traces_report_charged_gas() {
                 .await
                 .unwrap();
             let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+            assert_eq!(frame.gas, U256::from(limit));
             assert_eq!(frame.gas_used, U256::from(limit));
             assert_eq!(frame.error.is_some(), failed);
         }
@@ -2804,6 +2805,7 @@ async fn monad_debug_traces_report_charged_gas() {
         .with_tracer(GethDebugBuiltInTracerType::CallTracer.into());
     let trace = provider.debug_trace_transaction(hash, options).await.unwrap();
     let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+    assert_eq!(frame.gas, U256::from(100_000));
     assert_eq!(frame.gas_used, U256::from(100_000));
 }
 
@@ -2979,13 +2981,19 @@ async fn monad_debug_trace_call_preserves_nested_consumption() {
         .await
         .unwrap();
     let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+    assert_eq!(frame.gas, U256::from(100_000));
     assert_eq!(frame.gas_used, U256::from(100_000));
     assert_eq!(frame.calls.len(), 1);
     assert_eq!(frame.calls[0].to, Some(STORAGE_GAS_PROBE_ADDRESS));
     assert_eq!(frame.calls[0].gas_used, U256::from(4));
+    assert!(frame.calls[0].gas < frame.gas);
 
     let trace = provider
-        .debug_trace_call(request.into(), BlockId::latest(), GethDebugTracingCallOptions::default())
+        .debug_trace_call(
+            request.clone().into(),
+            BlockId::latest(),
+            GethDebugTracingCallOptions::default(),
+        )
         .await
         .unwrap();
     let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
@@ -2993,6 +3001,28 @@ async fn monad_debug_trace_call_preserves_nested_consumption() {
     let child_steps = frame.struct_logs.iter().filter(|step| step.depth == 2).collect::<Vec<_>>();
     assert_eq!(child_steps.len(), 3);
     assert_eq!(child_steps.iter().map(|step| step.gas_cost).sum::<u64>(), 4);
+
+    let receipt = provider
+        .send_transaction(request.gas_limit(100_000).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let trace = provider
+        .debug_trace_transaction(
+            receipt.transaction_hash,
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugBuiltInTracerType::CallTracer.into()),
+        )
+        .await
+        .unwrap();
+    let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+    assert_eq!(frame.gas, U256::from(100_000));
+    assert_eq!(frame.gas_used, U256::from(receipt.gas_used()));
+    assert_eq!(frame.calls.len(), 1);
+    assert_eq!(frame.calls[0].gas_used, U256::from(4));
+    assert!(frame.calls[0].gas < frame.gas);
 }
 
 #[tokio::test(flavor = "multi_thread")]

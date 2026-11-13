@@ -7329,6 +7329,7 @@ where
                         let tracing_inspector = inspector.tracer.expect("tracer disappeared");
 
                         Ok(tracing_inspector
+                            .with_transaction_gas_limit(tx.tx.gas_limit())
                             .into_geth_builder()
                             .geth_call_traces(call_config, executed.result.ext.charged_gas)
                             .into())
@@ -8398,6 +8399,7 @@ where
                     &pending,
                     EnvelopeExecution::replay(transaction_context, hardfork),
                 )?;
+                inspector.set_transaction_gas_limit(tx.gas_limit());
                 traces.push(TraceResult::Success {
                     result: build_trace(&inspector, *gas_used, output.clone()),
                     tx_hash: Some(tx.hash()),
@@ -8447,8 +8449,9 @@ where
                                 let frame = self.replay_tx_with_inspector(
                                     tx.info.transaction_hash,
                                     inspector,
-                                    |_, _, inspector, _, _| {
+                                    |_, _, inspector, prepared, _| {
                                         inspector
+                                            .with_transaction_gas_limit(prepared.tx.gas_limit())
                                             .geth_builder()
                                             .geth_call_traces(call_config, tx.info.gas_used)
                                             .into()
