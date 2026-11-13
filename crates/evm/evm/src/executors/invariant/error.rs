@@ -148,8 +148,7 @@ pub fn handler_edge_fingerprint(
 }
 
 /// Records a handler-side assertion bug (if strictly shorter than the existing repro for
-/// this site) and pops the just-asserted reverted input from `inputs`. Shared by the
-/// periodic-check path and the inline check-skipped path.
+/// this site) and pops the just-asserted reverted input from `inputs`.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn record_handler_assertion_bug<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,

@@ -1353,7 +1353,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 .fuzz_runs
                                 .push(FuzzCase { gas: result.gas_used, stipend: result.stipend });
 
-                            let continues = if should_check {
+                            let continues = if should_check || assertion_failure || reverted {
                                 let outcome = can_continue(
                                     &invariant_contract,
                                     &mut invariant_test,
@@ -1370,48 +1370,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 run_cancelled = outcome.cancelled;
                                 outcome.continues
                             } else {
-                                if result.reverted {
-                                    invariant_test.test_data.failures.reverts += 1;
-                                }
-                                if assertion_failure {
-                                    let call_reverted = result.reverted;
-                                    error::record_handler_assertion_bug(
-                                        &invariant_contract,
-                                        &config,
-                                        &invariant_test.targeted_contracts,
-                                        &mut invariant_test.test_data.failures,
-                                        &mut current_run.inputs,
-                                        handler_target,
-                                        handler_selector,
-                                        pre_merge_edges_hash,
-                                        result,
-                                        call_reverted,
-                                        invariant_contract.is_optimization(),
-                                    );
-                                    true
-                                } else if result.reverted && config.fail_on_revert {
-                                    let anchor = invariant_contract.anchor();
-                                    let case_data = error::InvariantRunCtx {
-                                        contract: &invariant_contract,
-                                        config: &config,
-                                        targeted_contracts: &invariant_test.targeted_contracts,
-                                        calldata: &current_run.inputs,
-                                    }
-                                    .failed_case(anchor, config.fail_on_revert, false, result, &[]);
-                                    invariant_test.test_data.failures.record_failure(
-                                        anchor,
-                                        InvariantFuzzError::Revert(case_data),
-                                    );
-                                    false
-                                } else {
-                                    if result.reverted
-                                        && !invariant_contract.is_optimization()
-                                        && !config.has_delay()
-                                    {
-                                        current_run.inputs.pop();
-                                    }
-                                    true
-                                }
+                                true
                             };
 
                             if run_cancelled {
