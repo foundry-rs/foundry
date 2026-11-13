@@ -290,6 +290,8 @@ impl RemappingsProvider<'_> {
                 .map(|(lib, remapping, _)| (lib.clone(), remapping.clone()))
                 .collect::<Vec<_>>();
             let RemappingDiscovery { global, contextual } = auto_detected_remappings;
+            let lib_roots =
+                self.lib_paths.iter().map(|lib| self.root.join(lib)).collect::<Vec<_>>();
             let mut global = global
                 .into_iter()
                 .map(|remapping| {
@@ -306,10 +308,7 @@ impl RemappingsProvider<'_> {
                                 && path.parent().is_some_and(|parent| {
                                     parent.ends_with("lib")
                                         || parent.ends_with("node_modules")
-                                        || self
-                                            .lib_paths
-                                            .iter()
-                                            .any(|lib| parent == self.root.join(lib))
+                                        || lib_roots.iter().any(|lib| parent == lib)
                                 })
                         })
                         .unwrap_or(path)
