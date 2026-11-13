@@ -289,7 +289,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     };
 
     // Classify assertion failures first, so a caught `vm.assert*` that leaves no revert or fail
-    // slot is recorded the same way as on calls between checks.
+    // slot is recorded as a handler assertion bug.
     if !assertion_failure && !call_result.reverted && handlers_succeeded() {
         if let Some(traces) = call_result.traces {
             invariant_run.run_traces.push(traces);
