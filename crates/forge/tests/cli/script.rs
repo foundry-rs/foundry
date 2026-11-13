@@ -44,6 +44,11 @@ use std::{
 };
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope};
 
+#[cfg(feature = "monad")]
+use alloy_consensus::Transaction as _;
+#[cfg(feature = "monad")]
+use alloy_network::TransactionResponse as _;
+
 #[cfg(unix)]
 use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
 #[cfg(unix)]
@@ -1951,6 +1956,39 @@ Deployed contracts (chain 31337):
     ));
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
     assert_eq!(archives().len(), 1);
+
+    // Without its snapshot, an unreadable export, including a dangling link, blocks until
+    // `--start-fresh` archives it.
+    let export = prj.root().join("broadcast/StartFresh.s.sol/31337/run-latest.json");
+    let refused = str![[r#"
+Error: the previous broadcast `[..]/broadcast/StartFresh.s.sol/31337/run-latest.json` is unreadable and its recovery snapshot `[..]/cache/StartFresh.s.sol/31337/run-latest.json.recovery.json` is missing, so forge cannot tell whether it left unfinished operations; pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending, or restore the snapshot and finish with `--resume`
+
+Context:
+- [..]
+
+"#]];
+    fs::remove_file(&recovery_path).unwrap();
+    fs::write(&export, r#"{"transactions":["#).unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args(args);
+    cmd.assert_failure().stderr_eq(refused.clone());
+    #[cfg(unix)]
+    {
+        fs::remove_file(&export).unwrap();
+        std::os::unix::fs::symlink(prj.root().join("missing.json"), &export).unwrap();
+        cmd.assert_failure().stderr_eq(refused);
+    }
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
+
+    cmd.arg("--start-fresh");
+    cmd.assert_success().stderr_eq(format!(
+        "Archived `{0}/broadcast/StartFresh.s.sol/31337/run-latest.json` to `{0}/broadcast/StartFresh.s.sol/31337/run-latest.[..].json`\nArchived `{0}/cache/StartFresh.s.sol/31337/run-latest.json` to `{0}/cache/StartFresh.s.sol/31337/run-latest.[..].json`\n\nDeployed contracts (chain 31337):\n  StartFreshTarget  {1}\n  StartFreshTarget  {2}\n",
+        "[..]",
+        sender.create(5),
+        sender.create(6),
+    ));
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 7);
+    assert!(!prj.root().join("missing.json").exists());
+    assert!(!fs::symlink_metadata(&export).unwrap().is_symlink());
 }
 
 #[forgetest_init]
@@ -4501,6 +4539,7 @@ async fn assert_raw_transaction_access_list(
     let common = [
         "script",
         "RawTransactionScript",
+        "--offline",
         "--rpc-url",
         endpoint.as_str(),
         "--unlocked",
@@ -4554,20 +4593,13 @@ async fn assert_raw_transaction_access_list(
                 transaction.into_signed(signature).into()
             };
 
-            // Measure real execution before choosing a tight cap. Missing the access list must
-            // make this exact cap insufficient, for both CALL and CREATE and both typed envelopes.
-            let snapshot = api.evm_snapshot().await.unwrap();
+            // Size a tight cap from the estimate, which reports consumption on every network.
+            // Missing the access list must make this exact cap insufficient, for both CALL and
+            // CREATE and both typed envelopes.
             let transaction = sign(2_000_000, access_list.clone());
-            let receipt = provider
-                .send_raw_transaction(&transaction.encoded_2718())
-                .await
-                .unwrap()
-                .get_receipt()
-                .await
-                .unwrap();
-            assert!(receipt.status());
-            let gas_limit = receipt.gas_used() + 1_000;
-            assert!(api.evm_revert(snapshot).await.unwrap());
+            let request =
+                TransactionRequest::from_transaction_with_sender(transaction, signer.address());
+            let gas_limit = provider.estimate_gas(request.into()).await.unwrap() + 1_000;
 
             let snapshot = api.evm_snapshot().await.unwrap();
             let without_list = sign(gas_limit, AccessList::default());
@@ -4622,7 +4654,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
             let receipt =
                 provider.get_transaction_receipt(*transaction.tx_hash()).await.unwrap().unwrap();
             assert!(receipt.status());
-            assert!(receipt.gas_used() < gas_limit);
+            assert!(receipt.gas_used() <= gas_limit);
             assert_eq!(provider.get_transaction_count(signer.address()).await.unwrap(), 1);
             assert_eq!(
                 provider.get_storage_at(target, U256::from(400)).await.unwrap(),
@@ -11323,7 +11355,8 @@ contract CaGasScript is Script {
 /// not sent when one of them would fail, when they fit neither in one block nor in as many blocks
 /// as a node simulates,
 /// when the RPC caps the gas of the simulation, when one of them changes the account's
-/// configuration before another, or when they would use a nonce key.
+/// configuration before another, or when they would use a nonce key. On `--resume`, it also
+/// refuses an account that already sent the nonce planned for its first one.
 #[forgetest_init]
 async fn tempo_t14_script_offline_owner_export_checked_before_sending(prj: _, cmd: _) {
     let script = prj.add_script(
@@ -11481,4 +11514,139 @@ contract CaChecksScript is Script {
         assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0, "{error}");
         std::fs::remove_dir_all(prj.root().join("broadcast")).ok();
     }
+
+    // A `--broadcast` that the RPC stops before it sends anything is resumed after the account
+    // sent the nonce planned for its transaction elsewhere: the EOA transaction is not sent.
+    let (flaky, rejecting) =
+        rpc::spawn_rpc_proxy_rejecting_method_when_enabled(upstream.clone(), "eth_simulateV1")
+            .await;
+    rejecting.store(true, Ordering::SeqCst);
+    let runs = [
+        (
+            "--broadcast",
+            "cannot simulate the transactions in order to fix the gas limits of the ones awaiting \
+             owner approvals, so no more transactions are sent: [..]\n..."
+                .to_string(),
+        ),
+        (
+            "--resume",
+            format!(
+                "transaction 1 of {account} was planned with nonce 0, but the account already \
+                 sent nonce 0, as its next nonce is 1; broadcast the script anew with \
+                 --start-fresh"
+            ),
+        ),
+    ];
+    for (mode, error) in runs {
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--rpc-url",
+            flaky.as_str(),
+            "--sender",
+            &account_arg,
+            mode,
+            "--skip-simulation",
+            "--network",
+            "tempo",
+            "--tempo.fee-token",
+            &fee_token,
+            "--tempo.config",
+            &config,
+            "--private-keys",
+            &keys[0],
+            "--private-keys",
+            &eoa_key,
+        ]);
+        cmd.env("CA_EOA", eoa.to_string());
+        cmd.env("CA_TARGET", target.to_string());
+        cmd.env("CA_DATA", "0x");
+        cmd.env("CA_CALLS", "0");
+        cmd.assert_failure().stderr_eq(format!("...\nError: {error}\n"));
+        assert_eq!(provider.get_transaction_count(eoa).await.unwrap(), 0, "{error}");
+
+        if mode == "--broadcast" {
+            rejecting.store(false, Ordering::SeqCst);
+            cmd.cast_fuse()
+                .args(["send", &target.to_string(), "--from", &account_arg, "--rpc-url"])
+                .args([upstream.as_str(), "--private-key", &keys[0], "--tempo.fee-token"])
+                .args([fee_token.as_str(), "--tempo.config", &config, "--tempo.owner"])
+                .arg(format!("private-key://{}", keys[2]))
+                .assert_success();
+        }
+    }
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+}
+
+#[cfg(feature = "monad")]
+#[forgetest]
+async fn monad_script_estimates_calldata_floor_fork(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let target = Address::with_last_byte(0x42);
+    api.anvil_set_code(target, bytes!("00")).await.unwrap();
+    prj.add_script(
+        "MonadCalldata.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+}
+
+contract MonadCalldataScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        bytes memory data = new bytes(5000);
+        for (uint256 i; i < data.length; ++i) data[i] = 0x01;
+        // Return empty runtime code; the trailing data only contributes to intrinsic gas.
+        data[0] = 0x5f;
+        data[1] = 0x5f;
+        data[2] = 0xf3;
+        vm.startBroadcast();
+        (bool ok,) = address(0x42).call(data);
+        require(ok, "call failed");
+        address deployed;
+        assembly { deployed := create(0, add(data, 32), mload(data)) }
+        require(deployed != address(0), "create failed");
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.args([
+        "script",
+        "MonadCalldataScript",
+        "--network",
+        "monad",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--broadcast",
+        "--offline",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+    let mut receipts = 0;
+    for number in 1..=provider.get_block_number().await.unwrap() {
+        let block = provider.get_block_by_number(number.into()).full().await.unwrap().unwrap();
+        for transaction in block.transactions.as_transactions().unwrap() {
+            let receipt =
+                provider.get_transaction_receipt(transaction.tx_hash()).await.unwrap().unwrap();
+            assert!(receipt.status());
+            assert_eq!(receipt.gas_used(), transaction.gas_limit());
+            // The 221,000 calldata floor exceeds both executions' intrinsic-plus-opcode cost.
+            assert!(transaction.gas_limit() >= 221_000);
+            assert!(transaction.gas_limit() < 400_000);
+            receipts += 1;
+        }
+    }
+    assert_eq!(receipts, 2);
 }

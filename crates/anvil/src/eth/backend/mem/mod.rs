@@ -551,7 +551,7 @@ pub struct CallOutcome {
     pub exit: InstrStop,
     /// Return or revert data.
     pub output: Bytes,
-    /// Gas used by the transaction.
+    /// Gas consumed by the call, including calldata floors and refunds.
     pub gas_used: u128,
     /// State changes of the call.
     pub state: PendingState,
@@ -8202,8 +8202,9 @@ where
             }
         }
 
-        // Replace the block hashes with the unwound chain's: a fork keeps its local state across
-        // `clear`, and inserting one by one would keep evicting below the removed head.
+        // Replace the cached block hashes with those from blockchain storage (now unwound, contains
+        // only valid blocks). Inserting them one by one is not enough: the fork database keeps its
+        // cached hashes across `clear`, so its pre-rollback head would evict the restored ones.
         db.set_block_hashes(block_hashes);
         publish();
 
@@ -9211,6 +9212,7 @@ impl Backend<FoundryNetwork> {
                 let mut coinbase_balance_before_tx = initial_coinbase;
                 let mut coinbase_balance_after_tx = initial_coinbase;
                 let mut total_gas_used = 0u64;
+                let mut total_charged_gas = 0u64;
                 let mut total_gas_fees = U256::ZERO;
                 let mut bundle_hash = alloy_primitives::Keccak256::new();
                 let mut results = Vec::with_capacity(transactions.len());
@@ -9233,8 +9235,10 @@ impl Backend<FoundryNetwork> {
 
                     let gas_price = tx.effective_tip_per_gas(base_fee).unwrap_or_default();
                     let gas_used = result.tx_gas_used();
-                    let gas_fees = U256::from(gas_used) * U256::from(gas_price);
+                    let charged_gas = result.ext.charged_gas;
+                    let gas_fees = U256::from(charged_gas) * U256::from(gas_price);
                     total_gas_used += gas_used;
+                    total_charged_gas += charged_gas;
                     total_gas_fees += gas_fees;
 
                     coinbase_balance_after_tx = state
@@ -9267,8 +9271,9 @@ impl Backend<FoundryNetwork> {
 
                 let coinbase_diff = coinbase_balance_after_tx.saturating_sub(initial_coinbase);
                 let eth_sent_to_coinbase = coinbase_diff.saturating_sub(total_gas_fees);
+                // The coinbase is paid for charged gas, which can exceed consumption.
                 let bundle_gas_price =
-                    coinbase_diff.checked_div(U256::from(total_gas_used)).unwrap_or_default();
+                    coinbase_diff.checked_div(U256::from(total_charged_gas)).unwrap_or_default();
 
                 Ok(EthCallBundleResponse {
                     bundle_hash: bundle_hash.finalize(),
