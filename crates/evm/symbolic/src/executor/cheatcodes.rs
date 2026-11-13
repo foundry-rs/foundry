@@ -472,6 +472,10 @@ impl SymbolicExecutor {
                     outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
                 }
             }
+            // Forge's CREATE runs a frame below the cheatcode call, so a rejected runtime leaves
+            // the caller's `vm.expectRevert` pending for the cheatcode revert.
+            let expected_revert =
+                if rejected_runtime { state.expected_revert.take() } else { None };
             if !matches!(outcome.status, CallStatus::Success)
                 && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
             {
@@ -488,14 +492,18 @@ impl SymbolicExecutor {
                 }
             };
             // Like Forge, a cheatcode CREATE leaves `vm.assumeNoRevert` for the next call.
-            match self.join_call_outcome(
+            let joined = self.join_call_outcome(
                 executor,
                 state,
                 &failure_world,
                 outcome,
                 failed_callee,
                 None,
-            )? {
+            );
+            if rejected_runtime {
+                state.expected_revert = expected_revert;
+            }
+            match joined? {
                 JoinedCallOutcome::Failure(parent)
                 | JoinedCallOutcome::Success { parent, unmet_expected_revert: Some(_), .. } => {
                     *state = parent;
@@ -547,6 +555,12 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
+                    if rejected_runtime {
+                        // Like Forge, the failed cheatcode call is the reverter for
+                        // `vm.assumeNoRevert` unless a call reverted earlier.
+                        parent.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
+                        parent.expected_revert.clone_from(&state.expected_revert);
+                    }
                     parent.return_data = child.frame.return_data;
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), out_size)?;
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;

@@ -132,7 +132,7 @@ contract SymbolicCreateCodeLimit is Test {
 
         // Forge records the cheatcode, not the created address, as the reverter.
         vm.expectRevert(address(vm));
-        vm.deployCode(oversized);
+        deployer.deployCode(oversized);
     }
 
     function checkDeployCodeInitcodeLimit() public {
@@ -201,6 +201,10 @@ contract Deployer {
             len = err.length;
         }
         nonceDelta = vm.getNonce(address(this)) - nonce;
+    }
+
+    function deployCode(string memory what) external returns (address) {
+        return vm.deployCode(what);
     }
 
     function create(uint256 size) external returns (address created) {
@@ -334,6 +338,7 @@ fn symbolic_create_respects_eip3541_runtime_prefix(prj: _, cmd: _) {
         "SymbolicCreateEip3541.t.sol",
         r#"
 import "forge-std/Test.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 
 contract SymbolicCreateEip3541 is Test {
     function checkRejectedPrefix() public {
@@ -378,6 +383,32 @@ contract SymbolicCreateEip3541 is Test {
         } catch (bytes memory err) {
             assert(keccak256(err) == keccak256(hex"ef"));
         }
+    }
+
+    DeployCodeCaller caller = new DeployCodeCaller();
+
+    function checkDeployCodeRejectedPrefixKeepsExpectRevert() public {
+        string memory what = "SymbolicCreateEip3541.t.sol:MarkThenReject";
+        // The cheatcode revert leaves `vm.expectRevert` pending, so the nested call meets it.
+        vm.expectRevert(address(vm));
+        try vm.deployCode(what, abi.encode(address(this))) returns (address) {
+            assert(false);
+        } catch {}
+        caller.deployCode(what, abi.encode(address(this)));
+    }
+
+    function checkDeployCodeRejectedPrefixAssumeNoRevert() public {
+        try this.assumeNoRevertDeployCode() {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256("FOUNDRY::ASSUME"));
+        }
+    }
+
+    function assumeNoRevertDeployCode() external {
+        // The failed cheatcode call is the reverter, not the caller that bubbles its revert.
+        vm.assumeNoRevert(VmSafe.PotentialRevert(address(vm), false, hex"ef"));
+        caller.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
     }
 
     function checkRejectedPrefixExpectedCallsAndRevert() public {
