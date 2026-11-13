@@ -1645,6 +1645,7 @@ impl SymbolicExecutor {
         // Like Forge, a test that reverts after a failed assertion fails, even when the assertion
         // was caught or only set the fail slot.
         if state.root_calldata.is_some() && state.assertion_failed {
+            state.failed_at_end = true;
             return Ok(StepOutcome::Failure);
         }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
@@ -1656,11 +1657,13 @@ impl SymbolicExecutor {
             && let Some(constraints) = self.constraints_for_condition(state, condition)?
         {
             state.constraints = constraints;
+            state.failed_at_end = true;
             return Ok(StepOutcome::Failure);
         }
         match data {
             Ok(data) => {
                 if is_assertion_revert(&data) {
+                    state.failed_at_end = true;
                     return Ok(StepOutcome::Failure);
                 }
             }
@@ -1671,6 +1674,7 @@ impl SymbolicExecutor {
                     && let Some(constraints) = self.constraints_for_condition(state, condition)?
                 {
                     state.constraints = constraints;
+                    state.failed_at_end = true;
                     return Ok(StepOutcome::Failure);
                 }
             }

@@ -34,7 +34,7 @@ use alloy_primitives::{
 use evm2::{
     bytecode::Bytecode,
     evm::{Cache, InMemoryDB},
-    interpreter::{InstrStop, op as opcode},
+    interpreter::op as opcode,
 };
 use eyre::Result;
 use foundry_common::{
@@ -82,8 +82,7 @@ use foundry_evm_symbolic::{
     SymbolicExecutor, SymbolicInvariantCandidateInput, SymbolicInvariantCounterexampleKind,
     SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
     SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, SymbolicStats,
-    SymbolicStopReason, SymbolicStorageAssignment, is_symbolic_failure_revert,
-    symbolic_vm_selectors,
+    SymbolicStopReason, SymbolicStorageAssignment, replay_left_failing_path, symbolic_vm_selectors,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -2487,15 +2486,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     None,
                 ),
             ),
-            SymbolicRunResult::Counterexample { args, calldata, svm_returns, stats } => self
-                .replay_symbolic_counterexample(
-                    func,
-                    args,
-                    calldata,
-                    svm_returns,
-                    stats,
-                    &symbolic_config,
-                ),
+            SymbolicRunResult::Counterexample {
+                args,
+                calldata,
+                svm_returns,
+                prunes_other_reverts,
+                stats,
+            } => self.replay_symbolic_counterexample(
+                func,
+                args,
+                calldata,
+                svm_returns,
+                prunes_other_reverts,
+                stats,
+                &symbolic_config,
+            ),
         };
         let symbolic_result = match corpus_seed_metadata {
             Some(metadata) => symbolic_result.with_corpus_seeds(metadata),
@@ -2507,12 +2512,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
     /// Replays a symbolic counterexample concretely, minimizing and persisting it when it
     /// reproduces.
+    #[expect(clippy::too_many_arguments)]
     fn replay_symbolic_counterexample(
         &mut self,
         func: &Function,
         args: Vec<DynSolValue>,
         calldata: Bytes,
         svm_returns: Vec<Bytes>,
+        prunes_other_reverts: bool,
         stats: SymbolicStats,
         symbolic_config: &SymbolicConfig,
     ) -> (TestStatus, Option<String>, Option<CounterExample>, SymbolicResult) {
@@ -2589,13 +2596,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &raw,
         ) {
             Some("symbolic counterexample did not replay".to_string())
-        } else if raw.exit_reason == Some(InstrStop::Revert)
-            && raw.failed_assertion.is_none()
-            && !is_symbolic_failure_revert(&raw.result)
-        {
-            // Symbolic execution prunes ordinary reverts and non-`assert` panics, so this replay
-            // fails for a reason other than the failure the solver model was found for. A
-            // `vm.assert*` that failed without reverting already confirmed the failure.
+        } else if replay_left_failing_path(prunes_other_reverts, &raw) {
+            // Symbolic execution would have pruned this revert, such as an ordinary revert or a
+            // non-`assert` panic.
             Some(format!(
                 "symbolic counterexample did not replay: concrete replay reverted with `{}`",
                 reason.as_deref().unwrap_or_default()

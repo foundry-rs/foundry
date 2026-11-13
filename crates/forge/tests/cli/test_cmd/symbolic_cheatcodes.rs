@@ -4204,6 +4204,16 @@ contract SymbolicExpectRevertMismatch is Test {
         vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedMismatchReverter.Custom.selector, uint256(1)));
         helper.failWithCustom(2);
     }
+
+    // The mismatch fails the path where it happens, so a test that catches it and then reverts
+    // with its own data still replays as a counterexample.
+    function checkMismatchedExpectedRevertCaught(uint256 value) public {
+        vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedMismatchReverter.Custom.selector, uint256(1)));
+        (bool ok,) = address(helper).call(
+            abi.encodeCall(SymbolicExpectedMismatchReverter.failWithCustom, (value))
+        );
+        require(ok);
+    }
 }
 "#,
     );
@@ -4217,9 +4227,10 @@ contract SymbolicExpectRevertMismatch is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicExpectRevertMismatch.t.sol:SymbolicExpectRevertMismatch
+Ran 2 tests for test/SymbolicExpectRevertMismatch.t.sol:SymbolicExpectRevertMismatch
 [FAIL: Error != expected error: Custom(2) != Custom(1); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectedRevert(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectedRevertCaught(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -9064,7 +9075,8 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
 // Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`,
 // `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log, a log without
 // topics cannot fill the template of a non-anonymous `vm.expectEmit`, and the next non-static
-// call must emit a pending `vm.expectEmit` or fail with `log != expected log`.
+// call must emit a pending `vm.expectEmit` or fail with `log != expected log`. A test that
+// catches that failure and then reverts still fails, and concrete replay confirms it.
 #[forgetest_init]
 fn symbolic_stop_record_and_expect_emit_count_zero_match_forge(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_stop_record_and_expect_emit_count_zero_match_forge");
@@ -9299,6 +9311,15 @@ contract SymbolicRecordAndEmitCount {
         store.setA(value);
     }
 
+    // Like Forge, a test that reverts after a call failed the expectation fails, even when the
+    // revert data is the test's own.
+    function checkExpectEmitCaughtFailureThenRevert(uint256 value) public {
+        vm.expectEmit();
+        emit Set(1);
+        (bool success,) = address(store).call(abi.encodeCall(Store.setA, (value)));
+        require(success);
+    }
+
     // Like Forge, the failure is an ABI-encoded string without an error selector.
     function checkExpectEmitFailureHasNoErrorSelector(uint256 value) public {
         vm.expectEmit();
@@ -9367,10 +9388,11 @@ contract SymbolicRecordAndEmitCount {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 22 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+Ran 23 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
 [PASS] checkExpectEmitAnonymousMatches(uint256) ([METRICS])
 [FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitAnonymousTemplate(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit failure message] checkExpectEmitCaughtFailureKeepsExpectation(uint256) ([METRICS])
+[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitCaughtFailureThenRevert(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitFailureHasNoErrorSelector(uint256) ([METRICS])
 [FAIL: log != expected log; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitInLaterCall(uint256) ([METRICS])
 [FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
@@ -9390,7 +9412,7 @@ Ran 22 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCoun
 [PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
 [PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
-Suite result: FAILED. 9 passed; 13 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 9 passed; 14 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

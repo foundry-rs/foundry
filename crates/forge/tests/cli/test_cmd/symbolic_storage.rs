@@ -450,10 +450,11 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 // default concrete storage value, so Forge must report Incomplete instead of a
 // user-facing counterexample. The same holds when the candidate's concrete
 // replay stops at the `vm.assume` that the symbolic path satisfied, or reverts
-// or panics on the real zero before it reaches the assert. A failed `vm.assert*`
-// that does not revert still confirms the model if the replay reverts later. An
-// entry that `setUp` wrote is known state, so a symbolic key that hits it reads
-// the written value: a bounded burn proves safe and a real burn replays.
+// or panics on the real zero before it reaches the failure, even with a bare
+// string, whether that failure is an `assert`, a `vm.assert*` or an invalid
+// opcode. An entry that `setUp` wrote is known state, so a symbolic key that
+// hits it reads the written value: a bounded burn proves safe and a real burn
+// replays.
 #[forgetest_init]
 fn symbolic_sload_unwritten_mapping_default_layout(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_sload_unwritten_mapping_default_layout");
@@ -463,7 +464,7 @@ fn symbolic_sload_unwritten_mapping_default_layout(prj: _, cmd: _) {
         r#"
 interface Vm {
     function assume(bool condition) external pure;
-    function assertGt(uint256 left, uint256 right) external pure;
+    function assertTrue(bool condition) external pure;
 }
 
 contract Token {
@@ -510,10 +511,32 @@ contract SymbolicSLoadUnwrittenMapping {
         assert(false);
     }
 
+    function checkRequireThenVmAssert(address owner) public view {
+        require(balanceOf[owner] != 0);
+        vm.assertTrue(false);
+    }
+
     /// forge-config: default.assertions_revert = false
-    function checkSoftAssertThenRevert(uint256 b) public pure {
-        vm.assertGt(b, 0);
-        10 / b;
+    function checkRequireThenSoftVmAssert(address owner) public view {
+        require(balanceOf[owner] != 0);
+        vm.assertTrue(false);
+    }
+
+    function checkRequireThenInvalid(address owner) public view {
+        require(balanceOf[owner] != 0);
+        assembly {
+            invalid()
+        }
+    }
+
+    function checkStringRevertUnwrittenBalance(address owner) public view {
+        if (balanceOf[owner] == 0) {
+            bytes memory data = abi.encode("unrelated");
+            assembly {
+                revert(add(data, 32), mload(data))
+            }
+        }
+        assert(false);
     }
 
     // A read at a symbolic key that hits the entry `setUp` wrote returns the written balance.
@@ -541,17 +564,20 @@ contract SymbolicSLoadUnwrittenMapping {
     .stdout_eq(str![[r#"
 ...
 Failing tests:
-Encountered 6 failing tests in test/SymbolicSLoadUnwrittenMapping.t.sol:SymbolicSLoadUnwrittenMapping
+Encountered 9 failing tests in test/SymbolicSLoadUnwrittenMapping.t.sol:SymbolicSLoadUnwrittenMapping
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: rejected by `vm.assume`] checkAssumedAdminIsUnreachable(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: concrete replay reverted with `panic: division or modulo by zero (0x12)`] checkDivByUnwrittenBalance(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNoUserIsAdmin(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: concrete replay reverted with `EvmError: Revert`] checkRequireThenInvalid(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: concrete replay reverted with `EvmError: Revert`] checkRequireThenSoftVmAssert(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: concrete replay reverted with `EvmError: Revert`] checkRequireThenVmAssert(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: concrete replay reverted with `EvmError: Revert`] checkRequireUnwrittenBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetUpHolderKeepsBalance(address,uint256) ([METRICS])
-[FAIL: panic: division or modulo by zero (0x12); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSoftAssertThenRevert(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: concrete replay reverted with `unrelated`] checkStringRevertUnwrittenBalance(address) ([METRICS])
 
-Encountered a total of 6 failing tests, 1 tests succeeded
+Encountered a total of 9 failing tests, 1 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 6 failed tests
+Tip: Run `forge test --rerun` to retry only the 9 failed tests
 
 "#]]);
 }
