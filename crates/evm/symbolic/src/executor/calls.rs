@@ -2244,21 +2244,24 @@ impl SymbolicExecutor {
         call_input: &SymBytes,
     ) -> Result<Vec<PathState>, SymbolicError> {
         let callee = if self.function_mock_may_match(executor, &mut branch, to, call_input)? {
-            self.call_code_account(executor, &mut branch, to)?
+            Some(self.call_code_account(executor, &mut branch, to)?)
         } else {
-            to
+            None
         };
         let mut branches = vec![branch];
-        for condition in self.function_mock_conditions(&branches[0], callee, call_input) {
-            branches = self.split_branches_on(branches, condition)?;
+        if let Some(callee) = callee {
+            for condition in self.function_mock_conditions(&branches[0], callee, call_input) {
+                branches = self.split_branches_on(branches, condition)?;
+            }
         }
 
         let mut out = Vec::new();
         for mut branch in branches {
-            let code_address = if branch.function_mocks.is_empty() {
-                to
-            } else {
-                self.function_mock_target(&mut branch, callee, call_input)?.unwrap_or(to)
+            let code_address = match callee {
+                Some(callee) => {
+                    self.function_mock_target(&mut branch, callee, call_input)?.unwrap_or(to)
+                }
+                None => to,
             };
 
             let mut value_branches = vec![branch];

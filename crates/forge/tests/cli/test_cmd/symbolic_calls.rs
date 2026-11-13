@@ -2335,6 +2335,24 @@ contract SymbolicEip7702Delegation is Test {
         assertEq(ret.length, 32, "unmocked selector");
     }
 
+    function checkSymbolicTargetIgnoresAuthorityFunctionMocks(address target, bytes1 suffix)
+        public
+    {
+        vm.assume(target == bob || target == eve);
+        // Function mocks on a delegated account never apply, as they are keyed by the delegate.
+        address mock = address(new DelegateMock());
+        bytes memory selector = abi.encodePacked(DelegateImpl.foo.selector);
+        vm.mockFunction(bob, mock, selector);
+        vm.mockFunction(eve, mock, selector);
+        bytes memory exact = abi.encodePacked(DelegateImpl.foo.selector, bytes1(0x00));
+        vm.mockCall(bob, exact, abi.encode(9));
+        vm.mockCall(eve, exact, abi.encode(9));
+        (bool ok, bytes memory ret) =
+            target.call(abi.encodePacked(DelegateImpl.foo.selector, suffix));
+        assertTrue(ok);
+        assertEq(abi.decode(ret, (uint256)), 9, "unmocked suffix");
+    }
+
     function checkSymbolicTargetMockFunctionOnDelegate(address target, bytes4 selector) public {
         vm.assume(target == bob || target == eve);
         bytes memory data = abi.encodePacked(DelegateImpl.foo.selector);
@@ -2417,7 +2435,7 @@ contract SymbolicEip7702DelegationCancun is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 12 tests for test/SymbolicEip7702Delegation.t.sol:SymbolicEip7702Delegation
+Ran 13 tests for test/SymbolicEip7702Delegation.t.sol:SymbolicEip7702Delegation
 [PASS] checkCallsRunDelegateCode() ([METRICS])
 [PASS] checkChainedDelegationRunsOneHop() ([METRICS])
 [PASS] checkDelegatecallAndCallcodeRunDelegateCode() ([METRICS])
@@ -2429,8 +2447,9 @@ Ran 12 tests for test/SymbolicEip7702Delegation.t.sol:SymbolicEip7702Delegation
 [PASS] checkMockFunctionIsKeyedByDelegate() ([METRICS])
 [FAIL: unmocked selector: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockFunctionOnDelegateWithSymbolicSelector(bytes4) ([METRICS])
 [PASS] checkMockFunctionOnDelegatedPrecompile() ([METRICS])
+[FAIL: unmocked suffix: 42 != 9; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicTargetIgnoresAuthorityFunctionMocks(address,bytes1) ([METRICS])
 [FAIL: unmocked selector: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicTargetMockFunctionOnDelegate(address,bytes4) ([METRICS])
-Suite result: FAILED. 9 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 9 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
