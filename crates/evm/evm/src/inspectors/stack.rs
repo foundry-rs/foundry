@@ -1842,8 +1842,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
             call_inspectors!(
                 [
-                    // These are sorted in definition order.
-                    &mut inner.chisel_state,
+                    // These are sorted in definition order. Chisel dumps the running
+                    // transaction, not a nested one such as `vm.executeTransaction`'s.
+                    inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
                     &mut inner.printer,
                     &mut inner.revert_diag,
                     &mut inner.script_execution_inspector,
@@ -1883,7 +1884,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             call_inspectors!(
                 [
                     // These are sorted in definition order.
-                    &mut inner.chisel_state,
+                    inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
                     &mut inner.printer,
                     &mut inner.revert_diag,
                     &mut inner.tracer,
@@ -2074,7 +2075,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         let inner = &mut *self.inner;
         call_inspectors!(
-            [&mut inner.chisel_state, &mut inner.line_coverage, &mut inner.tracer],
+            [
+                inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
+                &mut inner.line_coverage,
+                &mut inner.tracer,
+            ],
             |inspector| Inspector::<TypesFor<FEN>>::initialize_interp(&mut **inspector, interp),
         );
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
