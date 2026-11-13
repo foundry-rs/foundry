@@ -87,15 +87,19 @@ pub fn find_anchors(
                 }
                 CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
                     let kind = analysis.branch_kind(item.loc.source_id as u32, branch_id);
-                    index.branch(item_id, anchor_loc, kind == Some(BranchKind::Ternary)).map(
-                        |anchors| {
-                            // The failing side of a `require` is path 0, wherever the compiler
-                            // placed it.
-                            let swapped = kind == Some(BranchKind::Require)
-                                && index.taken_fails(&anchors, anchor_loc);
-                            select_branch(anchors, path_id, swapped)
-                        },
-                    )
+                    let exact = matches!(kind, Some(BranchKind::Ternary));
+                    index.branch(item_id, anchor_loc, exact).map(|anchors| {
+                        // Path 0 is the failing side of a `require` and the body of a Yul `if`,
+                        // wherever the compiler placed it.
+                        let swapped = match kind {
+                            Some(BranchKind::Require) => index.taken_fails(&anchors, anchor_loc),
+                            Some(BranchKind::YulIf(body)) => {
+                                index.taken_starts_in(&anchors, body).unwrap_or(false)
+                            }
+                            _ => false,
+                        };
+                        select_branch(anchors, path_id, swapped)
+                    })
                 }
                 _ => index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)),
             }
@@ -223,16 +227,24 @@ impl<'a> AnchorIndex<'a> {
     /// A side that starts inside the `require` span is the failing side, because the failure
     /// code carries the span while the passing side continues with the next statement. Without
     /// a single such side, the side that reverts without another conditional branch is.
-    fn taken_fails(
+    fn taken_fails(&self, anchors: &(ItemAnchor, ItemAnchor), loc: &SourceLocation) -> bool {
+        self.taken_starts_in(anchors, loc).unwrap_or_else(|| {
+            let (fallthrough, taken) = anchors;
+            self.fails(taken.instruction) && !self.fails(fallthrough.instruction)
+        })
+    }
+
+    /// Returns whether the taken side starts inside `loc`, when exactly one side does.
+    fn taken_starts_in(
         &self,
         (fallthrough, taken): &(ItemAnchor, ItemAnchor),
         loc: &SourceLocation,
-    ) -> bool {
+    ) -> Option<bool> {
         match (self.starts_in(fallthrough.instruction, loc), self.starts_in(taken.instruction, loc))
         {
-            (true, false) => false,
-            (false, true) => true,
-            _ => self.fails(taken.instruction) && !self.fails(fallthrough.instruction),
+            (true, false) => Some(false),
+            (false, true) => Some(true),
+            _ => None,
         }
     }
 
@@ -340,18 +352,18 @@ mod tests {
     use crate::CoverageItem;
     use foundry_compilers::artifacts::sourcemap;
 
-    /// Returns the `(instruction, jump)` of each anchor of the `require` branches at the given
-    /// source offsets, each spanning 20 bytes. Require `n` has items `2n` and `2n + 1` for its
-    /// paths 0 and 1.
-    fn require_anchors(
+    /// Returns the `(instruction, jump)` of each anchor of the branches of the given kinds at the
+    /// given source offsets, each spanning 20 bytes. Branch `n` has items `2n` and `2n + 1` for
+    /// its paths 0 and 1.
+    fn branch_anchors(
         bytecode: &[u8],
-        starts: &[u32],
+        starts: &[(u32, BranchKind)],
         source_map: &str,
     ) -> Vec<(u32, Option<u32>)> {
         let items = starts
             .iter()
             .enumerate()
-            .flat_map(|(branch_id, &start)| {
+            .flat_map(|(branch_id, &(start, _))| {
                 (0..2).map(move |path_id| CoverageItem {
                     kind: CoverageItemKind::Branch {
                         branch_id: branch_id as u32,
@@ -369,8 +381,11 @@ mod tests {
                 })
             })
             .collect();
-        let kinds =
-            (0..starts.len() as u32).map(|id| (id, BranchKind::Require)).collect::<Vec<_>>();
+        let kinds = starts
+            .iter()
+            .enumerate()
+            .map(|(id, (_, kind))| (id as u32, kind.clone()))
+            .collect::<Vec<_>>();
         let analysis = SourceAnalysis::for_test(items, &kinds);
         let source_map = sourcemap::parse(source_map).unwrap();
         let ic_pc_map = IcPcMap::new(bytecode);
@@ -385,6 +400,15 @@ mod tests {
                 (anchor.instruction, anchors.jumps.get(&index).copied())
             })
             .collect()
+    }
+
+    fn require_anchors(
+        bytecode: &[u8],
+        starts: &[u32],
+        source_map: &str,
+    ) -> Vec<(u32, Option<u32>)> {
+        let starts = starts.iter().map(|&start| (start, BranchKind::Require)).collect::<Vec<_>>();
+        branch_anchors(bytecode, &starts, source_map)
     }
 
     #[test]
@@ -498,6 +522,51 @@ mod tests {
             (&solar[..], "10:20:0;;;50:5:0;-1:-1:-1;10:20:0;", [(6, Some(4)), (5, None)]),
         ] {
             assert_eq!(require_anchors(bytecode, &[10], source_map), expected);
+        }
+    }
+
+    #[test]
+    fn yul_if_paths_follow_the_body() {
+        // `cond; PUSH dest; JUMPI`, then the body or the code after the `if`. The `if` spans bytes
+        // 10..30 and its body 20..30.
+        let body_falls_through = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            7,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let body_is_taken = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            6,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::POP,
+        ];
+        let kind = BranchKind::YulIf(SourceLocation {
+            source_id: 0,
+            contract_name: "T".into(),
+            bytes: 20..30,
+            lines: 1..2,
+        });
+        for (bytecode, source_map, expected) in [
+            (&body_falls_through[..], "10:20:0;;;22:5:0;;50:5:0;", [(5, None), (7, Some(4))]),
+            // Solar can place the body at the jump target, behind an unmapped `JUMPDEST`.
+            (&body_is_taken[..], "10:20:0;;;50:5:0;-1:-1:-1;22:5:0;", [(6, Some(4)), (5, None)]),
+            // Without a single side in the body, path 0 is the fallthrough.
+            (&body_falls_through[..], "10:20:0;;;50:5:0;;50:5:0;", [(5, None), (7, Some(4))]),
+            (&body_falls_through[..], "10:20:0;;;22:5:0;;22:5:0;", [(5, None), (7, Some(4))]),
+            (&body_is_taken[..], "10:20:0;;;50:5:0;-1:-1:-1;50:5:0;", [(5, None), (6, Some(4))]),
+        ] {
+            assert_eq!(branch_anchors(bytecode, &[(10, kind.clone())], source_map), expected);
         }
     }
 
