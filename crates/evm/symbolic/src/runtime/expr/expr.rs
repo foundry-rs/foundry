@@ -808,6 +808,10 @@ impl SymExpr {
                 // `addmod/mulmod(a, b, 0) => 0`.
                 Self::zero(cx)
             }
+            // `mulmod(a, m, m) => 0`, also for `m == 0`.
+            _ if ternop == SymTernOp::MulMod && (left == modulus || right == modulus) => {
+                Self::zero(cx)
+            }
             (SymExprKind::Const(left), SymExprKind::Const(right), SymExprKind::Const(modulus)) => {
                 // `addmod/mulmod(const, const, const) => const`.
                 Self::constant(cx, ternop.eval(*left, *right, *modulus))
@@ -2311,11 +2315,12 @@ pub(crate) enum SymTernOp {
 }
 
 impl SymTernOp {
-    pub(crate) const fn smt(self) -> &'static str {
+    /// Returns the 512-bit SMT functions that combine the operands and then apply the modulus.
+    pub(crate) const fn smt(self) -> (&'static str, &'static str) {
         match self {
-            Self::AddMod => "bvadd",
-            Self::MulMod => "bvmul",
-            Self::MulDiv => "bvudiv",
+            Self::AddMod => ("bvadd", "bvurem"),
+            Self::MulMod => ("bvmul", "bvurem"),
+            Self::MulDiv => ("bvmul", "bvudiv"),
         }
     }
 
@@ -2354,11 +2359,13 @@ pub(crate) enum SymBinOp {
 }
 
 impl SymBinOp {
+    /// Returns the SMT function of a 256-bit operator. The SMT writer emits `MulHigh` itself.
     pub(crate) const fn smt(self) -> &'static str {
         match self {
+            Self::MulHigh => unreachable!(),
             Self::Add => "bvadd",
             Self::Sub => "bvsub",
-            Self::Mul | Self::MulHigh => "bvmul",
+            Self::Mul => "bvmul",
             Self::UDiv => "bvudiv",
             Self::URem => "bvurem",
             Self::SDiv => "bvsdiv",

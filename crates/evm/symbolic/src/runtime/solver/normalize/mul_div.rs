@@ -33,7 +33,9 @@ pub(super) fn mul_high_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> 
 
 /// Returns `(a, b, d)` when `expr` is the 512-by-256-bit `mulDiv(a, b, d)` quotient.
 ///
-/// The quotient equals `floor(a * b / d)` whenever `mul_high(a, b) < d`.
+/// For any `d != 0` the algorithm computes `floor(a * b / d)` modulo `2**256`. The rewrite is
+/// still applied only under the library's own `mul_high(a, b) < d` check, where the quotient fits
+/// a word and the truncation never matters.
 pub(super) fn full_mul_div_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr, &SymExpr)> {
     let SymExprKind::BinOp(SymBinOp::Mul, left, right) = expr.kind() else {
         return None;
@@ -308,41 +310,48 @@ fn exact_shifted_product_operands<'a>(
     };
     [(left, right), (right, left)].into_iter().find_map(|(low, shifted_high)| {
         let (difference, low_twos) = word_division_operands(low)?;
-        let SymExprKind::BinOp(SymBinOp::Sub, lo, remainder) = difference.kind() else {
-            return None;
-        };
-        let SymExprKind::TernOp(SymTernOp::MulMod, a, b, modulus) = remainder.kind() else {
-            return None;
-        };
         let SymExprKind::BinOp(SymBinOp::Mul, high_part, flip) = shifted_high.kind() else {
             return None;
         };
-        let matches = low_twos == twos
-            && modulus == denominator
-            && is_product_of(lo, a, b)
-            && ([(high_part, flip), (flip, high_part)].into_iter().any(|(high_part, flip)| {
-                is_borrowed_high(high_part, a, b, lo, remainder) && is_inverse_shift(flip, twos)
-            }));
-        matches.then_some((a, b, denominator))
+        if low_twos != twos {
+            return None;
+        }
+        [(high_part, flip), (flip, high_part)].into_iter().find_map(|(high_part, flip)| {
+            let (a, b) = exact_product_parts(difference, high_part, denominator)?;
+            is_inverse_shift(flip, twos).then_some((a, b, denominator))
+        })
     })
 }
 
-/// Returns whether `expr` is `mul_high(a, b) - lt(lo, remainder)`.
-fn is_borrowed_high(
-    expr: &SymExpr,
-    a: &SymExpr,
-    b: &SymExpr,
-    lo: &SymExpr,
-    remainder: &SymExpr,
-) -> bool {
+/// Returns `(a, b)` when `low` is `a * b - r` and `high` is `mul_high(a, b) - lt(a * b, r)` for
+/// `r = mulmod(a, b, d)`.
+///
+/// When `d` is `a` or `b`, construction folds `r` to zero, which also drops the subtraction and
+/// the borrow: `low` is `a * b` and `high` is `mul_high(a, b)`.
+fn exact_product_parts<'a>(
+    low: &'a SymExpr,
+    high: &'a SymExpr,
+    denominator: &SymExpr,
+) -> Option<(&'a SymExpr, &'a SymExpr)> {
+    if let SymExprKind::BinOp(SymBinOp::Sub, lo, remainder) = low.kind()
+        && let SymExprKind::TernOp(SymTernOp::MulMod, a, b, modulus) = remainder.kind()
+        && let SymExprKind::BinOp(SymBinOp::Sub, high_word, borrow) = high.kind()
+        && modulus == denominator
+        && is_product_of(lo, a, b)
+        && is_mul_high_of(high_word, a, b)
+        && is_less_than_word(borrow, lo, remainder)
+    {
+        return Some((a, b));
+    }
+    let SymExprKind::BinOp(SymBinOp::Mul, a, b) = low.kind() else { return None };
+    ((a == denominator || b == denominator) && is_mul_high_of(high, a, b)).then_some((a, b))
+}
+
+fn is_mul_high_of(expr: &SymExpr, a: &SymExpr, b: &SymExpr) -> bool {
     matches!(
         expr.kind(),
-        SymExprKind::BinOp(SymBinOp::Sub, high, borrow)
-            if matches!(
-                high.kind(),
-                SymExprKind::BinOp(SymBinOp::MulHigh, left, right)
-                    if (left == a && right == b) || (left == b && right == a)
-            ) && is_less_than_word(borrow, lo, remainder)
+        SymExprKind::BinOp(SymBinOp::MulHigh, left, right)
+            if (left == a && right == b) || (left == b && right == a)
     )
 }
 

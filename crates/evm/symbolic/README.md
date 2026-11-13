@@ -353,13 +353,16 @@ decide. Before querying the solver, the normalizer recognizes two exact shapes:
   algorithm computes exactly that value.
 
 Recognition is structural: every operand must bind the same `a`, `b`, and `d`,
-and any other shape is left unchanged. The rounding-up variants, such as
-`mulDivRoundingUp` and `fullMulDivUp`, add one on a nonzero `mulmod(a, b, d)`
-and need no separate rule. Two guards around these libraries are also rewritten
-exactly: solady's fast-path check `x == 0 || x * y / x == y` becomes
-`high(x * y) == 0`, and an overflow check that a quotient plus a constant is
-zero becomes a comparison of the quotient itself, where `n / d == MAX` holds
-only for `d == 1` and `n == MAX`. The replacement terms are emitted
+and any other shape, such as fewer Newton steps, is left unchanged. For any
+nonzero `d` the algorithm computes `floor(a * b / d)` modulo `2**256`; requiring
+the library's check keeps the rewrite to inputs where that quotient fits a word.
+The rounding-up variants, such as `mulDivRoundingUp` and `fullMulDivUp`, add one
+on a nonzero `mulmod(a, b, d)`, which construction folds to zero when `d` is
+`a` or `b`. Two guards around these libraries are also rewritten exactly:
+solady's fast-path check `iszero(mul(or(iszero(x), eq(div(x * y, x), y)), d))`
+becomes `high(x * y) != 0 || d == 0`, and an overflow check that a quotient plus
+a constant is zero becomes a comparison of the quotient itself, where
+`n / d == MAX` holds only for `d == 1` and `n == MAX`. The replacement terms are emitted
 to SMT as 512-bit bit-vector arithmetic. Local order rules prove that the
 quotient is monotone in its factors when the larger quotient fits a word, that
 `floor(a * b / d) * d <= a * b`, and that full products ordered this way order

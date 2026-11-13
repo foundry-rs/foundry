@@ -1894,25 +1894,18 @@ impl SymExpr {
             .map(|condition| normalize_bool_for_solver(cx, condition))
     }
 
-    /// `a * bool_word(c) == 0 => !c || a == 0`.
+    /// Solady's `mul(guard, d) == 0` with the overflow guard `x == 0 || x * y / x == y`:
+    /// `a * guard(x, y) == 0 => mul_high(x, y) != 0 || a == 0`.
     fn normalize_bool_selected_eq_zero(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
         let SymExprKind::BinOp(SymBinOp::Mul, left, right) = self.kind() else { return None };
-        for (value, selector) in [(left, right), (right, left)] {
-            let condition = if let Some((factor, other)) = checked_product_guard_operands(selector)
-            {
-                let high = Self::binop(cx, SymBinOp::MulHigh, factor.clone(), other.clone());
-                Some(SymBoolExpr::eq_word_const(cx, &high, U256::ZERO))
-            } else {
-                selector.bitwise_bool_word_condition(cx)
-            };
-            if let Some(condition) = condition {
-                let condition = normalize_bool_for_solver(cx, condition).not(cx);
-                let value = normalize_expr_for_solver(cx, value.clone());
-                let zero = SymBoolExpr::eq_word_const(cx, &value, U256::ZERO);
-                return Some(SymBoolExpr::or(cx, vec![condition, zero]));
-            }
-        }
-        None
+        let (value, (factor, other)) = [(left, right), (right, left)]
+            .into_iter()
+            .find_map(|(value, guard)| Some((value, checked_product_guard_operands(guard)?)))?;
+        let high = Self::binop(cx, SymBinOp::MulHigh, factor.clone(), other.clone());
+        let overflows = SymBoolExpr::eq_word_const(cx, &high, U256::ZERO).not(cx);
+        let value = normalize_expr_for_solver(cx, value.clone());
+        let zero = SymBoolExpr::eq_word_const(cx, &value, U256::ZERO);
+        Some(SymBoolExpr::or(cx, vec![overflows, zero]))
     }
 
     fn add_with_operand<'a>(&'a self, operand: &Self) -> Option<(&'a Self, &'a Self)> {

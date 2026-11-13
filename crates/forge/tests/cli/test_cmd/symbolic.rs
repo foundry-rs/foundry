@@ -8117,13 +8117,13 @@ contract SymbolicSqrt {
 
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
-// its exact quotient, and a false rounding claim must still reach a replayed counterexample.
+// its exact quotient, and a false rounding claim must still reach a replayed counterexample. A
+// five-step inverse is wrong for large odd denominators, and without the high-word guard the
+// quotient wraps; neither may be rewritten into a false proof.
 #[forgetest_init]
 fn symbolic_proves_full_precision_mul_div(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_full_precision_mul_div");
-    prj.add_source(
-        "FullMath.sol",
-        r#"
+    let full_math = r#"
 library FullMath {
     function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
         unchecked {
@@ -8180,8 +8180,18 @@ library FullMath {
         }
     }
 }
-"#,
+"#;
+    let five_step = full_math.replacen("library FullMath", "library FiveStepMath", 1).replacen(
+        "            inv *= 2 - denominator * inv;\n",
+        "",
+        1,
     );
+    let unguarded = full_math.replacen("library FullMath", "library UnguardedMath", 1).replacen(
+        "require(denominator > prod1);",
+        "require(denominator > 0);",
+        1,
+    );
+    prj.add_source("FullMath.sol", &format!("{full_math}{five_step}{unguarded}"));
     prj.add_source(
         "Math.sol",
         r#"
@@ -8304,7 +8314,7 @@ library FixedPointMathLib {
     prj.add_test(
         "FullPrecisionMulDiv.t.sol",
         r#"
-import {FullMath} from "../src/FullMath.sol";
+import {FiveStepMath, FullMath, UnguardedMath} from "../src/FullMath.sol";
 import {Math} from "../src/Math.sol";
 import {FixedPointMathLib} from "../src/FixedPointMathLib.sol";
 
@@ -8327,6 +8337,21 @@ contract FullPrecisionMulDivTest {
     function proveV4RoundsUpRemainder(uint256 x, uint256 y, uint256 d) external pure {
         uint256 up = FullMath.mulDivRoundingUp(x, y, d);
         assert(up == FullMath.mulDiv(x, y, d) + (mulmod(x, y, d) == 0 ? 0 : 1));
+    }
+
+    function proveV4RoundingUpIdentity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(FullMath.mulDivRoundingUp(x, d, d) == x);
+    }
+
+    function proveFiveStepIdentity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(FiveStepMath.mulDiv(x, d, d) == x);
+    }
+
+    function proveUnguardedMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0) return;
+        assert(UnguardedMath.mulDiv(x1, y, d) <= UnguardedMath.mulDiv(x2, y, d));
     }
 
     function proveV4RoundingUpIsFloor(uint256 x, uint256 y, uint256 d) external pure {
@@ -8368,6 +8393,11 @@ contract FullPrecisionMulDivTest {
         assert(up == FixedPointMathLib.fullMulDiv(x, y, d) + (mulmod(x, y, d) == 0 ? 0 : 1));
     }
 
+    function proveSoladyRoundingUpIdentity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(FixedPointMathLib.fullMulDivUp(x, d, d) == x);
+    }
+
     function proveSoladyRoundingUpIsFloor(uint256 x, uint256 y, uint256 d) external pure {
         assert(FixedPointMathLib.fullMulDivUp(x, y, d) == FixedPointMathLib.fullMulDiv(x, y, d));
     }
@@ -8407,6 +8437,7 @@ contract FullPrecisionMulDivTest {
             ("proveV4Monotone", "uint256,uint256,uint256,uint256"),
             ("proveV4Floor", "uint256,uint256,uint256"),
             ("proveV4RoundsUpRemainder", "uint256,uint256,uint256"),
+            ("proveV4RoundingUpIdentity", "uint256,uint256"),
             ("proveOzIdentity", "uint256,uint256"),
             ("proveOzMonotone", "uint256,uint256,uint256,uint256"),
             ("proveOzFloor", "uint256,uint256,uint256"),
@@ -8414,12 +8445,18 @@ contract FullPrecisionMulDivTest {
             ("proveSoladyMonotone", "uint256,uint256,uint256,uint256"),
             ("proveSoladyFloor", "uint256,uint256,uint256"),
             ("proveSoladyRoundsUpRemainder", "uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpIdentity", "uint256,uint256"),
         ] {
             let result = json_test_result(&output, &format!("{name}({args})"));
             assert_eq!(result["symbolic"]["status"], "pass", "{name}, optimized={optimized}");
         }
-        for name in ["proveV4RoundingUpIsFloor", "proveSoladyRoundingUpIsFloor"] {
-            let result = json_test_result(&output, &format!("{name}(uint256,uint256,uint256)"));
+        for (name, args) in [
+            ("proveV4RoundingUpIsFloor", "uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpIsFloor", "uint256,uint256,uint256"),
+            ("proveFiveStepIdentity", "uint256,uint256"),
+            ("proveUnguardedMonotone", "uint256,uint256,uint256,uint256"),
+        ] {
+            let result = json_test_result(&output, &format!("{name}({args})"));
             assert_eq!(
                 result["symbolic"]["status"], "fail_counterexample",
                 "{name}, optimized={optimized}"
