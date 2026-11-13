@@ -48,7 +48,8 @@ pub struct CoverageConfig {
     pub ir_minimum: bool,
 
     /// Whether to keep the project's optimizer and `viaIR` settings instead of disabling them.
-    /// Optimized builds can miss or merge coverage items. Cannot be combined with `ir_minimum`.
+    /// Optimized builds can miss or merge coverage items. Cannot be combined with `ir_minimum`,
+    /// including the `--ir-minimum` flag, so enabling it here also rules out that flag.
     #[serde(default)]
     pub keep_optimizer: bool,
 

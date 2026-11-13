@@ -101,7 +101,8 @@ pub struct CoverageArgs {
     /// Keep the project's optimizer and viaIR settings instead of disabling them.
     ///
     /// Optimized builds can miss or merge coverage items. Cannot be combined with
-    /// `--ir-minimum`. Falls back to the `[profile.<name>.coverage] keep_optimizer` config value.
+    /// `--ir-minimum`, including when either is enabled in config, where it can only be turned
+    /// off. Falls back to the `[profile.<name>.coverage] keep_optimizer` config value.
     #[arg(long)]
     keep_optimizer: bool,
 
@@ -199,7 +200,7 @@ impl CoverageArgs {
         let settings = self.resolve(&self.load_config_no_warnings()?.coverage);
         eyre::ensure!(
             !(settings.ir_minimum && settings.keep_optimizer),
-            "`--ir-minimum` and `--keep-optimizer` cannot be used together"
+            "`ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled"
         );
         Ok(())
     }

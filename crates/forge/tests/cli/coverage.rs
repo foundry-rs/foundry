@@ -2767,13 +2767,32 @@ contract AContractTest is DSTest {
         .args(["coverage", "--keep-optimizer", "--ir-minimum"])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: `--ir-minimum` and `--keep-optimizer` cannot be used together
+Error: `ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled
 
 "#]]);
 
-    prj.update_config(|config| config.coverage.ir_minimum = true);
+    prj.update_config(|config| {
+        config.coverage.keep_optimizer = true;
+        config.optimizer = Some(true);
+    });
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.coverage.keep_optimizer = false;
+        config.coverage.ir_minimum = true;
+    });
     cmd.forge_fuse().args(["coverage", "--keep-optimizer"]).assert_failure().stderr_eq(str![[r#"
-Error: `--ir-minimum` and `--keep-optimizer` cannot be used together
+Error: `ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled
 
 "#]]);
 }
