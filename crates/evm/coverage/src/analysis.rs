@@ -1080,7 +1080,7 @@ pub struct SourceFiles {
 }
 
 #[cfg(test)]
-mod sparse_hint_tests {
+mod tests {
     use super::*;
 
     fn item(start: u32, line: u32) -> CoverageItem {
