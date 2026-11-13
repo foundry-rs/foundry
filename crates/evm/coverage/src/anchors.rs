@@ -239,7 +239,7 @@ impl<'a> AnchorIndex<'a> {
     /// Returns whether the first instruction at `pc` after any `JUMPDEST`s is mapped inside `loc`.
     fn starts_in(&self, pc: u32, loc: &SourceLocation) -> bool {
         let Ok(mut ic) = self.pcs.binary_search(&pc) else { return false };
-        while self.pcs.get(ic).is_some_and(|&pc| self.bytecode[pc as usize] == opcode::JUMPDEST) {
+        while self.pcs.get(ic).is_some_and(|&p| self.bytecode[p as usize] == opcode::JUMPDEST) {
             ic += 1;
         }
         self.source_map.get(ic).is_some_and(|element| {
@@ -249,7 +249,7 @@ impl<'a> AnchorIndex<'a> {
         })
     }
 
-    /// Returns whether the code at `pc` reverts without another conditional branch.
+    /// Returns whether the code at `pc` reverts without another conditional branch or other halt.
     ///
     /// Follows static `PUSH target; JUMP` hops, which compilers use to share revert blocks.
     fn fails(&self, mut pc: u32) -> bool {
