@@ -4789,3 +4789,62 @@ contract AContractTest {
         .assert_success();
     assert_data_eq!(Data::read_from(&prj.root().join("crlf-gaps.json"), None), expected);
 }
+
+// Enable in CI once a released compiler includes the source-map fixes in solar#2345 and #2416.
+#[forgetest]
+#[ignore = "requires a post-0.3.0 Solar build; set FOUNDRY_TEST_SOLAR and FOUNDRY_TEST_SOLC"]
+fn coverage_shared_reverts_and_storage_aliases(prj: _, cmd: _) {
+    let solar = std::env::var_os("FOUNDRY_TEST_SOLAR").expect("set FOUNDRY_TEST_SOLAR");
+    let solc = std::env::var_os("FOUNDRY_TEST_SOLC").expect("set FOUNDRY_TEST_SOLC to solc 0.8.38");
+    prj.add_source(
+        "Probe.sol",
+        include_str!("../../../../testdata/coverage/solar-shared-paths/Probe.sol"),
+    );
+    prj.add_test(
+        "Probe.t.sol",
+        include_str!("../../../../testdata/coverage/solar-shared-paths/Probe.t.sol"),
+    );
+    prj.update_config(|config| {
+        config.optimizer = Some(false);
+        config.evm_version = "cancun".parse().unwrap();
+    });
+    for compiler in [solc, solar] {
+        assert_lcov(
+            cmd.forge_fuse()
+                .args(["coverage", "--force", "--exclude-tests", "--use"])
+                .arg(compiler),
+            str![[r#"
+TN:
+SF:src/Probe.sol
+DA:9,2
+FN:9,Probe._state
+FNDA:2,Probe._state
+DA:10,2
+DA:11,2
+DA:14,1
+FN:14,Probe.set
+FNDA:1,Probe.set
+DA:15,1
+FN:15,Probe.get
+FNDA:1,Probe.get
+DA:17,3
+FN:17,Probe.check
+FNDA:3,Probe.check
+DA:18,3
+BRDA:18,0,0,1
+DA:19,2
+DA:20,2
+BRDA:20,1,0,1
+DA:21,1
+FNF:4
+FNH:4
+LF:10
+LH:10
+BRF:2
+BRH:2
+end_of_record
+
+"#]],
+        );
+    }
+}

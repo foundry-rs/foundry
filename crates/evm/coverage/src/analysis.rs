@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, yul},
     data_structures::{Never, map::FxHashMap},
-    interface::{RelativeBytePos, Span, Symbol, sym},
+    interface::{RelativeBytePos, Span, sym},
     sema::{Gcx, hir},
 };
 use std::{
@@ -31,6 +31,8 @@ struct SourceVisitor<'gcx> {
 
     /// Coverage items
     items: Vec<CoverageItem>,
+    /// Sparse anchor hints keyed by the current visitor item index.
+    anchor_hints: HashMap<usize, AnchorHints>,
 
     all_lines: Vec<u32>,
     /// Branch IDs whose jumps must match the exact ternary expression span.
@@ -42,6 +44,13 @@ struct SourceVisitor<'gcx> {
     /// Direct revert guards, resolved against HIR after collecting their source items.
     revert_guards: Vec<PendingRevertGuard>,
     current_function: Option<SourceLocation>,
+}
+
+/// Optional recovery evidence, kept outside ordinary report items.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AnchorHints {
+    pub revert_guard: Option<RevertGuard>,
+    pub alias_function: Option<SourceLocation>,
 }
 
 #[derive(Clone)]
@@ -141,6 +150,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             revert_guards: Default::default(),
             current_function: None,
             items: Default::default(),
+            anchor_hints: Default::default(),
         }
     }
 
@@ -163,6 +173,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             revert_guards,
         } = checkpoint;
         self.items.truncate(items);
+        self.anchor_hints.retain(|&id, _| id < items);
         self.all_lines.truncate(all_lines);
         self.function_calls.truncate(function_calls);
         self.ternary_branches.truncate(ternary_branches);
@@ -213,7 +224,24 @@ impl<'gcx> SourceVisitor<'gcx> {
     }
 
     fn sort(&mut self) {
-        self.items.sort();
+        if self.anchor_hints.is_empty() {
+            self.items.sort();
+            return;
+        }
+        // Item IDs follow the final report order, not AST traversal order.
+        let mut items = std::mem::take(&mut self.items).into_iter().enumerate().collect::<Vec<_>>();
+        items.sort_by(|(_, lhs), (_, rhs)| lhs.cmp(rhs));
+        let mut hints = std::mem::take(&mut self.anchor_hints);
+        self.items = items
+            .into_iter()
+            .enumerate()
+            .map(|(id, (old_id, item))| {
+                if let Some(hint) = hints.remove(&old_id) {
+                    self.anchor_hints.insert(id, hint);
+                }
+                item
+            })
+            .collect();
     }
 
     fn push_lines(&mut self) {
@@ -221,26 +249,30 @@ impl<'gcx> SourceVisitor<'gcx> {
         self.all_lines.dedup();
         let mut lines = Vec::with_capacity(self.all_lines.len());
         // Items are already ordered by line, so advance through them only once.
-        let mut items = self.items.iter().peekable();
+        let mut items = self.items.iter().enumerate().peekable();
         for &line in &self.all_lines {
-            while items.peek().is_some_and(|item| item.loc.lines.start < line) {
+            while items.peek().is_some_and(|(_, item)| item.loc.lines.start < line) {
                 items.next();
             }
-            if let Some(mut reference_item) = items.next_if(|item| item.loc.lines.start == line) {
+            if let Some((mut reference_id, mut reference_item)) =
+                items.next_if(|(_, item)| item.loc.lines.start == line)
+            {
                 // Anchor the line to its earliest source item, not the shortest span or a
                 // statement in a conditional body that may never execute.
-                while let Some(item) = items.next_if(|item| item.loc.lines.start == line) {
+                while let Some((id, item)) = items.next_if(|(_, item)| item.loc.lines.start == line)
+                {
                     if item.loc.bytes.start < reference_item.loc.bytes.start {
+                        reference_id = id;
                         reference_item = item;
                     }
+                }
+                if let Some(hints) = self.anchor_hints.get(&reference_id).cloned() {
+                    self.anchor_hints.insert(self.items.len() + lines.len(), hints);
                 }
                 lines.push(CoverageItem {
                     kind: CoverageItemKind::Line,
                     loc: reference_item.loc.clone(),
                     anchor_loc: None,
-                    revert_guard: reference_item.revert_guard.clone(),
-                    alias_function: reference_item.alias_function.clone(),
-                    unique_callee: reference_item.unique_callee.clone(),
                     hits: 0,
                 });
             }
@@ -255,15 +287,8 @@ impl<'gcx> SourceVisitor<'gcx> {
     /// Creates a coverage item for a given kind and source location. Pushes item to the internal
     /// collection (plus additional coverage line if item is a statement).
     fn push_item_kind(&mut self, kind: CoverageItemKind, span: Span) -> &mut CoverageItem {
-        let item = CoverageItem {
-            kind,
-            loc: self.source_location_for(span),
-            anchor_loc: None,
-            revert_guard: None,
-            alias_function: None,
-            unique_callee: None,
-            hits: 0,
-        };
+        let item =
+            CoverageItem { kind, loc: self.source_location_for(span), anchor_loc: None, hits: 0 };
 
         debug_assert!(!matches!(item.kind, CoverageItemKind::Line));
         self.all_lines.push(item.loc.lines.start);
@@ -350,8 +375,9 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 self.current_function = previous_function;
                 if storage_alias_body(func) {
                     let location = self.source_location_for(item.span);
-                    for covered in &mut self.items[first..] {
-                        covered.alias_function = Some(location.clone());
+                    for id in first..self.items.len() {
+                        self.anchor_hints.entry(id).or_default().alias_function =
+                            Some(location.clone());
                     }
                 }
             }
@@ -593,7 +619,7 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
                 if guard.call != expr.span {
                     continue;
                 }
-                for item in &mut self.items {
+                for (id, item) in self.items.iter().enumerate() {
                     if item.loc.contract_name == guard.body.contract_name
                         && (item.loc.bytes == guard.body.bytes
                             || (item.loc.bytes == guard.statement.bytes
@@ -602,7 +628,7 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
                                     CoverageItemKind::Branch { path_id: 0, .. }
                                 )))
                     {
-                        item.revert_guard = Some(RevertGuard {
+                        self.anchor_hints.entry(id).or_default().revert_guard = Some(RevertGuard {
                             condition: guard.condition.clone(),
                             statement: guard.statement.clone(),
                             function: guard.function.clone(),
@@ -689,134 +715,13 @@ fn stmt_has_statements(stmt: &ast::Stmt<'_>) -> bool {
     }
 }
 
-/// Count every function reference, including address-taking and operator calls, before using a
-/// callee entry to identify an erased call site. A single reference must also be a direct call.
-struct UniqueInternalCalls<'gcx> {
-    gcx: Gcx<'gcx>,
-    references: FxHashMap<hir::FunctionId, usize>,
-    calls: FxHashMap<hir::FunctionId, Vec<Span>>,
-    unresolved_members: HashSet<Symbol>,
-    has_internal_pointer: bool,
-}
-
-impl<'gcx> hir::Visit<'gcx> for UniqueInternalCalls<'gcx> {
-    type BreakValue = Never;
-
-    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
-        &self.gcx.hir
-    }
-
-    fn visit_ty(&mut self, ty: &'gcx hir::Type<'gcx>) -> ControlFlow<Self::BreakValue> {
-        if matches!(ty.kind, hir::TypeKind::Function(function) if function.visibility != ast::Visibility::External)
-        {
-            self.has_internal_pointer = true;
-        }
-        self.walk_ty(ty)
-    }
-
-    fn visit_expr(&mut self, expression: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
-        // Coverage analysis name-resolves sources without type checking them. Count every
-        // overload candidate conservatively rather than relying on expression type caches.
-        match expression.kind {
-            hir::ExprKind::Ident(candidates) => {
-                for candidate in candidates {
-                    if let hir::Res::Item(hir::ItemId::Function(function)) = candidate {
-                        *self.references.entry(*function).or_default() += 1;
-                    }
-                }
-            }
-            hir::ExprKind::Member(_, name) => {
-                if let Some(hir::Res::Item(hir::ItemId::Function(function))) =
-                    self.gcx.resolve_path_expr(expression)
-                {
-                    *self.references.entry(function).or_default() += 1;
-                } else {
-                    self.unresolved_members.insert(name.name);
-                }
-            }
-            _ => {}
-        }
-        if let Some((callee, _, _)) = expression.as_call()
-            && let Some(hir::Res::Item(hir::ItemId::Function(function))) =
-                self.gcx.resolve_path_expr(callee.peel_parens())
-        {
-            self.calls.entry(function).or_default().push(expression.span);
-        }
-        self.walk_expr(expression)
-    }
-}
-
-fn unique_internal_calls(gcx: Gcx<'_>, data: &SourceFiles) -> FxHashMap<Span, SourceLocation> {
-    let mut visitor = UniqueInternalCalls {
-        gcx,
-        references: Default::default(),
-        calls: Default::default(),
-        unresolved_members: Default::default(),
-        has_internal_pointer: false,
-    };
-    for source in gcx.hir.source_ids() {
-        let _ = hir::Visit::visit_nested_source(&mut visitor, source);
-    }
-    // A raw internal function pointer can call a native helper without naming it. Without
-    // expression types, decline all inference if any variable can carry such a pointer.
-    if visitor.has_internal_pointer {
-        return FxHashMap::default();
-    }
-    let usings = gcx
-        .hir
-        .source_ids()
-        .flat_map(|id| gcx.hir.source(id).usings.iter())
-        .chain(gcx.hir.contract_ids().flat_map(|id| gcx.hir.contract(id).usings.iter()));
-    for using in usings {
-        for entry in using.entries {
-            match entry.kind {
-                hir::UsingEntryKind::Functions(functions) => {
-                    for &function in functions {
-                        *visitor.references.entry(function).or_default() += 1;
-                    }
-                }
-                hir::UsingEntryKind::Library(contract) => {
-                    for function in gcx.hir.contract(contract).functions() {
-                        *visitor.references.entry(function).or_default() += 1;
-                    }
-                }
-                hir::UsingEntryKind::Err(_) => {}
-            }
-        }
-    }
-    let source_ids = data
-        .sources
-        .iter()
-        .map(|(&id, path)| (gcx.get_hir_source(path).unwrap().0, id))
-        .collect::<FxHashMap<_, _>>();
-    visitor
-        .calls
-        .into_iter()
-        .filter_map(|(id, calls)| {
-            let call =
-                sole_direct_call(visitor.references.get(&id).copied().unwrap_or_default(), &calls)?;
-            let function = gcx.hir.function(id);
-            if !matches!(function.visibility, ast::Visibility::Internal | ast::Visibility::Private)
-                || function.virtual_
-                || function.name.is_none_or(|name| visitor.unresolved_members.contains(&name.name))
-            {
-                return None;
-            }
-            let mut source = SourceVisitor::new(*source_ids.get(&function.source)?, gcx);
-            source.contract_name = function
-                .contract
-                .map(|id| gcx.hir.contract(id).name.as_str().into())
-                .unwrap_or_default();
-            Some((call, source.source_location_for(function.span)))
-        })
-        .collect()
-}
-
 /// Coverage source analysis.
 #[derive(Clone, Debug, Default)]
 pub struct SourceAnalysis {
     /// All the coverage items.
     all_items: Vec<CoverageItem>,
+    /// Recovery evidence only for items that need it, keyed by final report item ID.
+    anchor_hints: HashMap<u32, AnchorHints>,
     /// Source and branch IDs requiring exact decision-node source-map matching.
     ternary_branches: HashSet<(u32, u32)>,
     /// Source ID to `(offset, len)` into `all_items`.
@@ -847,7 +752,6 @@ impl SourceAnalysis {
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
             resolved_empty_special_functions =
                 resolve_empty_special_functions(compiler.gcx(), data);
-            let unique_calls = unique_internal_calls(compiler.gcx(), data);
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -891,39 +795,29 @@ impl SourceAnalysis {
                         visitor.resolve_function_calls(hir_source_id);
                     }
 
-                    for (call, scope) in &visitor.function_calls {
-                        if let Some(callee) = unique_calls.get(call) {
-                            let location = visitor.source_location_for(*call);
-                            for item in &mut visitor.items {
-                                if matches!(item.kind, CoverageItemKind::Statement)
-                                    && item.loc.contract_name == *scope
-                                    && item.loc.bytes == location.bytes
-                                {
-                                    item.unique_callee = Some(callee.clone());
-                                }
-                            }
-                        }
-                    }
-
                     if !visitor.items.is_empty() {
                         visitor.disambiguate_functions();
                         visitor.sort();
                         visitor.push_lines();
                         visitor.sort();
                     }
-                    (source_id, visitor.items, visitor.ternary_branches)
+                    (source_id, visitor.items, visitor.anchor_hints, visitor.ternary_branches)
                 })
                 .collect::<Vec<_>>()
         });
 
         // Create mapping and merge items.
-        sourced_items.sort_by_key(|(id, items, _)| (*id, items.first().map(|i| i.loc.bytes.start)));
-        let Some(&(max_idx, _, _)) = sourced_items.last() else { return Ok(Self::default()) };
+        sourced_items
+            .sort_by_key(|(id, items, _, _)| (*id, items.first().map(|i| i.loc.bytes.start)));
+        let Some(&(max_idx, _, _, _)) = sourced_items.last() else { return Ok(Self::default()) };
         let len = max_idx + 1;
         let mut all_items = Vec::new();
+        let mut anchor_hints = HashMap::default();
         let mut map = vec![(u32::MAX, 0); len as usize];
         let mut ternary_branches = HashSet::default();
-        for (idx, items, branches) in sourced_items {
+        for (idx, items, hints, branches) in sourced_items {
+            let base = all_items.len() as u32;
+            anchor_hints.extend(hints.into_iter().map(|(id, hint)| (base + id as u32, hint)));
             ternary_branches.extend(branches.into_iter().map(|branch| (idx, branch)));
             // Assumes that all `idx` items are consecutive, guaranteed by the sort above.
             let idx = idx as usize;
@@ -960,11 +854,16 @@ impl SourceAnalysis {
 
         Ok(Self {
             all_items,
+            anchor_hints,
             map,
             ternary_branches,
             empty_special_functions,
             contract_empty_special_functions,
         })
+    }
+
+    pub(crate) fn anchor_hints(&self, item_id: u32) -> Option<&AnchorHints> {
+        self.anchor_hints.get(&item_id)
     }
 
     pub(crate) fn is_ternary_branch(&self, source_id: u32, branch_id: u32) -> bool {
@@ -1033,63 +932,82 @@ pub struct SourceFiles {
     pub sources: HashMap<u32, PathBuf>,
 }
 
-/// Taking a function's address is a reference too, even if it has only one direct caller.
-const fn sole_direct_call(references: usize, calls: &[Span]) -> Option<Span> {
-    match calls {
-        [call] if references == 1 => Some(*call),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
-mod tests {
+mod sparse_hint_tests {
     use super::*;
 
-    #[test]
-    fn unique_calls_work_without_expression_type_checking() {
-        for (extra, expected) in [
-            ("", 1),
-            ("function twice() public { target(); }", 0),
-            ("function take() public { function() internal p = target; }", 0),
-            ("function raw() public { function() internal p; assembly { p := 42 } p(); }", 0),
-            ("function arrayPointer() public { function() internal[] memory pointers; }", 0),
-        ] {
-            let source = format!(
-                "contract Test {{ function target() internal {{}} function run() external {{ target(); }} {extra} }}"
-            );
-            let session = solar::interface::Session::builder()
-                .with_buffer_emitter(solar::interface::ColorChoice::Never)
-                .build();
-            let mut compiler = solar::sema::Compiler::new(session);
-            compiler.enter_mut(|compiler| {
-                let mut parsing = compiler.parse();
-                parsing.add_file(
-                    compiler
-                        .sess()
-                        .source_map()
-                        .new_source_file(PathBuf::from("Unique.sol"), source)
-                        .unwrap(),
-                );
-                parsing.parse();
-                assert_eq!(compiler.lower_asts().unwrap(), ControlFlow::Continue(()));
-                let files = SourceFiles {
-                    sources: [(0, PathBuf::from("Unique.sol"))].into_iter().collect(),
-                };
-                assert_eq!(
-                    unique_internal_calls(compiler.gcx(), &files).len(),
-                    expected,
-                    "{extra}"
-                );
-            });
+    fn item(start: u32, line: u32) -> CoverageItem {
+        CoverageItem {
+            kind: CoverageItemKind::Statement,
+            loc: SourceLocation {
+                source_id: 0,
+                contract_name: "T".into(),
+                bytes: start..start + 1,
+                lines: line..line + 1,
+            },
+            anchor_loc: None,
+            hits: 0,
         }
     }
 
     #[test]
-    fn unique_direct_call_rejects_address_taking_and_multiple_callers() {
-        let call = Span::DUMMY;
-        assert_eq!(sole_direct_call(1, &[call]), Some(call));
-        assert_eq!(sole_direct_call(2, &[call]), None, "an address-taken function is ambiguous");
-        assert_eq!(sole_direct_call(2, &[call, call]), None);
-        assert_eq!(sole_direct_call(1, &[]), None, "a pointer reference is not a direct call");
+    fn hints_follow_sorting_lines_and_checkpoint_reuse() {
+        let session = solar::interface::Session::builder()
+            .with_buffer_emitter(solar::interface::ColorChoice::Never)
+            .build();
+        let compiler = solar::sema::Compiler::new(session);
+        compiler.enter(|compiler| {
+            let mut visitor = SourceVisitor::new(0, compiler.gcx());
+            visitor.items = vec![item(30, 3), item(10, 1), item(20, 2)];
+            visitor.all_lines = vec![3, 1, 2];
+            visitor.anchor_hints.insert(
+                0,
+                AnchorHints { alias_function: Some(item(30, 3).loc), ..Default::default() },
+            );
+            visitor.anchor_hints.insert(
+                2,
+                AnchorHints {
+                    revert_guard: Some(RevertGuard {
+                        condition: item(20, 2).loc,
+                        statement: item(20, 2).loc,
+                        function: item(20, 2).loc,
+                        selector: [1, 2, 3, 4],
+                    }),
+                    ..Default::default()
+                },
+            );
+            visitor.sort();
+            visitor.push_lines();
+            visitor.sort();
+            assert_eq!(visitor.items.len(), 6);
+            assert_eq!(visitor.anchor_hints.len(), 4);
+            for (id, covered) in visitor.items.iter().enumerate() {
+                match covered.loc.bytes.start {
+                    10 => assert!(!visitor.anchor_hints.contains_key(&id)),
+                    20 => assert_eq!(
+                        visitor.anchor_hints[&id].revert_guard.as_ref().unwrap().condition.bytes,
+                        covered.loc.bytes
+                    ),
+                    30 => assert_eq!(
+                        visitor.anchor_hints[&id].alias_function.as_ref().unwrap().bytes,
+                        covered.loc.bytes
+                    ),
+                    _ => unreachable!(),
+                }
+            }
+            // Discarded test contracts must not leave hints on a later item reusing that ID.
+            let checkpoint = visitor.checkpoint();
+            let reused = visitor.items.len();
+            visitor.items.push(item(40, 4));
+            visitor.anchor_hints.insert(
+                reused,
+                AnchorHints { alias_function: Some(item(40, 4).loc), ..Default::default() },
+            );
+            visitor.restore_checkpoint(checkpoint);
+            visitor.items.push(item(50, 5));
+            assert!(!visitor.anchor_hints.contains_key(&reused));
+            visitor.sort();
+            assert_eq!(visitor.anchor_hints.len(), 4);
+        });
     }
 }
