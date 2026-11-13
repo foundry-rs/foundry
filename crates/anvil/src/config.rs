@@ -344,7 +344,7 @@ pub struct NodeConfig {
     ///
     /// If set to `Some(num)` keep latest num state in memory only.
     pub prune_history: PruneStateHistoryConfig,
-    /// Max number of states cached on disk.
+    /// Max number of older states to keep, beyond the most recent ones.
     pub max_persisted_states: Option<usize>,
     /// The initial state to apply and consume during startup.
     pub init_state: Option<SerializableState>,
@@ -942,7 +942,7 @@ impl NodeConfig {
         self
     }
 
-    /// Sets max number of states to cache on disk.
+    /// Sets max number of older states to keep, beyond the most recent ones.
     #[must_use]
     pub fn with_max_persisted_states<U: Into<usize>>(
         mut self,
@@ -2508,7 +2508,11 @@ latest block number: {latest_block}"
 
         debug!(target: "node", fork_number=config.block_number, fork_hash=%config.block_hash, "set up fork db");
 
-        let mut db = ForkedDatabase::new(backend, block_chain_db);
+        let mut db = ForkedDatabase::new(
+            backend,
+            block_chain_db,
+            self.prune_history.is_state_history_supported(),
+        );
 
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
