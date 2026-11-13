@@ -995,7 +995,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             executor.set_inspector(inspector);
         }
         let executed = executor.transact(tx).map_err(transaction_error)?;
-        let persistent = merge_untracked_nested_changes(evm.state_mut(), &executed)?;
+        let (persistent, _) = merge_untracked_nested_changes(evm.state_mut(), &executed)?;
         Ok((executed.result().clone(), persistent))
     }
 

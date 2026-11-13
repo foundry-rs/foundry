@@ -481,6 +481,7 @@ fn record_fork_switch<FEN: FoundryEvmNetwork>(
         ccx.state.commit_created_account_changes(source_fork_id);
         // The switch accepted the running state, so reverts no longer undo its persistent writes.
         ccx.state.persistent_writes.clear();
+        ccx.state.snapshot_restores.accept_writes();
     }
     ccx.state.record_initial_created_accounts(target_fork_id, initial);
     ccx.state.record_propagated_accounts(target_fork_id, propagated);
@@ -499,6 +500,7 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
         ccx.state.commit_created_account_changes(active_fork_id);
         // The roll accepted the running state, so reverts no longer undo its persistent writes.
         ccx.state.persistent_writes.clear();
+        ccx.state.snapshot_restores.accept_writes();
         sync_chain_id_override(ccx, active_fork_id);
     }
 }
