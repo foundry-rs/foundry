@@ -5413,6 +5413,35 @@ async fn test_fork_rollback_to_root() {
     assert_eq!(replacement.header.parent_hash, root.header.hash);
 }
 
+// Rolling back more than 256 blocks must restore the hashes of the surviving local blocks, which
+// the fork origin does not have.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rollback_beyond_blockhash_window_restores_blockhash() {
+    let (_source_api, source) = spawn(NodeConfig::test()).await;
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    let block1_hash =
+        api.block_by_number(BlockNumberOrTag::Number(1)).await.unwrap().unwrap().header.hash;
+    api.anvil_mine(Some(U256::from(300)), None).await.unwrap();
+
+    api.anvil_rollback(Some(300)).await.unwrap();
+    assert_eq!(api.block_number().unwrap(), U256::from(2));
+
+    // Runtime code returning BLOCKHASH(1):
+    // PUSH1 1, BLOCKHASH, PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN
+    let target = Address::repeat_byte(0xb1);
+    api.anvil_set_code(target, bytes!("0x60014060005260206000f3")).await.unwrap();
+    let tx = TransactionRequest::default().with_to(target);
+    let res = api.call(WithOtherFields::new(tx), None, EvmOverrides::default()).await.unwrap();
+
+    assert_eq!(B256::from_slice(res.as_ref()), block1_hash);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_rollback_to_root_restores_fee_and_gas_overrides() {
     for (case, source_base_fee, config, tx_gas_limit, block_gas_limit) in [
