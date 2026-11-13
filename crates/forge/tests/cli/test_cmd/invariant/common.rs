@@ -153,7 +153,10 @@ contract InvariantAfterInvariantCallsTest {
 "#]]);
 
     std::fs::remove_dir_all(prj.root().join("cache/invariant")).unwrap();
-    prj.update_config(|config| config.invariant.depth = 0);
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 0;
+    });
     let empty_sequence = str![[r#"
 ...
 [FAIL: bad count]

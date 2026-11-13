@@ -454,9 +454,11 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
         calldata: &invariant_run.inputs,
     }
     .failed_case(anchor, invariant_config.fail_on_revert, false, call_result, &[]);
-    // If the anchor already failed, for example right after `setUp`, replaying this sequence can
-    // hit that failure instead.
-    case_data.after_invariant = !invariant_test.test_data.failures.has_failure(anchor);
+    // Keep the flag only while every earlier failure of the anchor came from this hook; after any
+    // other failure, for example right after `setUp`, replaying can hit that failure instead.
+    case_data.after_invariant = invariant_test.test_data.failures.get_failure(anchor).is_none_or(
+        |prev| matches!(prev, InvariantFuzzError::BrokenInvariant(prev) if prev.after_invariant),
+    );
     invariant_test
         .test_data
         .failures
