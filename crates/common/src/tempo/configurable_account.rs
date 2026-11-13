@@ -91,7 +91,7 @@ pub fn single_owner_account(owner: Address) -> Result<Address> {
 
 /// Returns the configuration commitment of `account` at `block`, or `None` when the configurable
 /// account precompile is not active there: before T14 a call to it returns no data.
-async fn config_commitment<P: Provider<TempoNetwork>>(
+pub async fn config_commitment<P: Provider<TempoNetwork>>(
     provider: &P,
     account: Address,
     block: BlockId,
@@ -399,7 +399,7 @@ pub fn updates_config(to: Option<Address>, input: Option<&Bytes>) -> bool {
 /// that the node accepts: at most [`MAX_CONFIGURABLE_ACCOUNT_SIGNATURES`] owners that, in address
 /// order, reach `threshold` only on the last one. `owners` are sorted by address. Returns an empty
 /// list when no quorum exists.
-fn quorum(owners: &[ConfigurableAccountOwner], threshold: u8, largest: bool) -> Vec<Address> {
+pub fn quorum(owners: &[ConfigurableAccountOwner], threshold: u8, largest: bool) -> Vec<Address> {
     let threshold = usize::from(threshold);
     // `reach[i][k][w]`: `k` of the first `i` owners weigh `w`, below the threshold.
     let mut reach = vec![[[false; 256]; MAX_CONFIGURABLE_ACCOUNT_SIGNATURES]; owners.len() + 1];
@@ -574,12 +574,10 @@ fn parse_webauthn_assertion(json: &Value) -> Result<PrimitiveSignature> {
     };
 
     let signature = field("signature")?;
-    let signature = if signature.first() == Some(&0x30) {
-        p256::ecdsa::Signature::from_der(&signature)
-    } else {
-        p256::ecdsa::Signature::from_slice(&signature)
-    }
-    .map_err(|_| eyre::eyre!("invalid WebAuthn signature"))?;
+    // A raw `r || s` can start with the DER tag 0x30, so the first byte cannot tell them apart.
+    let signature = p256::ecdsa::Signature::from_der(&signature)
+        .or_else(|_| p256::ecdsa::Signature::from_slice(&signature))
+        .map_err(|_| eyre::eyre!("invalid WebAuthn signature"))?;
     // Tempo only accepts low-s P-256 signatures, which browsers do not guarantee.
     let signature = signature.normalize_s().unwrap_or(signature);
     let (r, s) = signature.split_bytes();
@@ -1078,6 +1076,24 @@ mod tests {
         });
         let parsed = parse_owner_signature(&assertion.to_string()).unwrap();
         assert_eq!(parsed, envelope);
+    }
+
+    /// A raw `r || s` signature whose `r` starts with the DER sequence tag `0x30` parses as raw.
+    #[test]
+    fn webauthn_assertion_accepts_raw_signature_starting_with_der_tag() {
+        let (r, s) = (B256::repeat_byte(0x30), B256::repeat_byte(0x01));
+        let assertion = json!({
+            "authenticatorData": "0x00",
+            "clientDataJSON": "{}",
+            "signature": hex::encode_prefixed([r.as_slice(), s.as_slice()].concat()),
+            "publicKey": format!("0x04{}", "11".repeat(64)),
+        });
+        let PrimitiveSignature::WebAuthn(signature) =
+            parse_owner_signature(&assertion.to_string()).unwrap()
+        else {
+            panic!("expected a WebAuthn signature");
+        };
+        assert_eq!((signature.r, signature.s), (r, s));
     }
 
     /// The worst-case quorum is the largest one the node accepts: in address order it reaches the

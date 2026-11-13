@@ -408,7 +408,10 @@ pub struct Config {
     pub tracing: TracingConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
-    /// Whether to show `console.log` outputs in realtime during script/test execution
+    /// Whether to show `console.log` outputs in realtime during script/test execution.
+    ///
+    /// Ignored when `--json` or `--junit` writes a report to stdout. Otherwise, logs print live
+    /// instead of being captured, so `forge test --json-file` does not include them.
     pub live_logs: bool,
     /// Whether to allow `expectRevert` for internal functions.
     pub allow_internal_expect_revert: bool,
@@ -535,13 +538,13 @@ pub struct Config {
     /// change forks already created by `setUp`.
     #[serde(default)]
     pub no_fork_bal: bool,
-    /// Prefetches a new fork block's remote cache from the keys of an older cached block.
+    /// Prefetches remote fork state before the EVM reads it.
     ///
-    /// Defaults to `false`. When a fork starts on a block with an empty disk cache, the accounts
-    /// and storage slots in the cache of the newest older block on the same chain are fetched
-    /// again at the new block in the background. This helps forks of `latest`, which start
-    /// cold on each new head. Values come from the fork block and never replace cached values,
-    /// so results do not change; unused keys cost extra RPC requests. Requires storage caching.
+    /// Defaults to `false`. While reads miss the cache, each call into a fork contract is
+    /// simulated on the endpoint with `eth_createAccessList`, and the state it touches is
+    /// fetched in batches. With storage caching, a fork block with an empty disk cache also
+    /// fetches the keys cached for the newest older block on the same chain. Values come from
+    /// the fork block; extra keys cost requests.
     #[serde(default)]
     pub fork_prefetch: bool,
     /// Disables rate limiting entirely. This overrides any settings made in

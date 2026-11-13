@@ -6,10 +6,18 @@
 //! read again at the new block through the fork backend, so the cache stays exact for that block.
 //! The cache file keeps only the keys the EVM then reads, so a wrong prediction only costs an RPC
 //! request and does not carry over to the next block.
+//!
+//! A call is predicted more precisely by simulating it on the endpoint, see [`prefetch_call`].
 
 use super::Fork;
+use crate::{
+    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    precompiles::P256_VERIFY,
+};
 use alloy_network::Network;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, map::B256HashMap};
+use alloy_rpc_types::{TransactionRequest, state::StateOverride};
+use evm2::{bytecode::Bytecode, evm::Cache};
 use foundry_config::Config;
 use foundry_fork_db::{
     ForkBlockEnv, SharedBackend,
@@ -33,6 +41,13 @@ const MAX_CONCURRENT_REQUESTS: usize = 32;
 /// Largest number of accounts and slots to prefetch. Older cache files can hold the union of many
 /// runs; past this size, a prefetch can cost more requests than it saves.
 const MAX_KEYS: usize = 4096;
+
+/// Runtime code that returns one zero word, standing in for the cheatcode contract in a
+/// simulation on the fork's endpoint: `PUSH1 0x20 PUSH1 0x00 RETURN`.
+const CHEATCODE_STUB: Bytes = Bytes::from_static(&[0x60, 0x20, 0x60, 0x00, 0xf3]);
+
+/// Largest local state, in bytes of code and storage, sent as overrides with a simulated call.
+const MAX_OVERRIDE_BYTES: usize = 512 * 1024;
 
 enum Key {
     Account(Address),
@@ -140,6 +155,105 @@ fn keys(db: &MemDb) -> Vec<Key> {
         )
         .take(MAX_KEYS)
         .collect()
+}
+
+/// Returns the local state of a fork context that differs from `remote`, the state the fork loaded
+/// from its endpoint, as overrides for a simulation there, with a stub for the cheatcode contract.
+/// Such state is the test contract and balances set with cheatcodes.
+///
+/// Returns `None` when nothing differs, so endpoints without override support still simulate, or
+/// when the state is larger than [`MAX_OVERRIDE_BYTES`].
+pub(crate) fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverride> {
+    let remote_accounts = remote.accounts.read();
+    let remote_storage = remote.storage.read();
+    let mut overrides = StateOverride::default();
+    let mut bytes = 0;
+    for (address, info) in &local.accounts {
+        // An absent account keeps its remote state; the simulation only predicts reads.
+        let Some(info) = info else { continue };
+        let remote = remote_accounts.get(address);
+        // Code that is neither inline nor in the contracts is unknown and not overridden, unless
+        // its hash is the empty code hash.
+        let code = remote
+            .is_none_or(|remote| remote.code_hash != info.code_hash)
+            .then(|| {
+                let code = info.code.as_ref().or_else(|| local.contracts.get(&info.code_hash));
+                code.map(Bytecode::original_bytes)
+                    .or_else(|| info.is_empty_code_hash().then(Bytes::new))
+            })
+            .flatten();
+        let balance = remote.is_none_or(|remote| remote.balance != info.balance);
+        let nonce = remote.is_none_or(|remote| remote.nonce != info.nonce);
+        if code.is_some() || balance || nonce {
+            bytes += code.as_ref().map_or(0, |code| code.len());
+            let account = overrides.entry(*address).or_default();
+            account.code = code;
+            account.balance = balance.then_some(info.balance);
+            account.nonce = nonce.then_some(info.nonce);
+        }
+    }
+    for (address, storage) in &local.storage {
+        // Wiped storage replaces the whole remote storage.
+        let remote = remote_storage.get(address).filter(|_| !storage.wiped);
+        let slots = storage
+            .slots
+            .iter()
+            .filter(|&(slot, value)| remote.and_then(|remote| remote.get(slot)) != Some(value))
+            .map(|(slot, value)| (B256::from(*slot), B256::from(*value)))
+            .collect::<B256HashMap<_>>();
+        bytes += slots.len() * 64;
+        if bytes > MAX_OVERRIDE_BYTES {
+            return None;
+        }
+        if storage.wiped {
+            overrides.entry(*address).or_default().state = Some(slots);
+        } else if !slots.is_empty() {
+            overrides.entry(*address).or_default().state_diff = Some(slots);
+        }
+    }
+    if overrides.is_empty() || bytes > MAX_OVERRIDE_BYTES {
+        return None;
+    }
+    overrides.entry(CHEATCODE_ADDRESS).or_default().code = Some(CHEATCODE_STUB);
+    Some(overrides)
+}
+
+/// Simulates a call on the fork's endpoint and prefetches the state it touches, see
+/// [`SharedBackend::prefetch_access_list`]. With `overrides`, the `local` state over the fork goes
+/// along as overrides; without, a call into a local-only account is skipped. Calls to precompiles,
+/// up to `P256VERIFY` at `0x100`, the cheatcode contract and the console are skipped.
+pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
+    backend: &SharedBackend<N, B>,
+    caller: Address,
+    target: Address,
+    value: U256,
+    input: Bytes,
+    local: Option<&Cache>,
+    overrides: bool,
+) {
+    if target <= P256_VERIFY || target == CHEATCODE_ADDRESS || target == HARDHAT_CONSOLE_ADDRESS {
+        return;
+    }
+    let remote = backend.data();
+    let remote_code = remote.accounts.read().get(&target).map(|account| account.code_hash);
+    let local_account = local.and_then(|local| local.accounts.get(&target)?.as_ref());
+    // Local code tells apart contracts at one address, such as the test contracts of two suites.
+    let code_hash = local_account
+        .map(|account| account.code_hash)
+        .filter(|&code_hash| remote_code != Some(code_hash))
+        .unwrap_or_default();
+    let tx = TransactionRequest::default().from(caller).to(target).value(value).input(input.into());
+    // Checked first, so a call that is not simulated does not build its overrides.
+    if !backend.wants_access_list(&tx, code_hash, overrides) {
+        return;
+    }
+    let overrides = local.filter(|_| overrides).and_then(|local| state_override(&remote, local));
+    // An account the context holds but never loaded from the endpoint was created locally, so the
+    // endpoint can only simulate a call into it with the local state as overrides.
+    if overrides.is_none() && local_account.is_some() && remote_code.is_none() {
+        return;
+    }
+    backend.prefetch_access_list(tx, overrides, code_hash);
 }
 
 #[cfg(test)]

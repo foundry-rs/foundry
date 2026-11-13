@@ -81,9 +81,9 @@ pub struct MakeTxArgs {
     /// digest with `cast wallet sign --no-hash <DIGEST>` (or a passkey in a browser), and
     /// `cast wallet assemble` combines the signatures into the signed transaction.
     ///
-    /// Gas estimation models the owner quorum, assuming the fewest owners that reach the
-    /// threshold approve with maximum-size WebAuthn signatures. An account that is not registered
-    /// yet needs `--gas-limit`, since only its owners know its configuration.
+    /// Gas estimation models the largest owner quorum the account accepts (at most eight
+    /// approvals), each a maximum-size WebAuthn signature. An account that is not registered yet
+    /// needs `--gas-limit`, since only its owners know its configuration.
     #[arg(long = "tempo.digest", requires_all = ["raw_unsigned", "from"])]
     tempo_digest: bool,
 

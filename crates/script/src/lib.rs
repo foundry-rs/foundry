@@ -470,6 +470,10 @@ impl ScriptArgs {
 
         tempo.resolve_expires();
         config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        // `--json` keeps stdout for the result, so logs are captured into it.
+        if shell::is_json() {
+            config.live_logs = false;
+        }
         if args.debug {
             if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);
@@ -1334,6 +1338,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     .logs(self.config.live_logs)
                     .trace_requirements(script_trace_requirements(&self.config, debug))
                     .create2_deployer(self.evm_opts.create2_deployer)
+                    .fork_prefetch(self.evm_opts.fork_prefetch)
             })
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);

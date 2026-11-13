@@ -16,7 +16,10 @@ use tempo_alloy::{
     accounts::TempoAccountsWallet,
     rpc::{ConfigurableAccountSimulationSpec, TempoTransactionRequest},
 };
-use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
+use tempo_primitives::{
+    SignatureType, TempoTxType,
+    transaction::{Call, TempoSignedAuthorization},
+};
 
 #[cfg(feature = "base")]
 use base_common_network::Base;
@@ -462,8 +465,26 @@ impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
         self.authorization_list.as_ref()
     }
 
+    /// A Tempo AA transaction carries its authorizations in `tempo_authorization_list` and
+    /// ignores the Ethereum list, so they go there once Tempo options have made the request AA.
+    /// A list with an invalid signature stays in the Ethereum list, where it is never applied.
     fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
-        self.authorization_list = Some(authorization_list);
+        if self.is_tempo_aa()
+            && let Ok(tempo_authorization_list) = authorization_list
+                .iter()
+                .map(|auth| {
+                    let signature = auth.signature()?;
+                    Ok(TempoSignedAuthorization::new_unchecked(
+                        auth.inner().clone(),
+                        signature.into(),
+                    ))
+                })
+                .collect::<Result<_, alloy_primitives::SignatureError>>()
+        {
+            self.tempo_authorization_list = tempo_authorization_list;
+        } else {
+            self.authorization_list = Some(authorization_list);
+        }
     }
 
     fn fee_token(&self) -> Option<Address> {

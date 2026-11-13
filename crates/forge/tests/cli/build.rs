@@ -300,6 +300,27 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]],
     );
+    cmd.forge_fuse()
+        .args(["test", "--list", "--json", "--match-path", "native/**"])
+        .assert_json_stdout(str![[r#"
+{"native/src/lib.fe":{"Counter":["testExternalArtifactIsDeployable"]}}
+"#]]);
+    cmd.forge_fuse()
+        .args(["coverage", "--report", "lcov", "--match-contract", "^Counter$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[..]
+Analysing contracts...
+Running tests...
+
+Ran 1 test for native/src/lib.fe:Counter
+[PASS] testExternalArtifactIsDeployable() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Wrote LCOV report.
+
+"#]]);
     for name in ["Counter.V1", "Counter-V1"] {
         fs::write(&adapter, adapter_script.replace("name=Counter", &format!("name={name}")))
             .unwrap();
