@@ -92,8 +92,7 @@ pub fn find_anchors(
                             // The failing side of a `require` is path 0, wherever the compiler
                             // placed it.
                             let swapped = kind == Some(BranchKind::Require)
-                                && index.fails(anchors.1.instruction)
-                                && !index.fails(anchors.0.instruction);
+                                && index.taken_fails(&anchors, anchor_loc);
                             select_branch(anchors, path_id, swapped)
                         },
                     )
@@ -141,6 +140,8 @@ const MAX_FAILURE_HOPS: usize = 8;
 struct AnchorIndex<'a> {
     bytecode: &'a [u8],
     source_map: &'a SourceMap,
+    /// The program counter of every instruction, by instruction counter.
+    pcs: Vec<u32>,
     ic_pc_map: &'a IcPcMap,
     /// `(source id, offset, instruction)`, sorted for source range lookups.
     entries: Vec<(i32, u32, usize)>,
@@ -158,11 +159,13 @@ impl<'a> AnchorIndex<'a> {
             .map(|(instruction, element)| (element.index_i32(), element.offset(), instruction))
             .collect::<Vec<_>>();
         entries.sort_unstable();
+        let mut pcs = Vec::new();
         let mut branches = Vec::new();
         let mut reverting_runs = Vec::new();
         let mut run_start = 0;
         let mut prev = opcode::STOP;
         for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
+            pcs.push(pc as u32);
             match inst.opcode.get() {
                 opcode::REVERT | opcode::INVALID => {
                     reverting_runs.push(run_start..ic + 1);
@@ -190,7 +193,7 @@ impl<'a> AnchorIndex<'a> {
                 }
             }
         }
-        Self { bytecode, source_map, ic_pc_map, entries, branches, reverting_runs }
+        Self { bytecode, source_map, pcs, ic_pc_map, entries, branches, reverting_runs }
     }
 
     /// Finds the first opcode in the source range, preferring code outside a failure stub.
@@ -217,6 +220,37 @@ impl<'a> AnchorIndex<'a> {
             .min()
             .or_else(|| candidates.min());
         ItemAnchor::from_instruction(instruction, self.ic_pc_map, item_id, loc)
+    }
+
+    /// Returns whether the taken side of a `require` branch is its failing side.
+    ///
+    /// A side that starts inside the `require` span is the failing side, because the failure
+    /// code carries the span while the passing side continues with the next statement. Without
+    /// a single such side, the side that reverts without another conditional branch is.
+    fn taken_fails(
+        &self,
+        (fallthrough, taken): &(ItemAnchor, ItemAnchor),
+        loc: &SourceLocation,
+    ) -> bool {
+        match (self.starts_in(fallthrough.instruction, loc), self.starts_in(taken.instruction, loc))
+        {
+            (true, false) => false,
+            (false, true) => true,
+            _ => self.fails(taken.instruction) && !self.fails(fallthrough.instruction),
+        }
+    }
+
+    /// Returns whether the first instruction at `pc` after any `JUMPDEST`s is mapped inside `loc`.
+    fn starts_in(&self, pc: u32, loc: &SourceLocation) -> bool {
+        let Ok(mut ic) = self.pcs.binary_search(&pc) else { return false };
+        while self.pcs.get(ic).is_some_and(|&pc| self.bytecode[pc as usize] == opcode::JUMPDEST) {
+            ic += 1;
+        }
+        self.source_map.get(ic).is_some_and(|element| {
+            element.index() == Some(loc.source_id as u32)
+                && element.offset() >= loc.bytes.start
+                && element.offset() + element.length() <= loc.bytes.end
+        })
     }
 
     /// Returns whether the code at `pc` reverts without another conditional branch.
@@ -430,6 +464,44 @@ mod tests {
             // Only the condition and the jump belong to the require.
             let source_map = format!("10:20:0;;;50:5:0{}", ";".repeat(count - 4));
             assert_eq!(require_anchors(bytecode, &[10], &source_map), expected);
+        }
+    }
+
+    #[test]
+    fn require_paths_prefer_the_source_map() {
+        // The success path of solc's `require(c, "m"); revert Foo();` reaches a straight-line
+        // revert, while the failure code encodes the message through a dynamic jump. The failing
+        // side is the one that starts inside the require.
+        let solc = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            7,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::JUMP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        // Solar's cold block follows an unmapped `JUMPDEST` and is not provably reverting.
+        let solar = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            6,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::JUMP,
+        ];
+        for (bytecode, source_map, expected) in [
+            (&solc[..], "10:20:0;;;;;;50:13:0;;;", [(5, None), (7, Some(4))]),
+            (&solar[..], "10:20:0;;;50:5:0;-1:-1:-1;10:20:0;", [(6, Some(4)), (5, None)]),
+        ] {
+            assert_eq!(require_anchors(bytecode, &[10], source_map), expected);
         }
     }
 
