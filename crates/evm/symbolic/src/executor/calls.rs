@@ -536,16 +536,15 @@ impl SymbolicExecutor {
         Ok(None)
     }
 
-    /// Returns the account whose code a call to `to` runs, the delegate of an EIP-7702 delegated
-    /// account as in evm2, by which `vm.mockFunction` is keyed.
+    /// Returns the delegate of an EIP-7702 delegated `to`, or `to` itself. As in evm2, this is the
+    /// code address that `vm.mockFunction` is keyed by and whose code runs.
     pub(super) fn call_code_account(
         &mut self,
         executor: &ExecutorView<'_>,
         state: &mut PathState,
         to: Address,
     ) -> Result<Address, SymbolicError> {
-        // `vm.etch` rejects precompiles, so they never hold a delegation designator.
-        if !executor.eip7702_delegations || is_precompile_for_spec(to, executor.spec_id) {
+        if !executor.eip7702_delegations {
             return Ok(to);
         }
         let delegate =
@@ -1218,8 +1217,12 @@ impl SymbolicExecutor {
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
         // `vm.mockFunction` swaps the code that runs, and the concrete inspector matches
         // `vm.expectCall` against that address, so resolve the redirect before observing.
-        let code_account = self.call_code_account(executor, state, to)?;
-        let function_mock = self.function_mock_target(state, code_account, &call_input)?;
+        let function_mock = if state.function_mocks.is_empty() {
+            None
+        } else {
+            let callee = self.call_code_account(executor, state, to)?;
+            self.function_mock_target(state, callee, &call_input)?
+        };
         let code_address = function_mock.unwrap_or(to);
         if !state.expected_calls.is_empty() {
             let concrete_value = self.transfer_value(state, kind, &value);
@@ -1410,7 +1413,10 @@ impl SymbolicExecutor {
         }
 
         // Like the concrete inspector, a mock target's own delegation is not resolved.
-        let code_address = function_mock.unwrap_or(code_account);
+        let code_address = match function_mock {
+            Some(mock) => mock,
+            None => self.call_code_account(executor, state, to)?,
+        };
         if self.equivalence.is_some()
             && state.world.is_unknown_account(&mut self.cx, executor, code_address)?
         {
