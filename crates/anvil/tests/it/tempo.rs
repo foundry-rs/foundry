@@ -3747,7 +3747,7 @@ async fn test_tempo_simulate_reverted_batch_discards_logs() {
     assert_eq!(response[0]["calls"][0]["status"], "0x0");
     assert_eq!(response[0]["calls"][0]["logs"], serde_json::json!([]));
     assert_eq!(response[0]["calls"][1]["status"], "0x1");
-    assert_eq!(response[0]["calls"][1]["logs"][0]["logIndex"], "0x1");
+    assert_eq!(response[0]["calls"][1]["logs"][0]["logIndex"], "0x0");
 }
 
 #[tokio::test(flavor = "multi_thread")]

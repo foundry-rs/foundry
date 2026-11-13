@@ -2287,7 +2287,7 @@ async fn test_simulate_trace_transfer_create_nonce_overflow_rpc() {
     let logs = response["result"][0]["calls"][0]["logs"].as_array().unwrap();
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0]["address"], "0xc100000000000000000000000000000000000000");
-    assert_eq!(logs[0]["logIndex"], "0x1");
+    assert_eq!(logs[0]["logIndex"], "0x0");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2441,7 +2441,7 @@ async fn test_simulate_trace_transfer_reverts_and_log_order_rpc() {
             }),
             json!({
                 "address": "0xc400000000000000000000000000000000000000",
-                "logIndex": "0x2"
+                "logIndex": "0x1"
             }),
         ]
     );
@@ -2453,7 +2453,7 @@ async fn test_simulate_trace_transfer_reverts_and_log_order_rpc() {
     let logs = response["result"][0]["calls"][0]["logs"].as_array().unwrap();
     assert_eq!(
         logs.iter().map(|log| log["logIndex"].clone()).collect::<Vec<_>>(),
-        vec![json!("0x0"), json!("0x2")]
+        vec![json!("0x0"), json!("0x1")]
     );
 
     let response = rpc_request(
@@ -2486,7 +2486,54 @@ async fn test_simulate_trace_transfer_reverts_and_log_order_rpc() {
     let calls = response["result"][0]["calls"].as_array().unwrap();
     assert_eq!(calls[0]["status"], "0x0");
     assert_eq!(calls[0]["logs"], json!([]));
-    assert_eq!(calls[1]["logs"][0]["logIndex"], "0x1");
+    assert_eq!(calls[1]["logs"][0]["logIndex"], "0x0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_reverted_logs_do_not_use_log_index_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let endpoint = handle.http_endpoint();
+    let sender = "0xc000000000000000000000000000000000000000";
+    // c3 logs and reverts, c4 logs, calls c3 and logs again, c5 logs.
+    let mut payload = json!({
+        "blockStateCalls": [{
+            "stateOverrides": {
+                "0xc000000000000000000000000000000000000000": {"balance": "0x2"},
+                "0xc300000000000000000000000000000000000000": {"code": "0x5f5fa05f5ffd"},
+                "0xc400000000000000000000000000000000000000": {
+                    "code": "0x5f5fa05f5f5f5f5f73c3000000000000000000000000000000000000005af1505f5fa000"
+                },
+                "0xc500000000000000000000000000000000000000": {"code": "0x5f5fa000"}
+            },
+            "calls": [
+                {"from": sender, "to": "0xc400000000000000000000000000000000000000"},
+                {"from": sender, "to": "0xc300000000000000000000000000000000000000", "value": "0x1"},
+                {"from": sender, "to": "0xc500000000000000000000000000000000000000", "value": "0x1"}
+            ]
+        }]
+    });
+
+    // Logs of reverted frames and calls take no index.
+    for (trace_transfers, last) in [(false, json!(["0x2"])), (true, json!(["0x2", "0x3"]))] {
+        payload["traceTransfers"] = json!(trace_transfers);
+        let response = rpc_request(&endpoint, "eth_simulateV1", json!([payload, "latest"])).await;
+        assert!(response.get("error").is_none(), "{response}");
+        let calls = response["result"][0]["calls"].as_array().unwrap();
+        assert_eq!(
+            calls.iter().map(|call| call["status"].clone()).collect::<Vec<_>>(),
+            [json!("0x1"), json!("0x0"), json!("0x1")]
+        );
+        let indices = calls
+            .iter()
+            .map(|call| {
+                call["logs"].as_array().unwrap().iter().map(|log| log["logIndex"].clone()).collect()
+            })
+            .collect::<Vec<Value>>();
+        assert_eq!(indices, [json!(["0x0", "0x1"]), json!([]), last]);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

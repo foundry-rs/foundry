@@ -60,7 +60,6 @@ impl LogCollector {
 #[derive(Clone, Debug)]
 struct SimulationLog {
     log: Log,
-    index: u64,
     canonical: bool,
 }
 
@@ -69,15 +68,13 @@ struct SimulationLog {
 struct SimulationLogCollector {
     logs: Vec<SimulationLog>,
     checkpoints: Vec<usize>,
-    next_index: u64,
     trace_transfers: bool,
     journal_log_count: usize,
 }
 
 impl SimulationLogCollector {
     fn push_log(&mut self, log: Log, canonical: bool) {
-        self.logs.push(SimulationLog { log, index: self.next_index, canonical });
-        self.next_index += 1;
+        self.logs.push(SimulationLog { log, canonical });
     }
 
     fn push_canonical_log(&mut self, log: Log, journal_log_count: usize) {
@@ -244,24 +241,20 @@ impl AnvilInspector {
         self
     }
 
-    /// Takes the collected `eth_simulateV1` response logs and attempted log count.
+    /// Takes the collected `eth_simulateV1` response logs.
     pub fn take_simulation_logs(
         &mut self,
         canonical_logs: &[Log],
         success: bool,
-    ) -> Option<(Vec<(u64, Log)>, u64)> {
+    ) -> Option<Vec<Log>> {
         self.simulation_logs.take().map(|mut collector| {
             if success {
                 collector.append_remaining_canonical_logs(canonical_logs);
             } else {
-                // A top-level revert can discard logs without producing an enclosing call frame
-                // callback. Preserve the attempted count for subsequent log indices.
+                // A top-level revert discards its logs without an enclosing frame callback.
                 collector.logs.clear();
             }
-            (
-                collector.logs.into_iter().map(|log| (log.index, log.log)).collect(),
-                collector.next_index,
-            )
+            collector.logs.into_iter().map(|log| log.log).collect()
         })
     }
 
