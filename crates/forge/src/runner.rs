@@ -11,14 +11,15 @@ use crate::{
     },
     progress::TestsProgress,
     result::{
-        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SuiteResult,
-        SymbolicArtifactRef, SymbolicCallTrace, SymbolicCorpusSeedMetadata, SymbolicCorpusSeedRef,
-        SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
-        SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
-        SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
-        SymbolicInvariantArtifactFailure, SymbolicInvariantFailureSite, SymbolicReplayMetadata,
-        SymbolicReplayStatus, SymbolicResult, TestKind, TestResult, TestSetup, TestStatus,
-        invariant_campaign_display_name, invariant_kind,
+        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SetupOutcome, SetupStorage,
+        SuiteResult, SymbolicArtifactRef, SymbolicCallTrace, SymbolicCorpusSeedMetadata,
+        SymbolicCorpusSeedRef, SymbolicCounterexample, SymbolicCounterexampleArtifact,
+        SymbolicCounterexampleArtifactKind, SymbolicCounterexampleCall,
+        SymbolicCounterexampleMinimization, SymbolicCounterexampleReplaySemantics,
+        SymbolicCounterexampleTestIdentity, SymbolicInvariantArtifactFailure,
+        SymbolicInvariantFailureSite, SymbolicReplayMetadata, SymbolicReplayStatus, SymbolicResult,
+        TestKind, TestResult, TestSetup, TestStatus, invariant_campaign_display_name,
+        invariant_kind,
     },
     symbolic_minimizer::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
@@ -29,6 +30,11 @@ use alloy_json_abi::{Function, JsonAbi, StateMutability};
 use alloy_primitives::{
     Address, B256, Bytes, I256, Selector, U256, address, hex, keccak256,
     map::{Entry, HashMap, HashSet},
+};
+use evm2::{
+    bytecode::Bytecode,
+    evm::{Cache, InMemoryDB},
+    interpreter::op as opcode,
 };
 use eyre::Result;
 use foundry_common::{
@@ -41,7 +47,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     constants::{CALLER, MAGIC_ASSUME},
-    core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
+    core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, DynamicTargetCtx, EvmError, Executor, ITest, InvariantReplayOptions,
@@ -52,8 +58,9 @@ use foundry_evm::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
             HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, LiveInvariantSolution,
             LiveInvariantSolver, ReplayErrorResult, apply_invariant_call_delay, check_sequence,
-            did_fail_on_assert, execute_and_commit_tx, execute_tx, execute_tx_and_register_created,
-            handler_edge_fingerprint, replay_error, replay_handler_failure_sequence, replay_run,
+            deadline_passed, did_fail_on_assert, execute_and_commit_tx, execute_tx,
+            execute_tx_and_register_created, handler_edge_fingerprint, replay_error,
+            replay_handler_failure_sequence, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
         replay_sequence_for_minimization, should_ignore_revert,
@@ -67,16 +74,15 @@ use foundry_evm::{
         strategies::EvmFuzzState,
     },
     inspectors::{CmpOperands, EdgeCovConfig, EdgeCovKind, cheatcodes::Vm::AccountAccess},
-    revm::{bytecode::opcode, primitives::hardfork::SpecId},
     traces::{TraceKind, TraceRequirements, load_contracts},
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
-    ExecutorView, SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor,
-    SymbolicInvariantCandidateInput, SymbolicInvariantCounterexampleKind,
+    ExecutorView, SYMBOLIC_VM_COMPAT_ADDRESS, SymbolicBranchTarget, SymbolicConcreteInput,
+    SymbolicExecutor, SymbolicInvariantCandidateInput, SymbolicInvariantCounterexampleKind,
     SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
     SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, SymbolicStats,
-    SymbolicStopReason, SymbolicStorageAssignment,
+    SymbolicStopReason, SymbolicStorageAssignment, symbolic_vm_selectors,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -393,8 +399,7 @@ fn can_merge_invariant_suite(
     };
     rest.iter().all(|func| {
         inline_config_for(config, inline_config, contract_name, Some(func))
-            .map(|config| !config.symbolic.enabled && config.invariant == anchor_config)
-            .unwrap_or(false)
+            .is_ok_and(|config| !config.symbolic.enabled && config.invariant == anchor_config)
     })
 }
 
@@ -492,6 +497,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         name: &'a str,
         contract: &'a TestContract,
         executor: Executor<FEN>,
+        tcfg: Cow<'a, TestRunnerConfig<FEN>>,
         span: Span,
         mcr: &'a MultiContractRunner<FEN>,
         context: ContractRunnerContext<'a>,
@@ -503,7 +509,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             progress: context.progress,
             tokio_handle: context.tokio_handle,
             span,
-            tcfg: Cow::Borrowed(&mcr.tcfg),
+            tcfg,
             mcr,
             num_invariant_campaign_anchors: context.num_invariant_campaign_anchors,
         }
@@ -526,7 +532,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
-        self._setup(call_setup).unwrap_or_else(|err| {
+        self.executor.set_collect_setup_storage(true);
+        let result = self._setup(call_setup);
+        self.executor.set_collect_setup_storage(false);
+        result.unwrap_or_else(|err| {
             if matches!(err.downcast_ref::<EvmError<FEN>>(), Some(EvmError::Skip(_))) {
                 TestSetup::skipped(err.to_string())
             } else {
@@ -576,10 +585,14 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
                     let (raw, reason) =
                         RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
-                    result.extend(raw, TraceKind::Deployment);
-                    if reason.is_some() {
-                        debug!(?reason, "deployment of library failed");
-                        result.reason = reason;
+                    result.extend(
+                        raw,
+                        TraceKind::Deployment,
+                        self.executor.backend().active_fork_id(),
+                    );
+                    if let Some(reason) = reason {
+                        debug!(%reason, "deployment of library failed");
+                        result.outcome = SetupOutcome::Failed(reason);
                         return Ok(result);
                     }
                 }
@@ -612,14 +625,18 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                         } else {
                             (raw, None)
                         };
-                        result.extend(raw, TraceKind::Deployment);
-                        if reason.is_some() {
-                            debug!(?reason, "CREATE2 deployment of library failed");
-                            result.reason = reason;
+                        result.extend(
+                            raw,
+                            TraceKind::Deployment,
+                            self.executor.backend().active_fork_id(),
+                        );
+                        if let Some(reason) = reason {
+                            debug!(%reason, "CREATE2 deployment of library failed");
+                            result.outcome = SetupOutcome::Failed(reason);
                             return Ok(result);
                         }
                         if self.executor.is_empty_code(address)? {
-                            result.reason = Some(format!(
+                            result.outcome = SetupOutcome::Failed(format!(
                                 "CREATE2 library deployment succeeded but no code was found at {address}"
                             ));
                             return Ok(result);
@@ -644,6 +661,12 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             cheats.set_pending_account_diffs(pending_account_diffs);
         }
 
+        // Explicitly configured libraries are trusted, even when solc has already resolved their
+        // link references and they are absent from `library_addresses`.
+        for address in self.mcr.libraries.libs.values().flat_map(|libraries| libraries.values()) {
+            self.executor.backend_mut().allow_cheatcode_access(address.parse()?);
+        }
+
         // Configured libraries may already exist and are not present in `libs_to_deploy`.
         for &address in &self.mcr.library_addresses {
             if !self.executor.is_empty_code(address)? {
@@ -664,16 +687,14 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let deploy_result =
             self.executor.deploy(self.sender, self.contract.bytecode.clone(), U256::ZERO, Some(rd));
 
-        result.deployment_failure = deploy_result.is_err();
-
         if let Ok(dr) = &deploy_result {
             debug_assert_eq!(dr.address, address);
         }
         let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
-        result.extend(raw, TraceKind::Deployment);
-        if reason.is_some() {
-            debug!(?reason, "deployment of test contract failed");
-            result.reason = reason;
+        result.extend(raw, TraceKind::Deployment, self.executor.backend().active_fork_id());
+        if let Some(reason) = reason {
+            debug!(%reason, "deployment of test contract failed");
+            result.outcome = SetupOutcome::DeploymentFailed(reason);
             return Ok(result);
         }
 
@@ -693,8 +714,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             trace!("calling setUp");
             let res = self.executor.setup(None, address, Some(rd));
             let (raw, reason) = RawCallResult::from_evm_result(res)?;
-            result.extend(raw, TraceKind::Setup);
-            result.reason = reason;
+            result.extend(raw, TraceKind::Setup, self.executor.backend().active_fork_id());
+            if let Some(reason) = reason {
+                result.outcome = SetupOutcome::Failed(reason);
+            }
         }
 
         Ok(result)
@@ -735,12 +758,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// Configures this runner with the inline configuration for the contract.
     fn apply_contract_inline_config(&mut self) -> Result<()> {
         if self.inline_config.contains_contract(self.name) {
-            let new_config = Arc::new(self.inline_config(None)?);
-            self.tcfg.to_mut().reconfigure_with(new_config);
+            // The multi-contract runner already resolved it, unless it failed to.
+            if matches!(self.tcfg, Cow::Borrowed(_)) {
+                let new_config = Arc::new(self.inline_config(None)?);
+                self.tcfg.to_mut().reconfigure_with(new_config);
+            }
             let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.tcfg.configure_executor(&mut self.executor);
             // Don't set tracer here.
-            self.executor.inspector_mut().tracer = prev_tracer;
+            self.executor.inspector_mut().set_tracer(prev_tracer);
         }
         Ok(())
     }
@@ -943,6 +969,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let should_override_setup_tracing =
             !self.tcfg.debug && (self.executor.inspector().tracer.is_some() || has_invariants);
 
+        // The call-level requirements also install a revert diagnostic; `set_tracer` drops it again
+        // with the tracer, so tests of a contract with invariants do not run the diagnostic.
         let prev_tracer = should_override_setup_tracing.then(|| {
             let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.executor.set_trace_requirements(TraceRequirements::none().with_calls(true));
@@ -954,12 +982,12 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
         if let Some(prev_tracer) = prev_tracer {
-            self.executor.inspector_mut().tracer = prev_tracer;
+            self.executor.inspector_mut().set_tracer(prev_tracer);
         }
 
-        if setup.reason.is_some() {
+        if !setup.outcome.is_success() {
             // The setup failed, so we return a single test result for `setUp`
-            let name = if setup.deployment_failure { "constructor()" } else { "setUp()" };
+            let name = setup.outcome.function_name();
             return self.failed_suite(
                 start,
                 warnings,
@@ -1184,6 +1212,8 @@ struct FunctionRunner<'a, FEN: FoundryEvmNetwork> {
     address: Address,
     /// The test setup result.
     setup: &'a TestSetup,
+    /// Setup storage observations, extended by function-specific setup without changing siblings.
+    fuzz_storage: Cow<'a, SetupStorage>,
     /// The test result. Returned after running the test.
     result: TestResult,
 }
@@ -1211,6 +1241,8 @@ struct SequenceReplay<'a> {
     target_invariant: &'a Function,
     assertion_failure: bool,
     storage: &'a [SymbolicStorageAssignment],
+    /// When shrinking the failure must stop, for a timed campaign.
+    shrink_deadline: Option<Instant>,
 }
 
 /// Metadata for the symbolic artifact persisted with a replayed invariant sequence.
@@ -1245,6 +1277,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             cr,
             address: setup.address,
             setup,
+            fuzz_storage: Cow::Borrowed(&setup.fuzz_storage),
             result: TestResult::new(setup),
         }
     }
@@ -1386,9 +1419,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return Err("candidate replay has no stable failure reason to compare".to_string());
         };
 
-        let mut executor = self.clone_executor();
+        let mut executor = self
+            .clone_executor_with_svm_returns(&call.svm_returns)
+            .map_err(|err| err.to_string())?;
         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())
             .map_err(|err| err.to_string())?;
+        if svm_returns_exhausted(&call.svm_returns, &raw) {
+            return Err("candidate replay ran out of `svm` values".to_string());
+        }
         if executor.is_raw_call_success(self.address, Cow::Borrowed(&raw.state_changeset), &raw) {
             return Err("candidate replay succeeded".to_string());
         }
@@ -1396,7 +1434,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return Err(format!("vm.skip during concrete replay: {reason}"));
         }
 
-        let reason = (raw.reverted || raw.exit_reason.is_some_and(|reason| !reason.is_ok()))
+        let reason = (raw.reverted || raw.exit_reason.is_some_and(|reason| !reason.is_success()))
             .then(|| self.revert_decoder().decode(&raw.result, raw.exit_reason));
         if reason.as_deref() != Some(expected_reason) {
             return Err(format!(
@@ -1455,6 +1493,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 replay.target_invariant,
                 identified_contracts,
                 progress,
+                replay.shrink_deadline,
                 position,
             )?;
 
@@ -1536,6 +1575,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         target_invariant: &Function,
         identified_contracts: &ContractsByAddress,
         progress: Option<&indicatif::ProgressBar>,
+        shrink_deadline: Option<Instant>,
         position: Option<(usize, usize)>,
     ) -> Result<ReplayErrorResult> {
         replay_error(
@@ -1558,6 +1598,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &mut self.result.deprecated_cheatcodes,
             progress,
             &self.tcfg.early_exit,
+            shrink_deadline,
             position,
         )
     }
@@ -1569,7 +1610,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         identified_contracts: &ContractsByAddress,
         current_settings: &InvariantSettings,
     ) -> Option<MinimizedSequence> {
-        if !self.config.symbolic.enabled || calls.is_empty() {
+        // With the shrink budget spent, skip the replays that set up and confirm minimization.
+        if !self.config.symbolic.enabled
+            || calls.is_empty()
+            || deadline_passed(replay.shrink_deadline)
+        {
             return None;
         }
 
@@ -1588,9 +1633,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &original_calls,
             &self.symbolic_sequence_sender_candidates(current_settings),
             replay.invariant_config.shrink_run_limit as usize,
+            replay.shrink_deadline,
             preserves,
         )?;
-        preserves(&minimization.minimized_calls).then_some(minimization)
+        let deadline = replay.shrink_deadline;
+        // Every accepted candidate was confirmed before the deadline, so once it passed, a
+        // minimization that accepted one is kept without the confirming replay, which the deadline
+        // would cancel. One that accepted none leaves the original sequence as the only artifact.
+        ((!deadline_passed(deadline) && preserves(&minimization.minimized_calls))
+            || (deadline_passed(deadline) && minimization.accepted > 0))
+            .then_some(minimization)
     }
 
     fn symbolic_sequence_sender_candidates(
@@ -1622,8 +1674,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let txes =
             calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect::<Vec<_>>();
         let sequence = (0..txes.len()).collect::<Vec<_>>();
+        let mut executor = self.clone_executor_with_symbolic_storage(replay.storage).ok()?;
+        if let Some(deadline) = replay.shrink_deadline {
+            executor.inspector_mut().set_execution_deadline(self.tcfg.early_exit.clone(), deadline);
+        }
         let outcome = check_sequence(
-            self.clone_executor_with_symbolic_storage(replay.storage).ok()?,
+            executor,
             &txes,
             &sequence,
             replay.invariant_contract.address,
@@ -1973,7 +2029,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         branch_target: Option<SymbolicBranchTarget>,
     ) -> SymbolicRunInput<'f> {
         SymbolicRunInput {
-            executor: ExecutorView::new(self.executor.as_ref()),
+            executor: ExecutorView::new(self.executor.as_ref())
+                .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.fuzz_literals),
             target: self.address,
             sender,
             function: func,
@@ -2340,12 +2397,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             {
                 return false;
             }
-            let selector = call
-                .call_details
-                .calldata
-                .get(..4)
-                .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-                .map(Selector::from);
+            let selector = call.call_details.calldata.get(..4).map(Selector::from_slice);
             !(select_frontier_selectors
                 && selector.is_none_or(|selector| !parsed_selectors.contains(&selector)))
         });
@@ -2445,9 +2497,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     None,
                 ),
             ),
-            SymbolicRunResult::Counterexample { args, calldata, stats } => {
-                self.replay_symbolic_counterexample(func, args, calldata, stats, &symbolic_config)
-            }
+            SymbolicRunResult::Counterexample { args, calldata, svm_returns, stats } => self
+                .replay_symbolic_counterexample(
+                    func,
+                    args,
+                    calldata,
+                    svm_returns,
+                    stats,
+                    &symbolic_config,
+                ),
         };
         let symbolic_result = match corpus_seed_metadata {
             Some(metadata) => symbolic_result.with_corpus_seeds(metadata),
@@ -2464,12 +2522,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         func: &Function,
         args: Vec<DynSolValue>,
         calldata: Bytes,
+        svm_returns: Vec<Bytes>,
         stats: SymbolicStats,
         symbolic_config: &SymbolicConfig,
     ) -> (TestStatus, Option<String>, Option<CounterExample>, SymbolicResult) {
-        let symbolic_counterexample = SymbolicCounterexample::from(
-            &BaseCounterExample::from_fuzz_call(calldata.clone(), args.clone(), None),
-        );
+        let symbolic_counterexample = SymbolicCounterexample {
+            svm_returns: svm_returns.clone(),
+            ..SymbolicCounterexample::from(&BaseCounterExample::from_fuzz_call(
+                calldata.clone(),
+                args.clone(),
+                None,
+            ))
+        };
         let incomplete = |reason: String, replay, call_trace| {
             SymbolicResult::incomplete(
                 symbolic_config,
@@ -2482,14 +2546,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             )
         };
 
-        let (raw, reason) = match self.executor.call(
-            self.sender,
-            self.address,
-            func,
-            &args,
-            U256::ZERO,
-            Some(self.revert_decoder()),
-        ) {
+        let replay = self
+            .clone_executor_with_svm_returns(&svm_returns)
+            .map_err(EvmError::from)
+            .and_then(|executor| {
+                executor.call(
+                    self.sender,
+                    self.address,
+                    func,
+                    &args,
+                    U256::ZERO,
+                    Some(self.revert_decoder()),
+                )
+            });
+        let (raw, reason) = match replay {
             Ok(res) => (res.raw, None),
             Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
             Err(EvmError::Skip(reason)) => {
@@ -2516,7 +2586,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             BaseCounterExample::from_fuzz_call(calldata, args, raw.traces.clone());
         // Concrete replay rejected the input as an assumption, as fuzzing does.
         let rejected_by_assume = raw.result.as_ref() == MAGIC_ASSUME;
+        // A replay that runs out of `svm` values left the solver path, so its failure proves
+        // nothing.
+        let svm_exhausted = svm_returns_exhausted(&svm_returns, &raw);
         if rejected_by_assume
+            || svm_exhausted
             || self.executor.is_raw_call_success(
                 self.address,
                 Cow::Borrowed(&raw.state_changeset),
@@ -2529,6 +2603,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.result.extend(raw);
             let reason = if rejected_by_assume {
                 "symbolic counterexample did not replay: rejected by `vm.assume`"
+            } else if svm_exhausted {
+                "symbolic counterexample did not replay: ran out of `svm` values"
             } else {
                 "symbolic counterexample did not replay"
             }
@@ -2542,11 +2618,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return (TestStatus::Failure, Some(display_reason), None, symbolic_result);
         }
 
-        let original_call = SymbolicCounterexampleCall::from_base_counterexample(
-            &base_counterexample,
-            self.sender,
-            self.address,
-        );
+        let original_call = SymbolicCounterexampleCall {
+            svm_returns,
+            ..SymbolicCounterexampleCall::from_base_counterexample(
+                &base_counterexample,
+                self.sender,
+                self.address,
+            )
+        };
         let mut final_call = original_call.clone();
         let mut final_raw = raw;
         let mut final_reason = reason;
@@ -2597,7 +2676,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             symbolic_config,
             stats,
             call_trace,
-            SymbolicCounterexample::from(&base_counterexample),
+            SymbolicCounterexample {
+                svm_returns: final_call.svm_returns.clone(),
+                ..SymbolicCounterexample::from(&base_counterexample)
+            },
         );
         let minimized_artifact = self.write_symbolic_artifact(
             &signature,
@@ -2713,14 +2795,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
 
                 let counterexample = || CounterExample::Single(call.to_base_counterexample());
-                let mut executor = self.clone_executor();
-                let raw = match execute_tx(&mut executor, &call.to_basic_tx_details()) {
-                    Ok(raw) => raw,
+                let (executor, raw) = match self
+                    .clone_executor_with_svm_returns(&call.svm_returns)
+                    .and_then(|mut executor| {
+                        let raw = execute_tx(&mut executor, &call.to_basic_tx_details())?;
+                        Ok((executor, raw))
+                    }) {
+                    Ok(replay) => replay,
                     Err(err) => {
                         self.result.counterexample = Some(counterexample());
                         return Err(err.to_string());
                     }
                 };
+                if svm_returns_exhausted(&call.svm_returns, &raw) {
+                    self.result.counterexample = Some(counterexample());
+                    return Err("symbolic artifact replay ran out of `svm` values".to_string());
+                }
                 if executor.is_raw_call_success(
                     self.address,
                     Cow::Borrowed(&raw.state_changeset),
@@ -3083,7 +3173,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> Option<CheckSequenceOutcome> {
         let policy = invariant_contract.invariant_fns[invariant_idx].1;
         let outcome = check_sequence(
-            self.clone_executor(),
+            self.clone_invariant_executor(),
             sequence,
             replay_order,
             invariant_contract.address,
@@ -3159,7 +3249,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .and_then(|after_invariant| {
                     let calldata = after_invariant.abi_encode_input(&[]).ok()?.into();
                     let mut replay = check_sequence(
-                        self.clone_executor(),
+                        self.clone_invariant_executor(),
                         sequence,
                         &replay_order,
                         invariant_contract.address,
@@ -3225,7 +3315,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .collect::<Vec<_>>();
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
         let result = symbolic.search_invariant_candidates(SymbolicInvariantCandidateInput {
-            executor: ExecutorView::new(prefix_executor),
+            executor: ExecutorView::new(prefix_executor)
+                .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.invariant_literals),
             invariant_address: invariant_contract.address,
             invariants: &invariants,
             after_invariant,
@@ -3346,16 +3437,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                 }
             };
-            let Some(selector) = call
-                .call_details
-                .calldata
-                .get(..4)
-                .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-                .map(Selector::from)
+            let Some(selector) = call.call_details.calldata.get(..4).map(Selector::from_slice)
             else {
                 continue;
             };
-            let mut prefix_executor = self.clone_executor();
+            let mut prefix_executor = self.clone_invariant_executor();
             let mut created_contracts = Vec::new();
             let prefix_targets = FuzzRunIdentifiedContracts::new(
                 targeted_contracts.targets().clone(),
@@ -3489,7 +3575,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 frontier.operands.result,
             );
             let search = symbolic.search_branch_target(SymbolicRunInput {
-                executor: ExecutorView::new(&prefix_executor),
+                executor: ExecutorView::new(&prefix_executor)
+                    .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.invariant_literals),
                 target: call.call_details.target,
                 sender: call.sender,
                 function,
@@ -3864,10 +3951,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let anchor_idx =
             live_invariants.iter().position(|(invariant, _)| *invariant == func).unwrap_or(0);
 
+        // Target discovery runs under the project limit like `setUp`; the campaign cap is set
+        // once the targets are selected.
         let mut executor = self.clone_executor();
-        // Every campaign call would append its steps to the shared step table. The replays that
-        // the debugger shows run on clones of the test executor, which keeps its recorder.
-        executor.inspector_mut().debug_recorder = None;
+        if invariant_config.gas_report_samples == 0 {
+            // The campaign never reads its call traces or revert diagnostics: a failure and the
+            // last run are replayed on a fresh clone of the test executor, which keeps them. The
+            // gas report samples are the one consumer, so the tracer stays only while samples
+            // are requested. This also drops the revert diagnostic that the setUp pass installed
+            // with its temporary tracer, which otherwise runs on every campaign opcode.
+            executor.set_trace_requirements(TraceRequirements::none());
+        } else {
+            // Every campaign call would append its steps to the shared step table. The replays
+            // that the debugger shows run on clones of the test executor, which keeps its
+            // recorder.
+            executor.inspector_mut().debug_recorder = None;
+        }
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
         executor.inspector_mut().collect_edge_coverage_with_config(&invariant_config.corpus);
@@ -3945,6 +4044,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
+        if let Some(limit) = self.config.invariant.call_gas_limit {
+            evm.executor.set_gas_limit(limit.min(evm.executor.gas_limit()));
+        }
         let current_settings = InvariantSettings::new(
             &targeted.targets(),
             &sender_filters,
@@ -4161,6 +4263,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 identified_contracts,
                 progress.as_ref(),
                 None,
+                None,
             ) {
                 Ok(ReplayErrorResult {
                     counterexample_sequence: sequence, check_result, ..
@@ -4343,7 +4446,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             };
             let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
             match symbolic.run_invariant(SymbolicInvariantRunInput {
-                executor: ExecutorView::new(&evm.executor),
+                executor: ExecutorView::new(&evm.executor)
+                    .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.invariant_literals),
                 invariant_address: self.address,
                 sender: self.sender,
                 invariant: anchor,
@@ -4393,6 +4497,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         target_invariant: anchor,
                         assertion_failure: false,
                         storage: &storage,
+                        shrink_deadline: None,
                     };
                     let replayed = self
                         .symbolic_sequence_failure(check, &symbolic_calls)
@@ -4614,9 +4719,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     "Live symbolic assistance does not support invariant.call_override; running concrete campaign only."
                 );
             } else {
-                let executor = self.clone_executor();
+                let executor = self.clone_invariant_executor();
                 let targets = targeted.targets().clone();
-                let senders = sender_filters;
+                let senders = sender_filters.clone();
                 let config = self.config.symbolic.clone();
                 let ffi_enabled = self.config.ffi;
                 let runtime = tokio::runtime::Handle::current();
@@ -4648,6 +4753,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
         let mut invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
+            sender_filters,
+            &targeted,
             &self.setup.fuzz_fixtures,
             self.build_fuzz_state(true, None),
             progress.as_ref(),
@@ -4688,13 +4795,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if success {
             if let Some(best_value) = invariant_result.optimization_best_value {
                 // Optimization mode: replay and shrink to find shortest best sequence.
-                let targets = evm
-                    .select_contracts_and_senders(invariant_contract.address)
-                    .map(|(_, targets)| targets.targets().keys().copied().collect::<Vec<_>>())
-                    .unwrap_or_default();
+                let targets = targeted.targets().keys().copied().collect::<Vec<_>>();
                 match self.replay_error(
                     evm.config(),
-                    self.clone_executor(),
+                    self.clone_invariant_executor(),
                     &invariant_result.optimization_best_sequence,
                     None,
                     false,
@@ -4704,6 +4808,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     anchor,
                     identified_contracts,
                     progress.as_ref(),
+                    invariant_result.shrink_deadline,
                     None,
                 ) {
                     Ok(ReplayErrorResult {
@@ -4731,7 +4836,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 // Standard check mode: replay last run for traces.
                 &invariant_contract,
                 anchor,
-                self.clone_executor(),
+                self.clone_invariant_executor(),
                 &self.cr.mcr.known_contracts,
                 identified_contracts.clone(),
                 &mut self.result.logs,
@@ -4840,6 +4945,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             target_invariant: invariant,
                             assertion_failure: case_data.assertion_failure,
                             storage,
+                            shrink_deadline: invariant_result.shrink_deadline,
                         },
                         calls,
                         Some(case_data.inner_sequence.clone()),
@@ -5203,6 +5309,23 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         );
 
         let state = self.build_fuzz_state(false, Some(func));
+        let shrink_run_limit = self.config.invariant.shrink_run_limit as usize;
+        // Replays would print live logs again.
+        let minimizes = shrink_run_limit > 0 && !self.config.live_logs;
+        let (sender, address) = (self.tcfg.sender, self.address);
+        let minimize = |counterexample: &BaseCounterExample,
+                        still_fails: &mut dyn FnMut(&Bytes) -> bool| {
+            let call = SymbolicCounterexampleCall::from_base_counterexample(
+                counterexample,
+                sender,
+                address,
+            );
+            minimize_single_call_counterexample(func, &call, shrink_run_limit, |candidate| {
+                still_fails(&candidate.calldata)
+            })
+            .filter(|minimized| minimized.changed())
+            .map(|minimized| minimized.minimized_call.calldata)
+        };
         let mut executor = self.executor.into_owned();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
@@ -5236,6 +5359,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 progress.as_ref(),
                 &self.tcfg.early_exit,
                 &self.cr.tokio_handle,
+                minimizes.then_some(&minimize),
             )
         };
         let result = match result {
@@ -5273,19 +5397,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 address,
                 &ITest::beforeTestSetupCall { testSelector: func.selector() },
             ) {
-                let spec_id: SpecId = self.executor.spec_id().into();
-                debug!(?calldata, spec=%spec_id, "applying before_test_setup");
+                debug!(?calldata, spec=?self.executor.spec_id(), "applying before_test_setup");
                 // Apply before test configured calldata.
-                let Ok(call_result) = self.executor.to_mut().transact_raw(
-                    self.tcfg.sender,
-                    address,
-                    calldata,
-                    U256::ZERO,
-                ) else {
+                let executor = self.executor.to_mut();
+                executor.set_collect_setup_storage(true);
+                let call_result =
+                    executor.transact_raw(self.tcfg.sender, address, calldata, U256::ZERO);
+                executor.set_collect_setup_storage(false);
+                let Ok(call_result) = call_result else {
                     self.result.single_fail(None);
                     return Err(());
                 };
                 let reverted = call_result.reverted;
+                self.fuzz_storage
+                    .to_mut()
+                    .extend(self.executor.backend().active_fork_id(), &call_result);
                 // Merge tx result traces in unit test result.
                 self.result.extend_setup(call_result);
                 // To continue unit test execution the call should not revert.
@@ -5322,8 +5448,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // For EVM we enable line coverage rather than edge coverage so the IDs
         // (bytecode_hash, pc) are deterministic across forge processes —
         // `EdgeCovInspector` uses a per-process random hash and would yield
-        // non-comparable IDs across approaches.
-        let mut executor = self.clone_executor();
+        // non-comparable IDs across approaches. Invariant corpus entries replay under the
+        // campaign's call gas limit, like the campaign that found them.
+        let mut executor = if func.is_invariant_test() {
+            self.clone_invariant_executor()
+        } else {
+            self.clone_executor()
+        };
         let domain = showmap.domain;
         executor.inspector_mut().collect_line_coverage(domain.includes_evm());
         executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
@@ -5394,11 +5525,52 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.executor.clone().into_owned()
     }
 
+    /// Clones the executor and answers the `svm.*` helper calls with `svm_returns` in order, as
+    /// the symbolic path did.
+    fn clone_executor_with_svm_returns(&self, svm_returns: &[Bytes]) -> Result<Executor<FEN>> {
+        let mut executor = self.clone_executor();
+        // Like the symbolic model, the helper address reports one byte of code.
+        executor
+            .set_code(SYMBOLIC_VM_COMPAT_ADDRESS, Bytecode::new_raw(Bytes::from_static(&[0])))?;
+        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+            if svm_returns.is_empty() {
+                // A replay that diverges into a helper call runs out of values, while other calls
+                // see the account that the symbolic model gives them.
+                for selector in symbolic_vm_selectors() {
+                    cheats.core.mock_call_sequence(
+                        SYMBOLIC_VM_COMPAT_ADDRESS,
+                        Bytes::copy_from_slice(&selector),
+                        &[],
+                    );
+                }
+            } else {
+                cheats.core.mock_call_sequence(
+                    SYMBOLIC_VM_COMPAT_ADDRESS,
+                    Bytes::new(),
+                    svm_returns,
+                );
+            }
+        }
+        Ok(executor)
+    }
+
+    /// Clones the executor for an invariant campaign or a replay of its calls. `setUp` already
+    /// ran under the project limit; the campaign's calls, and every replay and shrink of them,
+    /// run under `call_gas_limit` so a counterexample keeps the semantics it was found under.
+    fn clone_invariant_executor(&self) -> Executor<FEN> {
+        let mut executor = self.clone_executor();
+        if let Some(limit) = self.config.invariant.call_gas_limit {
+            executor.set_gas_limit(limit.min(executor.gas_limit()));
+        }
+        executor
+    }
+
+    /// Clones the invariant executor with the storage of a symbolic counterexample applied.
     fn clone_executor_with_symbolic_storage(
         &self,
         storage: &[SymbolicStorageAssignment],
     ) -> Result<Executor<FEN>> {
-        let mut executor = self.clone_executor();
+        let mut executor = self.clone_invariant_executor();
         for assignment in storage {
             executor.set_storage_slot(assignment.address, assignment.slot, assignment.value)?;
             if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
@@ -5439,12 +5611,37 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> EvmFuzzState {
         let literals =
             if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
-        if let Some(db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
-        } else {
-            let db = self.executor.backend().mem_db();
-            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
+        // Seed from the state setup accepted, including function-specific setup.
+        let backend = self.executor.backend();
+        let mut db = InMemoryDB::default();
+        if let Some(cache) = &backend.lifecycle().active().cache {
+            db.cache = Cache::clone(cache);
         }
+        // evm2 can leave loaded-but-unchanged slots implicit in the execution cache. Retain their
+        // keys for guidance in this seed-only copy, resolving values from the accepted state,
+        // not from an earlier setup call. Like other dictionary hints, unavailable reads are
+        // skipped.
+        if config.include_storage {
+            for ((fork, address), slots) in &self.fuzz_storage.slots {
+                if !slots.is_empty()
+                    && (*fork == backend.active_fork_id() || backend.is_persistent(address))
+                    && let Ok(Some(_)) = backend.basic(*address)
+                {
+                    for &slot in slots {
+                        if !db
+                            .cache
+                            .storage
+                            .get(address)
+                            .is_some_and(|s| s.slots.contains_key(&slot))
+                            && let Ok(value) = backend.storage(*address, slot)
+                        {
+                            db.insert_account_storage(address, &slot, &value);
+                        }
+                    }
+                }
+            }
+        }
+        EvmFuzzState::new(&self.setup.deployed_libs, &db, config, Some(literals))
     }
 }
 
@@ -5683,6 +5880,20 @@ fn symbolic_invariant_counterexample_calls(
             )
         })
         .collect()
+}
+
+/// Returns whether a replay answered with `svm_returns` made an `svm.*` call past them. A test
+/// that clears mocked calls also clears the sequence, which only matters when it had returns.
+fn svm_returns_exhausted<FEN: FoundryEvmNetwork>(
+    svm_returns: &[Bytes],
+    raw: &RawCallResult<FEN>,
+) -> bool {
+    raw.cheatcodes.as_ref().is_none_or(|cheats| {
+        cheats
+            .core
+            .mock_call_sequence_exhausted(SYMBOLIC_VM_COMPAT_ADDRESS)
+            .unwrap_or(!svm_returns.is_empty())
+    })
 }
 
 fn frontier_selector(frontier: &FuzzBranchFrontierRecord) -> Option<Selector> {

@@ -31,6 +31,12 @@ use std::{
 pub mod analysis;
 pub mod anchors;
 
+mod edge;
+pub use edge::{
+    CmpOperands, EdgeCovConfig, EdgeCovHit, EdgeCovInspector, EdgeCovKind, EdgeCoverage,
+    EdgeIndexMap, EdgeKey, MAX_EDGE_COUNT,
+};
+
 mod inspector;
 pub use inspector::LineCoverageCollector;
 
@@ -164,18 +170,22 @@ impl CoverageReport {
         is_deployed_code: bool,
     ) -> Result<()> {
         // Add bytecode level hits.
-        self.bytecode_hits
-            .entry(contract_id.clone())
-            .and_modify(|m| m.merge(hit_map))
-            .or_insert_with(|| hit_map.clone());
+        match self.bytecode_hits.get_mut(contract_id) {
+            Some(hits) => hits.merge(hit_map),
+            None => {
+                self.bytecode_hits.insert(contract_id.clone(), hit_map.clone());
+            }
+        }
 
         // Add source level hits.
+        let mut items =
+            self.analyses.get_mut(&contract_id.build_id).map(SourceAnalysis::all_items_mut);
         if let Some(anchors) = self.anchors.get(contract_id) {
             let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
             for (anchor, hits) in anchors.hits(hit_map) {
-                self.analyses
-                    .get_mut(&contract_id.build_id)
-                    .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
+                items
+                    .as_deref_mut()
+                    .and_then(|items| items.get_mut(anchor.item_id as usize))
                     .expect("Anchor refers to non-existent coverage item")
                     .hits += hits.get();
             }
@@ -183,9 +193,9 @@ impl CoverageReport {
         if let Some(anchors) = self.execution_anchors.get(contract_id) {
             for anchor in &anchors.anchors {
                 let hits = anchors.hits(hit_map, anchor.kind, is_deployed_code);
-                self.analyses
-                    .get_mut(&contract_id.build_id)
-                    .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
+                items
+                    .as_deref_mut()
+                    .and_then(|items| items.get_mut(anchor.item_id as usize))
                     .expect("Anchor refers to non-existent coverage item")
                     .hits += hits;
             }

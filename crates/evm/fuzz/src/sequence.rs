@@ -7,7 +7,7 @@ use crate::{
         FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
     },
 };
-use alloy_dyn_abi::{JsonAbiExt, abi::AbiDecoderConfig};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt, abi::AbiDecoderConfig};
 use alloy_json_abi::Function;
 use alloy_primitives::{U256, map::HashSet};
 use eyre::{Result, eyre};
@@ -17,6 +17,7 @@ use rand::{
     Rng,
     distr::{Distribution, weighted::WeightedIndex},
 };
+use std::mem::replace;
 
 /// A neutral borrowed view of one corpus entry.
 #[derive(Clone, Copy)]
@@ -65,10 +66,20 @@ pub struct SequenceGenerator {
 pub struct SequencePlan {
     initial: InitialSequence,
     tx: TxGenerator,
-    fresh_weight: u32,
-    has_corpus_dir: bool,
-    stateless: bool,
+    continuation: Continuation,
     source: Option<usize>,
+}
+
+/// How a [`SequencePlan`] continues past its first transaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Continuation {
+    /// A stateless sequence is a single transaction and never continues.
+    Stateless,
+    /// Every further transaction is freshly generated, as there is no corpus to follow.
+    Fresh,
+    /// Further transactions follow the initial sequence by depth until it runs out, each drawing
+    /// a fresh transaction instead with a `fresh_weight` percent chance.
+    Initial { fresh_weight: u32 },
 }
 
 enum InitialSequence {
@@ -109,8 +120,9 @@ impl SequencePlan {
             return Err(eyre!("replay sequence has no transactions"));
         }
         self.initial = InitialSequence::Multiple(transactions);
-        self.fresh_weight = 0;
-        self.has_corpus_dir = true;
+        if self.continuation != Continuation::Stateless {
+            self.continuation = Continuation::Initial { fresh_weight: 0 };
+        }
         self.source = None;
         Ok(self)
     }
@@ -121,17 +133,20 @@ impl SequencePlan {
         discarded: bool,
         depth: usize,
     ) -> Result<BasicTxDetails> {
-        if self.stateless {
-            return Err(eyre!("stateless sequence is limited to one transaction"));
-        }
-        if !self.has_corpus_dir || discarded {
-            return self.tx.next_tx(runner);
-        }
-        let fresh = self.fresh_weight > 0 && runner.rng().random_ratio(self.fresh_weight, 100);
-        if depth >= self.initial.as_slice().len() || fresh {
-            self.tx.next_tx(runner)
-        } else {
-            Ok(self.initial.as_slice()[depth].clone())
+        match self.continuation {
+            Continuation::Stateless => {
+                Err(eyre!("stateless sequence is limited to one transaction"))
+            }
+            Continuation::Fresh => self.tx.next_tx(runner),
+            Continuation::Initial { .. } if discarded => self.tx.next_tx(runner),
+            Continuation::Initial { fresh_weight } => {
+                let fresh = fresh_weight > 0 && runner.rng().random_ratio(fresh_weight, 100);
+                if depth >= self.initial.as_slice().len() || fresh {
+                    self.tx.next_tx(runner)
+                } else {
+                    Ok(self.initial.as_slice()[depth].clone())
+                }
+            }
         }
     }
 }
@@ -249,14 +264,18 @@ impl SequenceGenerator {
                 self.start_invariant(runner, corpus_len, &mut entry_at, coverage, targets)?
             }
         };
-        Ok(SequencePlan {
-            initial,
-            tx: self.tx.clone(),
-            fresh_weight: self.fresh_weight,
-            has_corpus_dir: self.has_corpus_dir,
-            stateless: matches!(self.mode, SequenceMode::Stateless(_)),
-            source,
-        })
+        Ok(SequencePlan { initial, tx: self.tx.clone(), continuation: self.continuation(), source })
+    }
+
+    /// How the sequences this generator starts continue past their first transaction.
+    const fn continuation(&self) -> Continuation {
+        match self.mode {
+            SequenceMode::Stateless(_) => Continuation::Stateless,
+            SequenceMode::Invariant(_) if self.has_corpus_dir => {
+                Continuation::Initial { fresh_weight: self.fresh_weight }
+            }
+            SequenceMode::Invariant(_) => Continuation::Fresh,
+        }
     }
 
     fn start_stateless<'a>(
@@ -598,12 +617,9 @@ impl SequenceMutator {
         };
         while rounds > 0 {
             let index = indices[rounds - 1];
-            inputs[index] = mutate_param_value(
-                &function.inputs[index].selector_type().parse()?,
-                inputs[index].clone(),
-                runner,
-                state,
-            );
+            let param = function.inputs[index].selector_type().parse()?;
+            let value = replace(&mut inputs[index], DynSolValue::Bool(false));
+            inputs[index] = mutate_param_value(&param, value, runner, state);
             rounds -= 1;
         }
         let inputs = inputs
@@ -745,12 +761,11 @@ mod tests {
         invariant::{TargetedContract, TargetedContracts},
         strategies::EvmFuzzState,
     };
-    use alloy_dyn_abi::DynSolValue;
     use alloy_json_abi::JsonAbi;
     use alloy_primitives::{Address, Bytes, I256};
+    use evm2::evm::InMemoryDB;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{prelude::Just, strategy::Strategy};
-    use revm::database::InMemoryDB;
     use std::path::PathBuf;
 
     fn sentinel(runner: &mut TestRunner) -> u64 {
@@ -1051,10 +1066,8 @@ mod tests {
         let mut runner = TestRunner::default();
         let plan = SequencePlan {
             initial: InitialSequence::Multiple(vec![tx(1), tx(2)]),
+            continuation: generator.continuation(),
             tx: generator.tx,
-            fresh_weight: generator.fresh_weight,
-            has_corpus_dir: generator.has_corpus_dir,
-            stateless: false,
             source: Some(0),
         };
 
@@ -1074,9 +1087,7 @@ mod tests {
             let plan = SequencePlan {
                 initial: InitialSequence::Multiple(vec![tx(1), tx(2)]),
                 tx: generator_tx(9),
-                fresh_weight,
-                has_corpus_dir: true,
-                stateless: false,
+                continuation: Continuation::Initial { fresh_weight },
                 source: Some(0),
             };
             let mut actual = TestRunner::deterministic();

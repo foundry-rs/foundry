@@ -10,7 +10,7 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend,
-    core::evm::FoundryEvmNetwork,
+    core::evm::{EvmFactoryFor, FoundryEvmNetwork},
     decode::decode_console_logs,
     inspectors::CheatsConfig,
     opts::{ExecutionSpecContext, resolve_execution_spec},
@@ -20,7 +20,7 @@ use solar::{
     ast::{ElementaryType, LitKind, StmtKind as AstStmtKind, StrKind, UnOpKind, yul},
     interface::Session,
     sema::{
-        hir::{Event, Expr, ExprKind, StmtKind},
+        hir::{Block, Event, Expr, ExprKind, StmtKind},
         ty::{Gcx, Ty, TyKind},
     },
 };
@@ -97,6 +97,20 @@ fn yul_inspection(input: &str, session_source: &str) -> Option<YulInspection> {
         replay_input.replace_range(expr_range, &format!("pop({expression})"));
         Some(YulInspection { inspector_input, replay_input })
     })
+}
+
+/// Type of the expression passed to the generated `abi.encode` in `inspectoor`.
+fn inspectoor_type<'gcx>(gcx: Gcx<'gcx>, block: Block<'gcx>) -> Option<(bool, DynSolType)> {
+    let var = block.iter().rev().find_map(|stmt| {
+        let StmtKind::DeclSingle(vid) = stmt.kind else { return None };
+        let var = gcx.hir.variable(vid);
+        let is_inspectoor = var.name.is_some_and(|name| name.as_str() == "inspectoor");
+        is_inspectoor.then_some(var)
+    })?;
+    let init = var.initializer?;
+    let ExprKind::Call(_callee, args) = &init.kind else { return None };
+    let inner_expr = args.exprs().next()?;
+    Some((should_continue(inner_expr), expr_to_dyn(gcx, inner_expr)?))
 }
 
 /// Executor implementation for [SessionSource]
@@ -257,21 +271,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
 
         // Inside the compiler closure, infer the DynSolType of the inspected expression and
         // determine whether the REPL should continue.
-        let res_ty = generated_output.enter(|out| -> Option<(bool, DynSolType)> {
-            let gcx = out.gcx();
-
-            // Find `bytes memory inspectoor = abi.encode(<input>);` before the generated return
-            // block and pull out the first call argument.
-            let [.., last, _] = out.run_func_body().stmts else { return None };
-            let StmtKind::DeclSingle(vid) = last.kind else { return None };
-            let var = gcx.hir.variable(vid);
-            let init = var.initializer?;
-            let ExprKind::Call(_callee, args) = &init.kind else { return None };
-            let inner_expr = args.exprs().next()?;
-
-            let ty = expr_to_dyn(gcx, inner_expr)?;
-            Some((should_continue(inner_expr), ty))
-        });
+        let res_ty = generated_output.enter(|out| inspectoor_type(out.gcx(), out.run_func_body()));
 
         let Some((cont, ty)) = res_ty else {
             return Ok(InspectResult::empty(ControlFlow::Continue(())));
@@ -301,20 +301,23 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             backend.clone()
         } else {
             let opts = &self.config.evm_opts;
-            let backend = Backend::spawn(opts.get_fork(
-                &self.config.foundry_config,
-                opts.env.chain_id.unwrap_or_default(),
-                None,
-            ))?;
+            let backend = Backend::spawn_source(
+                opts.get_fork(
+                    &self.config.foundry_config,
+                    opts.env.chain_id.unwrap_or_default(),
+                    None,
+                ),
+                opts.local_evm_env::<FEN>(),
+            )?;
             self.config.cached_backend = Some(backend.clone());
             backend
         };
-        let (mut evm_env, tx_env) = backend.env(&self.config.evm_opts).await?;
-        let fork_context = backend.fork()?.as_ref().map(|fork| fork.context());
+        let (mut evm_env, tx) = backend.env(&self.config.evm_opts).await?;
+        let fork_context = backend.fork().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.config.source_chain_id = fork_chain_id;
-        self.config.resolved_hardfork = resolve_execution_spec(
+        self.config.resolved_hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
             self.config.foundry_config.evm_version,
             self.config.foundry_config.hardfork,
             &mut evm_env,
@@ -344,7 +347,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             })
             .gas_limit(self.config.evm_opts.gas_limit())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
-            .build(evm_env, tx_env, backend, self.config.evm_opts.networks);
+            .build(evm_env, tx, backend, self.config.evm_opts.networks);
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
@@ -393,7 +396,7 @@ fn format_token(token: DynSolValue) -> String {
             format!(
                 "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
                 format!("uint{bit_len}").red(),
-                format!("0x{i:x}").cyan(),
+                format!("{i:#x}").cyan(),
                 hex::encode_prefixed(B256::from(i)).cyan(),
                 i.cyan()
             )

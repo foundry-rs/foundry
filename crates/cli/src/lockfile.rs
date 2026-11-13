@@ -299,7 +299,10 @@ impl<'a> Lockfile<'a> {
     /// Writes the lockfile to the project root.
     pub fn write(&self) -> Result<()> {
         let ordered_deps: BTreeMap<_, _> = self.deps.clone().into_iter().collect();
-        foundry_common::fs::write_pretty_json_file(&self.lockfile_path, &ordered_deps)?;
+        let mut contents = serde_json::to_string_pretty(&ordered_deps)?;
+        // End the file with a newline, as editors and formatters expect for text files.
+        contents.push('\n');
+        foundry_common::fs::write(&self.lockfile_path, contents)?;
         trace!(at= ?self.lockfile_path, "wrote lockfile");
 
         Ok(())
@@ -588,8 +591,9 @@ mod tests {
   "z_dep": {
     "rev": "3"
   }
-}"#;
-        assert_eq!(contents.trim(), expected.trim());
+}
+"#;
+        assert_eq!(contents, expected);
 
         let mut lockfile = Lockfile::new(dir.path());
         lockfile.read().unwrap();
@@ -612,8 +616,9 @@ mod tests {
   "z_dep": {
     "rev": "3"
   }
-}"#;
-        assert_eq!(contents.trim(), expected.trim());
+}
+"#;
+        assert_eq!(contents, expected);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use alloy_primitives::{U256, keccak256};
+use alloy_primitives::{Address, U256, address, keccak256};
 use foundry_test_utils::{
     TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
 };
@@ -360,7 +360,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // Tests that invariant exists with success after configured timeout.
 #[forgetest_init]
 fn should_apply_configured_timeout(prj: _, cmd: _) {
-    // Add initial test that breaks invariant.
     prj.add_test(
         "TimeoutTest.t.sol",
         r#"
@@ -385,9 +384,10 @@ contract TimeoutTest is Test {
     /// forge-config: default.invariant.depth = 20000
     /// forge-config: default.invariant.timeout = 1
     function invariant_counter_timeout() public view {
-        // Invariant will fail if more than 10000 increments.
-        // Make sure test timeouts after one second and remaining runs are canceled.
-        require(handler.count() < 10000);
+        // Make sure test timeouts after one second and remaining runs are canceled. The invariant
+        // must hold however many calls a fast machine makes before the timeout, since shrinking a
+        // broken invariant is not bounded by the campaign timeout.
+        require(handler.count() < type(uint256).max);
     }
 }
      "#,
@@ -400,13 +400,126 @@ Compiler run successful!
 
 Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
 [PASS] invariant_counter_timeout() (runs: 0, calls: 0, reverts: 0)
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-╭----------------+-----------+-------+---------+----------╮
-| Contract       | Selector  | Calls | Reverts | Discards |
-+=========================================================+
-| TimeoutHandler | increment | [..]| [..]| [..]|
-╰----------------+-----------+-------+---------+----------╯
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
+"#]]);
+}
+
+// Tests that a timed campaign still checks the initial state when its timeout expires during the
+// check.
+#[forgetest_init]
+fn should_check_initial_state_of_timed_campaign(prj: _, cmd: _) {
+    prj.add_test(
+        "TimeoutInitialStateTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public count;
+
+    function increment() public {
+        count++;
+    }
+}
+
+contract TimeoutInitialStateTest is Test {
+    Counter counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.increment();
+    }
+
+    /// forge-config: default.invariant.timeout = 0
+    function invariant_initial_state() public view {
+        // Runs long enough for the campaign deadline to be polled during the initial check.
+        uint256 sum;
+        for (uint256 i; i < 100; ++i) {
+            sum += counter.count();
+        }
+        require(sum == 0, "initial state broken");
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/TimeoutInitialStateTest.t.sol:TimeoutInitialStateTest
+[FAIL: initial state broken] invariant_initial_state() (runs: 0, calls: 0, reverts: 0)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/TimeoutInitialStateTest.t.sol:TimeoutInitialStateTest
+[FAIL: initial state broken] invariant_initial_state() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+...
+"#]]);
+}
+
+// Tests that the timeout interrupts a handler that loops without calls, which only the timeout
+// ends.
+#[forgetest_init]
+fn invariant_timeout_interrupts_loop_without_calls(prj: _, cmd: _) {
+    prj.add_test(
+        "LoopTimeoutTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract LoopHandler {
+    uint256 public acc;
+
+    function spin() public {
+        uint256 value;
+        // `value` stays even, so the loop never ends.
+        while (value != 1) {
+            unchecked {
+                value += 2;
+            }
+        }
+        acc = value;
+    }
+}
+
+contract LoopTimeoutTest is Test {
+    LoopHandler handler;
+
+    function setUp() public {
+        handler = new LoopHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.depth = 10
+    /// forge-config: default.invariant.timeout = 1
+    function invariant_loop_timeout() public view {
+        require(handler.acc() == 0);
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_loop_timeout", "--gas-limit", &i64::MAX.to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/LoopTimeoutTest.t.sol:LoopTimeoutTest
+[PASS] invariant_loop_timeout() (runs: 0, calls: 0, reverts: 0)
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
@@ -1422,6 +1535,67 @@ contract ComparisonCorpusTest is Test {
     );
 
     cmd.args(["test", "--mc", "ComparisonCorpusTest", "--fuzz-seed", "0x574"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
+}
+
+// solc compiles `if (a == b)` to `SUB` + `JUMPI`, without an `EQ` opcode.
+#[forgetest_init]
+fn invariant_corpus_reuses_sub_equality_hints(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 100;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.dictionary.include_storage = false;
+        config.invariant.dictionary.include_push_bytes = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+    });
+    prj.add_test(
+        "SubEqualityCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SubEqualityCorpusHandler {
+    bool public reached;
+
+    function compare(uint256 value) external {
+        uint256 magic = uint256(keccak256(abi.encode(address(this)))) % (1 << 40);
+        if (value == magic) reached = true;
+    }
+}
+
+contract SubEqualityCorpusTest is Test {
+    SubEqualityCorpusHandler handler;
+
+    function setUp() public {
+        handler = new SubEqualityCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_equality_is_reached() public view {
+        assertFalse(handler.reached());
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "SubEqualityCorpusTest", "--fuzz-seed", "0x574"])
         .assert_failure()
         .stdout_eq(str![[r#"
 ...
@@ -3501,6 +3675,85 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     ]]);
 }
 
+// Corpus entries that share a prefix which creates a dynamic target must all replay: the shared
+// prefix is executed once and its created target stays registered for every entry under it.
+#[forgetest_init]
+fn invariant_corpus_replays_shared_dynamic_target_prefix(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 8;
+        config.invariant.depth = 5;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "DynamicCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Child {
+    uint256 public calls;
+
+    function f() external {
+        calls++;
+    }
+
+    function g() external {
+        calls++;
+    }
+}
+
+contract Factory {
+    Child public child;
+
+    function create() external {
+        child = new Child();
+    }
+}
+
+contract DynamicCorpusTest is Test {
+    Factory factory;
+
+    function setUp() public {
+        factory = new Factory();
+    }
+
+    function invariant_dynamic_targets() public view {}
+}
+   "#,
+    );
+
+    // `setUp` deploys the factory from the test contract, and `create()` deploys the child from
+    // the factory; both use the first nonce.
+    let factory = address!("0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496").create(1);
+    let child = factory.create(1);
+    let tx = |target: Address, selector: &str| {
+        format!(
+            r#"{{"sender":"0x0000000000000000000000000000000000010000","target":"{target}","calldata":"{selector}","value":"0x0"}}"#
+        )
+    };
+    let create = tx(factory, "0xefc81a8c");
+    let corpus = prj.root().join("invariant_corpus").join("DynamicCorpusTest");
+    std::fs::create_dir_all(&corpus).unwrap();
+    for (id, call) in [(1, "0x26121ff0"), (2, "0xe2179b8e")] {
+        std::fs::write(
+            corpus.join(format!("00000000-0000-0000-0000-00000000000{id}-1.json")),
+            format!("[{create},{}]", tx(child, call)),
+        )
+        .unwrap();
+    }
+    assert_eq!(std::fs::read_dir(&corpus).unwrap().count(), 2);
+
+    assert_invariant(cmd.args(["test", "--mc", "DynamicCorpusTest"])).success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_dynamic_targets() ([RUNS])
+...
+"#
+    ]]);
+}
+
 // Calls hoisted from handler sub-calls must respect `targetSenders`.
 #[forgetest_init]
 fn invariant_corpus_hoisting_respects_target_senders(prj: _, cmd: _) {
@@ -3559,6 +3812,208 @@ Ran 1 test for test/HoistSenderTest.t.sol:HoistSenderTest
 [PASS] invariant_only_target_sender() (runs: 32, calls: 640, reverts: 0)
 ...
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Corpus metrics reported during an invariant campaign go to stderr, so `--json` stdout stays one
+// JSON document.
+#[forgetest_init]
+fn invariant_corpus_metrics_keep_json_stdout_clean(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.depth = 10;
+        config.invariant.timeout = Some(7);
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "InvariantMetrics.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantMetricsHandler {
+    uint256 public counter;
+
+    function inc() external {
+        counter++;
+    }
+}
+
+contract InvariantMetricsTest is Test {
+    function setUp() public {
+        targetContract(address(new InvariantMetricsHandler()));
+    }
+
+    function invariant_holds() public pure {}
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--json"]).assert_success();
+    serde_json::from_slice::<serde_json::Value>(&output.get_output().stdout).unwrap();
+    output.stderr_eq(str![[r#"
+...
+{"timestamp":[..],"event":"pulse","contract":"test/InvariantMetrics.t.sol:InvariantMetricsTest",[..]}
+...
+"#]]);
+}
+
+// A handler call whose intrinsic gas or calldata floor is above `call_gas_limit` runs with that
+// amount as its limit instead of aborting the campaign with a transaction validation error.
+#[forgetest_init]
+fn invariant_call_gas_limit_covers_intrinsic_gas(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+        config.invariant.call_gas_limit = Some(40_000);
+    });
+    prj.add_test(
+        "CallGasFloor.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract WideCalldata {
+    function poke(bytes32[1024] calldata) external {}
+}
+
+contract CallGasFloorTest is Test {
+    function setUp() public {
+        targetContract(address(new WideCalldata()));
+    }
+
+    function invariant_wide_calls_run() public {}
+}
+
+contract Ping {
+    function ping() external {}
+}
+
+contract FreshSenderTest is Test {
+    function setUp() public {
+        targetContract(address(new Ping()));
+        targetSender(address(0xBEEF));
+    }
+
+    function invariant_fresh_sender_runs() public {}
+}
+   "#,
+    );
+    // Before Prague there is no calldata floor, and the intrinsic gas alone is above the cap. The
+    // call then runs with exactly its intrinsic gas: nothing is left to execute, so it reverts,
+    // but the campaign goes on.
+    prj.update_config(|config| config.evm_version = "cancun".parse().unwrap());
+    cmd.args(["test", "--mt", "invariant_wide_calls_run"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] invariant_wide_calls_run() (runs: 5, calls: 25, reverts: 25)
+...
+"#]]);
+    // From Prague the calldata floor is the bound, and it leaves the call gas to run.
+    prj.update_config(|config| config.evm_version = "prague".parse().unwrap());
+    cmd.forge_fuse().args(["test", "--mt", "invariant_wide_calls_run"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] invariant_wide_calls_run() (runs: 5, calls: 25, reverts: 0)
+...
+"#]],
+    );
+    // Tempo T1 charges a nonce-zero sender for its account on top of the Ethereum intrinsic gas,
+    // so the bound comes from the network's own validation. As before Prague, the call is left
+    // with no gas to execute and reverts.
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_fresh_sender_runs", "--network", "tempo"])
+        .args(["--hardfork", "tempo:T1"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] invariant_fresh_sender_runs() (runs: 5, calls: 25, reverts: 25)
+...
+"#]]);
+}
+
+// Campaign calls, and the replays and shrinks of a failure, run under `call_gas_limit`, while
+// `setUp` and target discovery keep the project limit.
+#[forgetest_init]
+fn invariant_call_gas_limit_caps_campaign_calls(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 2;
+        config.invariant.call_gas_limit = Some(1_000_000);
+    });
+    prj.add_test(
+        "CallGasReplay.t.sol",
+        r#"
+contract LowGasProbe {
+    bool public lowGas;
+
+    function record() external {
+        require(msg.sender == address(0xBEEF), "wrong sender");
+        lowGas = gasleft() < 2_000_000;
+    }
+}
+
+contract CallGasReplayTest {
+    LowGasProbe probe;
+    uint256[600] pad;
+
+    function setUp() public {
+        require(gasleft() > 2_000_000, "setUp under the cap");
+        probe = new LowGasProbe();
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(probe);
+    }
+
+    // Reads more cold storage than the cap allows, so discovery must keep the project limit.
+    function targetSenders() public view returns (address[] memory senders) {
+        uint256 sum;
+        for (uint256 i; i < pad.length; ++i) {
+            sum += pad[i];
+        }
+        senders = new address[](1 + sum);
+        senders[0] = address(0xBEEF);
+    }
+
+    function invariant_never_low_gas() public view {
+        require(!probe.lowGas(), "low gas");
+    }
+}
+   "#,
+    );
+    // The replayed trace must show the handler under the cap: with the project limit it would
+    // see enough gas, record `false`, and the printed replay would not match the failure.
+    cmd.args(["test", "--mt", "invariant_never_low_gas", "-vvvv"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: low gas]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=0x000000000000000000000000000000000000bEEF addr=[test/CallGasReplay.t.sol:LowGasProbe]0x[..] calldata=record() args=[]
+ invariant_never_low_gas() (runs: 1, calls: 1, reverts: 0)
+...
+  [..] CallGasReplayTest::invariant_never_low_gas()
+    ├─ [..] LowGasProbe::lowGas() [staticcall]
+    │   └─ ← [Return] true
+...
+"#]],
+    );
+    // Corpus replay runs under the cap too: without the persisted failure, the corpus entry that
+    // holds the `record()` call must still break the invariant.
+    prj.update_config(|config| {
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    let failures = prj.root().join("cache").join("invariant").join("failures");
+    std::fs::remove_dir_all(&failures).unwrap();
+    cmd.forge_fuse().args(["test", "--mt", "invariant_never_low_gas"]).assert_failure();
+    std::fs::remove_dir_all(&failures).unwrap();
+    let corpus_dir = prj.root().join("invariant_corpus");
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mt", "invariant_never_low_gas", "--corpus-dir"])
+        .arg(&corpus_dir)
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: corpus replay failed:
+corpus entry [..] failed during replay: invariant `invariant_never_low_gas` broken] invariant_never_low_gas() ([GAS])
 ...
 "#]]);
 }

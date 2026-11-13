@@ -69,13 +69,15 @@ impl TxGenerator {
         config: InvariantConfig,
         fixtures: FuzzFixtures,
     ) -> Self {
-        let senders = Rc::new(senders);
         let dictionary_weight = config.dictionary.dictionary_weight;
         let payable_value_weight = config.corpus.payable_value_weight;
         let planned = Rc::new(RefCell::new(PlannedCalls::default()));
+        // The sender and delay strategies do not depend on the selected call: build them once.
+        let sender = select_sender(&state, senders, dictionary_weight);
+        let warp = optional_delay(&state, config.max_time_delay, dictionary_weight);
+        let roll = optional_delay(&state, config.max_block_delay, dictionary_weight);
         let strategy = any::<prop::sample::Selector>()
             .prop_flat_map(move |selector| {
-                let sender = select_sender(&state, senders.clone(), dictionary_weight);
                 let call = {
                     let generation = contracts.fuzzed_functions_generation();
                     let mut planned = planned.borrow_mut();
@@ -98,9 +100,7 @@ impl TxGenerator {
                     }
                     selector.select(planned.calls.iter()).clone()
                 };
-                let warp = optional_delay(config.max_time_delay);
-                let roll = optional_delay(config.max_block_delay);
-                (warp, roll, sender, call)
+                (warp.clone(), roll.clone(), sender.clone(), call)
             })
             .prop_map(move |(warp, roll, sender, call_details)| BasicTxDetails {
                 warp,
@@ -140,17 +140,29 @@ impl TxGenerator {
     }
 }
 
-fn optional_delay(max: Option<u32>) -> BoxedStrategy<Option<U256>> {
-    if let Some(max) = max.filter(|max| *max > 0) {
-        any::<U256>().prop_map(move |value| Some(value % U256::from(max))).boxed()
-    } else {
-        Just(None).boxed()
-    }
+/// Generates a delay of at most `max` like a fuzzed `uint256` argument, so dictionary constants
+/// such as `1 days` and zero delays are drawn regularly.
+fn optional_delay(
+    state: &FuzzState,
+    max: Option<u32>,
+    dictionary_weight: u32,
+) -> BoxedStrategy<Option<U256>> {
+    let Some(max) = max.filter(|max| *max > 0) else { return Just(None).boxed() };
+    let modulus = U256::from(max) + U256::ONE;
+    let dictionary_weight = dictionary_weight.min(100);
+    prop_oneof![
+        100 - dictionary_weight => fuzz_param(&DynSolType::Uint(256)),
+        dictionary_weight => fuzz_param_from_state(&DynSolType::Uint(256), state),
+    ]
+    .prop_map(move |value| {
+        Some(value.as_uint().unwrap().0 % modulus).filter(|delay| !delay.is_zero())
+    })
+    .boxed()
 }
 
 fn select_sender(
     state: &FuzzState,
-    senders: Rc<SenderFilters>,
+    senders: SenderFilters,
     dictionary_weight: u32,
 ) -> BoxedStrategy<Address> {
     if senders.targeted.is_empty() {
@@ -178,16 +190,29 @@ mod tests {
     use super::*;
     use crate::invariant::{TargetedContract, TargetedContracts};
     use alloy_json_abi::JsonAbi;
+    use evm2::evm::InMemoryDB;
     use foundry_config::FuzzDictionaryConfig;
-    use revm::database::InMemoryDB;
 
     #[test]
-    fn zero_delay_is_disabled() {
+    fn delays_are_bounded_and_draw_dictionary_constants() {
+        let mut state = EvmFuzzState::test();
+        state.collect_values([U256::from(86400).into(), U256::MAX.into()]);
+        let state = state.into_invariant();
         let mut runner = TestRunner::deterministic();
-        assert_eq!(optional_delay(Some(0)).new_tree(&mut runner).unwrap().current(), None);
         assert_eq!(
-            optional_delay(Some(1)).new_tree(&mut runner).unwrap().current(),
-            Some(U256::ZERO)
+            optional_delay(&state, Some(0), 100).new_tree(&mut runner).unwrap().current(),
+            None
+        );
+
+        // The maximum itself is a valid delay, and a zero delay is no delay.
+        let delays = (0..1000)
+            .map(|_| {
+                optional_delay(&state, Some(86400), 100).new_tree(&mut runner).unwrap().current()
+            })
+            .collect::<Vec<_>>();
+        assert!(delays.contains(&Some(U256::from(86400))));
+        assert!(
+            delays.iter().flatten().all(|delay| !delay.is_zero() && *delay <= U256::from(86400))
         );
     }
 
