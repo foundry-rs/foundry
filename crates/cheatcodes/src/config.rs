@@ -9,6 +9,7 @@ use foundry_config::{
 };
 use foundry_evm_core::opts::EvmOpts;
 use foundry_evm_traces::identifier::ExternalIdentifierConfig;
+use itertools::Itertools;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -200,6 +201,8 @@ impl CheatsConfig {
     /// corresponding URL of that alias. otherwise this assumes `url_or_alias` is itself a URL
     /// if it starts with a `http` or `ws` scheme.
     ///
+    /// A URL that configured entries resolve to keeps their settings when the entries agree.
+    ///
     /// If the url is a path to an existing file, it is also considered a valid RPC URL, IPC path.
     ///
     /// # Errors
@@ -207,9 +210,25 @@ impl CheatsConfig {
     ///  - Returns an error if `url_or_alias` is a known alias but references an unresolved env var.
     ///  - Returns an error if `url_or_alias` is not an alias but does not start with a `http` or
     ///    `ws` `scheme` and is not a path to an existing file
+    ///  - Returns an error if network access is disabled.
     pub fn rpc_endpoint(&self, url_or_alias: &str) -> Result<ResolvedRpcEndpoint> {
+        // Every cheatcode that opens a connection to a URL or alias resolves it here.
+        if self.evm_opts.no_network {
+            return Err(fmt_err!("network access is disabled"));
+        }
         if let Some(endpoint) = self.rpc_endpoints.get(url_or_alias) {
             Ok(endpoint.clone().try_resolve())
+        } else if let Ok(endpoint) = self
+            .rpc_endpoints
+            .values()
+            .map(|endpoint| endpoint.clone().try_resolve())
+            .filter(|endpoint| endpoint.endpoint.as_ref().is_ok_and(|url| url == url_or_alias))
+            .all_equal_value()
+        {
+            // A URL that entries resolve to, such as one `vm.rpcUrl` returns, keeps their settings
+            // when they agree. Entries are resolved again, as `vm.rpcUrl` does, so an env var set
+            // during the run matches too.
+            Ok(endpoint)
         } else if let Some(builtin_url) = foundry_config::builtin_rpc_url(url_or_alias) {
             let url = RpcEndpointUrl::Url(builtin_url.to_string());
             Ok(RpcEndpoint::new(url).resolve())
@@ -292,7 +311,7 @@ mod tests {
 
     use super::*;
     use alloy_primitives::Address;
-    use foundry_config::fs_permissions::PathPermission;
+    use foundry_config::{RpcEndpoints, fs_permissions::PathPermission};
     use tempfile::TempDir;
 
     fn config(root: &Path, fs_permissions: FsPermissions) -> CheatsConfig {
@@ -387,5 +406,41 @@ mod tests {
 
         let f = root.join("lib/other/foundry.toml");
         assert!(!config.is_foundry_toml(f));
+    }
+
+    #[test]
+    fn test_rpc_endpoint_url_keeps_entry_config() {
+        let mut endpoint = RpcEndpoint::new(RpcEndpointUrl::Url("http://127.0.0.1:18429".into()));
+        endpoint.config.retries = Some(2);
+        endpoint.config.retry_backoff = Some(100);
+        let shared = || RpcEndpoint::new(RpcEndpointUrl::Url("http://127.0.0.1:18430".into()));
+        let mut retrying = shared();
+        retrying.config.retries = Some(5);
+        let mut same = RpcEndpoint::new(RpcEndpointUrl::Url("http://127.0.0.1:18431".into()));
+        same.config.retries = Some(3);
+        let config = Config {
+            rpc_endpoints: RpcEndpoints::new([
+                ("stub", endpoint),
+                ("plain", shared()),
+                ("retrying", retrying),
+                ("same_a", same.clone()),
+                ("same_b", same),
+            ]),
+            ..Default::default()
+        };
+        let config = CheatsConfig::new(&config, Default::default(), None, None, false);
+        let settings = |url_or_alias| {
+            let config = config.rpc_endpoint(url_or_alias).unwrap().config;
+            (config.retries, config.retry_backoff)
+        };
+
+        assert_eq!(settings("stub"), (Some(2), Some(100)));
+        assert_eq!(settings("http://127.0.0.1:18429"), (Some(2), Some(100)));
+        // Two entries with different settings resolve to this URL, so neither applies.
+        assert_eq!(settings("http://127.0.0.1:18430"), (None, None));
+        assert_eq!(settings("retrying"), (Some(5), None));
+        // Two entries with the same settings resolve to this URL, so they apply.
+        assert_eq!(settings("http://127.0.0.1:18431"), (Some(3), None));
+        assert_eq!(settings("http://127.0.0.1:18432"), (None, None));
     }
 }

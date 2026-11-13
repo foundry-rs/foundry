@@ -1,19 +1,23 @@
 # Native Tempo certificate verification
 
 This test-only workspace member starts local Anvil nodes and decodes their HTTP
-responses using Commonware 2026.9.0's
+responses using Commonware 2026.10.0's
 `Finalization<Scheme<PublicKey, MinSig>, Digest>` and `tempo_primitives::Block`.
 It covers empty blocks, blocks containing Ethereum and Tempo transactions, and
 T3/T4 epoch boundaries. It checks byte-identical re-encoding, header and body
 commitments, and both signatures. Wrong identities and changes to the digest,
 parent view, epoch, view or either signature must fail verification. Raw header
 bytes, Ethereum block hashes and consensus digests must identify the same block.
+Fork checks inherit skipped views from a native root in a nonzero epoch and verify
+that the next epoch restarts at view one with parent view zero.
 
-Rotation checks begin with one trusted identity, authenticate the boundary block,
-and decode its DKG outcome to obtain the next epoch's key. The next certificate
-must verify under that announced key and reject the old key. Snapshot replay
-must restore the same announcement and activation without trusting a fresh
-identity RPC response for each block.
+Rotation checks begin with one trusted identity and authenticate the boundary
+that announces a full DKG for the following epoch. Its output retains the old
+key, while its next players commit to the new committee. The following boundary
+publishes that committee's key under the old key's signature, and the next
+epoch's certificate must verify under the announced key and reject the old key.
+Snapshot replay must restore both announcements and activation without trusting
+a fresh identity RPC response for each block.
 
 The package shares the root workspace lockfile and target directory. Its
 one-way dependency on Anvil keeps `commonware-consensus` and its runtime out of

@@ -154,6 +154,52 @@ where
     }
 }
 
+/// How `--resume` resolves an interrupted delegated submission whose outcome is unknown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DelegatedResolution {
+    /// No attempt is selected, so every unknown outcome blocks the resume.
+    None,
+    /// `--resume-attempt` selects the attempt to resolve with `action`.
+    Attempt {
+        attempt: B256,
+        /// `None` when neither `--resume-tx-hash` nor `--resume-retry` was given, which is
+        /// rejected once the attempt is found to need resolution.
+        action: Option<DelegatedAction>,
+    },
+}
+
+/// The operator's resolution of a delegated submission whose outcome is unknown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DelegatedAction {
+    /// `--resume-tx-hash`: the submission was found on chain under this hash.
+    RecordHash(B256),
+    /// `--resume-retry`: the submission was proven not to have been sent, so it is prepared anew.
+    Retry,
+}
+
+impl DelegatedResolution {
+    /// Builds the resolution from the `--resume-attempt`, `--resume-tx-hash` and
+    /// `--resume-retry` flags, preferring a retry over a hash.
+    pub(crate) fn new(
+        attempt: Option<B256>,
+        resolved_hash: Option<B256>,
+        retry_unknown: bool,
+    ) -> Result<Self> {
+        let action = if retry_unknown {
+            Some(DelegatedAction::Retry)
+        } else {
+            resolved_hash.map(DelegatedAction::RecordHash)
+        };
+        match (attempt, action) {
+            (Some(attempt), action) => Ok(Self::Attempt { attempt, action }),
+            (None, None) => Ok(Self::None),
+            (None, Some(_)) => {
+                bail!("--resume-attempt is required to resolve an interrupted submission")
+            }
+        }
+    }
+}
+
 pub struct ScriptSequenceKind<N: Network>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
@@ -392,15 +438,8 @@ where
 
     pub(crate) fn restore_delegated_pending(
         &mut self,
-        attempt_id: Option<B256>,
-        resolved_hash: Option<B256>,
-        retry_unknown: bool,
+        resolution: DelegatedResolution,
     ) -> Result<Option<(usize, usize, B256, B256)>> {
-        let resolution_requested = resolved_hash.is_some() || retry_unknown;
-        if resolution_requested && attempt_id.is_none() {
-            bail!("--resume-attempt is required to resolve an interrupted submission");
-        }
-
         for (sequence, index, _, status) in self.recovery.delegated_attempts() {
             if status == DelegatedStatus::Prepared {
                 self.recovery.persist_delegated_status(
@@ -412,7 +451,7 @@ where
         }
 
         let mut pending_resolution = None;
-        if let Some(attempt_id) = attempt_id {
+        if let DelegatedResolution::Attempt { attempt: attempt_id, action } = resolution {
             let (sequence, index) = self
                 .recovery
                 .delegated_attempt_location(attempt_id)
@@ -423,12 +462,14 @@ where
             ) {
                 bail!("delegated submission attempt {attempt_id} does not require resolution");
             }
-            if retry_unknown {
-                self.recovery.clear_delegated_request(sequence, index)?;
-            } else if let Some(hash) = resolved_hash {
-                pending_resolution = Some((sequence, index, attempt_id, hash));
-            } else {
-                bail!("--resume-attempt requires --resume-tx-hash or --resume-retry");
+            match action {
+                Some(DelegatedAction::Retry) => {
+                    self.recovery.clear_delegated_request(sequence, index)?;
+                }
+                Some(DelegatedAction::RecordHash(hash)) => {
+                    pending_resolution = Some((sequence, index, attempt_id, hash));
+                }
+                None => bail!("--resume-attempt requires --resume-tx-hash or --resume-retry"),
             }
         }
 
@@ -767,7 +808,12 @@ mod tests {
         let hash = B256::repeat_byte(0x42);
 
         assert_eq!(
-            sequence.restore_delegated_pending(Some(attempt), Some(hash), false).unwrap(),
+            sequence
+                .restore_delegated_pending(DelegatedResolution::Attempt {
+                    attempt,
+                    action: Some(DelegatedAction::RecordHash(hash)),
+                })
+                .unwrap(),
             Some((0, 0, attempt, hash))
         );
 
@@ -776,7 +822,12 @@ mod tests {
 
         let (_dir, mut sequence, attempt) = unknown_delegated_sequence();
 
-        sequence.restore_delegated_pending(Some(attempt), None, true).unwrap();
+        sequence
+            .restore_delegated_pending(DelegatedResolution::Attempt {
+                attempt,
+                action: Some(DelegatedAction::Retry),
+            })
+            .unwrap();
 
         assert!(sequence.delegated_status(0, 0).is_none());
     }

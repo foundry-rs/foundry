@@ -1,4 +1,5 @@
-use alloy_json_abi::{Event, Function, JsonAbi};
+use alloy_dyn_abi::{JsonAbiExt, abi::AbiDecoderConfig};
+use alloy_json_abi::{Event, Function, JsonAbi, StateMutability};
 use alloy_primitives::{Address, B256, Bytes, Selector, map::HashMap};
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
@@ -16,9 +17,9 @@ pub use call_override::RandomCallGenerator;
 
 mod filters;
 use crate::BasicTxDetails;
+use evm2::evm::AccountChanges;
 pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::utils::StateChangeset;
 
 type DynamicTargetArtifactMatchCache =
     Rc<RefCell<HashMap<(Address, B256), Option<CachedTargetContract>>>>;
@@ -85,9 +86,12 @@ impl FuzzRunIdentifiedContracts {
 
     /// If targets are updatable, collect all contracts created during an invariant run (which
     /// haven't been discovered yet).
-    pub fn collect_created_contracts(
+    ///
+    /// `state_changes` are the call's [`AccountChanges`], as returned by
+    /// `ExecutedTx::account_changes` or `PendingState::account_changes`.
+    pub fn collect_created_contracts<'a>(
         &self,
-        state_changeset: &StateChangeset,
+        state_changes: impl IntoIterator<Item = AccountChanges<'a>>,
         project_contracts: &ContractsByArtifact,
         setup_contracts: &ContractsByAddress,
         artifact_filters: &ArtifactFilters,
@@ -98,33 +102,33 @@ impl FuzzRunIdentifiedContracts {
         }
 
         let mut targets_changed = false;
-        for (address, account) in state_changeset {
-            if setup_contracts.contains_key(address) {
+        for changes in state_changes {
+            let address = changes.address;
+            // An account a call touched without changing it counts.
+            if setup_contracts.contains_key(&address) || !(changes.is_changed() || changes.touched)
+            {
                 continue;
             }
-            if !account.is_touched() {
-                continue;
-            }
-            let Some(code) = &account.info.code else {
+            let Some((code_hash, code)) = changes.code.or_else(|| {
+                changes.current.and_then(|info| Some((info.code_hash, info.code.as_ref()?)))
+            }) else {
                 continue;
             };
             if code.is_empty() {
                 continue;
             }
-            let code_hash = code.hash_slow();
-            let code = code.original_byte_slice();
             let Some(contract) = self.target_contract_for_code(
-                *address,
+                address,
                 code_hash,
-                code,
+                code.original_byte_slice(),
                 project_contracts,
                 artifact_filters,
             )?
             else {
                 continue;
             };
-            created_contracts.push(*address);
-            self.targets.borrow_mut().insert(*address, contract.into_targeted_contract());
+            created_contracts.push(address);
+            self.targets.borrow_mut().insert(address, contract.into_targeted_contract());
             targets_changed = true;
         }
         if targets_changed {
@@ -228,8 +232,7 @@ impl TargetedContracts {
                     .call_details
                     .calldata
                     .get(..4)
-                    .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-                    .map(Selector::from)
+                    .map(Selector::from_slice)
                     .and_then(|selector| c.function_by_selector(selector));
                 (Some(c), function)
             }
@@ -247,30 +250,41 @@ impl TargetedContracts {
     }
 
     /// Returns whether the given transaction can be replayed or not with known contracts.
+    ///
+    /// The call must target a fuzzed function, carry arguments that ABI-decode with canonical
+    /// words, and send value only to a payable function. This checks ABI admission, not exact
+    /// fuzzer output: trailing calldata and non-strict dynamic layouts are allowed, and enum
+    /// variant bounds are not checked.
     pub fn can_replay(&self, tx: &BasicTxDetails) -> bool {
-        match self.inner.get(&tx.call_details.target) {
-            Some(c) => tx
-                .call_details
-                .calldata
+        let calldata = &tx.call_details.calldata;
+        self.inner.get(&tx.call_details.target).is_some_and(|c| {
+            calldata
                 .get(..4)
-                .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-                .map(Selector::from)
-                .is_some_and(|selector| c.fuzzed_function_by_selector(selector).is_some()),
-            None => false,
-        }
+                .map(Selector::from_slice)
+                .and_then(|selector| c.fuzzed_function_by_selector(selector))
+                .is_some_and(|function| {
+                    (function.state_mutability == StateMutability::Payable
+                        || tx.call_details.value.is_none_or(|value| value.is_zero()))
+                        // Decoding depth follows the function's type nesting, which the fuzzer
+                        // does not limit, so the default recursion limit would reject valid calls.
+                        && function
+                            .abi_decode_input_with_config(
+                                &calldata[4..],
+                                AbiDecoderConfig::new()
+                                    .validate_words(true)
+                                    .recursion_limit(usize::MAX),
+                            )
+                            .is_ok()
+                })
+        })
     }
 
     /// Identifies fuzzed contract and function based on given tx details and returns unique metric
     /// key composed from contract identifier and function name.
     pub fn fuzzed_metric_key(&self, tx: &BasicTxDetails) -> Option<String> {
-        tx.call_details
-            .calldata
-            .get(..4)
-            .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-            .map(Selector::from)
-            .and_then(|selector| {
-                self.fuzzed_metric_key_for_selector(tx.call_details.target, selector)
-            })
+        tx.call_details.calldata.get(..4).map(Selector::from_slice).and_then(|selector| {
+            self.fuzzed_metric_key_for_selector(tx.call_details.target, selector)
+        })
     }
 
     /// Identifies fuzzed contract and function from target and selector and returns unique metric
@@ -683,13 +697,16 @@ mod tests {
     use super::*;
     use crate::CallDetails;
     use alloy_primitives::U256;
+    use evm2::{
+        bytecode::Bytecode,
+        evm::{AccountInfo, PendingState, StorageOverlay},
+    };
     use foundry_compilers::{
         ArtifactId,
         artifacts::{
             BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
         },
     };
-    use revm::{bytecode::Bytecode, state::Account};
 
     fn abi_with_functions(functions: &[&str]) -> JsonAbi {
         let mut abi = JsonAbi::new();
@@ -758,12 +775,10 @@ mod tests {
         ContractsByArtifact::new([(artifact_id(name), artifact)])
     }
 
-    fn touched_account_with_code(code: Bytes) -> Account {
-        let mut account = Account::default();
-        account.info.balance = U256::ZERO;
-        account.info.code = Some(Bytecode::new_raw(code));
-        account.mark_touch();
-        account
+    /// Records an account created with `code` by the transaction.
+    fn insert_created_account(state: &mut PendingState, address: Address, code: Bytes) {
+        let info = AccountInfo::default().with_code(Bytecode::new_raw(code));
+        state.insert_account(address, None, Some(info));
     }
 
     #[test]
@@ -775,6 +790,39 @@ mod tests {
         assert!(!targets.can_replay(&tx));
         assert!(targets.fuzzed_artifacts(&tx).1.is_none());
         assert!(targets.fuzzed_metric_key(&tx).is_none());
+    }
+
+    #[test]
+    fn targeted_contracts_replay_only_generatable_calls() {
+        let target = Address::repeat_byte(0x42);
+        let deep_signature = format!("deep(uint256{})", "[1]".repeat(17));
+        let targets = targeted_contracts_with_functions(
+            target,
+            &["set(uint8)", "deposit() payable", &deep_signature],
+        );
+        let set = Function::parse("set(uint8)").unwrap().selector();
+        let deposit = Function::parse("deposit()").unwrap().selector();
+        let deep = Function::parse(&deep_signature).unwrap().selector();
+        let set_calldata = |word: u64| {
+            let mut calldata = set.to_vec();
+            calldata.extend_from_slice(&U256::from(word).to_be_bytes::<32>());
+            calldata
+        };
+        let with_value = |value: u64, mut tx: BasicTxDetails| {
+            tx.call_details.value = Some(U256::from(value));
+            tx
+        };
+        let mut trailing = set_calldata(1);
+        trailing.extend_from_slice(&[0xaa; 20]);
+
+        assert!(targets.can_replay(&tx(target, set_calldata(0xff))));
+        assert!(!targets.can_replay(&tx(target, set.to_vec())));
+        assert!(!targets.can_replay(&tx(target, set_calldata(0x1ff))));
+        assert!(targets.can_replay(&tx(target, trailing)));
+        assert!(targets.can_replay(&with_value(0, tx(target, set_calldata(1)))));
+        assert!(!targets.can_replay(&with_value(1, tx(target, set_calldata(1)))));
+        assert!(targets.can_replay(&with_value(1, tx(target, deposit.to_vec()))));
+        assert!(targets.can_replay(&tx(target, [deep.as_slice(), &[0; 32]].concat())));
     }
 
     #[test]
@@ -848,6 +896,7 @@ mod tests {
         let created = Address::repeat_byte(0x43);
         let setup = Address::repeat_byte(0x44);
         let untouched = Address::repeat_byte(0x45);
+        let touched = Address::repeat_byte(0x46);
         let runtime_code = Bytes::from_static(&[0x60, 0x00, 0x56]);
         let project_contracts = project_contracts_with_runtime_code_and_abi(
             "DynamicTarget",
@@ -855,7 +904,7 @@ mod tests {
             JsonAbi::new(),
         );
         let mut targets = TargetedContracts::new();
-        for address in [existing, setup, untouched] {
+        for address in [existing, setup, untouched, touched] {
             targets.inner.insert(
                 address,
                 TargetedContract::new("AlreadyTargeted".to_string(), JsonAbi::new()),
@@ -863,18 +912,30 @@ mod tests {
         }
         let identified = FuzzRunIdentifiedContracts::new(targets, true);
 
-        let mut state_changeset = StateChangeset::default();
-        state_changeset.insert(existing, touched_account_with_code(runtime_code.clone()));
-        state_changeset.insert(setup, touched_account_with_code(runtime_code.clone()));
-        state_changeset.insert(untouched, Account::default());
-        state_changeset.insert(created, touched_account_with_code(runtime_code));
+        let mut state = PendingState::default();
+        insert_created_account(&mut state, existing, runtime_code.clone());
+        insert_created_account(&mut state, setup, runtime_code.clone());
+        let loaded = AccountInfo::default().with_code(Bytecode::new_raw(runtime_code.clone()));
+        state.insert_account(untouched, Some(loaded.clone()), Some(loaded.clone()));
+        insert_created_account(&mut state, created, runtime_code);
+        let storage = StorageOverlay::default();
+        let touched_only = AccountChanges {
+            address: touched,
+            original: Some(&loaded),
+            current: Some(&loaded),
+            created: false,
+            selfdestructed: false,
+            touched: true,
+            code: None,
+            storage: &storage,
+        };
         let mut created_contracts = Vec::new();
         let setup_contracts =
             ContractsByAddress::from([(setup, ("Setup".to_string(), JsonAbi::new()))]);
 
         identified
             .collect_created_contracts(
-                &state_changeset,
+                state.account_changes().chain([touched_only]),
                 &project_contracts,
                 &setup_contracts,
                 &ArtifactFilters::default(),
@@ -883,17 +944,18 @@ mod tests {
             .unwrap();
 
         created_contracts.sort_unstable();
-        assert_eq!(created_contracts, vec![existing, created]);
+        assert_eq!(created_contracts, vec![existing, created, touched]);
         let targets = identified.targets();
         assert_eq!(targets[&existing].identifier, "DynamicTarget");
         assert_eq!(targets[&created].identifier, "DynamicTarget");
+        assert_eq!(targets[&touched].identifier, "DynamicTarget");
         assert_eq!(targets[&setup].identifier, "AlreadyTargeted");
         assert_eq!(targets[&untouched].identifier, "AlreadyTargeted");
         drop(targets);
 
         identified
             .collect_created_contracts(
-                &state_changeset,
+                state.account_changes(),
                 &Default::default(),
                 &setup_contracts,
                 &ArtifactFilters::default(),
@@ -902,7 +964,7 @@ mod tests {
             .unwrap();
 
         created_contracts.sort_unstable();
-        assert_eq!(created_contracts, vec![existing, existing, created, created]);
+        assert_eq!(created_contracts, vec![existing, existing, created, created, touched]);
     }
 
     #[test]
@@ -928,13 +990,13 @@ mod tests {
         assert_eq!(initial, vec![(existing, Function::parse("existing()").unwrap().selector())]);
         assert_eq!(identified.fuzzed_functions_generation(), 0);
 
-        let mut state_changeset = StateChangeset::default();
-        state_changeset.insert(created, touched_account_with_code(runtime_code));
+        let mut state = PendingState::default();
+        insert_created_account(&mut state, created, runtime_code);
         let mut created_contracts = Vec::new();
 
         identified
             .collect_created_contracts(
-                &state_changeset,
+                state.account_changes(),
                 &project_contracts,
                 &ContractsByAddress::default(),
                 &ArtifactFilters::default(),

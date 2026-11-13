@@ -33,7 +33,8 @@ pub fn override_call_strat(
                 *target
             }),
     ]
-    .prop_flat_map(move |target_address| {
+    .prop_perturb(|target_address, rng| (target_address, rng))
+    .prop_flat_map(move |(target_address, mut rng)| {
         let fuzz_state = fuzz_state.clone();
         let fuzz_fixtures = fuzz_fixtures.clone();
         let contracts = contracts.clone();
@@ -48,10 +49,8 @@ pub fn override_call_strat(
                 .find(|(address, _)| *address == target_address)
                 .map(|(address, functions)| (*address, functions.clone()))
                 .unwrap_or_else(|| {
-                    let (address, functions) = contracts
-                        .iter()
-                        .choose(&mut rand::rng())
-                        .expect("at least one target contract");
+                    let (address, functions) =
+                        contracts.iter().choose(&mut rng).expect("at least one target contract");
                     (*address, functions.clone())
                 });
             (
@@ -72,4 +71,33 @@ pub fn override_call_strat(
             )
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::{strategy::ValueTree, test_runner::TestRunner};
+
+    #[test]
+    fn untargeted_reference_falls_back_deterministically() {
+        let function = Function::parse("fuzz(uint256)").unwrap();
+        let contracts = (1..=4)
+            .map(|byte| (Address::with_last_byte(byte), vec![function.clone()]))
+            .collect::<Vec<_>>();
+        let strategy = override_call_strat(
+            EvmFuzzState::test(),
+            contracts,
+            Arc::new(RwLock::new(Address::with_last_byte(0xff))),
+            FuzzFixtures::default(),
+            40,
+            0,
+        );
+        let targets = || {
+            let mut runner = TestRunner::deterministic();
+            (0..32)
+                .map(|_| strategy.new_tree(&mut runner).unwrap().current().target)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(targets(), targets());
+    }
 }

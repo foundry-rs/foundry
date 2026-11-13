@@ -93,32 +93,29 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 .wrap_err("Failed to parse job response")
                 .map_err(RetryError::Retry)?;
 
-                if !job_response.is_job_completed {
-                    return Err(RetryError::Retry(eyre!("Verification is still pending...")));
-                }
-
-                if let Some(error) = job_response.error {
-                    if error.custom_code == "already_verified" {
-                        let _ = sh_status!("Contract source code already verified");
-                        return Ok(());
+                match job_response.into_status() {
+                    SourcifyJobStatus::Pending => {
+                        Err(RetryError::Retry(eyre!("Verification is still pending...")))
                     }
-
-                    return Err(RetryError::Break(eyre!(
+                    SourcifyJobStatus::AlreadyVerified => {
+                        let _ = sh_status!("Contract source code already verified");
+                        Ok(())
+                    }
+                    SourcifyJobStatus::Failed(error) => Err(RetryError::Break(eyre!(
                         "Verification job failed:\nError Code: `{}`\nMessage: `{}`",
                         sanitize_remote_message(&error.custom_code),
                         sanitize_remote_message(&error.message)
-                    )));
+                    ))),
+                    SourcifyJobStatus::Verified { match_status } => {
+                        if let Some(contract_status) = match_status {
+                            let _ = sh_status!(
+                                "Contract successfully verified:\nStatus: `{}`",
+                                sanitize_remote_message(&contract_status),
+                            );
+                        }
+                        Ok(())
+                    }
                 }
-
-                if let Some(contract_status) =
-                    job_response.contract.and_then(|contract| contract.match_status)
-                {
-                    let _ = sh_status!(
-                        "Contract successfully verified:\nStatus: `{}`",
-                        sanitize_remote_message(&contract_status),
-                    );
-                }
-                Ok(())
             })
             .await
             .wrap_err("Checking verification result failed")
@@ -427,6 +424,37 @@ pub struct SourcifyJobResponse {
     error: Option<SourcifyErrorResponse>,
 }
 
+impl SourcifyJobResponse {
+    /// Resolves the job's state from its completion flag, error and contract fields.
+    fn into_status(self) -> SourcifyJobStatus {
+        if !self.is_job_completed {
+            return SourcifyJobStatus::Pending;
+        }
+        match self.error {
+            Some(error) if error.custom_code == "already_verified" => {
+                SourcifyJobStatus::AlreadyVerified
+            }
+            Some(error) => SourcifyJobStatus::Failed(error),
+            None => SourcifyJobStatus::Verified {
+                match_status: self.contract.and_then(|contract| contract.match_status),
+            },
+        }
+    }
+}
+
+/// The state of a Sourcify verification job.
+#[derive(Debug)]
+enum SourcifyJobStatus {
+    /// The job has not completed yet; check again.
+    Pending,
+    /// The job completed because the contract was already verified.
+    AlreadyVerified,
+    /// The job completed with an error.
+    Failed(SourcifyErrorResponse),
+    /// The job completed without an error, with the match Sourcify reported, if any.
+    Verified { match_status: Option<String> },
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourcifyContractResponse {
@@ -447,6 +475,8 @@ pub struct SourcifyErrorResponse {
 mod tests {
     use super::*;
     use clap::Parser;
+    use foundry_cli::utils::LoadConfig;
+    use foundry_common::compile::ProjectCompiler;
     use foundry_config::Config;
     use foundry_test_utils::{forgetest, util::SOLC_VERSION};
     use serde_json::json;
@@ -476,6 +506,40 @@ mod tests {
         assert_eq!(request.std_json_input, input);
         assert_eq!(request.contract_identifier, "contracts/Unknown.sol:ExactTarget");
         assert_eq!(request.compiler_version, "0.8.30+commit.73712a01");
+    }
+
+    #[test]
+    fn job_response_status() {
+        let status = |body: serde_json::Value| {
+            serde_json::from_value::<SourcifyJobResponse>(body).unwrap().into_status()
+        };
+        assert!(matches!(
+            status(json!({ "isJobCompleted": false, "contract": null, "error": null })),
+            SourcifyJobStatus::Pending
+        ));
+        assert!(matches!(
+            status(json!({
+                "isJobCompleted": true,
+                "error": { "customCode": "already_verified", "message": "" }
+            })),
+            SourcifyJobStatus::AlreadyVerified
+        ));
+        assert!(matches!(
+            status(json!({
+                "isJobCompleted": true,
+                "contract": { "match": "match" },
+                "error": { "customCode": "internal_error", "message": "boom" }
+            })),
+            SourcifyJobStatus::Failed(error) if error.custom_code == "internal_error"
+        ));
+        assert!(matches!(
+            status(json!({ "isJobCompleted": true, "contract": { "match": "exact_match" } })),
+            SourcifyJobStatus::Verified { match_status: Some(m) } if m == "exact_match"
+        ));
+        assert!(matches!(
+            status(json!({ "isJobCompleted": true, "contract": null })),
+            SourcifyJobStatus::Verified { match_status: None }
+        ));
     }
 
     #[test]
@@ -649,5 +713,32 @@ mod tests {
         let counter_source = sources.get("src/Counter.sol").unwrap().as_object().unwrap();
         let content = counter_source.get("content").unwrap().as_str().unwrap();
         assert!(content.contains("contract Counter {}"));
+    }
+
+    #[forgetest]
+    async fn keeps_solar_compiler_version(prj: _) {
+        prj.add_source("Counter", "contract Counter {}");
+
+        let solar_version = format!("{SOLC_VERSION}+commit.d9f23fb.solar.0.2.0");
+        let args = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
+            "src/Counter.sol:Counter",
+            "--compiler-version",
+            &solar_version,
+            "--root",
+            &prj.root().to_string_lossy(),
+        ]);
+
+        // Cache the artifacts under the plain version, as for a Solar build.
+        let mut config = args.load_config().unwrap();
+        config.solc = Some(SOLC_VERSION.into());
+        ProjectCompiler::new().quiet(true).compile(&config.project().unwrap()).unwrap();
+
+        let context = args.resolve_context().await.unwrap();
+        let provider = SourcifyVerificationProvider::default();
+        let request = provider.prepare_verify_request(&args, &context).await.unwrap();
+
+        assert_eq!(request.compiler_version, solar_version);
     }
 }

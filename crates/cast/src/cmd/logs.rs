@@ -20,8 +20,8 @@ use foundry_common::{
     fmt::{UIfmt, format_token},
     shell,
 };
-use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
-use std::{fmt::Write as _, io::Write as _, str::FromStr};
+use futures::{FutureExt, Stream, StreamExt, TryStreamExt, future::Either};
+use std::{fmt::Write as _, str::FromStr};
 use tokio::signal::ctrl_c;
 
 /// CLI arguments for `cast logs`.
@@ -106,66 +106,93 @@ impl LogsArgs {
         let provider = alloy_provider::ProviderBuilder::<_, _, AnyNetwork>::default()
             .connect(url.as_ref())
             .await?;
-        let output = &mut std::io::stdout();
-        let mut subscription = provider.subscribe_logs(&filter).await?.into_stream();
+        let subscription = provider.subscribe_logs(&filter).await?.into_stream();
 
         // Subscribe to blocks when a `to_block` is set so the stream ends once it is passed.
-        let to_block_number = filter.get_to_block();
-        let mut block_subscription = match to_block_number {
+        let to_block = filter.get_to_block();
+        let blocks = match to_block {
             Some(_) => Some(provider.subscribe_blocks().await?.into_stream()),
             None => None,
         };
 
-        let format_json = shell::is_json();
-        if format_json {
-            write!(output, "[")?;
-        }
-
-        let mut first = true;
-        let mut warned_decode_failure = false;
-        loop {
-            tokio::select! {
-                block = match &mut block_subscription {
-                    Some(bs) => Either::Left(bs.next().fuse()),
-                    None => Either::Right(futures::future::pending()),
-                } => {
-                    if let (Some(block), Some(to_block)) = (block, to_block_number)
-                        && block.number() > to_block
-                    {
-                        break;
-                    }
-                },
-                log = subscription.next() => {
-                    let Some(log) = log else { break };
-                    if format_json {
-                        if !first {
-                            write!(output, ",")?;
-                        }
-                        first = false;
-                        write!(output, "{}", serde_json::to_string(&log).unwrap())?;
-                    } else {
-                        let (formatted, decode_failed) = format_log(&log, event.as_ref());
-                        if decode_failed && !warned_decode_failure {
-                            warned_decode_failure = true;
-                            sh_warn!(
-                                "failed to decode a log with the provided event signature; \
-                                 make sure its indexed parameters match the log topics"
-                            )?;
-                        }
-                        writeln!(output, "{formatted}")?;
-                    }
-                },
-                // Break on the cancel signal so the JSON array is still closed.
-                _ = ctrl_c() => break,
-                else => break,
-            }
-        }
-
-        if format_json {
-            write!(output, "]")?;
-        }
-        Ok(())
+        // Break on the cancel signal so the JSON array is still closed.
+        stream_logs(
+            &mut std::io::stdout(),
+            subscription,
+            blocks,
+            to_block,
+            event.as_ref(),
+            ctrl_c(),
+        )
+        .await
     }
+}
+
+/// Writes the logs of `logs` to `output` until the stream ends, `blocks` passes `to_block`, or
+/// `cancel` resolves.
+async fn stream_logs<H: BlockHeader>(
+    output: &mut impl std::io::Write,
+    mut logs: impl Stream<Item = Log> + Unpin,
+    mut blocks: Option<impl Stream<Item = H> + Unpin>,
+    to_block: Option<u64>,
+    event: Option<&Event>,
+    cancel: impl Future,
+) -> Result<()> {
+    let format_json = shell::is_json();
+    if format_json {
+        write!(output, "[")?;
+    }
+
+    let mut cancel = std::pin::pin!(cancel);
+    let mut first = true;
+    let mut warned_decode_failure = false;
+    loop {
+        tokio::select! {
+            block = match &mut blocks {
+                Some(bs) => Either::Left(bs.next().fuse()),
+                None => Either::Right(futures::future::pending()),
+            } => match (block, to_block) {
+                (Some(block), Some(to_block)) if block.number() > to_block => break,
+                (Some(_), _) => {}
+                // An ended stream yields at once, so polling it again would spin.
+                (None, _) => blocks = None,
+            },
+            log = logs.next() => {
+                let Some(log) = log else { break };
+                // Log subscriptions ignore the filter's block range, so a log past `to_block` can
+                // arrive before the block that passes it.
+                if let (Some(block), Some(to_block)) = (log.block_number, to_block)
+                    && block > to_block
+                {
+                    break;
+                }
+                if format_json {
+                    if !first {
+                        write!(output, ",")?;
+                    }
+                    first = false;
+                    write!(output, "{}", serde_json::to_string(&log).unwrap())?;
+                } else {
+                    let (formatted, decode_failed) = format_log(&log, event);
+                    if decode_failed && !warned_decode_failure {
+                        warned_decode_failure = true;
+                        sh_warn!(
+                            "failed to decode a log with the provided event signature; \
+                             make sure its indexed parameters match the log topics"
+                        )?;
+                    }
+                    writeln!(output, "{formatted}")?;
+                }
+            },
+            _ = &mut cancel => break,
+            else => break,
+        }
+    }
+
+    if format_json {
+        write!(output, "]")?;
+    }
+    Ok(())
 }
 
 impl LogQueryArgs {
@@ -806,6 +833,63 @@ mod logs_bisecting {
 
     fn log_at(block: u64) -> Log {
         Log { block_number: Some(block), ..Default::default() }
+    }
+
+    /// Streams `logs` up to `to_block` while the block subscription stays silent.
+    async fn streamed(logs: Vec<Log>, to_block: u64) -> String {
+        let mut output = Vec::new();
+        let blocks = futures::stream::pending::<alloy_rpc_types::Header>();
+        stream_logs(
+            &mut output,
+            futures::stream::iter(logs),
+            Some(blocks),
+            Some(to_block),
+            None,
+            futures::future::pending::<()>(),
+        )
+        .await
+        .unwrap();
+        String::from_utf8(output).unwrap()
+    }
+
+    // An ended block subscription must not be polled again, or the loop spins until the next log.
+    #[tokio::test]
+    async fn ended_block_subscription_is_not_polled_again() {
+        let polls = Arc::new(Mutex::new(0usize));
+        let blocks = futures::stream::poll_fn({
+            let polls = polls.clone();
+            move |_| {
+                let mut polls = polls.lock().unwrap();
+                *polls += 1;
+                assert!(*polls < 1000, "the ended block subscription keeps being polled");
+                Poll::<Option<alloy_rpc_types::Header>>::Ready(None)
+            }
+        });
+        let logs = futures::stream::once(async {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            log_at(1)
+        });
+        let mut output = Vec::new();
+        stream_logs(
+            &mut output,
+            logs.boxed(),
+            Some(blocks),
+            Some(1),
+            None,
+            futures::future::pending::<()>(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), format_log(&log_at(1), None).0 + "\n");
+        assert_eq!(*polls.lock().unwrap(), 1);
+    }
+
+    // Log subscriptions ignore the filter's block range, so a log can arrive before the block that
+    // passes `to_block` does.
+    #[tokio::test]
+    async fn subscription_stops_at_first_log_past_to_block() {
+        let expected = [5, 6].map(|block| format_log(&log_at(block), None).0 + "\n").concat();
+        assert_eq!(streamed(vec![log_at(5), log_at(6), log_at(7), log_at(6)], 6).await, expected);
     }
 
     /// Mock transport that records the `eth_getLogs` `[fromBlock, toBlock]` ranges it is asked for

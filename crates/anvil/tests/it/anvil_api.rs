@@ -9,8 +9,12 @@ use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::{eip2718::Decodable2718, eip4788::BEACON_ROOTS_ADDRESS};
 use alloy_genesis::{ChainConfig, Genesis};
-use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
+use alloy_network::{
+    AnyNetwork, EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync,
+};
+use alloy_primitives::{
+    Address, B256, Bytes, TxKind, U256, address, b256, bytes, fixed_bytes, keccak256,
+};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
@@ -37,9 +41,9 @@ use foundry_common::{
     provider::redact_url,
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
 use futures::{FutureExt, StreamExt};
 use tempo_hardfork::TempoHardfork;
 
@@ -565,6 +569,85 @@ async fn test_can_set_storage_bsc_fork() {
 
     let balance = busd_contract.balanceOf(Address::ZERO).call().await.unwrap();
     assert_eq!(balance, U256::from(12345u64));
+}
+
+// Storage set on an empty account survives until the account is created.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_storage_on_empty_account_kept_until_creation() {
+    // Shanghai still deletes accounts on `SELFDESTRUCT`.
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let one = B256::with_last_byte(1);
+    let send = async |tx: TransactionRequest| {
+        let tx = WithOtherFields::new(tx.from(from));
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+    };
+
+    // A value transfer keeps the storage.
+    let funded = Address::random();
+    api.anvil_set_storage_at(funded, U256::ZERO, one).await.unwrap();
+    send(TransactionRequest::default().to(funded).value(U256::ONE)).await;
+    assert_eq!(api.storage_at(funded, U256::ZERO, None).await.unwrap(), one);
+
+    // A contract created at a funded address discards its storage. The factory deploys its
+    // calldata with `CREATE2` and salt zero, and the init code deploys `STOP`.
+    let factory = Address::random();
+    api.anvil_set_code(factory, bytes!("365f5f375f365f5ff500")).await.unwrap();
+    let init_code = bytes!("6001600c60003960016000f300");
+    let created = factory.create2(B256::ZERO, keccak256(&init_code));
+    api.anvil_set_storage_at(created, U256::ZERO, one).await.unwrap();
+    api.anvil_set_balance(created, U256::ONE).await.unwrap();
+    send(TransactionRequest::default().to(factory).input(init_code.into()).gas_limit(100_000))
+        .await;
+    assert_eq!(api.get_code(created, None).await.unwrap(), bytes!("00"));
+    assert_eq!(api.storage_at(created, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
+    // A contract created and destroyed in the same transaction also discards the storage. The
+    // init code runs `SELFDESTRUCT(CALLER)`.
+    let init_code = bytes!("33ff");
+    let destroyed = factory.create2(B256::ZERO, keccak256(&init_code));
+    api.anvil_set_storage_at(destroyed, U256::ZERO, one).await.unwrap();
+    send(TransactionRequest::default().to(factory).input(init_code.into()).gas_limit(100_000))
+        .await;
+    assert_eq!(api.get_code(destroyed, None).await.unwrap(), bytes!(""));
+    assert_eq!(api.storage_at(destroyed, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
+    // A contract created in one transaction and destroyed by a later one in the same block also
+    // discards the storage. The init code deploys `SELFDESTRUCT(CALLER)`.
+    let init_code = bytes!("6002600c60003960026000f333ff");
+    let destroyed = factory.create2(B256::ZERO, keccak256(&init_code));
+    api.anvil_set_storage_at(destroyed, U256::ZERO, one).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let create = TransactionRequest::default().to(factory).input(init_code.into()).nonce(nonce);
+    let destroy = TransactionRequest::default().to(destroyed).nonce(nonce + 1);
+    let mut receipts = Vec::new();
+    for tx in [create, destroy] {
+        let tx = WithOtherFields::new(tx.from(from).gas_limit(100_000));
+        receipts.push(provider.send_transaction(tx).await.unwrap());
+    }
+    api.mine_one().await.unwrap();
+    for receipt in receipts {
+        let receipt = receipt.get_receipt().await.unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.block_number, Some(api.backend.best_number()));
+    }
+    api.anvil_set_auto_mine(true).await.unwrap();
+    assert_eq!(api.get_code(destroyed, None).await.unwrap(), bytes!(""));
+    assert_eq!(api.storage_at(destroyed, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
+    // A value transfer revives a deleted account without its storage. `SELFDESTRUCT(CALLER)`
+    // deletes the account.
+    let deleted = Address::random();
+    api.anvil_set_code(deleted, bytes!("33ff")).await.unwrap();
+    api.anvil_set_storage_at(deleted, U256::ZERO, one).await.unwrap();
+    send(TransactionRequest::default().to(deleted)).await;
+    send(TransactionRequest::default().to(deleted).value(U256::ONE)).await;
+    assert_eq!(api.balance(deleted, None).await.unwrap(), U256::ONE);
+    assert_eq!(api.storage_at(deleted, U256::ZERO, None).await.unwrap(), B256::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1163,9 +1246,27 @@ async fn flaky_test_reorg() {
         .get_receipt()
         .await
         .unwrap();
+    let height = provider.get_block_number().await.unwrap();
+    let hashes = || async {
+        let mut hashes = vec![];
+        for number in height - 2..=height {
+            hashes.push(provider.get_block(number.into()).await.unwrap().unwrap().header.hash);
+        }
+        hashes
+    };
+    let before = hashes().await;
     api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
     let value = storage.getValue().call().await.unwrap();
     assert_eq!("initial value".to_string(), value);
+    // Replacement blocks differ from the replaced ones, also when both are empty, and a second
+    // reorg over the same heights differs from the first.
+    let first_reorg = hashes().await;
+    assert!(before.iter().zip(&first_reorg).all(|(old, new)| old != new));
+    api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
+    let second_reorg = hashes().await;
+    assert!(first_reorg.iter().zip(&second_reorg).all(|(old, new)| old != new));
+    let block = provider.get_block(height.into()).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_hash, second_reorg[1]);
 
     api.mine_one().await.unwrap();
     api.mine_one().await.unwrap();
@@ -1450,8 +1551,14 @@ async fn manual_mining_rpcs_preserve_controls_on_failure() {
                 )
                 .await
         };
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("execution reverted"), "{method}: {error}");
+        let error = result.unwrap_err();
+        let error = error.as_error_resp().unwrap();
+        assert_eq!(error.code, -32603, "{method}");
+        assert_eq!(
+            error.message,
+            "failed to apply withdrawal requests contract call: execution reverted: 0x",
+            "{method}"
+        );
         assert_eq!(api.backend.best_number(), 0, "{method}");
 
         api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
@@ -1466,6 +1573,27 @@ async fn manual_mining_rpcs_preserve_controls_on_failure() {
         assert_ne!(following.header.mix_hash, Some(prevrandao), "{method}");
         assert_eq!(following.header.timestamp, next_timestamp + 1, "{method}");
     }
+}
+
+// A halting request system call fails mining with its halt reason.
+#[tokio::test(flavor = "multi_thread")]
+async fn halting_request_system_call_fails_mining() {
+    let config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(config).await;
+    // The withdrawal requests contract loops until it runs out of gas.
+    let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+    api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5b, 0x5f, 0x56])).await.unwrap();
+
+    let result =
+        handle.http_provider().raw_request::<_, serde_json::Value>("evm_mine".into(), ()).await;
+    let error = result.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!(error.code, -32603);
+    assert_eq!(
+        error.message,
+        "failed to apply withdrawal requests contract call: execution halted: OutOfGas(Basic)"
+    );
+    assert_eq!(api.backend.best_number(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2204,7 +2332,7 @@ async fn can_get_node_info_tempo_t1() {
 #[cfg(feature = "monad")]
 async fn can_get_node_info_monad() {
     let config = NodeConfig::test_monad()
-        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into()));
+        .with_hardfork(Some(foundry_evm_hardforks::MonadHardfork::MonadEight.into()));
     let (api, handle) = spawn(config).await;
 
     let node_info = api.anvil_node_info().await.unwrap();
@@ -2381,6 +2509,9 @@ async fn test_rollback_and_reorg_respect_genesis_block_number() {
     api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     assert_eq!(api.backend.best_number(), 102);
 
+    let err = api.debug_execution_witness(BlockNumberOrTag::Number(100)).await.unwrap_err();
+    assert_eq!(err.to_string(), "genesis block has no parent state to build a witness from");
+
     // Depth 3 would go below genesis.
     let err = api.anvil_rollback(Some(3)).await.unwrap_err();
     let BlockchainError::RpcError(err) = err else { panic!("unexpected rollback error: {err}") };
@@ -2404,4 +2535,117 @@ async fn test_rollback_and_reorg_respect_genesis_block_number() {
     assert_eq!(api.backend.best_number(), 102);
     api.anvil_rollback(Some(2)).await.unwrap();
     assert_eq!(api.backend.best_number(), 100);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lifecycle_transitions_do_not_wait_for_sync_transaction() {
+    let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let request = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_from(sender)
+            .with_to(Address::repeat_byte(0x77))
+            .with_value(U256::ONE),
+    );
+    let send_sync =
+        || provider.client().request::<_, FoundryTxReceipt>("eth_sendTransactionSync", (&request,));
+    // Drives the RPC until its transaction is pooled and the RPC waits for a receipt.
+    async fn wait_until_pooled(
+        provider: &impl TxPoolApi<AnyNetwork>,
+        send: &mut (impl Future + Unpin),
+    ) {
+        loop {
+            assert!(futures::poll!(&mut *send).is_pending());
+            if provider.txpool_status().await.unwrap().pending == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+    let mine = || provider.client().request::<_, String>("evm_mine", ());
+    mine().await.unwrap();
+
+    // A rollback keeps the pool, so the waiting RPC returns the receipt of the next block.
+    let mut send = Box::pin(send_sync());
+    tokio::time::timeout(Duration::from_secs(5), wait_until_pooled(&provider, &mut send))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        provider.client().request::<_, ()>("anvil_rollback", (1,)).await.unwrap();
+        assert_eq!(provider.get_block_number().await.unwrap(), 0);
+        mine().await.unwrap();
+    })
+    .await
+    .expect("rollback waited for the synchronous transaction");
+    let receipt = tokio::time::timeout(Duration::from_secs(5), send).await.unwrap().unwrap();
+    assert_eq!(receipt.block_number(), Some(1));
+
+    // A reset clears the pool, so the waiting RPC gets no receipt, but other RPCs still run.
+    let instance_id = api.instance_id();
+    let mut send = Box::pin(send_sync());
+    tokio::time::timeout(Duration::from_secs(5), wait_until_pooled(&provider, &mut send))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        provider.client().request::<_, ()>("anvil_reset", ()).await.unwrap();
+        assert_eq!(provider.get_block_number().await.unwrap(), 0);
+        mine().await.unwrap();
+        assert_eq!(provider.get_block_number().await.unwrap(), 1);
+    })
+    .await
+    .expect("reset waited for the synchronous transaction");
+    assert_ne!(api.instance_id(), instance_id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn requests_see_one_state_across_reset() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    api.mine_one().await.unwrap();
+    let instance_id = api.instance_id();
+
+    let metadata = (0..32)
+        .map(|_| provider.client().request::<_, Metadata>("anvil_metadata", ()))
+        .collect::<futures::stream::FuturesUnordered<_>>()
+        .collect::<Vec<_>>();
+    let (metadata, reset) = tokio::join!(metadata, api.anvil_reset(None));
+    reset.unwrap();
+
+    let reset_instance_id = api.instance_id();
+    assert_ne!(reset_instance_id, instance_id);
+    for metadata in metadata {
+        let metadata = metadata.unwrap();
+        let state = (metadata.instance_id, metadata.latest_block_number);
+        assert!(
+            state == (instance_id, 1) || state == (reset_instance_id, 0),
+            "metadata mixes states: {state:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_fork_resets_serialize() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    origin_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    let resets = (1..=3).map(|block_number| {
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(block_number) }))
+    });
+    for reset in futures::future::join_all(resets).await {
+        reset.unwrap();
+    }
+
+    let fork_block_number = api.get_fork().unwrap().block_number();
+    assert!((1..=3).contains(&fork_block_number));
+    assert_eq!(api.backend.best_number(), fork_block_number);
+    let metadata = api.anvil_metadata().await.unwrap();
+    assert_eq!(metadata.latest_block_number, fork_block_number);
+    assert_eq!(metadata.forked_network.unwrap().fork_block_number, fork_block_number);
 }

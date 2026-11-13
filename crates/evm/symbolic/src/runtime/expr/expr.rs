@@ -1,10 +1,13 @@
 use super::{hashcons::HashConsed, *};
-use foundry_evm::revm::interpreter::instructions::i256::{i256_div, i256_mod};
 
 // Boolean selector recovery is an optional expression rewrite. Bound it to one word's worth of
 // unique nodes so adversarial expression trees cannot make construction unbounded.
 const MAX_BITWISE_BOOL_WORD_VISITS: usize = 256;
 const MAX_CONSTANT_DIFFERENCE_VISITS: usize = 256;
+// Storage layout keys `keccak(..) + offset` are assumed not to alias fixed slots or other hash
+// bases only while the offset stays below `2^64`, the bound Solidity's `push` enforces on
+// dynamic array lengths.
+pub(crate) const STORAGE_LAYOUT_OFFSET_BITS: usize = 64;
 
 impl SymExpr {
     pub(crate) fn select_storage_write(
@@ -26,40 +29,83 @@ impl SymExpr {
     }
 
     pub(crate) fn storage_key_eq(&self, cx: &mut SymCx, write_key: &Self) -> SymBoolExpr {
+        if let (Some(read), Some(write)) = (self.as_const(), write_key.as_const()) {
+            return SymBoolExpr::constant(cx, read == write);
+        }
         if let (Some(read_root), Some(write_root)) =
             (self.storage_mapping_root_slot(cx), write_key.storage_mapping_root_slot(cx))
             && read_root != write_root
         {
             return SymBoolExpr::constant(cx, false);
         }
+        // The hash assumption only rules out aliasing for small offsets: an offset chosen as
+        // `slot - keccak(..)` reaches any slot, so large offsets keep real word equality.
         match (self.storage_layout_key(cx), write_key.storage_layout_key(cx)) {
             (Some((read_base, read_offset)), Some((write_base, write_offset))) => {
-                let read_base = read_base
-                    .storage_base_eq(cx, &write_base)
-                    .unwrap_or_else(|| SymBoolExpr::eq(cx, read_base, write_base));
+                // On one base, `base + i == base + j` iff `i == j`, so only distinct bases alias.
+                if read_base == write_base {
+                    return SymBoolExpr::eq(cx, read_offset, write_offset);
+                }
+                let large_read_offset = storage_offset_is_large(cx, &read_offset);
+                let large_write_offset = storage_offset_is_large(cx, &write_offset);
+                let large_offset = SymBoolExpr::or(cx, vec![large_read_offset, large_write_offset]);
+                // Large offsets on two concrete hash bases are compared exactly.
+                if large_offset.as_const() != Some(false)
+                    && read_base.as_const().is_some()
+                    && write_base.as_const().is_some()
+                {
+                    return SymBoolExpr::eq(cx, self.clone(), write_key.clone());
+                }
+                let read_base = read_base.storage_base_eq(cx, &write_base);
                 let read_offset = SymBoolExpr::eq(cx, read_offset, write_offset);
-                SymBoolExpr::and(cx, vec![read_base, read_offset])
+                let same_layout_slot = SymBoolExpr::and(cx, vec![read_base, read_offset]);
+                if large_offset.as_const() == Some(false) {
+                    return same_layout_slot;
+                }
+                let words_eq = SymBoolExpr::eq(cx, self.clone(), write_key.clone());
+                let aliased = SymBoolExpr::and(cx, vec![large_offset, words_eq]);
+                SymBoolExpr::or(cx, vec![same_layout_slot, aliased])
             }
-            (Some(_), None) if write_key.as_const().is_some() => SymBoolExpr::constant(cx, false),
-            (None, Some(_)) if self.as_const().is_some() => SymBoolExpr::constant(cx, false),
+            // A constant that is not a hash base or near one is a fixed slot, which a symbolic
+            // hash base only reaches through a large offset.
+            (Some((base, offset)), None) | (None, Some((base, offset)))
+                if base.as_const().is_none()
+                    && (self.as_const().is_some() || write_key.as_const().is_some()) =>
+            {
+                let large_offset = storage_offset_is_large(cx, &offset);
+                if large_offset.as_const() == Some(false) {
+                    return SymBoolExpr::constant(cx, false);
+                }
+                let words_eq = SymBoolExpr::eq(cx, self.clone(), write_key.clone());
+                SymBoolExpr::and(cx, vec![large_offset, words_eq])
+            }
             _ => SymBoolExpr::eq(cx, self.clone(), write_key.clone()),
         }
     }
 
-    fn storage_base_eq(&self, cx: &mut SymCx, other: &Self) -> Option<SymBoolExpr> {
-        let read = self.storage_mapping_key(cx)?;
-        let write = other.storage_mapping_key(cx)?;
+    /// Compares two storage hash bases, assuming different Keccak preimages never collide.
+    fn storage_base_eq(&self, cx: &mut SymCx, other: &Self) -> SymBoolExpr {
+        // Dynamic array data slots `keccak(slot)` are equal when their slots are.
+        if let (Some(read), Some(write)) =
+            (self.keccak_preimage(cx, 32), other.keccak_preimage(cx, 32))
+        {
+            let read = Self::from_bytes(cx, read[..32].iter().cloned());
+            let write = Self::from_bytes(cx, write[..32].iter().cloned());
+            return read.storage_base_eq(cx, &write);
+        }
+        let (Some(read), Some(write)) =
+            (self.storage_mapping_key(cx), other.storage_mapping_key(cx))
+        else {
+            return SymBoolExpr::eq(cx, self.clone(), other.clone());
+        };
 
         let key_eq = storage_mapping_key_eq(cx, &read, &write);
-        let slot_eq = read
-            .slot
-            .storage_base_eq(cx, &write.slot)
-            .unwrap_or_else(|| SymBoolExpr::eq(cx, read.slot, write.slot));
-        Some(SymBoolExpr::and(cx, vec![key_eq, slot_eq]))
+        let slot_eq = read.slot.storage_base_eq(cx, &write.slot);
+        SymBoolExpr::and(cx, vec![key_eq, slot_eq])
     }
 
     pub(crate) fn storage_mapping_key(&self, cx: &mut SymCx) -> Option<StorageMappingKey> {
-        let bytes = self.storage_mapping_key_bytes(cx)?;
+        let bytes = self.keccak_preimage(cx, 64)?;
         let key_bytes = &bytes[..32];
         let preserve_key_bytes = (!key_bytes.iter().all(|byte| byte.as_const().is_some())
             && word_from_extracted_bytes(key_bytes).is_none())
@@ -101,10 +147,10 @@ impl SymExpr {
     }
 
     fn storage_mapping_root_slot(&self, cx: &mut SymCx) -> Option<U256> {
-        let bytes = self.storage_mapping_key_bytes(cx)?;
+        let bytes = self.keccak_preimage(cx, 64)?;
         let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
         match slot.kind() {
-            SymExprKind::Const(value) if cx.concrete_keccak_preimage(*value).is_some() => {
+            SymExprKind::Const(_) if slot.keccak_preimage(cx, 64).is_some() => {
                 slot.storage_mapping_root_slot(cx)
             }
             SymExprKind::Const(slot) => Some(*slot),
@@ -113,14 +159,16 @@ impl SymExpr {
         }
     }
 
-    fn storage_mapping_key_bytes(&self, cx: &SymCx) -> Option<Arc<[Self]>> {
+    fn keccak_preimage(&self, cx: &SymCx, len: usize) -> Option<Arc<[Self]>> {
         match self.kind() {
-            SymExprKind::Keccak { len, bytes, .. }
-                if len.as_const() == Some(U256::from(64)) && bytes.len() >= 64 =>
+            SymExprKind::Keccak { len: hashed, bytes, .. }
+                if hashed.as_const() == Some(U256::from(len)) && bytes.len() >= len =>
             {
                 Some(bytes.clone())
             }
-            SymExprKind::Const(hash) => cx.concrete_keccak_preimage(*hash),
+            SymExprKind::Const(hash) => {
+                cx.concrete_keccak_preimage(*hash).filter(|bytes| bytes.len() == len)
+            }
             _ => None,
         }
     }
@@ -128,8 +176,10 @@ impl SymExpr {
     fn storage_layout_key(&self, cx: &mut SymCx) -> Option<(Self, Self)> {
         match self.kind() {
             SymExprKind::Keccak { .. } => Some((self.clone(), Self::zero(cx))),
-            SymExprKind::Const(hash) if cx.concrete_keccak_preimage(*hash).is_some() => {
-                Some((self.clone(), Self::zero(cx)))
+            // Constant folding turns `keccak(7, s) + 1` into an unrecorded constant.
+            SymExprKind::Const(value) => {
+                let hash = cx.concrete_keccak_base(*value, STORAGE_LAYOUT_OFFSET_BITS)?;
+                Some((Self::constant(cx, hash), Self::constant(cx, *value - hash)))
             }
             SymExprKind::BinOp(SymBinOp::Add, left, right) => {
                 if let Some((base, offset)) = left.storage_layout_key(cx)
@@ -198,6 +248,14 @@ fn storage_mapping_key_eq(
     }
 }
 
+/// Returns the condition under which a storage layout offset is too large to assume no aliasing.
+fn storage_offset_is_large(cx: &mut SymCx, offset: &SymExpr) -> SymBoolExpr {
+    if offset.unsigned_bits() <= STORAGE_LAYOUT_OFFSET_BITS {
+        return SymBoolExpr::constant(cx, false);
+    }
+    SymBoolExpr::cmp_word_const(cx, SymCmpOp::Uge, offset, U256::ONE << STORAGE_LAYOUT_OFFSET_BITS)
+}
+
 fn masked_expr_matches(candidate: &SymExprKind, target: &SymExpr) -> Option<U256> {
     match candidate {
         SymExprKind::BinOp(SymBinOp::And, left, right) if left == target => right.eval(),
@@ -264,6 +322,28 @@ pub(in crate::runtime::expr) fn low_masked_source_any(expr: &SymExpr) -> Option<
         }
         _ => None,
     }
+}
+
+/// Returns `(a, d)` for the rounded product `(a / d) * d` in either operand order.
+pub(crate) fn rounded_product_operands<'a>(
+    left: &'a SymExpr,
+    right: &'a SymExpr,
+) -> Option<(&'a SymExpr, &'a SymExpr)> {
+    [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
+        let (dividend, divisor) = quotient.udiv_operands()?;
+        (divisor == factor).then_some((dividend, divisor))
+    })
+}
+
+/// Returns `a` for the Euclidean sum `(a / d) * d + a % d` in either operand order.
+fn euclidean_sum_dividend<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<&'a SymExpr> {
+    [(left, right), (right, left)].into_iter().find_map(|(product, remainder)| {
+        let SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) = remainder.kind() else {
+            return None;
+        };
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else { return None };
+        (rounded_product_operands(left, right) == Some((dividend, divisor))).then_some(dividend)
+    })
 }
 
 fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
@@ -467,6 +547,9 @@ impl SymExpr {
                         value
                     } else if let Some(value) = Self::add_with_const_ite(cx, &right, &left) {
                         value
+                    } else if let Some(dividend) = euclidean_sum_dividend(&left, &right) {
+                        // `(a / d) * d + a % d => a`.
+                        dividend.clone()
                     } else {
                         Self::from_kind(cx, SymExprKind::BinOp(binop, left, right))
                     }
@@ -481,6 +564,11 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a - a => 0`.
                 _ if left == right => Self::zero(cx),
+                // `a - a % d => (a / d) * d`.
+                (_, SymExprKind::BinOp(SymBinOp::URem, dividend, divisor)) if *dividend == left => {
+                    let quotient = Self::binop(cx, SymBinOp::UDiv, left, divisor.clone());
+                    Self::binop(cx, SymBinOp::Mul, quotient, divisor.clone())
+                }
                 // `bool_word(c) - 1 => ite(c, 0, MAX)`.
                 (_, SymExprKind::Const(value))
                     if *value == U256::ONE
@@ -1173,7 +1261,7 @@ impl SymExpr {
 
     pub(crate) fn low_byte(self, cx: &mut SymCx) -> Self {
         if let Some(word) = self.as_const() {
-            return Self::constant(cx, U256::from(word.to::<u8>()));
+            return Self::constant(cx, U256::from(word.byte(0)));
         }
         let mask = Self::constant(cx, U256::from(0xff));
         Self::binop(cx, SymBinOp::And, self, mask)
@@ -1245,6 +1333,38 @@ impl SymExpr {
         } else {
             Ok(None)
         }
+    }
+
+    /// Evaluates `self` under `model` and records the concrete preimage of every Keccak node it
+    /// folds, so a hash key pinned by path constraints still compares as a hash base.
+    pub(crate) fn eval_model_recording_keccak_preimages<M: SymbolicModelLookup + ?Sized>(
+        &self,
+        cx: &mut SymCx,
+        model: &M,
+    ) -> Result<U256, SymbolicError> {
+        let mut evaluator = ModelEvaluator::new(model);
+        let value = evaluator.eval_word(self)?;
+        let hashes = evaluator
+            .words
+            .iter()
+            .filter(|(expr, _)| matches!(expr.kind(), SymExprKind::Keccak { .. }))
+            .map(|(expr, hash)| (expr.clone(), *hash))
+            .collect::<Vec<_>>();
+        for (expr, hash) in hashes {
+            let SymExprKind::Keccak { len, bytes, .. } = expr.kind() else {
+                unreachable!("filtered keccak node")
+            };
+            let len = usize::try_from(evaluator.eval_word(len)?).expect("checked keccak length");
+            let bytes = bytes[..len]
+                .iter()
+                .map(|byte| {
+                    let byte = evaluator.eval_word(byte)? & U256::from(0xff);
+                    Ok(Self::constant(cx, byte))
+                })
+                .collect::<Result<Arc<[Self]>, SymbolicError>>()?;
+            cx.record_concrete_keccak_preimage(hash, bytes);
+        }
+        Ok(value)
     }
 
     pub(crate) fn assign_model_value(&self, model: &mut SymbolicModel, value: U256) -> bool {
@@ -1575,7 +1695,7 @@ impl SymExpr {
                     {
                         pending.push((left.clone(), false));
                     }
-                    SymExprKind::BinOp(SymBinOp::UDiv, left, _) => {
+                    SymExprKind::BinOp(SymBinOp::UDiv | SymBinOp::URem, left, _) => {
                         pending.push((left.clone(), false));
                     }
                     SymExprKind::TernOp(_, _, _, modulus) => {
@@ -1599,7 +1719,11 @@ impl SymExpr {
                     bit_widths[left].max(bit_widths[right]).saturating_add(1).min(256)
                 }
                 SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                    bit_widths[left].saturating_add(bit_widths[right]).min(256)
+                    match rounded_product_operands(left, right) {
+                        // `(a / d) * d <= a`, so the rounded product fits the dividend.
+                        Some((dividend, _)) => bit_widths[dividend],
+                        None => bit_widths[left].saturating_add(bit_widths[right]).min(256),
+                    }
                 }
                 SymExprKind::BinOp(SymBinOp::Shl, left, right) => right
                     .as_const()
@@ -1610,6 +1734,11 @@ impl SymExpr {
                     .and_then(|shift| usize::try_from(shift).ok())
                     .map_or(256, |shift| bit_widths[left].saturating_sub(shift).max(1)),
                 SymExprKind::BinOp(SymBinOp::UDiv, left, _) => bit_widths[left],
+                // `a % d <= a`, and `a % d < d` for a nonzero constant `d`.
+                SymExprKind::BinOp(SymBinOp::URem, left, right) => match right.as_const() {
+                    Some(divisor) if !divisor.is_zero() => bit_widths[left].min(divisor.bit_len()),
+                    _ => bit_widths[left],
+                },
                 SymExprKind::TernOp(_, _, _, modulus) => bit_widths[modulus],
                 SymExprKind::Ite(_, left, right) => bit_widths[left].max(bit_widths[right]),
                 _ => 256,
@@ -1660,8 +1789,10 @@ impl SymExpr {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => Some(self.extracted_byte(cx, index)),
             SymExprKind::Not(value) => {
+                // Complement within the byte, as a full-word `Not` would set the upper bits.
                 let value = value.byte_term(cx, index)?;
-                Some(Self::not(cx, value))
+                let mask = Self::constant(cx, U256::from(0xff));
+                Some(Self::binop(cx, SymBinOp::Xor, value, mask))
             }
             SymExprKind::Ite(cond, then_expr, else_expr) => {
                 let then_expr = then_expr.byte_term(cx, index)?;
@@ -1772,6 +1903,22 @@ impl SymExpr {
     ) -> Option<U256> {
         if self == expr {
             return Some(value);
+        }
+        // `x - c == v`, `c - x == v`, and `x + c == v` pin `x`, as solc's `iszero(sub(x, c))`
+        // form of `x == c` does.
+        if let SymExprKind::BinOp(op @ (SymBinOp::Sub | SymBinOp::Add), left, right) = self.kind() {
+            if let Some(constant) = right.as_const() {
+                let value = match op {
+                    SymBinOp::Sub => value.wrapping_add(constant),
+                    _ => value.wrapping_sub(constant),
+                };
+                return left.equality_forces_const(value, expr, context);
+            }
+            if *op == SymBinOp::Sub
+                && let Some(constant) = left.as_const()
+            {
+                return right.equality_forces_const(constant.wrapping_sub(value), expr, context);
+            }
         }
         self.equality_forces_const_inner(value, expr, context)
     }
@@ -1999,42 +2146,6 @@ impl SymExpr {
         folded.words.insert(self, expr.clone());
         expr
     }
-
-    pub(in crate::runtime::expr) fn write_smt(&self, cx: &SymCx, out: &mut String) {
-        match self.kind() {
-            SymExprKind::Const(value) => {
-                let _ = write!(out, "(_ bv{value} 256)");
-            }
-            SymExprKind::Var(symbol)
-            | SymExprKind::GasLeft(symbol)
-            | SymExprKind::Keccak { name: symbol, .. }
-            | SymExprKind::Hash { name: symbol, .. } => out.push_str(cx.symbol_name(*symbol)),
-            SymExprKind::Not(value) => {
-                out.push_str("(bvnot ");
-                value.write_smt(cx, out);
-                out.push(')');
-            }
-            SymExprKind::BinOp(op, left, right) => {
-                let _ = write!(out, "({} ", op.smt());
-                left.write_smt(cx, out);
-                out.push(' ');
-                right.write_smt(cx, out);
-                out.push(')');
-            }
-            SymExprKind::TernOp(op, left, right, modulus) => {
-                write_smt_wide_modular_arithmetic(cx, out, op.smt(), left, right, modulus);
-            }
-            SymExprKind::Ite(cond, left, right) => {
-                out.push_str("(ite ");
-                cond.write_smt(cx, out);
-                out.push(' ');
-                left.write_smt(cx, out);
-                out.push(' ');
-                right.write_smt(cx, out);
-                out.push(')');
-            }
-        }
-    }
 }
 
 // Branchless expression rewrites are optional. Bound both the distinct DAG nodes inspected while
@@ -2135,31 +2246,6 @@ impl UnfoldedNodeCounter {
     }
 }
 
-fn write_smt_wide_modular_arithmetic(
-    cx: &SymCx,
-    out: &mut String,
-    op: &'static str,
-    left: &SymExpr,
-    right: &SymExpr,
-    modulus: &SymExpr,
-) {
-    // if modulus == 0:
-    //   0
-    // else:
-    //   low_256((zext(left) op zext(right)) urem zext(modulus))
-    out.push_str("(ite (= ");
-    modulus.write_smt(cx, out);
-    out.push_str(" (_ bv0 256)) (_ bv0 256) ((_ extract 255 0) (bvurem (");
-    out.push_str(op);
-    out.push_str(" ((_ zero_extend 256) ");
-    left.write_smt(cx, out);
-    out.push_str(") ((_ zero_extend 256) ");
-    right.write_smt(cx, out);
-    out.push_str(")) ((_ zero_extend 256) ");
-    modulus.write_smt(cx, out);
-    out.push_str("))))");
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum SymTernOp {
     AddMod,
@@ -2240,8 +2326,20 @@ impl SymBinOp {
                     left % right
                 }
             }
-            Self::SDiv => i256_div(left, right),
-            Self::SRem => i256_mod(left, right),
+            Self::SDiv => {
+                if right.is_zero() {
+                    U256::ZERO
+                } else {
+                    I256::from_raw(left).wrapping_div(I256::from_raw(right)).into_raw()
+                }
+            }
+            Self::SRem => {
+                if right.is_zero() {
+                    U256::ZERO
+                } else {
+                    I256::from_raw(left).wrapping_rem(I256::from_raw(right)).into_raw()
+                }
+            }
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -2283,9 +2381,7 @@ pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: Sym
         && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
     {
         let hash = Into::<U256>::into(keccak256(concrete));
-        if len == 64 {
-            cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
-        }
+        cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
         return SymExpr::constant(cx, hash);
     }
 
@@ -2323,14 +2419,7 @@ pub(crate) fn create2_address_word(
             Ok((SymExpr::constant(cx, address_word(address)), address))
         }
         (None, Ok(initcode)) => {
-            let initcode_hash = keccak256(&initcode);
-            let word = symbolic_create2_address_word(
-                cx,
-                state,
-                format!("address:{creator:?}"),
-                salt,
-                format!("hash:{initcode_hash:?}"),
-            );
+            let word = create2_hash_address_word(cx, creator, salt, keccak256(&initcode));
             let address = state.world.symbolic_address_slot(word.clone());
             Ok((word, address))
         }
@@ -2367,6 +2456,9 @@ pub(crate) fn compute_create2_address_word(
         let init_code_hash = B256::from(init_code_hash);
         let address = deployer.create2(B256::from(salt), init_code_hash);
         return Ok(SymExpr::constant(cx, address_word(address)));
+    }
+    if let (Some(deployer), Some(init_code_hash)) = (deployer_concrete, init_code_hash_concrete) {
+        return Ok(create2_hash_address_word(cx, deployer, salt, B256::from(init_code_hash)));
     }
 
     let deployer_identity = deployer_identity(deployer_concrete, &deployer);
@@ -2435,6 +2527,26 @@ pub(crate) fn symbolic_create2_address_word(
     let word = SymExpr::get_var(cx, name);
     state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
     word
+}
+
+/// Builds `keccak256(0xff ++ deployer ++ salt ++ init_code_hash)` cut to an address.
+///
+/// The bytes match `abi.encodePacked` of the same values, so a test that predicts the address
+/// hashes the same preimage and the Keccak equality rewrite relates both.
+fn create2_hash_address_word(
+    cx: &mut SymCx,
+    deployer: Address,
+    salt: SymExpr,
+    init_code_hash: B256,
+) -> SymExpr {
+    let mut bytes = Vec::with_capacity(85);
+    bytes.push(SymExpr::constant(cx, U256::from(0xff)));
+    bytes.extend(deployer.iter().map(|byte| SymExpr::constant(cx, U256::from(*byte))));
+    bytes.extend((0..32).map(|index| byte_expr(cx, index, &salt)));
+    bytes.extend(init_code_hash.iter().map(|byte| SymExpr::constant(cx, U256::from(*byte))));
+    let hash = keccak_word(cx, bytes);
+    let mask = SymExpr::constant(cx, (U256::ONE << 160) - U256::ONE);
+    SymExpr::binop(cx, SymBinOp::And, hash, mask)
 }
 
 /// Identifies a deployer in a stable address symbol name.

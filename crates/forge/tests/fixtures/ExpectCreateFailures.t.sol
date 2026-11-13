@@ -17,6 +17,26 @@ contract OtherContract {
     }
 }
 
+contract Reverter {
+    constructor() {
+        revert();
+    }
+}
+
+contract Halter {
+    constructor() {
+        assembly {
+            invalid()
+        }
+    }
+}
+
+contract HalterFactory {
+    function deploy() external {
+        try new Halter() {} catch {}
+    }
+}
+
 contract ExpectCreateFailureTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     bytes contractBytecode =
@@ -58,5 +78,16 @@ contract ExpectCreateFailureTest is DSTest {
     function testShouldFailExpectCreate2WrongScheme() public {
         vm.expectCreate2(contractBytecode, address(this));
         new Contract();
+    }
+
+    function testShouldFailExpectCreateReverted() public {
+        vm.expectCreate(hex"", address(this));
+        try new Reverter() {} catch {}
+    }
+
+    function testShouldFailExpectCreateNestedHalt() public {
+        HalterFactory factory = new HalterFactory();
+        vm.expectCreate(hex"", address(factory));
+        factory.deploy();
     }
 }

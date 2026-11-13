@@ -1,25 +1,35 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{BundledState, remaining_unsigned_transactions_for_recovery},
+    broadcast::{
+        BundledState, refused_after_revert, remaining_operation_indices,
+        remaining_unsigned_transactions_for_recovery,
+    },
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
     receipts::is_mined_receipt_for,
     recovery::recovery_exists,
-    sequence::{ScriptSequenceKind, blocked_pending},
+    sequence::{DelegatedResolution, ScriptSequenceKind, blocked_pending},
     session::{SignerScope, script_session_expected_sender_if_configured},
 };
 use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
-    ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    external_compiler::is_builtin_compiler_source, fs::canonicalize_path, namespaced_storage,
+    ContractData, ContractsByArtifact, ContractsByArtifactBuilder,
+    compile::ProjectCompiler,
+    external_compiler::is_builtin_compiler_source,
+    fs::canonicalize_path,
+    namespaced_storage,
     provider::ProviderBuilder,
+    tempo::configurable_account::{
+        detect_configurable_account, parse_config, reaches_threshold, stored_owner_keys,
+    },
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -40,6 +50,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use tempo_alloy::TempoNetwork;
 
 /// Container for the compiled contracts.
 #[derive(Clone, Debug)]
@@ -356,11 +367,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             sequence.set_rpc_override(fork_url);
         }
 
-        let resolution = sequence.restore_delegated_pending(
+        let resolution = sequence.restore_delegated_pending(DelegatedResolution::new(
             self.args.resume_attempt,
             self.args.resume_tx_hash,
             self.args.resume_retry,
-        )?;
+        )?)?;
         if !self.args.batch {
             if let Some((sequence_index, _, attempt_id, hash)) = resolution {
                 let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
@@ -439,6 +450,15 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 _ => eyre::bail!("{}", errors.iter().format("\n")),
             }
         }
+        // Resume refuses new operations after a recorded revert. Saved attempts after it are still
+        // recovered, so it refuses here only once nothing is left to recover, and otherwise after
+        // the broadcast.
+        if let Some(err) = refused_after_revert(&sequence)
+            && (0..sequence.sequences().len())
+                .all(|index| remaining_operation_indices(&sequence, index).is_empty())
+        {
+            return Err(err);
+        }
         for deployment in sequence.sequences() {
             for hash in &deployment.reverted {
                 sh_warn!(
@@ -487,13 +507,26 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     &self.script_config.tempo,
                     &remaining_froms,
                 )?;
-                let has_available_signers = has_available_script_signers(
+                let session_scope = script_session_scope(
                     &self.script_config.tempo,
                     &self.args.wallets,
-                    &self.script_wallets,
                     expected_session_sender,
                     &remaining_transactions,
                 )?;
+                let has_available_signers = has_available_script_signers(
+                    &self.script_wallets,
+                    session_scope,
+                    &remaining_transactions,
+                )?;
+                let has_available_signers = configurable_account_signers_available(
+                    &self.script_config,
+                    &sequence,
+                    &self.script_wallets,
+                    &remaining_transactions,
+                    session_scope,
+                    has_available_signers,
+                )
+                .await?;
 
                 if has_available_signers {
                     (
@@ -611,16 +644,31 @@ fn progress_exists(path: &Path) -> bool {
     path.exists() || path.with_extension("previous").exists()
 }
 
-/// Returns whether every scoped signer needed for resume is already available.
+/// Returns the sender and chain that the selected Tempo session signs for, if any. The session is
+/// not resolved when no transaction remains.
 ///
 /// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
-/// session signer lives in the Accounts store instead, so resume needs to treat the session
-/// root account as available only on the chain covered by the session.
-fn has_available_script_signers(
+/// session signer lives in the Accounts store instead, so resume treats the session root account
+/// as available only on the chain covered by the session.
+fn script_session_scope(
     tempo: &TempoOpts,
     wallets: &MultiWalletOpts,
-    script_wallets: &Wallets,
     expected_sender: Option<Address>,
+    remaining: &[SignerScope],
+) -> Result<Option<SignerScope>> {
+    if remaining.is_empty() {
+        return Ok(None);
+    }
+    Ok(tempo
+        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
+        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account())))
+}
+
+/// Returns whether every scoped signer needed for resume is already available: a wallet of the
+/// sender, or the session in `session_scope`.
+fn has_available_script_signers(
+    script_wallets: &Wallets,
+    session_scope: Option<SignerScope>,
     remaining: &[SignerScope],
 ) -> Result<bool> {
     let signers = script_wallets
@@ -630,11 +678,85 @@ fn has_available_script_signers(
         return Ok(true);
     }
 
-    let session_scope = tempo
-        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account()));
-
     Ok(remaining.iter().all(|tx| signers.contains(&tx.sender) || session_scope == Some(*tx)))
+}
+
+/// Returns whether broadcast can sign every remaining transaction without running the script,
+/// given whether the wallets, sessions and access keys cover every sender (`available`).
+///
+/// The session in `session_scope` signs for its sender before any owner keys do, as broadcast
+/// selects it first, even for an upgraded account. On Tempo, any other sender that the chain
+/// reports as a configurable account signs with its owners, even when its own key is among the
+/// wallets, as the retired root key of an upgraded EOA is. It is ready only when its owner keys
+/// among the wallets, `--tempo.owner` and the Tempo Accounts store reach its threshold. Resume
+/// only publishes the saved transactions, so it runs the script again only to collect signers,
+/// such as keys from `vm.rememberKey`. When detection fails, resume runs the script as before.
+async fn configurable_account_signers_available<FEN: FoundryEvmNetwork>(
+    script_config: &ScriptConfig<FEN>,
+    sequence: &ScriptSequenceKind<FEN::Network>,
+    script_wallets: &Wallets,
+    remaining: &[SignerScope],
+    session_scope: Option<SignerScope>,
+    available: bool,
+) -> Result<bool> {
+    let tempo = &script_config.tempo;
+    if !script_config.evm_opts.networks.is_tempo() || tempo.eoa || remaining.is_empty() {
+        return Ok(available);
+    }
+    let signers = script_wallets
+        .signers()
+        .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
+    let config = tempo.configurable_account_config.as_deref().map(parse_config).transpose()?;
+    // Broadcast also signs with the `--tempo.owner` keys.
+    let Ok(owners) = tempo.owner_addresses().await else { return Ok(false) };
+    let keys = signers.iter().chain(&owners).copied().collect::<Vec<_>>();
+    let mut scopes = remaining.to_vec();
+    scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
+    scopes.dedup();
+    scopes.retain(|scope| session_scope != Some(*scope));
+    for scope in scopes {
+        let own_key = signers.contains(&scope.sender);
+        // As in broadcast, the configurable account options describe the account they name.
+        let explicit = !own_key || tempo.configurable_account == Some(scope.sender);
+        if !own_key && tempo.configurable_account.is_some_and(|account| account != scope.sender) {
+            return Ok(false);
+        }
+        // The endpoint broadcast uses, which honours `--rpc-url` on a single-chain resume.
+        let Some(rpc_url) = (0..sequence.sequences().len())
+            .find(|&i| sequence.sequences()[i].chain == scope.chain)
+            .map(|i| sequence.rpc_url(i))
+        else {
+            return Ok(false);
+        };
+        let provider =
+            ProviderBuilder::<TempoNetwork>::from_config_with_url(&script_config.config, rpc_url)?
+                .build()?;
+        let detected = detect_configurable_account(
+            &provider,
+            scope.sender,
+            &keys,
+            if explicit { config.clone() } else { None },
+            false,
+            BlockId::latest(),
+        )
+        .await;
+        match detected {
+            Ok(Some(config)) => {
+                let keys = keys
+                    .iter()
+                    .copied()
+                    .chain(stored_owner_keys(scope.chain, &config).iter().map(|key| key.address()))
+                    .collect::<Vec<_>>();
+                if !reaches_threshold(&config, &keys) {
+                    return Ok(false);
+                }
+            }
+            // Not a configurable account: its own key, a session or an access key signs.
+            Ok(None) if own_key || available => {}
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -660,16 +782,19 @@ mod tests {
     }
 
     #[test]
-    fn has_available_script_signers_skips_session_resolution_when_remaining_empty() {
-        let has_available = has_available_script_signers(
+    fn script_session_scope_skips_session_resolution_when_remaining_empty() {
+        let scope = script_session_scope(
             &TempoOpts { session: Some(B256::repeat_byte(0x99)), ..Default::default() },
             &MultiWalletOpts::default(),
-            &Wallets::new(Default::default(), None),
             None,
             &[],
         )
         .unwrap();
 
-        assert!(has_available);
+        assert_eq!(scope, None);
+        assert!(
+            has_available_script_signers(&Wallets::new(Default::default(), None), scope, &[])
+                .unwrap()
+        );
     }
 }

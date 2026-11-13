@@ -108,9 +108,13 @@ fn symbolic_limits_invariant_depth_changes_result(prj: _) {
         return;
     }
 
-    // `--symbolic` still runs the concrete invariant campaign, so keep it at depth 1 to let the
-    // symbolic depth decide whether the two-call sequence is found.
-    prj.update_config(|config| config.invariant.depth = 1);
+    // `--symbolic` still runs the concrete invariant campaign, so keep it to one call to let the
+    // symbolic depth decide whether the two-call sequence is found. Later runs may resume from
+    // snapshots of earlier runs, so a single run is needed as well as depth 1.
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
     prj.add_test(
         "SymbolicLimitsInvariantDepth.t.sol",
         r#"
@@ -156,7 +160,7 @@ Ran 1 test for test/SymbolicLimitsInvariantDepth.t.sol:SymbolicLimitsInvariantDe
 ╭---------------+----------+-------+---------+----------╮
 | Contract      | Selector | Calls | Reverts | Discards |
 +=======================================================+
-| LimitsCounter | inc      | 256   | 0       | 0        |
+| LimitsCounter | inc      | 1     | 0       | 0        |
 ╰---------------+----------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]

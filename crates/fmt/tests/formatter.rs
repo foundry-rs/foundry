@@ -1,10 +1,15 @@
 use forge_fmt::{DocCommentStyle, FormatterConfig};
-use foundry_config::fmt::IndentStyle;
+use foundry_config::fmt::{IndentStyle, SingleLineBlockStyle};
 use foundry_test_utils::init_tracing;
-use snapbox::{Data, assert_data_eq};
-use solar::sema::Compiler;
+use snapbox::{Data, assert_data_eq, str};
+use solar::{
+    ast::{self, Visit},
+    sema::Compiler,
+};
 use std::{
+    fmt::Write,
     fs,
+    ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -540,6 +545,247 @@ fn return_expression_comment_is_idempotent() {
     assert_eq!(format(source, Path::new("test.sol"), config), expected);
 }
 
+#[test]
+fn unmatched_disable_end_preserves_comments_and_nested_blocks() {
+    let source = r#"// forgefmt: disable-end
+// forgefmt: disable-end
+/**@notice Before disabled blocks.*/
+contract  Before {}
+// forgefmt: disable-start
+contract  OuterDisabled {}
+// forgefmt: disable-start
+contract  InnerDisabled {}
+// forgefmt: disable-end
+contract  StillDisabled {}
+// forgefmt: disable-end
+// forgefmt: disable-end
+/* Another comment. */
+/**
+ * @notice After disabled blocks.
+ */
+contract  After {}
+"#;
+
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+        assert_data_eq!(
+            format(source, Path::new("test.sol"), config),
+            str![[r#"
+// forgefmt: disable-end
+// forgefmt: disable-end
+/**
+ * @notice Before disabled blocks.
+ */
+contract Before {}
+
+// forgefmt: disable-start
+contract  OuterDisabled {}
+// forgefmt: disable-start
+contract  InnerDisabled {}
+// forgefmt: disable-end
+contract  StillDisabled {}
+// forgefmt: disable-end
+// forgefmt: disable-end
+/* Another comment. */
+/**
+ * @notice After disabled blocks.
+ */
+contract After {}
+
+"#]]
+        );
+    }
+}
+
+#[test]
+fn disable_directive_whitespace_preserves_doc_comments() {
+    for start_space in ["", " ", "  ", "\t"] {
+        for end_space in ["", " ", "  ", "\t"] {
+            let source = format!(
+                "// forgefmt:{start_space}disable-start\ncontract  A {{}}\n// forgefmt:{end_space}disable-end\n/**@notice format me*/\ncontract  B {{}}\n"
+            );
+            let expected = format!(
+                "// forgefmt:{start_space}disable-start\ncontract  A {{}}\n// forgefmt:{end_space}disable-end\n/**\n * @notice format me\n */\ncontract B {{}}\n"
+            );
+
+            for wrap_comments in [false, true] {
+                let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+                assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+            }
+        }
+    }
+}
+
+#[test]
+fn block_disable_directives_preserve_doc_comments() {
+    for disabled in [
+        "// forgefmt: disable-start\ncontract  A {}\n/**forgefmt:disable-end*/\n",
+        "/**forgefmt:disable-start*/\ncontract  A {}\n/**forgefmt:disable-end*/\n",
+        "/*forgefmt:disable-start*/\ncontract  A {}\n/*forgefmt:disable-end*/\n",
+        "/**forgefmt:disable-start\nforgefmt:disable-end*/\n",
+        "/*forgefmt:disable-start\nforgefmt:disable-end*/\n",
+    ] {
+        let source = format!("{disabled}/**@notice format me*/\ncontract  B {{}}\n");
+        let expected = format!("{disabled}/**\n * @notice format me\n */\ncontract B {{}}\n");
+        for wrap_comments in [false, true] {
+            let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+            assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+        }
+    }
+}
+
+#[test]
+fn disable_directives_between_comments_preserve_doc_comments() {
+    let disabled = "// before\n// forgefmt:disable-start\n// inside\ncontract  A {}\n// inside\n// forgefmt:disable-end\n// after\n";
+    let source = format!("{disabled}/**@notice format me*/\ncontract  B {{}}\n");
+    let expected = format!("{disabled}/**\n * @notice format me\n */\ncontract B {{}}\n");
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+        assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+    }
+}
+
+#[test]
+fn directive_like_text_preserves_doc_comments() {
+    for prefix in [
+        "// mention forgefmt: disable-start\n",
+        "// forgefmt: disable-start-invalid\n",
+        "/* mention forgefmt: disable-start */\n",
+        "contract A {\n    string constant TEXT = \"forgefmt: disable-start\";\n}\n\n",
+    ] {
+        let source = format!("{prefix}/**@notice format me*/\ncontract  B {{}}\n");
+        let expected = format!("{prefix}/**\n * @notice format me\n */\ncontract B {{}}\n");
+        for wrap_comments in [false, true] {
+            let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+            assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+        }
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_disable_directives() {
+    let source = "/// @notice Before\n/// forgefmt: disable-start\ncontract  A {}\n/// forgefmt: disable-end\n/// @notice After\ncontract  B {}\n";
+    let expected = "/// @notice Before\n/// forgefmt: disable-start\ncontract  A {}\n/// forgefmt: disable-end\n/// @notice After\ncontract B {}\n";
+    for wrap_comments in [true, false] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_directive_doc_groups() {
+    let source = "/// @notice Before\n/// forgefmt:disable-end\n/// @dev After\ncontract  A {}\n";
+    let expected = "/// @notice Before\n/// forgefmt:disable-end\n/// @dev After\ncontract A {}\n";
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_single_item_directives() {
+    for directive in ["disable-next-item", "disable-line"] {
+        let source = format!(
+            "/// @notice Before\n/// forgefmt:                     {directive}\n/// @dev After\ncontract  A {{}}\n\n/// @notice Unrelated\ncontract  B {{}}\n"
+        );
+        for docs_style in [DocCommentStyle::Preserve, DocCommentStyle::Line, DocCommentStyle::Block]
+        {
+            let unrelated = if docs_style == DocCommentStyle::Block {
+                "/**\n * @notice Unrelated\n */"
+            } else {
+                "/// @notice Unrelated"
+            };
+            let expected = format!(
+                "/// @notice Before\n/// forgefmt:                     {directive}\n/// @dev After\ncontract  A {{}}\n\n{unrelated}\ncontract B {{}}\n"
+            );
+            for wrap_comments in [false, true] {
+                let config = Arc::new(FormatterConfig {
+                    wrap_comments,
+                    docs_style,
+                    line_length: 40,
+                    ..Default::default()
+                });
+                assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+            }
+        }
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_next_line_directive_target() {
+    let source =
+        "/// @notice Before\n/// forgefmt: disable-next-line\n/// @dev After\ncontract  A {}\n";
+    let expected =
+        "/// @notice Before\n/// forgefmt: disable-next-line\n/// @dev After\ncontract A {}\n";
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            line_length: 20,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_trailing_directive_doc_groups() {
+    let source =
+        "contract A {} /// forgefmt: disable-next-item\n/// @notice Before\ncontract  B {}\n";
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), source);
+    }
+}
+
+#[test]
+fn directive_doc_groups_are_separate_from_regular_comments() {
+    let source = "// A long regular comment with enough words to exceed the configured width.\n/// @notice Before\n/// forgefmt:disable-end\n/// @dev After\ncontract  A {}\n";
+    for wrap_comments in [false, true] {
+        let regular = if wrap_comments {
+            "// A long regular comment with enough\n// words to exceed the configured width."
+        } else {
+            "// A long regular comment with enough words to exceed the configured width."
+        };
+        let expected = format!(
+            "{regular}\n/// @notice Before\n/// forgefmt:disable-end\n/// @dev After\ncontract A {{}}\n"
+        );
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            line_length: 40,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn doc_style_conversion_keeps_adjacent_regular_comments() {
+    let source = "contract A {\n    /// @notice a\n    // regular note\n    function f() external {}\n\n    // regular note\n    /// @notice b\n    function g() external {}\n\n    /// @notice c\n    //\n    function h() external {}\n}\n";
+    let expected = "contract A {\n    /**\n     * @notice a\n     */\n    // regular note\n    function f() external {}\n\n    // regular note\n    /**\n     * @notice b\n     */\n    function g() external {}\n\n    /**\n     * @notice c\n     */\n    //\n    function h() external {}\n}\n";
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }
@@ -738,6 +984,9 @@ fmt_tests! {
     SimpleComments,
     SortedImports,
     StatementBlock,
+    StatementBlockBodyComments,
+    StatementBlockModes,
+    StatementBlockSafety,
     StructDefinition,
     StructFieldAccess,
     ThisExpression,
@@ -968,8 +1217,366 @@ fn concatenated_string_trailing_comment_stays_after_last_literal() {
 }
 
 #[test]
+fn for_normalization_is_stable() {
+    for (header, source_body, normalized_body, inline_length) in [
+        ("for(uint i=0;i<n;i++)", "n++;", "n++;", 45),
+        ("for(uint i=0;i<n;i++)", "n += uint(n);", "n += uint256(n);", 57),
+    ] {
+        let source = format!(
+            "contract C {{ function f() external {{ uint256 n; {header} {source_body} }} }}"
+        );
+        for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+            for line_length in [inline_length - 1, inline_length] {
+                let body = if line_length < inline_length {
+                    format!("{{\n            {normalized_body}\n        }}")
+                } else {
+                    normalized_body.into()
+                };
+                let expected = format!(
+                    "contract C {{\n    function f() external {{\n        uint256 n;\n        for (uint256 i = 0; i < n; i++) {body}\n    }}\n}}\n"
+                );
+                let config = Arc::new(FormatterConfig {
+                    line_length,
+                    single_line_statement_blocks: style,
+                    ..Default::default()
+                });
+                assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn existing_condition_layouts_are_preserved() {
+    for source in [
+        r#"contract C {
+    function f() external {
+        if (_sel == this.superchainConfigProxy.selector) _superchainConfigProxy = _addr;
+        else if (_sel == this.delayedWethPermissionlessGameProxy.selector) _delayedWethPermissionlessGameProxy = _addr;
+        else revert("unknown address selector");
+    }
+}
+"#,
+        r#"contract C {
+    function f() external {
+        for (uint256 i; i < logs.length; ++i) {
+            Vm.Log memory entry = logs[i];
+            if (entry.emitter != address(hook) || entry.topics.length == 0 || entry.topics[0] != NATIVE_FEE_PAID_TOPIC) continue;
+            ++count;
+        }
+    }
+}
+"#,
+    ] {
+        let config = Arc::new(FormatterConfig { line_length: 120, ..Default::default() });
+        assert_eq!(format(source, Path::new("test.sol"), config), source);
+    }
+}
+
+/// Records statement nesting while ignoring braces around a single non-declaration statement.
+fn statement_structure(source: &str) -> String {
+    let mut compiler = Compiler::new(
+        solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
+    );
+    compiler.enter_mut(|c| {
+        let file = c
+            .sess()
+            .source_map()
+            .new_source_file(solar::interface::source_map::FileName::Stdin, source)
+            .unwrap();
+        let mut parser = c.parse();
+        parser.set_resolve_imports(false);
+        parser.add_file(file.clone());
+        parser.parse();
+        c.dcx().has_errors().unwrap();
+        let gcx = c.gcx();
+        let (_, source) = gcx.get_ast_source(&file.name).unwrap();
+        let mut visitor = StatementStructure::default();
+        let _ = visitor.visit_source_unit(source.ast.as_ref().unwrap());
+        visitor.0
+    })
+}
+
+#[derive(Default)]
+struct StatementStructure(String);
+
+impl<'ast> Visit<'ast> for StatementStructure {
+    type BreakValue = ();
+
+    fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
+        if let ast::StmtKind::Block(block) = &stmt.kind
+            && let [child] = block.stmts.as_slice()
+            && !matches!(child.kind, ast::StmtKind::DeclSingle(_) | ast::StmtKind::DeclMulti(..))
+        {
+            return self.visit_stmt(child);
+        }
+        write!(self.0, "{:?}", std::mem::discriminant(&stmt.kind)).unwrap();
+        self.walk_stmt(stmt)?;
+        self.0.push(')');
+        ControlFlow::Continue(())
+    }
+}
+
+#[test]
+fn inlined_loops_preserve_else_binding() {
+    for then in [
+        "for (;;) { if (b) x(); }",
+        "{ for (;;) { if (b) x(); } }",
+        "for (;;) while (b) { if (c) x(); }",
+        "while (b) for (;;) { if (c) x(); }",
+        "for (;;) { if (b) x(); else y(); }",
+        "for (;;) { if (b) { if (c) x(); } else y(); }",
+    ] {
+        let source =
+            format!("contract C {{ function f() external {{ if (a) {then} else z(); }} }}");
+        let expected = statement_structure(&source);
+        for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+            let config = Arc::new(FormatterConfig {
+                line_length: 120,
+                single_line_statement_blocks: style,
+                ..Default::default()
+            });
+            let actual = format(&source, Path::new("test.sol"), config);
+            assert_eq!(expected, statement_structure(&actual), "{style:?}\n{source}\n{actual}");
+        }
+    }
+}
+
+#[test]
+fn for_header_at_line_limit_keeps_nested_body_stable() {
+    let source = "contract C { function f() external { for (uint i=0;i<n;++i) { while (b) { if (c) x(); } } y(); } }";
+    let expected = "contract C {\n    function f() external {\n        for (uint256 i = 0; i < n; ++i) {\n            while (b) if (c) x();\n        }\n        y();\n    }\n}\n";
+    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+        let config = Arc::new(FormatterConfig {
+            line_length: 40,
+            single_line_statement_blocks: style,
+            ..Default::default()
+        });
+        assert_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn body_trailing_block_comment_spacing_keeps_braces() {
+    let expected = "contract C {\n    function f() external {\n        for (;;) {\n            break; /* aaaaaaaaa bbbbbbbbb */\n        }\n    }\n}\n";
+    let config = Arc::new(FormatterConfig {
+        line_length: 40,
+        single_line_statement_blocks: SingleLineBlockStyle::Single,
+        ..Default::default()
+    });
+    for spacing in ["", " "] {
+        let source = format!(
+            "contract C {{ function f() external {{ for (;;) {{ break;{spacing}/* aaaaaaaaa bbbbbbbbb */ }} }} }}"
+        );
+        assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
+    }
+}
+
+#[test]
+fn for_body_assignment_spacing_is_stable() {
+    for (nested, line_lengths, paddings) in [
+        (false, &[36, 37][..], &[20][..]),
+        (false, &[40][..], &[65_516][..]),
+        (true, &[40][..], &[20, 65_516][..]),
+    ] {
+        let statement = if nested { "g(variable = h() + b);" } else { "variable = g() + b;" };
+        for &padding in paddings {
+            let spacing = " ".repeat(padding);
+            let body = if nested {
+                format!("g(variable = h({spacing}) + b);")
+            } else {
+                format!("variable = g({spacing}) + b;")
+            };
+            let source = format!(
+                "contract C {{ function f(uint256 b) external {{ uint256 variable; for (;;) {body} }} }}"
+            );
+            for &line_length in line_lengths {
+                let body = if line_length == 36 {
+                    format!("for (;;) {{\n            {statement}\n        }}")
+                } else {
+                    format!("for (;;) {statement}")
+                };
+                let expected = format!(
+                    "contract C {{\n    function f(uint256 b) external {{\n        uint256 variable;\n        {body}\n    }}\n}}\n"
+                );
+                for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+                    let config = Arc::new(FormatterConfig {
+                        line_length,
+                        single_line_statement_blocks: style,
+                        ..Default::default()
+                    });
+                    assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn for_nested_body_tail_comments_keep_braces() {
+    for header in ["while (a)", "if (a)"] {
+        let source = format!(
+            r#"contract C {{
+    function f(bool a) external {{
+        for (;;) {{
+            {header} {{
+                break; // tail
+            }}
+        }}
+    }}
+}}
+"#
+        );
+        let expected = format!(
+            r#"contract C {{
+    function f(bool a) external {{
+        for (;;) {{
+            {header} break; // tail
+        }}
+    }}
+}}
+"#
+        );
+        let config = Arc::new(FormatterConfig {
+            single_line_statement_blocks: SingleLineBlockStyle::Single,
+            ..Default::default()
+        });
+        assert_data_eq!(format(&source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
 fn fractional_and_wide_number_literals() {
     let source = "contract C { function f() external { 1.25e-2; 1e100; 1.2e3; } }";
     let expected = "contract C {\n    function f() external {\n        1.25e-2;\n        1e100;\n        1.2e3;\n    }\n}\n";
     assert_eq!(format(source, Path::new("test.sol"), Arc::default()), expected);
+}
+
+#[test]
+fn wrapped_for_header_keeps_body_braces() {
+    let source = "contract C { function f() external { for (uint i = f() + g(); i < n; i += 2) x = g() + b; y(); } }";
+    let expected = r#"contract C {
+    function f() external {
+        for (
+            uint256 i = f() + g(); i < n; i += 2) {
+            x = g() + b;
+        }
+        y();
+    }
+}
+"#;
+    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+        let config = Arc::new(FormatterConfig {
+            line_length: 50,
+            single_line_statement_blocks: style,
+            ..Default::default()
+        });
+        assert_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn body_tail_comments_keep_braces() {
+    for header in ["for (;;)", "if (a)", "while (a)"] {
+        let source = format!(
+            "contract C {{ function f() external {{ {header} {{ x = g() /* tail */; }} y(); }} }}"
+        );
+        let expected = format!(
+            "contract C {{\n    function f() external {{\n        {header} {{\n            x = g(); /* tail */\n        }}\n        y();\n    }}\n}}\n"
+        );
+        let config = Arc::new(FormatterConfig {
+            single_line_statement_blocks: SingleLineBlockStyle::Single,
+            ..Default::default()
+        });
+        assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn nested_for_headers_keep_parent_braces() {
+    for (prefix, line_length, expected_body) in [
+        ("if(a)", 50, "if (a) {\n            for (uint256 i = 0; i < n; ++i) x();\n        }"),
+        (
+            "while(a)",
+            53,
+            "while (a) {\n            for (uint256 i = 0; i < n; ++i) x();\n        }",
+        ),
+        (
+            "if(a)while(b)",
+            61,
+            "if (a) {\n            while (b) {\n                for (uint256 i = 0; i < n; ++i) x();\n            }\n        }",
+        ),
+    ] {
+        let source = format!(
+            "contract C {{ function f() external {{ {prefix}for(uint i=0;i<n;++i)x(); y(); }} }}"
+        );
+        let expected = format!(
+            "contract C {{\n    function f() external {{\n        {expected_body}\n        y();\n    }}\n}}\n"
+        );
+        for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+            let config = Arc::new(FormatterConfig {
+                line_length,
+                single_line_statement_blocks: style,
+                ..Default::default()
+            });
+            assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+        }
+    }
+}
+
+#[test]
+fn assignment_rhs_leading_comment_keeps_member_chain_layout() {
+    let source = "contract C { function f() external { value = /* lead */ factory.first(\na, b\n).second(); } }";
+    let expected = r#"contract C {
+    function f() external {
+        value = /* lead */
+            factory.first(a, b).second();
+    }
+}
+"#;
+    let config =
+        Arc::new(FormatterConfig { line_length: 46, bracket_spacing: true, ..Default::default() });
+    assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+}
+
+#[test]
+fn preserve_statement_body_line_breaks() {
+    for header in ["for (;;)", "if (a)", "while (a)"] {
+        for (spacing, body) in [
+            (" ", " x();"),
+            ("\n", " {\n            x();\n        }"),
+            ("\r\n", " {\n            x();\n        }"),
+        ] {
+            let source =
+                format!("contract C {{ function f() external {{ {header}{spacing}x(); }} }}");
+            let expected = format!(
+                "contract C {{\n    function f() external {{\n        {header}{body}\n    }}\n}}\n"
+            );
+            assert_data_eq!(format(&source, Path::new("test.sol"), Arc::default()), expected);
+        }
+    }
+}
+
+#[test]
+fn wrapped_line_tail_comment_keeps_for_body_braces() {
+    let source = r#"contract C { function f() external { for (;;) { break; // aaaaaaaaa bbbbbbbbb ccccccccc ddddddddd eeeeeeeee fffffffff
+} y(); } }
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        for (;;) {
+            break; // aaaaaaaaa bbbbbbbbb ccccccccc
+            // ddddddddd eeeeeeeee fffffffff
+        }
+        y();
+    }
+}
+"#;
+    let config = Arc::new(FormatterConfig {
+        line_length: 40,
+        wrap_comments: true,
+        single_line_statement_blocks: SingleLineBlockStyle::Single,
+        ..Default::default()
+    });
+    assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
 }

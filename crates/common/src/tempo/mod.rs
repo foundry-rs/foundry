@@ -1,6 +1,7 @@
 //! Tempo network utilities.
 
 pub mod auth;
+pub mod configurable_account;
 
 use crate::FoundryTransactionBuilder;
 use alloy_network::{Network, TransactionBuilder};
@@ -9,13 +10,22 @@ use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
 use eyre::{Context, Result};
-use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
+use foundry_wallets::{
+    RawWalletOpts, TempoWalletSpec, WalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner,
+};
 use std::sync::Arc;
 pub use tempo_alloy::contracts::precompiles::PATH_USD_ADDRESS;
-use tempo_alloy::contracts::precompiles::{
-    IFeeManager, IStablecoinDEX, ITIP20, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+use tempo_alloy::{
+    TempoNetwork,
+    accounts::TempoAccountsWallet,
+    contracts::precompiles::{
+        IFeeManager, IStablecoinDEX, ITIP20, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+    },
 };
-use tempo_primitives::TempoAddressExt;
+use tempo_primitives::{
+    TempoAddressExt,
+    transaction::{KeyAuthorization, SignedKeyAuthorization},
+};
 
 mod hardfork;
 mod keystore;
@@ -30,6 +40,7 @@ pub(crate) use auth::is_known_tempo_endpoint;
 pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
 pub use hardfork::{
     active_tempo_hardfork, ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
+    mark_sponsored_gas_estimation,
 };
 pub use keystore::*;
 pub use lane::{PaymentLane, PaymentLaneClassification, PaymentLaneReason, classify_payment_lane};
@@ -284,10 +295,14 @@ where
     let is_aa = tx.is_tempo_aa();
     let tx_from = tx.from();
 
-    // A stored fee-token preference would classify a contract creation as Tempo AA, but AA
-    // transactions require a non-empty call list. Leave CREATE requests as Ethereum transactions;
-    // the protocol still applies the account's stored fee-token preference when charging fees.
-    if !has_call_list && calls.iter().any(|(to, _)| to.is_create()) {
+    // A resolved fee token would classify the request as Tempo AA. AA transactions require a
+    // non-empty call list, which a contract creation lacks, and carry authorizations in their own
+    // list, so an EIP-7702 request would silently lose its Ethereum authorization list. Leave both
+    // as Ethereum transactions; the protocol selects the same fee token for them when charging
+    // fees.
+    if (!has_call_list && calls.iter().any(|(to, _)| to.is_create()))
+        || (!is_aa && tx.authorization_list().is_some_and(|auths| !auths.is_empty()))
+    {
         return Ok(None);
     }
 
@@ -466,4 +481,78 @@ where
         }
     }
     Ok(())
+}
+
+/// Resolves the signer and Tempo Accounts wallet selected by `wallet`, pinning the Tempo wallet
+/// to `chain_id` when given.
+///
+/// `foundry-wallets` only describes the Tempo wallet so that it does not link its own
+/// `tempo-alloy`; the wallet is built here with Foundry's.
+pub async fn maybe_signer(
+    wallet: &WalletOpts,
+    chain_id: Option<u64>,
+) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+    let (signer, spec) = wallet.maybe_signer().await?;
+    let tempo_wallet = match spec {
+        None => None,
+        Some(TempoWalletSpec::AccessKey { root_account, signer }) => {
+            Some(TempoAccountsWallet::from_secp256k1(root_account, signer, None))
+        }
+        Some(TempoWalletSpec::Store { from }) => {
+            match TempoAccountsWallet::try_from_default_store()? {
+                Some(store) if store.has_account(from)? => Some(store),
+                _ => None,
+            }
+        }
+    };
+    let tempo_wallet = match chain_id {
+        Some(chain_id) => tempo_wallet.map(|wallet| wallet.with_chain_id(chain_id)),
+        None => tempo_wallet,
+    };
+    Ok((signer, tempo_wallet))
+}
+
+/// Asks the browser wallet to sign `authorization` with its connected root account, and verifies
+/// the result.
+///
+/// The browser wallet cannot display T5/T6 fields (witness, account, admin) yet, so callers must
+/// reject them before starting the browser flow.
+pub async fn sign_key_authorization_with_browser(
+    browser: &BrowserSigner<TempoNetwork>,
+    authorization: KeyAuthorization,
+) -> Result<SignedKeyAuthorization> {
+    let signed = browser
+        .sign_key_authorization(
+            serde_json::to_value(&authorization)?,
+            authorization.chain_id,
+            authorization.signature_hash(),
+        )
+        .await?;
+    verify_browser_key_authorization(&signed, &authorization, browser.address())
+}
+
+/// Decodes a `SignedKeyAuthorization` returned by the browser wallet and checks that it signs
+/// exactly `requested` and recovers to `root_account`.
+fn verify_browser_key_authorization(
+    signed: &[u8],
+    requested: &KeyAuthorization,
+    root_account: Address,
+) -> Result<SignedKeyAuthorization> {
+    let signed = alloy_rlp::decode_exact::<SignedKeyAuthorization>(signed)
+        .wrap_err("invalid SignedKeyAuthorization RLP from wallet")?;
+    eyre::ensure!(
+        signed.authorization() == requested,
+        "wallet returned a mutated KeyAuthorization payload: signed digest {} but requested {}",
+        signed.authorization().signature_hash(),
+        requested.signature_hash(),
+    );
+    let recovered = signed
+        .recover_signer()
+        .wrap_err("wallet returned an unrecoverable SignedKeyAuthorization signature")?;
+    eyre::ensure!(
+        recovered == root_account,
+        "wallet returned a SignedKeyAuthorization signed by {recovered} but the connected root \
+         account is {root_account}"
+    );
+    Ok(signed)
 }

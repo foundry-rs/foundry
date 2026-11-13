@@ -1,24 +1,33 @@
 //! CLI tests for shared Tempo transaction options.
 
-use alloy_eips::eip2718::Decodable2718;
-use alloy_network::{ReceiptResponse, TransactionBuilder};
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+use alloy_network::{AnyNetwork, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, U256, address, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::{SolEvent, SolValue};
+use alloy_signer::Signer;
+use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use anvil::NodeConfig;
 use foundry_cli::utils::parse_json;
-use foundry_evm::core::tempo::PATH_USD_ADDRESS;
+use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
 use foundry_test_utils::util::OutputExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempo_contracts::precompiles::{
-    CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee, IReceivePolicyGuard, IRolesAuth, ITIP20,
-    ITIP20Factory, ITIP403Registry, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+    CONFIGURABLE_ACCOUNT_ADDRESS, CURRENT_COMMITTEE_ADDRESS, IConfigurableAccount,
+    ICurrentCommittee, IReceivePolicyGuard, IRolesAuth, ITIP20, ITIP20Factory, ITIP403Registry,
+    NONCE_PRECOMPILE_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
     TIP403_REGISTRY_ADDRESS,
 };
 use tempo_hardfork::TempoHardfork;
-use tempo_primitives::TempoTxEnvelope;
+use tempo_primitives::{
+    TempoSignature, TempoTransaction, TempoTxEnvelope,
+    transaction::{
+        Call, ConfigurableAccountConfig, ConfigurableAccountOwner, ConfigurableAccountSignature,
+        PrimitiveSignature, configurable_account_digest,
+    },
+};
 
 fn json_success_data(output: &str) -> serde_json::Value {
     let envelope: serde_json::Value = parse_json(output.trim()).expect("command emits JSON");
@@ -1807,6 +1816,404 @@ fn tip20_role_commands_reject_unknown_role_names(cmd: _) {
 error: invalid value 'minter' for '<ROLE>': unknown TIP-20 role `minter`; expected one of admin, issuer, pause, unpause, burn-blocked, burn-at, or a 32-byte role hash
 
 For more information, try '--help'.
+
+"#]]);
+}
+
+/// Returns a protocol-lane Tempo transaction with `nonce` that pays its fees in PathUSD.
+async fn t14_tempo_tx(
+    provider: &impl Provider<AnyNetwork>,
+    nonce: u64,
+    calls: Vec<Call>,
+) -> TempoTransaction {
+    let base_fee = provider.get_gas_price().await.unwrap();
+    TempoTransaction {
+        chain_id: provider.get_chain_id().await.unwrap(),
+        fee_token: Some(ALPHA_USD_ADDRESS),
+        max_priority_fee_per_gas: base_fee / 10,
+        max_fee_per_gas: base_fee * 2,
+        gas_limit: 5_000_000,
+        calls,
+        nonce,
+        ..Default::default()
+    }
+}
+
+/// Returns the approval of every owner of `config` whose key is in `owners` over `tx` for the
+/// configurable `account`.
+async fn configurable_account_signature(
+    account: Address,
+    config: &ConfigurableAccountConfig,
+    owners: &[PrivateKeySigner],
+    tx: &TempoTransaction,
+) -> TempoSignature {
+    let digest = configurable_account_digest(tx.signature_hash(), account, config.version);
+    let mut signatures = Vec::new();
+    for owner in &config.owners {
+        if let Some(key) = owners.iter().find(|key| key.address() == owner.owner) {
+            signatures.push(PrimitiveSignature::Secp256k1(key.sign_hash(&digest).await.unwrap()));
+        }
+    }
+    TempoSignature::ConfigurableAccount(
+        ConfigurableAccountSignature::try_new(account, config.clone(), signatures).unwrap(),
+    )
+}
+
+/// Returns `config`'s owners as `IConfigurableAccount` encodes them.
+fn abi_owners(
+    config: &ConfigurableAccountConfig,
+) -> Vec<IConfigurableAccount::ConfigurableAccountOwner> {
+    config
+        .owners
+        .iter()
+        .map(|owner| IConfigurableAccount::ConfigurableAccountOwner {
+            owner: owner.owner,
+            weight: owner.weight,
+        })
+        .collect()
+}
+
+/// `cast run` forks a T14 node at the parent of each `0x05` transaction of a configurable account,
+/// replays the block up to it, and reproduces the status and gas the node charged: the
+/// transaction that registers the account, its `updateConfig`, and a later transaction that the
+/// updated owners authorize. The last two read the configuration commitment, which the account
+/// extension stores, from the fork. No public Tempo network schedules T14 yet, so the node is a
+/// local Anvil T14 node.
+#[casttest]
+async fn tempo_t14_configurable_account_run_fork_replay_matches_node(cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let provider = handle.http_provider();
+    let rpc = handle.http_endpoint();
+    let sender = handle.dev_wallets().next().unwrap();
+
+    let owners =
+        [0x11, 0x22].map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
+    let mut config = ConfigurableAccountConfig {
+        salt: B256::repeat_byte(0x5a),
+        version: 0,
+        threshold: 2,
+        owners: owners
+            .iter()
+            .map(|key| ConfigurableAccountOwner { owner: key.address(), weight: 1 })
+            .collect(),
+    };
+    config.owners.sort_by_key(|owner| owner.owner);
+    let account = config.derive_account().unwrap();
+    api.anvil_deal_tip20(account, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+
+    let call = |to: Address, input: Vec<u8>| Call {
+        to: to.into(),
+        value: U256::ZERO,
+        input: input.into(),
+    };
+    let get_commitment = IConfigurableAccount::getConfigCommitmentCall { account }.abi_encode();
+    let target = Address::repeat_byte(0x73);
+
+    // A primitive transaction precedes the registration in its block, so replay has to run it
+    // first. The registration batch calls the same target twice, which T14 charges as one cold
+    // access.
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let tx = t14_tempo_tx(&provider, 0, vec![call(target, vec![])]).await;
+    let signature = sender.sign_hash(&tx.signature_hash()).await.unwrap();
+    let primitive = *provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(tx.into_signed(signature.into())).encoded_2718())
+        .await
+        .unwrap()
+        .tx_hash();
+    let tx = t14_tempo_tx(
+        &provider,
+        0,
+        vec![
+            call(CONFIGURABLE_ACCOUNT_ADDRESS, get_commitment),
+            call(target, vec![]),
+            call(target, vec![]),
+        ],
+    )
+    .await;
+    let signature = configurable_account_signature(account, &config, &owners, &tx).await;
+    let registration = *provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(tx.into_signed(signature)).encoded_2718())
+        .await
+        .unwrap()
+        .tx_hash();
+    api.evm_mine(None).await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    let primitive = provider.get_transaction_receipt(primitive).await.unwrap().unwrap();
+    let registered = provider.get_transaction_receipt(registration).await.unwrap().unwrap();
+    assert_eq!(registered.block_number, primitive.block_number);
+    assert_eq!(registered.transaction_index, Some(1));
+
+    // The registered account rotates its owners to threshold one over keys `0x22..22` and
+    // `0x44..44`, then key `0x44..44` alone authorizes a transaction, each in a later block.
+    let keys =
+        [0x22, 0x44].map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
+    let mut rotated = ConfigurableAccountConfig {
+        salt: config.salt,
+        version: 1,
+        threshold: 1,
+        owners: keys
+            .iter()
+            .map(|key| ConfigurableAccountOwner { owner: key.address(), weight: 1 })
+            .collect(),
+    };
+    rotated.owners.sort_by_key(|owner| owner.owner);
+    let update = IConfigurableAccount::updateConfigCall {
+        current: IConfigurableAccount::ConfigurableAccountConfig {
+            salt: config.salt,
+            version: config.version,
+            threshold: config.threshold,
+            owners: abi_owners(&config),
+        },
+        threshold: rotated.threshold,
+        owners: abi_owners(&rotated),
+    };
+    let tx = t14_tempo_tx(
+        &provider,
+        1,
+        vec![call(CONFIGURABLE_ACCOUNT_ADDRESS, update.abi_encode()), call(target, vec![])],
+    )
+    .await;
+    let signature = configurable_account_signature(account, &config, &owners, &tx).await;
+    let update = provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(tx.into_signed(signature)).encoded_2718())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash();
+    let get_commitment = IConfigurableAccount::getConfigCommitmentCall { account }.abi_encode();
+    let tx = t14_tempo_tx(
+        &provider,
+        2,
+        vec![call(CONFIGURABLE_ACCOUNT_ADDRESS, get_commitment), call(target, vec![])],
+    )
+    .await;
+    let signature = configurable_account_signature(account, &rotated, &keys[1..], &tx).await;
+    let rotated_tx = provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(tx.into_signed(signature)).encoded_2718())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash();
+
+    // Replay forks at each transaction's parent block. The account is unregistered at the
+    // registration's parent and registered with its commitment at the others'.
+    let hashes = [(registration, true), (update, true), (rotated_tx, true)];
+    for (hash, succeeds) in hashes {
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert_eq!(receipt.status(), succeeds, "{receipt:?}");
+        assert_eq!(receipt.from, account);
+        let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        assert!(signed.signature().is_configurable_account());
+
+        cmd.cast_fuse();
+        cmd.env("FOUNDRY_HARDFORK", "tempo:T14");
+        let output = cmd.args(["run", &hash.to_string(), "--rpc-url", &rpc]).assert_success();
+        let stdout = output.get_output().stdout_lossy();
+        let stderr = output.get_output().stderr_lossy();
+        assert_eq!(stdout.contains("Transaction successfully executed."), succeeds, "{stdout}");
+        assert_eq!(stderr.contains("Error: Transaction failed."), !succeeds, "{stderr}");
+        let gas = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("Gas used: ")?.trim().parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("`cast run` printed no gas for {hash}:\n{stdout}"));
+        assert_eq!(gas, receipt.gas_used, "replayed {hash}:\n{stdout}");
+    }
+}
+
+// From T14 a sponsored transaction pays to load its fee payer's account, which checks the fee
+// payer's root key, so its gas estimate must include that access. Before T14 it must not.
+#[casttest]
+async fn tempo_sponsored_send_estimate_covers_fee_payer_access(cmd: _) {
+    for hardfork in [TempoHardfork::T13, TempoHardfork::T14] {
+        let (_, handle) =
+            anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+        let rpc = handle.http_endpoint();
+        let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
+        let sponsor_key =
+            format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
+
+        let receipt = cmd
+            .cast_fuse()
+            .args([
+                "send",
+                "0x7373737373737373737373737373737373737373",
+                "--private-key",
+                &hex::encode_prefixed(wallets[0].credential().to_bytes()),
+                "--tempo.sponsor",
+                &wallets[1].address().to_string(),
+                "--tempo.sponsor-signer",
+                &sponsor_key,
+                "--json",
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let hash = serde_json::from_str::<serde_json::Value>(&receipt).unwrap()["transactionHash"]
+            .as_str()
+            .unwrap()
+            .parse::<B256>()
+            .unwrap();
+
+        let provider = handle.http_provider();
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status(), "{hardfork:?}: {receipt:?}");
+        let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        assert!(signed.tx().fee_payer_signature.is_some());
+        assert_eq!(signed.tx().gas_limit, receipt.gas_used, "{hardfork:?}");
+    }
+}
+
+/// Transactions on a Tempo 2D nonce lane take the lane's own nonce, not the protocol nonce, for
+/// an EOA, an access key and a configurable account sender.
+#[casttest]
+async fn tempo_nonce_key_lane_uses_lane_nonce(cmd: _) {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let target = Address::repeat_byte(0x73).to_string();
+    let (eoa, eoa_key) = dev_account(&handle, 0);
+    let (root, root_key) = dev_account(&handle, 1);
+    let (account, account_key) = dev_account(&handle, 2);
+    let access_key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x51)).unwrap();
+    let owner = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x52)).unwrap();
+
+    // Each sender's first transaction advances its protocol nonce to 1, so a lane nonce taken
+    // from it is 1 instead of 0.
+    cmd.cast_fuse()
+        .args(["send", &target, "--private-key", &eoa_key, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["keychain", "authorize", &access_key.address().to_string()])
+        .args(["--private-key", &root_key, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["wallet", "upgrade", "--owner", &owner.address().to_string(), "--threshold", "1"])
+        .args(["--private-key", &account_key, "--rpc-url", &rpc, "--force"])
+        .assert_success();
+
+    let access_key = hex::encode_prefixed(access_key.to_bytes());
+    let owner = hex::encode_prefixed(owner.to_bytes());
+    let (eoa, root, account) = (eoa.to_string(), root.to_string(), account.to_string());
+    let senders: [(&str, &[&str]); 3] = [
+        (&eoa, &["--private-key", &eoa_key]),
+        (&root, &["--tempo.access-key", &access_key, "--tempo.root-account", &root]),
+        (&account, &["--from", &account, "--private-key", &owner]),
+    ];
+    for (sender, signer) in senders {
+        // Without the lane nonce the first transaction is never mined, so time out early.
+        for command in [&["send", &target][..], &["batch-send", "--call", &target]] {
+            cmd.cast_fuse()
+                .args(command)
+                .args(signer)
+                .args(["--tempo.nonce-key", "42", "--timeout", "10", "--rpc-url", &rpc])
+                .assert_success();
+        }
+
+        cmd.cast_fuse()
+            .args(["call", &NONCE_PRECOMPILE_ADDRESS.to_string()])
+            .args(["getNonce(address,uint256)(uint64)", sender, "42", "--rpc-url", &rpc])
+            .assert_success()
+            .stdout_eq(str![[r#"
+2
+
+"#]]);
+        cmd.cast_fuse().args(["nonce", sender, "--rpc-url", &rpc]).assert_success().stdout_eq(
+            str![[r#"
+1
+
+"#]],
+        );
+    }
+}
+
+/// `--auth` on a Tempo nonce lane or expiring nonce transaction is carried in the AA
+/// authorization list and signed with the sender's protocol nonce, which these transactions do
+/// not bump.
+#[casttest]
+async fn tempo_nonce_key_auth_uses_protocol_nonce(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let (sender, key) = dev_account(&handle, 0);
+    let sender = sender.to_string();
+
+    // A protocol nonce of 3 differs from both the lane nonce plus one and itself plus one.
+    for _ in 0..3 {
+        cmd.cast_fuse()
+            .args(["send", &Address::repeat_byte(0x73).to_string(), "--private-key", &key])
+            .args(["--rpc-url", &rpc])
+            .assert_success();
+    }
+
+    let cases: [(&str, &[&str], _); 2] = [
+        (
+            "0x00000000000000000000000000000000000000aa",
+            &["--tempo.nonce-key", "42"],
+            str![[r#"
+0xef010000000000000000000000000000000000000000aa
+
+"#]],
+        ),
+        (
+            "0x00000000000000000000000000000000000000bb",
+            &["--tempo.expires", "20"],
+            str![[r#"
+0xef010000000000000000000000000000000000000000bb
+
+"#]],
+        ),
+    ];
+    for (delegate, nonce_args, code) in cases {
+        cmd.cast_fuse()
+            .args(["send", &sender, "--auth", delegate, "--private-key", &key, "--force"])
+            .args(nonce_args)
+            .args(["--rpc-url", &rpc])
+            .assert_success();
+        cmd.cast_fuse().args(["code", &sender, "--rpc-url", &rpc]).assert_success().stdout_eq(code);
+    }
+}
+
+/// Before T1 the expiring nonce key is an ordinary lane, so its nonce comes from the Nonce Manager.
+#[casttest]
+async fn tempo_t0_expiring_nonce_key_uses_lane_nonce(cmd: _) {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()))).await;
+    let rpc = handle.http_endpoint();
+    let (sender, key) = dev_account(&handle, 0);
+    let nonce_key = U256::MAX.to_string();
+    let send = ["send", "0x7373737373737373737373737373737373737373", "--private-key", &key];
+
+    // The first transaction advances the lane to 1; the second only mines with that nonce.
+    cmd.cast_fuse()
+        .args(send)
+        .args(["--tempo.nonce-key", &nonce_key, "--nonce", "0", "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(send)
+        .args(["--tempo.nonce-key", &nonce_key, "--timeout", "10", "--rpc-url", &rpc])
+        .assert_success();
+
+    cmd.cast_fuse()
+        .args(["call", &NONCE_PRECOMPILE_ADDRESS.to_string()])
+        .args(["getNonce(address,uint256)(uint64)", &sender.to_string(), &nonce_key])
+        .args(["--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+2
 
 "#]]);
 }

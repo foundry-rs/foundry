@@ -7,7 +7,7 @@ use crate::{
         FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
     },
 };
-use alloy_dyn_abi::{JsonAbiExt, abi::AbiDecoderConfig};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt, abi::AbiDecoderConfig};
 use alloy_json_abi::Function;
 use alloy_primitives::{U256, map::HashSet};
 use eyre::{Result, eyre};
@@ -17,6 +17,7 @@ use rand::{
     Rng,
     distr::{Distribution, weighted::WeightedIndex},
 };
+use std::mem::replace;
 
 /// A neutral borrowed view of one corpus entry.
 #[derive(Clone, Copy)]
@@ -65,10 +66,20 @@ pub struct SequenceGenerator {
 pub struct SequencePlan {
     initial: InitialSequence,
     tx: TxGenerator,
-    fresh_weight: u32,
-    has_corpus_dir: bool,
-    stateless: bool,
+    continuation: Continuation,
     source: Option<usize>,
+}
+
+/// How a [`SequencePlan`] continues past its first transaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Continuation {
+    /// A stateless sequence is a single transaction and never continues.
+    Stateless,
+    /// Every further transaction is freshly generated, as there is no corpus to follow.
+    Fresh,
+    /// Further transactions follow the initial sequence by depth until it runs out, each drawing
+    /// a fresh transaction instead with a `fresh_weight` percent chance.
+    Initial { fresh_weight: u32 },
 }
 
 enum InitialSequence {
@@ -102,23 +113,40 @@ impl SequencePlan {
     pub const fn source(&self) -> Option<usize> {
         self.source
     }
+
+    /// Replays an unmutated candidate before generating any continuation.
+    pub fn replay(mut self, transactions: Vec<BasicTxDetails>) -> Result<Self> {
+        if transactions.is_empty() {
+            return Err(eyre!("replay sequence has no transactions"));
+        }
+        self.initial = InitialSequence::Multiple(transactions);
+        if self.continuation != Continuation::Stateless {
+            self.continuation = Continuation::Initial { fresh_weight: 0 };
+        }
+        self.source = None;
+        Ok(self)
+    }
+
     pub fn next(
         &self,
         runner: &mut TestRunner,
         discarded: bool,
         depth: usize,
     ) -> Result<BasicTxDetails> {
-        if self.stateless {
-            return Err(eyre!("stateless sequence is limited to one transaction"));
-        }
-        if !self.has_corpus_dir || discarded {
-            return self.tx.next_tx(runner);
-        }
-        let fresh = self.fresh_weight > 0 && runner.rng().random_ratio(self.fresh_weight, 100);
-        if depth >= self.initial.as_slice().len() || fresh {
-            self.tx.next_tx(runner)
-        } else {
-            Ok(self.initial.as_slice()[depth].clone())
+        match self.continuation {
+            Continuation::Stateless => {
+                Err(eyre!("stateless sequence is limited to one transaction"))
+            }
+            Continuation::Fresh => self.tx.next_tx(runner),
+            Continuation::Initial { .. } if discarded => self.tx.next_tx(runner),
+            Continuation::Initial { fresh_weight } => {
+                let fresh = fresh_weight > 0 && runner.rng().random_ratio(fresh_weight, 100);
+                if depth >= self.initial.as_slice().len() || fresh {
+                    self.tx.next_tx(runner)
+                } else {
+                    Ok(self.initial.as_slice()[depth].clone())
+                }
+            }
         }
     }
 }
@@ -236,14 +264,18 @@ impl SequenceGenerator {
                 self.start_invariant(runner, corpus_len, &mut entry_at, coverage, targets)?
             }
         };
-        Ok(SequencePlan {
-            initial,
-            tx: self.tx.clone(),
-            fresh_weight: self.fresh_weight,
-            has_corpus_dir: self.has_corpus_dir,
-            stateless: matches!(self.mode, SequenceMode::Stateless(_)),
-            source,
-        })
+        Ok(SequencePlan { initial, tx: self.tx.clone(), continuation: self.continuation(), source })
+    }
+
+    /// How the sequences this generator starts continue past their first transaction.
+    const fn continuation(&self) -> Continuation {
+        match self.mode {
+            SequenceMode::Stateless(_) => Continuation::Stateless,
+            SequenceMode::Invariant(_) if self.has_corpus_dir => {
+                Continuation::Initial { fresh_weight: self.fresh_weight }
+            }
+            SequenceMode::Invariant(_) => Continuation::Fresh,
+        }
     }
 
     fn start_stateless<'a>(
@@ -578,17 +610,16 @@ impl SequenceMutator {
         } else {
             (0..rounds).map(|_| runner.rng().random_range(0..function.inputs.len())).collect()
         };
-        let mut inputs = function
-            .abi_decode_input(&tx.call_details.calldata[4..])
-            .map_err(|err| eyre!("failed to load previous inputs: {err}"))?;
+        // Observed sub-calls and older corpus entries can match a selector without decoding, so
+        // keep their calldata instead of aborting the campaign.
+        let Ok(mut inputs) = function.abi_decode_input(&tx.call_details.calldata[4..]) else {
+            return Ok(());
+        };
         while rounds > 0 {
             let index = indices[rounds - 1];
-            inputs[index] = mutate_param_value(
-                &function.inputs[index].selector_type().parse()?,
-                inputs[index].clone(),
-                runner,
-                state,
-            );
+            let param = function.inputs[index].selector_type().parse()?;
+            let value = replace(&mut inputs[index], DynSolValue::Bool(false));
+            inputs[index] = mutate_param_value(&param, value, runner, state);
             rounds -= 1;
         }
         let inputs = inputs
@@ -730,12 +761,11 @@ mod tests {
         invariant::{TargetedContract, TargetedContracts},
         strategies::EvmFuzzState,
     };
-    use alloy_dyn_abi::DynSolValue;
     use alloy_json_abi::JsonAbi;
     use alloy_primitives::{Address, Bytes, I256};
+    use evm2::evm::InMemoryDB;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{prelude::Just, strategy::Strategy};
-    use revm::database::InMemoryDB;
     use std::path::PathBuf;
 
     fn sentinel(runner: &mut TestRunner) -> u64 {
@@ -870,6 +900,25 @@ mod tests {
         let decoded = function.abi_decode_input(&input.call_details.calldata[4..]).unwrap();
         assert_eq!(decoded[0].as_uint().unwrap().0, U256::from(42));
         assert_eq!((input.warp, input.roll, input.sender, input.call_details.value), metadata);
+    }
+
+    #[test]
+    fn abi_mutation_keeps_undecodable_calldata() {
+        let function = Function::parse("test(uint256)").unwrap();
+        let mut input = tx(1);
+        input.call_details.calldata = function.selector().to_vec().into();
+        let calldata = input.call_details.calldata.clone();
+
+        SequenceMutator::abi_mutate(
+            &mut input,
+            &function,
+            &mut TestRunner::deterministic(),
+            &state(),
+            &FuzzFixtures::default(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(input.call_details.calldata, calldata);
     }
 
     #[test]
@@ -1017,10 +1066,8 @@ mod tests {
         let mut runner = TestRunner::default();
         let plan = SequencePlan {
             initial: InitialSequence::Multiple(vec![tx(1), tx(2)]),
+            continuation: generator.continuation(),
             tx: generator.tx,
-            fresh_weight: generator.fresh_weight,
-            has_corpus_dir: generator.has_corpus_dir,
-            stateless: false,
             source: Some(0),
         };
 
@@ -1040,9 +1087,7 @@ mod tests {
             let plan = SequencePlan {
                 initial: InitialSequence::Multiple(vec![tx(1), tx(2)]),
                 tx: generator_tx(9),
-                fresh_weight,
-                has_corpus_dir: true,
-                stateless: false,
+                continuation: Continuation::Initial { fresh_weight },
                 source: Some(0),
             };
             let mut actual = TestRunner::deterministic();

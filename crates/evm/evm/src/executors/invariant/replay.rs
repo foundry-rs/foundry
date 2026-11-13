@@ -21,7 +21,7 @@ use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantC
 use foundry_evm_traces::{TraceKind, TraceRequirements, Traces, load_contracts};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 pub struct ReplayErrorResult {
     pub counterexample_sequence: Vec<BaseCounterExample>,
@@ -91,7 +91,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     )?;
     let fork_block_number = invariant_result.fork_block_number;
     debug_bytecodes.extend(invariant_result.debug_bytecodes);
-    traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
+    traces.push((TraceKind::Execution, invariant_result.traces.unwrap()));
     logs.extend(invariant_result.logs);
     deprecated_cheatcodes.extend(
         invariant_result
@@ -105,7 +105,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
         let (after_invariant_result, _) =
             call_after_invariant_function(&executor, invariant_contract.address)?;
         debug_bytecodes.extend(after_invariant_result.debug_bytecodes);
-        traces.push((TraceKind::Execution, after_invariant_result.traces.clone().unwrap()));
+        traces.push((TraceKind::Execution, after_invariant_result.traces.unwrap()));
         logs.extend(after_invariant_result.logs);
     }
 
@@ -143,6 +143,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
+    shrink_deadline: Option<Instant>,
     position: Option<(usize, usize)>,
 ) -> Result<ReplayErrorResult> {
     // Multi-invariant runs include `[i/N]` in the shrink progress message so users see how many
@@ -156,6 +157,9 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         config.show_solidity,
     );
 
+    // Every shrink attempt would append its steps to the shared step table, so only the replay of
+    // the shrunk sequence records them.
+    let recorder = executor.inspector_mut().debug_recorder.take();
     let (calls, check_result, optimization_value) = if let Some(target) = target_value {
         let (calls, value) = shrink_sequence_value(
             &config,
@@ -167,6 +171,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             targets,
             &shrink_progress,
             early_exit,
+            shrink_deadline,
         )?;
         (calls, None, Some(value))
     } else {
@@ -180,9 +185,11 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             rd,
             &shrink_progress,
             early_exit,
+            shrink_deadline,
         )?;
         (shrunk.calls, shrunk.result, None)
     };
+    executor.inspector_mut().debug_recorder = recorder;
 
     if let Some(sequence) = inner_sequence {
         set_up_inner_replay(&mut executor, &sequence);

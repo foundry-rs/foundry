@@ -200,6 +200,7 @@ max_test_rejects = 65536
 dictionary_weight = 40
 include_storage = true
 include_push_bytes = true
+include_view_values = false
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
@@ -213,6 +214,7 @@ evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
+instrumented_edges = false
 corpus_random_sequence_weight = 10
 payable_value_weight = 0
 mutation_weight_splice = 1
@@ -236,6 +238,7 @@ call_override = false
 dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
+include_view_values = false
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
@@ -251,6 +254,7 @@ evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
+instrumented_edges = false
 corpus_random_sequence_weight = 10
 payable_value_weight = 15
 mutation_weight_splice = 1
@@ -272,6 +276,7 @@ use_fuzz_corpus = false
 corpus_seed_limit = 32
 use_fuzz_frontiers = false
 check_invariant_frontiers = false
+live = false
 frontier_limit = 256
 solver = "z3"
 timeout = 30
@@ -396,6 +401,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
             corpus_seed_limit: 17,
             use_fuzz_frontiers: true,
             check_invariant_frontiers: true,
+            live: true,
             frontier_limit: 11,
             frontier_ids: vec![4, 9],
             frontier_pcs: vec![123, 456],
@@ -490,6 +496,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         rpc_endpoints: Default::default(),
         build_info: false,
         build_info_path: None,
+        build_info_without_ast: false,
         fmt: Default::default(),
         lint: Default::default(),
         doc: Default::default(),
@@ -517,6 +524,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
         script_execution_protection: true,
+        restrict_inline_config: false,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -2284,6 +2292,7 @@ fn test_default_config(prj: _, cmd: _) {
     "dictionary_weight": 40,
     "include_storage": true,
     "include_push_bytes": true,
+    "include_view_values": false,
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 9830400,
     "max_fuzz_dictionary_literals": 6553600,
@@ -2299,6 +2308,7 @@ fn test_default_config(prj: _, cmd: _) {
     "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
+    "instrumented_edges": false,
     "corpus_random_sequence_weight": 10,
     "payable_value_weight": 0,
     "mutation_weight_splice": 1,
@@ -2323,6 +2333,7 @@ fn test_default_config(prj: _, cmd: _) {
     "dictionary_weight": 80,
     "include_storage": true,
     "include_push_bytes": true,
+    "include_view_values": false,
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 9830400,
     "max_fuzz_dictionary_literals": 6553600,
@@ -2340,6 +2351,7 @@ fn test_default_config(prj: _, cmd: _) {
     "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
+    "instrumented_edges": false,
     "corpus_random_sequence_weight": 10,
     "payable_value_weight": 15,
     "mutation_weight_splice": 1,
@@ -2355,7 +2367,8 @@ fn test_default_config(prj: _, cmd: _) {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
-    "check_interval": 1
+    "check_interval": 1,
+    "call_gas_limit": null
   },
   "symbolic": {
     "enabled": false,
@@ -2364,6 +2377,7 @@ fn test_default_config(prj: _, cmd: _) {
     "corpus_seed_limit": 32,
     "use_fuzz_frontiers": false,
     "check_invariant_frontiers": false,
+    "live": false,
     "frontier_limit": 256,
     "solver": "z3",
     "timeout": 30,

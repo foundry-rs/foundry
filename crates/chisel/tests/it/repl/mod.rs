@@ -348,6 +348,17 @@ repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
 });
 
+// A call that returns nothing runs without a trailing semicolon, as it does with one, instead of
+// being dropped.
+repl_test!(eval_call_without_return_value, r#"eval require(false,"boom")"#, |repl| {
+    repl.expect("[Revert] boom");
+});
+
+repl_test!(call_without_return_value_runs, |repl| {
+    repl.sendln(r#"revert("boom")"#);
+    repl.expect("[Revert] boom");
+});
+
 // Issue #17125: external function references display their address and selector.
 repl_test!(external_function_references, |repl| {
     repl.sendln_raw(
@@ -675,3 +686,13 @@ fn imported_repl_does_not_shadow_wrapper() {
         }
     }
 }
+
+// Issue #18203: Solar does not leave the inspected value's pointer on the stack.
+repl_test!(solar_inspection, "--use solar:0.3.0", |repl| {
+    repl.sendln("uint256 val = 1;");
+    repl.sendln("val");
+    repl.expect("Decimal: 1");
+    repl.sendln("string memory s = \"hello\";");
+    repl.sendln("s");
+    repl.expect("UTF-8: hello");
+});

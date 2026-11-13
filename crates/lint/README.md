@@ -33,10 +33,12 @@ inline suppressions. Production source files remain linted.
   - `assert-state-change`: Flags state-modifying expressions inside `assert()` arguments.
   - `boolean-cst`: Flags misuse of boolean constants.
   - `dangerous-unary-operator`: Flags an assignment whose `=` is fused to a unary operator (`=-`, `=~`), e.g. `x =- 1`, which parses as `x = -1` instead of the intended compound `x -= 1`.
+  - `duplicate-storage-namespace`: Flags structs in one inheritance hierarchy that declare the same ERC-7201 namespace and therefore share a storage root.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
   - `ecrecover`: Flags direct `ecrecover` calls whose signature `s` value is not proven to be canonical and non-malleable.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
+  - `incorrect-storage-namespace-slot`: Flags constant storage pointer slots that disagree with the struct's ERC-7201 namespace.
   - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
   - `mapping-deletion`: `delete` on a value containing a mapping does not clear the mapping.
   - `reentrancy-no-eth`: Flags non-ETH external calls followed by writes to state that was read before the call.

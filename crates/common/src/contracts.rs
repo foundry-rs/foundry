@@ -29,6 +29,10 @@ use std::{
 const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
     hex!("730000000000000000000000000000000000000000");
 
+/// Immutable holding a library's own address in its runtime code under the IR pipeline, which
+/// replaces the `PUSH20` call protection prefix.
+const LIBRARY_DEPLOY_ADDRESS_IMMUTABLE: &str = "library_deploy_address";
+
 /// Isolated account used to deploy libraries needed only while executing locally.
 ///
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
@@ -46,6 +50,19 @@ pub struct BytecodeData {
 impl BytecodeData {
     fn bytes(&self) -> Option<&Bytes> {
         self.object.as_ref().and_then(|b| b.as_bytes())
+    }
+}
+
+/// Returns whether Solidity deployed code starts with the library call protection prefix.
+///
+/// See <https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries>.
+fn has_call_protection(code: &BytecodeObject) -> bool {
+    match code {
+        BytecodeObject::Bytecode(bytes) => bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX),
+        BytecodeObject::Unlinked(bytes) => bytes
+            .get(..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2)
+            .and_then(|prefix| Bytes::from_str(prefix).ok())
+            .is_some_and(|prefix| prefix.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)),
     }
 }
 
@@ -125,6 +142,14 @@ impl ContractData {
     /// Returns the deployed bytecode without placeholders, if present.
     pub fn deployed_bytecode_without_placeholders(&self) -> Option<Bytes> {
         strip_bytecode_placeholders(self.deployed_bytecode.as_ref()?.object.as_ref()?)
+    }
+
+    /// Returns whether this is a Solidity library, from the call protection the compiler emits:
+    /// a `library_deploy_address` immutable under the IR pipeline, or a `PUSH20` prefix otherwise.
+    pub fn is_library(&self) -> bool {
+        let Some(deployed_bytecode) = &self.deployed_bytecode else { return false };
+        deployed_bytecode.immutable_references.contains_key(LIBRARY_DEPLOY_ADDRESS_IMMUTABLE)
+            || deployed_bytecode.object.as_ref().is_some_and(has_call_protection)
     }
 }
 
@@ -253,7 +278,7 @@ impl ContractsByArtifact {
     ) -> Option<ArtifactWithContractRef<'_>> {
         self.iter()
             .filter_map(|(id, contract)| {
-                if let Some(deployed_bytecode) = get(contract) {
+                get(contract).and_then(|deployed_bytecode| {
                     let mut code = code;
                     if strip_ctor_args && code.len() > deployed_bytecode.len() {
                         // Try to decode ctor args with contract abi.
@@ -269,9 +294,7 @@ impl ContractsByArtifact {
 
                     let score = bytecode_diff_score(deployed_bytecode.as_ref(), code);
                     (score <= accepted_score).then_some((score, (id, contract)))
-                } else {
-                    None
-                }
+                })
             })
             .min_by(|(score1, _), (score2, _)| score1.total_cmp(score2))
             .map(|(_, data)| data)
@@ -290,7 +313,8 @@ impl ContractsByArtifact {
         code: &[u8],
         preferred: impl Fn(&ArtifactId) -> bool,
     ) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_inner(code, false, preferred).0
+        let (exact, partial, _) = self.find_by_deployed_code_exact_inner(code, false, preferred);
+        exact.or(partial)
     }
 
     /// Finds the only contract whose deployed bytecode exactly matches the given code.
@@ -307,14 +331,24 @@ impl ContractsByArtifact {
         &self,
         code: &[u8],
     ) -> Result<Option<ArtifactWithContractRef<'_>>> {
-        let (matched, ambiguous_partial) =
+        let (exact, partial, ambiguous_partial) =
             self.find_by_deployed_code_exact_inner(code, false, |_| true);
         if ambiguous_partial {
             eyre::bail!(
                 "Multiple local contracts match the deployed bytecode with different metadata. Specify the contract as <path>:<contract>"
             );
         }
-        Ok(matched)
+        Ok(exact.or(partial))
+    }
+
+    /// Finds an exact deployed-code match, including metadata. Accounts for link references,
+    /// immutables, library call protection, and Vyper's appended immutable data, but does not
+    /// accept matches differing only in metadata.
+    pub fn find_by_deployed_code_exact_with_metadata(
+        &self,
+        code: &[u8],
+    ) -> Option<ArtifactWithContractRef<'_>> {
+        self.find_by_deployed_code_exact_inner(code, false, |_| true).0
     }
 
     fn find_by_deployed_code_exact_inner(
@@ -322,10 +356,10 @@ impl ContractsByArtifact {
         code: &[u8],
         unique: bool,
         preferred: impl Fn(&ArtifactId) -> bool,
-    ) -> (Option<ArtifactWithContractRef<'_>>, bool) {
+    ) -> (Option<ArtifactWithContractRef<'_>>, Option<ArtifactWithContractRef<'_>>, bool) {
         // Immediately return None if the code is empty.
         if code.is_empty() {
-            return (None, false);
+            return (None, None, false);
         }
 
         let mut partial_match = None;
@@ -371,23 +405,7 @@ impl ContractsByArtifact {
             // ignore it as it includes library address determined at runtime.
             // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
             // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
-            let has_call_protection = !is_vyper
-                && match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => {
-                        bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
-                    }
-                    BytecodeObject::Unlinked(bytes) => {
-                        if let Ok(bytes) =
-                            Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
-                        {
-                            bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
-                        } else {
-                            false
-                        }
-                    }
-                };
-
-            if has_call_protection {
+            if !is_vyper && has_call_protection(deployed_code) {
                 ignored.push(Offsets { start: 1, length: 20 });
             }
 
@@ -454,13 +472,13 @@ impl ContractsByArtifact {
 
             if matches_metadata {
                 if unique && exact_match.is_some() {
-                    return (None, false);
+                    return (None, None, false);
                 }
                 if exact_match.is_none() || preferred(id) {
                     exact_match = Some((id, contract));
                 }
                 if !unique && preferred(id) {
-                    return (exact_match, false);
+                    return (exact_match, None, false);
                 }
             } else {
                 ambiguous_partial |= partial_match.is_some();
@@ -471,7 +489,7 @@ impl ContractsByArtifact {
         }
 
         let ambiguous_partial = exact_match.is_none() && ambiguous_partial;
-        (if unique { exact_match } else { exact_match.or(partial_match) }, ambiguous_partial)
+        (exact_match, partial_match, ambiguous_partial)
     }
 
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
@@ -845,6 +863,7 @@ mod tests {
         ]);
 
         assert!(contracts.find_by_deployed_code_exact_unique(&code).is_none());
+        assert_eq!(contracts.find_by_deployed_code_exact_with_metadata(&code).unwrap().0.name, "A");
 
         let contracts = ContractsByArtifact::new([deployed_artifact("A", code.clone())]);
         assert_eq!(contracts.find_by_deployed_code_exact_unique(&code).unwrap().0.name, "A");
@@ -858,6 +877,7 @@ mod tests {
 
         assert!(contracts.find_by_deployed_code_exact(&deployed_code).is_some());
         assert!(contracts.find_by_deployed_code_exact_unique(&deployed_code).is_none());
+        assert!(contracts.find_by_deployed_code_exact_with_metadata(&deployed_code).is_none());
     }
 
     #[test]

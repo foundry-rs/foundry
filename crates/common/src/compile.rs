@@ -13,6 +13,12 @@ use comfy_table::{
     Cell, Color, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
+use evm2::{
+    SpecId,
+    constants::{
+        MAX_CODE_SIZE, MAX_CODE_SIZE_AMSTERDAM, MAX_INITCODE_SIZE, MAX_INITCODE_SIZE_AMSTERDAM,
+    },
+};
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
@@ -33,7 +39,6 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use num_format::{Locale, ToFormattedString};
-use revm::primitives::{eip170, eip3860, hardfork::SpecId};
 use solar::{
     ast::{Arena, ContractKind, ItemKind},
     interface::{Session, source_map::FileName},
@@ -343,6 +348,13 @@ impl ProjectCompiler {
                 // reuse DTL artifacts. Return only this attempt, including any compiler errors.
                 output = compile(false)?;
             }
+            // Drop deferred DTL-disable warnings on failure; solc's error already explains it.
+            let disable_warnings = preprocessor.take_disable_warnings();
+            if !output.has_compiler_errors() {
+                for warning in disable_warnings {
+                    sh_warn!("{warning}")?;
+                }
+            }
             if !output.has_compiler_errors()
                 && let Some(external) = external
             {
@@ -555,14 +567,14 @@ impl ProjectCompiler {
 }
 
 // https://eips.ethereum.org/EIPS/eip-170
-const CONTRACT_RUNTIME_SIZE_LIMIT: usize = eip170::MAX_CODE_SIZE;
+const CONTRACT_RUNTIME_SIZE_LIMIT: usize = MAX_CODE_SIZE;
 
 // https://eips.ethereum.org/EIPS/eip-3860
-const CONTRACT_INITCODE_SIZE_LIMIT: usize = eip3860::MAX_INITCODE_SIZE;
+const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
 
 // https://eips.ethereum.org/EIPS/eip-7954
-const AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT: usize = 65_536;
-const AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT: usize = 131_072;
+const AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT: usize = MAX_CODE_SIZE_AMSTERDAM;
+const AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE_AMSTERDAM;
 
 const CONTRACT_RUNTIME_SIZE_WARN_THRESHOLD: usize = 18_000;
 const CONTRACT_INITCODE_SIZE_WARN_THRESHOLD: usize = 36_000;
@@ -589,7 +601,7 @@ impl ContractSizeLimits {
 
     /// Returns the protocol limits active for an EVM specification.
     pub const fn for_spec_id(spec_id: SpecId) -> Self {
-        if spec_id.is_enabled_in(SpecId::AMSTERDAM) {
+        if spec_id.enables(SpecId::AMSTERDAM) {
             Self::new(AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT, AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT)
         } else {
             Self::new(CONTRACT_RUNTIME_SIZE_LIMIT, CONTRACT_INITCODE_SIZE_LIMIT)

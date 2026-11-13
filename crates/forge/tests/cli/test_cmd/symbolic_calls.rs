@@ -41,6 +41,88 @@ contract SymbolicInvalidChildCall {
     cmd.args(["test", "--symbolic", "--match-test", "checkInvalidChildCall"]).assert_success();
 }
 
+// A callee that stops, by STOP or by running past the end of its code, after a call of its own
+// returns no data, not the return data of that call. Initcode that does the same deploys no code,
+// and a callee that hits INVALID after a call reverts with no data.
+#[forgetest_init]
+fn symbolic_stopped_callee_returns_no_data(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_stopped_callee_returns_no_data");
+
+    prj.add_test(
+        "SymbolicStoppedCallee.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Inner {
+    function value() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Outer {
+    function callInner(Inner inner) external {
+        inner.value();
+    }
+
+    function callInnerThenInvalid(Inner inner) external {
+        inner.value();
+        assembly ("memory-safe") {
+            invalid()
+        }
+    }
+}
+
+contract SymbolicStoppedCallee is Test {
+    function checkStoppedCalleeReturnsNoData(uint256 size) public {
+        Outer outer = new Outer();
+        Inner inner = new Inner();
+        (bool success, bytes memory output) =
+            address(outer).call(abi.encodeCall(Outer.callInner, (inner)));
+        assert(success);
+        assert(output.length == 0);
+
+        vm.expectRevert(bytes(""));
+        outer.callInnerThenInvalid(inner);
+
+        // Runtime code that calls the identity precompile with 32 bytes, then runs past its end.
+        bytes memory initcode = hex"6012600c60003960126000f3602a600052600060006020600060045afa50";
+        address endless;
+        assembly ("memory-safe") {
+            endless := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        (success, output) = endless.call("");
+        assert(success);
+        assert(output.length == 0);
+
+        // Initcode `staticcall(gas(), 4, 3, 2, 1, 0)` to the identity precompile, which returns
+        // 2 bytes, then STOP.
+        initcode = hex"58585858585afa5000";
+        address created;
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        assert(created != address(0));
+        assert(created.code.length == 0);
+
+        // The same call with a symbolic initcode size: at size 8 the initcode runs past its end,
+        // and at size 9 it reaches INVALID. Bounds, not equalities, keep the size symbolic.
+        initcode = hex"58585858585afa50fe";
+        vm.assume(size >= 8);
+        vm.assume(size <= 9);
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 0x20), size)
+        }
+        assert(size == 9 || created != address(0));
+        assert(created.code.length == 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkStoppedCalleeReturnsNoData"])
+        .assert_success();
+}
+
 #[forgetest_init]
 fn symbolic_assume_no_revert_does_not_prune_invalid_child_halt(prj: _, cmd: _) {
     if !z3_available() {
@@ -63,12 +145,26 @@ contract InvalidAssumeNoRevertChild {
     }
 }
 
+contract RevertingConstructorChild {
+    constructor(uint256 x) {
+        require(x != 5);
+    }
+}
+
 contract SymbolicAssumeNoRevertInvalidChild is Test {
     function checkAssumeNoRevertInvalidChild() public {
         InvalidAssumeNoRevertChild child = new InvalidAssumeNoRevertChild();
         vm.assumeNoRevert();
         (bool success,) = address(child).call("");
         assertTrue(success);
+    }
+
+    // A CREATE leaves the assumption pending, so the catch branch's revert rejects the input.
+    function checkAssumeNoRevertSkipsRevertingCreate(uint256 x) public {
+        vm.assumeNoRevert();
+        try new RevertingConstructorChild(x) {} catch {
+            assert(false);
+        }
     }
 }
 "#,
@@ -77,15 +173,16 @@ contract SymbolicAssumeNoRevertInvalidChild is Test {
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkAssumeNoRevertInvalidChild",
+        "--match-contract",
+        "SymbolicAssumeNoRevertInvalidChild",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicAssumeNoRevertInvalidChild.t.sol:SymbolicAssumeNoRevertInvalidChild
+Ran 2 tests for test/SymbolicAssumeNoRevertInvalidChild.t.sol:SymbolicAssumeNoRevertInvalidChild
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertInvalidChild() ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[PASS] checkAssumeNoRevertSkipsRevertingCreate(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1095,10 +1192,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 }
 
 #[forgetest_init]
-fn symbolic_svm_create_calldata_generates_bounded_dispatch(prj: _, cmd: _) {
+fn symbolic_svm_create_calldata_follows_contract_abi(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
-            "skipping symbolic_svm_create_calldata_generates_bounded_dispatch because z3 is not available"
+            "skipping symbolic_svm_create_calldata_follows_contract_abi because z3 is not available"
         );
         return;
     }
@@ -1108,36 +1205,104 @@ fn symbolic_svm_create_calldata_generates_bounded_dispatch(prj: _, cmd: _) {
         r#"
 interface Svm {
     function createCalldata(string calldata name) external returns (bytes memory);
+    function createCalldata(string calldata name, bool includeViewAndPureFunctions)
+        external
+        returns (bytes memory);
+    function createCalldata(string calldata filename, string calldata name) external returns (bytes memory);
+    function createCalldata(address target) external returns (bytes memory);
 }
 
+interface IEmpty {}
+
 contract OneSelectorTarget {
-    function ping() external pure returns (uint256) {
-        return 1;
+    uint256 value;
+
+    function ping(uint256 newValue, bytes calldata memo) external {
+        value = newValue ^ memo.length;
+    }
+
+    function last() external view returns (uint256) {
+        return value;
+    }
+}
+
+contract BackdoorToken {
+    address public immutable holder;
+    uint256 public holderBalance = 100;
+
+    constructor(address holder_) {
+        holder = holder_;
+    }
+
+    function transfer(address to, uint256 amount) external {
+        require(msg.sender == holder && to != address(0));
+        holderBalance -= amount;
+    }
+
+    function backdoor(address to, uint256 amount) external {
+        require(to != address(0));
+        holderBalance -= amount;
     }
 }
 
 contract SymbolicSvmCreateCalldata {
     address constant SVM_ADDRESS = address(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+    address constant HOLDER = address(0x1001);
     OneSelectorTarget target;
+    BackdoorToken token;
 
     function setUp() public {
         target = new OneSelectorTarget();
+        token = new BackdoorToken(HOLDER);
     }
 
-    /// forge-config: default.symbolic.max_calldata_bytes = 4
-    function checkSvmCreateCalldata() public {
-        bytes memory data = Svm(SVM_ADDRESS).createCalldata("data");
-        assert(data.length <= 4);
+    /// forge-config: default.symbolic.max_calldata_bytes = 132
+    function checkSvmCreateCalldataDispatch() public {
+        bytes memory data = Svm(SVM_ADDRESS).createCalldata("SymbolicSvmCreateCalldata.t.sol", "OneSelectorTarget");
         (bool ok,) = address(target).call(data);
+        assert(ok == (selectorOf(data) == OneSelectorTarget.ping.selector));
+    }
 
-        bytes4 selector;
-        assembly {
-            selector := mload(add(data, 0x20))
-        }
-        if (selector == OneSelectorTarget.ping.selector) {
-            assert(ok);
-        } else {
-            assert(!ok);
+    /// forge-config: default.symbolic.max_calldata_bytes = 132
+    function checkSvmCreateCalldataViewFunctions() public {
+        bytes memory data = Svm(SVM_ADDRESS).createCalldata("OneSelectorTarget", true);
+        (bool ok,) = address(target).call(data);
+        bytes4 selector = selectorOf(data);
+        assert(
+            ok == (selector == OneSelectorTarget.ping.selector || selector == OneSelectorTarget.last.selector)
+        );
+    }
+
+    /// forge-config: default.symbolic.max_calldata_bytes = 100
+    function checkSvmCreateCalldataNoBackdoor() public {
+        checkNoBackdoor(Svm(SVM_ADDRESS).createCalldata("BackdoorToken"));
+    }
+
+    /// forge-config: default.symbolic.max_calldata_bytes = 100
+    function checkSvmCreateCalldataAddressNoBackdoor() public {
+        checkNoBackdoor(Svm(SVM_ADDRESS).createCalldata(address(token)));
+    }
+
+    /// forge-config: default.symbolic.max_calldata_bytes = 100
+    function checkSvmCreateCalldataFallbackNoBackdoor() public {
+        checkNoBackdoor(Svm(SVM_ADDRESS).createCalldata("IEmpty"));
+    }
+
+    function checkSvmCreateCalldataUnknownContract() public {
+        Svm(SVM_ADDRESS).createCalldata("MissingContract");
+    }
+
+    function checkNoBackdoor(bytes memory data) internal {
+        uint256 balance = token.holderBalance();
+        (bool ok,) = address(token).call(data);
+        assert(!ok || token.holderBalance() >= balance);
+    }
+
+    function selectorOf(bytes memory data) internal pure returns (bytes4 selector) {
+        if (data.length >= 4) {
+            assembly {
+                selector := mload(add(data, 0x20))
+            }
         }
     }
 }
@@ -1150,14 +1315,22 @@ contract SymbolicSvmCreateCalldata {
         "--match-test",
         "checkSvmCreateCalldata",
     ]))
-    .success()
-    .stdout_eq(str![[r#"
+    .failure()
+    .stdout_eq(
+        str![[r#"
 ...
-Ran 1 test for test/SymbolicSvmCreateCalldata.t.sol:SymbolicSvmCreateCalldata
-[PASS] checkSvmCreateCalldata() ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Ran 6 tests for test/SymbolicSvmCreateCalldata.t.sol:SymbolicSvmCreateCalldata
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataAddressNoBackdoor() ([METRICS])
+[PASS] checkSvmCreateCalldataDispatch() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataFallbackNoBackdoor() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataNoBackdoor() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic svm.createCalldata unknown contract] checkSvmCreateCalldataUnknownContract() ([METRICS])
+[PASS] checkSvmCreateCalldataViewFunctions() ([METRICS])
+Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
-"#]])
+"#]]
+        .unordered(),
+    )
     .get_output()
     .stdout_lossy();
 
@@ -1264,11 +1437,74 @@ contract SymbolicDelegateCall {
 "#,
     );
 
+    prj.add_test(
+        "SymbolicCheatcodeDelegateCall.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function warp(uint256 timestamp) external;
+}
+
+contract SymbolicCheatcodeDelegateCall {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    // Like Forge, only CALL and STATICCALL reach a cheatcode. A DELEGATECALL or CALLCODE to the
+    // cheatcode address runs its one-byte code and has no effect.
+    function checkCheatcodeDelegateCall(uint256 x) public {
+        (bool ok,) = address(vm).delegatecall(abi.encodeCall(Vm.assume, (x > 10)));
+        assert(ok);
+        (ok,) = address(vm).delegatecall(abi.encodeCall(Vm.warp, (12345)));
+        assert(ok && block.timestamp != 12345);
+        bytes memory data = abi.encodeCall(Vm.assume, (false));
+        address target = address(vm);
+        assembly {
+            ok := callcode(gas(), target, 0, add(data, 32), mload(data), 0, 0)
+        }
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicDirtyCallTarget.t.sol",
+        r#"
+contract DirtyTargetProbe {
+    fallback() external {
+        assembly {
+            mstore(0, address())
+            return(0, 32)
+        }
+    }
+}
+
+contract SymbolicDirtyCallTarget {
+    DirtyTargetProbe probe;
+
+    function setUp() public {
+        probe = new DirtyTargetProbe();
+    }
+
+    // The callee's ADDRESS is the low 160 bits of a dirty CALL target word.
+    function checkDirtyCallTarget() public view {
+        uint256 clean = uint256(uint160(address(probe)));
+        uint256 dirty = clean | (uint256(0xdead) << 160);
+        uint256 seen;
+        assembly {
+            if iszero(staticcall(gas(), dirty, 0, 0, 0, 32)) { revert(0, 0) }
+            seen := mload(0)
+        }
+        assert(seen == clean);
+    }
+}
+"#,
+    );
+
     assert_symbolic(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkStatic|checkStaticCallValue|checkDelegate)\\(",
+        "^(checkStatic|checkStaticCallValue|checkDelegate|checkCheatcodeDelegateCall|checkDirtyCallTarget)\\(",
     ]))
     .success()
     .stdout_eq(
@@ -1284,6 +1520,14 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicStaticCallValue.t.sol:SymbolicStaticCallValue
 [PASS] checkStaticCallValue(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCheatcodeDelegateCall.t.sol:SymbolicCheatcodeDelegateCall
+[PASS] checkCheatcodeDelegateCall(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicDirtyCallTarget.t.sol:SymbolicDirtyCallTarget
+[PASS] checkDirtyCallTarget() ([METRICS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]
@@ -1525,14 +1769,15 @@ contract SymbolicCallcodeValue is Test {
         vm.deal(caller, 1);
         vm.prank(caller);
 
+        bytes memory input = abi.encodeWithSelector(SymbolicCallcodeValueTarget.echoValue.selector);
         bool ok;
         address callTarget = address(target);
         assembly {
-            ok := callcode(gas(), callTarget, 1, 0, 0, 0, 0)
+            ok := callcode(gas(), callTarget, 1, add(input, 0x20), mload(input), 0, 0)
         }
 
-        assert(!ok);
-        assertEq(caller.balance, 1);
+        assert(ok);
+        assertEq(caller.balance, 0);
         assertEq(address(this).balance, type(uint256).max);
     }
 
@@ -1591,4 +1836,372 @@ Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic CALLCODE value"), "{stdout}");
+}
+
+// An undefined opcode or one that underflows the stack halts its frame exceptionally, so the
+// call or create that ran it fails instead of the symbolic run stopping.
+#[forgetest_init]
+fn symbolic_invalid_opcode_halts_frame(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invalid_opcode_halts_frame");
+
+    prj.add_test(
+        "SymbolicInvalidOpcode.t.sol",
+        &r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvalidOpcode is Test {
+    uint256 marker;
+
+    function checkCallToStackOverflowFails(uint256 value) public {
+        // Init code that returns a runtime of one PUSH0 more than the stack holds.
+        bytes memory init = hex"61040180600a5f395ff3PUSH0S";
+        address child;
+        assembly ("memory-safe") {
+            child := create(0, add(init, 0x20), mload(init))
+        }
+        assertEq(child.code.length, 1025);
+        marker = value;
+        (bool ok, bytes memory output) = child.call("");
+        assert(!ok);
+        assertEq(output.length, 0);
+        assertEq(marker, value);
+    }
+
+    function checkCallToFullStackSucceeds() public {
+        // Init code that returns a runtime that fills the stack and stops.
+        bytes memory init = hex"61040180600a5f395ff3FULL_STACK";
+        address child;
+        assembly ("memory-safe") {
+            child := create(0, add(init, 0x20), mload(init))
+        }
+        assertEq(child.code.length, 1025);
+        (bool ok,) = child.call("");
+        assert(ok);
+    }
+
+    function checkCallToStackUnderflowFails(uint256 value) public {
+        address child = address(0xC0DE);
+        // ADD with an empty stack.
+        vm.etch(child, hex"01");
+        marker = value;
+        (bool ok, bytes memory output) = child.call("");
+        assert(!ok);
+        assertEq(output.length, 0);
+        assertEq(marker, value);
+    }
+
+    function checkCallToUndefinedOpcodeFails(uint256 value) public {
+        address child = address(0xC0DE);
+        // 0xCC is not an opcode.
+        vm.etch(child, hex"cc");
+        marker = value;
+        (bool ok, bytes memory output) = child.call("");
+        assert(!ok);
+        assertEq(output.length, 0);
+        assertEq(marker, value);
+    }
+
+    function checkCreateWithStackUnderflowFails(uint256 value) public {
+        // ADDMOD with two of its three operands.
+        bytes memory initcode = hex"6001600208";
+        uint64 nonce = vm.getNonce(address(this));
+        marker = value;
+        address created;
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        assertEq(created, address(0));
+        assertEq(vm.getNonce(address(this)), nonce + 1);
+        assertEq(marker, value);
+    }
+}
+"#
+        .replace("PUSH0S", &"5f".repeat(1025))
+        .replace("FULL_STACK", &format!("{}00", "5f".repeat(1024))),
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "check.*(Fails|Succeeds)"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicInvalidOpcode.t.sol:SymbolicInvalidOpcode
+[PASS] checkCallToFullStackSucceeds() ([METRICS])
+[PASS] checkCallToStackOverflowFails(uint256) ([METRICS])
+[PASS] checkCallToStackUnderflowFails(uint256) ([METRICS])
+[PASS] checkCallToUndefinedOpcodeFails(uint256) ([METRICS])
+[PASS] checkCreateWithStackUnderflowFails(uint256) ([METRICS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A call or create beyond the EVM call depth limit fails, so self-call recursion unwinds after
+// 1024 nested frames, as on a node, instead of exhausting the native stack. As in concrete Forge,
+// the depth counts from the first frame of the transaction or `vm.deployCode` constructor.
+#[forgetest_init]
+fn symbolic_call_depth_limit_stops_recursion(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_call_depth_limit_stops_recursion");
+
+    prj.add_test(
+        "SymbolicCallDepth.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SelfCaller {
+    uint256 public frames;
+
+    fallback() external {
+        frames += 1;
+        (bool ok,) = address(this).call("");
+        ok;
+    }
+}
+
+// Returns how many frames its self-STATICCALL recursion nests.
+contract StaticDepth {
+    function depth() external view returns (uint256) {
+        try this.depth() returns (uint256 inner) {
+            return inner + 1;
+        } catch {
+            return 1;
+        }
+    }
+}
+
+// Its constructor starts self-call recursion.
+contract Launcher {
+    constructor(SelfCaller target) {
+        (bool ok,) = address(target).call("");
+        require(ok);
+    }
+}
+
+// Deploys a Launcher with `vm.deployCode` from below the test frame.
+contract NestedDeployer {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function deploy(SelfCaller target) external {
+        vm.deployCode("SymbolicCallDepth.t.sol:Launcher", abi.encode(target));
+    }
+}
+
+// The deepest frame's self-call fails, so it tries a CREATE at the depth limit.
+contract DeepCreator {
+    address public created = address(1);
+
+    function descend() external {
+        (bool ok,) = address(this).call(abi.encodeCall(this.descend, ()));
+        if (!ok) {
+            address child;
+            assembly {
+                child := create(0, 0, 0)
+            }
+            created = child;
+        }
+    }
+}
+
+// The deepest frame calls an address outside the known contracts.
+contract DeepSymbolicCaller {
+    address public to;
+    bool public reached;
+
+    function aim(address target) external {
+        to = target;
+    }
+
+    function descend() external {
+        (bool ok,) = address(this).call(abi.encodeCall(this.descend, ()));
+        if (!ok) {
+            (bool sent,) = to.call("");
+            reached = sent;
+        }
+    }
+}
+
+// The deepest frame expects its repeated self-call to fail at the depth limit.
+contract DeepExpectRevert {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool public caughtExpected;
+    uint256 public outputLength;
+
+    function descend() external {
+        (bool ok,) = address(this).call(abi.encodeCall(this.descend, ()));
+        if (!ok) {
+            vm.expectRevert();
+            bytes memory output;
+            (caughtExpected, output) = address(this).call(abi.encodeCall(this.descend, ()));
+            outputLength = output.length;
+        }
+    }
+}
+
+// The deepest frame expects its CREATE to fail at the depth limit.
+contract DeepExpectRevertCreator {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address public created = address(1);
+
+    function descend() external {
+        (bool ok,) = address(this).call(abi.encodeCall(this.descend, ()));
+        if (!ok) {
+            vm.expectRevert();
+            address child;
+            assembly {
+                child := create(0, 0, 0)
+            }
+            created = child;
+        }
+    }
+}
+
+// Isolation runs a CALL or CREATE, but not a STATICCALL or CREATE2, from the test as its own
+// transaction, whose first frame is at depth 0. A `vm.deployCode` constructor always starts at
+// depth 0.
+abstract contract CallDepthFrames is Test {
+    function checkSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        (bool ok,) = address(target).call("");
+        assertTrue(ok);
+        assertEq(target.frames(), vm.isIsolateMode() ? 1025 : 1024);
+    }
+
+    function checkStaticCallsStopAtTheCallDepthLimit(uint256) public {
+        assertEq(new StaticDepth().depth(), 1024);
+    }
+
+    function checkConstructorSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        new Launcher(target);
+        assertEq(target.frames(), vm.isIsolateMode() ? 1024 : 1023);
+    }
+
+    function checkCreate2ConstructorSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        new Launcher{salt: bytes32(0)}(target);
+        assertEq(target.frames(), 1023);
+    }
+
+    function checkDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        vm.deployCode("SymbolicCallDepth.t.sol:Launcher", abi.encode(target));
+        assertEq(target.frames(), 1024);
+    }
+
+    function checkNestedDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        new NestedDeployer().deploy(target);
+        assertEq(target.frames(), 1024);
+    }
+}
+
+contract SymbolicCallDepth is CallDepthFrames {
+    function checkExpectedRevertOnCreateBeyondDepthLimit(uint256) public {
+        DeepExpectRevertCreator target = new DeepExpectRevertCreator();
+        target.descend();
+        assertTrue(target.created() != address(0));
+    }
+
+    function checkExpectedRevertAtTheCallDepthLimitSucceeds(uint256) public {
+        DeepExpectRevert target = new DeepExpectRevert();
+        target.descend();
+        assertTrue(target.caughtExpected());
+        // Forge answers a call that met its expected revert with 8192 zero bytes.
+        assertEq(target.outputLength(), 8192);
+    }
+
+    function checkSymbolicTargetAtTheCallDepthLimitFails(address to) public {
+        DeepSymbolicCaller target = new DeepSymbolicCaller();
+        vm.assume(to != address(target) && to != address(this) && uint160(to) > 0xffff);
+        target.aim(to);
+        target.descend();
+        assertFalse(target.reached());
+    }
+
+    function checkCreateAtTheCallDepthLimitFails(uint256) public {
+        DeepCreator target = new DeepCreator();
+        target.descend();
+        assertEq(target.created(), address(0));
+        assertEq(vm.getNonce(address(target)), 1);
+    }
+}
+
+/// forge-config: default.isolate = false
+contract SymbolicCallDepthNoIsolation is CallDepthFrames {}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "^SymbolicCallDepth$",
+        "--match-test",
+        "check.*AtTheCallDepthLimit",
+        "--symbolic-call-targets",
+        // Every nested frame completes a path for each outcome of the deepest call, and the
+        // depth budget spans all 1024 frames.
+        "--symbolic-max-paths",
+        "16384",
+        "--symbolic-max-depth",
+        "1000000",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 9 tests for test/SymbolicCallDepth.t.sol:SymbolicCallDepth
+[PASS] checkConstructorSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkCreate2ConstructorSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkCreateAtTheCallDepthLimitFails(uint256) ([METRICS])
+[PASS] checkDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkExpectedRevertAtTheCallDepthLimitSucceeds(uint256) ([METRICS])
+[PASS] checkNestedDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkStaticCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkSymbolicTargetAtTheCallDepthLimitFails(address) ([METRICS])
+Suite result: ok. 9 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicCallDepthNoIsolation",
+        "--symbolic-max-paths",
+        "16384",
+        "--symbolic-max-depth",
+        "1000000",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicCallDepth.t.sol:SymbolicCallDepthNoIsolation
+[PASS] checkConstructorSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkCreate2ConstructorSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkNestedDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkStaticCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Concrete Forge fails a default `vm.expectRevert` on a CREATE rejected at the depth limit,
+    // which the symbolic engine does not model, so the result is incomplete instead of a proof.
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectedRevertOnCreateBeyondDepthLimit",
+        "--symbolic-max-paths",
+        "16384",
+        "--symbolic-max-depth",
+        "1000000",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: revert cheatcode on a CREATE beyond the call depth limit] checkExpectedRevertOnCreateBeyondDepthLimit(uint256) ([METRICS])
+...
+"#]]);
 }

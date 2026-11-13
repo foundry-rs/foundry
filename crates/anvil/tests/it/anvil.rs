@@ -8,7 +8,8 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_sol_types::SolCall;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::{core::precompiles::P256_VERIFY, hardfork::EthereumHardfork};
+use foundry_evm_core::precompiles::P256_VERIFY;
+use foundry_evm_hardforks::EthereumHardfork;
 
 const BSC_MAINNET_CHAIN_ID: u64 = 56;
 const BSC_MAINNET_HABER_TIMESTAMP: u64 = 1_718_863_500;

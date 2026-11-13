@@ -7,7 +7,8 @@ use crate::{
     receipts::is_mined_receipt_for,
     recovery::{AttemptKind, DelegatedStatus},
     sequence::{
-        ScriptSequenceKind, blocked_pending, completed_transaction_prefix, operation_ordinal,
+        DelegatedResolution, ScriptSequenceKind, blocked_pending, completed_transaction_prefix,
+        operation_ordinal,
     },
     session::{
         SignerScope, insert_session_access_key_for_remaining_transactions,
@@ -32,12 +33,15 @@ use alloy_provider::{
     transport::{RpcError, TransportError},
     utils::Eip1559Estimation,
 };
-use alloy_rpc_types::TransactionRequest;
-use alloy_signer::Signature;
+use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_signer::{Signature, Signer};
 use eyre::{Context, ContextCompat, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
+use foundry_cli::{
+    opts::TempoOpts,
+    utils::{apply_gas_estimate_multiplier, has_batch_support, has_different_gas_calc},
+};
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{
@@ -46,7 +50,9 @@ use foundry_common::{
     },
     shell,
     tempo::{
-        TempoSponsor, active_tempo_hardfork, maybe_print_fee_token, resolve_and_set_fee_token,
+        TempoSponsor, active_tempo_hardfork,
+        configurable_account::{ConfigurableAccountSigner, detect_configurable_account},
+        mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token,
     },
 };
 use foundry_config::Config;
@@ -55,20 +61,25 @@ use foundry_evm::{
         constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
         evm::{FoundryEvmNetwork, TempoEvmNetwork},
     },
-    hardfork::TempoHardfork,
     traces::CallKind,
 };
-use foundry_wallets::{
-    TempoAccountsWallet,
-    wallet_browser::{error::BrowserWalletError, signer::BrowserSigner},
-};
+use foundry_wallets::wallet_browser::{error::BrowserWalletError, signer::BrowserSigner};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
 use tempo_alloy::{
     TempoNetwork,
+    accounts::TempoAccountsWallet,
+    chainspec::hardfork::TempoHardfork,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},
 };
 use tempo_primitives::transaction::{Call, TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};
+
+/// How `forge script` tells the owners of a configurable account sender that are not local how to
+/// sign.
+const SCRIPT_OWNERS_HINT: &str = "forge script needs enough owner keys locally to sign as a \
+     configurable account: pass them with --private-keys, --account, --tempo.owner or other wallet \
+     options, or keep them in the Tempo Accounts store. Signing with owners on separate machines \
+     is not supported yet.";
 
 /// Represents how to send a single transaction.
 #[derive(Clone)]
@@ -78,6 +89,7 @@ pub enum SendTransactionKind<'a, N: Network> {
     Browser(N::TransactionRequest, &'a BrowserSigner<N>),
     Signed(N::TxEnvelope),
     AccessKey(N::TransactionRequest, Box<TempoAccountsWallet>),
+    ConfigurableAccount(N::TransactionRequest, &'a ConfigurableAccountSigner),
     PreparedRaw(Bytes, TxHash),
 }
 
@@ -107,6 +119,11 @@ where
         let (tx, tempo_wallet) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
             Self::AccessKey(tx, wallet) => (tx, Some(wallet)),
+            Self::ConfigurableAccount(tx, account) => {
+                // The estimate models the owners' approvals.
+                account.prepare_request::<N>(tx);
+                (tx, None)
+            }
             Self::Signed(_) | Self::PreparedRaw(..) => return Ok(()),
         };
 
@@ -164,7 +181,8 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier, browser).await?;
+            estimate_gas(tx, provider, estimate_multiplier, browser, tempo_sponsor.is_some())
+                .await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -213,6 +231,11 @@ where
                 let envelope = N::TxEnvelope::decode_2718_exact(&payload)?;
                 PreparedTransaction::Raw(payload, envelope.trie_hash())
             }
+            Self::ConfigurableAccount(tx, account) => {
+                let payload = Bytes::from(tx.sign_with_configurable_account(account).await?);
+                let envelope = N::TxEnvelope::decode_2718_exact(&payload)?;
+                PreparedTransaction::Raw(payload, envelope.trie_hash())
+            }
             Self::PreparedRaw(payload, hash) => PreparedTransaction::Raw(payload, hash),
             Self::Unlocked(request) => PreparedTransaction::Unlocked(request),
             Self::Browser(request, signer) => PreparedTransaction::Browser(request, signer),
@@ -232,7 +255,8 @@ where
             Self::Raw(tx, _)
             | Self::Unlocked(tx)
             | Self::Browser(tx, _)
-            | Self::AccessKey(tx, _) => tx.nonce_key(),
+            | Self::AccessKey(tx, _)
+            | Self::ConfigurableAccount(tx, _) => tx.nonce_key(),
             Self::Signed(tx) => {
                 <N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).nonce_key()
             }
@@ -471,16 +495,53 @@ where
         .collect()
 }
 
-fn remaining_operation_indices<N: Network>(
+/// Returns the operations of the sequence that are left to send or recover. From the first sequence
+/// with a recorded revert on, the script never reached operations that were not yet submitted, so
+/// only operations that were already submitted are left.
+pub(crate) fn remaining_operation_indices<N: Network>(
     sequence: &ScriptSequenceKind<N>,
     sequence_index: usize,
 ) -> Vec<usize>
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
+    let after_revert = sequence.sequences()[..=sequence_index]
+        .iter()
+        .any(|deployment| !deployment.reverted.is_empty());
     (0..sequence.sequences()[sequence_index].transactions.len())
-        .filter(|&index| !is_operation_completed(sequence, sequence_index, index))
+        .filter(|&index| {
+            !is_operation_completed(sequence, sequence_index, index)
+                && (!after_revert || is_operation_submitted(sequence, sequence_index, index))
+        })
         .collect()
+}
+
+/// Returns the error for operations that resume must not send: the script stops at a failed call,
+/// so it never reached the operations without a submission in the first sequence with a recorded
+/// revert or in a later one.
+pub(crate) fn refused_after_revert<N: Network>(
+    sequence: &ScriptSequenceKind<N>,
+) -> Option<eyre::Report>
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    let reverted =
+        sequence.sequences().iter().position(|deployment| !deployment.reverted.is_empty())?;
+    let refused = (reverted..sequence.sequences().len()).any(|index| {
+        (0..sequence.sequences()[index].transactions.len()).any(|operation| {
+            !is_operation_completed(sequence, index, operation)
+                && !is_operation_submitted(sequence, index, operation)
+        })
+    });
+    refused.then(|| {
+        sequence.label_error(
+            reverted,
+            eyre::eyre!(
+                "transaction {} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again",
+                sequence.sequences()[reverted].reverted.iter().format(", ")
+            ),
+        )
+    })
 }
 
 /// Returns true if the operation has a receipt or a recorded revert for its own hash.
@@ -510,6 +571,21 @@ where
         deployment.reverted.contains(&hash)
             || deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
     })
+}
+
+/// Returns true if the operation was already submitted, or may have been: it has a recorded hash or
+/// a saved signed or delegated attempt.
+fn is_operation_submitted<N: Network>(
+    sequence: &ScriptSequenceKind<N>,
+    sequence_index: usize,
+    index: usize,
+) -> bool
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    sequence.sequences()[sequence_index].transactions[index].hash.is_some()
+        || sequence.signed_payload(sequence_index, index).is_some()
+        || sequence.delegated_status(sequence_index, index).is_some()
 }
 
 fn remaining_sender_addresses<N: Network>(sequence: &ScriptSequenceKind<N>) -> AddressHashSet
@@ -551,6 +627,35 @@ const fn should_broadcast_sequentially(
     estimate_via_rpc || slow || required_signers == 0 || ordering_senders != 1 || !batch_supported
 }
 
+/// Fees chosen once per sequence for its remaining unsigned operations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FeePlan {
+    /// Every remaining operation already has a signed payload, so no fees are set.
+    PreSigned,
+    /// Legacy transactions pay this gas price.
+    Legacy(u128),
+    /// EIP-1559 transactions pay these fees.
+    Eip1559(Eip1559Estimation),
+}
+
+impl FeePlan {
+    /// Sets the planned fees on an unsigned operation.
+    ///
+    /// # Panics
+    ///
+    /// Panics for `FeePlan::PreSigned`, which has no unsigned operation to price.
+    fn apply<N: Network>(self, tx: &mut N::TransactionRequest) {
+        match self {
+            Self::Legacy(gas_price) => tx.set_gas_price(gas_price),
+            Self::Eip1559(fees) => {
+                tx.set_max_priority_fee_per_gas(fees.max_priority_fee_per_gas);
+                tx.set_max_fee_per_gas(fees.max_fee_per_gas);
+            }
+            Self::PreSigned => unreachable!("pre-signed operations are not priced"),
+        }
+    }
+}
+
 /// Represents how to send _all_ transactions
 pub enum SendTransactionsKind<N: Network> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
@@ -560,6 +665,7 @@ pub enum SendTransactionsKind<N: Network> {
         eth_wallets: AddressHashMap<EthereumWallet>,
         browser: Option<BrowserSigner<N>>,
         access_keys: HashMap<SignerScope, TempoAccountsWallet>,
+        configurable_accounts: HashMap<SignerScope, ConfigurableAccountSigner>,
     },
 }
 
@@ -580,9 +686,12 @@ impl<N: Network> SendTransactionsKind<N> {
                 }
                 Ok(SendTransactionKind::Unlocked(tx))
             }
-            Self::Raw { eth_wallets, browser, access_keys } => {
-                if let Some(wallet) = access_keys.get(&SignerScope::new(chain, *addr)) {
+            Self::Raw { eth_wallets, browser, access_keys, configurable_accounts } => {
+                let scope = SignerScope::new(chain, *addr);
+                if let Some(wallet) = access_keys.get(&scope) {
                     Ok(SendTransactionKind::AccessKey(tx, Box::new(wallet.clone())))
+                } else if let Some(account) = configurable_accounts.get(&scope) {
+                    Ok(SendTransactionKind::ConfigurableAccount(tx, account))
                 } else if let Some(wallet) = eth_wallets.get(addr) {
                     Ok(SendTransactionKind::Raw(tx, wallet))
                 } else if let Some(b) = browser
@@ -711,6 +820,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 eth_wallets: AddressHashMap::default(),
                 browser: None,
                 access_keys: HashMap::default(),
+                configurable_accounts: HashMap::default(),
             }
         } else if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
@@ -744,7 +854,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .chain(self.browser_wallet.as_ref().map(|b| b.address()))
                 .collect();
 
-            let mut missing_addresses = Vec::new();
             let accounts_wallet = self
                 .script_config
                 .evm_opts
@@ -754,6 +863,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .transpose()?
                 .flatten();
 
+            let mut missing_scopes = Vec::new();
             for tx in &remaining_transactions {
                 let scope = *tx;
                 if !signers.contains(&tx.sender) && !access_keys.contains_key(&scope) {
@@ -762,11 +872,104 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     {
                         access_keys.insert(scope, wallet.clone().with_chain_id(tx.chain));
                     } else {
-                        missing_addresses.push(tx.sender);
+                        missing_scopes.push(scope);
+                    }
+                }
+            }
+            missing_scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
+            missing_scopes.dedup();
+
+            // A sender without its own signer may be a configurable account whose owners are
+            // among the wallets: they sign its transactions together. A sender with its own key
+            // may be an upgraded EOA, whose root key no longer signs once it has owners.
+            let wallet_signers = self
+                .script_wallets
+                .into_multi_wallet()
+                .into_signers()?
+                .into_values()
+                .map(Arc::new)
+                .collect::<Vec<_>>();
+            let mut configurable_accounts = HashMap::default();
+            if self.script_config.evm_opts.networks.is_tempo() {
+                let tempo = &self.script_config.tempo;
+                // `--tempo.configurable-account` and `--tempo.config` describe one account: a
+                // sender with its own key that is not that account is only checked against the
+                // chain, and signs with the owners among the wallets and `--tempo.owner`.
+                let own_key_tempo = TempoOpts {
+                    configurable_account: None,
+                    configurable_account_config: None,
+                    ..tempo.clone()
+                };
+                let mut own_key_scopes = remaining_transactions
+                    .iter()
+                    .copied()
+                    .filter(|scope| {
+                        signers.contains(&scope.sender) && !access_keys.contains_key(scope)
+                    })
+                    .collect::<Vec<_>>();
+                own_key_scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
+                own_key_scopes.dedup();
+                let candidates = std::mem::take(&mut missing_scopes)
+                    .into_iter()
+                    .map(|scope| (scope, true))
+                    .chain(own_key_scopes.into_iter().map(|scope| (scope, false)));
+                for (scope, missing) in candidates {
+                    let rpc_url = (0..self.sequence.sequences().len())
+                        .find(|&i| self.sequence.sequences()[i].chain == scope.chain)
+                        .map(|i| self.sequence.rpc_url(i).to_owned());
+                    let account = match rpc_url {
+                        Some(rpc_url)
+                            if tempo.configurable_account.is_none_or(|a| a == scope.sender) =>
+                        {
+                            let provider = ProviderBuilder::<TempoNetwork>::from_config_with_url(
+                                &self.script_config.config,
+                                &rpc_url,
+                            )?
+                            .build()?;
+                            let explicit =
+                                missing || tempo.configurable_account == Some(scope.sender);
+                            // A sender with its own key signs with it unless the chain says it
+                            // is a configurable account, such as an upgraded EOA.
+                            let own_key_is_account = !explicit
+                                && detect_configurable_account(
+                                    &provider,
+                                    scope.sender,
+                                    &signers,
+                                    None,
+                                    false,
+                                    BlockId::latest(),
+                                )
+                                .await?
+                                .is_some();
+                            if explicit || own_key_is_account {
+                                let tempo = if explicit { tempo } else { &own_key_tempo };
+                                tempo
+                                    .configurable_account_signer(
+                                        &provider,
+                                        Some(scope.sender),
+                                        None,
+                                        &wallet_signers,
+                                        SCRIPT_OWNERS_HINT,
+                                    )
+                                    .await?
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    match account {
+                        Some(account) => {
+                            configurable_accounts.insert(scope, account);
+                        }
+                        None if missing => missing_scopes.push(scope),
+                        None => {}
                     }
                 }
             }
 
+            let mut missing_addresses =
+                missing_scopes.iter().map(|scope| scope.sender).collect::<Vec<_>>();
             missing_addresses.sort_unstable();
             missing_addresses.dedup();
 
@@ -780,11 +983,29 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 eyre::bail!(message);
             }
 
-            let signers = self.script_wallets.into_multi_wallet().into_signers()?;
-            let eth_wallets: AddressHashMap<EthereumWallet> =
-                signers.into_iter().map(|(addr, signer)| (addr, signer.into())).collect();
+            // An owner key that a configurable account holds cannot also send on its own.
+            let mut eth_wallets = AddressHashMap::<EthereumWallet>::default();
+            for signer in wallet_signers {
+                let address = signer.address();
+                match Arc::into_inner(signer) {
+                    Some(signer) => {
+                        eth_wallets.insert(address, signer.into());
+                    }
+                    None if required_addresses.contains(&address) => eyre::bail!(
+                        "{address} signs both as a sender and as an owner of a Tempo \
+                         configurable account in this script, which is not supported; broadcast \
+                         them in separate scripts"
+                    ),
+                    None => {}
+                }
+            }
 
-            SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet, access_keys }
+            SendTransactionsKind::Raw {
+                eth_wallets,
+                browser: self.browser_wallet,
+                access_keys,
+                configurable_accounts,
+            }
         };
         if let Some(error) = &self.resume_script_error {
             sh_warn!("{}", resume_script_failure(error))?;
@@ -838,15 +1059,15 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     // Make a one-time gas price estimation
                     let all_signed =
                         remaining_indices.iter().all(|index| signed_payloads[*index].is_some());
-                    let (gas_price, eip1559_fees) = match (
+                    let fee_plan = match (
                         all_signed,
                         is_legacy,
                         self.args.with_gas_price,
                         self.args.priority_gas_price,
                     ) {
-                        (true, _, _, _) => (None, None),
-                        (false, true, Some(gas_price), _) => (Some(gas_price.to()), None),
-                        (false, true, None, _) => (Some(provider.get_gas_price().await?), None),
+                        (true, _, _, _) => FeePlan::PreSigned,
+                        (false, true, Some(gas_price), _) => FeePlan::Legacy(gas_price.to()),
+                        (false, true, None, _) => FeePlan::Legacy(provider.get_gas_price().await?),
                         (false, false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => {
                             let max_fee: u128 = max_fee_per_gas.to();
                             let max_priority: u128 = max_priority_fee_per_gas.to();
@@ -855,13 +1076,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "--priority-gas-price ({max_priority}) cannot be higher than --with-gas-price ({max_fee})"
                                 );
                             }
-                            (
-                                None,
-                                Some(Eip1559Estimation {
-                                    max_fee_per_gas: max_fee,
-                                    max_priority_fee_per_gas: max_priority,
-                                }),
-                            )
+                            FeePlan::Eip1559(Eip1559Estimation {
+                                max_fee_per_gas: max_fee,
+                                max_priority_fee_per_gas: max_priority,
+                            })
                         }
                         (false, false, _, _) => {
                             let fees = estimate_eip1559_fees(
@@ -888,7 +1106,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 browser_suggested_tip,
                             )?;
 
-                            (None, Some(fees.estimation()))
+                            FeePlan::Eip1559(fees.estimation())
                         }
                     };
 
@@ -937,15 +1155,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     tx.set_create();
                                 }
 
-                                if let Some(gas_price) = gas_price {
-                                    tx.set_gas_price(gas_price);
-                                } else {
-                                    let eip1559_fees = eip1559_fees.expect("was set above");
-                                    tx.set_max_priority_fee_per_gas(
-                                        eip1559_fees.max_priority_fee_per_gas,
-                                    );
-                                    tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
-                                }
+                                fee_plan.apply::<FEN::Network>(&mut tx);
 
                                 // `vm.attachBlob` transactions also need a blob fee.
                                 if tx.blob_sidecar().is_some()
@@ -1211,6 +1421,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     .then(|| format!("chain {}: {}", deployment.chain, hashes.iter().format(", ")))
             })
             .collect::<Vec<_>>();
+        // Saved attempts after a recorded revert are recovered above, but the new work is refused
+        // once they are resolved. Until then, the warning below points to `--resume`.
+        if unresolved.is_empty()
+            && let Some(err) = refused_after_revert(&self.sequence)
+        {
+            return Err(err);
+        }
         if !shell::is_json() {
             sh_println!("\n\n==========================")?;
         }
@@ -1300,13 +1517,13 @@ impl BundledState<TempoEvmNetwork> {
             );
         }
 
-        let batch_resolution = if self.args.resume_tx_hash.is_some() {
+        let batch_resolution = if let Some(hash) = self.args.resume_tx_hash {
             self.sequence
-                .restore_delegated_pending(
+                .restore_delegated_pending(DelegatedResolution::new(
                     self.args.resume_attempt,
-                    self.args.resume_tx_hash,
+                    Some(hash),
                     false,
-                )?
+                )?)?
                 .map(|(_, _, attempt, hash)| (attempt, hash))
         } else {
             None
@@ -1651,8 +1868,14 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         // Estimate gas for the batch transaction
-        estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier, false)
-            .await?;
+        estimate_gas(
+            &mut batch_tx,
+            provider.as_ref(),
+            self.args.gas_estimate_multiplier,
+            false,
+            tempo_sponsor.is_some(),
+        )
+        .await?;
 
         sh_println!("Estimated gas: {}", batch_tx.inner.gas.unwrap_or(0))?;
 
@@ -1886,11 +2109,14 @@ async fn wait_for_batch_receipt<N: Network>(
     }
 }
 
+/// Estimates and sets the gas limit of `tx`, which a Tempo fee payer signs afterwards when
+/// `sponsored`.
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
     browser: bool,
+    sponsored: bool,
 ) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -1899,12 +2125,13 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.reset_gas_limit();
 
-    let request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
-    tx.set_gas_limit(
-        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
-            * estimate_multiplier
-            / 100,
-    );
+    let mut request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
+    if sponsored {
+        mark_sponsored_gas_estimation(provider, &mut request).await;
+    }
+    let estimate =
+        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
+    tx.set_gas_limit(apply_gas_estimate_multiplier(estimate, Some(estimate_multiplier))?);
     Ok(())
 }
 
@@ -1984,15 +2211,80 @@ fn resume_script_failure(error: &str) -> String {
     format!("Resume re-ran the script to collect signers, but it failed: {error}")
 }
 
+impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
+    /// Prints recorded creations with successful receipts, including factory deployments.
+    pub(crate) fn print_deployed_contracts(&self) -> Result<()> {
+        if shell::is_json() {
+            return Ok(());
+        }
+
+        for sequence in self.sequence.sequences() {
+            let mined = sequence
+                .receipts
+                .iter()
+                .map(|receipt| receipt.transaction_hash())
+                .collect::<HashSet<_>>();
+            let rows = sequence
+                .transactions
+                .iter()
+                .filter(|tx| tx.hash.is_some_and(|hash| mined.contains(&hash)))
+                .flat_map(|tx| {
+                    let direct = tx.call_kind.is_any_create().then_some(tx).and_then(|tx| {
+                        Some((
+                            tx.label.as_deref(),
+                            tx.contract_name.as_deref(),
+                            tx.contract_address?,
+                        ))
+                    });
+                    direct.into_iter().chain(tx.additional_contracts.iter().map(|contract| {
+                        (
+                            contract.label.as_deref(),
+                            contract.contract_name.as_deref(),
+                            contract.address,
+                        )
+                    }))
+                })
+                .map(|(label, name, address)| {
+                    (label, name.filter(|name| !name.is_empty()).unwrap_or("-"), address)
+                })
+                .collect::<Vec<_>>();
+            if rows.is_empty() {
+                continue;
+            }
+
+            let has_labels = rows.iter().any(|(label, ..)| label.is_some());
+            let label_width = rows
+                .iter()
+                .map(|(label, ..)| label.map_or(1, |label| label.chars().count()))
+                .max()
+                .unwrap_or(0);
+            let name_width =
+                rows.iter().map(|(_, name, _)| name.chars().count()).max().unwrap_or(0);
+            sh_status!("\nDeployed contracts (chain {}):", sequence.chain)?;
+            for (label, name, address) in rows {
+                if has_labels {
+                    sh_status!(
+                        "  {:<label_width$}  {name:<name_width$}  {address}",
+                        label.unwrap_or("-")
+                    )?;
+                } else {
+                    sh_status!("  {name:<name_width$}  {address}")?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sequence::DelegatedAction;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, Bloom, address, hex};
     use alloy_provider::mock::Asserter;
     use alloy_rpc_types::TransactionReceipt;
-    use alloy_signer::Signer;
     use foundry_common::tempo::PATH_USD_ADDRESS;
     use foundry_evm::{backend::Backend, core::evm::EthEvmNetwork, opts::EvmOpts};
 
@@ -2029,9 +2321,12 @@ mod tests {
             fork_block_number: Some(block_number),
             ..Default::default()
         };
-        let backend =
-            Backend::<EthEvmNetwork>::spawn(evm_opts.get_fork(&Config::default(), 31337, None))
-                .unwrap();
+        let (env, _, _) = evm_opts.env_with_fork_context::<EthEvmNetwork>().await.unwrap();
+        let backend = Backend::<EthEvmNetwork>::spawn(
+            evm_opts.get_fork(&Config::default(), 31337, None),
+            env,
+        )
+        .unwrap();
         assert_eq!(backend.transaction_count(sender).await.unwrap(), 1);
 
         provider
@@ -2061,8 +2356,12 @@ mod tests {
             SignerScope::new(4217, root_address),
             TempoAccountsWallet::from_secp256k1(root_address, access_key, None).with_chain_id(4217),
         );
-        let send_kind =
-            SendTransactionsKind::<Ethereum>::Raw { eth_wallets, browser: None, access_keys };
+        let send_kind = SendTransactionsKind::<Ethereum>::Raw {
+            eth_wallets,
+            browser: None,
+            access_keys,
+            configurable_accounts: HashMap::default(),
+        };
 
         let tx = TransactionRequest { from: Some(root_address), ..Default::default() };
         let sender = send_kind.for_sender(4217, &root_address, tx).unwrap();
@@ -2089,8 +2388,12 @@ mod tests {
             SignerScope::new(4217, root_address),
             TempoAccountsWallet::from_secp256k1(root_address, access_key, None).with_chain_id(4217),
         );
-        let send_kind =
-            SendTransactionsKind::<Ethereum>::Raw { eth_wallets, browser: None, access_keys };
+        let send_kind = SendTransactionsKind::<Ethereum>::Raw {
+            eth_wallets,
+            browser: None,
+            access_keys,
+            configurable_accounts: HashMap::default(),
+        };
 
         let tx = TransactionRequest { from: Some(root_address), ..Default::default() };
         let sender = send_kind.for_sender(1, &root_address, tx).unwrap();
@@ -2149,7 +2452,12 @@ mod tests {
         sequence.persist_batch_delegated_request(0, 0, Default::default()).unwrap();
         let (_, attempt, _) = sequence.batch_attempt(0).unwrap();
 
-        sequence.restore_delegated_pending(Some(attempt), None, true).unwrap();
+        sequence
+            .restore_delegated_pending(DelegatedResolution::Attempt {
+                attempt,
+                action: Some(DelegatedAction::Retry),
+            })
+            .unwrap();
 
         assert!(sequence.batch_attempt(0).is_none());
         drop(sequence);
@@ -2230,6 +2538,28 @@ mod tests {
         sequence.sequences_mut()[0].receipts.push(second_receipt);
 
         assert_eq!(remaining_operation_indices(&sequence, 0), [0]);
+    }
+
+    #[test]
+    fn recorded_revert_leaves_only_submitted_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut deployment = ScriptSequence::<Ethereum> {
+            chain: 1,
+            transactions: [planned_tx(SIGNED_TX), planned_tx(OTHER_SIGNED_TX)].into(),
+            ..Default::default()
+        };
+        deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
+        let reverted =
+            sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
+        sequence.sequences_mut()[0].reverted.push(reverted);
+        assert!(remaining_operation_indices(&sequence, 0).is_empty());
+        assert!(refused_after_revert(&sequence).is_some());
+
+        // An attempt saved before the revert was recorded is recovered, and nothing is refused.
+        sequence.persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX), true).unwrap();
+        assert_eq!(remaining_operation_indices(&sequence, 0), [1]);
+        assert!(refused_after_revert(&sequence).is_none());
     }
 
     #[test]
@@ -2629,6 +2959,24 @@ mod tests {
             };
             assert_eq!(payload.as_ref(), SIGNED_TX);
             assert_eq!(prepared_hash, hash);
+        }
+    }
+
+    #[tokio::test]
+    async fn estimate_gas_multiplies_large_estimates_without_overflow() {
+        for (estimate, multiplier, expected) in
+            [(u64::MAX / 2, 130, Some(11_990_383_647_911_208_549)), (u64::MAX, 200, None)]
+        {
+            let asserter = Asserter::new();
+            let provider: RootProvider<Ethereum> =
+                alloy_provider::ProviderBuilder::default().connect_mocked_client(asserter.clone());
+            asserter.push_success(&alloy_primitives::U64::from(estimate));
+            let mut tx = alloy_rpc_types::TransactionRequest::default();
+
+            let result = estimate_gas(&mut tx, &provider, multiplier, false, false).await;
+
+            assert_eq!(result.is_ok(), expected.is_some());
+            assert_eq!(tx.gas, expected);
         }
     }
 }

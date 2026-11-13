@@ -1,25 +1,18 @@
 use super::{ScriptConfig, ScriptResult};
 use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_evm::{
-    FromRecoveredTx,
-    revm::context::{Block, Transaction},
-};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256, map::AddressHashMap};
+use evm2::interpreter::InstrStop;
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
-use foundry_common::{LIBRARY_DEPLOYER, TransactionMaybeSigned};
+use foundry_common::{FoundryTransactionBuilder, LIBRARY_DEPLOYER, TransactionMaybeSigned};
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
-    core::{
-        FoundryBlock, FoundryTransaction,
-        evm::{EvmEnvFor, FoundryEvmNetwork, TransactionRequestFor, TxEnvFor},
-    },
+    core::evm::{EvmEnvFor, FoundryEvmNetwork, TransactionRequestFor},
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
-    revm::interpreter::{InstructionResult, return_ok},
     traces::{TraceKind, Traces},
 };
 use std::collections::VecDeque;
@@ -324,16 +317,23 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             return self.simulate_with_tx_env(transaction, is_fixed_gas_limit);
         };
 
-        // Every simulated call clones the executor's tx env, so a blob transaction is run as one
-        // there, making `BLOBHASH` match the published transaction.
-        let original_tx_env = self.executor.tx_env().clone();
-        let blob_gasprice = self.executor.evm_env().block_env.blob_gasprice().unwrap_or_default();
-        let tx_env = self.executor.tx_env_mut();
-        tx_env.set_blob_hashes(blob_hashes.to_vec());
-        tx_env.set_max_fee_per_blob_gas(blob_gasprice);
-        tx_env.set_tx_type(3);
+        // Every simulated call starts from the executor's transaction defaults, so a blob
+        // transaction is run as one there, making `BLOBHASH` match the published transaction.
+        let original_tx = self.executor.tx().clone();
+        let blob_basefee = self.executor.evm_env().block.blob_basefee.saturating_to();
+        let tx = self.executor.tx_mut();
+        tx.set_blob_versioned_hashes(blob_hashes.to_vec());
+        tx.set_max_fee_per_blob_gas(blob_basefee);
+        // evm2 executes complete EIP-4844 requests, which carry 1559 fees and the sidecar.
+        tx.set_max_fee_per_gas(0);
+        tx.set_max_priority_fee_per_gas(0);
+        if let TransactionMaybeSigned::Unsigned(request) = transaction
+            && let Some(sidecar) = request.blob_sidecar()
+        {
+            tx.set_blob_sidecar(sidecar.clone());
+        }
         let result = self.simulate_with_tx_env(transaction, is_fixed_gas_limit);
-        *self.executor.tx_env_mut() = original_tx_env;
+        *self.executor.tx_mut() = original_tx;
         result
     }
 
@@ -344,8 +344,21 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
     ) -> Result<ScriptResult<FEN::Network>> {
         if is_fixed_gas_limit {
             let (env, tx) = self.prepare_fixed_gas_env(transaction);
-            return if tx.is_single_create() {
-                let result = self.executor.deploy_with_env(env, tx, None);
+            return if is_single_create(&tx) {
+                // Tempo AA requests keep their creation in the call list, so they have no
+                // top-level kind for `deploy_with_env`.
+                let result = self
+                    .executor
+                    .transact_with_env(env, tx)
+                    .map_err(EvmError::from)
+                    .and_then(|raw| raw.into_result(None))
+                    .map(|raw| DeployResult {
+                        address: raw.created_address.unwrap_or_default(),
+                        raw,
+                    });
+                if let Ok(DeployResult { address, .. }) = &result {
+                    self.executor.backend_mut().add_persistent_account(*address);
+                }
                 self.deployment_result(result)
             } else {
                 let result = self.executor.transact_with_env(env, tx)?;
@@ -512,60 +525,78 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         value: U256,
     ) -> Result<u64> {
         let mut gas_used = res.gas_used;
-        if matches!(res.exit_reason, Some(return_ok!())) {
+        if res.exit_reason.is_some_and(InstrStop::is_success) {
             // Store the current gas limit and reset it later.
-            let init_gas_limit = self.executor.tx_env().gas_limit();
+            let init_gas_limit = self.executor.tx().gas_limit();
 
             let mut search = GasSearch::new(gas_used);
             while let Some(limit) = search.next_limit() {
-                self.executor.tx_env_mut().set_gas_limit(limit);
+                self.executor.tx_mut().set_gas_limit(limit);
                 let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
                 search.record(limit, needs_more_gas(res.exit_reason));
             }
             gas_used = search.gas_used();
             // Reset gas limit in the executor.
-            self.executor.tx_env_mut().set_gas_limit(init_gas_limit);
+            match init_gas_limit {
+                Some(gas_limit) => self.executor.tx_mut().set_gas_limit(gas_limit),
+                None => self.executor.tx_mut().reset_gas_limit(),
+            }
         }
         Ok(gas_used)
     }
 
     /// Prepares a fixed-limit transaction without changing the block or executor gas limit.
+    ///
+    /// The transaction keeps its complete network-native payload, including access lists,
+    /// authorizations and network fields; only the sender, chain ID, gas limit and fees are
+    /// normalized as for synthetic calls.
     pub(crate) fn prepare_fixed_gas_env(
         &self,
         transaction: &TransactionMaybeSigned<FEN::Network>,
-    ) -> (EvmEnvFor<FEN>, TxEnvFor<FEN>) {
+    ) -> (EvmEnvFor<FEN>, TransactionRequestFor<FEN>) {
         let from = transaction.from().expect("transaction sender missing");
         let kind = transaction.to().map_or(TxKind::Create, TxKind::Call);
-        let (mut env, mut tx) = self.executor.prepare_call_env(
+        let (mut env, defaults) = self.executor.prepare_call_env(
             from,
             kind,
             transaction.input().cloned().unwrap_or_default(),
             transaction.value().unwrap_or_default(),
         );
-        env.block_env.set_gas_limit(self.executor.evm_env().block_env.gas_limit());
-        match transaction {
-            TransactionMaybeSigned::Signed { tx: signed, .. } => {
-                // Keep the complete signed payload, including access lists and network fields.
-                tx = TxEnvFor::<FEN>::from_recovered_tx(signed, from);
-            }
-            TransactionMaybeSigned::Unsigned(request) => {
-                let access_list = request.access_list().cloned().unwrap_or_default();
-                if !access_list.is_empty() && tx.tx_type() == 0 {
-                    tx.set_tx_type(1);
-                }
-                tx.set_access_list(access_list);
-                if let Some(authorization_list) = transaction.authorization_list() {
-                    tx.set_signed_authorization(authorization_list);
-                    tx.set_tx_type(4);
-                }
-            }
+        env.block.gas_limit = self.executor.evm_env().block.gas_limit;
+        let mut tx: TransactionRequestFor<FEN> = match transaction {
+            TransactionMaybeSigned::Signed { tx: signed, .. } => signed.clone().into(),
+            TransactionMaybeSigned::Unsigned(request) => request.clone(),
+        };
+        tx.set_from(from);
+        // Requests and envelopes of creations can leave the kind unset.
+        if tx.kind().is_none() && !tx.has_tempo_call_list() {
+            tx.set_kind(kind);
+        }
+        if tx.nonce().is_none() {
+            tx.set_nonce(defaults.nonce().unwrap_or_default());
         }
         // Retain the synthetic call's fee and chain normalization.
-        tx.set_gas_price(0);
-        tx.set_gas_priority_fee(None);
-        tx.set_chain_id(Some(env.cfg_env.chain_id));
+        if tx.max_fee_per_gas().is_some() || tx.authorization_list().is_some() || tx.is_tempo_aa() {
+            tx.set_max_fee_per_gas(0);
+            tx.set_max_priority_fee_per_gas(0);
+        } else {
+            tx.set_gas_price(0);
+        }
+        tx.set_chain_id(env.chain_id());
         tx.set_gas_limit(transaction.gas().expect("fixed gas limit missing") as u64);
         (env, tx)
+    }
+}
+
+/// Returns whether `tx` executes a single contract creation.
+fn is_single_create<N, T: FoundryTransactionBuilder<N>>(tx: &T) -> bool
+where
+    N: alloy_network::Network<TransactionRequest = T>,
+{
+    if tx.has_tempo_call_list() {
+        matches!(tx.tempo_calls().as_slice(), [(TxKind::Create, _)])
+    } else {
+        tx.kind().is_some_and(|kind| kind.is_create())
     }
 }
 
@@ -620,13 +651,8 @@ impl GasSearch {
 }
 
 /// Returns whether the gas search treats `exit_reason` as needing more gas.
-pub(crate) const fn needs_more_gas(exit_reason: Option<InstructionResult>) -> bool {
-    matches!(
-        exit_reason,
-        Some(
-            InstructionResult::Revert | InstructionResult::OutOfGas | InstructionResult::OutOfFunds
-        )
-    )
+pub(crate) const fn needs_more_gas(exit_reason: Option<InstrStop>) -> bool {
+    matches!(exit_reason, Some(InstrStop::Revert | InstrStop::OutOfGas | InstrStop::OutOfFunds))
 }
 
 #[cfg(test)]
@@ -635,9 +661,7 @@ mod tests {
     use alloy_primitives::bytes;
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use foundry_evm::{
-        backend::Backend, core::evm::TempoEvmNetwork, executors::ExecutorBuilder, revm::DatabaseRef,
-    };
+    use foundry_evm::{backend::Backend, core::evm::TempoEvmNetwork, executors::ExecutorBuilder};
     use foundry_evm_networks::NetworkConfigs;
     use tempo_alloy::primitives::{TempoTransaction, TempoTxEnvelope, transaction::Call};
 
@@ -664,17 +688,12 @@ mod tests {
 
     #[test]
     fn only_revert_and_running_out_mean_too_little_gas() {
-        for reason in
-            [InstructionResult::Revert, InstructionResult::OutOfGas, InstructionResult::OutOfFunds]
-        {
+        for reason in [InstrStop::Revert, InstrStop::OutOfGas, InstrStop::OutOfFunds] {
             assert!(needs_more_gas(Some(reason)));
         }
-        for reason in [
-            Some(InstructionResult::Return),
-            Some(InstructionResult::Stop),
-            Some(InstructionResult::InvalidFEOpcode),
-            None,
-        ] {
+        for reason in
+            [Some(InstrStop::Return), Some(InstrStop::Stop), Some(InstrStop::InvalidFEOpcode), None]
+        {
             assert!(!needs_more_gas(reason));
         }
     }
@@ -687,13 +706,14 @@ mod tests {
         // The constructor stores seven; the runtime increments that slot when called.
         let initcode = bytes!("60075f556008600e5f3960085ff35f546001015f5500");
         for batch in [false, true] {
-            let mut env = EvmEnvFor::<TempoEvmNetwork>::default();
-            env.cfg_env.chain_id = 31337;
-            env.cfg_env.disable_nonce_check = true;
+            let opts = EvmOpts { memory_limit: 1 << 25, ..Default::default() };
+            let mut env = opts.local_evm_env::<TempoEvmNetwork>();
+            env.set_chain_id(31337);
+            env.block.gas_limit = U256::from(30_000_000);
             let executor = ExecutorBuilder::<TempoEvmNetwork>::new().gas_limit(30_000_000).build(
                 env,
-                TxEnvFor::<TempoEvmNetwork>::default(),
-                Backend::spawn(None).unwrap(),
+                Default::default(),
+                Backend::spawn(None, env).unwrap(),
                 NetworkConfigs::with_tempo(),
             );
             let mut runner = ScriptRunner::new(executor, EvmOpts::default());
@@ -720,7 +740,7 @@ mod tests {
             let result = runner.simulate(&transaction, true).unwrap();
             assert!(result.success);
             assert_eq!(
-                runner.executor.backend().storage_ref(target, U256::ZERO).unwrap(),
+                runner.executor.backend().storage(target, U256::ZERO).unwrap(),
                 U256::from(if batch { 8 } else { 7 }),
             );
             assert!(!runner.executor.is_empty_code(target).unwrap());
