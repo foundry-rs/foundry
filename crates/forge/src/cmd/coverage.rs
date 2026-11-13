@@ -195,7 +195,13 @@ impl CoverageSettings {
 
 impl CoverageArgs {
     pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
-        self.test.ensure_coverage_mode_compatible()
+        self.test.ensure_coverage_mode_compatible()?;
+        let settings = self.resolve(&self.load_config_no_warnings()?.coverage);
+        eyre::ensure!(
+            !(settings.ir_minimum && settings.keep_optimizer),
+            "`--ir-minimum` and `--keep-optimizer` cannot be used together"
+        );
+        Ok(())
     }
 
     pub async fn run(self) -> Result<()> {
@@ -215,10 +221,6 @@ impl CoverageArgs {
         // Merge CLI args with `[profile.<name>.coverage]` config values. CLI
         // flags take precedence; unset CLI flags fall back to the config.
         let settings = self.resolve(&config.coverage);
-        eyre::ensure!(
-            !(settings.ir_minimum && settings.keep_optimizer),
-            "`--ir-minimum` and `--keep-optimizer` cannot be used together"
-        );
         let filter = self.test.filter(&config)?;
 
         let (paths, mut output) = {

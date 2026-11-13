@@ -2770,6 +2770,12 @@ contract AContractTest is DSTest {
 Error: `--ir-minimum` and `--keep-optimizer` cannot be used together
 
 "#]]);
+
+    prj.update_config(|config| config.coverage.ir_minimum = true);
+    cmd.forge_fuse().args(["coverage", "--keep-optimizer"]).assert_failure().stderr_eq(str![[r#"
+Error: `--ir-minimum` and `--keep-optimizer` cannot be used together
+
+"#]]);
 }
 
 #[forgetest]
