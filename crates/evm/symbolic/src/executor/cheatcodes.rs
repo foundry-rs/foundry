@@ -382,7 +382,7 @@ impl SymbolicExecutor {
         initcode.extend_from_slice(&constructor_args);
         // Like Forge, initcode above the EIP-3860 limit fails the cheatcode before it takes a
         // prank or changes any state.
-        if executor.max_initcode_size.is_some_and(|limit| initcode.len() > limit) {
+        if initcode.len() > executor.max_initcode_size {
             let return_data = error_string_return_data(
                 &mut self.cx,
                 "vm.deployCode: initcode size limit exceeded",

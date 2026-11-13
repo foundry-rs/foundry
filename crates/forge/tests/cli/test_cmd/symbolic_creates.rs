@@ -162,6 +162,13 @@ contract SymbolicCreateCodeLimit is Test {
         assert(!ok && data.length == 0);
     }
 
+    function checkNoInitcodeLimitBeforeShanghai() public {
+        assert(deployer.create(49153) != address(0));
+        assert(deployer.create2(49153) != address(0));
+        bytes memory args = new bytes(49153 - type(Small).creationCode.length);
+        assert(vm.deployCode("SymbolicCreateCodeLimit.t.sol:Small", args) != address(0));
+    }
+
     function checkSymbolicInitcodeOverLimit(uint256 size) public {
         vm.assume(size <= 49153);
         deployer.create(size);
@@ -230,13 +237,14 @@ contract Deployer {
     ])
     .assert_success();
 
-    // A symbolic initcode size that may exceed the limit reports incomplete.
+    // A symbolic initcode size that may exceed the limit reports incomplete, also when the
+    // calldata bound equals the limit.
     cmd.forge_fuse();
     assert_symbolic(cmd.args([
         "test",
         "--symbolic",
         "--symbolic-max-calldata-bytes",
-        "60000",
+        "49152",
         "--match-test",
         "checkSymbolicInitcode",
     ]))
@@ -244,28 +252,25 @@ contract Deployer {
     .stdout_eq(str![[r#"
 ...
 Ran 2 tests for test/SymbolicCreateCodeLimit.t.sol:SymbolicCreateCodeLimit
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic CREATE initcode size] checkSymbolicInitcodeOverLimit(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic CREATE initcode size beyond the EIP-3860 limit] checkSymbolicInitcodeOverLimit(uint256) ([METRICS])
 [PASS] checkSymbolicInitcodeWithinLimit(uint256) ([METRICS])
 ...
 "#]]);
 
-    // Before Shanghai there is no initcode size limit.
+    // Before Shanghai there is no initcode size limit. Without MCOPY, ABI-encoding the
+    // `deployCode` args copies them word by word, which needs a larger depth.
     cmd.forge_fuse();
-    assert_symbolic_witness(cmd.args([
+    cmd.args([
         "test",
         "--symbolic",
         "--evm-version",
         "london",
+        "--symbolic-max-depth",
+        "40000",
         "--match-test",
-        "checkCreateInitcodeLimit",
-    ]))
-    .failure()
-    .stdout_eq(str![[r#"
-...
-Ran 1 test for test/SymbolicCreateCodeLimit.t.sol:SymbolicCreateCodeLimit
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreateInitcodeLimit() ([METRICS])
-...
-"#]]);
+        "checkNoInitcodeLimitBeforeShanghai",
+    ])
+    .assert_success();
 
     prj.update_config(|config| config.code_size_limit = Some(24_575));
     cmd.forge_fuse();

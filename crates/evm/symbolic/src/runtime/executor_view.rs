@@ -63,8 +63,9 @@ pub struct ExecutorView<'a> {
     /// Gas limit of the calls and deployments the executor runs.
     pub(crate) gas_limit: u64,
     pub(crate) max_code_size: usize,
-    /// Initcode size limit of CREATE, CREATE2, and `vm.deployCode` when EIP-3860 applies.
-    pub(crate) max_initcode_size: Option<usize>,
+    /// Initcode size limit of CREATE, CREATE2, and `vm.deployCode`, or `usize::MAX` before
+    /// EIP-3860.
+    pub(crate) max_initcode_size: usize,
     pub(crate) active_fork_id: Option<U256>,
     /// Addresses cached by the active context, including committed-session reads.
     pub(crate) account_addresses: Vec<Address>,
@@ -141,10 +142,11 @@ impl<'a> ExecutorView<'a> {
             memory_limit: evm_env.version.memory_limit,
             gas_limit: executor.gas_limit(),
             max_code_size: evm_env.version.max_code_size,
-            max_initcode_size: evm_env
-                .version
-                .feature(EvmFeatures::EIP3860)
-                .then_some(evm_env.version.max_initcode_size),
+            max_initcode_size: if evm_env.version.feature(EvmFeatures::EIP3860) {
+                evm_env.version.max_initcode_size
+            } else {
+                usize::MAX
+            },
             active_fork_id: backend.active_fork_id(),
             account_addresses,
             block: ExecutorBlock {
