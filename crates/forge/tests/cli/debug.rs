@@ -681,76 +681,82 @@ import {Token as TokenLong} from "../lib/x/src/Token.sol";
 import {Token as TokenShort} from "../src/Token.sol";
 
 contract SameNameTest {
-    function test_a() public {
+    function test_all() public {
         new TokenA(1).set(2);
-    }
-
-    function test_b() public {
         new TokenB(1).set(2);
-    }
-
-    function test_long() public {
         new TokenLong(1).set(2);
-    }
-
-    function test_short() public {
         new TokenShort(1).set(2);
     }
 }
 "#,
     );
 
-    for (test, file, variable) in [
-        ("test_a", "src/a/Token.sol", "alpha"),
-        ("test_b", "src/b/Token.sol", "beta"),
-        ("test_long", "lib/x/src/Token.sol", "longPath"),
-        ("test_short", "src/Token.sol", "shortPath"),
-    ] {
-        cmd.forge_fuse()
-            .args(["test", "--debug", "--mt", &format!("^{test}\\(")])
-            .stdin(format!(
-                "break {file}:9\nbreak {file}:13\ncontinue\ncontinue\nprint {variable}\nquit\n"
-            ))
-            .assert_success()
-            .stdout_eq(format!(
-                "...
-Breakpoint #1 set at {file}:9
-Breakpoint #2 set at {file}:13
-Breakpoint #1 hit at step [..], {file}:9
+    let tokens = [
+        ("src/a/Token.sol", "alpha"),
+        ("src/b/Token.sol", "beta"),
+        ("lib/x/src/Token.sol", "longPath"),
+        ("src/Token.sol", "shortPath"),
+    ];
+    // soldb matches breakpoint files by file name, so these break in every `Token.sol`.
+    let mut stdin = "break src/a/Token.sol:9\nbreak src/a/Token.sol:13\n".to_string();
+    let mut stdout = "...\n".to_string();
+    for (file, variable) in tokens {
+        stdin += &format!("continue\ncontinue\nprint {variable}\n");
+        stdout += &format!(
+            "Breakpoint #1 hit at step [..]
 {file}:9 in constructor  (step [..])
     9 |         {variable} = value;
-Breakpoint #2 hit at step [..], {file}:13
+Breakpoint #2 hit at step [..]
 {file}:13 in set  (step [..])
    13 |         {variable} = value;
 ...
 uint256 {variable} = 1 [slot 0x0]
-Exiting debugger.
 "
-            ));
+        );
     }
+    stdin += "quit\n";
+    stdout += "Exiting debugger.\n";
+    cmd.args(["test", "--debug", "--mt", "^test_all\\("])
+        .stdin(stdin)
+        .assert_success()
+        .stdout_eq(stdout);
 
-    // The bundle pairs the contract's code with its own source map.
+    // The bundle pairs each contract's code with its own source map.
     let dump_dir = prj.root().join("soldb");
     cmd.forge_fuse()
-        .args(["test", "--debug", "--mt", "^test_b\\(", "--dump"])
+        .args(["test", "--debug", "--mt", "^test_all\\(", "--dump"])
         .arg(&dump_dir)
         .assert_success();
     let mapping = serde_json::from_slice::<serde_json::Value>(
         &std::fs::read(dump_dir.join("contracts.json")).unwrap(),
     )
     .unwrap();
-    let token = mapping["contracts"]
+    let mut identifiers = mapping["contracts"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|entry| entry["name"] == "Token")
-        .unwrap();
-    let combined = serde_json::from_slice::<serde_json::Value>(
-        &std::fs::read(dump_dir.join(token["debug_dir"].as_str().unwrap()).join("combined.json"))
-            .unwrap(),
-    )
-    .unwrap();
-    assert!(combined["contracts"]["src/b/Token.sol:Token"].is_object());
+        .filter(|entry| entry["name"] == "Token")
+        .flat_map(|entry| {
+            let combined = serde_json::from_slice::<serde_json::Value>(
+                &std::fs::read(
+                    dump_dir.join(entry["debug_dir"].as_str().unwrap()).join("combined.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            combined["contracts"].as_object().unwrap().keys().cloned().collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    identifiers.sort();
+    assert_eq!(
+        identifiers,
+        [
+            "lib/x/src/Token.sol:Token",
+            "src/Token.sol:Token",
+            "src/a/Token.sol:Token",
+            "src/b/Token.sol:Token"
+        ]
+    );
 }
 
 // A creation that reverts has no deployed code to compare, so only its init code tells apart

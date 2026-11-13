@@ -861,23 +861,7 @@ Exiting debugger.
 "#]]);
 }
 
-const SAME_NAME_TOKEN_A: &str = r#"
-contract Token {
-    uint256 public alpha;
-
-    constructor() {
-        alpha = 1;
-    }
-}
-"#;
-
-// Adds two contracts named `Token`: a plain one in `src/a` and one that uses a public library in
-// `src/b`.
-fn add_same_name_tokens(prj: &foundry_test_utils::TestProject) {
-    prj.add_source("a/Token.sol", SAME_NAME_TOKEN_A);
-    prj.add_source(
-        "b/Token.sol",
-        r#"
+const SAME_NAME_TOKEN_B: &str = r#"
 library LibB {
     function thrice(uint256 value) public pure returns (uint256) {
         return value * 3;
@@ -891,8 +875,34 @@ contract Token {
         beta = LibB.thrice(1);
     }
 }
+"#;
+
+// Adds two contracts named `Token`: a plain one in `src/a` and one that uses a public library in
+// `src/b`.
+fn add_same_name_tokens(prj: &foundry_test_utils::TestProject) {
+    prj.add_source(
+        "a/Token.sol",
+        r#"
+contract Token {
+    uint256 public alpha;
+
+    constructor() {
+        alpha = 1;
+    }
+}
 "#,
     );
+    prj.add_source("b/Token.sol", SAME_NAME_TOKEN_B);
+}
+
+// Deploys `LibB` and the `src/b` token linked to it. Returns the token's JSON output.
+fn create_linked_token(
+    cmd: &mut foundry_test_utils::TestCommand,
+    endpoint: &str,
+) -> serde_json::Value {
+    let library = forge_create(cmd, endpoint, &["src/b/Token.sol:LibB"]);
+    let library = format!("src/b/Token.sol:LibB:{}", library["deployedTo"].as_str().unwrap());
+    forge_create(cmd, endpoint, &["src/b/Token.sol:Token", "--libraries", &library])
 }
 
 // Runs `forge create` with `args` and returns its JSON output.
@@ -919,30 +929,17 @@ fn forge_create(
     serde_json::from_str(&output).unwrap()
 }
 
-// Local artifacts aren't linked, so the creation of a contract that uses a public library can't be
-// matched by its init code. Its source must still be found when another artifact has its name.
+// Local artifacts aren't linked, so the init code of a contract that uses a public library matches
+// only when library addresses are skipped. Its source must still be found when another artifact
+// has its name.
 #[forgetest]
 async fn cast_run_debug_soldb_same_name_linked_creation(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     add_same_name_tokens(&prj);
+    let token = create_linked_token(&mut cmd, &endpoint);
 
-    let library = forge_create(&mut cmd, &endpoint, &["src/b/Token.sol:LibB"]);
-    let library = format!("src/b/Token.sol:LibB:{}", library["deployedTo"].as_str().unwrap());
-    let token =
-        forge_create(&mut cmd, &endpoint, &["src/b/Token.sol:Token", "--libraries", &library]);
-
-    cmd.cast_fuse()
-        .current_dir(prj.root())
-        .args([
-            "run",
-            token["transactionHash"].as_str().unwrap(),
-            "--rpc-url",
-            &endpoint,
-            "--debug",
-            "--with-local-artifacts",
-        ])
-        .stdin("break src/b/Token.sol:14\ncontinue\nquit\n")
+    cast_run_debug(&mut cmd, &prj, &endpoint, &token, "break src/b/Token.sol:14\ncontinue\nquit\n")
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -955,35 +952,24 @@ Exiting debugger.
 "#]]);
 }
 
-// A comment changes the metadata hash, so the deployed init code no longer matches the local
-// artifact. Its source must still be found when another artifact has its name.
+// A comment changes the metadata hash, so the deployed init code of a linked contract no longer
+// matches the local artifact. Its source must still be found when another artifact has its name.
 #[forgetest]
 async fn cast_run_debug_soldb_same_name_edited_metadata(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     add_same_name_tokens(&prj);
+    let token = create_linked_token(&mut cmd, &endpoint);
+    prj.add_source("b/Token.sol", &format!("{SAME_NAME_TOKEN_B}// A comment.\n"));
 
-    let token = forge_create(&mut cmd, &endpoint, &["src/a/Token.sol:Token"]);
-    prj.add_source("a/Token.sol", &format!("{SAME_NAME_TOKEN_A}// A comment.\n"));
-
-    cmd.cast_fuse()
-        .current_dir(prj.root())
-        .args([
-            "run",
-            token["transactionHash"].as_str().unwrap(),
-            "--rpc-url",
-            &endpoint,
-            "--debug",
-            "--with-local-artifacts",
-        ])
-        .stdin("break src/a/Token.sol:8\ncontinue\nquit\n")
+    cast_run_debug(&mut cmd, &prj, &endpoint, &token, "break src/b/Token.sol:14\ncontinue\nquit\n")
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Breakpoint #1 set at src/a/Token.sol:8
-Breakpoint #1 hit at step [..], src/a/Token.sol:8
-src/a/Token.sol:8 in constructor  (step [..])
-    8 |         alpha = 1;
+Breakpoint #1 set at src/b/Token.sol:14
+Breakpoint #1 hit at step [..], src/b/Token.sol:14
+src/b/Token.sol:14 in constructor  (step [..])
+   14 |         beta = LibB.thrice(1);
 Exiting debugger.
 
 "#]]);
@@ -1127,29 +1113,29 @@ contract Token {{
     prj.add_source("a/Token.sol", &token(1));
     prj.add_source("b/Token.sol", &token(2));
 
-    let a = forge_create(&mut cmd, &endpoint, &["src/a/Token.sol:Token"]);
+    let b = forge_create(&mut cmd, &endpoint, &["src/b/Token.sol:Token"]);
     let set =
-        cast_send(&mut cmd, &endpoint, &[a["deployedTo"].as_str().unwrap(), "set(uint256)", "7"]);
-    prj.add_source("a/Token.sol", &format!("{}// A comment.\n", token(1)));
+        cast_send(&mut cmd, &endpoint, &[b["deployedTo"].as_str().unwrap(), "set(uint256)", "7"]);
+    prj.add_source("b/Token.sol", &format!("{}// A comment.\n", token(2)));
 
-    cast_run_debug(&mut cmd, &prj, &endpoint, &a, "break src/a/Token.sol:8\ncontinue\nquit\n")
+    cast_run_debug(&mut cmd, &prj, &endpoint, &b, "break src/b/Token.sol:8\ncontinue\nquit\n")
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Breakpoint #1 set at src/a/Token.sol:8
-Breakpoint #1 hit at step [..], src/a/Token.sol:8
-src/a/Token.sol:8 in constructor  (step [..])
-    8 |         value = 1;
+Breakpoint #1 set at src/b/Token.sol:8
+Breakpoint #1 hit at step [..], src/b/Token.sol:8
+src/b/Token.sol:8 in constructor  (step [..])
+    8 |         value = 2;
 Exiting debugger.
 
 "#]]);
 
-    // The runtime matches both contracts, so the call must not show `src/b`.
-    cast_run_debug(&mut cmd, &prj, &endpoint, &set, "break src/b/Token.sol:12\ncontinue\nquit\n")
+    // The runtime matches both contracts, so the call shows neither source.
+    cast_run_debug(&mut cmd, &prj, &endpoint, &set, "break src/a/Token.sol:12\ncontinue\nquit\n")
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Could not set breakpoint: [..]src/b/Token.sol[..]
+No sources matched the executed contracts; stepping is by instruction.
 ...
 "#]]);
 }
