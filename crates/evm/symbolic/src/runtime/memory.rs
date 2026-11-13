@@ -1016,12 +1016,12 @@ impl SymCode {
         self.legacy
     }
 
-    /// Returns the delegate of an EIP-7702 delegation designator, `0xef0100 || delegate`.
+    /// Returns the delegate of an EIP-7702 delegation designator, `0xef0100 || delegate`, as its
+    /// 20 bytes, which may be symbolic.
     pub(crate) fn eip7702_delegate(
         &self,
         cx: &mut SymCx,
-    ) -> Result<Option<Address>, SymbolicError> {
-        const REASON: &str = "symbolic EIP-7702 delegation";
+    ) -> Result<Option<SymBytes>, SymbolicError> {
         if self.legacy || self.len() != EIP7702_BYTECODE_LEN {
             return Ok(None);
         }
@@ -1031,9 +1031,9 @@ impl SymCode {
             return Ok(None);
         };
         if delegated.as_const() != Some(true) {
-            return Err(SymbolicError::Unsupported(REASON));
+            return Err(SymbolicError::Unsupported("symbolic EIP-7702 delegation"));
         }
-        Ok(Some(Address::from_slice(&self.concrete_range(cx, 3, 20, REASON)?)))
+        Ok(Some(self.read_bytes(cx, prefix.len(), 20)))
     }
 
     pub(crate) fn opcode(&self, cx: &mut SymCx, pc: usize) -> Result<Option<u8>, SymbolicError> {

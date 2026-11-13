@@ -2362,6 +2362,24 @@ contract SymbolicEip7702Delegation is Test {
         assertEq(abi.decode(ret, (uint256)), 8);
     }
 
+    function checkMockCallOnSymbolicDelegationWithRuledOutMocks(address delegate, bytes4 selector)
+        public
+    {
+        // The path rules out one function mock by its selector and the other by its callee.
+        vm.assume(selector != DelegateImpl.foo.selector);
+        vm.assume(delegate != address(0xbeef));
+        address carol = address(0xca401);
+        vm.etch(carol, abi.encodePacked(hex"ef0100", delegate));
+        address mock = address(new DelegateMock());
+        vm.mockFunction(address(impl), mock, abi.encodeCall(DelegateImpl.foo, ()));
+        vm.mockFunction(address(0xbeef), mock, abi.encodePacked(selector));
+        bytes memory any;
+        vm.mockCall(carol, any, abi.encode(9));
+        (bool ok, bytes memory ret) = carol.call(abi.encodePacked(selector));
+        assertTrue(ok);
+        assertEq(abi.decode(ret, (uint256)), 9);
+    }
+
     function checkExpectRevertOnDelegatedCall() public {
         vm.expectRevert();
         DelegateImpl(bob).bump();
@@ -2392,7 +2410,7 @@ contract SymbolicEip7702DelegationCancun is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 11 tests for test/SymbolicEip7702Delegation.t.sol:SymbolicEip7702Delegation
+Ran 12 tests for test/SymbolicEip7702Delegation.t.sol:SymbolicEip7702Delegation
 [PASS] checkCallsRunDelegateCode() ([METRICS])
 [PASS] checkChainedDelegationRunsOneHop() ([METRICS])
 [PASS] checkDelegatecallAndCallcodeRunDelegateCode() ([METRICS])
@@ -2400,11 +2418,12 @@ Ran 11 tests for test/SymbolicEip7702Delegation.t.sol:SymbolicEip7702Delegation
 [PASS] checkDelegationToPrecompileRunsEmptyCode() ([METRICS])
 [FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectRevertOnDelegatedCall() ([METRICS])
 [PASS] checkMockCallOnSymbolicDelegation(address) ([METRICS])
+[PASS] checkMockCallOnSymbolicDelegationWithRuledOutMocks(address,bytes4) ([METRICS])
 [PASS] checkMockFunctionIsKeyedByDelegate() ([METRICS])
 [FAIL: unmocked selector: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockFunctionOnDelegateWithSymbolicSelector(bytes4) ([METRICS])
 [PASS] checkMockFunctionOnDelegatedPrecompile() ([METRICS])
 [FAIL: unmocked selector: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicTargetMockFunctionOnDelegate(address,bytes4) ([METRICS])
-Suite result: FAILED. 8 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 9 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
