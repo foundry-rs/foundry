@@ -3961,8 +3961,7 @@ lib/dependency/:@custom/=lib/dependency/src/
 dependency/=lib/dependency/src/
 
 "#]]);
-    cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stdout_eq(str![[
-        r#"
+    let expected_stdout = str![[r#"
 Unable to resolve imports:
       "@custom/Dep.sol" in "[..]"
 with remappings:
@@ -3971,8 +3970,75 @@ with remappings:
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 
-"#
-    ]]);
+"#]];
+    let expected_stderr = str![[r#"
+Error: Compiler run failed:
+Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ [FILE]:3:1:
+  |
+3 | import {Dep} from "@custom/Dep.sol"; contract Root is Dep {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt:
+      @custom/=lib/dependency/src/
+
+"#]];
+    for source in ["toml", "file"] {
+        prj.create_file(
+            "lib/dependency/foundry.toml",
+            if source == "toml" {
+                "[profile.default]\nremappings = [\"@custom/=src/\"]\n"
+            } else {
+                "[profile.default]\n"
+            },
+        );
+        if source == "file" {
+            prj.create_file("lib/dependency/remappings.txt", "@custom/=src/\n");
+        }
+        cmd.forge_fuse()
+            .args(["build", "--force", "--no-lint"])
+            .assert_failure()
+            .stdout_eq(expected_stdout.clone())
+            .stderr_eq(expected_stderr.clone());
+    }
+    cmd.forge_fuse()
+        .args(["build", "--force", "--no-lint", "--quiet"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(expected_stderr);
+    cmd.forge_fuse()
+        .args(["build", "--force", "--no-lint", "--json"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "errors": [
+    {
+      "sourceLocation": "{...}",
+      "secondarySourceLocations": [
+        {
+          "file": null,
+          "start": null,
+          "end": null,
+          "message": "help: this file imports the alias \"@custom/\", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt:\n      @custom/=lib/dependency/src/"
+        }
+      ],
+      "type": "ParserError",
+      "component": "general",
+      "severity": "error",
+      "errorCode": "6275",
+      "message": "Source \"@custom/Dep.sol\" not found: File not found. Searched the following locations: \"[..]\".",
+      "formattedMessage": "{...}"
+    }
+  ],
+  "sources": {},
+  "contracts": {},
+  "build_infos": "{...}"
+}
+"#]],
+        )
+        .stderr_eq("");
 
     prj.add_test(
         "AliasMigration.t.sol",
@@ -3986,7 +4052,134 @@ contract AliasMigrationTest {
 "#,
     );
     let root_alias = "@custom/=lib/dependency/src/";
+    for source in ["toml", "file", "cli"] {
+        prj.update_config(|config| {
+            config.remappings.clear();
+            if source == "toml" {
+                config.remappings.push(Remapping::from_str(root_alias).unwrap().into());
+            }
+        });
+        if source == "file" {
+            prj.create_file("remappings.txt", &format!("{root_alias}\n"));
+        } else if prj.root().join("remappings.txt").is_file() {
+            fs::remove_file(prj.root().join("remappings.txt")).unwrap();
+        }
+        let command = cmd.forge_fuse();
+        command.args(["test", "--force", "--match-contract", "AliasMigrationTest"]);
+        if source == "cli" {
+            command.args(["--remappings", root_alias]);
+        }
+        command.assert_success();
+    }
+}
+
+#[forgetest]
+fn openzeppelin_dependency_alias_reports_root_migration(prj: _, cmd: _) {
+    prj.create_file(
+        "lib/openzeppelin-contracts/foundry.toml",
+        "[profile.default]\nsrc = \"contracts\"\n",
+    );
+    prj.create_file(
+        "lib/openzeppelin-contracts/remappings.txt",
+        "@openzeppelin/contracts/=contracts/\n",
+    );
+    prj.add_lib("openzeppelin-contracts/contracts/token/ERC20/ERC20.sol", "contract ERC20 {}\n");
+    prj.add_source(
+        "Root.sol",
+        "import {ERC20} from \"@openzeppelin/contracts/token/ERC20/ERC20.sol\"; contract Root is ERC20 {}\n",
+    );
+
+    cmd.args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
+Error: Compiler run failed:
+Error (6275): Source "@openzeppelin/contracts/token/ERC20/ERC20.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "@openzeppelin/contracts/token/ERC20/ERC20.sol" not found: File not found. Searched the following locations: "[..]".
+ [FILE]:3:1:
+  |
+3 | import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol"; contract Root is ERC20 {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+help: this file imports the alias "@openzeppelin/contracts/", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt:
+      @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+
+"#]]);
+
+    prj.create_file(
+        "remappings.txt",
+        "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/\n",
+    );
+    cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_success().stderr_eq("");
+}
+
+#[forgetest]
+fn dependency_alias_migration_only_suggests_existing_targets(prj: _, cmd: _) {
+    for name in ["z", "a"] {
+        prj.create_file(
+            &format!("lib/{name}/foundry.toml"),
+            "[profile.default]\nremappings = [\"@custom/=src/\"]\n",
+        );
+        prj.add_lib(&format!("{name}/src/Dep.sol"), "contract Dep {}\n");
+    }
+    prj.add_source("Root.sol", "import {Dep} from \"@custom/Dep.sol\"; contract Root is Dep {}\n");
+
+    cmd.args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
+Error: Compiler run failed:
+Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ [FILE]:3:1:
+  |
+3 | import {Dep} from "@custom/Dep.sol"; contract Root is Dep {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, choose a root remapping in foundry.toml or remappings.txt:
+      @custom/=lib/a/src/
+      @custom/=lib/z/src/
+
+"#]]);
+
+    fs::remove_file(prj.root().join("lib/a/src/Dep.sol")).unwrap();
+    cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
+        r#"
+Error: Compiler run failed:
+Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ [FILE]:3:1:
+  |
+3 | import {Dep} from "@custom/Dep.sol"; contract Root is Dep {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt:
+      @custom/=lib/z/src/
+
+"#
+    ]]);
+
+    fs::remove_file(prj.root().join("lib/z/src/Dep.sol")).unwrap();
+    cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
+        r#"
+Error: Compiler run failed:
+Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ [FILE]:3:1:
+  |
+3 | import {Dep} from "@custom/Dep.sol"; contract Root is Dep {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+"#
+    ]]);
+
+    prj.add_lib("a/src/Dep.sol", "contract Dep {}\n");
+    let explicit_error = str![[r#"
+Error: Compiler run failed:
+Error (6275): Source "src/missing/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "src/missing/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ [FILE]:3:1:
+  |
+3 | import {Dep} from "@custom/Dep.sol"; contract Root is Dep {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+"#]];
     for source in ["toml", "cli"] {
+        let root_alias = "@custom/=src/missing/";
         prj.update_config(|config| {
             config.remappings.clear();
             if source == "toml" {
@@ -3994,10 +4187,11 @@ contract AliasMigrationTest {
             }
         });
         let command = cmd.forge_fuse();
-        command.args(["test", "--force", "--match-contract", "AliasMigrationTest"]);
+        command.env("RUST_LOG", "off");
+        command.args(["build", "--force", "--no-lint"]);
         if source == "cli" {
             command.args(["--remappings", root_alias]);
         }
-        command.assert_success();
+        command.assert_failure().stderr_eq(explicit_error.clone());
     }
 }
