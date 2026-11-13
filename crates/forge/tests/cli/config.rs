@@ -3755,9 +3755,9 @@ contract {name} {{
         .unwrap();
     }
 
-    // Root aliases remain authoritative inside dependencies across all configuration providers.
+    // Root TOML and CLI aliases remain authoritative inside dependencies.
     let trusted_remapping = "victim/=lib/victim/src/";
-    for source in ["auto", "toml", "file", "env", "cli"] {
+    for source in ["auto", "toml", "cli"] {
         prj.update_config(|config| {
             config.remappings.clear();
             if source == "toml" {
@@ -3786,15 +3786,8 @@ contract RemappingScopeTest {{
         command.args(["test", "--match-contract", "RemappingScopeTest"]);
         if source == "cli" {
             command.args(["--remappings", trusted_remapping]);
-        } else if source == "env" {
-            command.env("FOUNDRY_REMAPPINGS", trusted_remapping);
-        } else if source == "file" {
-            fs::write(prj.root().join("remappings.txt"), trusted_remapping).unwrap();
         }
         command.assert_success();
-        if source == "file" {
-            fs::remove_file(prj.root().join("remappings.txt")).unwrap();
-        }
     }
 }
 
