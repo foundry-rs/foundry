@@ -44,6 +44,11 @@ use std::{
 };
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope};
 
+#[cfg(feature = "monad")]
+use alloy_consensus::Transaction as _;
+#[cfg(feature = "monad")]
+use alloy_network::TransactionResponse as _;
+
 #[cfg(unix)]
 use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
 #[cfg(unix)]
@@ -4534,6 +4539,7 @@ async fn assert_raw_transaction_access_list(
     let common = [
         "script",
         "RawTransactionScript",
+        "--offline",
         "--rpc-url",
         endpoint.as_str(),
         "--unlocked",
@@ -4587,20 +4593,13 @@ async fn assert_raw_transaction_access_list(
                 transaction.into_signed(signature).into()
             };
 
-            // Measure real execution before choosing a tight cap. Missing the access list must
-            // make this exact cap insufficient, for both CALL and CREATE and both typed envelopes.
-            let snapshot = api.evm_snapshot().await.unwrap();
+            // Size a tight cap from the estimate, which reports consumption on every network.
+            // Missing the access list must make this exact cap insufficient, for both CALL and
+            // CREATE and both typed envelopes.
             let transaction = sign(2_000_000, access_list.clone());
-            let receipt = provider
-                .send_raw_transaction(&transaction.encoded_2718())
-                .await
-                .unwrap()
-                .get_receipt()
-                .await
-                .unwrap();
-            assert!(receipt.status());
-            let gas_limit = receipt.gas_used() + 1_000;
-            assert!(api.evm_revert(snapshot).await.unwrap());
+            let request =
+                TransactionRequest::from_transaction_with_sender(transaction, signer.address());
+            let gas_limit = provider.estimate_gas(request.into()).await.unwrap() + 1_000;
 
             let snapshot = api.evm_snapshot().await.unwrap();
             let without_list = sign(gas_limit, AccessList::default());
@@ -4655,7 +4654,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
             let receipt =
                 provider.get_transaction_receipt(*transaction.tx_hash()).await.unwrap().unwrap();
             assert!(receipt.status());
-            assert!(receipt.gas_used() < gas_limit);
+            assert!(receipt.gas_used() <= gas_limit);
             assert_eq!(provider.get_transaction_count(signer.address()).await.unwrap(), 1);
             assert_eq!(
                 provider.get_storage_at(target, U256::from(400)).await.unwrap(),
@@ -11575,4 +11574,79 @@ contract CaChecksScript is Script {
         }
     }
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+}
+
+#[cfg(feature = "monad")]
+#[forgetest]
+async fn monad_script_estimates_calldata_floor_fork(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let target = Address::with_last_byte(0x42);
+    api.anvil_set_code(target, bytes!("00")).await.unwrap();
+    prj.add_script(
+        "MonadCalldata.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+}
+
+contract MonadCalldataScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        bytes memory data = new bytes(5000);
+        for (uint256 i; i < data.length; ++i) data[i] = 0x01;
+        // Return empty runtime code; the trailing data only contributes to intrinsic gas.
+        data[0] = 0x5f;
+        data[1] = 0x5f;
+        data[2] = 0xf3;
+        vm.startBroadcast();
+        (bool ok,) = address(0x42).call(data);
+        require(ok, "call failed");
+        address deployed;
+        assembly { deployed := create(0, add(data, 32), mload(data)) }
+        require(deployed != address(0), "create failed");
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.args([
+        "script",
+        "MonadCalldataScript",
+        "--network",
+        "monad",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--broadcast",
+        "--offline",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+    let mut receipts = 0;
+    for number in 1..=provider.get_block_number().await.unwrap() {
+        let block = provider.get_block_by_number(number.into()).full().await.unwrap().unwrap();
+        for transaction in block.transactions.as_transactions().unwrap() {
+            let receipt =
+                provider.get_transaction_receipt(transaction.tx_hash()).await.unwrap().unwrap();
+            assert!(receipt.status());
+            assert_eq!(receipt.gas_used(), transaction.gas_limit());
+            // The 221,000 calldata floor exceeds both executions' intrinsic-plus-opcode cost.
+            assert!(transaction.gas_limit() >= 221_000);
+            assert!(transaction.gas_limit() < 400_000);
+            receipts += 1;
+        }
+    }
+    assert_eq!(receipts, 2);
 }

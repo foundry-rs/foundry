@@ -696,7 +696,8 @@ async fn can_call_bundle() {
         let mut tx = TxEip1559 {
             chain_id: CHAIN_ID,
             nonce,
-            gas_limit: 21_000,
+            // Ethereum charges consumption even when the signed allowance is larger.
+            gas_limit: 100_000,
             max_fee_per_gas: fees.max_fee_per_gas,
             max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
             to: coinbase.into(),
@@ -748,6 +749,10 @@ async fn can_call_bundle() {
     assert_eq!(response.results[0].to_address, Some(coinbase));
     assert_eq!(response.results[0].eth_sent_to_coinbase, U256::ONE);
     assert_eq!(response.results[1].eth_sent_to_coinbase, U256::from(2));
+    for result in &response.results {
+        assert_eq!(result.gas_used, 21_000);
+        assert_eq!(result.gas_fees, result.gas_price * U256::from(result.gas_used));
+    }
     assert!(response.results.iter().all(|result| result.revert.is_none()));
 
     assert_eq!(provider.get_balance(coinbase).await.unwrap(), initial_coinbase_balance);
