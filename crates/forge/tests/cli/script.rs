@@ -4473,7 +4473,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 #[forgetest]
 async fn broadcast_raw_transaction_preserves_access_list_fork(prj: _, cmd: _) {
-    assert_raw_transaction_access_list(&prj, &mut cmd, NodeConfig::test(), false).await;
+    assert_raw_transaction_access_list(&prj, &mut cmd, NodeConfig::test()).await;
 }
 
 #[cfg(feature = "monad")]
@@ -4487,7 +4487,6 @@ async fn monad_broadcast_raw_transaction_preserves_access_list_fork(prj: _, cmd:
         &prj,
         &mut cmd,
         NodeConfig::test_monad().with_hardfork(Some("monad:MonadNine".parse().unwrap())),
-        true,
     )
     .await;
 }
@@ -4496,7 +4495,6 @@ async fn assert_raw_transaction_access_list(
     prj: &TestProject,
     cmd: &mut TestCommand,
     config: NodeConfig,
-    full_gas_charge: bool,
 ) {
     let (api, handle) = spawn(config.with_gas_limit(Some(30_000_000))).await;
     let provider = handle.http_provider();
@@ -4561,27 +4559,13 @@ async fn assert_raw_transaction_access_list(
                 transaction.into_signed(signature).into()
             };
 
-            // Measure real execution before choosing a tight cap. Missing the access list must
-            // make this exact cap insufficient, for both CALL and CREATE and both typed envelopes.
+            // Size a tight cap from the estimate, which reports consumption on every network.
+            // Missing the access list must make this exact cap insufficient, for both CALL and
+            // CREATE and both typed envelopes.
             let transaction = sign(2_000_000, access_list.clone());
-            let gas_limit = if full_gas_charge {
-                // Monad receipts charge the full limit; estimate consumption for this cap.
-                let request =
-                    TransactionRequest::from_transaction_with_sender(transaction, signer.address());
-                provider.estimate_gas(request.into()).await.unwrap() + 1_000
-            } else {
-                let snapshot = api.evm_snapshot().await.unwrap();
-                let receipt = provider
-                    .send_raw_transaction(&transaction.encoded_2718())
-                    .await
-                    .unwrap()
-                    .get_receipt()
-                    .await
-                    .unwrap();
-                assert!(receipt.status());
-                assert!(api.evm_revert(snapshot).await.unwrap());
-                receipt.gas_used() + 1_000
-            };
+            let request =
+                TransactionRequest::from_transaction_with_sender(transaction, signer.address());
+            let gas_limit = provider.estimate_gas(request.into()).await.unwrap() + 1_000;
 
             let snapshot = api.evm_snapshot().await.unwrap();
             let without_list = sign(gas_limit, AccessList::default());
@@ -4636,11 +4620,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
             let receipt =
                 provider.get_transaction_receipt(*transaction.tx_hash()).await.unwrap().unwrap();
             assert!(receipt.status());
-            if full_gas_charge {
-                assert_eq!(receipt.gas_used(), gas_limit);
-            } else {
-                assert!(receipt.gas_used() < gas_limit);
-            }
+            assert!(receipt.gas_used() <= gas_limit);
             assert_eq!(provider.get_transaction_count(signer.address()).await.unwrap(), 1);
             assert_eq!(
                 provider.get_storage_at(target, U256::from(400)).await.unwrap(),

@@ -177,6 +177,7 @@ contract MonadStorageWarmthTest is Test {
         (uint256 warm,) = probe.read(127);
         assertEq(cold - warm, 8000);
     }
+
     function check_copy_storage_retains_native_page_warmth() external {
         MonadStorageProbe source = new MonadStorageProbe();
         MonadStorageProbe target = new MonadStorageProbe();
@@ -233,7 +234,6 @@ contract StorageSlotWarmthTest is Test {
         assertEq(adjacent, separate);
     }
 }
-
 
 contract MonadForkStorageWarmthTest is Test {
     function test_fork_switch_retains_persistent_page_warmth() public {

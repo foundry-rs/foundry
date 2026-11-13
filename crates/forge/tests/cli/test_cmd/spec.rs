@@ -2868,7 +2868,6 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     }
 }
 
-#[cfg(feature = "monad")]
 #[forgetest_init]
 fn isolated_calls_retain_calldata_floor(prj: _, cmd: _) {
     prj.add_test(
@@ -2901,7 +2900,11 @@ contract IsolatedFloorTest is Test {
 }
 "#,
     );
-    for (network, hardfork) in [("ethereum", "prague"), ("monad", "monad:MonadTen")] {
+    for (network, hardfork) in [
+        ("ethereum", "prague"),
+        #[cfg(feature = "monad")]
+        ("monad", "monad:MonadTen"),
+    ] {
         prj.update_config(|config| {
             config.evm_version = EvmVersion::Prague;
             config.hardfork = Some(hardfork.parse().unwrap());

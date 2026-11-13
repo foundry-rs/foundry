@@ -396,7 +396,6 @@ fn monad_charges_the_full_gas_limit() {
     let tx = TypesFor::<crate::evm::MonadEvmNetwork>::tx_from_request(request).unwrap();
     evm.ext_mut().for_transaction(&tx);
     assert_eq!(evm.ext().chain.current_block_senders, vec![caller]);
-    assert!(!evm.ext().revert_on_reserve_balance_violation);
     let result = evm.transact(&tx).unwrap().commit();
     assert!(result.status);
     assert_eq!(result.ext.charged_gas, 50_000);

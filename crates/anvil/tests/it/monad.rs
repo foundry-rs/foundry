@@ -2721,7 +2721,7 @@ async fn monad_simulate_without_gas_limits_reports_consumption() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn monad_call_traces_report_execution_gas() {
+async fn monad_traces_report_call_consumption_and_mined_charge() {
     let (api, handle) = spawn(NodeConfig::test_monad()).await;
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
@@ -2771,6 +2771,26 @@ async fn monad_call_traces_report_execution_gas() {
         .unwrap();
     // Parity call frames exclude intrinsic transaction gas.
     assert_eq!(root_trace_gas(&trace), 4);
+
+    // Mined traces report the receipt charge, like geth's top-level frame.
+    let receipt = provider
+        .send_transaction(storage_gas_probe_call().with_from(sender).with_gas_limit(100_000))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(receipt.gas_used(), 100_000);
+    let hash = receipt.transaction_hash;
+    let trace =
+        provider.debug_trace_transaction(hash, GethDebugTracingOptions::default()).await.unwrap();
+    let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
+    assert_eq!(frame.gas, 100_000);
+    let options = GethDebugTracingOptions::default()
+        .with_tracer(GethDebugBuiltInTracerType::CallTracer.into());
+    let trace = provider.debug_trace_transaction(hash, options).await.unwrap();
+    let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+    assert_eq!(frame.gas_used, U256::from(100_000));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2816,6 +2836,8 @@ async fn monad_bundle_separates_consumption_from_charged_fees() {
     assert_eq!(response.gas_fees, U256::from(200_000 * tip));
     assert_eq!(response.eth_sent_to_coinbase, U256::from(3));
     assert_eq!(response.coinbase_diff, response.gas_fees + U256::from(3));
+    // Charged gas, not consumption, prices the bundle.
+    assert_eq!(response.bundle_gas_price, U256::from(tip));
     assert_eq!(response.results.len(), 2);
     for (index, result) in response.results.iter().enumerate() {
         assert_eq!(result.from_address, sender);

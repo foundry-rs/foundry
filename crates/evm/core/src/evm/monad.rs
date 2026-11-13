@@ -3,7 +3,6 @@
 //! Ordinary transactions charge the full gas limit, including on revert. The runtime
 //! keeps that charge in `MonadTxResultExt::charged_gas`; evm2's gas consumption and
 //! calldata floor retain their ordinary meanings for simulations and isolated frames.
-//! Anvil maps the charge into receipts and block totals at its result conversion boundary.
 //! Native reserve-balance enforcement remains opt-in, while tracking stays active.
 //! MIP-8 page warmth derives from native slot warmth, including cheatcode accesses.
 

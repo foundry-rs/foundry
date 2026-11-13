@@ -1407,8 +1407,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub has_state_snapshot_failure: bool,
     /// The raw result of the call.
     pub result: Bytes,
-    /// Gas reported by the execution family for simulation, including intrinsic gas.
-    /// Excludes unused gas charged by networks such as Monad.
+    /// Gas consumed by the call, including intrinsic gas, calldata floors and refunds.
+    /// Excludes unused gas a network may charge.
     pub gas_used: u64,
     /// Refunded gas
     pub gas_refunded: u64,
