@@ -454,7 +454,7 @@ fn can_build_physical_and_symlinked_dependency_configs(prj: _, cmd: _) {
                 r#"
 [profile.default]
 src = "custom-source"
-remappings = ["special-alias/=vendor/inner/src/", "{}:special-alias/=vendor/inner/src/"]
+remappings = ["{}:special-alias/=vendor/inner/src/"]
 "#,
                 prj.root().display()
             ),
@@ -462,10 +462,7 @@ remappings = ["special-alias/=vendor/inner/src/", "{}:special-alias/=vendor/inne
         .unwrap();
         fs::write(
             dependency.join("remappings.txt"),
-            format!(
-                "file-alias/=vendor/file/src/\n{}:file-alias/=vendor/file/src/\n",
-                prj.root().display()
-            ),
+            format!("{}:file-alias/=vendor/file/src/\n", prj.root().display()),
         )
         .unwrap();
         fs::write(

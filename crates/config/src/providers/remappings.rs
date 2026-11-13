@@ -544,7 +544,6 @@ impl RemappingsProvider<'_> {
                                 &anchored_root,
                                 Path::new(""),
                             )
-                            && !normalized.starts_with(&entry.path)
                         {
                             let name = normalized.display().to_string();
                             #[cfg(windows)]
