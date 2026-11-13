@@ -1396,249 +1396,284 @@ mod tests {
 
     #[test]
     fn dependency_remappings_are_scoped_to_their_owner() {
-        let temp = tempdir().unwrap();
-        let root = dunce::canonicalize(temp.path()).unwrap();
-        let owner = root.join("lib/a-helper");
-        fs::create_dir_all(owner.join("src")).unwrap();
-        fs::create_dir_all(root.join("lib/victim/src")).unwrap();
-        fs::write(owner.join("src/Helper.sol"), "contract Helper {}\n").unwrap();
-        fs::write(root.join("lib/victim/src/Victim.sol"), "contract Victim {}\n").unwrap();
-        fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            let owner = root.join("lib/a-helper");
+            fs::create_dir_all(owner.join("src")).unwrap();
+            fs::create_dir_all(root.join("lib/victim/src")).unwrap();
+            fs::write(owner.join("src/Helper.sol"), "contract Helper {}\n").unwrap();
+            fs::write(root.join("lib/victim/src/Victim.sol"), "contract Victim {}\n").unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
 
-        for (remapping, scoped) in [
-            ("victim/=src/".to_string(), Some("lib/a-helper/")),
-            ("../../src/:victim/=src/".to_string(), None),
-            ("../a-helper-other/:victim/=src/".to_string(), None),
-            ("../../:victim/=src/".to_string(), Some("lib/a-helper/")),
-            // The parser treats a Windows drive letter's colon as the context separator.
-            #[cfg(unix)]
-            (format!("{}:victim/=src/", root.display()), Some("lib/a-helper/")),
-            ("src/../src/Pre:victim/=src/".to_string(), Some("lib/a-helper/src/Pre")),
-        ] {
+            for (remapping, scoped) in [
+                ("victim/=src/".to_string(), Some("lib/a-helper/")),
+                ("../../src/:victim/=src/".to_string(), None),
+                ("../a-helper-other/:victim/=src/".to_string(), None),
+                ("../../:victim/=src/".to_string(), Some("lib/a-helper/")),
+                // The parser treats a Windows drive letter's colon as the context separator.
+                #[cfg(unix)]
+                (format!("{}:victim/=src/", root.display()), Some("lib/a-helper/")),
+                ("src/../src/Pre:victim/=src/".to_string(), Some("lib/a-helper/src/Pre")),
+            ] {
+                fs::write(
+                    owner.join(Config::FILE_NAME),
+                    format!("[profile.default]\nremappings = [{remapping:?}]\n"),
+                )
+                .unwrap();
+                let config = Config::load_with_root(&root).unwrap();
+                let mut expected = Vec::new();
+                if let Some(scoped) = scoped {
+                    expected.push(format!("{scoped}:victim/=lib/a-helper/src/"));
+                }
+                expected.extend([
+                    "a-helper/=lib/a-helper/src/".to_string(),
+                    "victim/=lib/victim/src/".to_string(),
+                ]);
+                assert_eq!(
+                    config
+                        .get_all_remappings()
+                        .map(|remapping| remapping.to_string())
+                        .collect::<Vec<_>>(),
+                    expected,
+                    "remapping: {remapping}"
+                );
+            }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn configured_source_does_not_change_package_precedence() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = temp.path().join("project/deep/root");
+            let substitute = temp.path().join("substitute");
+            for path in [
+                root.join("lib/helper/src"),
+                root.join("lib/helper/lib/victim"),
+                root.join("lib/victim/src"),
+                substitute.clone(),
+            ] {
+                fs::create_dir_all(path).unwrap();
+            }
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            fs::write(root.join("lib/helper/foundry.toml"), "[profile.default]\n").unwrap();
             fs::write(
-                owner.join(Config::FILE_NAME),
-                format!("[profile.default]\nremappings = [{remapping:?}]\n"),
+                root.join("lib/helper/lib/victim/foundry.toml"),
+                format!("[profile.default]\nsrc = {:?}\n", substitute.display().to_string()),
             )
             .unwrap();
+            fs::write(root.join("lib/helper/src/Helper.sol"), "contract Helper {}\n").unwrap();
+            fs::write(root.join("lib/victim/src/Victim.sol"), "contract Victim {}\n").unwrap();
+            fs::write(substitute.join("Victim.sol"), "contract Substitute {}\n").unwrap();
+
             let config = Config::load_with_root(&root).unwrap();
-            let mut expected = Vec::new();
-            if let Some(scoped) = scoped {
-                expected.push(format!("{scoped}:victim/=lib/a-helper/src/"));
+            assert_eq!(
+                config
+                    .get_all_remappings()
+                    .filter(|remapping| remapping.context.is_none())
+                    .map(|remapping| remapping.to_string())
+                    .collect::<Vec<_>>(),
+                ["helper/=lib/helper/src/", "victim/=lib/victim/src/"]
+            );
+
+            // A nested custom-source package remains available when there is no closer
+            // installation.
+            fs::remove_dir_all(root.join("lib/victim")).unwrap();
+            let config = Config::load_with_root(&root).unwrap();
+            let victim =
+                config.get_all_remappings().find(|remapping| remapping.name == "victim/").unwrap();
+            assert_eq!(
+                dunce::canonicalize(root.join(&victim.path)).unwrap(),
+                dunce::canonicalize(substitute).unwrap()
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn repeated_source_directory_name_does_not_change_package_precedence() {
+        figment::Jail::expect_with(|_| {
+            for (lib, honest) in [("lib", "victim"), ("vendor", "victim"), ("lib", "a/lib/victim")]
+            {
+                let temp = tempdir().unwrap();
+                let root = temp.path();
+                let source = Path::new(lib).join(honest).join("custom/victim/src");
+                for path in [
+                    root.join(&source),
+                    root.join(lib).join("helper/src"),
+                    root.join(lib).join("helper/lib/victim"),
+                ] {
+                    fs::create_dir_all(path).unwrap();
+                }
+                fs::write(
+                    root.join(Config::FILE_NAME),
+                    format!("[profile.default]\nlibs = [{lib:?}]\n"),
+                )
+                .unwrap();
+                fs::write(root.join(lib).join("helper/foundry.toml"), "[profile.default]\n")
+                    .unwrap();
+                fs::write(
+                    root.join(lib).join("helper/lib/victim/foundry.toml"),
+                    "[profile.default]\nsrc = \"../../src\"\n",
+                )
+                .unwrap();
+                fs::write(root.join(&source).join("Victim.sol"), "contract Victim {}\n").unwrap();
+                fs::write(root.join(lib).join("helper/src/Victim.sol"), "contract Substitute {}\n")
+                    .unwrap();
+
+                let config = Config::load_with_root(root).unwrap();
+                let victim = config
+                    .get_all_remappings()
+                    .find(|remapping| remapping.context.is_none() && remapping.name == "victim/")
+                    .unwrap();
+                assert_eq!(Path::new(&victim.path), source, "{lib}/{honest}");
             }
-            expected.extend([
-                "a-helper/=lib/a-helper/src/".to_string(),
-                "victim/=lib/victim/src/".to_string(),
-            ]);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn external_sources_preserve_dependency_declarations() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            let owner = root.join("lib/a");
+            let source = root.join("external");
+            fs::create_dir_all(owner.join("src/internal")).unwrap();
+            fs::create_dir_all(&source).unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            fs::write(source.join("A.sol"), "contract A {}\n").unwrap();
+            fs::write(owner.join("remappings.txt"), "file-alias/=src/internal/\n").unwrap();
+
+            for src in [source.display().to_string(), "../../external".to_string()] {
+                fs::write(
+                    owner.join(Config::FILE_NAME),
+                    format!(
+                        "[profile.default]\nsrc = {src:?}\nremappings = [\"private/=src/internal/\", \"../../external/:contextual/=src/internal/\"]\n"
+                    ),
+                )
+                .unwrap();
+                let config = Config::load_with_root(&root).unwrap();
+                let remappings = config.get_all_remappings().collect::<Vec<_>>();
+                let package = remappings.iter().find(|remapping| remapping.name == "a/").unwrap();
+                assert_eq!(dunce::canonicalize(root.join(&package.path)).unwrap(), source);
+                for alias in ["private/", "file-alias/"] {
+                    let remapping =
+                        remappings.iter().find(|remapping| remapping.name == alias).unwrap();
+                    assert_eq!(remapping.context, None);
+                    assert_eq!(remapping.path, "lib/a/src/internal/");
+                }
+                let contextual =
+                    remappings.iter().find(|remapping| remapping.name == "contextual/").unwrap();
+                assert_eq!(contextual.context.as_deref(), Some("external/"));
+                assert_eq!(remappings.len(), 4);
+            }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn absolute_internal_source_preserves_owner_scope() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            let owner = root.join("lib/a");
+            let source = owner.join("custom-source");
+            fs::create_dir_all(&source).unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            fs::write(
+                owner.join(Config::FILE_NAME),
+                format!(
+                    "[profile.default]\nsrc = {:?}\nremappings = [\"private/=custom-source/\"]\n",
+                    source.display().to_string()
+                ),
+            )
+            .unwrap();
+            fs::write(source.join("A.sol"), "contract A {}\n").unwrap();
+            let config = Config::load_with_root(&root).unwrap();
             assert_eq!(
                 config
                     .get_all_remappings()
                     .map(|remapping| remapping.to_string())
                     .collect::<Vec<_>>(),
-                expected,
-                "remapping: {remapping}"
+                ["lib/a/:private/=lib/a/custom-source/", "a/=lib/a/custom-source/"]
             );
-        }
-    }
 
-    #[test]
-    fn configured_source_does_not_change_package_precedence() {
-        let temp = tempdir().unwrap();
-        let root = temp.path().join("project/deep/root");
-        let substitute = temp.path().join("substitute");
-        for path in [
-            root.join("lib/helper/src"),
-            root.join("lib/helper/lib/victim"),
-            root.join("lib/victim/src"),
-            substitute.clone(),
-        ] {
-            fs::create_dir_all(path).unwrap();
-        }
-        fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
-        fs::write(root.join("lib/helper/foundry.toml"), "[profile.default]\n").unwrap();
-        fs::write(
-            root.join("lib/helper/lib/victim/foundry.toml"),
-            format!("[profile.default]\nsrc = {:?}\n", substitute.display().to_string()),
-        )
-        .unwrap();
-        fs::write(root.join("lib/helper/src/Helper.sol"), "contract Helper {}\n").unwrap();
-        fs::write(root.join("lib/victim/src/Victim.sol"), "contract Victim {}\n").unwrap();
-        fs::write(substitute.join("Victim.sol"), "contract Substitute {}\n").unwrap();
-
-        let config = Config::load_with_root(&root).unwrap();
-        assert_eq!(
-            config
-                .get_all_remappings()
-                .filter(|remapping| remapping.context.is_none())
-                .map(|remapping| remapping.to_string())
-                .collect::<Vec<_>>(),
-            ["helper/=lib/helper/src/", "victim/=lib/victim/src/"]
-        );
-
-        // A nested custom-source package remains available when there is no closer installation.
-        fs::remove_dir_all(root.join("lib/victim")).unwrap();
-        let config = Config::load_with_root(&root).unwrap();
-        let victim =
-            config.get_all_remappings().find(|remapping| remapping.name == "victim/").unwrap();
-        assert_eq!(
-            dunce::canonicalize(root.join(&victim.path)).unwrap(),
-            dunce::canonicalize(substitute).unwrap()
-        );
-    }
-
-    #[test]
-    fn repeated_source_directory_name_does_not_change_package_precedence() {
-        for (lib, honest) in [("lib", "victim"), ("vendor", "victim"), ("lib", "a/lib/victim")] {
-            let temp = tempdir().unwrap();
-            let root = temp.path();
-            let source = Path::new(lib).join(honest).join("custom/victim/src");
-            for path in [
-                root.join(&source),
-                root.join(lib).join("helper/src"),
-                root.join(lib).join("helper/lib/victim"),
-            ] {
-                fs::create_dir_all(path).unwrap();
-            }
-            fs::write(
-                root.join(Config::FILE_NAME),
-                format!("[profile.default]\nlibs = [{lib:?}]\n"),
-            )
-            .unwrap();
-            fs::write(root.join(lib).join("helper/foundry.toml"), "[profile.default]\n").unwrap();
-            fs::write(
-                root.join(lib).join("helper/lib/victim/foundry.toml"),
-                "[profile.default]\nsrc = \"../../src\"\n",
-            )
-            .unwrap();
-            fs::write(root.join(&source).join("Victim.sol"), "contract Victim {}\n").unwrap();
-            fs::write(root.join(lib).join("helper/src/Victim.sol"), "contract Substitute {}\n")
-                .unwrap();
-
-            let config = Config::load_with_root(root).unwrap();
-            let victim = config
-                .get_all_remappings()
-                .find(|remapping| remapping.context.is_none() && remapping.name == "victim/")
-                .unwrap();
-            assert_eq!(Path::new(&victim.path), source, "{lib}/{honest}");
-        }
-    }
-
-    #[test]
-    fn external_sources_preserve_dependency_declarations() {
-        let temp = tempdir().unwrap();
-        let root = dunce::canonicalize(temp.path()).unwrap();
-        let owner = root.join("lib/a");
-        let source = root.join("external");
-        fs::create_dir_all(owner.join("src/internal")).unwrap();
-        fs::create_dir_all(&source).unwrap();
-        fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
-        fs::write(source.join("A.sol"), "contract A {}\n").unwrap();
-        fs::write(owner.join("remappings.txt"), "file-alias/=src/internal/\n").unwrap();
-
-        for src in [source.display().to_string(), "../../external".to_string()] {
-            fs::write(
-                owner.join(Config::FILE_NAME),
-                format!(
-                    "[profile.default]\nsrc = {src:?}\nremappings = [\"private/=src/internal/\", \"../../external/:contextual/=src/internal/\"]\n"
-                ),
-            )
-            .unwrap();
-            let config = Config::load_with_root(&root).unwrap();
-            let remappings = config.get_all_remappings().collect::<Vec<_>>();
-            let package = remappings.iter().find(|remapping| remapping.name == "a/").unwrap();
-            assert_eq!(dunce::canonicalize(root.join(&package.path)).unwrap(), source);
-            for alias in ["private/", "file-alias/"] {
-                let remapping =
-                    remappings.iter().find(|remapping| remapping.name == alias).unwrap();
-                assert_eq!(remapping.context, None);
-                assert_eq!(remapping.path, "lib/a/src/internal/");
-            }
-            let contextual =
-                remappings.iter().find(|remapping| remapping.name == "contextual/").unwrap();
-            assert_eq!(contextual.context.as_deref(), Some("external/"));
-            assert_eq!(remappings.len(), 4);
-        }
-    }
-
-    #[test]
-    fn absolute_internal_source_preserves_owner_scope() {
-        let temp = tempdir().unwrap();
-        let root = dunce::canonicalize(temp.path()).unwrap();
-        let owner = root.join("lib/a");
-        let source = owner.join("custom-source");
-        fs::create_dir_all(&source).unwrap();
-        fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
-        fs::write(
-            owner.join(Config::FILE_NAME),
-            format!(
-                "[profile.default]\nsrc = {:?}\nremappings = [\"private/=custom-source/\"]\n",
-                source.display().to_string()
-            ),
-        )
-        .unwrap();
-        fs::write(source.join("A.sol"), "contract A {}\n").unwrap();
-        let config = Config::load_with_root(&root).unwrap();
-        assert_eq!(
-            config.get_all_remappings().map(|remapping| remapping.to_string()).collect::<Vec<_>>(),
-            ["lib/a/:private/=lib/a/custom-source/", "a/=lib/a/custom-source/"]
-        );
+            Ok(())
+        });
     }
 
     #[cfg(unix)]
     #[test]
     fn symlinked_external_source_preserves_global_aliases() {
-        let temp = tempdir().unwrap();
-        let root = dunce::canonicalize(temp.path()).unwrap();
-        let owner = root.join("lib/a");
-        let source = root.join("external");
-        fs::create_dir_all(&owner).unwrap();
-        fs::create_dir_all(&source).unwrap();
-        fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
-        fs::write(
-            owner.join(Config::FILE_NAME),
-            "[profile.default]\nremappings = [\"private/=src/\"]\n",
-        )
-        .unwrap();
-        fs::write(source.join("A.sol"), "contract A {}\n").unwrap();
-        symlink(&source, owner.join("src")).unwrap();
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            let owner = root.join("lib/a");
+            let source = root.join("external");
+            fs::create_dir_all(&owner).unwrap();
+            fs::create_dir_all(&source).unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            fs::write(
+                owner.join(Config::FILE_NAME),
+                "[profile.default]\nremappings = [\"private/=src/\"]\n",
+            )
+            .unwrap();
+            fs::write(source.join("A.sol"), "contract A {}\n").unwrap();
+            symlink(&source, owner.join("src")).unwrap();
 
-        let config = Config::load_with_root(&root).unwrap();
-        let remapping =
-            config.get_all_remappings().find(|remapping| remapping.name == "private/").unwrap();
-        assert_eq!(remapping.context, None);
-        assert_eq!(remapping.path, "lib/a/src/");
+            let config = Config::load_with_root(&root).unwrap();
+            let remapping =
+                config.get_all_remappings().find(|remapping| remapping.name == "private/").unwrap();
+            assert_eq!(remapping.context, None);
+            assert_eq!(remapping.path, "lib/a/src/");
+
+            Ok(())
+        });
     }
 
     #[test]
     fn equally_deep_packages_preserve_source_precedence() {
-        for (source_a, source_b) in [("custom-source", "src"), ("custom/src", "src")] {
-            let temp = tempdir().unwrap();
-            let root = temp.path();
-            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
-            for (name, source) in [("a", source_a), ("b", source_b)] {
-                let owner = root.join("lib").join(name);
-                let package = owner.join("lib/shared");
-                fs::create_dir_all(owner.join("src")).unwrap();
-                fs::create_dir_all(package.join(source)).unwrap();
-                fs::write(owner.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
-                fs::write(owner.join("src/Owner.sol"), "contract Owner {}\n").unwrap();
-                fs::write(
-                    package.join(Config::FILE_NAME),
-                    format!("[profile.default]\nsrc = {source:?}\n"),
-                )
-                .unwrap();
-                fs::write(package.join(source).join("Shared.sol"), "contract Shared {}\n").unwrap();
+        figment::Jail::expect_with(|_| {
+            for (source_a, source_b) in [("custom-source", "src"), ("custom/src", "src")] {
+                let temp = tempdir().unwrap();
+                let root = temp.path();
+                fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+                for (name, source) in [("a", source_a), ("b", source_b)] {
+                    let owner = root.join("lib").join(name);
+                    let package = owner.join("lib/shared");
+                    fs::create_dir_all(owner.join("src")).unwrap();
+                    fs::create_dir_all(package.join(source)).unwrap();
+                    fs::write(owner.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+                    fs::write(owner.join("src/Owner.sol"), "contract Owner {}\n").unwrap();
+                    fs::write(
+                        package.join(Config::FILE_NAME),
+                        format!("[profile.default]\nsrc = {source:?}\n"),
+                    )
+                    .unwrap();
+                    fs::write(package.join(source).join("Shared.sol"), "contract Shared {}\n")
+                        .unwrap();
+                }
+
+                let config = Config::load_with_root(root).unwrap();
+                let shared = config
+                    .get_all_remappings()
+                    .find(|remapping| remapping.context.is_none() && remapping.name == "shared/")
+                    .unwrap();
+                assert_eq!(
+                    Path::new(&shared.path),
+                    Path::new("lib/b/lib/shared").join(source_b),
+                    "{source_a} vs {source_b}"
+                );
             }
 
-            let config = Config::load_with_root(root).unwrap();
-            let shared = config
-                .get_all_remappings()
-                .find(|remapping| remapping.context.is_none() && remapping.name == "shared/")
-                .unwrap();
-            assert_eq!(
-                Path::new(&shared.path),
-                Path::new("lib/b/lib/shared").join(source_b),
-                "{source_a} vs {source_b}"
-            );
-        }
+            Ok(())
+        });
     }
 }
