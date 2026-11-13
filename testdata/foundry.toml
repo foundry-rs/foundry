@@ -3,7 +3,6 @@ src = "src"
 test = "./"
 # These fixtures are assembled into isolated projects by CLI tests.
 skip = [
-    "coverage/**",
     "fixtures/PreprocessViaIr/**",
     "fixtures/TempoProof.t.sol",
     "fixtures/TempoProofVerifier.sol",
