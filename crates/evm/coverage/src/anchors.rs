@@ -242,8 +242,8 @@ impl<'a> AnchorIndex<'a> {
     }
 
     /// Returns whether the taken side starts inside `loc` and the fallthrough does not, or `None`
-    /// when neither does. When both do, the source map cannot tell them apart and the positional
-    /// default stays.
+    /// when neither does. A fallthrough that starts inside `loc` wins, so the positional default
+    /// stays when both do.
     fn taken_starts_in(
         &self,
         (fallthrough, taken): &(ItemAnchor, ItemAnchor),
@@ -251,10 +251,9 @@ impl<'a> AnchorIndex<'a> {
     ) -> Option<bool> {
         match (self.starts_in(fallthrough.instruction, loc), self.starts_in(taken.instruction, loc))
         {
-            (true, false) => Some(false),
+            (true, _) => Some(false),
             (false, true) => Some(true),
             (false, false) => None,
-            (true, true) => Some(false),
         }
     }
 
