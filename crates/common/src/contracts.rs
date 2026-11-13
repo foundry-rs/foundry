@@ -365,17 +365,7 @@ impl ContractsByArtifact {
     /// Finds a contract which deployed bytecode exactly matches the given code. Accounts for link
     /// references and immutables.
     pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_preferred(code, |_| true)
-    }
-
-    /// Same as [`Self::find_by_deployed_code_exact`], preferring artifacts matching `preferred`
-    /// only among equally strong matches. Metadata-exact matches always take precedence.
-    pub fn find_by_deployed_code_exact_preferred(
-        &self,
-        code: &[u8],
-        preferred: impl Fn(&ArtifactId) -> bool,
-    ) -> Option<ArtifactWithContractRef<'_>> {
-        let (exact, partial, _) = self.find_by_deployed_code_exact_inner(code, false, preferred);
+        let (exact, partial, _) = self.find_by_deployed_code_exact_inner(code, false, |_| true);
         exact.or(partial)
     }
 
@@ -393,8 +383,18 @@ impl ContractsByArtifact {
         &self,
         code: &[u8],
     ) -> Result<Option<ArtifactWithContractRef<'_>>> {
+        self.find_by_deployed_code_exact_unambiguous_preferred(code, |_| true)
+    }
+
+    /// Same as [`Self::find_by_deployed_code_exact_unambiguous`], preferring artifacts matching
+    /// `preferred` only among equally strong matches.
+    pub fn find_by_deployed_code_exact_unambiguous_preferred(
+        &self,
+        code: &[u8],
+        preferred: impl Fn(&ArtifactId) -> bool,
+    ) -> Result<Option<ArtifactWithContractRef<'_>>> {
         let (exact, partial, ambiguous_partial) =
-            self.find_by_deployed_code_exact_inner(code, false, |_| true);
+            self.find_by_deployed_code_exact_inner(code, false, preferred);
         if ambiguous_partial {
             eyre::bail!(
                 "Multiple local contracts match the deployed bytecode with different metadata. Specify the contract as <path>:<contract>"
