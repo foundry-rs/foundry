@@ -1,5 +1,5 @@
 use crate::{
-    Config, FigmentProviders, foundry_toml_dir_entries, remappings_from_env_var,
+    Config, FigmentProviders, Warning, foundry_toml_dir_entries, remappings_from_env_var,
     remappings_from_newline,
 };
 use figment::{
@@ -18,6 +18,9 @@ use std::{
     path::{Component, MAIN_SEPARATOR, Path, PathBuf},
 };
 
+#[cfg(windows)]
+use path_slash::PathExt as _;
+
 const GENERATED_REMAPPINGS_KEY: &str = "__generated_remappings";
 
 #[derive(Default)]
@@ -29,6 +32,8 @@ struct RemappingsOutput {
     /// These are tracked so the later CLI merge can distinguish them from equivalent explicit
     /// contextual remappings.
     generated_contextual_remappings: Vec<Remapping>,
+    /// Existing configuration warnings and warnings for newly scoped declarations.
+    warnings: Vec<Warning>,
 }
 
 /// Wrapper types over a `Vec<Remapping>` that only appends unique remappings.
@@ -110,12 +115,13 @@ impl Remappings {
             return false;
         };
 
-        // Ignore remappings of root project src, test or script dir.
+        // Ignore global remappings of root project src, test or script dir.
         // See <https://github.com/foundry-rs/foundry/issues/3440>.
-        if self
-            .project_paths
-            .iter()
-            .any(|project_path| remapping.name.eq_ignore_ascii_case(&project_path.name))
+        if remapping.context.is_none()
+            && self
+                .project_paths
+                .iter()
+                .any(|project_path| remapping.name.eq_ignore_ascii_case(&project_path.name))
         {
             return false;
         };
@@ -134,6 +140,13 @@ impl Remappings {
     /// Extract generated contextual refinements from a Figment.
     pub fn generated_from_figment(figment: &Figment) -> Vec<Remapping> {
         figment.extract_inner(GENERATED_REMAPPINGS_KEY).unwrap_or_default()
+    }
+
+    /// Returns configuration warnings not resolved by these authoritative remappings.
+    pub fn warnings_from_figment(&self, figment: &Figment) -> Vec<Warning> {
+        let mut warnings = figment.extract_inner("__warnings").unwrap_or_default();
+        suppress_overridden_remapping_warnings(&mut warnings, &self.remappings);
+        warnings
     }
 
     /// Merge config remappings while preserving CLI precedence over generated refinements.
@@ -197,6 +210,10 @@ pub struct RemappingsProvider<'a> {
     ///   - a `MissingField` error, which means previous provider didn't set the "remappings" field
     ///   - other error, like formatting
     pub remappings: Result<Vec<Remapping>, Error>,
+    /// Source, test and script directories owned by the root project.
+    pub project_paths: Vec<PathBuf>,
+    /// Warnings collected by earlier configuration providers.
+    pub warnings: Result<Vec<Warning>, Error>,
 }
 
 impl RemappingsProvider<'_> {
@@ -212,6 +229,7 @@ impl RemappingsProvider<'_> {
     /// - CLI parameters
     fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<RemappingsOutput, Error> {
         trace!("get all remappings from {:?}", self.root);
+        let mut warnings = self.warnings.clone()?;
         /// Prioritizes remappings by shortest path, then a `src` target, then lexical path.
         ///   - ("a", "1/2") over ("a", "1/2/3")
         ///   - ("a", "1/src") over ("a", "1/lib")
@@ -350,16 +368,50 @@ impl RemappingsProvider<'_> {
                 if r.context.is_some() {
                     continue;
                 }
-                // Scope declarations when source identities stay within their dependency.
-                // External sources retain the existing global behavior until their physical
-                // paths can be separated from their owner-specific source-unit names.
-                if *kind == NestedRemappingKind::Declaration {
-                    if let Some(contextual) = scope_nested_remapping(r.clone(), lib)
-                        && let Some(overlays) =
+                // Preserve unique aliases while isolating declarations that can change another
+                // import namespace. External sources retain their existing declaration scope.
+                if *kind == NestedRemappingKind::Declaration
+                    && (self.project_paths.iter().any(|path| {
+                        let path = path.strip_prefix(self.root).unwrap_or(path);
+                        #[cfg(windows)]
+                        let name = path.to_slash_lossy();
+                        #[cfg(not(windows))]
+                        let name = path.to_string_lossy();
+                        remappings_conflict(
+                            r,
+                            &Remapping {
+                                context: None,
+                                name: format!("{name}/"),
+                                path: self.root.join(path).display().to_string(),
+                            },
+                            self.root,
+                        )
+                    }) || (self.root.join(&r.name).exists()
+                        && foundry_compilers::utils::canonicalized(self.root.join(&r.name))
+                            != foundry_compilers::utils::canonicalized(self.root.join(&r.path)))
+                        || nested_foundry_remappings
+                            .iter()
+                            .filter(|(owner, _, kind)| {
+                                owner != lib || *kind == NestedRemappingKind::PackageEntry
+                            })
+                            .map(|(_, mapping, _)| mapping)
+                            .chain(&global)
+                            .chain(&contextual)
+                            .any(|other| remappings_conflict(r, other, self.root)))
+                {
+                    if let Some(contextual) = scope_nested_remapping(r.clone(), lib) {
+                        warnings.push(Warning::ScopedDependencyRemapping {
+                            remapping: relative_remapping_preserving_context_boundary(
+                                contextual.clone(),
+                                self.root,
+                            ),
+                        });
+                        if let Some(overlays) =
                             contextual_overlays(&authoritative_remappings, &contextual)
-                    {
-                        contextual_remappings.extend(overlays);
-                        contextual_remappings.push(contextual);
+                        {
+                            contextual_remappings.extend(overlays);
+                            contextual_remappings.push(contextual);
+                        }
                     }
                     continue;
                 }
@@ -439,13 +491,19 @@ impl RemappingsProvider<'_> {
                     .collect(),
             );
 
+            suppress_overridden_remapping_warnings(&mut warnings, &authoritative_remappings);
             return Ok(RemappingsOutput {
                 remappings: all_remappings.into_inner(),
                 generated_contextual_remappings: generated_remappings,
+                warnings,
             });
         }
 
-        Ok(RemappingsOutput { remappings: all_remappings.into_inner(), ..Default::default() })
+        Ok(RemappingsOutput {
+            remappings: all_remappings.into_inner(),
+            warnings,
+            ..Default::default()
+        })
     }
 
     /// Returns all remappings declared in foundry.toml files of libraries
@@ -810,6 +868,36 @@ fn sort_by_context_specificity(remappings: &mut [Remapping]) {
     });
 }
 
+/// Compares the targets of the overlapping part of two import namespaces.
+fn remappings_conflict(first: &Remapping, second: &Remapping, root: &Path) -> bool {
+    let (broad, narrow) = if remapping_name_is_prefix(&first.name, &second.name) {
+        (first, second)
+    } else if remapping_name_is_prefix(&second.name, &first.name) {
+        (second, first)
+    } else {
+        return false;
+    };
+    let broad_name = broad.name.strip_suffix('/').unwrap_or(&broad.name);
+    let narrow_name = narrow.name.strip_suffix('/').unwrap_or(&narrow.name);
+    let suffix = narrow_name.strip_prefix(broad_name).unwrap().trim_start_matches('/');
+    let broad_target = root.join(&broad.path).join(suffix);
+    let narrow_target = root.join(&narrow.path);
+    normalize_remapping_context(&foundry_compilers::utils::canonicalized(broad_target))
+        != normalize_remapping_context(&foundry_compilers::utils::canonicalized(narrow_target))
+}
+
+fn suppress_overridden_remapping_warnings(
+    warnings: &mut Vec<Warning>,
+    authoritative: &[Remapping],
+) {
+    warnings.retain(|warning| match warning {
+        Warning::ScopedDependencyRemapping { remapping } => !authoritative.iter().any(|mapping| {
+            mapping.context.is_none() && remapping_name_is_prefix(&mapping.name, &remapping.name)
+        }),
+        _ => true,
+    });
+}
+
 impl Provider for RemappingsProvider<'_> {
     fn metadata(&self) -> Metadata {
         Metadata::named("Remapping Provider")
@@ -843,6 +931,7 @@ impl Provider for RemappingsProvider<'_> {
             Config::selected_profile(),
             Dict::from([
                 ("remappings".to_string(), figment::value::Value::from(remappings)),
+                ("__warnings".to_string(), figment::value::Value::serialize(output.warnings)?),
                 (
                     GENERATED_REMAPPINGS_KEY.to_string(),
                     figment::value::Value::from(generated_remappings),
@@ -878,6 +967,8 @@ mod tests {
             lib_paths: Cow::Borrowed(&libs),
             root,
             remappings: Ok(vec![]),
+            project_paths: Vec::new(),
+            warnings: Ok(Vec::new()),
         };
 
         assert!(provider.find_nested_foundry_remappings().unwrap().is_empty());
@@ -906,6 +997,8 @@ mod tests {
             lib_paths: Cow::Borrowed(&libs),
             root: &root,
             remappings: Ok(vec![]),
+            project_paths: Vec::new(),
+            warnings: Ok(Vec::new()),
         };
 
         assert_eq!(
@@ -943,6 +1036,8 @@ mod tests {
             lib_paths: Cow::Borrowed(&libs),
             root: &root,
             remappings: Ok(vec![]),
+            project_paths: Vec::new(),
+            warnings: Ok(Vec::new()),
         };
 
         assert!(provider.find_nested_foundry_remappings().unwrap().contains(&(
@@ -1073,6 +1168,8 @@ mod tests {
             lib_paths: Cow::Borrowed(&libs),
             root: root.path(),
             remappings: Ok(Vec::new()),
+            project_paths: Vec::new(),
+            warnings: Ok(Vec::new()),
         };
 
         let dependencies = provider
@@ -1459,13 +1556,14 @@ mod tests {
     }
 
     #[test]
-    fn absolute_internal_source_preserves_owner_scope() {
+    fn absolute_internal_source_scopes_conflicting_aliases() {
         figment::Jail::expect_with(|_| {
             let temp = tempdir().unwrap();
             let root = dunce::canonicalize(temp.path()).unwrap();
             let owner = root.join("lib/a");
             let source = owner.join("custom-source");
             fs::create_dir_all(&source).unwrap();
+            fs::create_dir(root.join("private")).unwrap();
             fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
             fs::write(
                 owner.join(Config::FILE_NAME),
@@ -1722,6 +1820,222 @@ mod tests {
                 );
             }
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn unique_dependency_aliases_remain_global() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = temp.path();
+            let owner = root.join("lib/a");
+            fs::create_dir_all(owner.join("src")).unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            fs::write(
+                owner.join(Config::FILE_NAME),
+                "[profile.default]\nremappings = [\"@custom/=src/\", \"Custom.sol=src/Custom.sol\"]\n",
+            )
+            .unwrap();
+            fs::write(owner.join("src/Custom.sol"), "contract Custom {}\n").unwrap();
+
+            let config = Config::load_with_root(root).unwrap();
+            assert_eq!(
+                config
+                    .get_all_remappings()
+                    .map(|remapping| remapping.to_string())
+                    .collect::<Vec<_>>(),
+                ["@custom/=lib/a/src/", "Custom.sol=lib/a/src/Custom.sol", "a/=lib/a/src/"]
+            );
+            assert_eq!(config.warnings, []);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn scoped_dependency_aliases_warn_about_previous_global_targets() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = temp.path();
+            let owner = root.join("lib/a");
+            fs::create_dir_all(owner.join("src/pinned")).unwrap();
+            fs::create_dir_all(owner.join("lib/shared/src")).unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\nunknown_key = true\n")
+                .unwrap();
+            fs::write(
+                owner.join(Config::FILE_NAME),
+                "[profile.default]\nremappings = [\"shared/=src/pinned/\"]\n",
+            )
+            .unwrap();
+            fs::write(owner.join("src/pinned/Version.sol"), "contract Pinned {}\n").unwrap();
+            fs::write(owner.join("lib/shared/src/Version.sol"), "contract Discovered {}\n")
+                .unwrap();
+
+            let config = Config::load_with_root(root).unwrap();
+            assert_eq!(config.warnings.len(), 2);
+            assert!(
+                matches!(&config.warnings[0], crate::Warning::UnknownKey { key, .. } if key == "unknown_key")
+            );
+            assert_eq!(
+                config.warnings[1].to_string(),
+                "Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `shared/=lib/a/src/pinned/` to your root remappings."
+            );
+            assert_eq!(
+                config
+                    .get_all_remappings()
+                    .find(|mapping| mapping.context.is_none() && mapping.name == "shared/")
+                    .unwrap()
+                    .path,
+                "lib/a/lib/shared/src/"
+            );
+
+            // Choosing an owner-only override does not restore the old root alias.
+            fs::write(
+                root.join(Config::FILE_NAME),
+                "[profile.default]\nremappings = [\"lib/a/:shared/=src/selected/\"]\n",
+            )
+            .unwrap();
+            let config = Config::load_with_root(root).unwrap();
+            assert_eq!(config.warnings.len(), 1);
+            assert_eq!(
+                config
+                    .get_all_remappings()
+                    .find(|mapping| mapping.context.is_none() && mapping.name == "shared/")
+                    .unwrap()
+                    .path,
+                "lib/a/lib/shared/src/"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn dependency_alias_conflicts_compare_overlapping_targets() {
+        figment::Jail::expect_with(|_| {
+            for (alias, target, scoped) in [
+                ("pkg/", "src/", true),
+                ("pkg/", "../a/src/./", false),
+                #[cfg(unix)]
+                ("pkg/", "linked/", false),
+                ("pkg/sub/", "src/", true),
+                ("pkg/sub/", "../a/src/sub/", false),
+                ("pkg-other/", "src/", false),
+            ] {
+                let temp = tempdir().unwrap();
+                let root = temp.path();
+                for name in ["a", "b"] {
+                    let owner = root.join("lib").join(name);
+                    fs::create_dir_all(owner.join("src/sub")).unwrap();
+                    fs::write(owner.join("src/Version.sol"), "contract Version {}\n").unwrap();
+                    fs::write(
+                        owner.join(Config::FILE_NAME),
+                        format!(
+                            "[profile.default]\nremappings = [{:?}]\n",
+                            if name == "a" {
+                                "pkg/=src/".to_string()
+                            } else {
+                                format!("{alias}={target}")
+                            }
+                        ),
+                    )
+                    .unwrap();
+                }
+                #[cfg(unix)]
+                symlink(root.join("lib/a/src"), root.join("lib/b/linked")).unwrap();
+                fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+
+                let config = Config::load_with_root(root).unwrap();
+                let aliases = config
+                    .get_all_remappings()
+                    .filter(|mapping| mapping.name == "pkg/" || mapping.name == alias)
+                    .collect::<Vec<_>>();
+                assert_eq!(config.warnings.len(), if scoped { 2 } else { 0 }, "{alias}={target}");
+                assert!(
+                    aliases.iter().all(|mapping| mapping.context.is_some() == scoped),
+                    "{alias}={target}"
+                );
+
+                // An explicit root choice remains authoritative and suppresses migration warnings.
+                fs::write(
+                    root.join(Config::FILE_NAME),
+                    "[profile.default]\nremappings = [\"pkg/=src/selected/\"]\n",
+                )
+                .unwrap();
+                let config = Config::load_with_root(root).unwrap();
+                assert_eq!(config.warnings, [], "{alias}={target}");
+            }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn dependency_aliases_cannot_replace_configured_project_paths() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = temp.path();
+            let owner = root.join("lib/a");
+            fs::create_dir_all(owner.join("src")).unwrap();
+            fs::write(owner.join("src/Version.sol"), "contract Version {}\n").unwrap();
+            for (key, path) in [
+                ("src", "custom/root"),
+                ("test", "custom/root"),
+                ("script", "custom/root"),
+                #[cfg(windows)]
+                ("src", r"custom\root"),
+            ] {
+                fs::write(
+                    root.join(Config::FILE_NAME),
+                    format!("[profile.default]\n{key} = '{path}'\n"),
+                )
+                .unwrap();
+                fs::write(
+                    owner.join(Config::FILE_NAME),
+                    "[profile.default]\nremappings = [\"custom/root/=src/\"]\n",
+                )
+                .unwrap();
+                let config = Config::load_with_root(root).unwrap();
+                assert_eq!(config.warnings.len(), 1, "{key}");
+                let mapping = config
+                    .get_all_remappings()
+                    .find(|mapping| mapping.name == "custom/root/")
+                    .unwrap();
+                assert_eq!(mapping.context.as_deref(), Some("lib/a/"), "{key}");
+            }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn unique_dependency_alias_keeps_its_contextual_refinement() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = temp.path();
+            let owner = root.join("lib/a");
+            fs::create_dir_all(owner.join("src/special")).unwrap();
+            fs::create_dir_all(owner.join("overrides")).unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            fs::write(
+                owner.join(Config::FILE_NAME),
+                "[profile.default]\nremappings = [\"@custom/=src/\", \"src/special/:@custom/=overrides/\"]\n",
+            )
+            .unwrap();
+            fs::write(owner.join("src/Version.sol"), "contract Version {}\n").unwrap();
+            fs::write(owner.join("overrides/Version.sol"), "contract Refined {}\n").unwrap();
+
+            let config = Config::load_with_root(root).unwrap();
+            assert_eq!(
+                config.get_all_remappings().map(|mapping| mapping.to_string()).collect::<Vec<_>>(),
+                [
+                    "lib/a/src/special/:@custom/=lib/a/overrides/",
+                    "@custom/=lib/a/src/",
+                    "a/=lib/a/src/",
+                ]
+            );
+            assert_eq!(config.warnings, []);
             Ok(())
         });
     }

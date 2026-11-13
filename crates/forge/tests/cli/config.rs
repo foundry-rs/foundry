@@ -17,6 +17,7 @@ use foundry_config::{
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     foundry_compilers::artifacts::{EvmVersion, remappings::Remapping},
+    snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, TestCommand, pretty_err},
 };
 use path_slash::PathBufExt;
@@ -1003,11 +1004,10 @@ fn can_detect_lib_foundry_toml(prj: _, cmd: _) {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            // Dependency declarations apply only within their owner.
-            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
-            // Global package entry points remain available.
+            // Unique dependency declarations and package entries remain global.
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -1025,13 +1025,11 @@ fn can_detect_lib_foundry_toml(prj: _, cmd: _) {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            "lib/nested-lib/lib/another-lib/:nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/"
-                .parse()
-                .unwrap(),
-            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "another-lib/=lib/nested-lib/lib/another-lib/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -1042,13 +1040,11 @@ fn can_detect_lib_foundry_toml(prj: _, cmd: _) {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            "lib/nested-lib/lib/another-lib/:nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/"
-                .parse()
-                .unwrap(),
-            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -1060,13 +1056,11 @@ fn can_detect_lib_foundry_toml(prj: _, cmd: _) {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            "lib/nested-lib/lib/another-lib/:nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/"
-                .parse()
-                .unwrap(),
-            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 }
@@ -1159,15 +1153,13 @@ fn can_prioritise_project_remappings(prj: _, cmd: _) {
 @utils/libraries/Contract.sol=src/Contract.sol
 @utils/=src/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/
+@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
 dep1/=lib/dep1/src/
 forge-std/=lib/forge-std/src/
-lib/dep1/:@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
 
 "#]])
         .stderr_eq(str![[r#"
 Global:
-
-Context: lib/dep1/
 
 
 "#]]);
@@ -1558,36 +1550,120 @@ fn nested_auto_remapping_preserves_declared_precedence(prj: _, cmd: _) {
     pretty_err(&shared_x, fs::create_dir_all(shared_x.join("src")));
     pretty_err(&a, fs::write(a.join("foundry.toml"), "[profile.default]\nlibs = [\"lib\"]\n"));
     pretty_err(&a, fs::write(a.join("remappings.txt"), "shared/=src/pinned/\n"));
-    pretty_err(&pinned_a, fs::write(pinned_a.join("Marker.sol"), "contract Marker {}\n"));
-    pretty_err(&pinned_a, fs::write(pinned_a.join("Version.sol"), "contract VersionA {}\n"));
-    pretty_err(&shared_a, fs::write(shared_a.join("Version.sol"), "contract ShadowedA {}\n"));
+    pretty_err(
+        &pinned_a,
+        fs::write(
+            pinned_a.join("Marker.sol"),
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; contract Marker {}\n",
+        ),
+    );
+    pretty_err(
+        &pinned_a,
+        fs::write(
+            pinned_a.join("Version.sol"),
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; contract VersionA {}\n",
+        ),
+    );
+    pretty_err(
+        &shared_a,
+        fs::write(
+            shared_a.join("Version.sol"),
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; contract ShadowedA {}\n",
+        ),
+    );
     pretty_err(
         &a,
         fs::write(
             a.join("src/A.sol"),
-            "import {VersionA} from \"shared/Version.sol\"; import {X} from \"x/X.sol\"; contract A is VersionA, X {}\n",
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; import {VersionA} from \"shared/Version.sol\"; import {X} from \"x/X.sol\"; contract A is VersionA, X {}\n",
         ),
     );
     pretty_err(
         &x,
         fs::write(
             x.join("src/X.sol"),
-            "import {VersionX} from \"shared/Version.sol\"; contract X is VersionX {}\n",
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; import {VersionX} from \"shared/Version.sol\"; contract X is VersionX {}\n",
         ),
     );
-    pretty_err(&shared_x, fs::write(shared_x.join("src/Version.sol"), "contract VersionX {}\n"));
-    prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"a/pinned/Marker.sol\"; contract UsesA is A, Marker {}\n");
+    pretty_err(
+        &shared_x,
+        fs::write(
+            shared_x.join("src/Version.sol"),
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; contract VersionX {}\n",
+        ),
+    );
+    prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"a/pinned/Marker.sol\"; import {ShadowedA} from \"shared/Version.sol\"; contract UsesA is A, Marker, ShadowedA {}\n");
+    let warning = str![[r#"
+Warning: Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `shared/=lib/a/src/pinned/` to your root remappings.
 
-    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+"#]];
+
+    cmd.arg("remappings")
+        .assert_success()
+        .stdout_eq(str![[r#"
 lib/a/lib/x/:shared/=lib/a/lib/x/lib/shared/src/
 lib/a/:shared/=lib/a/src/pinned/
 a/=lib/a/src/
 shared/=lib/a/lib/shared/src/
 x/=lib/a/lib/x/src/
 
-"#]]);
-    cmd.forge_fuse().arg("build").assert_success();
+"#]])
+        .stderr_eq(warning.clone());
+    cmd.forge_fuse()
+        .args(["build", "--no-lint"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]])
+        .stderr_eq(warning.clone());
+    cmd.forge_fuse()
+        .args(["build", "--force", "--no-lint", "--quiet"])
+        .assert_success()
+        .stdout_eq("")
+        .stderr_eq("");
+    cmd.forge_fuse()
+        .args(["build", "--force", "--no-lint", "--json"])
+        .assert_json_stdout_with_status(
+            true,
+            str![[r#"
+{
+  "errors": [],
+  "sources": "{...}",
+  "contracts": "{...}",
+  "build_infos": "{...}"
+}
+"#]],
+        )
+        .stderr_eq(warning.clone());
     cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.create_file(
+        "lib/a/src/override/Version.sol",
+        "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; contract VersionA {} contract VersionX {}\n",
+    );
+    cmd.forge_fuse()
+        .args([
+            "build",
+            "--force",
+            "--no-lint",
+            "--remappings",
+            "lib/a/:shared/=lib/a/src/override/",
+        ])
+        .assert_success()
+        .stderr_eq(warning.clone());
+    cmd.forge_fuse()
+        .args([
+            "build",
+            "--force",
+            "--no-lint",
+            "--remappings",
+            "shared/unused/=lib/a/src/override/",
+        ])
+        .assert_success()
+        .stderr_eq(warning);
 }
 
 #[forgetest]
@@ -3941,7 +4017,45 @@ fn external_source_bytecode_is_independent_of_project_root(prj: _, cmd: _) {
 }
 
 #[forgetest]
-fn unique_dependency_alias_requires_root_declaration(prj: _, cmd: _) {
+fn unique_dependency_aliases_remain_global(prj: _, cmd: _) {
+    prj.add_lib("dependency/src/Dep.sol", "contract Dep {}\n");
+    prj.add_source("Root.sol", "import {Dep} from \"@custom/Dep.sol\"; contract Root is Dep {}\n");
+    for source in ["toml", "file"] {
+        prj.create_file(
+            "lib/dependency/foundry.toml",
+            if source == "toml" {
+                "[profile.default]\nremappings = [\"@custom/=src/\"]\n"
+            } else {
+                "[profile.default]\n"
+            },
+        );
+        if source == "file" {
+            prj.create_file("lib/dependency/remappings.txt", "@custom/=src/\n");
+        }
+        cmd.forge_fuse()
+            .arg("remappings")
+            .assert_success()
+            .stdout_eq(str![[r#"
+@custom/=lib/dependency/src/
+dependency/=lib/dependency/src/
+
+"#]])
+            .stderr_eq("");
+        cmd.forge_fuse()
+            .args(["build", "--force", "--no-lint"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]])
+            .stderr_eq("");
+    }
+}
+
+#[forgetest]
+fn conflicting_dependency_alias_requires_root_declaration(prj: _, cmd: _) {
     prj.create_file(
         "lib/dependency/foundry.toml",
         "[profile.default]\nremappings = [\"@custom/=src/\"]\n",
@@ -3954,11 +4068,18 @@ fn unique_dependency_alias_requires_root_declaration(prj: _, cmd: _) {
         "dependency/src/Dep.sol",
         "import {Inner} from \"@custom/Inner.sol\"; contract Dep { function value() public pure returns (uint256) { return Inner.value(); } }\n",
     );
+    prj.create_file(
+        "lib/other/foundry.toml",
+        "[profile.default]\nremappings = [\"@custom/=src/\"]\n",
+    );
+    prj.add_lib("other/src/Other.sol", "contract Other {}\n");
     prj.add_source("Root.sol", "import {Dep} from \"@custom/Dep.sol\"; contract Root is Dep {}\n");
 
     cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
 lib/dependency/:@custom/=lib/dependency/src/
+lib/other/:@custom/=lib/other/src/
 dependency/=lib/dependency/src/
+other/=lib/other/src/
 
 "#]]);
     let expected_stdout = str![[r#"
@@ -3966,12 +4087,19 @@ Unable to resolve imports:
       "@custom/Dep.sol" in "[..]"
 with remappings:
       lib/dependency/:@custom/=[..]
+      lib/other/:@custom/=[..]
       dependency/=[..]
+      other/=[..]
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 
 "#]];
-    let expected_stderr = str![[r#"
+    let warnings = str![[r#"
+Warning: Dependency remapping `@custom/=lib/dependency/src/` now applies only within `lib/dependency/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/dependency/src/` to your root remappings.
+Warning: Dependency remapping `@custom/=lib/other/src/` now applies only within `lib/other/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/other/src/` to your root remappings.
+
+"#]];
+    let migration_error = str![[r#"
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -3984,6 +4112,11 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
       @custom/=lib/dependency/src/
 
 "#]];
+    let expected_stderr = format!(
+        "{}{}",
+        warnings.clone().into_data().render().unwrap(),
+        migration_error.clone().into_data().render().unwrap(),
+    );
     for source in ["toml", "file"] {
         prj.create_file(
             "lib/dependency/foundry.toml",
@@ -4006,7 +4139,7 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
         .args(["build", "--force", "--no-lint", "--quiet"])
         .assert_failure()
         .stdout_eq("")
-        .stderr_eq(expected_stderr);
+        .stderr_eq(migration_error);
     cmd.forge_fuse()
         .args(["build", "--force", "--no-lint", "--json"])
         .assert_json_stdout_with_status(
@@ -4038,7 +4171,7 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
 }
 "#]],
         )
-        .stderr_eq("");
+        .stderr_eq(warnings);
 
     prj.add_test(
         "AliasMigration.t.sol",
@@ -4069,12 +4202,12 @@ contract AliasMigrationTest {
         if source == "cli" {
             command.args(["--remappings", root_alias]);
         }
-        command.assert_success();
+        command.assert_success().stderr_eq("");
     }
 }
 
 #[forgetest]
-fn openzeppelin_dependency_alias_reports_root_migration(prj: _, cmd: _) {
+fn openzeppelin_dependency_alias_remains_global(prj: _, cmd: _) {
     prj.create_file(
         "lib/openzeppelin-contracts/foundry.toml",
         "[profile.default]\nsrc = \"contracts\"\n",
@@ -4089,25 +4222,24 @@ fn openzeppelin_dependency_alias_reports_root_migration(prj: _, cmd: _) {
         "import {ERC20} from \"@openzeppelin/contracts/token/ERC20/ERC20.sol\"; contract Root is ERC20 {}\n",
     );
 
-    cmd.args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
-Error: Compiler run failed:
-Error (6275): Source "@openzeppelin/contracts/token/ERC20/ERC20.sol" not found: File not found. Searched the following locations: "[..]".
-ParserError: Source "@openzeppelin/contracts/token/ERC20/ERC20.sol" not found: File not found. Searched the following locations: "[..]".
- [FILE]:3:1:
-  |
-3 | import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol"; contract Root is ERC20 {}
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    cmd.arg("remappings")
+        .assert_success()
+        .stdout_eq(str![[r#"
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
 
-help: this file imports the alias "@openzeppelin/contracts/", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt:
-      @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+"#]])
+        .stderr_eq("");
+    cmd.forge_fuse()
+        .args(["build", "--no-lint"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-"#]]);
-
-    prj.create_file(
-        "remappings.txt",
-        "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/\n",
-    );
-    cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_success().stderr_eq("");
+"#]])
+        .stderr_eq("");
 }
 
 #[forgetest]
@@ -4122,6 +4254,8 @@ fn dependency_alias_migration_only_suggests_existing_targets(prj: _, cmd: _) {
     prj.add_source("Root.sol", "import {Dep} from \"@custom/Dep.sol\"; contract Root is Dep {}\n");
 
     cmd.args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
+Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/a/src/` to your root remappings.
+Warning: Dependency remapping `@custom/=lib/z/src/` now applies only within `lib/z/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/z/src/` to your root remappings.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4139,6 +4273,8 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
     fs::remove_file(prj.root().join("lib/a/src/Dep.sol")).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
         r#"
+Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/a/src/` to your root remappings.
+Warning: Dependency remapping `@custom/=lib/z/src/` now applies only within `lib/z/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/z/src/` to your root remappings.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4156,6 +4292,8 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
     fs::remove_file(prj.root().join("lib/z/src/Dep.sol")).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
         r#"
+Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/a/src/` to your root remappings.
+Warning: Dependency remapping `@custom/=lib/z/src/` now applies only within `lib/z/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/z/src/` to your root remappings.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4194,4 +4332,32 @@ ParserError: Source "src/missing/Dep.sol" not found: File not found. Searched th
         }
         command.assert_failure().stderr_eq(explicit_error.clone());
     }
+}
+
+#[forgetest]
+fn scoped_source_alias_preserves_root_sources(prj: _, cmd: _) {
+    prj.add_source("Base.sol", "contract RootBase {}\n");
+    prj.add_lib("dependency/src/internal/Base.sol", "contract OwnerBase {}\n");
+    prj.add_lib(
+        "dependency/src/Dep.sol",
+        "import {OwnerBase} from \"src/Base.sol\"; contract Dep is OwnerBase {}\n",
+    );
+    prj.create_file(
+        "lib/dependency/foundry.toml",
+        "[profile.default]\nremappings = [\"src/=src/internal/\"]\n",
+    );
+    prj.add_source(
+        "Root.sol",
+        "import {RootBase} from \"src/Base.sol\"; import {Dep} from \"dependency/Dep.sol\"; contract Root is RootBase, Dep {}\n",
+    );
+
+    cmd.args(["build", "--no-lint"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]).stderr_eq(str![[r#"
+Warning: Dependency remapping `src/=lib/dependency/src/internal/` now applies only within `lib/dependency/`. Root imports may resolve differently. To retain the previous target, add `src/=lib/dependency/src/internal/` to your root remappings.
+
+"#]]);
 }
