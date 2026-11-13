@@ -1801,24 +1801,20 @@ impl FunctionMock {
         self.target
     }
 
-    /// The condition for this mock to match a call whose code address, as 20 bytes, is
-    /// `code_address`, with `calldata` matching its data in full or as the selector. A symbolic
-    /// callee is left unconstrained.
+    /// The condition for this mock to match a call whose code address is `code_address`, with
+    /// `calldata` matching its data in full or as the selector.
     pub(crate) fn code_match_condition(
         &self,
         cx: &mut SymCx,
-        code_address: &SymBytes,
+        code_address: &SymExpr,
         calldata: &SymBytes,
     ) -> Option<SymBoolExpr> {
         if self.data.len() != calldata.len() && self.data.len() != 4 {
             return None;
         }
-        let mut conditions = vec![calldata.prefix_condition(cx, &self.data)?];
-        if let Some(callee) = self.callee.as_const() {
-            let callee = SymBytes::concrete(cx, word_to_address(callee).to_vec());
-            conditions.push(code_address.prefix_condition(cx, &callee)?);
-        }
-        Some(SymBoolExpr::and(cx, conditions))
+        let data_condition = calldata.prefix_condition(cx, &self.data)?;
+        let callee_condition = SymBoolExpr::eq(cx, self.callee.clone(), code_address.clone());
+        Some(SymBoolExpr::and(cx, vec![callee_condition, data_condition]))
     }
 
     pub(crate) fn match_condition(

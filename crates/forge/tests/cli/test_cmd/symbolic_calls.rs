@@ -2318,7 +2318,12 @@ contract SymbolicEip7702Delegation is Test {
         bytes memory data = abi.encodeCall(DelegateImpl.foo, ());
         vm.mockFunction(bob, address(mock), data);
         assertEq(DelegateImpl(bob).foo(), 42);
-        vm.mockFunction(address(impl), address(mock), data);
+        // Like Forge, only the address bits of the callee word count.
+        uint256 callee = uint256(uint160(address(impl))) | (1 << 200);
+        (bool ok,) = address(vm).call(
+            abi.encodeWithSelector(vm.mockFunction.selector, callee, address(mock), data)
+        );
+        assertTrue(ok);
         assertEq(DelegateImpl(bob).foo(), 7);
     }
 
@@ -2362,17 +2367,19 @@ contract SymbolicEip7702Delegation is Test {
         assertEq(abi.decode(ret, (uint256)), 8);
     }
 
-    function checkMockCallOnSymbolicDelegationWithRuledOutMocks(address delegate, bytes4 selector)
-        public
-    {
+    function checkMockCallOnSymbolicDelegationWithRuledOutMocks(
+        address delegate,
+        address mockCallee,
+        bytes4 selector
+    ) public {
         // The path rules out one function mock by its selector and the other by its callee.
         vm.assume(selector != DelegateImpl.foo.selector);
-        vm.assume(delegate != address(0xbeef));
+        vm.assume(mockCallee != delegate);
         address carol = address(0xca401);
         vm.etch(carol, abi.encodePacked(hex"ef0100", delegate));
         address mock = address(new DelegateMock());
         vm.mockFunction(address(impl), mock, abi.encodeCall(DelegateImpl.foo, ()));
-        vm.mockFunction(address(0xbeef), mock, abi.encodePacked(selector));
+        vm.mockFunction(mockCallee, mock, abi.encodePacked(selector));
         bytes memory any;
         vm.mockCall(carol, any, abi.encode(9));
         (bool ok, bytes memory ret) = carol.call(abi.encodePacked(selector));
@@ -2418,7 +2425,7 @@ Ran 12 tests for test/SymbolicEip7702Delegation.t.sol:SymbolicEip7702Delegation
 [PASS] checkDelegationToPrecompileRunsEmptyCode() ([METRICS])
 [FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectRevertOnDelegatedCall() ([METRICS])
 [PASS] checkMockCallOnSymbolicDelegation(address) ([METRICS])
-[PASS] checkMockCallOnSymbolicDelegationWithRuledOutMocks(address,bytes4) ([METRICS])
+[PASS] checkMockCallOnSymbolicDelegationWithRuledOutMocks(address,address,bytes4) ([METRICS])
 [PASS] checkMockFunctionIsKeyedByDelegate() ([METRICS])
 [FAIL: unmocked selector: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockFunctionOnDelegateWithSymbolicSelector(bytes4) ([METRICS])
 [PASS] checkMockFunctionOnDelegatedPrecompile() ([METRICS])

@@ -562,21 +562,21 @@ impl SymbolicExecutor {
         Ok(false)
     }
 
-    /// Returns the code address of a call to `to` as 20 bytes, which `vm.mockFunction` is keyed
-    /// by: the delegate of an EIP-7702 delegated `to`, as in evm2, or `to` itself.
+    /// Returns the code address of a call to `to`, which `vm.mockFunction` is keyed by: the
+    /// delegate of an EIP-7702 delegated `to`, as in evm2, which may be symbolic, or `to` itself.
     fn call_code_address(
         &mut self,
         executor: &ExecutorView<'_>,
         state: &mut PathState,
         to: Address,
-    ) -> Result<SymBytes, SymbolicError> {
+    ) -> Result<SymExpr, SymbolicError> {
         if executor.eip7702_delegations
             && let Some(delegate) =
                 state.world.extcode(&mut self.cx, executor, to)?.eip7702_delegate(&mut self.cx)?
         {
-            return Ok(delegate);
+            return Ok(delegate.right_aligned_word(&mut self.cx, 0, 20));
         }
-        Ok(SymBytes::concrete(&mut self.cx, to.to_vec()))
+        Ok(SymExpr::constant(&mut self.cx, address_word(to)))
     }
 
     /// Returns the code address of a call to `to`, whose code runs unless a mock redirects it.
@@ -587,9 +587,10 @@ impl SymbolicExecutor {
         to: Address,
     ) -> Result<Address, SymbolicError> {
         let address = self.call_code_address(executor, state, to)?;
-        Ok(Address::from_slice(
-            &address.concrete_bytes(&mut self.cx, "symbolic EIP-7702 delegation")?,
-        ))
+        let Some(address) = address.as_const() else {
+            return Err(SymbolicError::Unsupported("symbolic EIP-7702 delegation"));
+        };
+        Ok(word_to_address(address))
     }
 
     pub(super) fn expected_call_match_constraints(
