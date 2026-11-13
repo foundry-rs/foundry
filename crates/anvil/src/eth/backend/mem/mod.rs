@@ -8181,7 +8181,7 @@ where
                 .hashes
                 .iter()
                 .filter(|(num, _)| **num >= min_block)
-                .map(|(&num, &hash)| (num, hash))
+                .map(|(&num, &hash)| (U256::from(num), hash))
                 .collect()
         };
 
@@ -8199,10 +8199,10 @@ where
             }
         }
 
-        // Restore block hashes from blockchain storage (now unwound, contains only valid blocks).
-        for (block_num, hash) in block_hashes {
-            db.insert_block_hash(U256::from(block_num), hash);
-        }
+        // Replace the cached block hashes with those from blockchain storage (now unwound, contains
+        // only valid blocks). Inserting them one by one is not enough: the fork database keeps its
+        // cached hashes across `clear`, so its pre-rollback head would evict the restored ones.
+        db.set_block_hashes(block_hashes);
         publish();
 
         Ok(())

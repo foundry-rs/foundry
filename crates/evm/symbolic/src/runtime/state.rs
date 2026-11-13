@@ -956,7 +956,7 @@ impl PathState {
         cx: &mut SymCx,
         executor: &ExecutorView<'_>,
         address: Address,
-    ) -> SymExpr {
+    ) -> Result<SymExpr, SymbolicError> {
         self.world.balance_word_for_address(cx, executor, address)
     }
 
@@ -1203,10 +1203,11 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address: Address,
         value: SymExpr,
-    ) {
-        let previous = self.world.balance_word_for_address(cx, executor, address);
+    ) -> Result<(), SymbolicError> {
+        let previous = self.world.balance_word_for_address(cx, executor, address)?;
         self.world.set_balance_word(address, value.clone());
         self.persistent_writes.push(PersistentWrite::Balance { address, balance: value, previous });
+        Ok(())
     }
 
     /// Returns the concrete accounts that a cheatcode write through the free address word
@@ -1287,7 +1288,7 @@ impl PathState {
         // Each account's balance and nonce writes are recorded again as one net change, so an
         // enclosing replay keeps this replay's saturation.
         for (address, writes) in balance_writes {
-            let reverted = self.world.balance_word_for_address(cx, executor, address);
+            let reverted = self.world.balance_word_for_address(cx, executor, address)?;
             // The exact sum of the balance and the deltas, as `high * 2^256 + low` with a signed
             // `high`.
             let mut low = reverted.clone();
@@ -1309,7 +1310,7 @@ impl PathState {
             let negative = SymBoolExpr::cmp(cx, SymCmpOp::Slt, high, zero.clone());
             let balance = SymExpr::ite(cx, negative, zero, saturated);
             if balance != reverted {
-                self.set_persistent_balance(cx, executor, address, balance);
+                self.set_persistent_balance(cx, executor, address, balance)?;
             }
         }
         for (address, delta) in nonce_deltas {
@@ -2758,14 +2759,16 @@ impl SymbolicWorld {
         }
     }
 
-    pub(crate) fn backend_balance(&self, executor: &ExecutorView<'_>, address: Address) -> U256 {
+    pub(crate) fn backend_balance(
+        &self,
+        executor: &ExecutorView<'_>,
+        address: Address,
+    ) -> Result<U256, SymbolicError> {
         executor
             .backend
             .basic(address)
-            .ok()
-            .flatten()
-            .map(|account| account.balance)
-            .unwrap_or_default()
+            .map_err(|err| SymbolicError::Backend(err.to_string()))
+            .map(|account| account.map(|account| account.balance).unwrap_or_default())
     }
 
     pub(crate) fn balance_word_for_address(
@@ -2773,17 +2776,17 @@ impl SymbolicWorld {
         cx: &mut SymCx,
         executor: &ExecutorView<'_>,
         address: Address,
-    ) -> SymExpr {
+    ) -> Result<SymExpr, SymbolicError> {
         if self.destroyed_accounts.contains(&address) {
-            return SymExpr::zero(cx);
+            return Ok(SymExpr::zero(cx));
         }
         if let Some(balance) = self.balances.get(&address) {
-            return balance.clone();
+            return Ok(balance.clone());
         }
         if self.symbolic_accounts && !self.created_accounts.contains(&address) {
-            return SymExpr::var(cx, &format!("balance_{address:?}"));
+            return Ok(SymExpr::var(cx, &format!("balance_{address:?}")));
         }
-        SymExpr::constant(cx, self.backend_balance(executor, address))
+        Ok(SymExpr::constant(cx, self.backend_balance(executor, address)?))
     }
 
     pub(crate) fn balance_word(
@@ -2797,7 +2800,7 @@ impl SymbolicWorld {
             executor,
             address_expr,
             |world, address| world.balances.contains_key(&address),
-            |world, cx, address| Ok(world.balance_word_for_address(cx, executor, address)),
+            |world, cx, address| world.balance_word_for_address(cx, executor, address),
         )
     }
 
@@ -2821,12 +2824,12 @@ impl SymbolicWorld {
         to: Address,
         value: SymExpr,
         saturate: bool,
-    ) {
+    ) -> Result<(), SymbolicError> {
         if from == to || value.as_const().is_some_and(|value| value.is_zero()) {
-            return;
+            return Ok(());
         }
-        let from_balance = self.balance_word_for_address(cx, executor, from);
-        let to_balance = self.balance_word_for_address(cx, executor, to);
+        let from_balance = self.balance_word_for_address(cx, executor, from)?;
+        let to_balance = self.balance_word_for_address(cx, executor, to)?;
         let from_balance = SymExpr::binop(cx, SymBinOp::Sub, from_balance, value.clone());
         let to_balance = if saturate {
             SymMemory::saturating_add_word(cx, to_balance, value)
@@ -2835,6 +2838,7 @@ impl SymbolicWorld {
         };
         self.set_balance_word(from, from_balance);
         self.set_balance_word(to, to_balance);
+        Ok(())
     }
 
     pub(crate) fn nonce(
@@ -2922,9 +2926,9 @@ impl SymbolicWorld {
         address: Address,
         beneficiary: Address,
     ) -> Result<(), SymbolicError> {
-        let balance = self.balance_word_for_address(cx, executor, address);
+        let balance = self.balance_word_for_address(cx, executor, address)?;
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
-            let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
+            let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary)?;
             let beneficiary_balance =
                 SymMemory::saturating_add_word(cx, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
@@ -2943,10 +2947,10 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address: Address,
         beneficiary: Address,
-    ) {
-        let balance = self.balance_word_for_address(cx, executor, address);
+    ) -> Result<(), SymbolicError> {
+        let balance = self.balance_word_for_address(cx, executor, address)?;
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
-            let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
+            let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary)?;
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
             let beneficiary_balance =
@@ -2955,6 +2959,7 @@ impl SymbolicWorld {
             let zero = SymExpr::zero(cx);
             Arc::make_mut(&mut self.state).balances.insert(address, zero);
         }
+        Ok(())
     }
 
     pub(crate) fn extcode(
@@ -3025,7 +3030,7 @@ impl SymbolicWorld {
             return Ok(hash);
         }
         // EIP-161: without code or a nonce, the account exists only while it has a balance.
-        let balance = self.balance_word_for_address(cx, executor, address);
+        let balance = self.balance_word_for_address(cx, executor, address)?;
         let empty = SymBoolExpr::eq_word_const(cx, &balance, U256::ZERO);
         let zero = SymExpr::zero(cx);
         Ok(SymExpr::ite(cx, empty, zero, hash))

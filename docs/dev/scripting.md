@@ -220,7 +220,8 @@ transaction hash or a saved attempt, and left an operation, on any chain, with n
 a recorded revert. Without a snapshot, progress written before snapshots existed is checked through
 the broadcast export. A broadcast export written with a snapshot cannot show a submission whose
 response was lost, so when its snapshot is missing, for example in a checkout without `cache/`, it
-blocks while any operation lacks a receipt or recorded revert, even if nothing was sent. With
+blocks while any operation lacks a receipt or recorded revert, even if nothing was sent. Without a
+snapshot, an existing but unreadable broadcast export also blocks. With
 `--start-fresh`, it first moves the snapshot, including an interrupted pending commit, and both
 exports to timestamped names. Dry runs never block, and neither do runs that never signed or sent
 anything while their snapshot is present.
