@@ -133,7 +133,8 @@ struct AnchorIndex<'a> {
     /// `(JUMPDEST, start of its straight-line run)` for every `JUMPDEST` that the previous
     /// instruction falls through to, ordered. A run starts after a `JUMP`, `STOP`, `RETURN`,
     /// `REVERT`, `INVALID`, `SELFDESTRUCT`, or a `JUMPI` that can skip to something other than a
-    /// failure stub. A `JUMP` that no source element maps does not end a run.
+    /// failure stub or a block that jumps to one. A `JUMP` that no source element maps does not
+    /// end a run.
     fallen_into: Vec<(usize, usize)>,
     /// `(target pc, push instruction)` for every push that feeds a `JUMP` or `JUMPI`, sorted.
     jumps: Vec<(u32, usize)>,
@@ -155,6 +156,8 @@ impl<'a> AnchorIndex<'a> {
         // Instructions that end a straight-line run, and `(JUMPI, static target pc)` pairs.
         let mut run_ends = Vec::new();
         let mut conditional_jumps = Vec::new();
+        // `(run, static target pc)` of every run ending in a `JUMP`.
+        let mut jump_runs = Vec::new();
         let mut run_start = 0;
         let mut prev = opcode::STOP;
         let mut prev_target = None;
@@ -162,11 +165,15 @@ impl<'a> AnchorIndex<'a> {
             match inst.opcode.get() {
                 opcode::JUMPDEST => jumpdests.push((pc, ic)),
                 opcode::JUMPI => conditional_jumps.push((ic, prev_target)),
-                // A compiler-generated helper, such as an ABI decoder, returns to the code that
-                // called it, so its `JUMP` does not end the caller's run.
-                opcode::JUMP if source_map.get(ic).is_some_and(|e| e.index().is_none()) => {}
-                opcode::JUMP
-                | opcode::STOP
+                opcode::JUMP => {
+                    jump_runs.push((run_start..ic + 1, prev_target));
+                    // A compiler-generated helper, such as an ABI decoder, returns to the code
+                    // that called it, so its `JUMP` does not end the caller's run.
+                    if source_map.get(ic).is_none_or(|e| e.index().is_some()) {
+                        run_ends.push(ic);
+                    }
+                }
+                opcode::STOP
                 | opcode::RETURN
                 | opcode::REVERT
                 | opcode::INVALID
@@ -209,13 +216,24 @@ impl<'a> AnchorIndex<'a> {
             }
         }
         jumps.sort_unstable();
+        let jumpdest_at = |pc: Option<usize>| {
+            pc.and_then(|pc| jumpdests.binary_search_by_key(&pc, |&(pc, _)| pc).ok())
+                .map(|i| jumpdests[i].1)
+        };
+        // A run that jumps to a failure stub, such as a panic helper call, is a failure stub too.
+        let failing_jump_runs = jump_runs
+            .into_iter()
+            .filter(|&(_, target)| {
+                jumpdest_at(target).is_some_and(|ic| in_reverting_run(&reverting_runs, ic))
+            })
+            .map(|(run, _)| run)
+            .collect::<Vec<_>>();
         // A `JUMPI` ends a run unless it can only skip to a failure stub.
         run_ends.extend(conditional_jumps.into_iter().filter_map(|(ic, target)| {
-            let target_ic = target
-                .and_then(|target| jumpdests.binary_search_by_key(&target, |&(pc, _)| pc).ok())
-                .map(|i| jumpdests[i].1);
-            (!target_ic.is_some_and(|target| in_reverting_run(&reverting_runs, target)))
-                .then_some(ic)
+            let fails = jumpdest_at(target).is_some_and(|ic| {
+                in_reverting_run(&reverting_runs, ic) || in_reverting_run(&failing_jump_runs, ic)
+            });
+            (!fails).then_some(ic)
         }));
         run_ends.sort_unstable();
         let fallen_into = jumpdests
@@ -622,6 +640,35 @@ mod tests {
                 ],
                 "10:20:0;;;;;;0:100:0;;;",
                 0,
+            ),
+            // A `JUMPI` to a block that jumps to a failure stub, such as an optimized panic helper
+            // call, does not end the run either.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    13,
+                    opcode::JUMPI,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::PUSH1,
+                    0,
+                    opcode::JUMP,
+                    opcode::PUSH1,
+                    4,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    17,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                ],
+                "10:20:0;;;;;;0:100:0;;;;-1:-1:-1;;;;;;",
+                4,
             ),
             // An unmapped helper `JUMP`, such as an ABI decoder returning to the wrapper, does not
             // end the run, but a mapped `JUMP` does.
