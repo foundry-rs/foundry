@@ -408,15 +408,7 @@ impl RemappingsProvider<'_> {
                     contextual_remappings.push(remapping);
                 }
             }
-            contextual_remappings.sort_by(|a, b| {
-                let a_context = a.context.as_deref().unwrap_or_default();
-                let b_context = b.context.as_deref().unwrap_or_default();
-                Path::new(b_context)
-                    .components()
-                    .count()
-                    .cmp(&Path::new(a_context).components().count())
-                    .then_with(|| a_context.cmp(b_context))
-            });
+            sort_by_context_specificity(&mut contextual_remappings);
             for (origin, r) in global {
                 insert_closest(&mut lib_remappings, r.context, r.name, origin, r.path.into());
             }
@@ -426,15 +418,7 @@ impl RemappingsProvider<'_> {
                 .iter()
                 .map(|r| relative_remapping_preserving_context_boundary(r.clone(), self.root))
                 .collect::<Vec<_>>();
-            explicit_contextual_remappings.sort_by(|a, b| {
-                let a_context = a.context.as_deref().unwrap_or_default();
-                let b_context = b.context.as_deref().unwrap_or_default();
-                Path::new(b_context)
-                    .components()
-                    .count()
-                    .cmp(&Path::new(a_context).components().count())
-                    .then_with(|| a_context.cmp(b_context))
-            });
+            sort_by_context_specificity(&mut explicit_contextual_remappings);
             let mut generated_remappings = Vec::new();
             for contextual in
                 explicit_contextual_remappings.into_iter().chain(contextual_remappings)
@@ -867,6 +851,19 @@ fn anchored_dependency_source(
         }
     }
     Some((anchored, anchored_root))
+}
+
+/// Sorts by descending context depth, then by context, preserving order within each context.
+fn sort_by_context_specificity(remappings: &mut [Remapping]) {
+    remappings.sort_by(|a, b| {
+        let a_context = a.context.as_deref().unwrap_or_default();
+        let b_context = b.context.as_deref().unwrap_or_default();
+        Path::new(b_context)
+            .components()
+            .count()
+            .cmp(&Path::new(a_context).components().count())
+            .then_with(|| a_context.cmp(b_context))
+    });
 }
 
 impl Provider for RemappingsProvider<'_> {
