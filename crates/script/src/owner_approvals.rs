@@ -598,17 +598,35 @@ where
             sequence.rpc_url(sequence_index),
         )?
         .build()?;
+        let entries = || {
+            sequence.sequences()[sequence_index]
+                .awaiting_owners
+                .iter()
+                .filter(|entry| unsent.contains(&entry.index))
+        };
+        // The next nonce of each account, or `None` when its configuration changed. The unsent
+        // transactions of an account share one configuration, as one export saved them together
+        // and a void drops all of them, so it is read once per account.
+        let mut next_nonces = HashMap::<_, _>::default();
+        for entry in entries() {
+            if next_nonces.contains_key(&entry.account) {
+                continue;
+            }
+            let (_, owners_config, ..) = decode_entry(entry)?;
+            let next_nonce = if has_config(&provider, entry.account, &owners_config).await? {
+                Some(provider.get_transaction_count(entry.account).await?)
+            } else {
+                None
+            };
+            next_nonces.insert(entry.account, next_nonce);
+        }
+        // Read after the accounts, so that a deadline that passes meanwhile is not missed.
         let latest = provider
             .get_block_by_number(BlockNumberOrTag::Latest)
             .await?
             .context("the latest block is missing")?;
-        let mut next_nonces = HashMap::default();
-        for entry in &sequence.sequences()[sequence_index].awaiting_owners {
-            if !unsent.contains(&entry.index) {
-                continue;
-            }
-            if let Some(reason) =
-                void_reason(&provider, entry, latest.header(), &mut next_nonces).await?
+        for entry in entries() {
+            if let Some(reason) = void_reason(entry, next_nonces[&entry.account], latest.header())?
             {
                 sh_warn!(
                     "{reason} after transaction {} was saved for the owners of {}, so their \
@@ -637,32 +655,20 @@ where
 }
 
 /// Tells why a saved transaction can no longer be sent with its owners' approvals: its
-/// account's configuration or nonce, its deadline or the base fee changed on chain, as of the
-/// `latest` block.
-///
-/// `next_nonces` holds the next nonce of each account whose configuration was checked already:
-/// the unsent transactions of an account in a sequence share one configuration, as one export
-/// saved them together and a void drops all of them, so it is read once per account.
+/// account's configuration or nonce, its deadline or the base fee changed on chain.
+/// `next_nonce` is the account's next nonce, or `None` when its configuration changed, and
+/// `latest` the latest block, read after them.
 ///
 /// The account's planned nonces cannot change, so a spent nonce fails here.
-async fn void_reason(
-    provider: &RootProvider<TempoNetwork>,
+fn void_reason(
     entry: &AwaitingOwners,
+    next_nonce: Option<u64>,
     latest: &impl BlockHeader,
-    next_nonces: &mut HashMap<Address, u64>,
 ) -> Result<Option<String>> {
-    let (tx, owners_config, ..) = decode_entry(entry)?;
+    let (tx, ..) = decode_entry(entry)?;
     let account = entry.account;
-    let next_nonce = match next_nonces.get(&account) {
-        Some(nonce) => *nonce,
-        None => {
-            if !has_config(provider, account, &owners_config).await? {
-                return Ok(Some(format!("the configuration of {account} changed")));
-            }
-            let nonce = provider.get_transaction_count(account).await?;
-            next_nonces.insert(account, nonce);
-            nonce
-        }
+    let Some(next_nonce) = next_nonce else {
+        return Ok(Some(format!("the configuration of {account} changed")));
     };
     if next_nonce > tx.nonce {
         bail!(
