@@ -146,9 +146,10 @@ impl<'a> AnchorIndex<'a> {
                     reverting_runs.push(run_start..ic + 1);
                     run_start = ic + 1;
                 }
+                // A JUMPDEST begins a basic block, so a failure stub led by one is part of its run.
+                opcode::JUMPDEST => run_start = ic,
                 opcode::JUMP
                 | opcode::JUMPI
-                | opcode::JUMPDEST
                 | opcode::STOP
                 | opcode::RETURN
                 | opcode::SELFDESTRUCT => run_start = ic + 1,
@@ -309,6 +310,35 @@ mod tests {
                 ],
                 0,
             ),
+            // A JUMPDEST-led failure stub before the real code is skipped.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::RETURN,
+                ],
+                4,
+            ),
+            // Code falling through into the stub's JUMPDEST is not part of the failure run.
+            (
+                vec![
+                    opcode::PUSH0,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                ],
+                0,
+            ),
+            // A JUMPDEST-led failure stub is still the fallback when it is the only candidate.
+            (vec![opcode::JUMPDEST, opcode::PUSH0, opcode::PUSH0, opcode::REVERT], 0),
         ] {
             let count = InstIter::new(&bytecode).count();
             let source_map =
