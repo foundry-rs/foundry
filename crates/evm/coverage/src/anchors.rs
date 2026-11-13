@@ -81,6 +81,9 @@ pub fn find_anchors(
                         .branch(item_id, anchor_loc, exact)
                         .map(|anchors| select_branch(anchors, path_id))
                 }
+                CoverageItemKind::Function { .. } => {
+                    index.function(item_id, anchor_loc).map(|anchor| (anchor, None))
+                }
                 _ => index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)),
             }
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
@@ -127,6 +130,8 @@ struct AnchorIndex<'a> {
     branches: Vec<(usize, usize, &'a [u8])>,
     /// Straight-line instruction ranges ending in REVERT or INVALID, ordered by start.
     reverting_runs: Vec<Range<usize>>,
+    /// Instructions that are `JUMPDEST`s, ordered.
+    jumpdests: Vec<usize>,
 }
 
 impl<'a> AnchorIndex<'a> {
@@ -139,6 +144,7 @@ impl<'a> AnchorIndex<'a> {
         entries.sort_unstable();
         let mut branches = Vec::new();
         let mut reverting_runs = Vec::new();
+        let mut jumpdests = Vec::new();
         let mut run_start = 0;
         for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
             match inst.opcode.get() {
@@ -146,9 +152,12 @@ impl<'a> AnchorIndex<'a> {
                     reverting_runs.push(run_start..ic + 1);
                     run_start = ic + 1;
                 }
+                opcode::JUMPDEST => {
+                    jumpdests.push(ic);
+                    run_start = ic + 1;
+                }
                 opcode::JUMP
                 | opcode::JUMPI
-                | opcode::JUMPDEST
                 | opcode::STOP
                 | opcode::RETURN
                 | opcode::SELFDESTRUCT => run_start = ic + 1,
@@ -165,7 +174,7 @@ impl<'a> AnchorIndex<'a> {
                 }
             }
         }
-        Self { source_map, ic_pc_map, entries, branches, reverting_runs }
+        Self { source_map, ic_pc_map, entries, branches, reverting_runs, jumpdests }
     }
 
     /// Finds the first opcode in the source range, preferring code outside a failure stub.
@@ -192,6 +201,32 @@ impl<'a> AnchorIndex<'a> {
             .min()
             .or_else(|| candidates.min());
         ItemAnchor::from_instruction(instruction, self.ic_pc_map, item_id, loc)
+    }
+
+    /// Finds the entry of a function.
+    ///
+    /// Compilers map the entry `JUMPDEST` to exactly the function's span, so it is preferred over
+    /// the lowest instruction in the span, which can belong to a body block laid out before the
+    /// entry. Falls back to [`Self::simple`] when no `JUMPDEST` has that exact span, such as for
+    /// inlined constructors, whose exact-span instructions are not an entry.
+    fn function(&self, item_id: u32, loc: &SourceLocation) -> eyre::Result<ItemAnchor> {
+        let source = loc.source_id as i32;
+        let start = self
+            .entries
+            .partition_point(|&(id, offset, _)| (id, offset) < (source, loc.bytes.start));
+        let entry = self.entries[start..]
+            .iter()
+            .take_while(|&&(id, offset, _)| (id, offset) == (source, loc.bytes.start))
+            .map(|&(_, _, instruction)| instruction)
+            .filter(|&instruction| {
+                self.source_map[instruction].length() == loc.len()
+                    && self.jumpdests.binary_search(&instruction).is_ok()
+            })
+            .min();
+        match entry {
+            Some(_) => ItemAnchor::from_instruction(entry, self.ic_pc_map, item_id, loc),
+            None => self.simple(item_id, loc),
+        }
     }
 
     /// Finds the fallthrough and taken anchors of a branch.
@@ -317,5 +352,38 @@ mod tests {
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
             assert_eq!(index.simple(0, &loc).unwrap().instruction, expected);
         }
+    }
+
+    #[test]
+    fn function_anchor_prefers_exact_entry_over_earlier_body_block() {
+        let loc =
+            SourceLocation { source_id: 0, contract_name: "T".into(), bytes: 10..30, lines: 1..2 };
+        // A body block (inner span) is laid out before the entry JUMPDEST (exact span).
+        let bytecode = [
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::STOP,
+        ];
+        let source_map = sourcemap::parse("15:5:0;;;10:20:0;;").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        assert_eq!(index.simple(0, &loc).unwrap().instruction, 0);
+        assert_eq!(index.function(0, &loc).unwrap().instruction, 3);
+
+        // Without an exact entry, fall back to the lowest instruction in the span.
+        let source_map = sourcemap::parse("15:5:0;;;16:5:0;;").unwrap();
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        assert_eq!(index.function(0, &loc).unwrap().instruction, 0);
+
+        // An exact-span instruction that is not a `JUMPDEST` is not an entry, as in an inlined
+        // constructor whose exact span only marks its trailing cleanup.
+        let bytecode = [opcode::PUSH0, opcode::POP, opcode::PUSH0, opcode::POP, opcode::STOP];
+        let source_map = sourcemap::parse("15:5:0;;10:20:0;;").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        assert_eq!(index.function(0, &loc).unwrap().instruction, 0);
     }
 }
