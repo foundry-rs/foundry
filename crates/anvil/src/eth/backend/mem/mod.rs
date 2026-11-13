@@ -8184,7 +8184,7 @@ where
                 .hashes
                 .iter()
                 .filter(|(num, _)| **num >= min_block)
-                .map(|(&num, &hash)| (num, hash))
+                .map(|(&num, &hash)| (U256::from(num), hash))
                 .collect()
         };
 
@@ -8202,10 +8202,9 @@ where
             }
         }
 
-        // Restore block hashes from blockchain storage (now unwound, contains only valid blocks).
-        for (block_num, hash) in block_hashes {
-            db.insert_block_hash(U256::from(block_num), hash);
-        }
+        // Replace the block hashes with the unwound chain's: a fork keeps its local state across
+        // `clear`, and inserting one by one would keep evicting below the removed head.
+        db.set_block_hashes(block_hashes);
         publish();
 
         Ok(())
