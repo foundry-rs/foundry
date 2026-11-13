@@ -560,6 +560,11 @@ impl SymbolicExecutor {
                         // `vm.assumeNoRevert` unless a call reverted earlier.
                         parent.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
                         parent.expected_revert.clone_from(&state.expected_revert);
+                        // The constructor ran a frame deeper, so a revert of this frame can meet
+                        // the pending expectation.
+                        if let Some(expected) = &mut parent.expected_revert {
+                            expected.mark_deeper_frame_ran();
+                        }
                     }
                     parent.return_data = child.frame.return_data;
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), out_size)?;

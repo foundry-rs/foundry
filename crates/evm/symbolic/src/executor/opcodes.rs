@@ -1647,6 +1647,21 @@ impl SymbolicExecutor {
         if state.root_calldata.is_some() && state.assertion_failed {
             return Ok(StepOutcome::Failure);
         }
+        // Like Forge's `call_end` for the test call, a pending `vm.expectRevert` that a frame
+        // deeper left pending passes the depth check and turns a matching revert into a return.
+        if state.root_calldata.is_some()
+            && let Some(mut expected) = state.expected_revert.take_if(|e| e.deeper_frame_ran())
+        {
+            let reverter = expected.reverted_by(Some(state.address), state.first_failed_callee);
+            let return_data = state.return_data.clone();
+            if !self.expected_revert_matches(state, &expected, reverter, &return_data)? {
+                return Ok(StepOutcome::Failure);
+            }
+            if !expected.consume_one() {
+                state.expected_revert = Some(expected);
+            }
+            return Ok(StepOutcome::Halt);
+        }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
         // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
         // Match its selector independently of the memory address and the rest of the payload.

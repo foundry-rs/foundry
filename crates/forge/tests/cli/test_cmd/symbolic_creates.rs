@@ -130,9 +130,11 @@ contract SymbolicCreateCodeLimit is Test {
         assert(len == 24577);
         assert(nonceDelta == 1);
 
-        // Forge records the cheatcode, not the created address, as the reverter.
+        // Forge records the cheatcode, not the created address, as the reverter. The constructor
+        // ran a frame deeper, so the bubbled cheatcode revert meets the expectation when the test
+        // call ends.
         vm.expectRevert(address(vm));
-        deployer.deployCode(oversized);
+        vm.deployCode(oversized);
     }
 
     function checkDeployCodeInitcodeLimit() public {
@@ -201,10 +203,6 @@ contract Deployer {
             len = err.length;
         }
         nonceDelta = vm.getNonce(address(this)) - nonce;
-    }
-
-    function deployCode(string memory what) external returns (address) {
-        return vm.deployCode(what);
     }
 
     function create(uint256 size) external returns (address created) {
@@ -397,6 +395,41 @@ contract SymbolicCreateEip3541 is Test {
         caller.deployCode(what, abi.encode(address(this)));
     }
 
+    function checkDeployCodeRejectedPrefixExpectRevertAny() public {
+        vm.expectRevert();
+        vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkDeployCodeRejectedPrefixExpectRevertEmpty() public {
+        vm.expectRevert(bytes(""));
+        vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkDeployCodeRejectedPrefixExpectRevertInCaller() public {
+        // The caller's own frame reverts after the cheatcode revert, so its call returns.
+        caller.expectRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkDeployCodeRejectedPrefixExpectRevertOutlivesCaller() public {
+        // The caller returns with its expectation pending after a deeper frame ran.
+        try caller.expectRevertCatchDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this))) {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256(abi.encodeWithSignature(
+                "CheatcodeError(string)", "next call did not revert as expected")));
+        }
+    }
+
+    function checkOverlappingExpectRevertOnDeployCode() public {
+        vm.expectRevert(bytes("other"));
+        caller.expectRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkMismatchedExpectRevertOnDeployCode() public {
+        vm.expectRevert(bytes("other"));
+        vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
     function checkDeployCodeRejectedPrefixAssumeNoRevert() public {
         try this.assumeNoRevertDeployCode() {
             assert(false);
@@ -544,6 +577,16 @@ contract DeployCodeCaller {
     function deployCode(string memory what, bytes memory args) external returns (address) {
         return vm.deployCode(what, args);
     }
+
+    function expectRevertDeployCode(string memory what, bytes memory args) external {
+        vm.expectRevert(address(vm));
+        vm.deployCode(what, args);
+    }
+
+    function expectRevertCatchDeployCode(string memory what, bytes memory args) external {
+        vm.expectRevert();
+        try vm.deployCode(what, args) returns (address) {} catch {}
+    }
 }
 "#,
     );
@@ -565,6 +608,21 @@ contract DeployCodeCaller {
     cmd.forge_fuse();
     cmd.args(["test", "--symbolic", "--match-test", "checkDeployCodeRejectedPrefix"])
         .assert_success();
+
+    cmd.forge_fuse();
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMismatchedExpectRevertOnDeployCode|checkOverlappingExpectRevertOnDeployCode",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+[FAIL: call reverted as expected, but without data; counterexample: 		[SENDER] [SENDER] calldata=0xe668c5ba args=[]] checkMismatchedExpectRevertOnDeployCode() ([METRICS])
+[FAIL: Error != expected error: vm.expectRevert: you must call another function prior to expecting a second revert != other; counterexample: 		[SENDER] [SENDER] calldata=0x67563089 args=[]] checkOverlappingExpectRevertOnDeployCode() ([METRICS])
+...
+"#]]);
 
     cmd.forge_fuse();
     cmd.args(["test", "--symbolic", "--match-test", "checkAdjacentPrefixStillAllowed"])
