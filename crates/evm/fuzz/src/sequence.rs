@@ -536,7 +536,7 @@ impl WordPatch {
     fn apply(self, calldata: &[u8]) -> Option<Vec<u8>> {
         let word = self.word.to_be_bytes::<32>();
         let current = calldata.get(self.offset..self.offset.checked_add(32)?)?;
-        if self.offset < SELECTOR_LEN || current == word {
+        if current == word {
             return None;
         }
         let mut mutated = calldata.to_vec();

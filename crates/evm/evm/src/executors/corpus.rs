@@ -59,7 +59,7 @@ use foundry_cheatcodes::Vm::{
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
-    constants::{CALLER, CHEATCODE_ADDRESS},
+    constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
     evm::FoundryEvmNetwork,
 };
 use foundry_evm_coverage::MAX_EDGE_COUNT;
@@ -436,11 +436,13 @@ impl WorkerCorpusSeed {
         }
     }
 
+    /// Loads and replays the persisted corpus, measuring cmp word patches when `solve_patches`.
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
         config: &FuzzCorpusConfig,
         replay_root: Option<&Path>,
         executor: Option<&Executor<FEN>>,
         target: ReplayTarget<'_>,
+        solve_patches: bool,
     ) -> Result<Self> {
         let mut seed = Self::empty(config).with_optimization_state(config);
         let Some(corpus_dir) = &config.corpus_dir else {
@@ -530,13 +532,8 @@ impl WorkerCorpusSeed {
             metrics: Some(&mut seed.metrics),
         };
         let sequences = entries.iter().map(|(_, tx_seq)| tx_seq.as_slice()).collect::<Vec<_>>();
-        let outcomes = replay_corpus_sequences(
-            &sequences,
-            executor,
-            target,
-            coverage,
-            config.mutates_evm_comparisons(),
-        )?;
+        let outcomes =
+            replay_corpus_sequences(&sequences, executor, target, coverage, solve_patches)?;
         for ((entry, tx_seq), outcome) in entries.into_iter().zip(outcomes) {
             let ReplayOutcome { keep_entry, new_edge, cmp_seq, failed_replays, .. } = outcome;
             seed.failed_replays += failed_replays;
@@ -559,6 +556,46 @@ impl WorkerCorpusSeed {
         }
 
         Ok(seed)
+    }
+
+    /// Measures cmp word patches for the entries [`Self::clone_for_worker`] gives worker 0.
+    ///
+    /// Each patch costs extra calls, so a corpus shared by several workers is loaded without
+    /// patches, and only the entries of the worker that mutates with cmp hints are solved.
+    pub(crate) fn solve_worker_patches<FEN: FoundryEvmNetwork>(
+        &mut self,
+        config: &FuzzCorpusConfig,
+        executor: &Executor<FEN>,
+        target: ReplayTarget<'_>,
+        worker_count: usize,
+    ) -> Result<()> {
+        // Coverage starts empty, so every call that adds coverage within the shard is solved.
+        let mut shard = Self::empty(config);
+        let sequences = self
+            .in_memory_corpus
+            .iter()
+            .step_by(worker_count)
+            .map(|entry| entry.tx_seq.as_slice())
+            .collect::<Vec<_>>();
+        let outcomes = replay_corpus_sequences(
+            &sequences,
+            executor,
+            target,
+            ReplayCoverage {
+                history_map: &mut shard.history_map,
+                edge_indices: &mut shard.edge_indices,
+                sancov_history_map: &mut shard.sancov_history_map,
+                metrics: None,
+            },
+            true,
+        )?;
+        for (entry, outcome) in self.in_memory_corpus.iter_mut().step_by(worker_count).zip(outcomes)
+        {
+            if outcome.keep_entry {
+                entry.cmp_seq = outcome.cmp_seq;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -930,13 +967,6 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     })
 }
 
-/// Replays persisted corpus sequences, executing each distinct prefix once.
-///
-/// Persisted entries often extend the same prefixes, for example the calls that led to a state
-/// snapshot, so replaying every entry from the initial state executes the shared calls once per
-/// entry. The sequences are merged into a prefix tree that is replayed depth first, and the state
-/// is cloned where sequences diverge. The outcomes are in input order and match replaying each
-/// sequence on its own clone of `executor`, except that coverage is merged in tree order.
 /// A replayed call with what it added to the corpus.
 struct ReplayedCall<FEN: FoundryEvmNetwork> {
     kind: CampaignCallKind,
@@ -963,7 +993,8 @@ fn replay_call<FEN: FoundryEvmNetwork>(
             coverage.edge_indices,
             coverage.sancov_history_map,
         );
-        let function = if new_coverage && solve_patches {
+        // Calls rejected by `vm.assume` are not kept, so their patches would go unused.
+        let function = if new_coverage && solve_patches && result.result.as_ref() != MAGIC_ASSUME {
             match target.fuzzed_contracts {
                 Some(contracts) => contracts.targets().fuzzed_artifacts(tx).1.cloned(),
                 None => target.stateless.map(|stateless| stateless.function.clone()),
@@ -1001,6 +1032,13 @@ fn replay_call<FEN: FoundryEvmNetwork>(
     Ok(ReplayedCall { kind, result, new_coverage, new_edge, cmp: CmpHints { operands, patches } })
 }
 
+/// Replays persisted corpus sequences, executing each distinct prefix once.
+///
+/// Persisted entries often extend the same prefixes, for example the calls that led to a state
+/// snapshot, so replaying every entry from the initial state executes the shared calls once per
+/// entry. The sequences are merged into a prefix tree that is replayed depth first, and the state
+/// is cloned where sequences diverge. The outcomes are in input order and match replaying each
+/// sequence on its own clone of `executor`, except that coverage is merged in tree order.
 fn replay_corpus_sequences<FEN: FoundryEvmNetwork>(
     sequences: &[&[BasicTxDetails]],
     executor: &Executor<FEN>,
@@ -1178,7 +1216,13 @@ impl WorkerCorpus {
         target: ReplayTarget<'_>,
     ) -> Result<Self> {
         let seed = if id == 0 {
-            WorkerCorpusSeed::load_from_disk(&config, replay_root, executor, target)?
+            WorkerCorpusSeed::load_from_disk(
+                &config,
+                replay_root,
+                executor,
+                target,
+                config.mutates_evm_comparisons(),
+            )?
         } else {
             WorkerCorpusSeed::empty(&config).with_optimization_state(&config)
         };
@@ -1243,14 +1287,7 @@ impl WorkerCorpus {
         new_coverage: bool,
         optimization: Option<(I256, &[BasicTxDetails])>,
     ) {
-        self.process_inputs_inner(
-            inputs,
-            cmp_seq,
-            patch_seq,
-            new_coverage,
-            optimization,
-            true,
-        );
+        self.process_inputs_inner(inputs, cmp_seq, patch_seq, new_coverage, optimization, true);
     }
 
     /// Updates worker-local corpus state and persists interesting inputs immediately, while
@@ -1266,17 +1303,9 @@ impl WorkerCorpus {
         new_coverage: bool,
         optimization: Option<(I256, &[BasicTxDetails])>,
     ) {
-        self.process_inputs_inner(
-            inputs,
-            cmp_seq,
-            patch_seq,
-            new_coverage,
-            optimization,
-            false,
-        );
+        self.process_inputs_inner(inputs, cmp_seq, patch_seq, new_coverage, optimization, false);
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn process_inputs_inner(
         &mut self,
         inputs: &[BasicTxDetails],
@@ -2230,7 +2259,7 @@ mod tests {
     use evm2::{EvmFeatures, bytecode::Bytecode, evm::InMemoryDB};
     use foundry_cheatcodes::{Cheatcodes, CheatsConfig};
     use foundry_config::FuzzDictionaryConfig;
-    use foundry_evm_core::{constants::MAGIC_ASSUME, evm::EthEvmNetwork};
+    use foundry_evm_core::evm::EthEvmNetwork;
     use foundry_evm_fuzz::{
         invariant::TargetedContract,
         strategies::{EvmFuzzState, TxGenerator},
@@ -2810,6 +2839,7 @@ mod tests {
             None,
             None,
             ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None, senders: None },
+            false,
         )
         .unwrap();
         fs::create_dir_all(flat_root.join("worker1").join(CORPUS_DIR)).unwrap();
@@ -3704,6 +3734,7 @@ mod tests {
                 dynamic: None,
                 senders: Some(&senders),
             },
+            false,
         )
         .unwrap();
 
@@ -3796,6 +3827,7 @@ mod tests {
                     dynamic: None,
                     senders: None,
                 },
+                false,
             )
             .unwrap();
 

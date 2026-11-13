@@ -659,6 +659,7 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
 struct RecordedCallSequence {
     inputs: Vec<BasicTxDetails>,
     cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
+    /// Per-call argument words measured to flip a comparison, recorded only for corpus feedback.
     patch_seq: Vec<Vec<WordPatch>>,
 }
 
@@ -844,17 +845,29 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             invariant_worker_collects_evm_cmp_log(&self.config, 0, actual_worker_count),
         );
         let dynamic = self.dynamic_target_ctx();
+        let replay_target = ReplayTarget {
+            stateless: None,
+            fuzzed_contracts: Some(&replay_targets),
+            dynamic: Some(&dynamic),
+            senders: Some(&campaign_seed.sender_filters),
+        };
+        // Only worker 0 mutates with cmp hints, so patches are solved after sharding.
+        let solve_patches = self.config.corpus.mutates_evm_comparisons();
         let mut corpus_seed = WorkerCorpusSeed::load_from_disk(
             &self.config.corpus,
             None,
             Some(&corpus_replay_executor),
-            ReplayTarget {
-                stateless: None,
-                fuzzed_contracts: Some(&replay_targets),
-                dynamic: Some(&dynamic),
-                senders: Some(&campaign_seed.sender_filters),
-            },
+            replay_target,
+            solve_patches && actual_worker_count == 1,
         )?;
+        if solve_patches && actual_worker_count > 1 {
+            corpus_seed.solve_worker_patches(
+                &self.config.corpus,
+                &corpus_replay_executor,
+                replay_target,
+                actual_worker_count,
+            )?;
+        }
         if invariant_contract.is_optimization()
             && let Some(best_value) = corpus_seed.optimization_best_value
         {
@@ -1156,7 +1169,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             .then(|| RecordedCallSequence {
                 inputs: start.prefix.to_vec(),
                 cmp_seq: vec![Vec::new(); start.prefix.len()],
-                patch_seq: vec![Vec::new(); start.prefix.len()],
+                // Frontier recording reads only the comparisons.
+                patch_seq: Vec::new(),
             });
 
             // Create current invariant run data.
@@ -1232,9 +1246,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 .flatten();
                             call_new_coverage = corpus_manager.merge_edge_coverage(call_result);
                             // The call is not committed yet, so its shifted runs see the same
-                            // pre-state.
-                            call_patches = Vec::new();
+                            // pre-state. Calls rejected by `vm.assume` are popped, so they are
+                            // not solved.
+                            call_patches.clear();
                             if call_new_coverage
+                                && !discarded
                                 && collect_corpus_cmp
                                 && config.corpus.mutates_evm_comparisons()
                                 && let Some(function) = invariant_test
@@ -1294,7 +1310,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 {
                                     history.inputs.push(tx.clone());
                                     history.cmp_seq.push(call_cmp_values.clone());
-                                    history.patch_seq.push(call_patches.clone());
                                 } else {
                                     frontier_run = None;
                                     current_run

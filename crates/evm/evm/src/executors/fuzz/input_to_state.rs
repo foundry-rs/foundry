@@ -8,16 +8,14 @@ use super::frontier::comparison_result;
 use crate::{executors::Executor, inspectors::CmpOperands};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::Function;
-use alloy_primitives::{
-    Address, I256, U256,
-    map::{HashMap, HashSet},
-};
+use alloy_primitives::{Address, I256, U256, map::HashSet};
 use evm2::interpreter::op as opcode;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_fuzz::{
     BasicTxDetails,
     sequence::{SELECTOR_LEN, WordPatch},
 };
+use std::collections::BTreeMap;
 
 /// Most argument words shifted per call, so wide static arguments do not multiply the cost.
 const MAX_SHIFTED_WORDS: usize = 16;
@@ -138,18 +136,15 @@ fn solve(
             continue;
         };
         for (cmp, moved) in base.into_iter().zip(shifted) {
-            let Some((is_op1, slope)) = moved_operand(cmp, moved) else { continue };
-            let operand = if is_op1 { cmp.op1 } else { cmp.op2 };
-            let Some(target) = flip_target(cmp, is_op1) else { continue };
-            let step = target.wrapping_sub(operand);
-            let word = if slope == delta {
-                word.wrapping_add(step)
-            } else if slope == delta.wrapping_neg() {
-                word.wrapping_sub(step)
-            } else {
-                continue;
-            };
-            patches.push(WordPatch { offset, word });
+            if let Some((is_op1, slope)) = moved_operand(cmp, moved)
+                && let Some(target) = flip_target(cmp, is_op1)
+                && (slope == delta || slope == delta.wrapping_neg())
+            {
+                let step = target.wrapping_sub(if is_op1 { cmp.op1 } else { cmp.op2 });
+                let word =
+                    if slope == delta { word.wrapping_add(step) } else { word.wrapping_sub(step) };
+                patches.push(WordPatch { offset, word });
+            }
         }
     }
     patches
@@ -167,8 +162,10 @@ fn moved_operand(base: &CmpOperands, moved: &CmpOperands) -> Option<(bool, U256)
 }
 
 /// Groups `log` by comparison site, keeping each site's occurrences in execution order.
-fn by_site(log: &[CmpOperands]) -> HashMap<(Address, usize, u8), Vec<&CmpOperands>> {
-    let mut sites = HashMap::<_, Vec<_>>::default();
+///
+/// Sites are ordered, so a seeded campaign sees its patches in the same order in every process.
+fn by_site(log: &[CmpOperands]) -> BTreeMap<(Address, usize, u8), Vec<&CmpOperands>> {
+    let mut sites = BTreeMap::<_, Vec<_>>::new();
     for cmp in log {
         sites.entry((cmp.address, cmp.pc, cmp.opcode)).or_default().push(cmp);
     }
@@ -184,8 +181,13 @@ const fn needs_higher_operand(opcode: u8, is_op1: bool) -> bool {
 /// Returns the value for one operand of `cmp`, op1 when `is_op1`, that flips its result while the
 /// other operand stays the same.
 fn flip_target(cmp: &CmpOperands, is_op1: bool) -> Option<U256> {
-    let result = comparison_result(cmp)?;
     let other = if is_op1 { cmp.op2 } else { cmp.op1 };
+    // A `SUB` is logged only when a branch takes its nonzero result, which is how solc compiles
+    // `a == b`, so equal operands flip it.
+    if cmp.opcode == opcode::SUB {
+        return Some(other);
+    }
+    let result = comparison_result(cmp)?;
     match cmp.opcode {
         opcode::EQ => Some(if result { other.wrapping_add(U256::ONE) } else { other }),
         opcode::ISZERO => Some(if result { U256::ONE } else { U256::ZERO }),
@@ -380,5 +382,14 @@ mod tests {
         let function = Function::parse("f((uint8,bytes),uint16)").unwrap();
         // The tuple is dynamic, so only its offset word occupies the head.
         assert_eq!(value_words(&function), [ValueWord { offset: 36, max: U256::from(u16::MAX) }]);
+    }
+
+    #[test]
+    fn solves_equality_logged_as_sub() {
+        // solc compiles `x + 10 == 50` to `SUB` + `JUMPI`, logged while the operands differ.
+        let x = U256::from(3);
+        let base = [cmp(opcode::SUB, x + U256::from(10), U256::from(50))];
+        let shifted = [cmp(opcode::SUB, x + U256::from(11), U256::from(50))];
+        assert_eq!(solve(&base, &shifted, 4, x, U256::ONE), [patch(U256::from(40))]);
     }
 }
