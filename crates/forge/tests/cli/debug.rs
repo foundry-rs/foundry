@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
+use foundry_compilers::artifacts::{BytecodeHash, output_selection::ContractOutputSelection};
 use foundry_test_utils::util::OutputExt;
 use itertools::Itertools;
 use std::path::Path;
@@ -783,6 +783,68 @@ Breakpoint #1 set at src/b/Token.sol:8
 Breakpoint #1 hit at step [..], src/b/Token.sol:8
 src/b/Token.sol:8 in constructor  (step [..])
     8 |         require(value != 0, "zero");
+Exiting debugger.
+
+"#]]);
+}
+
+// Without a metadata hash, contracts that differ only in their constructors share a runtime, so
+// each runtime frame shows the contract that created its address.
+#[forgetest]
+fn debugger_soldb_identical_runtimes(prj: _, cmd: _) {
+    prj.update_config(|config| config.bytecode_hash = BytecodeHash::None);
+    let contract = |name: &str, value: u32| {
+        format!(
+            r#"
+contract {name} {{
+    uint256 public stored;
+
+    constructor() {{
+        stored = {value};
+    }}
+
+    function set(uint256 value) external {{
+        stored = value;
+    }}
+}}
+"#
+        )
+    };
+    prj.add_source("A.sol", &contract("A", 1));
+    prj.add_source("B.sol", &contract("B", 2));
+    // Shares the name of `src/A.sol:A` too.
+    prj.add_source("b/A.sol", &contract("A", 3));
+    prj.add_test(
+        "IdenticalRuntimes.t.sol",
+        r#"
+import {A} from "../src/A.sol";
+import {B} from "../src/B.sol";
+import {A as OtherA} from "../src/b/A.sol";
+
+contract IdenticalRuntimesTest {
+    function test_runtimes() public {
+        new A().set(4);
+        new B().set(5);
+        new OtherA().set(6);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--debug", "--mt", "^test_runtimes\\("])
+        .stdin("break src/A.sol:12\nbreak src/B.sol:12\ncontinue\ncontinue\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 hit at step [..]
+src/A.sol:12 in set  (step [..])
+   12 |         stored = value;
+Breakpoint #2 hit at step [..]
+src/B.sol:12 in set  (step [..])
+   12 |         stored = value;
+Breakpoint #1 hit at step [..]
+src/b/A.sol:12 in set  (step [..])
+   12 |         stored = value;
 Exiting debugger.
 
 "#]]);

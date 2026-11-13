@@ -7,6 +7,7 @@ use alloy_primitives::{
 };
 use eyre::Result;
 use foundry_common::{ContractsByArtifact, get_contract_name};
+use foundry_compilers::ArtifactId;
 use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::{
     CallTrace, CallTraceArena, CallTraceDecoder, CallTraceNode, Traces,
@@ -129,6 +130,7 @@ impl DebuggerBuilder {
             Vec::new()
         };
         let mut identified_code = HashMap::default();
+        let mut created = AddressHashMap::default();
         let contract_identities = trace_arenas
             .iter()
             .map(|arena| {
@@ -141,6 +143,7 @@ impl DebuggerBuilder {
                             &known_contracts,
                             &identified_contracts,
                             &mut identified_code,
+                            &mut created,
                         )
                     })
                     .collect::<Vec<_>>()
@@ -169,22 +172,37 @@ impl DebuggerBuilder {
 }
 
 /// Identifies the contract executed by `node` from its recorded bytecode, since an address can
-/// execute different code over time (e.g. after `vm.etch`).
+/// execute different code over time (e.g. after `vm.etch`). `created` holds the artifact that
+/// created each address, in the order the nodes run.
 fn node_contract_identity<'a>(
     node: &CallTraceNode,
     known_contracts: &'a ContractsByArtifact,
     identified_contracts: &AddressHashMap<String>,
     identified_code: &mut HashMap<(Address, Bytes), Option<ContractIdentity<'a>>>,
+    created: &mut AddressHashMap<&'a ArtifactId>,
 ) -> Option<ContractIdentity<'a>> {
     let trace = &node.trace;
     let address_name = identified_contracts.get(&trace.address);
     if trace.kind.is_any_create() {
-        return identify_creation(known_contracts, address_name, trace);
+        let identity = identify_creation(known_contracts, address_name, trace);
+        if trace.success
+            && let Some(ContractIdentity::Local(id)) = identity
+        {
+            created.insert(trace.address, id);
+        }
+        return identity;
     }
     match &trace.bytecode {
         Some(code) if !code.is_empty() => identified_code
             .entry((trace.address, code.clone()))
-            .or_insert_with(|| identify_code(known_contracts, address_name, code))
+            .or_insert_with(|| {
+                identify_code(
+                    known_contracts,
+                    address_name,
+                    created.get(&trace.address).copied(),
+                    code,
+                )
+            })
             .clone(),
         _ => None,
     }
@@ -195,10 +213,19 @@ fn node_contract_identity<'a>(
 fn identify_code<'a>(
     known_contracts: &'a ContractsByArtifact,
     address_name: Option<&String>,
+    creator: Option<&ArtifactId>,
     code: &[u8],
 ) -> Option<ContractIdentity<'a>> {
+    // Artifacts can share a runtime, e.g. with `bytecode_hash = "none"` and different
+    // constructors, so ties go to the artifact that created the address, else to its name.
+    let preferred = |id: &ArtifactId| match creator {
+        Some(creator) => id == creator,
+        None => address_name == Some(&id.name),
+    };
     // If several artifacts match except for metadata, we can't tell which ran, so none is used.
-    if let Ok(Some((id, _))) = known_contracts.find_by_deployed_code_exact_unambiguous(code) {
+    if let Ok(Some((id, _))) =
+        known_contracts.find_by_deployed_code_exact_unambiguous_preferred(code, preferred)
+    {
         return Some(ContractIdentity::Local(id));
     }
     identify_external(known_contracts, address_name)
