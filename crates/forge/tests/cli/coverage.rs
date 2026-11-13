@@ -2778,6 +2778,91 @@ Error: `--ir-minimum` and `--keep-optimizer` cannot be used together
 "#]]);
 }
 
+// Same as `keep_optimizer`, with the Solar compiler.
+#[forgetest]
+fn keep_optimizer_solar(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public y;
+
+    function f(uint256 x) public {
+        if (x == x) {
+            y = 2;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_f() public {
+        new AContract().f(1);
+    }
+}
+    "#,
+    );
+
+    let solar = prj.ensure_foundry_bin("solar");
+    cmd.arg("coverage").arg("--use").arg(&solar).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with Solar 0.8.38
+Solar 0.8.38 [ELAPSED]
+Compiler run successful!
+Analysing contracts...
+Running tests...
+
+Ran 1 test for src/AContractTest.sol:AContractTest
+[PASS] test_f() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--optimize", "--use"])
+        .arg(&solar)
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with Solar 0.8.38
+Solar 0.8.38 [ELAPSED]
+Compiler run successful!
+Analysing contracts...
+Running tests...
+
+Ran 1 test for src/AContractTest.sol:AContractTest
+[PASS] test_f() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+}
+
 #[forgetest]
 fn no_artifacts_written(prj: _, cmd: _) {
     prj.insert_ds_test();
