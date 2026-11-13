@@ -86,6 +86,8 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
+    /// Whether to prefetch the remote state of calls into fork contracts.
+    pub fork_prefetch: bool,
     /// Concrete Tempo label inspector selected by the Tempo executor builder.
     tempo_labels: Option<Box<TempoLabels>>,
     /// Explicitly resolved additional cheatcode addresses.
@@ -110,6 +112,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             print: None,
             chisel_state: None,
             enable_isolation: false,
+            fork_prefetch: false,
             tempo_labels: None,
             extra_cheatcode_addresses: &[],
             wallets: None,
@@ -210,6 +213,13 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
+    /// Set whether to prefetch the remote state of calls into fork contracts.
+    #[inline]
+    pub const fn fork_prefetch(mut self, yes: bool) -> Self {
+        self.fork_prefetch = yes;
+        self
+    }
+
     /// Installs the Tempo label inspector.
     #[inline]
     pub(crate) fn tempo_labels(mut self, inspector: TempoLabels) -> Self {
@@ -247,6 +257,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             print,
             chisel_state,
             enable_isolation,
+            fork_prefetch,
             tempo_labels,
             extra_cheatcode_addresses,
             wallets,
@@ -281,6 +292,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         stack.tracing_requirements(trace_requirements);
 
         stack.enable_isolation(enable_isolation);
+        stack.fork_prefetch(fork_prefetch);
         stack.inner.tempo_labels = tempo_labels;
         stack.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
         stack.set_create2_deployer(create2_deployer);
@@ -456,6 +468,9 @@ pub struct InspectorStackInner {
     /// inspector.
     pub instrumented_cmp_log: bool,
     pub enable_isolation: bool,
+    /// Whether calls into fork contracts prefetch the remote state they are about to read, see
+    /// [`Backend::prefetch_call`](foundry_evm_core::backend::Backend::prefetch_call).
+    pub fork_prefetch: bool,
     /// Additional addresses installed and recognized as cheatcode contracts.
     pub extra_cheatcode_addresses: &'static [Address],
     pub create2_deployer: Address,
@@ -915,6 +930,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub const fn enable_isolation(&mut self, yes: bool) {
         self.inner.enable_isolation = yes;
+    }
+
+    /// Set whether calls into fork contracts prefetch the remote state they are about to read.
+    #[inline]
+    pub const fn fork_prefetch(&mut self, yes: bool) {
+        self.inner.fork_prefetch = yes;
     }
 
     /// Returns additional addresses installed and recognized as cheatcode contracts.
@@ -2140,6 +2161,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_start();
+        }
+
+        // Delegate calls run inside a call that was already simulated.
+        if self.inner.fork_prefetch
+            && matches!(message.kind, MessageKind::Call | MessageKind::StaticCall)
+        {
+            self.backend.backend().prefetch_call(
+                message.caller,
+                message.destination,
+                message.value,
+                message.input.to_bytes(interp.memory()),
+                depth == root && !self.inner.in_inner_context,
+            );
         }
 
         let storage_hook_callback = self
