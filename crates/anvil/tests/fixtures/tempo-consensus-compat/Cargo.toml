@@ -30,3 +30,10 @@ tokio.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 commonware-consensus = "=2026.10.0"
+commonware-utils.workspace = true
+evm2.workspace = true
+reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "467449357b6d0aca6c1fb7cc2d87a304bb8fbff5", features = ["account-ext"] }
+reth-primitives-traits = { version = "0.8.1", default-features = false, features = ["account-ext"] }
+tempo-evm.workspace = true
+tempo-precompiles = { workspace = true, features = ["test-utils"] }
+tempo-validator-config = { git = "https://github.com/tempoxyz/tempo", rev = "4008a2986ad18fa3bf55838d2d63bbb878ee7da7" }

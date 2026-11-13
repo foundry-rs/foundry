@@ -4,7 +4,7 @@ This test-only workspace member starts local Anvil nodes and decodes their HTTP
 responses using Commonware 2026.10.0's
 `Finalization<Scheme<PublicKey, MinSig>, Digest>` and `tempo_primitives::Block`.
 It covers empty blocks, blocks containing Ethereum and Tempo transactions, and
-T3/T4/T15 epoch boundaries. It checks byte-identical re-encoding, header and body
+T3/T4 epoch boundaries. It checks byte-identical re-encoding, header and body
 commitments, and both signatures. Wrong identities and changes to the digest,
 parent view, epoch, view or either signature must fail verification. Raw header
 bytes, Ethereum block hashes and consensus digests must identify the same block.
@@ -18,6 +18,14 @@ publishes that committee's key under the old key's signature, and the next
 epoch's certificate must verify under the announced key and reject the old key.
 Snapshot replay must restore both announcements and activation without trusting
 a fresh identity RPC response for each block.
+
+The T15 boundary test initializes `ValidatorConfigV2` with Anvil's development
+validator, freezes the parent state, and passes Anvil's next boundary block to
+Tempo's native execution pre-stage. The generated outcome passes; missing data
+and mismatched epoch, next players or full-DKG flag fail. A T14 execution control
+accepts those field mismatches, demonstrating the T15 rule change. This checks
+compatibility with a matching development registry, not full block execution or
+native consensus acceptance.
 
 The package shares the root workspace lockfile and target directory. Its
 one-way dependency on Anvil keeps `commonware-consensus` and its runtime out of
