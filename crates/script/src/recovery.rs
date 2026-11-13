@@ -1050,9 +1050,9 @@ where
             Err(_) if dry_run || paths.0.symlink_metadata().is_err() => return Ok(false),
             Err(err) => {
                 return Err(err).wrap_err(format!(
-                    "the recovery snapshot `{}` of the previous broadcast `{}` is missing and the broadcast is unreadable, so forge cannot tell whether it left unfinished operations; restore the snapshot and finish with `{}`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
-                    snapshot.display(),
+                    "the previous broadcast `{}` is unreadable and its recovery snapshot `{}` is missing, so forge cannot tell whether it left unfinished operations; pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending, or restore the snapshot and finish with `{}`",
                     paths.0.display(),
+                    snapshot.display(),
                     if multi { "--multi --resume" } else { "--resume" }
                 ));
             }
@@ -2217,21 +2217,6 @@ mod tests {
             create().unwrap_err().to_string(),
             format!(
                 "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so forge cannot tell which of its unfinished operations were sent; restore the snapshot and finish with `--resume`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
-                snapshot.display(),
-                paths.0.display()
-            )
-        );
-        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
-        assert!(!paths.0.exists());
-        create().unwrap();
-
-        // Without its snapshot, an unreadable export blocks until archived.
-        std::fs::remove_file(&snapshot).unwrap();
-        std::fs::write(&paths.0, r#"{"transactions":["#).unwrap();
-        assert_eq!(
-            create().unwrap_err().to_string(),
-            format!(
-                "the recovery snapshot `{}` of the previous broadcast `{}` is missing and the broadcast is unreadable, so forge cannot tell whether it left unfinished operations; restore the snapshot and finish with `--resume`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
                 snapshot.display(),
                 paths.0.display()
             )

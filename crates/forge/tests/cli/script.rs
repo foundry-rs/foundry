@@ -1950,70 +1950,38 @@ Deployed contracts (chain 31337):
     ));
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
     assert_eq!(archives().len(), 1);
-}
 
-// Without its recovery snapshot, an unreadable broadcast export, including a dangling link, blocks
-// a new broadcast until `--start-fresh` archives it.
-#[cfg(unix)]
-#[forgetest_init]
-async fn unreadable_export_without_snapshot_blocks_broadcast(prj: _, cmd: _) {
-    let script = prj.add_script(
-        "UnreadableExport.s.sol",
-        r#"
-import "forge-std/Script.sol";
-
-contract UnreadableExportTarget {}
-
-contract UnreadableExport is Script {
-    function run() external {
-        vm.startBroadcast();
-        new UnreadableExportTarget();
-        vm.stopBroadcast();
-    }
-}
-"#,
-    );
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
-    let sender = handle.dev_accounts().next().unwrap();
-    let rpc = handle.http_endpoint();
-    let export = prj.root().join("broadcast/UnreadableExport.s.sol/31337/run-latest.json");
-    let target = prj.root().join("missing.json");
+    // Without its snapshot, an unreadable export, including a dangling link, blocks until
+    // `--start-fresh` archives it.
+    let export = prj.root().join("broadcast/StartFresh.s.sol/31337/run-latest.json");
     let refused = str![[r#"
-Error: the recovery snapshot `[..]/cache/UnreadableExport.s.sol/31337/run-latest.json.recovery.json` of the previous broadcast `[..]/broadcast/UnreadableExport.s.sol/31337/run-latest.json` is missing and the broadcast is unreadable, so forge cannot tell whether it left unfinished operations; restore the snapshot and finish with `--resume`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending
+Error: the previous broadcast `[..]/broadcast/StartFresh.s.sol/31337/run-latest.json` is unreadable and its recovery snapshot `[..]/cache/StartFresh.s.sol/31337/run-latest.json.recovery.json` is missing, so forge cannot tell whether it left unfinished operations; pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending, or restore the snapshot and finish with `--resume`
 
 Context:
 - [..]
 
 "#]];
-    cmd.arg("script").arg(&script).args([
-        "--tc",
-        "UnreadableExport",
-        "--rpc-url",
-        &rpc,
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        "--broadcast",
-    ]);
-
-    fs::create_dir_all(export.parent().unwrap()).unwrap();
+    fs::remove_file(&recovery_path).unwrap();
     fs::write(&export, r#"{"transactions":["#).unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args(args);
     cmd.assert_failure().stderr_eq(refused.clone());
-    fs::remove_file(&export).unwrap();
-    std::os::unix::fs::symlink(&target, &export).unwrap();
-    cmd.assert_failure().stderr_eq(refused);
-    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+    #[cfg(unix)]
+    {
+        fs::remove_file(&export).unwrap();
+        std::os::unix::fs::symlink(prj.root().join("missing.json"), &export).unwrap();
+        cmd.assert_failure().stderr_eq(refused);
+    }
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
 
     cmd.arg("--start-fresh");
-    cmd.assert_success().stderr_eq(str![[r#"
-Archived `[..]/broadcast/UnreadableExport.s.sol/31337/run-latest.json` to `[..]/broadcast/UnreadableExport.s.sol/31337/run-latest.[..].json`
-
-Deployed contracts (chain 31337):
-  UnreadableExportTarget  0x5FbDB2315678afecb367f032d93F642f64180aa3
-
-"#]]);
-    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
-    assert!(!target.exists());
+    cmd.assert_success().stderr_eq(format!(
+        "Archived `{0}/broadcast/StartFresh.s.sol/31337/run-latest.json` to `{0}/broadcast/StartFresh.s.sol/31337/run-latest.[..].json`\nArchived `{0}/cache/StartFresh.s.sol/31337/run-latest.json` to `{0}/cache/StartFresh.s.sol/31337/run-latest.[..].json`\n\nDeployed contracts (chain 31337):\n  StartFreshTarget  {1}\n  StartFreshTarget  {2}\n",
+        "[..]",
+        sender.create(5),
+        sender.create(6),
+    ));
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 7);
+    assert!(!prj.root().join("missing.json").exists());
     assert!(!fs::symlink_metadata(&export).unwrap().is_symlink());
 }
 
