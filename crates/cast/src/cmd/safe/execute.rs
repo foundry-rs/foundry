@@ -55,7 +55,7 @@ impl ExecuteArgs {
                 .unwrap_or_default()
         );
 
-        transaction.verify_hash(safe, &provider).await?;
+        transaction.verify_hash(safe, &provider, chain_id).await?;
         let transaction_nonce = SafeTransaction::number(&transaction.nonce, "nonce")?;
         let current_nonce = ISafe::new(safe, &provider)
             .nonce()
@@ -66,7 +66,7 @@ impl ExecuteArgs {
             transaction_nonce == current_nonce,
             "Safe transaction nonce {transaction_nonce} does not match current Safe nonce {current_nonce}"
         );
-        transaction.show_transaction_summary()?;
+        transaction.show_transaction_summary(chain_id)?;
         let signatures = transaction.packed_signatures()?;
 
         sh_status!("Executing Safe transaction {safe_tx_hash}")?;

@@ -47,7 +47,7 @@ const SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_HASH: B256 =
 const SIMULATE_TX_ACCESSOR_V1_4_1_RUNTIME_HASH: B256 =
     b256!("91f82615581fc73b190b83d72e883608b25e392f72322035df1b13d51766cf8d");
 const SAFE_SERVICE_API_KEY: &str = "cast-safe-test-key";
-const SIMULATION_SAFE_CODE: &str = "0x63d8d11f785f3560e01c146051577333333333333333333333333333333333333333333214602b575f80fd5b60015f5260a0602052602a60405260016060526060608052602060a0523260c05260e05ffd5b5f805260205ff3";
+const SIMULATION_SAFE_CODE_PREFIX: &str = "0x63d8d11f785f3560e01c146051577333333333333333333333333333333333333333333214602b575f80fd5b60015f5260a0602052602a60405260016060526060608052602060a0523260c05260e05ffd5b";
 
 #[allow(clippy::too_many_arguments)]
 mod test_safe_contract {
@@ -972,16 +972,7 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
-    api.anvil_set_code(
-        SAFE_L2_V1_4_1,
-        fixture_runtime(
-            include_bytes!("../fixtures/safe/v1.4.1/SafeL2.runtime.bin"),
-            SAFE_L2_V1_4_1_RUNTIME_LEN,
-            SAFE_L2_V1_4_1_RUNTIME_HASH,
-        ),
-    )
-    .await
-    .unwrap();
+    install_safe_l2_v1_4_1(&api, SAFE_L2_V1_4_1).await;
     api.anvil_set_code(
         SAFE_PROXY_FACTORY_V1_4_1,
         fixture_runtime(
@@ -1012,8 +1003,9 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
     let owner_1 = ANVIL_OWNER.to_string();
     let owner_2 = ANVIL_OWNER_2.to_string();
     let target_arg = target.to_string();
+    cmd.cast_fuse();
+    cmd.env("FOUNDRY_CHAIN_ID", "1");
     let create_output = cmd
-        .cast_fuse()
         .args([
             "safe",
             "create",
@@ -1031,8 +1023,13 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
             ANVIL_KEY,
             "--rpc-url",
             &rpc,
+            "--chain",
+            "31337",
         ])
         .assert_success()
+        .stderr_eq(format!(
+            "Deploying Safe on chain ID 31337 with singleton {SAFE_L2_V1_4_1}\n[TX_HASH]\n"
+        ))
         .get_output()
         .stdout_lossy();
     let safe: Address = create_output
@@ -1079,6 +1076,8 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
         SAFE_SERVICE_API_KEY,
         "--rpc-url",
         rpc.as_str(),
+        "--chain",
+        "31337",
     ];
 
     cmd.cast_fuse()
@@ -1153,8 +1152,9 @@ async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
         })));
     assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::ZERO);
 
+    cmd.cast_fuse();
+    cmd.env("FOUNDRY_CHAIN_ID", "1");
     let execution_output = cmd
-        .cast_fuse()
         .args(["safe", "execute", &safe_arg, &safe_tx_hash_arg, "--private-key", ANVIL_KEY])
         .args(service_args)
         .assert_success()
@@ -1221,9 +1221,9 @@ async fn safe_execute_rejects_approved_hash_confirmation(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let safe = Address::repeat_byte(0x11);
-    // Return a zero bytes32 word for both getTransactionHash() and nonce().
-    api.anvil_set_code(safe, bytes!("0x600060005260206000f3")).await.unwrap();
     let mut transaction = safe_transaction(safe, 0);
+    let hash = set_safe_transaction_hash(&mut transaction, Some(31337));
+    api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, 0)).await.unwrap();
     let mut approved_hash_signature = vec![0u8; 65];
     approved_hash_signature[..32].copy_from_slice(ANVIL_OWNER.into_word().as_slice());
     approved_hash_signature[64] = 1;
@@ -1237,7 +1237,7 @@ async fn safe_execute_rejects_approved_hash_confirmation(cmd: _) {
             "safe",
             "execute",
             &safe.to_string(),
-            &B256::ZERO.to_string(),
+            &hash.to_string(),
             "--service-url",
             service.endpoint(),
             "--rpc-url",
@@ -1247,126 +1247,39 @@ async fn safe_execute_rejects_approved_hash_confirmation(cmd: _) {
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
-Safe transaction: 0x0000000000000000000000000000000000000000000000000000000000000000
-  Safe:            0x1111111111111111111111111111111111111111
-  To:              0x0000000000000000000000000000000000000000
-  Value:           0
-  Operation:       0 (CALL)
-  Safe tx gas:     0
-  Base gas:        0
-  Gas price:       0
-  Gas token:       0x0000000000000000000000000000000000000000
-  Refund receiver: 0x0000000000000000000000000000000000000000
-  Nonce:           0
-  Data:            0x
+...
 Error: approved-hash signatures (v = 1) are not supported by `cast safe execute`
 
 "#]]);
 }
 
 #[casttest]
-async fn safe_execute_rejects_future_nonce(cmd: _) {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let rpc = handle.http_endpoint();
-    let safe = Address::repeat_byte(0x11);
-    api.anvil_set_code(safe, bytes!("0x600060005260206000f3")).await.unwrap();
-    let mut transaction = safe_transaction(safe, 0);
-    transaction["nonce"] = json!("1");
-    let service = spawn_safe_service(transaction).await;
-    cmd.cast_fuse()
-        .args([
-            "safe",
-            "execute",
-            &safe.to_string(),
-            &B256::ZERO.to_string(),
-            "--service-url",
-            service.endpoint(),
-            "--rpc-url",
-            &rpc,
-            "--private-key",
-            ANVIL_KEY,
-        ])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Error: Safe transaction nonce 1 does not match current Safe nonce 0
-
-"#]]);
-}
-
-#[casttest]
-async fn safe_execute_rejects_stale_nonce(cmd: _) {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let rpc = handle.http_endpoint();
-    let safe = Address::repeat_byte(0x11);
-    // Return one for nonce() and zero for getTransactionHash().
-    api.anvil_set_code(
-        safe,
-        bytes!("0x5f3560e01c63affed0e0146015575f5f5260205ff35b60015f5260205ff3"),
-    )
-    .await
-    .unwrap();
-    let transaction = safe_transaction(safe, 0);
-    let service = spawn_safe_service(transaction).await;
-    cmd.cast_fuse()
-        .args([
-            "safe",
-            "execute",
-            &safe.to_string(),
-            &B256::ZERO.to_string(),
-            "--service-url",
-            service.endpoint(),
-            "--rpc-url",
-            &rpc,
-            "--private-key",
-            ANVIL_KEY,
-        ])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Error: Safe transaction nonce 0 does not match current Safe nonce 1
-
-"#]]);
-}
-
-#[casttest]
-async fn safe_execute_rejects_approved_hash_with_stale_or_future_nonce(cmd: _) {
-    // A v = 1 confirmation must not make a transaction with a stale or future nonce
-    // executable. Use a fresh node for each case so the no-broadcast assertions are
-    // independent and a regression cannot hide behind state from the other case.
-    for (nonce, current_nonce, safe_code, expected_error) in [
-        (
-            1u64,
-            0u64,
-            "0x600060005260206000f3",
-            "Error: Safe transaction nonce 1 does not match current Safe nonce 0\n",
-        ),
-        (
-            0u64,
-            1u64,
-            "0x5f3560e01c63affed0e0146015575f5f5260205ff35b60015f5260205ff3",
-            "Error: Safe transaction nonce 0 does not match current Safe nonce 1\n",
-        ),
+async fn safe_execute_rejects_stale_or_future_nonce(cmd: _) {
+    let signer = ANVIL_KEY.parse::<PrivateKeySigner>().unwrap();
+    // Use a fresh node for each case so the no-broadcast assertions are independent.
+    for (nonce, current_nonce, expected_error) in [
+        (1u64, 0u64, "Error: Safe transaction nonce 1 does not match current Safe nonce 0\n"),
+        (0u64, 1u64, "Error: Safe transaction nonce 0 does not match current Safe nonce 1\n"),
     ] {
         let (api, handle) = anvil::spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let provider = handle.http_provider();
         let safe = Address::repeat_byte(0x11);
-        api.anvil_set_code(safe, safe_code.parse().unwrap()).await.unwrap();
-
         let initial_block = provider.get_block_number().await.unwrap();
         let initial_sender_nonce = provider.get_transaction_count(ANVIL_OWNER).await.unwrap();
         let mut transaction = safe_transaction(safe, 0);
         transaction["nonce"] = json!(nonce.to_string());
-        let mut approved_hash_signature = vec![0u8; 65];
-        approved_hash_signature[..32].copy_from_slice(ANVIL_OWNER.into_word().as_slice());
-        approved_hash_signature[64] = 1;
+        let hash = set_safe_transaction_hash(&mut transaction, Some(31337));
+        api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, current_nonce)).await.unwrap();
+        let signature = signer.sign_hash(&hash).await.unwrap().as_bytes();
         transaction["confirmations"] = json!([{
             "owner": ANVIL_OWNER,
-            "signature": hex::encode_prefixed(approved_hash_signature),
+            "signature": hex::encode_prefixed(signature),
         }]);
         let service = spawn_safe_service(transaction).await;
 
         let safe_arg = safe.to_string();
-        let hash_arg = B256::ZERO.to_string();
+        let hash_arg = hash.to_string();
         cmd.cast_fuse()
             .args([
                 "safe",
@@ -1384,8 +1297,7 @@ async fn safe_execute_rejects_approved_hash_with_stale_or_future_nonce(cmd: _) {
             .stdout_eq("")
             .stderr_eq(expected_error);
 
-        // Nonce validation happens before eth_sendTransaction; prove that no outer transaction
-        // was submitted even though the service supplied an approved-hash confirmation.
+        // Reject the nonce mismatch before broadcasting an outer transaction.
         assert_eq!(provider.get_block_number().await.unwrap(), initial_block);
         assert_eq!(
             provider.get_transaction_count(ANVIL_OWNER).await.unwrap(),
@@ -1407,15 +1319,6 @@ async fn safe_execute_packs_mixed_p256_confirmations(cmd: _) {
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
     let safe = Address::repeat_byte(0x11);
-    // Return zero for hash/nonce calls and emit ExecutionSuccess(bytes32(0), 0).
-    api.anvil_set_code(
-        safe,
-        bytes!(
-            "0x5f7f442e715f626346e8c54381002da614f62bee8d27386535b2521ec8540898556e60205fa260205ff3"
-        ),
-    )
-    .await
-    .unwrap();
 
     let p256_owner = Address::repeat_byte(1);
     let eoa_owner = Address::repeat_byte(2);
@@ -1440,6 +1343,15 @@ async fn safe_execute_packs_mixed_p256_confirmations(cmd: _) {
     contract_signature.extend_from_slice(&contract_payload);
 
     let mut service_transaction = safe_transaction(safe, 0);
+    let hash = set_safe_transaction_hash(&mut service_transaction, Some(31337));
+    // Emit the matching execution event, then return the requested hash or nonce word.
+    let mut code = vec![0x7f];
+    code.extend_from_slice(hash.as_slice());
+    code.push(0x7f);
+    code.extend_from_slice(TestSafe::ExecutionSuccess::SIGNATURE_HASH.as_slice());
+    code.extend_from_slice(&hex!("60206040a2"));
+    code.extend_from_slice(&safe_hash_and_nonce_code(hash, 0));
+    api.anvil_set_code(safe, code.into()).await.unwrap();
     service_transaction["confirmations"] = json!([
         {
             "owner": contract_owner,
@@ -1461,7 +1373,7 @@ async fn safe_execute_packs_mixed_p256_confirmations(cmd: _) {
             "safe",
             "execute",
             &safe.to_string(),
-            &B256::ZERO.to_string(),
+            &hash.to_string(),
             "--service-url",
             service.endpoint(),
             "--rpc-url",
@@ -1630,12 +1542,15 @@ async fn safe_service_mutations_emit_json_envelopes(cmd: _) {
     let safe = Address::repeat_byte(0x11);
     let delegate = Address::repeat_byte(0x22);
     let target = Address::repeat_byte(0x33);
-    api.anvil_set_code(safe, bytes!("0x5f5f5260205ff3")).await.unwrap();
-    let service = spawn_safe_service(safe_transaction(safe, 0)).await;
+    let mut transaction = safe_transaction(safe, 0);
+    transaction["to"] = json!(target);
+    let hash = set_safe_transaction_hash(&mut transaction, Some(31337));
+    api.anvil_set_code(safe, safe_hash_and_nonce_code(hash, 0)).await.unwrap();
+    let service = spawn_safe_service(transaction).await;
     let safe = safe.to_string();
     let delegate = delegate.to_string();
     let target = target.to_string();
-    let safe_tx_hash = B256::ZERO.to_string();
+    let safe_tx_hash = hash.to_string();
     let signer_args = [
         "--service-url",
         service.endpoint(),
@@ -1648,26 +1563,31 @@ async fn safe_service_mutations_emit_json_envelopes(cmd: _) {
     cmd.cast_fuse()
         .args(["--json", "safe", "add-delegate", &safe, &delegate, "--label", "test"])
         .args(signer_args)
-        .assert_json_stdout(json_envelope(json!(delegate)));
+        .assert_json_stdout_with_status(true, json_envelope(json!(delegate)))
+        .stderr_eq("Signing Safe delegate authorization on chain ID 31337\n");
 
     cmd.cast_fuse()
         .args(["--json", "safe", "remove-delegate", &safe, &delegate])
         .args(signer_args)
-        .assert_json_stdout(json_envelope(json!(delegate)));
+        .assert_json_stdout_with_status(true, json_envelope(json!(delegate)))
+        .stderr_eq("Signing Safe delegate authorization on chain ID 31337\n");
 
+    let expected_summary = format!("Safe transaction: {hash}\n  Chain ID:        31337\n...\n");
     cmd.cast_fuse()
         .args(["--json", "safe", "propose", &safe, &target, "--nonce", "0"])
         .args(signer_args)
-        .assert_json_stdout(json_envelope(json!(B256::ZERO)));
+        .assert_json_stdout_with_status(true, json_envelope(json!(hash)))
+        .stderr_eq(expected_summary.clone());
 
     let signer: PrivateKeySigner = ANVIL_KEY.parse().unwrap();
-    let mut signature = signer.sign_message(B256::ZERO.as_slice()).await.unwrap().as_bytes();
+    let mut signature = signer.sign_message(hash.as_slice()).await.unwrap().as_bytes();
     signature[64] += 4;
     let signature = hex::encode_prefixed(signature);
     cmd.cast_fuse()
         .args(["--json", "safe", "sign", &safe, &safe_tx_hash])
         .args(signer_args)
-        .assert_json_stdout(json_envelope(json!(signature)));
+        .assert_json_stdout_with_status(true, json_envelope(json!(signature)))
+        .stderr_eq(expected_summary);
 }
 
 #[casttest]
@@ -1717,6 +1637,10 @@ async fn safe_list_delegates_follows_pagination(cmd: _) {
             &safe.to_string(),
             "--service-url",
             server.endpoint(),
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--chain",
+            "mainnet",
         ])
         .assert_json_stdout(json_envelope(json!([first, second])));
 }
@@ -1805,17 +1729,17 @@ async fn safe_simulation_uses_executor_context(cmd: _) {
     let safe = Address::repeat_byte(0x11);
     let executor = Address::repeat_byte(0x33);
     let accessor = Address::repeat_byte(0x44);
-    // Return a zero transaction hash, then require `tx.origin` to be `executor` and return it as
-    // the simulated call result.
-    api.anvil_set_code(safe, SIMULATION_SAFE_CODE.parse().unwrap()).await.unwrap();
     api.anvil_set_code(accessor, bytes!("0x00")).await.unwrap();
     let safe_arg = safe.to_string();
     let executor_arg = executor.to_string();
     let accessor_arg = accessor.to_string();
-    let safe_tx_hash = B256::ZERO.to_string();
 
     for operation in [0, 1] {
-        let service = spawn_safe_service(safe_transaction(safe, operation)).await;
+        let mut transaction = safe_transaction(safe, operation);
+        let hash = set_safe_transaction_hash(&mut transaction, Some(31337));
+        api.anvil_set_code(safe, simulation_safe_code(hash)).await.unwrap();
+        let safe_tx_hash = hash.to_string();
+        let service = spawn_safe_service(transaction).await;
         cmd.cast_fuse()
             .args([
                 "--json",
@@ -1833,7 +1757,7 @@ async fn safe_simulation_uses_executor_context(cmd: _) {
                 &rpc,
             ])
             .assert_json_stdout(json_envelope(json!({
-                "safeTxHash": B256::ZERO,
+                "safeTxHash": hash,
                 "success": true,
                 "gasUsed": "42",
                 "returnData": "0x0000000000000000000000003333333333333333333333333333333333333333",
@@ -1848,10 +1772,11 @@ async fn safe_simulation_rejects_reimbursed_transaction(cmd: _) {
     let safe = Address::repeat_byte(0x11);
     let executor = Address::repeat_byte(0x33);
     let accessor = Address::repeat_byte(0x44);
-    api.anvil_set_code(safe, SIMULATION_SAFE_CODE.parse().unwrap()).await.unwrap();
     api.anvil_set_code(accessor, bytes!("0x00")).await.unwrap();
     let mut transaction = safe_transaction(safe, 0);
     transaction["gasPrice"] = json!("1");
+    let hash = set_safe_transaction_hash(&mut transaction, Some(31337));
+    api.anvil_set_code(safe, simulation_safe_code(hash)).await.unwrap();
     let service = spawn_safe_service(transaction).await;
 
     cmd.cast_fuse()
@@ -1859,7 +1784,7 @@ async fn safe_simulation_rejects_reimbursed_transaction(cmd: _) {
             "safe",
             "simulate",
             &safe.to_string(),
-            &B256::ZERO.to_string(),
+            &hash.to_string(),
             "--from",
             &executor.to_string(),
             "--accessor",
@@ -1872,18 +1797,7 @@ async fn safe_simulation_rejects_reimbursed_transaction(cmd: _) {
         .assert_failure()
         .stdout_eq("")
         .stderr_eq(str![[r#"
-Safe transaction: 0x0000000000000000000000000000000000000000000000000000000000000000
-  Safe:            0x1111111111111111111111111111111111111111
-  To:              0x0000000000000000000000000000000000000000
-  Value:           0
-  Operation:       0 (CALL)
-  Safe tx gas:     0
-  Base gas:        0
-  Gas price:       1
-  Gas token:       0x0000000000000000000000000000000000000000
-  Refund receiver: 0x0000000000000000000000000000000000000000
-  Nonce:           0
-  Data:            0x
+...
 Error: cannot simulate reimbursed Safe transactions (gasPrice > 0): SimulateTxAccessor does not enforce safeTxGas
 
 "#]]);
@@ -1894,16 +1808,7 @@ async fn safe_simulation_call_target_checks_origin_and_sender(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
-    api.anvil_set_code(
-        SAFE_L2_V1_4_1,
-        fixture_runtime(
-            include_bytes!("../fixtures/safe/v1.4.1/SafeL2.runtime.bin"),
-            SAFE_L2_V1_4_1_RUNTIME_LEN,
-            SAFE_L2_V1_4_1_RUNTIME_HASH,
-        ),
-    )
-    .await
-    .unwrap();
+    install_safe_l2_v1_4_1(&api, SAFE_L2_V1_4_1).await;
     api.anvil_set_code(
         SAFE_PROXY_FACTORY_V1_4_1,
         fixture_runtime(
@@ -2014,4 +1919,520 @@ async fn safe_simulation_call_target_checks_origin_and_sender(cmd: _) {
             "gasUsed": "[..]",
             "returnData": expected_return_data,
         })));
+}
+
+#[casttest]
+async fn safe_commands_reject_unrelated_onchain_hash(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let safe = Address::repeat_byte(0x11);
+    let target = Address::repeat_byte(0x22);
+    // An honest RPC will execute this contract and return an unrelated transaction hash.
+    api.anvil_set_code(
+        safe,
+        bytes!("0x7f44444444444444444444444444444444444444444444444444444444444444445f5260205ff3"),
+    )
+    .await
+    .unwrap();
+
+    let mut transaction = safe_transaction(safe, 0);
+    transaction["to"] = json!(target);
+    let local_hash = set_safe_transaction_hash(&mut transaction, Some(31337));
+    let legacy_hash = set_safe_transaction_hash(&mut transaction, None);
+    let remote_hash = B256::repeat_byte(0x44);
+    transaction["safeTxHash"] = json!(remote_hash);
+    let (service, submissions) = spawn_safe_service_with_submissions(transaction).await;
+    let rpc = handle.http_endpoint();
+    let safe_arg = safe.to_string();
+    let target_arg = target.to_string();
+    let hash_arg = remote_hash.to_string();
+    let owner_arg = ANVIL_OWNER.to_string();
+
+    for command in ["propose", "sign", "simulate", "execute"] {
+        cmd.cast_fuse().args(["safe", command, &safe_arg]);
+        if command == "propose" {
+            cmd.args([&target_arg, "--nonce", "0"]);
+        } else {
+            cmd.args([&hash_arg]);
+        }
+        if command == "simulate" {
+            cmd.args(["--from", &owner_arg]);
+        } else {
+            cmd.args(["--private-key", ANVIL_KEY]);
+        }
+        cmd.args(["--rpc-url", &rpc, "--service-url", service.endpoint()])
+            .assert_failure()
+            .stdout_eq("")
+            .stderr_eq(format!(
+                "Error: Safe transaction hash mismatch: contract returned {remote_hash}, locally calculated {local_hash} (chain ID 31337) or {legacy_hash} (pre-v1.3.0 Safe)\n"
+            ));
+        assert_eq!(*submissions.lock().unwrap(), 0, "{command} submitted to the service");
+    }
+    assert_eq!(handle.http_provider().get_transaction_count(ANVIL_OWNER).await.unwrap(), 0);
+}
+
+#[casttest]
+async fn safe_propose_rejects_configured_chain_mismatch(prj: _, cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let safe = Address::repeat_byte(0x11);
+    install_safe_l2_v1_4_1(&api, safe).await;
+    let (service, submissions) = spawn_safe_service_with_submissions(json!({})).await;
+    let target = Address::repeat_byte(0x22);
+    let mut transaction = safe_transaction(safe, 0);
+    transaction["to"] = json!(target);
+    let expected_hash = set_safe_transaction_hash(&mut transaction, Some(31337));
+    let safe_arg = safe.to_string();
+    let target_arg = target.to_string();
+    let rpc = handle.http_endpoint();
+    let args = [
+        "safe",
+        "propose",
+        &safe_arg,
+        &target_arg,
+        "--nonce",
+        "0",
+        "--rpc-url",
+        &rpc,
+        "--service-url",
+        service.endpoint(),
+        "--private-key",
+        ANVIL_KEY,
+    ];
+
+    let expected_summary =
+        format!("Safe transaction: {expected_hash}\n  Chain ID:        31337\n...\n");
+    let mut expected_submissions = 0;
+    let mut run_case = |profile, configured, foundry_chain, chain, cli_chain, rejects| {
+        cmd.cast_fuse().current_dir(prj.root());
+        cmd.unset_env("FOUNDRY_PROFILE");
+        cmd.unset_env("FOUNDRY_CHAIN_ID");
+        cmd.unset_env("CHAIN");
+        if let Some(profile) = profile {
+            cmd.env("FOUNDRY_PROFILE", profile);
+        }
+        if let Some(chain) = foundry_chain {
+            cmd.env("FOUNDRY_CHAIN_ID", chain);
+        }
+        if let Some(chain) = chain {
+            cmd.env("CHAIN", chain);
+        }
+        cmd.args(args);
+        if let Some(chain) = cli_chain {
+            cmd.args(["--chain", chain]);
+        }
+        if rejects {
+            cmd.assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: Configured chain ID 1 does not match RPC chain ID 31337.
+Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN_ID.
+
+"#]]);
+        } else {
+            cmd.assert_success()
+                .stdout_eq(format!("{expected_hash}\n"))
+                .stderr_eq(expected_summary.clone());
+            expected_submissions += 1;
+        }
+        assert_eq!(
+            *submissions.lock().unwrap(),
+            expected_submissions,
+            "unexpected proposal submission for FOUNDRY_PROFILE={profile:?}, configured={configured:?}, FOUNDRY_CHAIN_ID={foundry_chain:?}, CHAIN={chain:?}, --chain={cli_chain:?}"
+        );
+    };
+
+    for (configured, foundry_chain, chain, cli_chain, rejects) in [
+        (None, None, None, None, false),
+        (Some(1u64), None, None, None, true),
+        (None, Some("1"), None, None, true),
+        (Some(1), Some("31337"), None, None, false),
+        (Some(1), Some("1"), Some("31337"), None, false),
+        (Some(1), Some("1"), Some("1"), Some("31337"), false),
+        (Some(31337), Some("31337"), Some("31337"), Some("1"), true),
+    ] {
+        prj.update_config(|config| config.chain = configured.map(Into::into));
+        run_case(None, configured, foundry_chain, chain, cli_chain, rejects);
+    }
+
+    prj.create_file(
+        "foundry.toml",
+        "[profile.default]\nchain_id = 31337\n\n[profile.safe_chain]\nchain_id = 1\n",
+    );
+    // CLI and CHAIN also override a selected profile, not just the default profile.
+    for (chain, cli_chain, rejects) in
+        [(None, None, true), (Some("31337"), None, false), (Some("1"), Some("31337"), false)]
+    {
+        run_case(Some("safe_chain"), Some(1), None, chain, cli_chain, rejects);
+    }
+}
+
+#[casttest]
+async fn safe_commands_reject_unexpected_chain_before_signing(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let service = spawn_safe_service(json!({})).await;
+    let safe = Address::repeat_byte(0x11).to_string();
+    let target = Address::repeat_byte(0x22).to_string();
+    let hash = B256::ZERO.to_string();
+    let owner = ANVIL_OWNER.to_string();
+
+    // No wallet is supplied: chain rejection must happen before a signer is loaded.
+    for command in
+        ["create", "add-delegate", "remove-delegate", "propose", "sign", "simulate", "execute"]
+    {
+        cmd.cast_fuse().args(["safe", command]);
+        cmd.arg(if command == "create" { &owner } else { &safe });
+        match command {
+            "add-delegate" => {
+                cmd.args([&target, "--label", "test"]);
+            }
+            "remove-delegate" => {
+                cmd.arg(&target);
+            }
+            "propose" => {
+                cmd.args([&target, "--nonce", "0"]);
+            }
+            "sign" | "execute" => {
+                cmd.arg(&hash);
+            }
+            "simulate" => {
+                cmd.args([&hash, "--from", &owner]);
+            }
+            _ => {}
+        }
+        if command != "create" {
+            cmd.args(["--service-url", service.endpoint()]);
+        }
+        cmd.args(["--rpc-url", &rpc, "--chain", "mainnet"])
+            .assert_failure()
+            .stdout_eq("")
+            .stderr_eq(str![[r#"
+Error: Configured chain ID 1 does not match RPC chain ID 31337.
+Check --chain, CHAIN, chain_id in the selected Foundry profile, or FOUNDRY_CHAIN_ID.
+
+"#]]);
+    }
+}
+
+#[casttest]
+async fn safe_propose_hash_matches_safe_for_all_fields(cmd: _) {
+    for chain_id in [31337u64, 31338] {
+        let (api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
+        let safe = Address::repeat_byte(0x11);
+        install_safe_l2_v1_4_1(&api, safe).await;
+        let provider = handle.http_provider();
+        let contract = TestSafe::new(safe, &provider);
+        let target = Address::repeat_byte(0x22);
+        let gas_token = Address::repeat_byte(0x55);
+        let refund_receiver = Address::repeat_byte(0x66);
+        let data = bytes!("0x1234567890");
+        let service = spawn_safe_service(json!({})).await;
+
+        for (operation, name, label) in [(0, "call", "CALL"), (1, "delegate-call", "DELEGATECALL")]
+        {
+            let expected_hash = contract
+                .getTransactionHash(
+                    target,
+                    U256::from(19),
+                    data.clone(),
+                    operation,
+                    U256::from(12345),
+                    U256::from(4567),
+                    U256::from(42),
+                    gas_token,
+                    refund_receiver,
+                    U256::from(7),
+                )
+                .call()
+                .await
+                .unwrap();
+            cmd.cast_fuse();
+            cmd.env("FOUNDRY_CHAIN_ID", chain_id.to_string());
+            cmd.args([
+                "--json",
+                "safe",
+                "propose",
+                &safe.to_string(),
+                &target.to_string(),
+                "--value",
+                "19",
+                "--data",
+                &data.to_string(),
+                "--operation",
+                name,
+                "--safe-tx-gas",
+                "12345",
+                "--base-gas",
+                "4567",
+                "--gas-price",
+                "42",
+                "--gas-token",
+                &gas_token.to_string(),
+                "--refund-receiver",
+                &refund_receiver.to_string(),
+                "--nonce",
+                "7",
+                "--rpc-url",
+                &handle.http_endpoint(),
+                "--service-url",
+                service.endpoint(),
+                "--private-key",
+                ANVIL_KEY,
+            ])
+            .assert_json_stdout_with_status(true, json_envelope(json!(expected_hash)))
+            .stderr_eq(format!(
+                r#"Safe transaction: {expected_hash}
+  Chain ID:        {chain_id}
+  Safe:            {safe}
+  To:              {target}
+  Value:           19
+  Operation:       {operation} ({label})
+  Safe tx gas:     12345
+  Base gas:        4567
+  Gas price:       42
+  Gas token:       {gas_token}
+  Refund receiver: {refund_receiver}
+  Nonce:           7
+  Data:            {data}
+"#
+            ));
+        }
+    }
+}
+
+#[casttest]
+async fn safe_sign_rejects_service_fields_for_another_hash(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let safe = Address::repeat_byte(0x11);
+    install_safe_l2_v1_4_1(&api, safe).await;
+
+    // The service keeps the requested hash but replaces the target. The honest Safe agrees with
+    // the local hash of the changed fields, leaving the service hash comparison to reject them.
+    let mut transaction = safe_transaction(safe, 0);
+    let requested_hash = set_safe_transaction_hash(&mut transaction, Some(31337));
+    transaction["to"] = json!(Address::repeat_byte(0x22));
+    let calculated_hash = set_safe_transaction_hash(&mut transaction, Some(31337));
+    transaction["safeTxHash"] = json!(requested_hash);
+    let (service, submissions) = spawn_safe_service_with_submissions(transaction).await;
+
+    cmd.cast_fuse()
+        .args([
+            "safe",
+            "sign",
+            &safe.to_string(),
+            &requested_hash.to_string(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--service-url",
+            service.endpoint(),
+            "--private-key",
+            ANVIL_KEY,
+        ])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(format!(
+            "Error: Safe transaction hash mismatch: service/file returned {requested_hash}, calculated {calculated_hash}\n"
+        ));
+    assert_eq!(*submissions.lock().unwrap(), 0, "a signature was submitted to the service");
+}
+
+#[casttest]
+async fn safe_v1_1_1_propose_sign_and_execute_warn_about_replay(cmd: _) {
+    let singleton = address!("34CfAC646f301356fAa8B21e94227e3583Fe3F5F");
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    api.anvil_set_code(
+        singleton,
+        fixture_runtime(
+            include_bytes!("../fixtures/safe/v1.1.1/GnosisSafe.runtime.bin"),
+            24_040,
+            b256!("56b8be58b5ad629a621593a2e5e5e8e9a28408dc06e95597497b303902772e45"),
+        ),
+    )
+    .await
+    .unwrap();
+    api.anvil_set_code(
+        SAFE_PROXY_FACTORY_V1_4_1,
+        fixture_runtime(
+            include_bytes!("../fixtures/safe/v1.4.1/SafeProxyFactory.runtime.bin"),
+            SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_LEN,
+            SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_HASH,
+        ),
+    )
+    .await
+    .unwrap();
+    let created = cmd
+        .cast_fuse()
+        .args([
+            "safe",
+            "create",
+            &ANVIL_OWNER.to_string(),
+            "--singleton",
+            &singleton.to_string(),
+            "--factory",
+            &SAFE_PROXY_FACTORY_V1_4_1.to_string(),
+            "--fallback-handler",
+            &Address::ZERO.to_string(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            ANVIL_KEY,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let safe = created.trim().parse::<Address>().expect("missing Safe address");
+    let contract = TestSafe::new(safe, &provider);
+    let target = Address::repeat_byte(0x22);
+    api.anvil_set_code(target, bytes!("60005460010160005500")).await.unwrap();
+    let hash = contract
+        .getTransactionHash(
+            target,
+            U256::ZERO,
+            Bytes::new(),
+            0,
+            U256::ZERO,
+            U256::ZERO,
+            U256::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .call()
+        .await
+        .unwrap();
+    let signer = ANVIL_KEY.parse::<PrivateKeySigner>().unwrap();
+    let mut signature = signer.sign_message(hash.as_slice()).await.unwrap().as_bytes();
+    signature[64] += 4;
+    let signature = hex::encode_prefixed(signature);
+    let mut transaction = safe_transaction(safe, 0);
+    transaction["to"] = json!(target);
+    assert_eq!(set_safe_transaction_hash(&mut transaction, None), hash);
+    transaction["confirmations"] = json!([{ "owner": ANVIL_OWNER, "signature": signature }]);
+    let service = spawn_safe_service(transaction).await;
+    let safe_arg = safe.to_string();
+    let hash_arg = hash.to_string();
+    let args = ["--rpc-url", &rpc, "--service-url", service.endpoint(), "--private-key", ANVIL_KEY];
+    let summary = format!(
+        "Warning: This Safe uses a pre-v1.3.0 transaction hash without a chain ID. Its signatures can be replayed on other chains.\nSafe transaction: {hash}\n  Chain ID:        31337\n...\n"
+    );
+    cmd.cast_fuse()
+        .args(["safe", "propose", &safe_arg, &target.to_string(), "--nonce", "0"])
+        .args(args)
+        .assert_success()
+        .stdout_eq(format!("{hash}\n"))
+        .stderr_eq(summary.clone());
+    cmd.cast_fuse()
+        .args(["safe", "sign", &safe_arg, &hash_arg])
+        .args(args)
+        .assert_success()
+        .stdout_eq(format!("{signature}\n"))
+        .stderr_eq(summary.clone());
+    let execution = cmd
+        .cast_fuse()
+        .args(["safe", "execute", &safe_arg, &hash_arg])
+        .args(args)
+        .assert_success()
+        .stderr_eq(summary);
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let hashes = block.transactions.as_hashes().unwrap();
+    assert_eq!(hashes.len(), 1);
+    execution.stdout_eq(format!("{}\n", hashes[0]));
+    assert_eq!(contract.nonce().call().await.unwrap(), U256::ONE);
+    assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::ONE);
+}
+
+async fn spawn_safe_service_with_submissions(
+    response: Value,
+) -> (TestServerHandle, Arc<Mutex<usize>>) {
+    let submissions = Arc::new(Mutex::new(0));
+    let captured = Arc::clone(&submissions);
+    let router = Router::new().fallback(move |request: Request<Body>| {
+        let captured = Arc::clone(&captured);
+        let response = response.clone();
+        async move {
+            if request.method() == Method::POST || request.method() == Method::DELETE {
+                *captured.lock().unwrap() += 1;
+            }
+            Json(response)
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    (TestServerHandle { endpoint, task }, submissions)
+}
+
+fn set_safe_transaction_hash(transaction: &mut Value, chain_id: Option<u64>) -> B256 {
+    let mut typed_data = json!({
+        "types": {
+            "EIP712Domain": [
+                { "name": "chainId", "type": "uint256" },
+                { "name": "verifyingContract", "type": "address" }
+            ],
+            "SafeTx": [
+                { "name": "to", "type": "address" },
+                { "name": "value", "type": "uint256" },
+                { "name": "data", "type": "bytes" },
+                { "name": "operation", "type": "uint8" },
+                { "name": "safeTxGas", "type": "uint256" },
+                { "name": "baseGas", "type": "uint256" },
+                { "name": "gasPrice", "type": "uint256" },
+                { "name": "gasToken", "type": "address" },
+                { "name": "refundReceiver", "type": "address" },
+                { "name": "nonce", "type": "uint256" }
+            ]
+        },
+        "primaryType": "SafeTx",
+        "domain": {
+            "chainId": chain_id,
+            "verifyingContract": transaction["safe"]
+        },
+        "message": &*transaction
+    });
+    if chain_id.is_none() {
+        typed_data["types"]["EIP712Domain"].as_array_mut().unwrap().remove(0);
+        typed_data["domain"].as_object_mut().unwrap().remove("chainId");
+    }
+    let hash =
+        serde_json::from_value::<TypedData>(typed_data).unwrap().eip712_signing_hash().unwrap();
+    transaction["safeTxHash"] = json!(hash);
+    hash
+}
+
+fn safe_hash_and_nonce_code(hash: B256, nonce: u64) -> Bytes {
+    // Keep independent words for the transaction hash and nonce, selected by the call selector.
+    let mut code = vec![0x7f];
+    code.extend_from_slice(hash.as_slice());
+    code.extend_from_slice(&hex!("5f527f"));
+    code.extend_from_slice(&U256::from(nonce).to_be_bytes::<32>());
+    code.extend_from_slice(&hex!("60205260205f3560e01c63"));
+    code.extend_from_slice(&TestSafe::nonceCall::SELECTOR);
+    code.extend_from_slice(&hex!("14602002f3"));
+    code.into()
+}
+
+fn simulation_safe_code(hash: B256) -> Bytes {
+    // Retain the simulation path and its jump destination before appending the hash return code.
+    let mut code = hex::decode(SIMULATION_SAFE_CODE_PREFIX).unwrap();
+    code.push(0x7f);
+    code.extend_from_slice(hash.as_slice());
+    code.extend_from_slice(&hex!("5f5260205ff3"));
+    code.into()
+}
+
+async fn install_safe_l2_v1_4_1(
+    api: &anvil::eth::EthApi<foundry_primitives::FoundryNetwork>,
+    address: Address,
+) {
+    api.anvil_set_code(
+        address,
+        fixture_runtime(
+            include_bytes!("../fixtures/safe/v1.4.1/SafeL2.runtime.bin"),
+            SAFE_L2_V1_4_1_RUNTIME_LEN,
+            SAFE_L2_V1_4_1_RUNTIME_HASH,
+        ),
+    )
+    .await
+    .unwrap();
 }
