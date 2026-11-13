@@ -1,5 +1,5 @@
 use super::{CoverageItem, CoverageItemKind, SourceLocation};
-use alloy_primitives::map::{HashMap, HashSet};
+use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
@@ -33,8 +33,8 @@ struct SourceVisitor<'gcx> {
     items: Vec<CoverageItem>,
 
     all_lines: Vec<u32>,
-    /// Branch IDs whose jumps must match the exact ternary expression span.
-    ternary_branches: Vec<u32>,
+    /// Branch IDs whose anchors need more than their source span, with their kind.
+    branch_kinds: Vec<(u32, BranchKind)>,
     /// Deferred function-call spans, each paired with the contract scope active where the call
     /// was collected, so scope travels with the span to the delayed HIR resolution pass.
     function_calls: Vec<(Span, Arc<str>)>,
@@ -45,7 +45,16 @@ struct SourceVisitorCheckpoint {
     items: usize,
     all_lines: usize,
     function_calls: usize,
-    ternary_branches: usize,
+    branch_kinds: usize,
+}
+
+/// The kind of a branch whose anchors depend on more than its source span.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BranchKind {
+    /// A `require` call. Path 0 is the failing side and path 1 the passing side.
+    Require,
+    /// A ternary expression. Its jumps must match the exact expression span.
+    Ternary,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,7 +130,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             gcx,
             contract_name: Arc::default(),
             branch_id: 0,
-            ternary_branches: Default::default(),
+            branch_kinds: Default::default(),
             all_lines: Default::default(),
             function_calls: Default::default(),
             function_call_scopes: Default::default(),
@@ -134,17 +143,16 @@ impl<'gcx> SourceVisitor<'gcx> {
             items: self.items.len(),
             all_lines: self.all_lines.len(),
             function_calls: self.function_calls.len(),
-            ternary_branches: self.ternary_branches.len(),
+            branch_kinds: self.branch_kinds.len(),
         }
     }
 
     fn restore_checkpoint(&mut self, checkpoint: SourceVisitorCheckpoint) {
-        let SourceVisitorCheckpoint { items, all_lines, function_calls, ternary_branches } =
-            checkpoint;
+        let SourceVisitorCheckpoint { items, all_lines, function_calls, branch_kinds } = checkpoint;
         self.items.truncate(items);
         self.all_lines.truncate(all_lines);
         self.function_calls.truncate(function_calls);
-        self.ternary_branches.truncate(ternary_branches);
+        self.branch_kinds.truncate(branch_kinds);
     }
 
     fn visit_contract<'ast>(&mut self, contract: &'ast ast::ItemContract<'ast>) {
@@ -413,6 +421,7 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     // Asserts should not be considered branches: <https://github.com/foundry-rs/foundry/issues/9460>.
                     if ident.as_str() == "require" {
                         let branch_id = self.next_branch_id();
+                        self.branch_kinds.push((branch_id, BranchKind::Require));
                         self.push_item_kind(
                             CoverageItemKind::Branch {
                                 branch_id,
@@ -505,7 +514,7 @@ impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_> {
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         if matches!(expr.kind, ExprKind::Ternary(..)) {
             let branch_id = self.0.next_branch_id();
-            self.0.ternary_branches.push(branch_id);
+            self.0.branch_kinds.push((branch_id, BranchKind::Ternary));
             // Ternary path 0 is the false arm (fallthrough); path 1 is the true arm (jump target).
             for path_id in 0..2 {
                 self.0.push_item_kind(
@@ -569,8 +578,8 @@ fn stmt_has_statements(stmt: &ast::Stmt<'_>) -> bool {
 pub struct SourceAnalysis {
     /// All the coverage items.
     all_items: Vec<CoverageItem>,
-    /// Source and branch IDs requiring exact decision-node source-map matching.
-    ternary_branches: HashSet<(u32, u32)>,
+    /// Kinds of the branches that need special anchoring, by source and branch ID.
+    branch_kinds: HashMap<(u32, u32), BranchKind>,
     /// Source ID to `(offset, len)` into `all_items`.
     map: Vec<(u32, u32)>,
     /// Empty receive and fallback items keyed by coverage item ID.
@@ -648,7 +657,7 @@ impl SourceAnalysis {
                         visitor.push_lines();
                         visitor.sort();
                     }
-                    (source_id, visitor.items, visitor.ternary_branches)
+                    (source_id, visitor.items, visitor.branch_kinds)
                 })
                 .collect::<Vec<_>>()
         });
@@ -659,9 +668,9 @@ impl SourceAnalysis {
         let len = max_idx + 1;
         let mut all_items = Vec::new();
         let mut map = vec![(u32::MAX, 0); len as usize];
-        let mut ternary_branches = HashSet::default();
+        let mut branch_kinds = HashMap::default();
         for (idx, items, branches) in sourced_items {
-            ternary_branches.extend(branches.into_iter().map(|branch| (idx, branch)));
+            branch_kinds.extend(branches.into_iter().map(|(branch, kind)| ((idx, branch), kind)));
             // Assumes that all `idx` items are consecutive, guaranteed by the sort above.
             let idx = idx as usize;
             if map[idx].0 == u32::MAX {
@@ -698,14 +707,14 @@ impl SourceAnalysis {
         Ok(Self {
             all_items,
             map,
-            ternary_branches,
+            branch_kinds,
             empty_special_functions,
             contract_empty_special_functions,
         })
     }
 
-    pub(crate) fn is_ternary_branch(&self, source_id: u32, branch_id: u32) -> bool {
-        self.ternary_branches.contains(&(source_id, branch_id))
+    pub(crate) fn branch_kind(&self, source_id: u32, branch_id: u32) -> Option<BranchKind> {
+        self.branch_kinds.get(&(source_id, branch_id)).copied()
     }
 
     /// Returns all the coverage items.
@@ -760,6 +769,17 @@ impl SourceAnalysis {
             .into_iter()
             .flatten()
             .copied()
+    }
+
+    /// Creates an analysis of source 0 from `items`, with the given branch kinds.
+    #[cfg(test)]
+    pub(crate) fn for_test(items: Vec<CoverageItem>, branch_kinds: &[(u32, BranchKind)]) -> Self {
+        Self {
+            map: vec![(0, items.len() as u32)],
+            all_items: items,
+            branch_kinds: branch_kinds.iter().map(|&(branch, kind)| ((0, branch), kind)).collect(),
+            ..Default::default()
+        }
     }
 }
 

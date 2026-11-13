@@ -1,7 +1,7 @@
 use super::{
     CoverageItemKind, ExecutionAnchor, ExecutionAnchorKind, ItemAnchor, ItemAnchors, SourceLocation,
 };
-use crate::analysis::{EmptySpecialFunctionKind, SourceAnalysis};
+use crate::analysis::{BranchKind, EmptySpecialFunctionKind, SourceAnalysis};
 use alloy_primitives::map::rustc_hash::FxHashSet;
 use evm2::interpreter::op as opcode;
 use eyre::ensure;
@@ -28,16 +28,21 @@ impl ItemAnchor {
     }
 
     fn from_branch(item_id: u32, next_pc: usize, immediate: &[u8]) -> eyre::Result<(Self, Self)> {
-        // We do not support program counters bigger than u32.
-        ensure!(immediate.len() <= 4, "jump destination overflow");
-        let mut pc_bytes = [0u8; 4];
-        pc_bytes[4 - immediate.len()..].copy_from_slice(immediate);
-        let pc_jump = u32::from_be_bytes(pc_bytes);
+        let pc_jump = jump_destination(immediate)?;
         Ok((
             Self { item_id, instruction: (next_pc + 1).try_into()? },
             Self { item_id, instruction: pc_jump },
         ))
     }
+}
+
+/// Decodes a push immediate as a program counter.
+fn jump_destination(immediate: &[u8]) -> eyre::Result<u32> {
+    // We do not support program counters bigger than u32.
+    ensure!(immediate.len() <= 4, "jump destination overflow");
+    let mut pc_bytes = [0u8; 4];
+    pc_bytes[4 - immediate.len()..].copy_from_slice(immediate);
+    Ok(u32::from_be_bytes(pc_bytes))
 }
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
@@ -49,10 +54,15 @@ pub fn find_anchors(
 ) -> ItemAnchors {
     let mut anchors = ItemAnchors::default();
     let index = AnchorIndex::new(bytecode, source_map, ic_pc_map);
-    let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id| match path_id {
-        0 => (fallthrough, None),
-        1 => (taken, Some(fallthrough.instruction - 1)),
-        _ => panic!("too many path IDs for branch"),
+    // Path 0 is the fallthrough and path 1 the jump target, unless `swapped`. The jump target
+    // counts the jump's executions minus its fallthrough's.
+    let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id, swapped| {
+        let jump = Some(fallthrough.instruction - 1);
+        match (path_id, swapped) {
+            (0, false) | (1, true) => (fallthrough, None),
+            (1, false) | (0, true) => (taken, jump),
+            _ => panic!("too many path IDs for branch"),
+        }
     };
     let mut seen_sources = FxHashSet::default();
     source_map
@@ -72,14 +82,21 @@ pub fn find_anchors(
                     index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)).or_else(|_| {
                         index
                             .branch(item_id, &item.loc, false)
-                            .map(|anchors| select_branch(anchors, 1))
+                            .map(|anchors| select_branch(anchors, 1, false))
                     })
                 }
                 CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
-                    let exact = analysis.is_ternary_branch(item.loc.source_id as u32, branch_id);
-                    index
-                        .branch(item_id, anchor_loc, exact)
-                        .map(|anchors| select_branch(anchors, path_id))
+                    let kind = analysis.branch_kind(item.loc.source_id as u32, branch_id);
+                    index.branch(item_id, anchor_loc, kind == Some(BranchKind::Ternary)).map(
+                        |anchors| {
+                            // The failing side of a `require` is path 0, wherever the compiler
+                            // placed it.
+                            let swapped = kind == Some(BranchKind::Require)
+                                && index.fails(anchors.1.instruction)
+                                && !index.fails(anchors.0.instruction);
+                            select_branch(anchors, path_id, swapped)
+                        },
+                    )
                 }
                 _ => index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)),
             }
@@ -117,8 +134,12 @@ pub fn find_execution_anchors(
         .collect()
 }
 
+/// The most static jumps `AnchorIndex::fails` follows.
+const MAX_FAILURE_HOPS: usize = 8;
+
 /// Source map and branch lookups precomputed once per bytecode.
 struct AnchorIndex<'a> {
+    bytecode: &'a [u8],
     source_map: &'a SourceMap,
     ic_pc_map: &'a IcPcMap,
     /// `(source id, offset, instruction)`, sorted for source range lookups.
@@ -165,7 +186,7 @@ impl<'a> AnchorIndex<'a> {
                 }
             }
         }
-        Self { source_map, ic_pc_map, entries, branches, reverting_runs }
+        Self { bytecode, source_map, ic_pc_map, entries, branches, reverting_runs }
     }
 
     /// Finds the first opcode in the source range, preferring code outside a failure stub.
@@ -192,6 +213,38 @@ impl<'a> AnchorIndex<'a> {
             .min()
             .or_else(|| candidates.min());
         ItemAnchor::from_instruction(instruction, self.ic_pc_map, item_id, loc)
+    }
+
+    /// Returns whether the code at `pc` reverts without another conditional branch.
+    ///
+    /// Follows static `PUSH target; JUMP` hops, which compilers use to share revert blocks.
+    fn fails(&self, mut pc: u32) -> bool {
+        // Bounds a cycle of static jumps.
+        'hops: for _ in 0..MAX_FAILURE_HOPS {
+            let code = self.bytecode.get(pc as usize..).unwrap_or_default();
+            let mut push = None;
+            for inst in InstIter::new(code) {
+                match inst.opcode.get() {
+                    opcode::REVERT | opcode::INVALID => return true,
+                    opcode::JUMP => {
+                        let Some(target) = push else { return false };
+                        pc = target;
+                        continue 'hops;
+                    }
+                    opcode::JUMPI | opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT => {
+                        return false;
+                    }
+                    op => {
+                        push = (opcode::PUSH1..=opcode::PUSH32)
+                            .contains(&op)
+                            .then(|| jump_destination(inst.immediate).ok())
+                            .flatten();
+                    }
+                }
+            }
+            return false;
+        }
+        false
     }
 
     /// Finds the fallthrough and taken anchors of a branch.
@@ -250,7 +303,168 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CoverageItem;
     use foundry_compilers::artifacts::sourcemap;
+
+    /// Returns the `(instruction, jump)` of each anchor of the `require` branches at the given
+    /// source offsets, each spanning 20 bytes. Require `n` has items `2n` and `2n + 1` for its
+    /// paths 0 and 1.
+    fn require_anchors(
+        bytecode: &[u8],
+        starts: &[u32],
+        source_map: &str,
+    ) -> Vec<(u32, Option<u32>)> {
+        let items = starts
+            .iter()
+            .enumerate()
+            .flat_map(|(branch_id, &start)| {
+                (0..2).map(move |path_id| CoverageItem {
+                    kind: CoverageItemKind::Branch {
+                        branch_id: branch_id as u32,
+                        path_id,
+                        is_first_opcode: false,
+                    },
+                    loc: SourceLocation {
+                        source_id: 0,
+                        contract_name: "T".into(),
+                        bytes: start..start + 20,
+                        lines: 1..2,
+                    },
+                    anchor_loc: None,
+                    hits: 0,
+                })
+            })
+            .collect();
+        let kinds =
+            (0..starts.len() as u32).map(|id| (id, BranchKind::Require)).collect::<Vec<_>>();
+        let analysis = SourceAnalysis::for_test(items, &kinds);
+        let source_map = sourcemap::parse(source_map).unwrap();
+        let ic_pc_map = IcPcMap::new(bytecode);
+        let anchors = find_anchors(bytecode, &source_map, &ic_pc_map, &analysis);
+        assert_eq!(anchors.anchors.len(), starts.len() * 2);
+        anchors
+            .anchors
+            .iter()
+            .enumerate()
+            .map(|(index, anchor)| {
+                assert_eq!(anchor.item_id as usize, index);
+                (anchor.instruction, anchors.jumps.get(&index).copied())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn require_paths_follow_the_failing_side() {
+        // `cond; PUSH dest; JUMPI`, then the continuation or the revert.
+        let solc = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let solar = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            6,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        // Both sides revert, so the layout is ambiguous and the fallthrough is path 0.
+        let both_revert = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        // The taken side branches again before it can revert.
+        let taken_branches = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            6,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            14,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        for (bytecode, expected) in [
+            (&solc[..], [(5, None), (8, Some(4))]),
+            (&solar[..], [(6, Some(4)), (5, None)]),
+            (&both_revert[..], [(5, None), (8, Some(4))]),
+            (&taken_branches[..], [(5, None), (6, Some(4))]),
+        ] {
+            let count = InstIter::new(bytecode).count();
+            // Only the condition and the jump belong to the require.
+            let source_map = format!("10:20:0;;;50:5:0{}", ";".repeat(count - 4));
+            assert_eq!(require_anchors(bytecode, &[10], &source_map), expected);
+        }
+    }
+
+    #[test]
+    fn requires_share_a_revert_block() {
+        // Both requires jump to the same revert block, the first through a `PUSH; JUMP` stub.
+        let bytecode = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            15,
+            opcode::JUMPI,
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            19,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::INVALID,
+            opcode::INVALID,
+            opcode::INVALID,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            19,
+            opcode::JUMP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        // The first require maps the first three instructions, the second the rest.
+        let source_map =
+            format!("10:20:0;;;40:20:0{}", ";".repeat(InstIter::new(&bytecode).count() - 4));
+        assert_eq!(
+            require_anchors(&bytecode, &[10, 40], &source_map),
+            [(15, Some(4)), (5, None), (19, Some(9)), (10, None)]
+        );
+    }
 
     #[test]
     fn ternary_anchor_rejects_missing_node_mapping() {
