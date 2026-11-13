@@ -81,14 +81,19 @@ pub fn find_anchors(
                 {
                     index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)).or_else(|_| {
                         index
-                            .branch(item_id, &item.loc, false)
+                            .branch(item_id, &item.loc, false, None)
                             .map(|anchors| select_branch(anchors, 1, false))
                     })
                 }
                 CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
                     let kind = analysis.branch_kind(item.loc.source_id as u32, branch_id);
                     let exact = matches!(kind, Some(BranchKind::Ternary));
-                    index.branch(item_id, anchor_loc, exact).map(|anchors| {
+                    // A Yul `if` owns the jump outside its body, not those of nested branches.
+                    let body = match kind {
+                        Some(BranchKind::YulIf(body)) => Some(body),
+                        _ => None,
+                    };
+                    index.branch(item_id, anchor_loc, exact, body).map(|anchors| {
                         // Path 0 is the failing side of a `require` and the body of a Yul `if`,
                         // wherever the compiler placed it.
                         let swapped = match kind {
@@ -254,6 +259,11 @@ impl<'a> AnchorIndex<'a> {
         while self.pcs.get(ic).is_some_and(|&p| self.bytecode[p as usize] == opcode::JUMPDEST) {
             ic += 1;
         }
+        self.maps_inside(ic, loc)
+    }
+
+    /// Returns whether the instruction `ic` is mapped inside `loc`.
+    fn maps_inside(&self, ic: usize, loc: &SourceLocation) -> bool {
         self.source_map.get(ic).is_some_and(|element| {
             element.index() == Some(loc.source_id as u32)
                 && element.offset() >= loc.bytes.start
@@ -296,12 +306,16 @@ impl<'a> AnchorIndex<'a> {
     /// Finds the fallthrough and taken anchors of a branch.
     ///
     /// `exact` matches only the jump mapped to exactly `loc`, so ternaries skip nested decisions.
+    /// Otherwise the last matching jump wins, preferring one mapped outside `nested`, the code
+    /// of the branch's body, which holds the jumps of nested branches and loops.
     fn branch(
         &self,
         item_id: u32,
         loc: &SourceLocation,
         exact: bool,
+        nested: Option<&SourceLocation>,
     ) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
+        let mut own = None;
         let mut anchors = None;
         for &(ic, next_pc, immediate) in &self.branches {
             let matches = if exact {
@@ -319,10 +333,14 @@ impl<'a> AnchorIndex<'a> {
                 if exact {
                     return Ok(found);
                 }
-                anchors = Some(found);
+                if nested.is_none_or(|nested| !self.maps_inside(ic + 1, nested)) {
+                    own = Some(found);
+                } else {
+                    anchors = Some(found);
+                }
             }
         }
-        anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
+        own.or(anchors).ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
     }
 }
 
@@ -571,6 +589,42 @@ mod tests {
     }
 
     #[test]
+    fn yul_if_takes_its_own_jump() {
+        // An outer `if` whose body holds another conditional jump. The `if` spans bytes 10..30 and
+        // its body 22..30. The outer jump is at pc 4 and the nested one at pc 9.
+        let bytecode = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            12,
+            opcode::JUMPI,
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            11,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::JUMPDEST,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let kind = BranchKind::YulIf(SourceLocation {
+            source_id: 0,
+            contract_name: "T".into(),
+            bytes: 22..30,
+            lines: 1..2,
+        });
+        for (source_map, expected) in [
+            // The nested jump is mapped inside the body, so the condition's jump is the `if`'s.
+            ("12:5:0;;;25:2:0;;;26:3:0;;50:5:0;", [(5, None), (12, Some(4))]),
+            // Without a jump outside the body, the last jump is the `if`'s.
+            ("22:5:0;;;25:2:0;;;26:3:0;;50:5:0;", [(10, None), (11, Some(9))]),
+        ] {
+            assert_eq!(branch_anchors(&bytecode, &[(10, kind.clone())], source_map), expected);
+        }
+    }
+
+    #[test]
     fn requires_share_a_revert_block() {
         // Both requires jump to the same revert block, the first through a `PUSH; JUMP` stub.
         let bytecode = [
@@ -616,7 +670,7 @@ mod tests {
         let inner_only = sourcemap::parse("15:5:0;;;").unwrap();
         let ic_pc_map = IcPcMap::new(&bytecode);
         let index = AnchorIndex::new(&bytecode, &inner_only, &ic_pc_map);
-        assert!(index.branch(0, &loc, true).is_err());
+        assert!(index.branch(0, &loc, true, None).is_err());
     }
 
     #[test]
