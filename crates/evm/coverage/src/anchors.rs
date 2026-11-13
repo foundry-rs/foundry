@@ -212,7 +212,8 @@ impl<'a> AnchorIndex<'a> {
     /// the lowest instruction in the span, which can belong to a body block laid out before the
     /// entry. The entry is the exact-span instruction that code outside the function jumps to,
     /// which excludes the function's exit label and inlined code. Falls back to [`Self::simple`]
-    /// when there is none, as for inlined constructors and fallbacks.
+    /// when there is none, as for inlined constructors and fallbacks, and for functions that only
+    /// their own modifier wrapper jumps to, such as with solc via-IR and the optimizer.
     fn function(&self, item_id: u32, loc: &SourceLocation) -> eyre::Result<ItemAnchor> {
         let source = loc.source_id as i32;
         let start = self
@@ -400,6 +401,49 @@ mod tests {
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
             assert_eq!(index.simple(0, &loc).unwrap().instruction, 0);
             assert_eq!(index.function(0, &loc).unwrap().instruction, expected, "{source_map:?}");
+        }
+
+        // A lower exact-span `JUMPDEST` that nothing jumps to, such as a via-IR return point, and
+        // an exact-span failure stub that only the function itself jumps to are not the entry.
+        for (bytecode, source_map, expected) in [
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "10:20:0;;;;;;0:100:0;",
+                3,
+            ),
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::PUSH1,
+                    0,
+                    opcode::JUMPI,
+                    opcode::PUSH1,
+                    4,
+                    opcode::JUMP,
+                ],
+                "10:20:0;;;;;;12:3:0;;0:100:0;",
+                4,
+            ),
+        ] {
+            let source_map = sourcemap::parse(source_map).unwrap();
+            let ic_pc_map = IcPcMap::new(&bytecode);
+            let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+            assert_eq!(index.function(0, &loc).unwrap().instruction, expected);
         }
 
         // An exact-span instruction that nothing jumps to is not an entry, as in an inlined
