@@ -9469,6 +9469,7 @@ impl Backend<FoundryNetwork> {
                 let mut call_res = Vec::with_capacity(calls.len());
                 let mut log_index = 0;
                 let mut cumulative_gas_used = 0;
+                let mut cumulative_charged_gas = 0u64;
                 let mut block_regular_gas_used = 0;
                 let mut block_state_gas_used = 0;
                 let mut block_blob_gas_used = 0u64;
@@ -9774,9 +9775,13 @@ impl Backend<FoundryNetwork> {
                         state.account_changes().map(|changes| changes.address),
                     );
 
-                    rpc_gas_budget = rpc_gas_budget.saturating_sub(result.ext.charged_gas);
-                    cumulative_gas_used =
-                        cumulative_gas_used.saturating_add(result.ext.charged_gas);
+                    // Simulation allowances measure consumption independently of receipt charges.
+                    let gas_used = result.tx_gas_used();
+                    rpc_gas_budget = rpc_gas_budget.saturating_sub(gas_used);
+                    cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
+                    cumulative_charged_gas =
+                        cumulative_charged_gas.saturating_add(result.ext.charged_gas);
+                    // Amsterdam budgets regular and state gas separately, using consumption.
                     block_regular_gas_used =
                         block_regular_gas_used.saturating_add(result.execution_gas_spent());
                     block_state_gas_used =
@@ -9837,14 +9842,14 @@ impl Backend<FoundryNetwork> {
                             canonical_logs.clone(),
                             Some(self.hardfork()),
                             caller_nonce,
-                            cumulative_gas_used,
+                            cumulative_charged_gas,
                         )
                     } else {
                         build_receipt(
                             tx.as_ref().tx_type(),
                             result.status,
                             canonical_logs.clone(),
-                            cumulative_gas_used,
+                            cumulative_charged_gas,
                             result.ext.eip8130_phase_statuses.clone(),
                         )
                     };
@@ -9853,7 +9858,7 @@ impl Backend<FoundryNetwork> {
                         tx.as_ref().tx_type(),
                         result.status,
                         canonical_logs.clone(),
-                        cumulative_gas_used,
+                        cumulative_charged_gas,
                         result.ext.eip8130_phase_statuses.clone(),
                     );
                     receipts.push(receipt);
@@ -9923,7 +9928,7 @@ impl Backend<FoundryNetwork> {
                 let gas_used = if is_amsterdam {
                     block_regular_gas_used.max(block_state_gas_used)
                 } else {
-                    cumulative_gas_used
+                    cumulative_charged_gas
                 };
                 let (requests, block_access_list) = if let Some(transitions) = ethereum_transitions
                 {

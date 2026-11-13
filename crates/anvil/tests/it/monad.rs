@@ -1,6 +1,6 @@
 use alloy_consensus::{
-    SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559, TxLegacy,
-    transaction::TxEip7702,
+    Receipt, ReceiptEnvelope, SidecarBuilder, SignableTransaction, SimpleCoder, Transaction,
+    TxEip1559, TxLegacy, proofs::calculate_receipt_root, transaction::TxEip7702,
 };
 use alloy_eips::{
     calc_next_block_base_fee,
@@ -2865,7 +2865,7 @@ async fn monad_bundle_separates_consumption_from_charged_fees() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn monad_simulate_resolves_remaining_charged_gas() {
+async fn monad_simulate_resolves_remaining_execution_gas() {
     let (_api, handle) = spawn(NodeConfig::test_monad().with_gas_limit(Some(100_000))).await;
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
@@ -2881,9 +2881,9 @@ async fn monad_simulate_resolves_remaining_charged_gas() {
         .await
         .unwrap();
 
-    assert_eq!(blocks[0].inner.header.gas_used, 100_000);
+    assert_eq!(blocks[0].inner.header.gas_used, 119_000);
     assert_eq!(blocks[0].calls.len(), 2);
-    for (call, limit) in blocks[0].calls.iter().zip([40_000, 60_000]) {
+    for (call, limit) in blocks[0].calls.iter().zip([40_000, 79_000]) {
         assert!(call.status);
         assert_eq!(call.gas_used, limit);
         assert_eq!(call.max_used_gas, Some(21_000));
@@ -2891,59 +2891,70 @@ async fn monad_simulate_resolves_remaining_charged_gas() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn monad_simulate_enforces_charged_block_gas_limit() {
+async fn monad_simulate_budgets_block_gas_by_consumption() {
     let (_api, handle) = spawn(NodeConfig::test_monad()).await;
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
     let request =
         TransactionRequest::default().from(sender).to(ROLLBACK_RECIPIENT).gas_limit(60_000);
+    let mut block = SimBlock {
+        block_overrides: Some(BlockOverrides { gas_limit: Some(100_000), ..Default::default() }),
+        calls: vec![request.clone(), request.clone()],
+        ..Default::default()
+    };
+    let blocks = provider
+        .simulate(&SimulatePayload { block_state_calls: vec![block.clone()], ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(blocks[0].inner.header.gas_used, 120_000);
+    assert_eq!(blocks[0].calls.len(), 2);
+    for call in &blocks[0].calls {
+        assert!(call.status);
+        assert_eq!(call.gas_used, 60_000);
+        assert_eq!(call.max_used_gas, Some(21_000));
+    }
+
+    // Two transfers consume 42,000 gas, leaving less than the third call requests.
+    block.calls.push(request);
     let error = provider
-        .simulate(&SimulatePayload {
-            block_state_calls: vec![SimBlock {
-                block_overrides: Some(BlockOverrides {
-                    gas_limit: Some(100_000),
-                    ..Default::default()
-                }),
-                calls: vec![request.clone(), request],
-                ..Default::default()
-            }],
-            ..Default::default()
-        })
+        .simulate(&SimulatePayload { block_state_calls: vec![block], ..Default::default() })
         .await
         .unwrap_err();
 
     let error = error.as_error_resp().unwrap();
     assert_eq!(error.code, -38015);
-    assert_eq!(error.message, "block gas limit exceeded: remaining 40000, requested 60000");
+    assert_eq!(error.message, "block gas limit exceeded: remaining 58000, requested 60000");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn monad_simulate_enforces_charged_request_gas_budget() {
-    let (_api, handle) = spawn(NodeConfig::test_monad().with_gas_limit(Some(75_000_000))).await;
+async fn monad_simulate_without_gas_limits_across_blocks() {
+    let (_api, handle) = spawn(NodeConfig::test_monad().with_gas_limit(Some(30_000_000))).await;
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
     let block = SimBlock {
         calls: vec![
-            TransactionRequest::default().from(sender).to(ROLLBACK_RECIPIENT).gas_limit(30_000_000),
+            TransactionRequest::default().from(sender).to(ROLLBACK_RECIPIENT).value(U256::ONE),
         ],
         ..Default::default()
     };
     let blocks = provider
         .simulate(&SimulatePayload {
-            block_state_calls: vec![block.clone(), block],
+            block_state_calls: vec![block.clone(), block.clone(), block],
+            return_full_transactions: true,
             ..Default::default()
         })
         .await
         .unwrap();
 
-    assert_eq!(blocks.len(), 2);
-    // The 50M request allowance carries over between simulated blocks.
-    for (block, limit) in blocks.iter().zip([30_000_000, 20_000_000]) {
-        assert_eq!(block.inner.header.gas_used, limit);
+    assert_eq!(blocks.len(), 3);
+    // Charges exceed 50M in total, but the request consumes only 63,000 gas.
+    for block in &blocks {
+        assert_eq!(block.inner.header.gas_used, 30_000_000);
         assert_eq!(block.calls.len(), 1);
         assert!(block.calls[0].status);
-        assert_eq!(block.calls[0].gas_used, limit);
+        assert_eq!(block.calls[0].gas_used, 30_000_000);
         assert_eq!(block.calls[0].max_used_gas, Some(21_000));
+        assert_eq!(block.inner.transactions.as_transactions().unwrap()[0].gas_limit(), 30_000_000);
     }
 }
 
@@ -2982,4 +2993,88 @@ async fn monad_debug_trace_call_preserves_nested_consumption() {
     let child_steps = frame.struct_logs.iter().filter(|step| step.depth == 2).collect::<Vec<_>>();
     assert_eq!(child_steps.len(), 3);
     assert_eq!(child_steps.iter().map(|step| step.gas_cost).sum::<u64>(), 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_simulate_without_gas_limits_reports_charged_gas() {
+    let gas_limit = 30_000_000;
+    let config = NodeConfig::test_monad().with_gas_limit(Some(gas_limit)).with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    for (data, consumed) in [(Bytes::new(), 21_000), (Bytes::from(vec![1; 1000]), 61_000)] {
+        for validation in [false, true] {
+            let request = TransactionRequest::default()
+                .from(sender)
+                .to(ROLLBACK_RECIPIENT)
+                .value(U256::ONE)
+                .gas_price(0)
+                .input(data.clone().into());
+            let blocks = provider
+                .simulate(&SimulatePayload {
+                    block_state_calls: vec![SimBlock {
+                        calls: vec![request.clone(), request],
+                        ..Default::default()
+                    }],
+                    validation,
+                    return_full_transactions: true,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(blocks.len(), 1);
+            let block = &blocks[0];
+            let charged = [gas_limit, gas_limit - consumed];
+            assert_eq!(block.inner.header.gas_used, charged.iter().sum::<u64>());
+            assert_eq!(block.calls.len(), 2);
+            let transactions = block.inner.transactions.as_transactions().unwrap();
+            for ((call, tx), limit) in block.calls.iter().zip(transactions).zip(charged) {
+                assert!(call.status);
+                assert_eq!(tx.gas_limit(), limit);
+                assert_eq!(call.gas_used, limit);
+                assert_eq!(call.max_used_gas, Some(consumed));
+            }
+            let receipts = [charged[0], charged[0] + charged[1]].map(|cumulative_gas_used| {
+                ReceiptEnvelope::Legacy(
+                    Receipt { status: true.into(), cumulative_gas_used, logs: vec![] }.with_bloom(),
+                )
+            });
+            assert_eq!(block.inner.header.receipts_root, calculate_receipt_root(&receipts));
+        }
+    }
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_simulate_request_budget_counts_halted_execution() {
+    let (api, handle) = spawn(NodeConfig::test_monad().with_gas_limit(Some(30_000_000))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, bytes!("fe")).await.unwrap();
+    let blocks = provider
+        .simulate(&SimulatePayload {
+            block_state_calls: [STORAGE_GAS_PROBE_ADDRESS, ROLLBACK_RECIPIENT, ROLLBACK_RECIPIENT]
+                .map(|to| SimBlock {
+                    calls: vec![TransactionRequest::default().from(sender).to(to)],
+                    ..Default::default()
+                })
+                .into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(blocks.len(), 3);
+    // The halt consumes 30M; the next transfer only consumes 21,000 of the remaining 20M.
+    for (block, (limit, consumed, status)) in blocks.iter().zip([
+        (30_000_000, 30_000_000, false),
+        (20_000_000, 21_000, true),
+        (19_979_000, 21_000, true),
+    ]) {
+        assert_eq!(block.inner.header.gas_used, limit);
+        assert_eq!(block.calls.len(), 1);
+        assert_eq!(block.calls[0].gas_used, limit);
+        assert_eq!(block.calls[0].max_used_gas, Some(consumed));
+        assert_eq!(block.calls[0].status, status);
+    }
 }
