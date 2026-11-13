@@ -47,8 +47,10 @@ pub trait FoundryDatabase: DynDatabase {
 
     /// Prefetches the remote state a call is about to read, if this database reads a remote
     /// fork. With `overrides`, the `local` state over this database goes along as overrides;
-    /// without, a call into an account without code on the endpoint, or one the context holds but
-    /// the fork never loaded from it, is skipped.
+    /// without, a call into an account without code on the endpoint, unless it is a `precompile`
+    /// of the running EVM, or into one the context holds but the fork never loaded from it, is
+    /// skipped.
+    #[allow(clippy::too_many_arguments)]
     fn prefetch_call(
         &self,
         _caller: Address,
@@ -57,6 +59,7 @@ pub trait FoundryDatabase: DynDatabase {
         _input: Bytes,
         _local: Option<&Cache>,
         _overrides: bool,
+        _precompile: bool,
     ) {
     }
 }
@@ -107,8 +110,9 @@ impl FoundryDatabase for Box<dyn BackingDb> {
         input: Bytes,
         local: Option<&Cache>,
         overrides: bool,
+        precompile: bool,
     ) {
-        (**self).prefetch_call(caller, target, value, input, local, overrides);
+        (**self).prefetch_call(caller, target, value, input, local, overrides, precompile);
     }
 }
 
@@ -249,8 +253,11 @@ impl<N: Network, B: ForkBlockEnv> FoundryDatabase for ForkDb<SharedBackend<N, B>
         input: Bytes,
         local: Option<&Cache>,
         overrides: bool,
+        precompile: bool,
     ) {
-        prefetch::prefetch_call(&self.db, caller, target, value, input, local, overrides);
+        prefetch::prefetch_call(
+            &self.db, caller, target, value, input, local, overrides, precompile,
+        );
     }
 }
 
@@ -369,7 +376,8 @@ impl FoundryDatabase for AcceptedView {
         input: Bytes,
         local: Option<&Cache>,
         overrides: bool,
+        precompile: bool,
     ) {
-        self.backing.prefetch_call(caller, target, value, input, local, overrides);
+        self.backing.prefetch_call(caller, target, value, input, local, overrides, precompile);
     }
 }

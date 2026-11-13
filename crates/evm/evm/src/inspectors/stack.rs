@@ -2173,6 +2173,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
                 message.value,
                 message.input.to_bytes(interp.memory()),
                 depth == root && !self.inner.in_inner_context,
+                interp.host().precompiles().contains(&message.destination),
             );
         }
 
