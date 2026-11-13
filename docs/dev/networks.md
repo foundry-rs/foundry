@@ -316,7 +316,10 @@ upstream identity; this test does not authenticate an upstream committee handoff
 These tests exercise Solidity application acceptance, including a local HTTP transaction. They do
 not make a native Tempo validator accept the Anvil block or certificate. Native consensus acceptance
 would require the actual validator, DKG, committee membership and quorum; this receiver and its
-attachment semantics provide no such integration.
+attachment semantics provide no such integration. From T15, once `ValidatorConfigV2` is initialized
+in the parent state, Tempo's execution also checks each boundary block's DKG outcome against it.
+Anvil does not update that registry, so its rotation boundaries, and boundaries on forks of real
+validator sets, fail that check when the registry is initialized.
 
 ```sh
 cargo nextest run -p forge --test cli tempo_proofs

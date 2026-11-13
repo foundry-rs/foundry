@@ -26,8 +26,10 @@ mod brutalize;
 mod cheatcode_access;
 mod cheatcode_libraries;
 mod core;
+mod discovery;
 mod exact_fork;
 mod fork_bal;
+mod fork_prefetch;
 mod fork_state_by_number;
 mod fuzz;
 mod halts;
@@ -8715,4 +8717,175 @@ contract ForkRollSenderTest is Test {
 [PASS] test_rollKeepsSenderBalance() ([GAS])
 ...
 "#]]);
+}
+
+// Slots that an account created in an earlier transaction, or by an isolated call that switched
+// forks, never wrote read as zero on a fork rather than as the fork's storage at its address.
+#[forgetest]
+async fn fork_created_account_unwritten_storage(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // The test contract and the contracts it creates: at nonce 1 in `setUp`, and at nonce 2, or 3
+    // when the switching call is an isolated transaction.
+    let test = address!("0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496");
+    for account in [test, test.create(1), test.create(2), test.create(3)] {
+        api.anvil_set_storage_at(account, U256::from(100), B256::with_last_byte(1)).await.unwrap();
+    }
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    prj.add_test(
+        "CreatedStorage.t.sol",
+        &r#"
+interface Vm {
+    function createFork(string calldata url) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function makePersistent(address account) external;
+}
+
+contract Store {
+    uint256 public written = 1;
+
+    function get() external view returns (uint256 value) {
+        assembly {
+            value := sload(100)
+        }
+    }
+}
+
+contract CreatedStorageForkTest is Store {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Store created;
+    uint256 fork;
+
+    function setUp() public {
+        created = new Store();
+        vm.makePersistent(address(created));
+        fork = vm.createFork("<url>");
+    }
+
+    function selectAndCreate() external returns (Store) {
+        vm.selectFork(fork);
+        return new Store();
+    }
+
+    function poke() external {}
+
+    function testForkCreatedInEarlierTransaction() public {
+        vm.selectFork(fork);
+        require(created.get() == 0, "created in setUp");
+        require(created.written() == 1, "written in setUp");
+        require(this.get() == 0, "test contract");
+    }
+
+    function testForkCreatedInSwitchingCall() public {
+        Store store = this.selectAndCreate();
+        require(store.get() == 0, "created in a switching call");
+        require(store.written() == 1, "written in a switching call");
+        this.poke();
+        require(store.written() == 1, "written after a later call");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint()),
+    );
+
+    let output = str![[r#"
+...
+Ran 2 tests for test/CreatedStorage.t.sol:CreatedStorageForkTest
+[PASS] testForkCreatedInEarlierTransaction() ([GAS])
+[PASS] testForkCreatedInSwitchingCall() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// A creation that `vm.transact` replays on the active fork discards the storage at its address
+// only until the call that replayed it reverts.
+#[forgetest]
+async fn fork_transact_reverted_creation_keeps_storage(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    // The fork holds storage at the address the creation writes to, with a slot for each replay
+    // to read only after the creation.
+    let created = from.create(0);
+    api.anvil_set_balance(created, U256::ONE).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(1), B256::with_last_byte(5)).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(2), B256::with_last_byte(6)).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(3), B256::with_last_byte(8)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    // Init code that stores 1 at slot 1 and deploys an empty contract.
+    let tx_hash: B256 = provider
+        .raw_request(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({ "from": from, "data": "0x600160015500" }),),
+        )
+        .await
+        .unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
+    assert_eq!(receipt.contract_address, Some(created));
+
+    prj.add_test(
+        "TransactCreation.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, bytes32 txHash) external returns (uint256);
+    function transact(bytes32 txHash) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
+    function etch(address target, bytes calldata code) external;
+}
+
+contract TransactCreationForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant CREATED = <created>;
+
+    function replayAndRevert(bytes32 unloaded) external {
+        vm.transact(<tx>);
+        require(vm.load(CREATED, bytes32(0)) == 0, "replayed creation");
+        require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(1)), "replayed write");
+        require(vm.load(CREATED, unloaded) == 0, "replayed unloaded slot");
+        revert("rolled back");
+    }
+
+    function testForkTransactRevertedCreation() public {
+        vm.createSelectFork("<url>", <tx>);
+        vm.store(CREATED, bytes32(0), bytes32(uint256(7)));
+        try this.replayAndRevert(bytes32(uint256(2))) {} catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("rolled back"), reason);
+        }
+        require(CREATED.code.length == 0, "rolled back creation");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "seeded");
+        require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(5)), "fork storage");
+        require(vm.load(CREATED, bytes32(uint256(2))) == bytes32(uint256(6)), "slot read in replay");
+        // Clearing that slot costs a clean slot's SSTORE, so its original is its fork value.
+        vm.etch(CREATED, hex"5a5f6002555a90035f5260205ff3");
+        (, bytes memory used) = CREATED.call("");
+        require(abi.decode(used, (uint256)) >= 2900, "original of slot read in replay");
+        vm.etch(CREATED, "");
+        // A slot loaded before another replay keeps its value after the replay reverts.
+        vm.store(CREATED, bytes32(uint256(2)), 0);
+        try this.replayAndRevert(bytes32(uint256(3))) {} catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("rolled back"), reason);
+        }
+        require(vm.load(CREATED, bytes32(uint256(2))) == 0, "slot stored before replay");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<tx>", &tx_hash.to_string())
+        .replace("<created>", &created.to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkTransactRevertedCreation() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
 }
