@@ -3811,6 +3811,121 @@ end_of_record
     );
 }
 
+// Solar lays out a Yul `if` with the body at either jump side, and its `if`s nest. Path 0 is the
+// side that enters the body, and an `if` reports its own jump, whatever the compiler does.
+#[forgetest]
+fn yul_if_solar_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    uint256 public stored;
+
+    function reverting(uint256 a) external pure {
+        assembly { if iszero(a) { revert(0, 0) } }
+    }
+
+    function storing(uint256 a) external {
+        assembly {
+            if lt(a, 100) { sstore(stored.slot, a) sstore(add(stored.slot, 1), a) }
+        }
+    }
+
+    function leaving(uint256 a) external pure returns (uint256 r) {
+        assembly {
+            function f(x) -> y {
+                if lt(x, 5) { y := 1 leave }
+            }
+            r := f(a)
+        }
+    }
+
+    function nested(uint256 a, uint256 b) external {
+        assembly {
+            if a {
+                if b { sstore(stored.slot, 1) }
+            }
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        guard.reverting(5);
+        guard.reverting(6);
+        guard.reverting(7);
+        try guard.reverting(0) {} catch {}
+        guard.storing(1);
+        guard.storing(2);
+        guard.storing(3);
+        guard.storing(200);
+        guard.leaving(1);
+        guard.leaving(2);
+        guard.leaving(9);
+        guard.nested(1, 1);
+        guard.nested(1, 0);
+        guard.nested(0, 1);
+        guard.nested(0, 0);
+        guard.nested(0, 0);
+    }
+}
+"#,
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(
+        cmd.args(["coverage", "--use"]).arg(solar),
+        str![[r#"
+TN:
+SF:src/Guard.sol
+DA:7,4
+FN:7,Guard.reverting
+FNDA:4,Guard.reverting
+DA:8,4
+BRDA:8,0,0,1
+BRDA:8,0,1,3
+DA:11,4
+FN:11,Guard.storing
+FNDA:4,Guard.storing
+DA:13,4
+BRDA:13,1,0,3
+BRDA:13,1,1,1
+DA:17,3
+FN:17,Guard.leaving
+FNDA:3,Guard.leaving
+DA:19,3
+FN:19,Guard.f
+FNDA:3,Guard.f
+DA:20,3
+BRDA:20,2,0,2
+BRDA:20,2,1,1
+DA:22,3
+DA:26,5
+FN:26,Guard.nested
+FNDA:5,Guard.nested
+DA:28,5
+BRDA:28,3,0,2
+BRDA:28,3,1,3
+DA:29,2
+BRDA:29,4,0,1
+BRDA:29,4,1,1
+FNF:5
+FNH:5
+LF:11
+LH:11
+BRF:10
+BRH:10
+end_of_record
+
+"#]],
+    );
+}
+
 // Test that coverage files are written even when tests fail.
 #[forgetest]
 fn coverage_with_failing_tests(prj: _, cmd: _) {
