@@ -147,10 +147,11 @@ pub(crate) struct Awaiting<'a, N: Network> {
 /// anything is sent.
 ///
 /// `transactions` are the remaining operations of sequence `sequence_index`, in order. They are
-/// simulated in order up to the last one with offline owners, one per block, so that each gas
-/// limit succeeds after the operations before it, which are not sent yet. Fails when one of them
-/// fails, when there are more than a node simulates, or when one would change its account's
-/// configuration before another transaction of the account.
+/// simulated in order up to the last one with offline owners, in one block or else one per block,
+/// so that each gas limit succeeds after the operations before it, which are not sent yet. Fails
+/// when one of them fails, when they fit neither in one block nor in as many blocks as a node
+/// simulates, or when one would change its account's configuration before another transaction of
+/// the account.
 pub(crate) async fn prepare<'a, N: Network>(
     sequence: &ScriptSequenceKind<N>,
     sequence_index: usize,
@@ -170,15 +171,6 @@ where
         return Ok(Vec::new());
     };
     let transactions = &transactions[..=last];
-    if transactions.len() > MAX_SIMULATED_BLOCKS {
-        bail!(
-            "{} transactions must be simulated in order to fix the gas limits of the transactions \
-             awaiting owner approvals, but a node simulates at most {MAX_SIMULATED_BLOCKS}; split \
-             the script so that at most {MAX_SIMULATED_BLOCKS} operations run up to the last \
-             transaction of a configurable account with offline owners",
-            transactions.len()
-        );
-    }
 
     let mut requests = Vec::with_capacity(transactions.len());
     for (position, (kind, is_fixed_gas_limit, index)) in transactions.iter().enumerate() {
@@ -253,7 +245,26 @@ where
             );
         }
     }
-    let calls = match simulate(provider, &requests, block).await {
+    // All of them run in one block, as they fit in one on a node with a large block gas limit.
+    // When they do not, each runs in a block of its own, as a node simulates at most
+    // `MAX_SIMULATED_BLOCKS` blocks.
+    let mut per_call = false;
+    let calls = match simulate(provider, &requests, block, false).await {
+        Ok(calls) if calls.iter().all(|call| call.status) => Ok(calls),
+        _ if requests.len() > 1 && requests.len() <= MAX_SIMULATED_BLOCKS => {
+            per_call = true;
+            simulate(provider, &requests, block, true).await
+        }
+        Err(error) if requests.len() > MAX_SIMULATED_BLOCKS => Err(error.wrap_err(format!(
+            "the {} transactions do not fit in one simulated block, and a node simulates at \
+             most {MAX_SIMULATED_BLOCKS} blocks; split the script so that at most \
+             {MAX_SIMULATED_BLOCKS} operations run up to the last transaction of a configurable \
+             account with offline owners",
+            requests.len()
+        ))),
+        single => single,
+    };
+    let calls = match calls {
         Ok(calls) => calls,
         // A single transaction does not depend on unsent ones, so it can be estimated without
         // `eth_simulateV1`.
@@ -294,16 +305,24 @@ where
     // Gas used is not the gas a call needs to start with, as calls keep back 1/64 of their gas,
     // so the limits are checked together, and the first one that fails is raised to the least
     // that succeeds until they all do.
+    // The gas a call can be given: in one block, what the calls before it leave of it.
+    let room = |calls: &[SimCallResult], position: usize| {
+        let used =
+            if per_call { 0 } else { calls[..position].iter().map(|call| call.gas_used).sum() };
+        block_gas_limit.saturating_sub(used)
+    };
     for (position, call) in calls.iter().enumerate() {
         if adjusted[position] {
             let used = call.max_used_gas.unwrap_or_default().max(call.gas_used);
             let gas_limit = apply_gas_estimate_multiplier(used, Some(gas_estimate_multiplier))?;
-            requests[position].set_gas_limit(gas_limit.min(block_gas_limit));
+            requests[position].set_gas_limit(gas_limit.min(room(&calls, position)));
         }
     }
     // Each fixed limit succeeds after the ones before it, so the first failure moves forward.
     let mut fixed = None;
-    while let Some((position, error)) = fails(&simulate(provider, &requests, block).await?) {
+    loop {
+        let calls = simulate(provider, &requests, block, per_call).await?;
+        let Some((position, error)) = fails(&calls) else { break };
         let index = transactions[position].2;
         if !adjusted[position] || fixed.is_some_and(|fixed| position <= fixed) {
             return Err(error);
@@ -312,7 +331,8 @@ where
             provider,
             &mut requests[..=position],
             block,
-            block_gas_limit,
+            per_call,
+            room(&calls, position),
             gas_estimate_multiplier,
         )
         .await
@@ -400,23 +420,26 @@ where
     report(sequence)
 }
 
-/// Simulates `requests` in order on top of `block`, one per block, so that each runs on
-/// the state the ones before it leave.
+/// Simulates `requests` in order on top of `block`, so that each runs on the state the ones
+/// before it leave: all in one block, or each in a block of its own when `per_call` is set.
 async fn simulate<N: Network>(
     provider: &RootProvider<N>,
     requests: &[N::TransactionRequest],
     block: u64,
+    per_call: bool,
 ) -> Result<Vec<SimCallResult>>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
 {
-    let payload = SimulatePayload {
-        block_state_calls: requests
+    let block_state_calls = if per_call {
+        requests
             .iter()
             .map(|request| SimBlock { calls: vec![request.clone()], ..Default::default() })
-            .collect(),
-        ..Default::default()
+            .collect()
+    } else {
+        vec![SimBlock { calls: requests.to_vec(), ..Default::default() }]
     };
+    let payload = SimulatePayload { block_state_calls, ..Default::default() };
     let calls = provider
         .raw_request::<_, Vec<SimulatedBlock<Value>>>(
             "eth_simulateV1".into(),
@@ -447,6 +470,7 @@ async fn least_gas_limit<N: Network>(
     provider: &RootProvider<N>,
     requests: &mut [N::TransactionRequest],
     block: u64,
+    per_call: bool,
     cap: u64,
     multiplier: u64,
 ) -> Result<u64>
@@ -455,12 +479,13 @@ where
 {
     let succeeds = async |requests: &mut [N::TransactionRequest], gas: u64| -> Result<bool> {
         requests.last_mut().expect("a request").set_gas_limit(gas);
-        Ok(simulate(provider, requests, block).await?.last().expect("a result").status)
+        Ok(simulate(provider, requests, block, per_call).await?.last().expect("a result").status)
     };
     let mut low = requests.last().and_then(|request| request.gas_limit()).unwrap_or_default();
     if low >= cap || !succeeds(requests, cap).await? {
         bail!(
-            "it fails after the transactions before it even with the block gas limit {cap}; \
+            "it fails after the transactions before it even with gas limit {cap}, the gas left \
+             in the block; \
              {GAS_CAP_HINT}"
         );
     }

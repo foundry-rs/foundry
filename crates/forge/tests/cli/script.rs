@@ -11148,7 +11148,8 @@ contract CaOnlyScript is Script {
 
 /// The gas limits that owners on other machines approve are the least that succeed after the
 /// transactions before them: a call that keeps back gas for deeply nested calls needs more gas to
-/// start with than it uses, and the transactions together may exceed one block's gas limit.
+/// start with than it uses, the transactions together may exceed one block's gas limit, and there
+/// may be more of them than the blocks a node simulates.
 #[forgetest_init]
 async fn tempo_t14_script_offline_owner_gas_limits(prj: _, cmd: _) {
     prj.add_source(
@@ -11266,11 +11267,48 @@ contract CaGasScript is Script {
         assert_eq!(receipts.len() as u64, sent);
         assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"), "{sequence}");
     }
+
+    // More operations than a node simulates blocks are saved when they fit in one block.
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    api.anvil_set_code(address!("0x0000000000000000000000000000000000C0FFEE"), bytes!("00"))
+        .await
+        .unwrap();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    api.anvil_deal_tip20(
+        account,
+        foundry_common::tempo::ALPHA_USD_ADDRESS,
+        U256::from(1_000_000_000_000u64),
+    )
+    .await
+    .unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--rpc-url",
+        handle.http_endpoint().as_str(),
+        "--sender",
+        &account.to_string(),
+        "--broadcast",
+        "--start-fresh",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &foundry_common::tempo::ALPHA_USD_ADDRESS.to_string(),
+        "--tempo.config",
+        &config,
+        "--private-key",
+        &keys[0],
+    ]);
+    cmd.env("CA_CALLS", "257");
+    cmd.assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    assert_eq!(sequence["awaiting_owners"].as_array().unwrap().len(), 257);
 }
 
 /// `--broadcast` checks the transactions saved for owners on other machines, simulated in order
 /// after the operations before them, before it sends anything: an EOA transaction before them is
-/// not sent when one of them would fail, when there are more operations than a node simulates,
+/// not sent when one of them would fail, when they fit neither in one block nor in as many blocks
+/// as a node simulates,
 /// when the RPC caps the gas of the simulation, when one of them changes the account's
 /// configuration before another, or when they would use a nonce key.
 #[forgetest_init]
@@ -11297,7 +11335,13 @@ contract CaChecksScript is Script {
 "#,
     );
     let (api, handle) =
-        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+        // A block gas limit that 257 calls do not fit in.
+        spawn(
+            NodeConfig::test_tempo()
+                .with_hardfork(Some(TempoHardfork::T14.into()))
+                .with_gas_limit(Some(1_000_000)),
+        )
+        .await;
     let upstream = handle.http_endpoint();
     let provider = handle.http_provider();
     let target = address!("0x0000000000000000000000000000000000C0FFEE");
@@ -11349,10 +11393,12 @@ contract CaChecksScript is Script {
             vec![],
             255,
             vec![],
-            "257 transactions must be simulated in order to fix the gas limits of the \
-             transactions awaiting owner approvals, but a node simulates at most 256; split the \
+            "cannot simulate the transactions in order to fix the gas limits of the ones \
+             awaiting owner approvals, so no more transactions are sent: the 257 transactions do \
+             not fit in one simulated block, and a node simulates at most 256 blocks; split the \
              script so that at most 256 operations run up to the last transaction of a \
-             configurable account with offline owners"
+             configurable account with offline owners; server returned an error response: error \
+             code -38013: err: intrinsic gas too high -- CallGasCostMoreThanGasLimit"
                 .to_string(),
         ),
         (
