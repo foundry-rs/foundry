@@ -12,6 +12,7 @@ pub use comment::{Comment, CommentStyle};
 
 pub mod inline_config;
 
+#[derive(Default)]
 pub struct Comments {
     comments: std::collections::VecDeque<Comment>,
 }

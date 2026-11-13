@@ -661,6 +661,12 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             cheats.set_pending_account_diffs(pending_account_diffs);
         }
 
+        // Explicitly configured libraries are trusted, even when solc has already resolved their
+        // link references and they are absent from `library_addresses`.
+        for address in self.mcr.libraries.libs.values().flat_map(|libraries| libraries.values()) {
+            self.executor.backend_mut().allow_cheatcode_access(address.parse()?);
+        }
+
         // Configured libraries may already exist and are not present in `libs_to_deploy`.
         for &address in &self.mcr.library_addresses {
             if !self.executor.is_empty_code(address)? {
@@ -1630,7 +1636,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             replay.shrink_deadline,
             preserves,
         )?;
-        (!deadline_passed(replay.shrink_deadline) && preserves(&minimization.minimized_calls))
+        let deadline = replay.shrink_deadline;
+        // Every accepted candidate was confirmed before the deadline, so once it passed, a
+        // minimization that accepted one is kept without the confirming replay, which the deadline
+        // would cancel. One that accepted none leaves the original sequence as the only artifact.
+        ((!deadline_passed(deadline) && preserves(&minimization.minimized_calls))
+            || (deadline_passed(deadline) && minimization.accepted > 0))
             .then_some(minimization)
     }
 
@@ -5309,6 +5320,23 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         );
 
         let state = self.build_fuzz_state(false, Some(func));
+        let shrink_run_limit = self.config.invariant.shrink_run_limit as usize;
+        // Replays would print live logs again.
+        let minimizes = shrink_run_limit > 0 && !self.config.live_logs;
+        let (sender, address) = (self.tcfg.sender, self.address);
+        let minimize = |counterexample: &BaseCounterExample,
+                        still_fails: &mut dyn FnMut(&Bytes) -> bool| {
+            let call = SymbolicCounterexampleCall::from_base_counterexample(
+                counterexample,
+                sender,
+                address,
+            );
+            minimize_single_call_counterexample(func, &call, shrink_run_limit, |candidate| {
+                still_fails(&candidate.calldata)
+            })
+            .filter(|minimized| minimized.changed())
+            .map(|minimized| minimized.minimized_call.calldata)
+        };
         let mut executor = self.executor.into_owned();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
@@ -5342,6 +5370,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 progress.as_ref(),
                 &self.tcfg.early_exit,
                 &self.cr.tokio_handle,
+                minimizes.then_some(&minimize),
             )
         };
         let result = match result {

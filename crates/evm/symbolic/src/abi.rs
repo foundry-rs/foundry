@@ -336,7 +336,6 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
         &mut self,
         state: &mut SymbolicAbiState,
         name: String,
-        aliases: Vec<String>,
         ty: &DynSolType,
     ) -> Result<SymbolicAbiValue, SymbolicError> {
         Ok(match ty {
@@ -371,71 +370,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
                 self.constrain_uint(state, &word, 160);
                 SymbolicAbiValue::Address { word }
             }
-            DynSolType::Function => {
-                return Err(SymbolicError::UnsupportedAbi("function".to_string()));
-            }
-            DynSolType::Bytes => {
-                let len = self.next_dynamic_length(state, &name, &aliases, DynamicKind::Bytes)?;
-                let bytes = (0..len)
-                    .map(|idx| self.fresh_byte(state, &format!("{name}_{idx}"), false))
-                    .collect();
-                SymbolicAbiValue::Bytes {
-                    len: SymExpr::constant(self.cx, U256::from(len)),
-                    bytes: SymBytes::exprs(self.cx, bytes),
-                }
-            }
-            DynSolType::String => {
-                let len = self.next_dynamic_length(state, &name, &aliases, DynamicKind::String)?;
-                let bytes = (0..len)
-                    .map(|idx| self.fresh_byte(state, &format!("{name}_{idx}"), true))
-                    .collect();
-                SymbolicAbiValue::String { bytes: SymBytes::exprs(self.cx, bytes) }
-            }
-            DynSolType::Array(inner) => {
-                let len = self.next_dynamic_length(state, &name, &aliases, DynamicKind::Array)?;
-                SymbolicAbiValue::Array {
-                    elements: (0..len)
-                        .map(|idx| {
-                            self.value(
-                                state,
-                                format!("{name}_{idx}"),
-                                child_aliases(&aliases, idx),
-                                inner,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                }
-            }
-            DynSolType::FixedArray(inner, len) => SymbolicAbiValue::FixedArray {
-                elements: (0..*len)
-                    .map(|idx| {
-                        self.value(
-                            state,
-                            format!("{name}_{idx}"),
-                            child_aliases(&aliases, idx),
-                            inner,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            },
-            DynSolType::Tuple(types) => SymbolicAbiValue::Tuple {
-                elements: types
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, ty)| {
-                        self.value(state, format!("{name}_{idx}"), child_aliases(&aliases, idx), ty)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            },
-            DynSolType::CustomStruct { tuple, .. } => SymbolicAbiValue::Tuple {
-                elements: tuple
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, ty)| {
-                        self.value(state, format!("{name}_{idx}"), child_aliases(&aliases, idx), ty)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            },
+            _ => return Err(SymbolicError::UnsupportedAbi(ty.to_string())),
         })
     }
 
@@ -537,7 +472,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
                 .collect(),
             _ => {
                 let mut state = state;
-                let value = self.value(&mut state, name, aliases, ty)?;
+                let value = self.value(&mut state, name, ty)?;
                 vec![(state, value)]
             }
         })
@@ -634,19 +569,6 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
             ));
         }
         word
-    }
-
-    pub(super) fn next_dynamic_length(
-        &self,
-        state: &mut SymbolicAbiState,
-        name: &str,
-        aliases: &[String],
-        kind: DynamicKind,
-    ) -> Result<usize, SymbolicError> {
-        Ok(first_dynamic_length(
-            &self.next_dynamic_length_options(state, name, aliases, kind)?,
-            "symbolic dynamic length",
-        )? as usize)
     }
 
     pub(super) fn next_dynamic_length_options(
@@ -811,13 +733,6 @@ impl DynamicKind {
             _ => None,
         }
     }
-}
-
-pub(super) fn first_dynamic_length(lengths: &[u32], field: &str) -> Result<u32, SymbolicError> {
-    lengths
-        .first()
-        .copied()
-        .ok_or_else(|| SymbolicError::UnsupportedAbi(format!("{field} must not be empty")))
 }
 
 pub(super) fn child_aliases(aliases: &[String], idx: usize) -> Vec<String> {

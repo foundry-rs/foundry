@@ -13,6 +13,7 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
+use alloy_eips::BlockId;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{
@@ -24,7 +25,7 @@ use build::PreprocessedState;
 use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use dialoguer::Confirm;
 use evm2::{EvmFeatures, interpreter::InstrStop};
-use eyre::{ContextCompat, Result};
+use eyre::{ContextCompat, Result, WrapErr};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
@@ -35,7 +36,9 @@ use foundry_common::{
     ContractsByArtifact, FoundryTransactionBuilder, SELECTOR_LEN,
     abi::{encode_function_args, get_func},
     compile::ContractSizeLimits,
+    provider::ProviderBuilder,
     shell,
+    tempo::configurable_account::{detect_configurable_account, linked_account},
 };
 use foundry_compilers::{ArtifactId, artifacts::output_selection::ContractOutputSelection};
 use foundry_config::{
@@ -65,9 +68,10 @@ use foundry_evm::{
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
-use foundry_wallets::{MultiWalletOpts, wallet_multi::MultiWallet};
+use foundry_wallets::{MultiWalletOpts, utils::maybe_get_keystore_path, wallet_multi::MultiWallet};
 use serde::Serialize;
 use std::path::PathBuf;
+use tempo_alloy::TempoNetwork;
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -83,6 +87,7 @@ mod build;
 mod execute;
 mod library_deployments;
 mod multi_sequence;
+mod owner_approvals;
 mod progress;
 mod providers;
 mod receipts;
@@ -229,6 +234,22 @@ pub struct ScriptArgs {
         conflicts_with = "resume_tx_hash"
     )]
     pub resume_retry: bool,
+
+    /// An owner's approval of a Tempo configurable account transaction that awaits its owners.
+    ///
+    /// When the local owner keys of a configurable account sender do not reach its threshold,
+    /// `--broadcast` saves its transactions unsigned and prints the digest of each. Owners sign
+    /// the digests with `cast wallet sign --no-hash <DIGEST>` or with a passkey, and `--resume`
+    /// sends the transactions once their approvals reach the threshold. Repeat for each approval,
+    /// in any order. Takes a hex signature, a JSON signature, or a browser WebAuthn assertion, as
+    /// `cast wallet assemble` does; a value naming a file is read from it.
+    #[arg(
+        long = "tempo.owner-signature",
+        value_name = "SIGNATURE",
+        requires = "resume",
+        conflicts_with = "batch"
+    )]
+    pub tempo_owner_signatures: Vec<String>,
 
     /// Archives an unfinished previous broadcast of this script and broadcasts it anew.
     ///
@@ -420,8 +441,39 @@ impl ScriptArgs {
             }
         }
 
+        // An explicit configurable account is the sender of a bare `vm.startBroadcast()`, as
+        // `--sender` would make it; its owner keys must not broadcast in its place.
+        if let Some(account) = args.tempo.configurable_account
+            && !args.resume
+        {
+            if let Some(sender) = args.evm.sender {
+                eyre::ensure!(
+                    sender == account,
+                    "--sender {sender} conflicts with --tempo.configurable-account {account}"
+                );
+            }
+            evm_opts.sender = account;
+            script_wallets.inner.lock().provided_sender = Some(account);
+        } else if !args.resume
+            && !args.batch
+            && args.evm.sender.is_none()
+            && !args.tempo.eoa
+            && let Some((account, owner)) = args.linked_account_sender(&config, &evm_opts).await?
+        {
+            // `vm.startBroadcast()` without an address broadcasts from the provided sender, and
+            // `vm.sign` without a signer signs with its owner key.
+            evm_opts.sender = account;
+            let mut wallets = script_wallets.inner.lock();
+            wallets.provided_sender = Some(account);
+            wallets.sender_owner = Some(owner);
+        }
+
         tempo.resolve_expires();
         config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        // `--json` keeps stdout for the result, so logs are captured into it.
+        if shell::is_json() {
+            config.live_logs = false;
+        }
         if args.debug {
             if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);
@@ -507,6 +559,10 @@ impl ScriptArgs {
                     } else {
                         bundled.broadcast().await?
                     };
+                    // Transactions saved for their owners are deployed and verified on resume.
+                    if owner_approvals::awaits_approvals(&broadcasted.sequence) {
+                        return Ok(());
+                    }
                     broadcasted.print_deployed_contracts()?;
                     if broadcasted.args.verify {
                         broadcasted.verify().await?;
@@ -731,6 +787,58 @@ impl ScriptArgs {
         }
 
         Ok(())
+    }
+
+    /// Returns the Tempo configurable account linked to the keystore of the detected sender, and
+    /// its owner key. The account becomes the script sender when the RPC is a Tempo chain where
+    /// T14 is active.
+    async fn linked_account_sender(
+        &self,
+        config: &Config,
+        evm_opts: &EvmOpts,
+    ) -> Result<Option<(Address, Address)>> {
+        let Some(fork_url) = evm_opts.fork_url.as_deref() else { return Ok(None) };
+        if !evm_opts.networks.is_tempo() {
+            return Ok(None);
+        }
+        let paths = match (&self.wallets.keystore_paths, &self.wallets.keystore_account_names) {
+            (Some(paths), _) => paths.iter().map(PathBuf::from).collect(),
+            (None, Some(names)) => {
+                let mut paths = Vec::with_capacity(names.len());
+                for name in names {
+                    paths.extend(maybe_get_keystore_path(None, Some(name))?);
+                }
+                paths
+            }
+            (None, None) => Vec::new(),
+        };
+        for path in paths {
+            if let Some((account, owner)) = linked_account(&path)?
+                && owner == evm_opts.sender
+            {
+                let provider =
+                    ProviderBuilder::<TempoNetwork>::from_config_with_url(config, fork_url)?
+                        .build()?;
+                // Before T14 the linked account does not exist yet, and the key sends as before.
+                let config = detect_configurable_account(
+                    &provider,
+                    account,
+                    &[owner],
+                    None,
+                    false,
+                    BlockId::latest(),
+                )
+                .await
+                .wrap_err_with(|| {
+                    format!(
+                        "could not check the configurable account {account} linked to the \
+                             keystore; pass --sender {owner} or --eoa to send from the key"
+                    )
+                })?;
+                return Ok(config.map(|_| (account, owner)));
+            }
+        }
+        Ok(None)
     }
 
     /// In case the user has loaded *only* one private-key or a single remote signer (e.g.,
@@ -1230,6 +1338,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     .logs(self.config.live_logs)
                     .trace_requirements(script_trace_requirements(&self.config, debug))
                     .create2_deployer(self.evm_opts.create2_deployer)
+                    .fork_prefetch(self.evm_opts.fork_prefetch)
             })
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);

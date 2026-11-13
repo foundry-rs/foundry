@@ -13,6 +13,7 @@ use crate::{
     expected_emit::{self, ExpectedEmitTracker},
     script::Broadcast,
     test::{
+        assert::{FailureProvenance, FailureTrace},
         assume::AssumeNoRevert,
         expect::{self, ExpectedCallTracker, ExpectedCreate, ExpectedRevert, ExpectedRevertKind},
         revert_handlers,
@@ -53,6 +54,7 @@ use foundry_evm_core::{
         MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
         TransactionRequestFor, TxFor, TxResultFor, restore_access_warmth,
     },
+    utils::opcodes,
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -160,6 +162,7 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
         nonce,
     );
     message.call_target = message.destination;
+    message.code_address = message.destination;
     Ok(executor.exec_message(ccx.state, ccx.backend, ccx.evm, &mut message)?)
 }
 
@@ -725,7 +728,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Writes that survive reverts of the enclosing calls, with the depth of the frame that made
     /// them and the journal length right after them, replayed when that frame or an enclosing one
-    /// reverts and its rollback undid them.
+    /// reverts and its rollback undid them. Writes accepted outside the journal have length zero,
+    /// see [`Self::record_accepted`].
     pub persistent_writes: Vec<(usize, usize, PersistentWrite)>,
 
     /// The depth of the frame that ended last and the journal length of its checkpoint, which a
@@ -733,7 +737,7 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub frame_rollback: Option<(usize, usize)>,
 
     /// The number of persistent writes recorded when each snapshot of the running transaction
-    /// was taken.
+    /// was taken, capped by the restorations that dropped some of them since.
     pub persistent_write_snapshots: HashMap<U256, usize>,
 
     /// Message of the first `vm.assert*` cheatcode that failed during the current call.
@@ -741,6 +745,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Unlike the global failure slot, this survives reverts, so callers still see the failure
     /// when the asserting call reverts afterwards.
     pub failed_assertion: Option<String>,
+    /// Records failures by call site while set, so minimizers can tell failures apart.
+    pub failure_trace: Option<FailureTrace>,
+    /// Records where each call failed while set, so a replay can check it failed the same way.
+    pub failure_provenance: Option<FailureProvenance>,
 
     /// Gas metering state.
     pub gas_metering: GasMetering,
@@ -826,6 +834,13 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Depth of a create that a hook ended with a revert without running its frame.
     pub unrun_create_depth: Option<usize>,
+
+    /// Code that issued the CREATE being handed off to a new frame EVM.
+    pub env_handoff_creator: Option<Address>,
+
+    /// Automatic CREATE2 redirects: factory call depth, original issuing code, and whether the
+    /// original create grants cheatcode access. The grant is resolved after caller overrides.
+    pub pending_create2_redirects: Vec<(u16, Option<Address>, bool)>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -884,6 +899,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             frame_rollback: Default::default(),
             persistent_write_snapshots: Default::default(),
             failed_assertion: None,
+            failure_trace: Default::default(),
+            failure_provenance: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
             pc: Default::default(),
@@ -912,6 +929,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             deploy_code_output: None,
             applied_access_list: None,
             unrun_create_depth: None,
+            env_handoff_creator: None,
+            pending_create2_redirects: Vec::new(),
         }
     }
 
@@ -1199,9 +1218,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
+        let db = backend.backend();
+        db.ensure_cheatcode_access_forking_mode(&caller)?;
+        if interp.message().depth < message.depth {
+            db.ensure_cheatcode_access_forking_mode(&interp.message().code_address)?;
+        }
 
-        apply_dispatch(
+        let result = apply_dispatch(
             &decoded,
             &mut CheatsCtxt {
                 state: self,
@@ -1213,7 +1236,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 depth: message.depth.into(),
             },
             executor,
-        )
+        );
+        if let Some(provenance) = &mut self.failure_provenance {
+            provenance.finish_assertion();
+        }
+        result
     }
 
     /// Decodes the input data and applies Monad-specific cheatcodes.
@@ -1229,7 +1256,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
+        let db = backend.backend();
+        db.ensure_cheatcode_access_forking_mode(&caller)?;
+        if interp.message().depth < message.depth {
+            db.ensure_cheatcode_access_forking_mode(&interp.message().code_address)?;
+        }
 
         let input = message.input.to_bytes(interp.memory());
         crate::monad::apply_monad_cheatcode(
@@ -1246,21 +1277,34 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         )
     }
 
-    /// Grants cheat code access for new contracts if the caller also has
-    /// cheatcode access or the new contract is created in top most call.
+    /// Grants cheatcode access for top-level deployments or authorized callers, provided the
+    /// code issuing the CREATE also has access while forked.
     ///
-    /// There may be cheatcodes in the constructor of the new contract, in order to allow them
-    /// automatically we need to determine the new address.
+    /// Constructors need access before the new contract's runtime code has been deployed.
     fn allow_cheatcodes_on_create(
+        &self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         depth: usize,
         caller: Address,
         created_address: Address,
+        creator: Option<Address>,
     ) {
-        let db = backend.backend();
-        if (depth <= 1 || db.has_cheatcode_access(&caller))
-            && !db.has_cheatcode_access(&created_address)
-        {
+        let allowed = self
+            .pending_create2_redirects
+            .last()
+            .filter(|(factory_depth, ..)| usize::from(*factory_depth) + 1 == depth)
+            .map_or_else(
+                || {
+                    Self::can_grant_cheatcodes_on_create(
+                        backend,
+                        depth - self.root_depth,
+                        caller,
+                        creator,
+                    )
+                },
+                |(.., allowed)| *allowed,
+            );
+        if allowed && !backend.backend().has_cheatcode_access(&created_address) {
             backend.backend_mut().allow_cheatcode_access(created_address);
         }
     }
@@ -1662,6 +1706,18 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             recorded_account_diffs_stack.push(vec![access]);
         }
 
+        // The factory call keeps the original create's authorization after caller overrides.
+        if let Some((depth, creator, allowed)) = self.pending_create2_redirects.last_mut()
+            && *depth == call.depth
+        {
+            *allowed = Self::can_grant_cheatcodes_on_create(
+                backend,
+                curr_depth - self.root_depth,
+                call.caller,
+                *creator,
+            );
+        }
+
         None
     }
 
@@ -1856,17 +1912,28 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.broadcast.is_some()
             || self.gas_metering.paused
             || self.gas_metering.reset
-            || self.gas_metering.touched
             || self.gas_metering.recording
-            || self.recorded_account_diffs_stack.is_some()
-            || !self.allowed_mem_writes.is_empty()
-            || self.core.mapping_slots.is_some()
             || self.core.arbitrary_storage.is_some()
             || self.deploy_code_depth.is_some()
+            || self.failure_trace.is_some()
         {
             return OpcodeSet::ALL;
         }
         let mut steps = OpcodeSet::EMPTY;
+        // After a resume or reset, the gas check runs when a frame returns or reverts.
+        if self.gas_metering.touched {
+            steps = steps.union(FRAME_END_OPCODES);
+        }
+        if self.recorded_account_diffs_stack.is_some() {
+            steps = steps.union(STATE_DIFF_OPCODES);
+        }
+        if !self.allowed_mem_writes.is_empty() {
+            steps = steps.union(MEMORY_OPCODES);
+        }
+        // Mapping recording reads the stored slot and the 64-byte hash that derives it.
+        if self.core.mapping_slots.is_some() {
+            steps = steps.union(opcodes([op::SSTORE, op::KECCAK256]));
+        }
         // A log that fails `expectEmit` reverts its frame in the `step_end` of the instruction
         // that emitted it.
         if !self.expected_emits.is_empty() || self.pending_emit_failure.is_some() {
@@ -1881,6 +1948,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
         if self.has_active_env_overrides() {
             steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
+        }
+        if self.failure_provenance.is_some() {
+            steps = steps.union(opcodes([op::JUMPI, op::REVERT, op::INVALID]));
         }
         steps
     }
@@ -1912,6 +1982,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(expected) = &mut self.expected_revert {
             expected.max_depth = max(usize::from(interp.message().depth) + 1, expected.max_depth);
         }
+
+        if let Some(trace) = &mut self.failure_trace {
+            trace.enter_frame::<FEN>(interp, usize::from(interp.message().depth) + 1);
+        }
     }
 
     /// Called before each instruction in [`Self::steps`] executes.
@@ -1928,6 +2002,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         let depth = usize::from(interp.message().depth) + 1;
         let opcode = interp.opcode();
+
+        if let Some(trace) = &mut self.failure_trace {
+            trace.step::<FEN>(interp, depth);
+        }
+        if let Some(provenance) = &mut self.failure_provenance {
+            match opcode {
+                op::JUMPI => provenance.record_jumpi(depth, self.pc),
+                op::REVERT | op::INVALID => provenance.record_revert::<FEN>(interp, depth),
+                _ => {}
+            }
+        }
 
         // Marks an `ORIGIN` or `GASPRICE` instruction whose pushed value `step_end` overrides.
         self.pending_origin_override = opcode == op::ORIGIN && self.origin_override.is_some();
@@ -2164,24 +2249,49 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.persistent_writes.extend(writes.into_iter().map(|write| (depth, len, write)));
     }
 
+    /// Records `writes` the frame at `depth` just accepted into the running state outside the
+    /// journal, at journal length zero: no rollback undoes them, so only a failing frame that
+    /// reinstates the state a snapshot restoration replaced replays them.
+    pub fn record_accepted(
+        &mut self,
+        depth: usize,
+        writes: impl IntoIterator<Item = PersistentWrite>,
+    ) {
+        self.persistent_writes.extend(writes.into_iter().map(|write| (depth, 0, write)));
+    }
+
     /// Retains `replaced`, the running state a revert to `snapshot_id` replaced, and drops the
     /// persistent writes recorded since the snapshot, which the restored state does not hold.
+    /// `switched` is whether the revert switched to another fork.
     pub(crate) fn restore_persistent_writes(
         &mut self,
         snapshot_id: U256,
         replaced: StateSnapshot,
         remove: bool,
+        switched: bool,
     ) {
-        self.snapshot_restores.capture(replaced, &self.persistent_writes);
         let len = if remove {
             self.persistent_write_snapshots.remove(&snapshot_id)
         } else {
             self.persistent_write_snapshots.get(&snapshot_id).copied()
-        };
+        }
+        .unwrap_or_default();
+        self.snapshot_restores.capture(replaced, &self.persistent_writes, len);
+        // Like a fork switch, a revert to a snapshot of another fork is a context switch.
+        if switched {
+            self.snapshot_restores.accept_writes();
+        }
         // A snapshot of an earlier transaction holds none of this transaction's writes. Under the
-        // inspector stack a failing frame reinstates the captured ledger instead; this covers the
-        // stackless executor.
-        self.persistent_writes.truncate(len.unwrap_or_default());
+        // inspector stack a failing frame reinstates the captured ledger, followed by the writes
+        // recorded since, instead; this covers the stackless executor.
+        self.persistent_writes.truncate(len);
+        // The writes recorded from here on replace the dropped ones, so a later restoration to a
+        // snapshot that counted those only keeps the writes kept here. The state it restores
+        // already holds the others.
+        let len = self.persistent_writes.len();
+        for stored in self.persistent_write_snapshots.values_mut() {
+            *stored = (*stored).min(len);
+        }
     }
 
     /// Replays the persistent writes made in the frame at `depth` or deeper after the frame
@@ -2201,13 +2311,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let state = interp.host().state_mut();
         let mut failed = None;
         if !success && depth > root {
-            // Without the frame's rollback, such as without the inspector stack, every write of
-            // the frame was undone. A context switch in the frame can leave later writes below
-            // its checkpoint, which the rollback keeps.
+            // Without the frame's rollback, such as without the inspector stack, every journaled
+            // write of the frame was undone. A context switch in the frame can leave later writes
+            // below its checkpoint, which the rollback keeps.
             let rollback =
                 self.frame_rollback.take().filter(|(end, _)| *end == depth).map(|(_, len)| len);
             let undone = |&(write_depth, len, _): &(usize, usize, PersistentWrite)| {
-                write_depth >= depth && rollback.is_none_or(|rollback| len > rollback)
+                write_depth >= depth && len > rollback.unwrap_or_default()
             };
             let writes = self.persistent_writes.iter().filter(|entry| undone(entry));
             let applied = PersistentWrite::apply_all(writes.map(|(_, _, write)| write), state);
@@ -2217,7 +2327,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     return true;
                 }
                 entry.1 = len;
-                !entry.2.is_delta()
+                !entry.2.is_balance_or_nonce()
             });
             match applied {
                 Ok(applied) => self
@@ -2523,6 +2633,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(input.depth);
+        let creator = self.take_create_creator(interp, input);
         let is_root = curr_depth == self.root_depth;
         self.start_created_accounts_frame(is_root, CreatedAccountsFrameKind::Create, curr_depth);
         if is_root {
@@ -2632,14 +2743,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             input.call_target = input.destination;
         }
 
-        // Allow cheatcodes from the address of the new contract
+        input.code_address = input.destination;
+
+        // Allow cheatcodes from the address of the new contract.
         let address = input.destination;
-        Self::allow_cheatcodes_on_create(
-            backend,
-            curr_depth - self.root_depth,
-            input.caller,
-            address,
-        );
+        self.allow_cheatcodes_on_create(backend, curr_depth, input.caller, address, creator);
 
         self.record_created_account(backend.backend().active_fork_id(), address);
 
@@ -2896,6 +3004,38 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.core.config.evm_opts.create2_deployer
     }
 
+    /// Preserves the original CREATE authorization before redirecting it to the factory.
+    pub fn start_create2_redirect(
+        &mut self,
+        interp: &InterpreterFor<'_, '_, FEN>,
+        message: &MessageFor<FEN>,
+    ) {
+        let creator = self.take_create_creator(interp, message);
+        self.pending_create2_redirects.push((message.depth, creator, false));
+    }
+
+    fn take_create_creator(
+        &mut self,
+        interp: &InterpreterFor<'_, '_, FEN>,
+        input: &MessageFor<FEN>,
+    ) -> Option<Address> {
+        self.env_handoff_creator.take().or_else(|| {
+            let message = interp.message();
+            (message.depth < input.depth).then_some(message.code_address)
+        })
+    }
+
+    fn can_grant_cheatcodes_on_create(
+        backend: &dyn CheatcodesBackend<FEN>,
+        depth: usize,
+        caller: Address,
+        creator: Option<Address>,
+    ) -> bool {
+        let db = backend.backend();
+        (depth <= 1 || db.has_cheatcode_access(&caller))
+            && (!db.is_forked_mode() || creator.is_none_or(|code| db.has_cheatcode_access(&code)))
+    }
+
     #[cold]
     fn meter_gas(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
@@ -2964,7 +3104,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     #[cold]
     fn meter_gas_check(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
-        if interp.result().is_err() {
+        // The caller discards the gas and refund of a halting frame, so whichever other hook steps
+        // the halting instruction, its gas stays as the protocol leaves it.
+        if interp.result().is_err_and(|stop| !stop.is_halt()) {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
@@ -3285,8 +3427,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
         curr_depth: usize,
     ) {
-        let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         let opcode = interp.opcode();
+        // Act only on stepped instructions, so that an arm missing from the set fails its test
+        // instead of only working while another cheatcode steps every instruction.
+        if !STATE_DIFF_OPCODES.contains(opcode) {
+            return;
+        }
+        let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         let accessor = interp.message().destination;
         let fork_id = backend.backend().active_fork_id();
         let chain_id = self
@@ -3446,6 +3593,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// within the allowed ranges. If not, revert and fail the test.
     #[cold]
     fn check_mem_opcodes(&self, interpreter: &mut InterpreterFor<'_, '_, FEN>, depth: u64) {
+        // See `record_state_diffs`.
+        if !MEMORY_OPCODES.contains(interpreter.opcode()) {
+            return;
+        }
         let Some(ranges) = self.allowed_mem_writes.get(&depth) else {
             return;
         };
@@ -3672,16 +3823,45 @@ const LOG_EMITTING_OPCODES: OpcodeSet = opcodes([
     op::SELFDESTRUCT,
 ]);
 
-/// Returns the set of `ops`.
-const fn opcodes<const N: usize>(ops: [u8; N]) -> OpcodeSet {
-    let mut set = OpcodeSet::EMPTY;
-    let mut i = 0;
-    while i < N {
-        set.insert(ops[i]);
-        i += 1;
-    }
-    set
-}
+/// The instructions that end a frame with a result its caller reads: a halt discards the gas and
+/// refund of the frame.
+const FRAME_END_OPCODES: OpcodeSet = opcodes([op::STOP, op::RETURN, op::REVERT, op::SELFDESTRUCT]);
+
+/// The instructions that `startStateDiffRecording` records.
+const STATE_DIFF_OPCODES: OpcodeSet = opcodes([
+    op::SELFDESTRUCT,
+    op::SLOAD,
+    op::SSTORE,
+    op::EXTCODECOPY,
+    op::EXTCODESIZE,
+    op::EXTCODEHASH,
+    op::BALANCE,
+]);
+
+/// The instructions that read or write memory, which `expectSafeMemory` checks.
+const MEMORY_OPCODES: OpcodeSet = opcodes([
+    op::MSTORE,
+    op::MSTORE8,
+    op::MLOAD,
+    op::CALL,
+    op::CALLDATACOPY,
+    op::CODECOPY,
+    op::RETURNDATACOPY,
+    op::EXTCODECOPY,
+    op::CALLCODE,
+    op::STATICCALL,
+    op::DELEGATECALL,
+    op::KECCAK256,
+    op::LOG0,
+    op::LOG1,
+    op::LOG2,
+    op::LOG3,
+    op::LOG4,
+    op::CREATE,
+    op::CREATE2,
+    op::RETURN,
+    op::REVERT,
+]);
 
 /// Returns true if the kind of account access is a call.
 const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
@@ -3766,6 +3946,16 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     }
     let result = if ccx.state.core.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
         Err(fmt_err!("disabled during restricted execution"))
+    } else if let Some(trace) = &mut ccx.state.failure_trace
+        && has_host_effects(calls)
+    {
+        // A replay must not repeat these effects and cannot reproduce these reads, so it skips
+        // them and leaves the failure unidentified.
+        trace.unidentified = true;
+        Ok(Default::default())
+    } else if ccx.state.failure_trace.is_some() && matches!(calls, Vm::VmCalls::sleep(_)) {
+        // A replay does not wait, which only `unixTime` could observe.
+        Ok(Default::default())
     } else {
         vm_calls!(dispatch)
     }
@@ -3780,6 +3970,49 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     );
 
     result
+}
+
+/// Returns whether `call` writes to files or environment variables, runs a command, sends an
+/// arbitrary RPC request, creates a fork at the latest block, which can be newer than the
+/// campaign's, prompts for input, or reads the clock, which skipped sleeps would make disagree
+/// with the campaign's.
+const fn has_host_effects(call: &Vm::VmCalls) -> bool {
+    matches!(
+        call,
+        Vm::VmCalls::copyFile(_)
+            | Vm::VmCalls::createDir(_)
+            | Vm::VmCalls::createFork_0(_)
+            | Vm::VmCalls::createSelectFork_0(_)
+            | Vm::VmCalls::dumpState(_)
+            | Vm::VmCalls::eth_getLogs(_)
+            | Vm::VmCalls::eth_getProof(_)
+            | Vm::VmCalls::ffi(_)
+            | Vm::VmCalls::ffiBytes(_)
+            | Vm::VmCalls::ffiString(_)
+            | Vm::VmCalls::ffiUint(_)
+            | Vm::VmCalls::getRawBlockHeader(_)
+            | Vm::VmCalls::prompt(_)
+            | Vm::VmCalls::promptAddress(_)
+            | Vm::VmCalls::promptSecret(_)
+            | Vm::VmCalls::promptSecretUint(_)
+            | Vm::VmCalls::promptUint(_)
+            | Vm::VmCalls::removeDir(_)
+            | Vm::VmCalls::removeFile(_)
+            | Vm::VmCalls::rpcJson_0(_)
+            | Vm::VmCalls::rpcJson_1(_)
+            | Vm::VmCalls::rpc_0(_)
+            | Vm::VmCalls::rpc_1(_)
+            | Vm::VmCalls::setEnv(_)
+            | Vm::VmCalls::tryFfi(_)
+            | Vm::VmCalls::unixTime(_)
+            | Vm::VmCalls::writeFile(_)
+            | Vm::VmCalls::writeFileBinary(_)
+            | Vm::VmCalls::writeJson_0(_)
+            | Vm::VmCalls::writeJson_1(_)
+            | Vm::VmCalls::writeLine(_)
+            | Vm::VmCalls::writeToml_0(_)
+            | Vm::VmCalls::writeToml_1(_)
+    )
 }
 
 /// Returns the gas a frame used, as reported by `lastCallGas` and `lastFrameGas`.
@@ -3907,9 +4140,61 @@ mod tests {
 
         cheats.recording_accesses = false;
         cheats.gas_metering.touched = true;
-        assert_eq!(cheats.steps(), OpcodeSet::ALL);
+        assert_eq!(cheats.steps(), opcodes([op::STOP, op::RETURN, op::REVERT, op::SELFDESTRUCT]));
 
         cheats.gas_metering.touched = false;
+        cheats.recorded_account_diffs_stack = Some(Vec::new());
+        assert_eq!(
+            cheats.steps(),
+            opcodes([
+                op::SELFDESTRUCT,
+                op::SLOAD,
+                op::SSTORE,
+                op::EXTCODECOPY,
+                op::EXTCODESIZE,
+                op::EXTCODEHASH,
+                op::BALANCE,
+            ])
+        );
+
+        cheats.recorded_account_diffs_stack = None;
+        cheats.allowed_mem_writes.insert(1, Vec::new());
+        assert_eq!(
+            cheats.steps(),
+            opcodes([
+                op::MSTORE,
+                op::MSTORE8,
+                op::MLOAD,
+                op::CALL,
+                op::CALLDATACOPY,
+                op::CODECOPY,
+                op::RETURNDATACOPY,
+                op::EXTCODECOPY,
+                op::CALLCODE,
+                op::STATICCALL,
+                op::DELEGATECALL,
+                op::KECCAK256,
+                op::LOG0,
+                op::LOG1,
+                op::LOG2,
+                op::LOG3,
+                op::LOG4,
+                op::CREATE,
+                op::CREATE2,
+                op::RETURN,
+                op::REVERT,
+            ])
+        );
+
+        cheats.allowed_mem_writes.clear();
+        cheats.core.mapping_slots = Some(Default::default());
+        assert_eq!(cheats.steps(), [op::SSTORE, op::KECCAK256].into_iter().collect());
+
+        cheats.core.mapping_slots = None;
+        cheats.gas_metering.paused = true;
+        assert_eq!(cheats.steps(), OpcodeSet::ALL);
+        cheats.gas_metering.paused = false;
+
         cheats.register_storage_load_hook(Address::ZERO, Address::ZERO, [0; 4]);
         assert_eq!(cheats.steps(), OpcodeSet::ALL);
     }

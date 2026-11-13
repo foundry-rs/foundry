@@ -1254,7 +1254,7 @@ impl SymbolicExecutor {
             {
                 let (return_data, reverts) = mock.into_parts();
                 if !reverts && let Some((call_caller, _, _)) = call_context {
-                    self.apply_call_value_transfer(executor, state, kind, to, call_caller, value);
+                    self.apply_call_value_transfer(executor, state, kind, to, call_caller, value)?;
                 }
                 return self.finish_codeless_call(
                     executor,
@@ -1414,7 +1414,7 @@ impl SymbolicExecutor {
 
         let child_code = state.world.extcode(&mut self.cx, executor, code_address)?;
         if child_code.is_empty() {
-            self.apply_call_value_transfer(executor, state, kind, to, call_caller, value);
+            self.apply_call_value_transfer(executor, state, kind, to, call_caller, value)?;
             let return_data = SymReturnData::empty(&mut self.cx);
             return self.finish_codeless_call(
                 executor,
@@ -1503,7 +1503,7 @@ impl SymbolicExecutor {
             child.origin = origin;
             child.origin_word = origin_word;
         }
-        self.apply_call_value_transfer(executor, &mut child, kind, to, call_caller, value);
+        self.apply_call_value_transfer(executor, &mut child, kind, to, call_caller, value)?;
         let outcomes = self.execute_external_call(executor, child, &child_code, completed_paths)?;
         if outcomes.is_empty() {
             return Ok(StepOutcome::AssumeRejected);
@@ -1735,7 +1735,7 @@ impl SymbolicExecutor {
         };
         let (status, return_data) = match outcome {
             Some(return_data) => {
-                self.apply_call_value_transfer(executor, state, kind, to, call_caller, value);
+                self.apply_call_value_transfer(executor, state, kind, to, call_caller, value)?;
                 (CallStatus::Success, return_data)
             }
             None => (CallStatus::ExceptionalHalt, SymReturnData::empty(&mut self.cx)),
@@ -1760,13 +1760,13 @@ impl SymbolicExecutor {
         to: Address,
         from: Address,
         value: SymExpr,
-    ) {
+    ) -> Result<(), SymbolicError> {
         let to = match kind {
             CallKind::Call => to,
             CallKind::CallCode => state.address,
-            CallKind::DelegateCall | CallKind::StaticCall => return,
+            CallKind::DelegateCall | CallKind::StaticCall => return Ok(()),
         };
-        state.world.transfer(&mut self.cx, executor, from, to, value, true);
+        state.world.transfer(&mut self.cx, executor, from, to, value, true)
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -1787,7 +1787,7 @@ impl SymbolicExecutor {
         }
 
         // A sender balance below `value` fails the call with an `OutOfFunds` revert.
-        let balance = state.balance(&mut self.cx, executor, from);
+        let balance = state.balance(&mut self.cx, executor, from)?;
         let can_transfer = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         if can_transfer.as_const() == Some(true) {
             return Ok(None);
@@ -1843,7 +1843,7 @@ impl SymbolicExecutor {
             return Ok(true);
         }
 
-        let balance = state.balance(&mut self.cx, executor, from);
+        let balance = state.balance(&mut self.cx, executor, from)?;
         let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
@@ -2030,7 +2030,7 @@ impl SymbolicExecutor {
                         transfer_to,
                         value.clone(),
                         true,
-                    );
+                    )?;
                 }
             }
             let outcome = match outcome {

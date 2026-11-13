@@ -26,6 +26,8 @@ impl FromStr for CliAuthorizationList {
         if let Ok(addr) = Address::from_str(s) {
             Ok(Self::Address(addr))
         } else if let Ok(auth) = SignedAuthorization::decode(&mut hex::decode(s)?.as_ref()) {
+            auth.signature()
+                .map_err(|err| eyre::eyre!("Invalid authorization signature: {err}"))?;
             Ok(Self::Signed(auth))
         } else {
             eyre::bail!("Failed to decode authorization");
@@ -150,11 +152,31 @@ impl TransactionOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_eips::eip7702::Authorization;
 
     #[test]
     fn parse_priority_gas_tx_opts() {
         let args: TransactionOpts =
             TransactionOpts::parse_from(["foundry-cli", "--priority-gas-price", "100"]);
         assert!(args.priority_gas_price.is_some());
+    }
+
+    #[test]
+    fn parse_signed_authorization_rejects_invalid_parity() {
+        let auth = |y_parity| {
+            let auth = Authorization { chain_id: U256::from(1), address: Address::ZERO, nonce: 0 };
+            hex::encode(alloy_rlp::encode(SignedAuthorization::new_unchecked(
+                auth,
+                y_parity,
+                U256::from(1),
+                U256::from(1),
+            )))
+        };
+
+        assert!(matches!(auth(1).parse(), Ok(CliAuthorizationList::Signed(_))));
+        assert_eq!(
+            auth(27).parse::<CliAuthorizationList>().unwrap_err().to_string(),
+            "Invalid authorization signature: invalid parity: 27"
+        );
     }
 }
