@@ -1815,11 +1815,11 @@ impl SymbolicExecutor {
                     state.guard_free_address_write(&mut self.cx, executor, &word)
                 {
                     let previous =
-                        state.world.balance_word_for_address(&mut self.cx, executor, address);
+                        state.world.balance_word_for_address(&mut self.cx, executor, address)?;
                     let balance = SymExpr::ite(&mut self.cx, condition, value.clone(), previous);
-                    state.set_persistent_balance(&mut self.cx, executor, address, balance);
+                    state.set_persistent_balance(&mut self.cx, executor, address, balance)?;
                 }
-                state.set_persistent_balance(&mut self.cx, executor, target, value);
+                state.set_persistent_balance(&mut self.cx, executor, target, value)?;
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             setNonceCall::SELECTOR | setNonceUnsafeCall::SELECTOR => {

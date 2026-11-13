@@ -743,7 +743,6 @@ impl SymbolicExecutor {
                                 sequence.state.clone(),
                                 target.address,
                                 sender,
-                                &target.function,
                                 calldata,
                                 constraints,
                             )?;

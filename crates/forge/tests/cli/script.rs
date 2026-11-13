@@ -7,12 +7,14 @@ use crate::{
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702, TxEnvelope};
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
-    Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync, eip2718::Encodable2718,
+    Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync,
+    eip2718::{Decodable2718, Encodable2718},
 };
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, bytes, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{AccessList, AccessListItem, Authorization, TransactionRequest};
 use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use evm2::interpreter::op as opcode;
@@ -27,7 +29,7 @@ use foundry_test_utils::{
         spawn_rpc_proxy_rejecting_method_after_when_enabled,
     },
     snapbox::IntoData,
-    util::{OTHER_SOLC_VERSION, SOLC_VERSION, TestCommand, TestProject},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
 use regex::Regex;
 use serde_json::Value;
@@ -40,7 +42,7 @@ use std::{
     },
     time::Duration,
 };
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope};
 
 #[cfg(unix)]
 use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
@@ -7074,6 +7076,19 @@ Script ran successfully.
 [GAS]
 
 "#]]);
+
+    // `--json` keeps stdout for the result, which carries the logs instead.
+    cmd.forge_fuse()
+        .args(["script", "script/Foo.s.sol", "--live-logs", "--json"])
+        .assert_json_stdout(str![[r#"
+{
+  "logs": [
+    "Setup",
+    "Run 1"
+  ],
+  "...": "{...}"
+}
+"#]]);
 }
 
 #[forgetest_init]
@@ -10046,5 +10061,1424 @@ Deployed contracts (chain 31337):
                 .assert_success()
                 .stderr_eq(str![""]);
         }
+    }
+}
+
+// A local proxy cannot grant forked code cheatcode access, and a rejected call must not interrupt
+// the script's intended broadcast.
+#[forgetest]
+async fn fork_script_rejects_delegated_cheatcodes_before_broadcast(prj: _, cmd: _) {
+    prj.add_script(
+        "AccessBoundary.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+}
+
+contract UnintendedDeployment {
+    uint256 public value = 99;
+}
+
+contract RemoteBroadcaster {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function broadcastDeployment() external {
+        vm.startBroadcast();
+        new UnintendedDeployment();
+        vm.stopBroadcast();
+    }
+}
+
+contract LocalProxy {
+    function probe(address target) external returns (bool, bytes memory) {
+        return target.delegatecall(abi.encodeCall(RemoteBroadcaster.broadcastDeployment, ()));
+    }
+}
+
+contract IntendedDeployment {
+    uint256 public value = 42;
+}
+
+contract AccessBoundaryScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant TARGET = address(0x1234);
+
+    function run() external {
+        LocalProxy proxy = new LocalProxy();
+        (bool success, bytes memory output) = proxy.probe(TARGET);
+        require(!success, "delegated code unexpectedly authorized");
+        bytes memory expected = abi.encodeWithSignature(
+            "CheatcodeError(string)",
+            "cheatcodes are not enabled for 0x0000000000000000000000000000000000001234; see `vm.allowCheatcodes(address)`"
+        );
+        require(keccak256(output) == keccak256(expected), "unexpected authorization error");
+
+        vm.startBroadcast();
+        new IntendedDeployment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["inspect", "script/AccessBoundary.s.sol:RemoteBroadcaster", "deployedBytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let code = output.trim().parse::<Bytes>().unwrap();
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_code(address!("0000000000000000000000000000000000001234"), code).await.unwrap();
+    let sender = handle.dev_accounts().next().unwrap();
+    cmd.forge_fuse().args([
+        "script",
+        "AccessBoundaryScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+    ]);
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+"#]]);
+
+    let sequence = latest_dry_run_sequence(prj.root());
+    assert_eq!(sequence.transactions.len(), 1);
+    assert!(sequence.receipts.is_empty());
+}
+
+/// `forge script` broadcasts as a 2-of-3 Tempo configurable account whose owners are among the
+/// wallets: it deploys a contract and calls it, each transaction signed with a `0x05` signature
+/// and estimated exactly.
+#[forgetest_init]
+async fn tempo_t14_script_broadcasts_as_configurable_account(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "CaDeploy.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CaDeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        Counter counter = new Counter();
+        counter.increment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    api.anvil_deal_tip20(
+        account,
+        foundry_common::tempo::ALPHA_USD_ADDRESS,
+        U256::from(1_000_000_000_000u64),
+    )
+    .await
+    .unwrap();
+    let account_arg = account.to_string();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
+    let common = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account_arg,
+        "--broadcast",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        // The estimate itself must match the gas used.
+        "--gas-estimate-multiplier",
+        "100",
+    ];
+
+    cmd.forge_fuse().arg("script").arg(&script).args(common).args([
+        "--private-keys",
+        &keys[2],
+        "--private-keys",
+        &keys[0],
+    ]);
+    cmd.assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 2);
+
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 2);
+    let deployed = sequence["transactions"][0]["contractAddress"].as_str().unwrap();
+    let deployed = deployed.parse::<Address>().unwrap();
+    for receipt in receipts {
+        assert_eq!(receipt["status"], "0x1", "{receipt}");
+        assert_eq!(receipt["from"].as_str().unwrap().parse::<Address>().unwrap(), account);
+        let hash = receipt["transactionHash"].as_str().unwrap().parse::<B256>().unwrap();
+        let raw = provider
+            .raw_request::<_, Bytes>("eth_getRawTransactionByHash".into(), (hash,))
+            .await
+            .unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        let signature = signed.signature().as_configurable_account().expect("a 0x05 signature");
+        assert_eq!(signature.signatures().len(), 2);
+        let gas_used =
+            u64::from_str_radix(receipt["gasUsed"].as_str().unwrap().trim_start_matches("0x"), 16)
+                .unwrap();
+        assert_eq!(signed.tx().gas_limit, gas_used);
+    }
+    // `Counter.number()` is one after the increment.
+    let number = provider
+        .raw_request::<_, Bytes>(
+            "eth_call".into(),
+            (serde_json::json!({ "to": deployed, "data": "0x8381f58a" }),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(U256::from_be_slice(&number), U256::from(1));
+
+    // `--tempo.configurable-account` makes the account the sender of a bare
+    // `vm.startBroadcast()`, also when a single owner key would otherwise be the sender, and
+    // conflicts with another `--sender`.
+    let owner = format!("private-key://{}", keys[0]);
+    let explicit = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--broadcast",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--tempo.configurable-account",
+        &account_arg,
+        "--private-key",
+        &keys[2],
+        "--tempo.owner",
+        &owner,
+    ];
+    let high = keys[2].parse::<PrivateKeySigner>().unwrap().address();
+    let high_arg = high.to_string();
+    cmd.forge_fuse().arg("script").arg(&script).args(explicit).args(["--sender", &high_arg]);
+    cmd.assert_failure().stderr_eq(format!(
+        "...\nError: --sender {high} conflicts with --tempo.configurable-account {account}\n"
+    ));
+    cmd.forge_fuse().arg("script").arg(&script).args(explicit);
+    cmd.assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 4);
+    assert_eq!(provider.get_transaction_count(high).await.unwrap(), 0);
+}
+
+/// `--resume` publishes the saved transactions of a configurable account sender with its owner
+/// keys, without running the script again: here a second run would fail in `setUp`.
+#[forgetest_init]
+async fn tempo_t14_script_resumes_configurable_account_without_rerun(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "CaResume.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CaResumeScript is Script {
+    function setUp() public {
+        require(vm.envOr("CA_RESUME_GO", false), "the script ran again");
+    }
+
+    function run() external {
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
+    api.anvil_deal_tip20(account, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
+    let (account_arg, fee_token) = (account.to_string(), fee_token.to_string());
+    // One owner is a wallet and the other a `--tempo.owner`, both of which broadcast signs with.
+    let owner = format!("private-key://{}", keys[1]);
+    let common = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account_arg,
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--private-keys",
+        &keys[0],
+        "--tempo.owner",
+        &owner,
+    ];
+
+    // Simulate only, which saves the transactions for `--resume`.
+    cmd.forge_fuse().arg("script").arg(&script).args(common);
+    cmd.env("CA_RESUME_GO", "true");
+    cmd.assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+
+    cmd.forge_fuse().arg("script").arg(&script).args(common).arg("--resume");
+    cmd.assert_success().stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+Deployed contracts (chain 31337):
+  Counter  0xaE5D79A5D89Cd34393D7c27e598D89C2E3662769
+
+"#]]);
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+}
+
+/// On T14, `forge script` with a keystore that `cast wallet new` linked to a configurable account
+/// broadcasts from the account while `vm.sign` signs with the key, and `--sender` with the key
+/// broadcasts from the key.
+#[forgetest_init]
+async fn tempo_t14_script_broadcasts_from_linked_keystore(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "LinkedDeploy.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract LinkedDeployScript is Script {
+    function run() external {
+        // The keystore's key still signs messages for the script.
+        bytes32 digest = keccak256("linked");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
+        require(ecrecover(digest, v, r, s) == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2);
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (keystore, account, owner) = crate::utils::tempo_linked_keystore(prj.root());
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
+    for address in [account, owner] {
+        api.anvil_deal_tip20(address, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
+    }
+    let owner_arg = owner.to_string();
+    for (extra, sender) in [(&[][..], account), (&["--sender", owner_arg.as_str()][..], owner)] {
+        cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token.to_string()]);
+        cmd.args(["--keystore", keystore.to_str().unwrap(), "--password", "keystorepassword"]);
+        cmd.args(extra).assert_success();
+        let block = provider.get_block_number().await.unwrap();
+        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipt.last().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.from(), sender);
+    }
+}
+
+/// `--resume` runs the script again when the owner keys that the wallet options provide do not
+/// reach a configurable account's threshold, so that the script can provide the others, here with
+/// `vm.rememberKey`.
+#[forgetest_init]
+async fn tempo_t14_script_resume_reruns_for_remembered_owner(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "CaRemember.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CaRememberScript is Script {
+    function run() external {
+        vm.rememberKey(vm.envUint("CA_OWNER_KEY"));
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
+    api.anvil_deal_tip20(account, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
+    let (account_arg, fee_token) = (account.to_string(), fee_token.to_string());
+    let common = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account_arg,
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--private-key",
+        &keys[0],
+    ];
+
+    cmd.forge_fuse().arg("script").arg(&script).args(common);
+    cmd.env("CA_OWNER_KEY", &keys[1]);
+    cmd.assert_success();
+    cmd.forge_fuse().arg("script").arg(&script).args(common).arg("--resume");
+    cmd.env("CA_OWNER_KEY", &keys[1]);
+    cmd.assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+}
+
+/// A script that broadcasts from an upgraded EOA signs with its owners, also when the EOA's
+/// retired root key is among the wallets.
+#[forgetest_init]
+async fn tempo_t14_script_broadcasts_from_upgraded_eoa(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "UpgradedDeploy.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract UpgradedDeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let root = handle.dev_wallets().nth(3).unwrap();
+    let root_key = hex::encode_prefixed(root.to_bytes());
+    let (_, _, keys) = crate::utils::tempo_two_of_three_account();
+    let owner = keys[0].parse::<alloy_signer_local::PrivateKeySigner>().unwrap().address();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
+    let upgrade = prj.add_script(
+        "Upgrade.s.sol",
+        &format!(
+            r#"
+import {{Script}} from "forge-std/Script.sol";
+
+interface IConfigurableAccount {{
+    struct ConfigurableAccountOwner {{
+        address owner;
+        uint8 weight;
+    }}
+
+    function upgradeAccount(uint8 threshold, ConfigurableAccountOwner[] calldata owners) external;
+}}
+
+contract UpgradeScript is Script {{
+    function run() external {{
+        IConfigurableAccount.ConfigurableAccountOwner[] memory owners =
+            new IConfigurableAccount.ConfigurableAccountOwner[](1);
+        owners[0] = IConfigurableAccount.ConfigurableAccountOwner({owner}, 1);
+        vm.startBroadcast();
+        // A low-level call: the precompile has no code for Solidity's code size check.
+        (bool ok,) = address(0xAACC000000000000000000000000000000000000).call(
+            abi.encodeCall(IConfigurableAccount.upgradeAccount, (1, owners))
+        );
+        require(ok, "upgrade failed");
+        vm.stopBroadcast();
+    }}
+}}
+"#
+        ),
+    );
+    cmd.forge_fuse().arg("script").arg(&upgrade).args(["--rpc-url", &rpc, "--broadcast"]);
+    cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+    cmd.args(["--private-key", &root_key, "--skip-simulation"]).assert_success();
+
+    // The owner key is a wallet, then a `--tempo.owner`.
+    let owner_arg = format!("private-key://{}", keys[0]);
+    for owner in [["--private-keys", keys[0].as_str()], ["--tempo.owner", owner_arg.as_str()]] {
+        cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+        cmd.args(["--sender", &root.address().to_string(), "--private-keys", &root_key]);
+        cmd.args(owner).assert_success();
+        let block = provider.get_block_number().await.unwrap();
+        let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipts.last().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.from(), root.address());
+        let raw = provider
+            .raw_request::<_, Bytes>(
+                "eth_getRawTransactionByHash".into(),
+                (receipt.transaction_hash(),),
+            )
+            .await
+            .unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        assert!(signed.signature().as_configurable_account().is_some());
+    }
+
+    // `--resume` with only the retired root key loaded runs the script again to collect the
+    // owner key it remembers.
+    let resume_script = prj.add_script(
+        "UpgradedResume.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract UpgradedResumeScript is Script {
+    function run() external {
+        vm.rememberKey(vm.envUint("OWNER_KEY"));
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let nonce = provider.get_transaction_count(root.address()).await.unwrap();
+    for resume in [false, true] {
+        cmd.forge_fuse().arg("script").arg(&resume_script).args(["--rpc-url", &rpc]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+        cmd.args(["--sender", &root.address().to_string(), "--private-keys", &root_key]);
+        if resume {
+            cmd.arg("--resume");
+        }
+        cmd.env("OWNER_KEY", &keys[0]);
+        cmd.assert_success();
+    }
+    assert_eq!(provider.get_transaction_count(root.address()).await.unwrap(), nonce + 1);
+}
+
+/// `forge script` with one local owner of a 2-of-3 Tempo configurable account saves the account's
+/// transactions with their digests instead of sending them. An owner on another machine signs the
+/// digests with `cast wallet sign --no-hash`, and `--resume` sends the transactions in order once
+/// each is approved, with the gas limits fixed before signing. Invalid and missing approvals fail
+/// before anything is sent, and valid ones are kept across runs.
+#[forgetest_init]
+async fn tempo_t14_script_resumes_configurable_account_with_offline_owners(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "CaOffline.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CaOfflineScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        Counter counter = new Counter();
+        counter.setNumber(41);
+        counter.increment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    api.anvil_deal_tip20(
+        account,
+        foundry_common::tempo::ALPHA_USD_ADDRESS,
+        U256::from(1_000_000_000_000u64),
+    )
+    .await
+    .unwrap();
+    let account_arg = account.to_string();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
+    let local_owner = keys[0].parse::<PrivateKeySigner>().unwrap().address();
+    let offline_owner = keys[1].parse::<PrivateKeySigner>().unwrap().address();
+
+    // One local owner does not reach the threshold, so nothing is sent.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account_arg,
+        "--broadcast",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--private-key",
+        &keys[0],
+    ]);
+    let stdout = cmd.assert_success().get_output().stdout_lossy();
+    assert!(
+        stdout.contains(&format!(
+            "Transactions of the Tempo configurable account {account} on chain 31337 await \
+             approvals from its owners, with threshold 2:"
+        )) && stdout.contains("cast wallet sign --no-hash <DIGEST>")
+            && stdout.contains("--tempo.owner-signature <SIGNATURE>")
+            && !stdout.contains("ONCHAIN EXECUTION COMPLETE"),
+        "{stdout}"
+    );
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let saved = sequence["awaiting_owners"].as_array().unwrap();
+    assert_eq!(saved.len(), 3, "{sequence}");
+    let mut digests = Vec::new();
+    let mut unsigned_txs = Vec::new();
+    for (index, entry) in saved.iter().enumerate() {
+        assert_eq!(entry["index"], index);
+        assert_eq!(entry["account"].as_str().unwrap().parse::<Address>().unwrap(), account);
+        assert_eq!(entry["approvals"].as_array().unwrap().len(), 1, "{entry}");
+        // The nonces are fixed in order, and the digest is printed for the owners.
+        let unsigned = hex::decode(entry["unsignedTx"].as_str().unwrap()).unwrap();
+        let tx =
+            foundry_common::tempo::configurable_account::decode_unsigned_tx(&unsigned).unwrap();
+        assert_eq!(tx.nonce, index as u64);
+        unsigned_txs.push(tx);
+        let digest = entry["digest"].as_str().unwrap().to_string();
+        assert!(
+            stdout.contains(&format!("digest {digest}, approved by {local_owner}")),
+            "{stdout}"
+        );
+        digests.push(digest);
+    }
+
+    // The offline owner signs each digest on its own machine.
+    let sign = |cmd: &mut TestCommand, digest: &str, key: &str| {
+        cmd.cast_fuse()
+            .args(["wallet", "sign", "--no-hash", digest, "--private-key", key])
+            .assert_success()
+            .get_output()
+            .stdout_lossy()
+            .trim()
+            .to_string()
+    };
+    let approvals =
+        digests.iter().map(|digest| sign(&mut cmd, digest, &keys[1])).collect::<Vec<_>>();
+    let resume = |cmd: &mut TestCommand, signatures: &[&str]| {
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--rpc-url",
+            rpc.as_str(),
+            "--resume",
+            "--network",
+            "tempo",
+        ]);
+        for signature in signatures {
+            cmd.args(["--tempo.owner-signature", signature]);
+        }
+    };
+
+    // A signature by a key that is not an owner approves nothing.
+    let stranger = sign(&mut cmd, &digests[0], &format!("0x{}", "64".repeat(32)));
+    resume(&mut cmd, &[&approvals[0], &stranger]);
+    let stderr = cmd.assert_failure().get_output().stderr_lossy();
+    assert!(
+        stderr.contains(
+            "--tempo.owner-signature 2 is not an owner's approval of any transaction awaiting \
+             owner approvals"
+        ),
+        "{stderr}"
+    );
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+
+    // Two of the three transactions are approved: nothing is sent, but the approvals are kept.
+    resume(&mut cmd, &[&approvals[0], &approvals[1]]);
+    let stderr = cmd.assert_failure().get_output().stderr_lossy();
+    assert!(
+        stderr.contains("transactions await more owner approvals, so nothing was sent")
+            && stderr.contains(&format!(
+                "digest {}, approved by {local_owner}, {offline_owner} (weight 2 of 2)",
+                digests[0]
+            ))
+            && stderr.contains(&format!(
+                "digest {}, approved by {local_owner} (weight 1 of 2)",
+                digests[2]
+            )),
+        "{stderr}"
+    );
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+
+    // A new broadcast does not replace the approvals collected so far.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account_arg,
+        "--broadcast",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--private-key",
+        &keys[0],
+    ]);
+    let stderr = cmd.assert_failure().get_output().stderr_lossy();
+    assert!(stderr.contains("has unfinished operations"), "{stderr}");
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let counts = sequence["awaiting_owners"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["approvals"].as_array().unwrap().len())
+        .collect::<Vec<_>>();
+    assert_eq!(counts, [2, 2, 1]);
+
+    // The last approval completes them, and the transactions are sent in order.
+    resume(&mut cmd, &[&approvals[2]]);
+    cmd.assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 3);
+
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 3);
+    for (receipt, unsigned) in receipts.iter().zip(unsigned_txs) {
+        assert_eq!(receipt["status"], "0x1", "{receipt}");
+        assert_eq!(receipt["from"].as_str().unwrap().parse::<Address>().unwrap(), account);
+        let hash = receipt["transactionHash"].as_str().unwrap().parse::<B256>().unwrap();
+        let raw = provider
+            .raw_request::<_, Bytes>("eth_getRawTransactionByHash".into(), (hash,))
+            .await
+            .unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        // The owners approved exactly the transaction that was sent.
+        assert_eq!(*signed.tx(), unsigned);
+        let signature = signed.signature().as_configurable_account().expect("a 0x05 signature");
+        assert_eq!(signature.signatures().len(), 2);
+    }
+}
+
+/// Transactions that owners on other machines approved are only sent in order: once one of them
+/// reverts, `--resume` refuses to send the ones after it, as for any other script transaction.
+#[forgetest_init]
+async fn tempo_t14_script_offline_owner_approvals_stop_at_revert(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "CaPing.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract CaPingScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool ok,) = address(0xC0FFEE).call("");
+        (ok,) = address(0xC0FFEE).call("");
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let target = address!("0x0000000000000000000000000000000000C0FFEE");
+    // `STOP`, so that every call succeeds.
+    api.anvil_set_code(target, bytes!("00")).await.unwrap();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    api.anvil_deal_tip20(
+        account,
+        foundry_common::tempo::ALPHA_USD_ADDRESS,
+        U256::from(1_000_000_000_000u64),
+    )
+    .await
+    .unwrap();
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account.to_string(),
+        "--broadcast",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--private-key",
+        &keys[0],
+    ]);
+    cmd.assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let approvals = sequence["awaiting_owners"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            cmd.cast_fuse()
+                .args(["wallet", "sign", "--no-hash", entry["digest"].as_str().unwrap()])
+                .args(["--private-key", &keys[1]])
+                .assert_success()
+                .get_output()
+                .stdout_lossy()
+                .trim()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(approvals.len(), 2);
+
+    // The first transaction now reverts.
+    api.anvil_set_code(target, bytes!("5f5ffd")).await.unwrap();
+    let resume = |cmd: &mut TestCommand| {
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--rpc-url",
+            rpc.as_str(),
+            "--resume",
+            "--network",
+            "tempo",
+        ]);
+    };
+    resume(&mut cmd);
+    for approval in &approvals {
+        cmd.args(["--tempo.owner-signature", approval]);
+    }
+    cmd.assert_failure();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+
+    resume(&mut cmd);
+    let stderr = cmd.assert_failure().get_output().stderr_lossy();
+    assert!(stderr.contains("resume will not send them"), "{stderr}");
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+}
+
+/// `--broadcast` refuses to save a configurable account's transactions for owners on other
+/// machines with the expiring nonce key, whose deadline would pass before they approve. `--resume`
+/// checks again transactions that an earlier resume signed but did not send: here a missing
+/// wallet stops the first resume, and the later ones fail before sending anything once the
+/// transaction's deadline passes and once the account spends its nonce.
+#[forgetest_init]
+async fn tempo_t14_script_offline_owner_approvals_revalidated_on_resume(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "CaThenEoa.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract CaThenEoaScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool ok,) = address(0xC0FFEE).call("");
+        vm.stopBroadcast();
+        vm.startBroadcast(vm.envAddress("CA_EOA"));
+        (ok,) = address(0xC0FFEE).call("");
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let target = address!("0x0000000000000000000000000000000000C0FFEE");
+    api.anvil_set_code(target, bytes!("00")).await.unwrap();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    let eoa_key = format!("0x{}", "65".repeat(32));
+    let eoa = eoa_key.parse::<PrivateKeySigner>().unwrap().address();
+    for funded in [account, eoa] {
+        api.anvil_deal_tip20(
+            funded,
+            foundry_common::tempo::ALPHA_USD_ADDRESS,
+            U256::from(1_000_000_000_000u64),
+        )
+        .await
+        .unwrap();
+    }
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
+    let account_arg = account.to_string();
+    let broadcast = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--sender",
+        &account_arg,
+        "--broadcast",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &fee_token,
+        "--tempo.config",
+        &config,
+        "--private-keys",
+        &keys[0],
+        "--private-keys",
+        &eoa_key,
+    ];
+
+    let expiring_key = format!("{:#x}", U256::MAX);
+    for expiring in [
+        &["--tempo.expires", "300"][..],
+        &["--tempo.nonce-key", &expiring_key, "--tempo.valid-before", "4102444800"],
+    ] {
+        cmd.forge_fuse().arg("script").arg(&script).args(broadcast).args(expiring);
+        cmd.env("CA_EOA", eoa.to_string());
+        cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: the owners of a Tempo configurable account sender approve its transactions on other machines, so they cannot be sponsored with --tempo.sponsor or use the expiring nonce key (--tempo.expiring-nonce, --tempo.expires or --tempo.nonce-key 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), whose validity window is too short for them
+
+"#]]);
+    }
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+
+    // A deadline of another nonce key is kept, and checked when resuming.
+    let latest = provider.get_block_by_number("latest".parse().unwrap()).await.unwrap().unwrap();
+    let valid_before = latest.header.timestamp + 3600;
+    cmd.forge_fuse().arg("script").arg(&script).args(broadcast);
+    cmd.args(["--tempo.valid-before", &valid_before.to_string()]);
+    cmd.env("CA_EOA", eoa.to_string());
+    cmd.assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let digest = sequence["awaiting_owners"][0]["digest"].as_str().unwrap().to_string();
+    let approval = cmd
+        .cast_fuse()
+        .args(["wallet", "sign", "--no-hash", &digest, "--private-key", &keys[1]])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // The approvals complete the account's transaction, but the EOA has no wallet. Repeating
+    // the same command fails the same way, with the approvals kept.
+    let first_resume = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--resume",
+        "--network",
+        "tempo",
+        "--tempo.owner-signature",
+        &approval,
+    ];
+    for _ in 0..2 {
+        cmd.forge_fuse().arg("script").arg(&script).args(first_resume);
+        cmd.env("CA_EOA", eoa.to_string());
+        cmd.assert_failure().stderr_eq(format!(
+            "Error: No associated wallet for addresses: [{}]. Unlocked wallets: []\n",
+            eoa.to_string().to_lowercase()
+        ));
+    }
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+
+    // Once the deadline passes, the same `--resume` with the local owner saves the transaction
+    // again for the owners, with a new digest, and sends nothing.
+    api.evm_increase_time(U256::from(7200)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let resume = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--resume",
+        "--network",
+        "tempo",
+        "--private-keys",
+        &eoa_key,
+        "--private-keys",
+        &keys[0],
+        "--tempo.config",
+        &config,
+    ];
+    cmd.forge_fuse().arg("script").arg(&script).args(resume);
+    cmd.env("CA_EOA", eoa.to_string());
+    let output = cmd.assert_success().get_output().clone();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let saved = sequence["awaiting_owners"].as_array().unwrap();
+    assert_eq!(saved.len(), 1, "{sequence}");
+    let new_digest = saved[0]["digest"].as_str().unwrap();
+    assert_ne!(new_digest, digest);
+    foundry_test_utils::snapbox::assert_data_eq!(
+        output.stderr_lossy(),
+        format!(
+            "Warning: its deadline {valid_before} passed after transaction 0 was saved for the \
+             owners of {account}, so their approvals are void; the unsent transactions are saved \
+             again for the owners to approve, with new digests, when --resume is given the local \
+             owner keys and Tempo options of the original --broadcast\n"
+        )
+    );
+    assert!(output.stdout_lossy().contains(new_digest), "{}", output.stdout_lossy());
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+    assert_eq!(provider.get_transaction_count(eoa).await.unwrap(), 0);
+
+    // The account spends the saved nonce elsewhere, so the transaction cannot be sent with its
+    // planned nonce, and the saved approvals are kept for the record.
+    cmd.cast_fuse()
+        .args(["send", &target.to_string(), "--from", &account_arg, "--rpc-url", rpc.as_str()])
+        .args(["--private-key", &keys[0], "--tempo.fee-token", &fee_token])
+        .args(["--tempo.owner", &format!("private-key://{}", keys[2]), "--tempo.config", &config])
+        .assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+
+    cmd.forge_fuse().arg("script").arg(&script).args(resume);
+    cmd.env("CA_EOA", eoa.to_string());
+    cmd.assert_failure().stderr_eq(format!(
+        "Error: {account} sent nonce 0 after transaction 0 was saved for its owners, so their \
+         approvals are void, and the remaining transactions cannot be sent with the nonces the \
+         script planned; broadcast the script anew with --start-fresh\n"
+    ));
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    assert_eq!(sequence["awaiting_owners"][0]["digest"], new_digest);
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+    assert_eq!(provider.get_transaction_count(eoa).await.unwrap(), 0);
+}
+
+/// When only the configurable account's transactions remain and their approvals are void,
+/// `--resume` with the local owner key saves them again approved by it. A deadline that has
+/// already passed is refused before anything is saved.
+#[forgetest_init]
+async fn tempo_t14_script_offline_owner_approvals_saved_again_when_void(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "CaOnly.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract CaOnlyScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool ok,) = address(0xC0FFEE).call("");
+        (ok,) = address(0xC0FFEE).call("");
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    api.anvil_set_code(address!("0x0000000000000000000000000000000000C0FFEE"), bytes!("00"))
+        .await
+        .unwrap();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    api.anvil_deal_tip20(
+        account,
+        foundry_common::tempo::ALPHA_USD_ADDRESS,
+        U256::from(1_000_000_000_000u64),
+    )
+    .await
+    .unwrap();
+    let local_owner = keys[0].parse::<PrivateKeySigner>().unwrap().address();
+    let latest = provider.get_block_by_number("latest".parse().unwrap()).await.unwrap().unwrap();
+    let valid_before = (latest.header.timestamp + 3600).to_string();
+    let owner_options = [
+        "--rpc-url",
+        rpc.as_str(),
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        "0x20C0000000000000000000000000000000000001",
+        "--tempo.config",
+        &config,
+        "--private-key",
+        &keys[0],
+    ];
+    cmd.forge_fuse().arg("script").arg(&script).args(owner_options);
+    cmd.args(["--sender", &account.to_string(), "--broadcast", "--tempo.valid-before"]);
+    cmd.arg(&valid_before).assert_success();
+    let digests = |prj: &TestProject| {
+        let sequence: Value =
+            foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+        sequence["awaiting_owners"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["digest"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    let before = digests(&prj);
+    assert_eq!(before.len(), 2);
+
+    // An RPC that fails to read the configuration does not void the approvals.
+    let failing = rpc::spawn_rpc_proxy_internal_error_after(rpc.clone(), "eth_call", 0).await;
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &failing, "--network"]);
+    cmd.args(["tempo", "--resume"]).assert_failure();
+    assert_eq!(digests(&prj), before);
+
+    api.evm_increase_time(U256::from(7200)).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    // The same `--resume` saves them again, approved by the local owner.
+    cmd.forge_fuse().arg("script").arg(&script).args(owner_options).arg("--resume");
+    let output = cmd.assert_success().get_output().clone();
+    foundry_test_utils::snapbox::assert_data_eq!(
+        output.stderr_lossy(),
+        format!(
+            "Warning: its deadline {valid_before} passed after transaction 0 was saved for the \
+             owners of {account}, so their approvals are void; the unsent transactions are saved \
+             again for the owners to approve, with new digests, when --resume is given the local \
+             owner keys and Tempo options of the original --broadcast\n"
+        )
+    );
+    let after = digests(&prj);
+    assert_eq!(after.len(), 2);
+    let stdout = output.stdout_lossy();
+    for digest in &after {
+        assert!(!before.contains(digest), "{after:?}");
+        assert!(
+            stdout.contains(&format!("digest {digest}, approved by {local_owner}")),
+            "{stdout}"
+        );
+    }
+
+    // A deadline that has passed is refused before anything is saved.
+    cmd.forge_fuse().arg("script").arg(&script).args(owner_options);
+    cmd.args(["--sender", &account.to_string(), "--broadcast", "--start-fresh"]);
+    cmd.args(["--tempo.valid-before", &valid_before]);
+    cmd.assert_failure().stderr_eq(format!(
+        "...\nError: transaction 0 would be saved for owners to approve with the deadline \
+         {valid_before}, which has passed\n"
+    ));
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+}
+
+/// The gas limits that owners on other machines approve are the least that succeed after the
+/// transactions before them: a call that keeps back gas for deeply nested calls needs more gas to
+/// start with than it uses, the transactions together may exceed one block's gas limit, and there
+/// may be more of them than the blocks a node simulates.
+#[forgetest_init]
+async fn tempo_t14_script_offline_owner_gas_limits(prj: _, cmd: _) {
+    prj.add_source(
+        "Deep.sol",
+        r#"
+contract Deep {
+    mapping(uint256 => uint256) public slots;
+
+    function recurse(uint256 depth) external {
+        if (depth == 0) {
+            for (uint256 i; i < 20; i++) slots[i] = 1;
+            return;
+        }
+        this.recurse(depth - 1);
+    }
+}
+"#,
+    );
+    let script = prj.add_script(
+        "CaGas.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Deep} from "../src/Deep.sol";
+
+contract CaGasScript is Script {
+    function run() external {
+        uint256 calls = vm.envUint("CA_CALLS");
+        vm.startBroadcast();
+        if (calls == 0) {
+            new Deep().recurse(100);
+        } else {
+            for (uint256 i; i < calls; i++) {
+                (bool ok,) = address(0xC0FFEE).call("");
+                ok;
+            }
+        }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    for (calls, block_gas_limit, sent) in [(16, Some(1_000_000), 16), (0, None, 2)] {
+        let (api, handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_hardfork(Some(TempoHardfork::T14.into()))
+                .with_gas_limit(block_gas_limit),
+        )
+        .await;
+        let rpc = handle.http_endpoint();
+        let provider = handle.http_provider();
+        api.anvil_set_code(address!("0x0000000000000000000000000000000000C0FFEE"), bytes!("00"))
+            .await
+            .unwrap();
+        let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+        api.anvil_deal_tip20(
+            account,
+            foundry_common::tempo::ALPHA_USD_ADDRESS,
+            U256::from(1_000_000_000_000u64),
+        )
+        .await
+        .unwrap();
+        let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--rpc-url",
+            rpc.as_str(),
+            "--sender",
+            &account.to_string(),
+            "--broadcast",
+            "--start-fresh",
+            "--network",
+            "tempo",
+            "--tempo.fee-token",
+            &fee_token,
+            "--tempo.config",
+            &config,
+            "--private-key",
+            &keys[0],
+        ]);
+        cmd.env("CA_CALLS", calls.to_string());
+        cmd.assert_success();
+        let sequence: Value =
+            foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+        let approvals = sequence["awaiting_owners"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                cmd.cast_fuse()
+                    .args(["wallet", "sign", "--no-hash", entry["digest"].as_str().unwrap()])
+                    .args(["--private-key", &keys[1]])
+                    .assert_success()
+                    .get_output()
+                    .stdout_lossy()
+                    .trim()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(approvals.len() as u64, sent);
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--rpc-url",
+            rpc.as_str(),
+            "--resume",
+            "--network",
+            "tempo",
+        ]);
+        cmd.env("CA_CALLS", calls.to_string());
+        for approval in &approvals {
+            cmd.args(["--tempo.owner-signature", approval]);
+        }
+        cmd.assert_success();
+        assert_eq!(provider.get_transaction_count(account).await.unwrap(), sent);
+        let sequence: Value =
+            foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+        let receipts = sequence["receipts"].as_array().unwrap();
+        assert_eq!(receipts.len() as u64, sent);
+        assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"), "{sequence}");
+    }
+
+    // More operations than a node simulates blocks are saved when they fit in one block.
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    api.anvil_set_code(address!("0x0000000000000000000000000000000000C0FFEE"), bytes!("00"))
+        .await
+        .unwrap();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    api.anvil_deal_tip20(
+        account,
+        foundry_common::tempo::ALPHA_USD_ADDRESS,
+        U256::from(1_000_000_000_000u64),
+    )
+    .await
+    .unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--rpc-url",
+        handle.http_endpoint().as_str(),
+        "--sender",
+        &account.to_string(),
+        "--broadcast",
+        "--start-fresh",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        &foundry_common::tempo::ALPHA_USD_ADDRESS.to_string(),
+        "--tempo.config",
+        &config,
+        "--private-key",
+        &keys[0],
+    ]);
+    cmd.env("CA_CALLS", "257");
+    cmd.assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    assert_eq!(sequence["awaiting_owners"].as_array().unwrap().len(), 257);
+}
+
+/// `--broadcast` checks the transactions saved for owners on other machines, simulated in order
+/// after the operations before them, before it sends anything: an EOA transaction before them is
+/// not sent when one of them would fail, when they fit neither in one block nor in as many blocks
+/// as a node simulates,
+/// when the RPC caps the gas of the simulation, when one of them changes the account's
+/// configuration before another, or when they would use a nonce key.
+#[forgetest_init]
+async fn tempo_t14_script_offline_owner_export_checked_before_sending(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "CaChecks.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract CaChecksScript is Script {
+    function run() external {
+        uint256 calls = vm.envUint("CA_CALLS");
+        vm.startBroadcast(vm.envAddress("CA_EOA"));
+        (bool ok,) = address(0xC0FFEE).call("");
+        vm.stopBroadcast();
+        vm.startBroadcast();
+        (ok,) = vm.envAddress("CA_TARGET").call(vm.envBytes("CA_DATA"));
+        for (uint256 i; i < calls; i++) {
+            (ok,) = address(0xC0FFEE).call("");
+        }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        // A block gas limit that 257 calls do not fit in.
+        spawn(
+            NodeConfig::test_tempo()
+                .with_hardfork(Some(TempoHardfork::T14.into()))
+                .with_gas_limit(Some(1_000_000)),
+        )
+        .await;
+    let upstream = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let target = address!("0x0000000000000000000000000000000000C0FFEE");
+    api.anvil_set_code(target, bytes!("00")).await.unwrap();
+    // `PUSH0 PUSH0 REVERT`.
+    let reverting = address!("0x0000000000000000000000000000000000000BAD");
+    api.anvil_set_code(reverting, bytes!("5f5ffd")).await.unwrap();
+    let (account, config, keys) = crate::utils::tempo_two_of_three_account();
+    let eoa_key = format!("0x{}", "65".repeat(32));
+    let eoa = eoa_key.parse::<PrivateKeySigner>().unwrap().address();
+    for funded in [account, eoa] {
+        api.anvil_deal_tip20(
+            funded,
+            foundry_common::tempo::ALPHA_USD_ADDRESS,
+            U256::from(1_000_000_000_000u64),
+        )
+        .await
+        .unwrap();
+    }
+
+    // Answers `eth_simulateV1` as reth does over its `--rpc.gascap`.
+    let capped = rpc::spawn_rpc_proxy_method_error(
+        upstream.clone(),
+        "eth_simulateV1",
+        -38026,
+        "Client adjustable limit reached",
+    )
+    .await;
+
+    let update_config = &keccak256(
+        "updateConfig((bytes32,uint64,uint8,(address,uint8)[]),uint8,(address,uint8)[])",
+    )[..4];
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
+    let account_arg = account.to_string();
+    let cases = [
+        (
+            upstream.as_str(),
+            reverting,
+            vec![],
+            0,
+            vec![],
+            "transaction 1 fails when simulated after the transactions before it, so no more \
+             transactions are sent or saved for owners to approve: execution reverted"
+                .to_string(),
+        ),
+        (
+            upstream.as_str(),
+            target,
+            vec![],
+            255,
+            vec![],
+            "cannot simulate the transactions in order to fix the gas limits of the ones \
+             awaiting owner approvals, so no more transactions are sent: the 257 transactions do \
+             not fit in one simulated block, and a node simulates at most 256 blocks; split the \
+             script so that at most 256 operations run up to the last transaction of a \
+             configurable account with offline owners; server returned an error response: error \
+             code -38013: err: intrinsic gas too high -- CallGasCostMoreThanGasLimit"
+                .to_string(),
+        ),
+        (
+            capped.as_str(),
+            target,
+            vec![],
+            1,
+            vec![],
+            "cannot simulate the transactions in order to fix the gas limits of the ones \
+             awaiting owner approvals, so no more transactions are sent: eth_simulateV1 failed \
+             with -38026 (Client adjustable limit reached): the transactions use more gas or \
+             blocks than the RPC allows in one request; the node may cap the gas of a whole \
+             simulation request, such as reth's --rpc.gascap (50,000,000 by default), or its \
+             number of simulated blocks; raise them or use an RPC without these limits"
+                .to_string(),
+        ),
+        (
+            upstream.as_str(),
+            address!("0xAACC000000000000000000000000000000000000"),
+            update_config.to_vec(),
+            1,
+            vec![],
+            format!(
+                "transaction 1 changes the configuration of {account}, whose owners approve on \
+                 other machines, before its other transactions: their approvals would be void \
+                 once it is sent, so it must be the account's last transaction in the script"
+            ),
+        ),
+        (
+            upstream.as_str(),
+            target,
+            vec![],
+            0,
+            vec!["--tempo.nonce-key", "5"],
+            "the owners of a Tempo configurable account sender approve its transactions on \
+             other machines, so its transactions use the protocol nonce, not --tempo.nonce-key \
+             0x5"
+            .to_string(),
+        ),
+    ];
+    for (rpc, call_target, data, calls, args, error) in cases {
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--rpc-url",
+            rpc,
+            "--sender",
+            &account_arg,
+            "--broadcast",
+            "--skip-simulation",
+            "--network",
+            "tempo",
+            "--tempo.fee-token",
+            &fee_token,
+            "--tempo.config",
+            &config,
+            "--private-keys",
+            &keys[0],
+            "--private-keys",
+            &eoa_key,
+        ]);
+        cmd.args(args);
+        cmd.env("CA_EOA", eoa.to_string());
+        cmd.env("CA_TARGET", call_target.to_string());
+        cmd.env("CA_DATA", hex::encode_prefixed(&data));
+        cmd.env("CA_CALLS", calls.to_string());
+        cmd.assert_failure().stderr_eq(format!("...\nError: {error}\n"));
+        assert_eq!(provider.get_transaction_count(eoa).await.unwrap(), 0, "{error}");
+        assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0, "{error}");
+        std::fs::remove_dir_all(prj.root().join("broadcast")).ok();
     }
 }
