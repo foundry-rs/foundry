@@ -2612,7 +2612,7 @@ async fn test_simulate_resolves_nonces_from_state() {
         "eth_simulateV1",
         json!([{
             "blockStateCalls": [{
-                "stateOverrides": {(sender): {"nonce": "0xfffffffffffffffe"}},
+                "stateOverrides": {(sender): {"nonce": "0xfffffffffffffffc"}},
                 "calls": [
                     {"from": sender, "to": receiver},
                     {"from": sender, "to": receiver},
@@ -2632,18 +2632,75 @@ async fn test_simulate_resolves_nonces_from_state() {
             .iter()
             .all(|call| call["status"] == "0x1")
     );
-    assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xfffffffffffffffe");
-    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0xffffffffffffffff");
-    assert_eq!(response["result"][0]["transactions"][2]["nonce"], "0x0");
+    assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xfffffffffffffffc");
+    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0xfffffffffffffffd");
+    assert_eq!(response["result"][0]["transactions"][2]["nonce"], "0xfffffffffffffffe");
+}
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_rejects_max_sender_nonce_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let sender = "0xc000000000000000000000000000000000000000";
+    let receiver = "0xc100000000000000000000000000000000000000";
+    let error = json!({
+        "code": -32603,
+        "message": "nonce has max value: address 0xC000000000000000000000000000000000000000, nonce: 18446744073709551615"
+    });
+
+    // The nonce never wraps, with or without validation, for calls and creations alike.
+    for (nonce, calls, validation) in [
+        ("0xffffffffffffffff", json!([{"from": sender, "to": receiver}]), false),
+        ("0xffffffffffffffff", json!([{"from": sender, "to": receiver}]), true),
+        ("0xffffffffffffffff", json!([{"from": sender}]), false),
+        ("0xffffffffffffffff", json!([{"from": sender, "to": receiver, "nonce": "0x5"}]), false),
+        (
+            "0xfffffffffffffffe",
+            json!([{"from": sender, "to": receiver}, {"from": sender, "to": receiver}]),
+            false,
+        ),
+    ] {
+        let response = rpc_request(
+            &endpoint,
+            "eth_simulateV1",
+            json!([{
+                "blockStateCalls": [{
+                    "blockOverrides": {"baseFeePerGas": "0x0"},
+                    "stateOverrides": {(sender): {"nonce": nonce}},
+                    "calls": calls
+                }],
+                "validation": validation
+            }, "latest"]),
+        )
+        .await;
+        assert_eq!(response["error"], error, "{response}");
+    }
+
+    // With validation, a mismatched transaction nonce is reported before the cap.
     let response = rpc_request(
         &endpoint,
         "eth_simulateV1",
         json!([{
             "blockStateCalls": [{
+                "blockOverrides": {"baseFeePerGas": "0x0"},
                 "stateOverrides": {(sender): {"nonce": "0xffffffffffffffff"}},
+                "calls": [{"from": sender, "to": receiver, "nonce": "0x5"}]
+            }],
+            "validation": true
+        }, "latest"]),
+    )
+    .await;
+    assert_eq!(response["error"]["code"], -38010, "{response}");
+
+    // Without validation an explicit transaction nonce of 2^64 - 1 is still accepted.
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {(sender): {"nonce": "0x7"}},
                 "calls": [
-                    {"from": sender},
+                    {"from": sender, "to": receiver, "nonce": "0xffffffffffffffff"},
                     {"from": sender, "to": receiver}
                 ]
             }],
@@ -2651,10 +2708,9 @@ async fn test_simulate_resolves_nonces_from_state() {
         }, "latest"]),
     )
     .await;
-
     assert!(response.get("error").is_none(), "{response}");
     assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xffffffffffffffff");
-    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0xffffffffffffffff");
+    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0x8");
 }
 
 #[tokio::test(flavor = "multi_thread")]

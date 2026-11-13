@@ -4798,6 +4798,42 @@ async fn test_tempo_simulate_increments_protocol_nonce_for_call_batches() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_rejects_max_protocol_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let call =
+        || Call { to: TxKind::Call(Address::random()), value: U256::ZERO, input: Bytes::new() };
+    let create = || Call { to: TxKind::Create, value: U256::ZERO, input: Bytes::new() };
+
+    // 2D nonce lanes do not spend the protocol nonce, but creations always do.
+    for (nonce_key, call, validation, rejected) in [
+        (U256::ZERO, call(), false, true),
+        (U256::ONE, call(), false, false),
+        (U256::ONE, create(), false, true),
+        (U256::ONE, create(), true, true),
+    ] {
+        let mut request = tempo_call_request(from, [call]);
+        request["nonceKey"] = serde_json::json!(nonce_key);
+        let payload = serde_json::json!({
+            "blockStateCalls": [{
+                "stateOverrides": {(from.to_string()): {"nonce": "0xffffffffffffffff"}},
+                "calls": [request],
+            }],
+            "validation": validation,
+        });
+        let response =
+            provider.raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,)).await;
+        if rejected {
+            let error = response.unwrap_err().to_string();
+            assert!(error.contains("nonce has max value"), "{nonce_key} {validation}: {error}");
+        } else {
+            response.unwrap();
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_simulate_resolves_omitted_lane_nonces() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
