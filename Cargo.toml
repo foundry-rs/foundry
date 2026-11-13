@@ -373,6 +373,10 @@ tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "3e5d8fd24d2
     "std",
 ] }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "3e5d8fd24d210468569e3a182e035beb61569340", default-features = false }
+# Must match tempoxyz/tempo's reth-evm rev.
+reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "b05f9a86df7f45568f8c2fcc42512f702f548357", features = [
+    "account-ext",
+] }
 # Op, Base and Monad evm2 type families, on foundry-rs/evm2-networks at `b6116c7`.
 op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b6116c79df5f3c14de93e4350357beb0fe31cae7", default-features = false }
 base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b6116c79df5f3c14de93e4350357beb0fe31cae7", default-features = false }
