@@ -105,6 +105,53 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 "#]]);
 }
 
+// Tests that an `afterInvariant` counterexample holds only the calls the run executed.
+#[forgetest]
+fn invariant_after_invariant_excludes_unexecuted_call(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.shrink_run_limit = 0;
+    });
+    prj.add_test(
+        "InvariantAfterInvariantCalls.t.sol",
+        r#"
+contract Counter {
+    uint256 public count;
+
+    function inc() external {
+        count++;
+    }
+}
+
+contract InvariantAfterInvariantCallsTest {
+    Counter counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function afterInvariant() public view {
+        require(counter.count() != 3, "three calls");
+    }
+
+    function invariant_ok() public view {}
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: three calls]
+	[Sequence] (original: 3, shrunk: 3)
+		sender=[..] addr=[test/InvariantAfterInvariantCalls.t.sol:Counter][..] calldata=inc() args=[]
+		sender=[..] addr=[test/InvariantAfterInvariantCalls.t.sol:Counter][..] calldata=inc() args=[]
+		sender=[..] addr=[test/InvariantAfterInvariantCalls.t.sol:Counter][..] calldata=inc() args=[]
+ invariant_ok() (runs: 1, calls: 3, reverts: 0)
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn invariant_assume(prj: _, cmd: _) {
     prj.update_config(|config| {

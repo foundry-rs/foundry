@@ -1456,6 +1456,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             )?);
                         }
                         CampaignEvent::PostCheck => {
+                            // A complete run ends with the input generated after its last call,
+                            // which never runs.
+                            if current_run.depth >= run_depth {
+                                current_run.inputs.pop();
+                            }
                             // Multi-predicate campaigns keep running after earlier failures, but
                             // the hook must still execute on subsequent clean runs.
                             if !abort_campaign
