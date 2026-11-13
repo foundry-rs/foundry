@@ -101,7 +101,7 @@ async fn native_nonempty_block() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn native_epoch_boundaries() {
-    for hardfork in [TempoHardfork::T3, TempoHardfork::T4] {
+    for hardfork in [TempoHardfork::T3, TempoHardfork::T4, TempoHardfork::T15] {
         let (api, handle) = spawn(
             NodeConfig::test_tempo()
                 .with_no_mining(true)
@@ -197,7 +197,7 @@ async fn consensus_identity(handle: &NodeHandle) -> Identity {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn native_rotation_follows_authenticated_announcement() {
-    for hardfork in [TempoHardfork::T3, TempoHardfork::T4] {
+    for hardfork in [TempoHardfork::T3, TempoHardfork::T4, TempoHardfork::T15] {
         let (api, handle) = spawn(
             NodeConfig::test_tempo()
                 .with_no_mining(true)

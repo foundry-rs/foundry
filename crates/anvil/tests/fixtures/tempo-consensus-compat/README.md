@@ -4,7 +4,7 @@ This test-only workspace member starts local Anvil nodes and decodes their HTTP
 responses using Commonware 2026.10.0's
 `Finalization<Scheme<PublicKey, MinSig>, Digest>` and `tempo_primitives::Block`.
 It covers empty blocks, blocks containing Ethereum and Tempo transactions, and
-T3/T4 epoch boundaries. It checks byte-identical re-encoding, header and body
+T3/T4/T15 epoch boundaries. It checks byte-identical re-encoding, header and body
 commitments, and both signatures. Wrong identities and changes to the digest,
 parent view, epoch, view or either signature must fail verification. Raw header
 bytes, Ethereum block hashes and consensus digests must identify the same block.
