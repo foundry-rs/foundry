@@ -105,7 +105,8 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 "#]]);
 }
 
-// Tests that an `afterInvariant` counterexample holds only the calls the run executed.
+// Tests that an `afterInvariant` counterexample holds only the calls the run executed, and that an
+// empty one is still persisted for replay.
 #[forgetest]
 fn invariant_after_invariant_excludes_unexecuted_call(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -132,7 +133,7 @@ contract InvariantAfterInvariantCallsTest {
     }
 
     function afterInvariant() public view {
-        require(counter.count() != 3, "three calls");
+        require(counter.count() % 3 != 0, "bad count");
     }
 
     function invariant_ok() public view {}
@@ -142,7 +143,7 @@ contract InvariantAfterInvariantCallsTest {
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: three calls]
+[FAIL: bad count]
 	[Sequence] (original: 3, shrunk: 3)
 		sender=[..] addr=[test/InvariantAfterInvariantCalls.t.sol:Counter][..] calldata=inc() args=[]
 		sender=[..] addr=[test/InvariantAfterInvariantCalls.t.sol:Counter][..] calldata=inc() args=[]
@@ -150,6 +151,20 @@ contract InvariantAfterInvariantCallsTest {
  invariant_ok() (runs: 1, calls: 3, reverts: 0)
 ...
 "#]]);
+
+    std::fs::remove_dir_all(prj.root().join("cache/invariant")).unwrap();
+    prj.update_config(|config| config.invariant.depth = 0);
+    let empty_sequence = str![[r#"
+...
+[FAIL: bad count]
+	[Sequence] (original: 0, shrunk: 0)
+...
+"#]];
+    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(empty_sequence.clone());
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mt", "invariant_ok"])
+        .assert_failure()
+        .stdout_eq(empty_sequence);
 }
 
 #[forgetest_init]

@@ -4959,7 +4959,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         progress.as_ref(),
                         Some((position, total_broken)),
                     ) {
-                        Ok(replayed) if !replayed.call_sequence.is_empty() => {
+                        // An `afterInvariant` failure can need no calls, so its empty sequence is
+                        // still persisted for replay.
+                        Ok(replayed)
+                            if !replayed.call_sequence.is_empty() || case_data.after_invariant =>
+                        {
                             if single_failure {
                                 fork_block_number =
                                     replayed.fork_block_number.or(fork_block_number);
