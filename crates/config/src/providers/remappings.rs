@@ -513,12 +513,19 @@ impl RemappingsProvider<'_> {
                 .is_ok_and(|metadata| metadata.file_type().is_symlink())
                 && seen.insert(entry.canonical.clone())
             {
-                for lib in &config.libs {
-                    let lib = if lib.is_absolute() { lib.clone() } else { entry.path.join(lib) };
-                    pending.extend(foundry_toml_dir_entries(lib).into_iter().filter(|entry| {
-                        !fs::symlink_metadata(&entry.path)
-                            .is_ok_and(|metadata| metadata.file_type().is_symlink())
-                    }));
+                // Nested library roots must stay inside both dependency identities.
+                let owner = normalize_remapping_context(&entry.path);
+                for lib in config.libs.iter().filter(|lib| lib.is_relative()) {
+                    let lib = entry.path.join(lib);
+                    if normalize_remapping_context(&lib).starts_with(&owner)
+                        && let Ok(canonical) = dunce::canonicalize(&lib)
+                        && canonical.starts_with(&entry.canonical)
+                    {
+                        pending.extend(foundry_toml_dir_entries(lib).into_iter().filter(|entry| {
+                            !fs::symlink_metadata(&entry.path)
+                                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                        }));
+                    }
                 }
             }
 
@@ -1578,6 +1585,142 @@ mod tests {
                 .find(|remapping| remapping.context.is_none() && remapping.name == "shared/")
                 .unwrap();
             assert_eq!(Path::new(&shared.path), Path::new("lib/outer/lib/shared/custom"));
+
+            Ok(())
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_library_paths_cannot_forge_dependency_owners() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            let owner = root.join("lib/h");
+            let substitute = owner.join("p/victim");
+            for path in [
+                owner.join("src"),
+                owner.join("p/q/r"),
+                substitute.join("evil-src"),
+                root.join("lib/victim/src"),
+            ] {
+                fs::create_dir_all(path).unwrap();
+            }
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            fs::write(
+                owner.join(Config::FILE_NAME),
+                "[profile.default]\nlibs = [\"evil/../..\"]\n",
+            )
+            .unwrap();
+            fs::write(
+                substitute.join(Config::FILE_NAME),
+                "[profile.default]\nsrc = \"evil-src\"\nremappings = [\"solmate/=evil-src/\"]\n",
+            )
+            .unwrap();
+            fs::write(root.join("lib/victim/foundry.toml"), "[profile.default]\n").unwrap();
+            symlink("p/q/r", owner.join("evil")).unwrap();
+
+            let config = Config::load_with_root(&root).unwrap();
+            assert_eq!(
+                config
+                    .get_all_remappings()
+                    .filter(|remapping| remapping.name == "solmate/")
+                    .map(|remapping| remapping.to_string())
+                    .collect::<Vec<_>>(),
+                Vec::<String>::new(),
+            );
+
+            Ok(())
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_library_symlinks_stay_inside_their_owner() {
+        figment::Jail::expect_with(|_| {
+            for external in [false, true] {
+                let temp = tempdir().unwrap();
+                let root = dunce::canonicalize(temp.path()).unwrap();
+                let owner = root.join("lib/h");
+                let packages = if external { root.join("outside") } else { owner.join("packages") };
+                let source = packages.join("nested/src");
+                fs::create_dir_all(owner.join("src")).unwrap();
+                fs::create_dir_all(&source).unwrap();
+                fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+                fs::write(
+                    owner.join(Config::FILE_NAME),
+                    "[profile.default]\nlibs = [\"vendor\"]\n",
+                )
+                .unwrap();
+                fs::write(
+                    packages.join("nested/foundry.toml"),
+                    "[profile.default]\nremappings = [\"private/=src/\"]\n",
+                )
+                .unwrap();
+                symlink(&packages, owner.join("vendor")).unwrap();
+
+                let config = Config::load_with_root(&root).unwrap();
+                assert_eq!(
+                    config
+                        .get_all_remappings()
+                        .filter(|remapping| remapping.name == "private/")
+                        .map(|remapping| dunce::canonicalize(root.join(&remapping.path)).unwrap())
+                        .collect::<BTreeSet<_>>(),
+                    if external { BTreeSet::new() } else { BTreeSet::from([source]) },
+                    "external={external}",
+                );
+            }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn nested_library_paths_must_be_relative_and_contained() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            let owner = root.join("lib/h");
+            let internal = owner.join("vendor");
+            let external = root.join("lib/outside");
+            fs::create_dir_all(owner.join("src")).unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            for packages in [&internal, &external] {
+                fs::create_dir_all(packages.join("nested/src")).unwrap();
+                fs::write(
+                    packages.join("nested/foundry.toml"),
+                    "[profile.default]\nremappings = [\"private/=src/\"]\n",
+                )
+                .unwrap();
+            }
+
+            for (lib, allowed) in [
+                ("vendor".to_string(), true),
+                ("vendor/../vendor".to_string(), true),
+                ("../outside".to_string(), false),
+                (internal.display().to_string(), false),
+                (external.display().to_string(), false),
+            ] {
+                fs::write(
+                    owner.join(Config::FILE_NAME),
+                    format!("[profile.default]\nlibs = [{lib:?}]\n"),
+                )
+                .unwrap();
+                let config = Config::load_with_root(&root).unwrap();
+                assert_eq!(
+                    config
+                        .get_all_remappings()
+                        .filter(|remapping| remapping.name == "private/")
+                        .map(|remapping| dunce::canonicalize(root.join(&remapping.path)).unwrap())
+                        .collect::<BTreeSet<_>>(),
+                    if allowed {
+                        BTreeSet::from([internal.join("nested/src")])
+                    } else {
+                        BTreeSet::new()
+                    },
+                    "libs={lib:?}",
+                );
+            }
 
             Ok(())
         });
