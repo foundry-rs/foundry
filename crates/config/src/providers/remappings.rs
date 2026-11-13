@@ -212,36 +212,29 @@ impl RemappingsProvider<'_> {
     /// - CLI parameters
     fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<RemappingsOutput, Error> {
         trace!("get all remappings from {:?}", self.root);
-        /// Prioritizes installation depth, then target depth, a `src` target, and lexical target.
+        /// Prioritizes remappings by shortest path, then a `src` target, then lexical path.
+        ///   - ("a", "1/2") over ("a", "1/2/3")
+        ///   - ("a", "1/src") over ("a", "1/lib")
         ///
         /// grouped by remapping context
         fn insert_closest(
-            mappings: &mut BTreeMap<Option<String>, BTreeMap<String, (PathBuf, PathBuf)>>,
+            mappings: &mut BTreeMap<Option<String>, BTreeMap<String, PathBuf>>,
             context: Option<String>,
             key: String,
-            origin: PathBuf,
             path: PathBuf,
         ) {
             let context_mappings = mappings.entry(context).or_default();
             match context_mappings.entry(key) {
                 Entry::Occupied(mut entry) => {
                     let existing = entry.get();
-                    if (
-                        origin.components().count(),
-                        path.components().count(),
-                        !path.ends_with("src"),
-                        &path,
-                    ) < (
-                        existing.0.components().count(),
-                        existing.1.components().count(),
-                        !existing.1.ends_with("src"),
-                        &existing.1,
-                    ) {
-                        entry.insert((origin, path));
+                    if (path.components().count(), !path.ends_with("src"), &path)
+                        < (existing.components().count(), !existing.ends_with("src"), existing)
+                    {
+                        entry.insert(path);
                     }
                 }
                 Entry::Vacant(entry) => {
-                    entry.insert((origin, path));
+                    entry.insert(path);
                 }
             }
         }
@@ -293,31 +286,9 @@ impl RemappingsProvider<'_> {
                 .map(|(lib, remapping, _)| (lib.clone(), remapping.clone()))
                 .collect::<Vec<_>>();
             let RemappingDiscovery { global, contextual } = auto_detected_remappings;
-            let lib_roots =
-                self.lib_paths.iter().map(|lib| self.root.join(lib)).collect::<Vec<_>>();
             let mut global = global
                 .into_iter()
-                .map(|remapping| {
-                    // Discovery names aliases after their package window. Preserve that origin
-                    // before a configured source directory replaces the discovered target. Only
-                    // library barriers open a package window; source subdirectories may repeat
-                    // the package name.
-                    let path = Path::new(&remapping.path);
-                    let origin = path
-                        .ancestors()
-                        .find(|path| {
-                            path.file_name().and_then(|name| name.to_str())
-                                == Some(remapping.name.trim_end_matches('/'))
-                                && path.parent().is_some_and(|parent| {
-                                    parent.ends_with("lib")
-                                        || parent.ends_with("node_modules")
-                                        || lib_roots.iter().any(|lib| parent == lib)
-                                })
-                        })
-                        .unwrap_or(path)
-                        .to_path_buf();
-                    (origin, configured_auto_remapping(remapping, &configured_package_entries))
-                })
+                .map(|remapping| configured_auto_remapping(remapping, &configured_package_entries))
                 .collect::<Vec<_>>();
             let mut contextual = contextual
                 .into_iter()
@@ -326,7 +297,7 @@ impl RemappingsProvider<'_> {
             let safe_alias = |remapping: &Remapping| {
                 !["lib/", "src/", "contracts/"].contains(&remapping.name.as_str())
             };
-            global.retain(|(_, remapping)| safe_alias(remapping));
+            global.retain(&safe_alias);
             contextual.retain(safe_alias);
             // Dependencies commonly omit nested checkouts and use a hoisted installation. A
             // missing declared target must not shadow that discovered package within its owner.
@@ -335,20 +306,18 @@ impl RemappingsProvider<'_> {
                     || Path::new(&remapping.path).exists()
                     || !global
                         .iter()
-                        .any(|(_, auto)| remapping_name_is_prefix(&auto.name, &remapping.name))
+                        .any(|auto| remapping_name_is_prefix(&auto.name, &remapping.name))
             });
-            let mut targets_by_alias = BTreeMap::new();
-            for remapping in global.iter().map(|(_, remapping)| remapping).chain(&contextual) {
-                let path = Path::new(&remapping.path);
+            let mut targets_by_alias = BTreeMap::<_, BTreeSet<_>>::new();
+            for remapping in global.iter().chain(&contextual) {
                 targets_by_alias
-                    .entry(remapping.name.as_str())
-                    .and_modify(|(first, ambiguous)| *ambiguous |= *first != path)
-                    .or_insert((path, false));
+                    .entry(remapping.name.clone())
+                    .or_default()
+                    .insert(PathBuf::from(&remapping.path));
             }
             let ambiguous_aliases = targets_by_alias
                 .into_iter()
-                .filter(|(_, (_, ambiguous))| *ambiguous)
-                .map(|(name, _)| name.to_owned())
+                .filter_map(|(name, targets)| (targets.len() > 1).then_some(name))
                 .collect::<BTreeSet<_>>();
             let mut lib_remappings = BTreeMap::new();
             let mut explicit_contextual_remappings = Vec::new();
@@ -396,18 +365,16 @@ impl RemappingsProvider<'_> {
                 }
                 // Preserve existing contextual refinements for external-source dependencies.
                 if *kind == NestedRemappingKind::UnscopedDeclaration
-                    && global.iter().map(|(_, remapping)| remapping).chain(&contextual).any(
-                        |auto| {
-                            auto.name == r.name
-                                && Path::new(&r.path) != Path::new(&auto.path)
-                                && (auto
-                                    .context
-                                    .as_deref()
-                                    .is_some_and(|context| Path::new(context) == lib)
-                                    || (auto.context == r.context
-                                        && Path::new(&r.path).starts_with(&auto.path)))
-                        },
-                    )
+                    && global.iter().chain(&contextual).any(|auto| {
+                        auto.name == r.name
+                            && Path::new(&r.path) != Path::new(&auto.path)
+                            && (auto
+                                .context
+                                .as_deref()
+                                .is_some_and(|context| Path::new(context) == lib)
+                                || (auto.context == r.context
+                                    && Path::new(&r.path).starts_with(&auto.path)))
+                    })
                 {
                     let mut refinement = r.clone();
                     refinement.context = Some(format!("{}{MAIN_SEPARATOR}", lib.display()));
@@ -422,7 +389,6 @@ impl RemappingsProvider<'_> {
                     &mut lib_remappings,
                     r.context.clone(),
                     r.name.clone(),
-                    lib.clone(),
                     PathBuf::from(&r.path),
                 );
             }
@@ -437,15 +403,15 @@ impl RemappingsProvider<'_> {
                 }
             }
             sort_by_context_specificity(&mut contextual_remappings);
-            for (origin, r) in global {
-                insert_closest(&mut lib_remappings, r.context, r.name, origin, r.path.into());
+            for r in global {
+                insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
 
             let explicit_remappings = all_remappings
                 .remappings
                 .iter()
                 .map(|r| relative_remapping_preserving_context_boundary(r.clone(), self.root))
-                .collect::<BTreeSet<_>>();
+                .collect::<Vec<_>>();
             sort_by_context_specificity(&mut explicit_contextual_remappings);
             let mut generated_remappings = Vec::new();
             for contextual in
@@ -464,7 +430,7 @@ impl RemappingsProvider<'_> {
                 lib_remappings
                     .into_iter()
                     .flat_map(|(context, remappings)| {
-                        remappings.into_iter().map(move |(name, (_, path))| Remapping {
+                        remappings.into_iter().map(move |(name, path)| Remapping {
                             context: context.clone(),
                             name,
                             path: path.to_string_lossy().into(),
@@ -1445,99 +1411,6 @@ mod tests {
     }
 
     #[test]
-    fn configured_source_does_not_change_package_precedence() {
-        figment::Jail::expect_with(|_| {
-            let temp = tempdir().unwrap();
-            let root = temp.path().join("project/deep/root");
-            let substitute = temp.path().join("substitute");
-            for path in [
-                root.join("lib/helper/src"),
-                root.join("lib/helper/lib/victim"),
-                root.join("lib/victim/src"),
-                substitute.clone(),
-            ] {
-                fs::create_dir_all(path).unwrap();
-            }
-            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
-            fs::write(root.join("lib/helper/foundry.toml"), "[profile.default]\n").unwrap();
-            fs::write(
-                root.join("lib/helper/lib/victim/foundry.toml"),
-                format!("[profile.default]\nsrc = {:?}\n", substitute.display().to_string()),
-            )
-            .unwrap();
-            fs::write(root.join("lib/helper/src/Helper.sol"), "contract Helper {}\n").unwrap();
-            fs::write(root.join("lib/victim/src/Victim.sol"), "contract Victim {}\n").unwrap();
-            fs::write(substitute.join("Victim.sol"), "contract Substitute {}\n").unwrap();
-
-            let config = Config::load_with_root(&root).unwrap();
-            assert_eq!(
-                config
-                    .get_all_remappings()
-                    .filter(|remapping| remapping.context.is_none())
-                    .map(|remapping| remapping.to_string())
-                    .collect::<Vec<_>>(),
-                ["helper/=lib/helper/src/", "victim/=lib/victim/src/"]
-            );
-
-            // A nested custom-source package remains available when there is no closer
-            // installation.
-            fs::remove_dir_all(root.join("lib/victim")).unwrap();
-            let config = Config::load_with_root(&root).unwrap();
-            let victim =
-                config.get_all_remappings().find(|remapping| remapping.name == "victim/").unwrap();
-            assert_eq!(
-                dunce::canonicalize(root.join(&victim.path)).unwrap(),
-                dunce::canonicalize(substitute).unwrap()
-            );
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn repeated_source_directory_name_does_not_change_package_precedence() {
-        figment::Jail::expect_with(|_| {
-            for (lib, honest) in [("lib", "victim"), ("vendor", "victim"), ("lib", "a/lib/victim")]
-            {
-                let temp = tempdir().unwrap();
-                let root = temp.path();
-                let source = Path::new(lib).join(honest).join("custom/victim/src");
-                for path in [
-                    root.join(&source),
-                    root.join(lib).join("helper/src"),
-                    root.join(lib).join("helper/lib/victim"),
-                ] {
-                    fs::create_dir_all(path).unwrap();
-                }
-                fs::write(
-                    root.join(Config::FILE_NAME),
-                    format!("[profile.default]\nlibs = [{lib:?}]\n"),
-                )
-                .unwrap();
-                fs::write(root.join(lib).join("helper/foundry.toml"), "[profile.default]\n")
-                    .unwrap();
-                fs::write(
-                    root.join(lib).join("helper/lib/victim/foundry.toml"),
-                    "[profile.default]\nsrc = \"../../src\"\n",
-                )
-                .unwrap();
-                fs::write(root.join(&source).join("Victim.sol"), "contract Victim {}\n").unwrap();
-                fs::write(root.join(lib).join("helper/src/Victim.sol"), "contract Substitute {}\n")
-                    .unwrap();
-
-                let config = Config::load_with_root(root).unwrap();
-                let victim = config
-                    .get_all_remappings()
-                    .find(|remapping| remapping.context.is_none() && remapping.name == "victim/")
-                    .unwrap();
-                assert_eq!(Path::new(&victim.path), source, "{lib}/{honest}");
-            }
-
-            Ok(())
-        });
-    }
-
-    #[test]
     fn external_sources_preserve_dependency_declarations() {
         figment::Jail::expect_with(|_| {
             let temp = tempdir().unwrap();
@@ -1672,6 +1545,39 @@ mod tests {
                     "{source_a} vs {source_b}"
                 );
             }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn package_precedence_uses_target_depth_before_installation_depth() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = temp.path();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            for (package, source) in [
+                ("lib/shared", "custom/deep/source/extra"),
+                ("lib/outer", "src"),
+                ("lib/outer/lib/shared", "custom"),
+            ] {
+                let package = root.join(package);
+                fs::create_dir_all(package.join(source)).unwrap();
+                fs::write(
+                    package.join(Config::FILE_NAME),
+                    format!("[profile.default]\nsrc = {source:?}\n"),
+                )
+                .unwrap();
+                fs::write(package.join(source).join("Contract.sol"), "contract Contract {}\n")
+                    .unwrap();
+            }
+
+            let config = Config::load_with_root(root).unwrap();
+            let shared = config
+                .get_all_remappings()
+                .find(|remapping| remapping.context.is_none() && remapping.name == "shared/")
+                .unwrap();
+            assert_eq!(Path::new(&shared.path), Path::new("lib/outer/lib/shared/custom"));
 
             Ok(())
         });
