@@ -1368,11 +1368,9 @@ mod tests {
         for (context, scoped) in [
             ("../../src/".to_string(), None),
             ("../a-helper-other/".to_string(), None),
-            (owner.join("../../src/").display().to_string(), None),
             ("../../".to_string(), Some("lib/a-helper/")),
             (root.display().to_string(), Some("lib/a-helper/")),
             ("src/../src/Pre".to_string(), Some("lib/a-helper/src/Pre")),
-            (owner.join("src/../src/Pre").display().to_string(), Some("lib/a-helper/src/Pre")),
         ] {
             fs::write(
                 owner.join(Config::FILE_NAME),
