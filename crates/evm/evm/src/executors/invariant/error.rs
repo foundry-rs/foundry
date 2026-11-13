@@ -98,6 +98,7 @@ impl<'a> InvariantRunCtx<'a> {
             fail_on_revert,
             assertion_failure,
             fork_block_number: call_result.fork_block_number,
+            after_invariant: false,
         }
     }
 
@@ -454,6 +455,7 @@ impl InvariantFuzzError {
             fail_on_revert,
             assertion_failure,
             fork_block_number: None,
+            after_invariant: false,
         };
         if is_revert { Self::Revert(failure) } else { Self::BrokenInvariant(failure) }
     }
@@ -522,6 +524,8 @@ pub struct FailedInvariantCaseData {
     pub assertion_failure: bool,
     /// Active fork block when the failure was observed, if any.
     pub fork_block_number: Option<u64>,
+    /// Whether `afterInvariant` failed, which can happen without any calls.
+    pub after_invariant: bool,
 }
 
 #[cfg(test)]
