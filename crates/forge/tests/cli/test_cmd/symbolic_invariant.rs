@@ -3210,8 +3210,8 @@ contract SymbolicHostReads is Test {
 }
 
 // A timed campaign's shrink deadline passes during minimization, which must keep the candidates it
-// confirmed before then. Minimization replays skip `vm.sleep`, so the handler spends its time in
-// the EVM instead.
+// confirmed before then. Minimization replays skip `vm.sleep`, so the invariant, whose failure
+// identity they record, spends its time in the EVM instead.
 #[forgetest_init]
 fn symbolic_invariant_keeps_minimization_at_shrink_deadline(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_keeps_minimization_at_shrink_deadline");
@@ -3230,12 +3230,8 @@ import "forge-std/Test.sol";
 
 contract SlowTarget {
     bool public broken;
-    uint256 public acc;
 
     function step(uint256 x) external {
-        uint256 a = acc;
-        for (uint256 i; i < 10000; ++i) a = uint256(keccak256(abi.encode(a, i)));
-        acc = a;
         if (x > 1000) broken = true;
     }
 }
@@ -3249,7 +3245,9 @@ contract SymbolicShrinkDeadline is Test {
     }
 
     function invariant_notBroken() public view {
-        assertFalse(target.broken());
+        uint256 a;
+        for (uint256 i; i < 10000; ++i) a = uint256(keccak256(abi.encode(a, i)));
+        assertFalse(target.broken() && a != 0);
     }
 }
 "#,

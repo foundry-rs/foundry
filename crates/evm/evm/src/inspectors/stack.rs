@@ -918,6 +918,26 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         }
     }
 
+    /// Set whether recording failure identities is paused, see [`Self::collect_failure_identity`].
+    ///
+    /// Calls made while paused still skip cheatcodes with effects outside the EVM, but do not step
+    /// every instruction and have no identity.
+    #[inline]
+    pub fn pause_failure_identity(&mut self, yes: bool) {
+        if let Some(trace) = self.cheatcodes.as_mut().and_then(|c| c.failure_trace.as_mut()) {
+            trace.paused = yes;
+        }
+    }
+
+    /// Returns whether a call skipped a cheatcode with effects outside the EVM while recording
+    /// failure identities, and clears it for the copies of this stack that share it.
+    pub fn take_skipped_host_effects(&self) -> bool {
+        self.cheatcodes
+            .as_ref()
+            .and_then(|c| c.failure_trace.as_ref())
+            .is_some_and(|trace| trace.take_skipped_host_effects())
+    }
+
     /// Set whether to record the failure provenance of each call, see
     /// [`RawCallResult::failure_provenance`](crate::executors::RawCallResult::failure_provenance).
     ///
@@ -2943,9 +2963,11 @@ mod tests {
         stack.set_cheatcodes(Cheatcodes::new(Default::default()));
         assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
 
-        // Recording failure identities steps everything, only while set.
+        // Recording failure identities steps everything, only while set and not paused.
         stack.collect_failure_identity(true);
         assert_eq!(steps(&mut stack), OpcodeSet::ALL);
+        stack.pause_failure_identity(true);
+        assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
         stack.collect_failure_identity(false);
         assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
 

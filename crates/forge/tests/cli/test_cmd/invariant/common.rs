@@ -4444,7 +4444,7 @@ contract HostAfterInvariantTest is GateTest {
 }
 
 // A failure that cannot be identified, here because of a snapshot restore or a replay that skips
-// `vm.unixTime`, is still shrunk by removing calls.
+// `vm.unixTime`, even where that makes it fail elsewhere, is still shrunk by removing calls.
 #[forgetest_init]
 fn invariant_unidentified_failure_still_shrinks(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -4490,9 +4490,37 @@ contract ClockTest is Test {
         require(!(handler.a() && handler.b()), "both set");
     }
 }
+
+contract ClockHandler is Handler, Test {
+    function setClockA() external {
+        require(vm.unixTime() > 0);
+        this.setA();
+    }
+}
+
+// Replays revert in the handler that reads the clock, before the invariant fails.
+contract ClockHandlerTest is Test {
+    ClockHandler handler;
+    function setUp() public {
+        handler = new ClockHandler();
+        targetContract(address(handler));
+        bytes4[] memory selectors = new bytes4[](6);
+        selectors[0] = ClockHandler.setClockA.selector;
+        selectors[1] = Handler.setB.selector;
+        selectors[2] = Handler.noise1.selector;
+        selectors[3] = Handler.noise2.selector;
+        selectors[4] = Handler.noise3.selector;
+        selectors[5] = Handler.noise4.selector;
+        targetSelector(FuzzSelector(address(handler), selectors));
+    }
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_clock_handler() public view {
+        require(!(handler.a() && handler.b()), "both set");
+    }
+}
 "#,
     );
-    for contract in ["UnidentifiedTest", "ClockTest"] {
+    for contract in ["UnidentifiedTest", "ClockTest", "ClockHandlerTest"] {
         cmd.forge_fuse()
             .args(["test", "--fuzz-seed", "1", "--mc", contract])
             .assert_failure()

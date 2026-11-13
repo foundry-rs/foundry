@@ -1915,7 +1915,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.gas_metering.recording
             || self.core.arbitrary_storage.is_some()
             || self.deploy_code_depth.is_some()
-            || self.failure_trace.is_some()
+            || self.failure_trace.as_ref().is_some_and(|trace| !trace.paused)
         {
             return OpcodeSet::ALL;
         }

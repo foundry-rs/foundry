@@ -665,6 +665,9 @@ pub struct FailureTrace {
     /// calls can read the state it would have changed, so it leaves them unidentified too. Shared
     /// with the copies of the inspector that calls such as invariant checks run on and discard.
     pub(crate) skipped_host_effects: Arc<AtomicBool>,
+    /// Whether recording is paused: calls still skip cheatcodes with effects outside the EVM, but
+    /// do not step every instruction and have no identity.
+    pub paused: bool,
 }
 
 /// Call site tracking of one executing frame.
@@ -852,6 +855,12 @@ impl FailureTrace {
         self.frames.truncate(depth + 1);
     }
 
+    /// Returns whether a cheatcode with effects outside the EVM was skipped, and clears it for the
+    /// copies that share it.
+    pub fn take_skipped_host_effects(&self) -> bool {
+        self.skipped_host_effects.swap(false, Ordering::Relaxed)
+    }
+
     /// Returns the value-independent identity of the finished call that stopped with `exit` and
     /// returned `output`, and starts recording the next call.
     ///
@@ -862,11 +871,15 @@ impl FailureTrace {
     /// data.
     pub fn take_identity(&mut self, exit: InstrStop, output: &[u8]) -> Option<B256> {
         let skipped_host_effects = self.skipped_host_effects.clone();
-        let Self { events, unidentified, .. } = std::mem::replace(
+        let Self { events, unidentified, paused, .. } = std::mem::replace(
             self,
-            Self { skipped_host_effects: skipped_host_effects.clone(), ..Default::default() },
+            Self {
+                skipped_host_effects: skipped_host_effects.clone(),
+                paused: self.paused,
+                ..Default::default()
+            },
         );
-        if unidentified || skipped_host_effects.load(Ordering::Relaxed) {
+        if paused || unidentified || skipped_host_effects.load(Ordering::Relaxed) {
             return None;
         }
         let mut preimage = vec![exit as u8];

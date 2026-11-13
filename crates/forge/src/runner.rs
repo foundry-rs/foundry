@@ -55,7 +55,7 @@ use foundry_evm::{
         StatelessReplayTarget, canonical_replay_dirs,
         fuzz::FuzzedExecutor,
         invariant::{
-            CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
+            CandidateReplay, CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
             HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, LiveInvariantSolution,
             LiveInvariantSolver, ReplayErrorResult, apply_invariant_call_delay, check_sequence,
             deadline_passed, did_fail_on_assert, execute_and_commit_tx, execute_tx,
@@ -1681,25 +1681,55 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             identified_contracts,
             replay.invariant_config.show_solidity,
         ));
-        let Some(expected) = self.symbolic_sequence_failure(replay, &original_calls, true) else {
+        let Ok(mut executor) = self.clone_executor_with_symbolic_storage(replay.storage) else {
             return SequenceMinimization::KeepOriginal;
         };
-        // A replay that skipped effects outside the EVM, such as `vm.setEnv`, can read state the
-        // campaign left behind, so its failure is unidentified and only call removal applies, as
-        // without minimization. The same holds after a snapshot restore: the probe skips host
-        // writes, so it cannot change what call removal replays see.
-        if expected.failure_identity.is_none() {
+        // Candidate replays must not add steps to the debugger's recording.
+        executor.inspector_mut().debug_recorder = None;
+        if let Some(deadline) = replay.shrink_deadline {
+            executor.inspector_mut().set_execution_deadline(self.tcfg.early_exit.clone(), deadline);
+        }
+        let mut candidates = CandidateReplay::new(
+            &mut executor,
+            replay.invariant_contract.address,
+            replay.target_invariant.selector().into(),
+            CheckSequenceOptions {
+                accumulate_warp_roll: false,
+                fail_on_revert: replay.invariant_config.fail_on_revert,
+                expect_assertion_failure: replay.assertion_failure,
+                call_after_invariant: replay.invariant_contract.call_after_invariant,
+                rd: Some(self.revert_decoder()),
+            },
+            campaign_site,
+        );
+        let replay_sequence = |candidates: &mut CandidateReplay<'_, FEN>,
+                               calls: &[SymbolicCounterexampleCall]| {
+            let txes = calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect();
+            candidates.check(txes).ok().filter(|outcome| !outcome.success)
+        };
+        let Some(expected) = replay_sequence(&mut candidates, &original_calls) else {
+            return SequenceMinimization::KeepOriginal;
+        };
+        // A replay that skipped effects outside the EVM, such as `vm.setEnv` or `vm.unixTime`, can
+        // read state the campaign left behind or fail elsewhere, so only call removal applies, as
+        // without minimization.
+        if candidates.skipped_host_effects {
             return SequenceMinimization::RemoveCalls;
         }
         // Reproducing some failure is insufficient: it must be the campaign's failure, which the
         // provenance in the raw failure tells apart from other failures with the same outcome.
-        if expected.failure_site != Some(campaign_site)
-            || expected.raw_failure.as_ref() != Some(campaign_failure)
-        {
+        if expected.failure_site != Some(campaign_site) {
             return SequenceMinimization::KeepOriginal;
         }
-        let replay_candidate = |candidate: &[SymbolicCounterexampleCall]| {
-            self.symbolic_sequence_failure(replay, candidate, true)
+        // The failure is unidentified after a snapshot restore as well.
+        if expected.failure_identity.is_none() {
+            return SequenceMinimization::RemoveCalls;
+        }
+        if expected.raw_failure.as_ref() != Some(campaign_failure) {
+            return SequenceMinimization::KeepOriginal;
+        }
+        let mut replay_candidate = |candidate: &[SymbolicCounterexampleCall]| {
+            replay_sequence(&mut candidates, candidate)
                 .filter(|actual| same_sequence_failure(actual, &expected))
         };
         let deadline = replay.shrink_deadline;
@@ -1770,23 +1800,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         candidates
     }
 
-    /// Replays `calls` concretely and returns the outcome if the sequence still fails.
-    ///
-    /// With `identify`, the replay records failure identities for minimization, which skips
-    /// cheatcodes with effects outside the EVM; otherwise cheatcodes behave as in the campaign.
+    /// Replays `calls` concretely and returns the outcome if the sequence still fails, with the
+    /// provenance of the failing call.
     fn symbolic_sequence_failure(
         &self,
         replay: SequenceReplay<'_>,
         calls: &[SymbolicCounterexampleCall],
-        identify: bool,
     ) -> Option<CheckSequenceOutcome> {
         let txes =
             calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect::<Vec<_>>();
         let sequence = (0..txes.len()).collect::<Vec<_>>();
         let mut executor = self.clone_executor_with_symbolic_storage(replay.storage).ok()?;
-        // Candidate replays must not add steps to the debugger's recording.
-        executor.inspector_mut().debug_recorder = None;
-        executor.inspector_mut().collect_failure_identity(identify);
         executor.inspector_mut().collect_failure_provenance(true);
         if let Some(deadline) = replay.shrink_deadline {
             executor.inspector_mut().set_execution_deadline(self.tcfg.early_exit.clone(), deadline);
@@ -4614,7 +4638,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         shrink_deadline: None,
                     };
                     let replayed = self
-                        .symbolic_sequence_failure(check, &symbolic_calls, false)
+                        .symbolic_sequence_failure(check, &symbolic_calls)
                         .ok_or("symbolic invariant counterexample did not replay")
                         .and_then(|failure| {
                             let handler_site = match failure.failure_site {
