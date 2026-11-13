@@ -1427,7 +1427,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if svm_returns_exhausted(&call.svm_returns, &raw) {
             return Err("candidate replay ran out of `svm` values".to_string());
         }
-        if raw.exit_reason == Some(InstrStop::OutOfGas) {
+        if replay_ran_out_of_gas(&raw) {
             return Err("candidate replay ran out of gas".to_string());
         }
         if executor.is_raw_call_success(self.address, Cow::Borrowed(&raw.state_changeset), &raw) {
@@ -2592,9 +2592,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // A replay that runs out of `svm` values left the solver path, so its failure proves
         // nothing.
         let svm_exhausted = svm_returns_exhausted(&svm_returns, &raw);
-        // The symbolic engine does not model gas, so running out of gas is not the failure the
-        // solver model was found for.
-        let out_of_gas = raw.exit_reason == Some(InstrStop::OutOfGas);
+        let out_of_gas = replay_ran_out_of_gas(&raw);
         if rejected_by_assume
             || svm_exhausted
             || out_of_gas
@@ -5903,6 +5901,17 @@ fn svm_returns_exhausted<FEN: FoundryEvmNetwork>(
             .mock_call_sequence_exhausted(SYMBOLIC_VM_COMPAT_ADDRESS)
             .unwrap_or(!svm_returns.is_empty())
     })
+}
+
+/// Returns whether a replay ran out of gas without failing an assertion first. The symbolic engine
+/// does not model gas, so such a halt is not the failure the solver model was found for.
+/// `MemoryLimitOOG` and `InvalidOperandOOG` are memory exceptions the engine does model.
+fn replay_ran_out_of_gas<FEN: FoundryEvmNetwork>(raw: &RawCallResult<FEN>) -> bool {
+    raw.failed_assertion.is_none()
+        && raw.exit_reason.is_some_and(|reason| {
+            reason.is_out_of_gas()
+                && !matches!(reason, InstrStop::MemoryLimitOOG | InstrStop::InvalidOperandOOG)
+        })
 }
 
 fn frontier_selector(frontier: &FuzzBranchFrontierRecord) -> Option<Selector> {
