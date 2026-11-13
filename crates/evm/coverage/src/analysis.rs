@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, yul},
     data_structures::{Never, map::FxHashMap},
-    interface::{RelativeBytePos, Span, sym},
+    interface::{RelativeBytePos, Span, Symbol, sym},
     sema::{Gcx, hir},
 };
 use std::{
@@ -51,6 +51,7 @@ struct SourceVisitor<'gcx> {
 pub(crate) struct AnchorHints {
     pub revert_guard: Option<RevertGuard>,
     pub alias_function: Option<SourceLocation>,
+    pub unique_callee: Option<SourceLocation>,
 }
 
 #[derive(Clone)]
@@ -715,6 +716,129 @@ fn stmt_has_statements(stmt: &ast::Stmt<'_>) -> bool {
     }
 }
 
+/// Count every function reference, including address-taking and operator calls, before using a
+/// callee entry to identify an erased call site. A single reference must also be a direct call.
+struct UniqueInternalCalls<'gcx> {
+    gcx: Gcx<'gcx>,
+    references: FxHashMap<hir::FunctionId, usize>,
+    calls: FxHashMap<hir::FunctionId, Vec<Span>>,
+    unresolved_members: HashSet<Symbol>,
+    has_internal_pointer: bool,
+}
+
+impl<'gcx> hir::Visit<'gcx> for UniqueInternalCalls<'gcx> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.gcx.hir
+    }
+
+    fn visit_ty(&mut self, ty: &'gcx hir::Type<'gcx>) -> ControlFlow<Self::BreakValue> {
+        if matches!(ty.kind, hir::TypeKind::Function(function) if function.visibility != ast::Visibility::External)
+        {
+            self.has_internal_pointer = true;
+        }
+        self.walk_ty(ty)
+    }
+
+    fn visit_expr(&mut self, expression: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        // Coverage analysis name-resolves sources without type checking them. Count every
+        // overload candidate conservatively rather than relying on expression type caches.
+        match expression.kind {
+            hir::ExprKind::Ident(candidates) => {
+                for candidate in candidates {
+                    if let hir::Res::Item(hir::ItemId::Function(function)) = candidate {
+                        *self.references.entry(*function).or_default() += 1;
+                    }
+                }
+            }
+            hir::ExprKind::Member(_, name) => {
+                if let Some(hir::Res::Item(hir::ItemId::Function(function))) =
+                    self.gcx.resolve_path_expr(expression)
+                {
+                    *self.references.entry(function).or_default() += 1;
+                } else {
+                    self.unresolved_members.insert(name.name);
+                }
+            }
+            _ => {}
+        }
+        if let Some((callee, _, _)) = expression.as_call()
+            && let Some(hir::Res::Item(hir::ItemId::Function(function))) =
+                self.gcx.resolve_path_expr(callee.peel_parens())
+        {
+            self.calls.entry(function).or_default().push(expression.span);
+        }
+        self.walk_expr(expression)
+    }
+}
+
+fn unique_internal_calls(gcx: Gcx<'_>, data: &SourceFiles) -> FxHashMap<Span, SourceLocation> {
+    let mut visitor = UniqueInternalCalls {
+        gcx,
+        references: Default::default(),
+        calls: Default::default(),
+        unresolved_members: Default::default(),
+        has_internal_pointer: false,
+    };
+    for source in gcx.hir.source_ids() {
+        let _ = hir::Visit::visit_nested_source(&mut visitor, source);
+    }
+    // A raw internal function pointer can call a native helper without naming it. Without
+    // expression types, decline all inference if any variable can carry such a pointer.
+    if visitor.has_internal_pointer {
+        return FxHashMap::default();
+    }
+    let usings = gcx
+        .hir
+        .source_ids()
+        .flat_map(|id| gcx.hir.source(id).usings.iter())
+        .chain(gcx.hir.contract_ids().flat_map(|id| gcx.hir.contract(id).usings.iter()));
+    for using in usings {
+        for entry in using.entries {
+            match entry.kind {
+                hir::UsingEntryKind::Functions(functions) => {
+                    for &function in functions {
+                        *visitor.references.entry(function).or_default() += 1;
+                    }
+                }
+                hir::UsingEntryKind::Library(contract) => {
+                    for function in gcx.hir.contract(contract).functions() {
+                        *visitor.references.entry(function).or_default() += 1;
+                    }
+                }
+                hir::UsingEntryKind::Err(_) => {}
+            }
+        }
+    }
+    let source_ids = data
+        .sources
+        .iter()
+        .map(|(&id, path)| (gcx.get_hir_source(path).unwrap().0, id))
+        .collect::<FxHashMap<_, _>>();
+    visitor
+        .calls
+        .into_iter()
+        .filter_map(|(id, calls)| {
+            let call =
+                sole_direct_call(visitor.references.get(&id).copied().unwrap_or_default(), &calls)?;
+            let function = gcx.hir.function(id);
+            if !matches!(function.visibility, ast::Visibility::Internal | ast::Visibility::Private)
+                || function.virtual_
+                || function.name.is_none_or(|name| visitor.unresolved_members.contains(&name.name))
+            {
+                return None;
+            }
+            let mut source = SourceVisitor::new(*source_ids.get(&function.source)?, gcx);
+            source.contract_name = function
+                .contract
+                .map(|id| gcx.hir.contract(id).name.as_str().into())
+                .unwrap_or_default();
+            Some((call, source.source_location_for(function.span)))
+        })
+        .collect()
+}
+
 /// Coverage source analysis.
 #[derive(Clone, Debug, Default)]
 pub struct SourceAnalysis {
@@ -752,6 +876,7 @@ impl SourceAnalysis {
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
             resolved_empty_special_functions =
                 resolve_empty_special_functions(compiler.gcx(), data);
+            let unique_calls = unique_internal_calls(compiler.gcx(), data);
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -793,6 +918,21 @@ impl SourceAnalysis {
 
                     if !visitor.function_calls.is_empty() || !visitor.revert_guards.is_empty() {
                         visitor.resolve_function_calls(hir_source_id);
+                    }
+
+                    for (call, scope) in &visitor.function_calls {
+                        if let Some(callee) = unique_calls.get(call) {
+                            let location = visitor.source_location_for(*call);
+                            for (id, item) in visitor.items.iter().enumerate() {
+                                if matches!(item.kind, CoverageItemKind::Statement)
+                                    && item.loc.contract_name == *scope
+                                    && item.loc.bytes == location.bytes
+                                {
+                                    visitor.anchor_hints.entry(id).or_default().unique_callee =
+                                        Some(callee.clone());
+                                }
+                            }
+                        }
                     }
 
                     if !visitor.items.is_empty() {
@@ -930,6 +1070,67 @@ impl SourceAnalysis {
 pub struct SourceFiles {
     /// The sources keyed by their IDs within the compiler build.
     pub sources: HashMap<u32, PathBuf>,
+}
+
+/// Taking a function's address is a reference too, even if it has only one direct caller.
+const fn sole_direct_call(references: usize, calls: &[Span]) -> Option<Span> {
+    match calls {
+        [call] if references == 1 => Some(*call),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unique_calls_work_without_expression_type_checking() {
+        for (extra, expected) in [
+            ("", 1),
+            ("function twice() public { target(); }", 0),
+            ("function take() public { function() internal p = target; }", 0),
+            ("function raw() public { function() internal p; assembly { p := 42 } p(); }", 0),
+            ("function arrayPointer() public { function() internal[] memory pointers; }", 0),
+        ] {
+            let source = format!(
+                "contract Test {{ function target() internal {{}} function run() external {{ target(); }} {extra} }}"
+            );
+            let session = solar::interface::Session::builder()
+                .with_buffer_emitter(solar::interface::ColorChoice::Never)
+                .build();
+            let mut compiler = solar::sema::Compiler::new(session);
+            compiler.enter_mut(|compiler| {
+                let mut parsing = compiler.parse();
+                parsing.add_file(
+                    compiler
+                        .sess()
+                        .source_map()
+                        .new_source_file(PathBuf::from("Unique.sol"), source)
+                        .unwrap(),
+                );
+                parsing.parse();
+                assert_eq!(compiler.lower_asts().unwrap(), ControlFlow::Continue(()));
+                let files = SourceFiles {
+                    sources: [(0, PathBuf::from("Unique.sol"))].into_iter().collect(),
+                };
+                assert_eq!(
+                    unique_internal_calls(compiler.gcx(), &files).len(),
+                    expected,
+                    "{extra}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn unique_direct_call_rejects_address_taking_and_multiple_callers() {
+        let call = Span::DUMMY;
+        assert_eq!(sole_direct_call(1, &[call]), Some(call));
+        assert_eq!(sole_direct_call(2, &[call]), None, "an address-taken function is ambiguous");
+        assert_eq!(sole_direct_call(2, &[call, call]), None);
+        assert_eq!(sole_direct_call(1, &[]), None, "a pointer reference is not a direct call");
+    }
 }
 
 #[cfg(test)]

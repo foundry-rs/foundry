@@ -95,6 +95,11 @@ pub fn find_anchors(
                 {
                     return Ok((anchor, None));
                 }
+                if let Some(callee) = &hints.unique_callee
+                    && let Some(anchor) = index.unique_callee_entry(item_id, callee)
+                {
+                    return Ok((anchor, None));
+                }
                 Err(error)
             })
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
@@ -243,6 +248,27 @@ impl<'a> AnchorIndex<'a> {
             }
         }
         anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
+    }
+
+    /// With exactly one source reference to an internal function, its unique native entry
+    /// identifies that direct call even when a tail transfer emitted no instruction of its own.
+    fn unique_callee_entry(&self, item_id: u32, callee: &SourceLocation) -> Option<ItemAnchor> {
+        let mut labels = InstIter::new(self.bytecode).with_pc().enumerate().filter_map(
+            |(ic, (pc, instruction))| {
+                (instruction.opcode.get() == opcode::JUMPDEST
+                    && self.source_map.get(ic).is_some_and(|location| {
+                        location.index() == Some(callee.source_id as u32)
+                            && location.offset() == callee.bytes.start
+                            && location.length() == callee.len()
+                    }))
+                .then_some(pc)
+            },
+        );
+        let entry = labels.next()?;
+        if labels.next().is_some() {
+            return None;
+        }
+        Some(ItemAnchor { item_id, instruction: entry.try_into().ok()? })
     }
 
     /// An alias-only function has no instructions for some of its statements. Its unique normal
@@ -603,6 +629,24 @@ mod tests {
             selector: [0xe3, 0x37, 0x2e, 0x2d],
         };
         assert!(index.revert_guard(0, &guard).is_none());
+    }
+
+    #[test]
+    fn erased_call_requires_one_exact_callee_entry() {
+        let bytecode = [opcode::JUMPDEST, opcode::STOP, opcode::JUMPDEST, opcode::STOP];
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        for (map, expected) in
+            [("10:20:0;;-1:-1:-1;", Some(0)), ("10:20:0;;;", None), ("11:19:0;;-1:-1:-1;", None)]
+        {
+            let source_map = sourcemap::parse(map).unwrap();
+            let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+            assert_eq!(
+                index
+                    .unique_callee_entry(0, &source_location(10, 20))
+                    .map(|anchor| anchor.instruction),
+                expected
+            );
+        }
     }
 
     #[test]
