@@ -5743,3 +5743,48 @@ async fn test_fork_destroyed_account_past_in_memory_states() {
         .block_id(receipt.block_number.unwrap().into());
     assert_eq!(at_destroyed.await.unwrap(), U256::ZERO);
 }
+
+// Retained block states read fork state fetched after them from the fork cache, so rolling back or
+// reverting must keep it for their dumps.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_dump_keeps_fetched_state_after_rollback_and_revert() {
+    for revert in [false, true] {
+        let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+        let contract = Address::random();
+        origin_api.anvil_set_code(contract, bytes!("0x00")).await.unwrap();
+        origin_api
+            .anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(7))
+            .await
+            .unwrap();
+        origin_api.mine_one().await.unwrap();
+
+        let (api, handle) =
+            spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+        let provider = handle.http_provider();
+        api.mine_one().await.unwrap();
+        let retained = api.backend.best_hash();
+        let snapshot = api.evm_snapshot().await.unwrap();
+        // Fetches the slot from the fork after the retained block.
+        assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), U256::from(7));
+        api.mine_one().await.unwrap();
+        if revert {
+            assert!(api.evm_revert(snapshot).await.unwrap());
+        } else {
+            api.anvil_rollback(Some(1)).await.unwrap();
+        }
+        assert_eq!(api.backend.best_hash(), retained);
+
+        let state = api.serialized_state(true).await.unwrap();
+        let (_, retained_state) = state
+            .historical_states
+            .unwrap()
+            .into_iter()
+            .find(|(hash, _)| *hash == retained)
+            .unwrap();
+        assert_eq!(
+            retained_state.storage[&contract][&U256::ZERO],
+            U256::from(7),
+            "revert: {revert}"
+        );
+    }
+}
