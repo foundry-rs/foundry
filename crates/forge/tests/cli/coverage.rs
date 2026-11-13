@@ -2703,6 +2703,75 @@ contract AContract {
 "#]]);
 }
 
+// `--keep-optimizer` keeps the optimizer, which folds away the always-true `x == x` condition.
+#[forgetest]
+fn keep_optimizer(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public y;
+
+    function f(uint256 x) public {
+        if (x == x) {
+            y = 2;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_f() public {
+        new AContract().f(1);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--optimize"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--ir-minimum"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: `--ir-minimum` and `--keep-optimizer` cannot be used together
+
+"#]]);
+}
+
 #[forgetest]
 fn no_artifacts_written(prj: _, cmd: _) {
     prj.insert_ds_test();
