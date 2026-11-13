@@ -250,12 +250,51 @@ impl<'a> AnchorIndex<'a> {
         anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
     }
 
-    /// With exactly one source reference to an internal function, its unique native entry
-    /// identifies that direct call even when a tail transfer emitted no instruction of its own.
+    /// Recover an erased call only at an exact declaration label with a proven incoming edge
+    /// from outside the callee. Return labels with only internal predecessors are completions,
+    /// not entries. A real fallthrough edge also qualifies: a tail call can emit no jump.
     fn unique_callee_entry(&self, item_id: u32, callee: &SourceLocation) -> Option<ItemAnchor> {
+        let mut incoming = FxHashSet::default();
+        let mut previous_push = None;
+        for (ic, (pc, instruction)) in InstIter::new(self.bytecode).with_pc().enumerate() {
+            let outside = self.source_map.get(ic).is_some_and(|location| {
+                location.jump() != Jump::Out
+                    && location.length() != 0
+                    && location.offset().checked_add(location.length()).is_some_and(|end| {
+                        location.index().is_some_and(|source| {
+                            source != callee.source_id as u32
+                                || end <= callee.bytes.start
+                                || location.offset() >= callee.bytes.end
+                        })
+                    })
+            });
+            let opcode = instruction.opcode.get();
+            if outside {
+                if matches!(opcode, opcode::JUMP | opcode::JUMPI)
+                    && let Some(immediate) = previous_push
+                    && let Ok((_, target)) = ItemAnchor::from_branch(item_id, pc, immediate)
+                {
+                    incoming.insert(target.instruction as usize);
+                }
+                if !matches!(
+                    opcode,
+                    opcode::JUMP
+                        | opcode::STOP
+                        | opcode::RETURN
+                        | opcode::REVERT
+                        | opcode::INVALID
+                        | opcode::SELFDESTRUCT
+                ) {
+                    incoming.insert(pc + 1 + instruction.immediate.len());
+                }
+            }
+            previous_push =
+                (opcode::PUSH1..=opcode::PUSH32).contains(&opcode).then_some(instruction.immediate);
+        }
         let mut labels = InstIter::new(self.bytecode).with_pc().enumerate().filter_map(
             |(ic, (pc, instruction))| {
                 (instruction.opcode.get() == opcode::JUMPDEST
+                    && incoming.contains(&pc)
                     && self.source_map.get(ic).is_some_and(|location| {
                         location.index() == Some(callee.source_id as u32)
                             && location.offset() == callee.bytes.start
@@ -632,21 +671,77 @@ mod tests {
     }
 
     #[test]
-    fn erased_call_requires_one_exact_callee_entry() {
-        let bytecode = [opcode::JUMPDEST, opcode::STOP, opcode::JUMPDEST, opcode::STOP];
-        let ic_pc_map = IcPcMap::new(&bytecode);
-        for (map, expected) in
-            [("10:20:0;;-1:-1:-1;", Some(0)), ("10:20:0;;;", None), ("11:19:0;;-1:-1:-1;", None)]
-        {
+    fn erased_call_distinguishes_entries_from_completions() {
+        let bytecode = [
+            opcode::PUSH1,
+            4,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            8,
+            opcode::JUMP,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let maps = [
+            // Both labels have the function span, but only pc 4 is entered from the caller.
+            ("100:10:0;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", Some(4)),
+            // An exit label alone cannot stand in for an entry, even if it has the exact span.
+            ("100:10:0;;-1:-1:-1;12:1:0;;;10:20:0;12:1:0", None),
+            // A return from a helper outside this function is still a completion edge.
+            ("100:10:0;100:10:0:o;-1:-1:-1:-;10:20:0;12:1:0;;10:20:0;12:1:0", None),
+            // Unknown or overlapping source ranges do not prove an external predecessor.
+            ("-1:-1:-1;;;10:20:0;12:1:0;;10:20:0;12:1:0", None),
+            ("0:200:0;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", None),
+            ("0:0:1;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", None),
+            // Native helpers can be called from another source file in the same frame.
+            ("100:10:1;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", Some(4)),
+        ];
+        for (map, expected) in maps {
             let source_map = sourcemap::parse(map).unwrap();
+            let ic_pc_map = IcPcMap::new(&bytecode);
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
             assert_eq!(
-                index
-                    .unique_callee_entry(0, &source_location(10, 20))
-                    .map(|anchor| anchor.instruction),
-                expected
+                index.unique_callee_entry(0, &source_location(10, 20)).map(|a| a.instruction),
+                expected,
+                "{map}"
             );
         }
+    }
+
+    #[test]
+    fn erased_tail_call_can_fall_through_into_a_reverting_callee() {
+        let bytecode =
+            [opcode::PUSH1, 0, opcode::JUMPDEST, opcode::PUSH0, opcode::PUSH0, opcode::REVERT];
+        let source_map = sourcemap::parse("100:10:0;10:20:0;12:1:0;;;").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        let anchor = index.unique_callee_entry(0, &source_location(10, 20)).unwrap();
+        assert_eq!(anchor.instruction, 2);
+    }
+
+    #[test]
+    fn erased_call_rejects_two_externally_entered_labels() {
+        let bytecode = [
+            opcode::PUSH1,
+            4,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::STOP,
+            opcode::PUSH1,
+            10,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let source_map =
+            sourcemap::parse("100:10:0;;-1:-1:-1;10:20:0;;100:10:0;;-1:-1:-1;10:20:0;").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        assert!(index.unique_callee_entry(0, &source_location(10, 20)).is_none());
     }
 
     #[test]
