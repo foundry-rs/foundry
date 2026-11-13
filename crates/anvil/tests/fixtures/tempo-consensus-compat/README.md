@@ -20,11 +20,15 @@ Snapshot replay must restore both announcements and activation without trusting
 a fresh identity RPC response for each block.
 
 The T15 boundary test initializes `ValidatorConfigV2` with Anvil's development
-validator, freezes the parent state, and checks that Tempo's native execution
-pre-stage accepts Anvil's next, unrotated boundary block. This checks
-compatibility with a matching development registry, not full block execution or
-native consensus acceptance. Under T15, rotation boundaries and forked registries
-do not match `ValidatorConfigV2`, because Anvil does not update it.
+validator and freezes the parent state. It checks that Anvil's next, unrotated
+boundary outcome equals the one Tempo derives from that registry, and that
+Tempo's native `apply_pre_execution_changes` accepts the boundary block under
+the Moderato configuration with T15 and Anvil's epoch length. That pre-stage
+also checks the beneficiary, which passes because Anvil's default coinbase and
+the migrated validator's fee recipient are both zero. This checks compatibility
+with a matching development registry, not full block execution or native
+consensus acceptance. Under T15, rotation boundaries and forked registries do
+not match an initialized `ValidatorConfigV2`, because Anvil does not update it.
 
 The package shares the root workspace lockfile and target directory. Its
 one-way dependency on Anvil keeps `commonware-consensus` and its runtime out of

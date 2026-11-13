@@ -335,6 +335,8 @@ async fn native_fork_inherits_skipped_views() {
 // does not update it.
 #[tokio::test(flavor = "multi_thread")]
 async fn native_t15_accepts_unrotated_anvil_boundary() {
+    // Block 2 is the last block of epoch 0, so it announces the outcome for epoch 1.
+    let epoch_length = NonZeroU64::new(3).unwrap();
     let factory = TempoEvmConfig::moderato();
     let chain_id = factory.chain_spec().inner.chain.id();
     let (api, _handle) = spawn(
@@ -342,7 +344,7 @@ async fn native_t15_accepts_unrotated_anvil_boundary() {
             .with_no_mining(true)
             .with_chain_id(Some(chain_id))
             .with_hardfork(Some(TempoHardfork::T15.into()))
-            .with_tempo_epoch_length(NonZeroU64::new(3)),
+            .with_tempo_epoch_length(Some(epoch_length)),
     )
     .await;
     let identity = api.anvil_tempo_consensus_identity().await.unwrap();
@@ -359,6 +361,7 @@ async fn native_t15_accepts_unrotated_anvil_boundary() {
     StorageCtx::enter_evm(&mut registry, || {
         let mut legacy = ValidatorConfig::new();
         legacy.initialize(owner)?;
+        // The address and endpoints are arbitrary; consensus only needs endpoints that parse.
         legacy.add_validator(
             owner,
             IValidatorConfig::addValidatorCall {
@@ -375,7 +378,7 @@ async fn native_t15_accepts_unrotated_anvil_boundary() {
     })
     .unwrap();
     registry.state_mut().commit_transaction();
-    // Install native API-generated storage before mining, rather than deriving it from an outcome.
+    // Install the storage Tempo's precompile API wrote, so the slot layout is Tempo's own.
     for (&address, storage) in &registry.overlay_db().cache.storage {
         for (&slot, &value) in &storage.slots {
             assert!(api.anvil_set_storage_at(address, slot, value.into()).await.unwrap());
@@ -385,6 +388,7 @@ async fn native_t15_accepts_unrotated_anvil_boundary() {
     assert_eq!(api.backend.best_number(), 1);
     let parent_hash = api.backend.best_hash();
     let parent_db = api.backend.get_db().read().await.current_state();
+    // These reads only touch storage, so the spec passed to `EvmDb` does not affect them.
     let config = (&mut EvmDb::new(&parent_db, SpecId::OSAKA, None) as &mut dyn DynDatabase)
         .dkg_ceremony_config(TempoHardfork::T15, 2)
         .unwrap()
@@ -405,7 +409,7 @@ async fn native_t15_accepts_unrotated_anvil_boundary() {
     let mut env = factory.evm_env(block.header()).unwrap();
     env.spec = TempoHardfork::T15;
     env.version = *tempo_execution_config(TempoHardfork::T15, chain_id).version();
-    env.block.ext.epoch_length = NonZeroU64::new(3).unwrap();
+    env.block.ext.epoch_length = epoch_length;
     let context = factory.context_for_block(&block).unwrap();
     let evm = BlockExecutorFactory::evm_with_env(
         &factory,
