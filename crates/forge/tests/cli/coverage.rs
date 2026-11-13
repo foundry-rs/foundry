@@ -3678,6 +3678,85 @@ end_of_record
     );
 }
 
+// An assembly condition owns its own jump, not those of the branches and loops in its body.
+#[forgetest]
+fn yul_nested_if_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Nested.sol",
+        r#"
+contract Nested {
+    uint256 public stored;
+
+    function nested(uint256 a, uint256 b) external {
+        assembly {
+            if a {
+                if b { sstore(stored.slot, 1) }
+            }
+        }
+    }
+
+    function looped(uint256 a, uint256 n) external {
+        assembly {
+            if a {
+                for { let i := 0 } lt(i, n) { i := add(i, 1) } { sstore(stored.slot, i) }
+            }
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Nested.t.sol",
+        r#"
+import "../src/Nested.sol";
+contract NestedTest {
+    function testPaths() public {
+        Nested n = new Nested();
+        n.nested(1, 1);
+        n.nested(1, 0);
+        n.nested(0, 1);
+        n.nested(0, 0);
+        n.nested(0, 0);
+        n.looped(1, 3);
+        n.looped(1, 0);
+        n.looped(0, 5);
+    }
+}
+"#,
+    );
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Nested.sol
+DA:7,5
+FN:7,Nested.nested
+FNDA:5,Nested.nested
+DA:9,5
+BRDA:9,0,0,2
+BRDA:9,0,1,3
+DA:10,2
+BRDA:10,1,0,1
+BRDA:10,1,1,1
+DA:15,3
+FN:15,Nested.looped
+FNDA:3,Nested.looped
+DA:17,3
+BRDA:17,2,0,2
+BRDA:17,2,1,1
+DA:18,5
+FNF:2
+FNH:2
+LF:6
+LH:6
+BRF:6
+BRH:6
+end_of_record
+
+"#]],
+    );
+}
+
 // Test that coverage files are written even when tests fail.
 #[forgetest]
 fn coverage_with_failing_tests(prj: _, cmd: _) {
