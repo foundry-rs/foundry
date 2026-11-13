@@ -2353,6 +2353,13 @@ contract SymbolicEip7702Delegation is Test {
         bytes memory data = abi.encodeCall(DelegateImpl.foo, ());
         vm.mockCall(carol, data, abi.encode(9));
         assertEq(DelegateImpl(carol).foo(), 9);
+        // A function mock that cannot match the calldata does not need the delegate either.
+        vm.mockFunction(address(impl), address(new DelegateMock()), data);
+        bytes memory short = hex"abcd";
+        vm.mockCall(carol, short, abi.encode(8));
+        (bool ok, bytes memory ret) = carol.call(short);
+        assertTrue(ok);
+        assertEq(abi.decode(ret, (uint256)), 8);
     }
 
     function checkExpectRevertOnDelegatedCall() public {

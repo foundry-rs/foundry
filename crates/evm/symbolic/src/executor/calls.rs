@@ -168,9 +168,7 @@ impl SymbolicExecutor {
         }
 
         if let Some(to) = target_address {
-            let code_address = if state.function_mocks.is_empty() {
-                to
-            } else {
+            let code_address = if self.function_mock_may_match(state, &call_input) {
                 let callee = self.call_code_account(executor, state, to)?;
                 let pre_call_state =
                     pre_call_state.as_ref().expect("function mocks require pre-call state");
@@ -185,6 +183,8 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Forked);
                 }
                 self.function_mock_target(state, callee, &call_input)?.unwrap_or(to)
+            } else {
+                to
             };
             if !state.expected_calls.is_empty() || !state.call_mocks.is_empty() {
                 let pre_call_state =
@@ -534,6 +534,12 @@ impl SymbolicExecutor {
             }
         }
         Ok(None)
+    }
+
+    /// Whether a function mock can match `calldata`, so its key, the call's code address, is
+    /// needed.
+    fn function_mock_may_match(&mut self, state: &PathState, calldata: &SymBytes) -> bool {
+        state.function_mocks.iter().any(|mock| mock.may_match_calldata(&mut self.cx, calldata))
     }
 
     /// Returns the delegate of an EIP-7702 delegated `to`, or `to` itself. As in evm2, this is the
@@ -1217,11 +1223,11 @@ impl SymbolicExecutor {
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
         // `vm.mockFunction` swaps the code that runs, and the concrete inspector matches
         // `vm.expectCall` against that address, so resolve the redirect before observing.
-        let function_mock = if state.function_mocks.is_empty() {
-            None
-        } else {
+        let function_mock = if self.function_mock_may_match(state, &call_input) {
             let callee = self.call_code_account(executor, state, to)?;
             self.function_mock_target(state, callee, &call_input)?
+        } else {
+            None
         };
         let code_address = function_mock.unwrap_or(to);
         if !state.expected_calls.is_empty() {
@@ -2202,10 +2208,10 @@ impl SymbolicExecutor {
         gas: &SymExpr,
         call_input: &SymBytes,
     ) -> Result<Vec<PathState>, SymbolicError> {
-        let callee = if branch.function_mocks.is_empty() {
-            to
-        } else {
+        let callee = if self.function_mock_may_match(&branch, call_input) {
             self.call_code_account(executor, &mut branch, to)?
+        } else {
+            to
         };
         let mut branches = vec![branch];
         for condition in self.function_mock_conditions(&branches[0], callee, call_input) {

@@ -1801,6 +1801,12 @@ impl FunctionMock {
         self.target
     }
 
+    /// Whether `calldata` can match this mock's data, the whole calldata or its selector.
+    pub(crate) fn may_match_calldata(&self, cx: &mut SymCx, calldata: &SymBytes) -> bool {
+        (self.data.len() == calldata.len() || self.data.len() == 4)
+            && calldata.prefix_condition(cx, &self.data).is_some()
+    }
+
     pub(crate) fn match_condition(
         &self,
         cx: &mut SymCx,
