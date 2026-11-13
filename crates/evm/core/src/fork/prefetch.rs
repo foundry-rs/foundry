@@ -15,7 +15,7 @@ use crate::{
     precompiles::P256_VERIFY,
 };
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, Bytes, U256, map::B256HashMap};
+use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, map::B256HashMap};
 use alloy_rpc_types::{TransactionRequest, state::StateOverride};
 use evm2::{bytecode::Bytecode, evm::Cache};
 use foundry_config::Config;
@@ -220,8 +220,9 @@ pub(crate) fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverr
 
 /// Simulates a call on the fork's endpoint and prefetches the state it touches, see
 /// [`SharedBackend::prefetch_access_list`]. With `overrides`, the `local` state over the fork goes
-/// along as overrides; without, a call into a local-only account is skipped. Calls to precompiles,
-/// up to `P256VERIFY` at `0x100`, the cheatcode contract and the console are skipped.
+/// along as overrides; without, a call into an account without code on the endpoint, or one the
+/// context holds but the fork never loaded from it, is skipped. Calls to precompiles, up to
+/// `P256VERIFY` at `0x100`, the cheatcode contract and the console are skipped.
 pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
     backend: &SharedBackend<N, B>,
     caller: Address,
@@ -248,9 +249,13 @@ pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
         return;
     }
     let overrides = local.filter(|_| overrides).and_then(|local| state_override(&remote, local));
-    // An account the context holds but never loaded from the endpoint was created locally, so the
-    // endpoint can only simulate a call into it with the local state as overrides.
-    if overrides.is_none() && local_account.is_some() && remote_code.is_none() {
+    // Without overrides, the endpoint runs its own code at the target, so a call is skipped when
+    // the target has no code there, such as an account created on the fork, or when the context
+    // holds the target but never loaded it from the endpoint, such as an account created before
+    // the fork was selected.
+    if overrides.is_none()
+        && remote_code.map_or(local_account.is_some(), |remote| remote == KECCAK256_EMPTY)
+    {
         return;
     }
     backend.prefetch_access_list(tx, overrides, code_hash);
