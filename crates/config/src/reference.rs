@@ -4,12 +4,13 @@
 //! user-facing documentation for a setting lives in the doc comment of its field. Run
 //! `cargo config-reference` to update the file after adding or changing a setting.
 
-use crate::{Config, DEPRECATIONS};
+use crate::{Config, DEPRECATIONS, providers::DAPP_ENV_COMPAT};
 use heck::{ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
-    collections::{BTreeSet, HashMap},
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
 };
@@ -24,11 +25,24 @@ const REFERENCE_PATH: &str = "assets/config-reference.json";
 /// Fields that are serialized but are not `foundry.toml` settings.
 const EXCLUDED_KEYS: &[&str] = &["root"];
 
-/// Environment variables that set a key outside the generic `FOUNDRY_` and `DAPP_` mappings.
+/// Keys that the prefixed environment providers don't set, and the variables that do set them.
 const SPECIAL_ENV: &[(&str, &[&str])] = &[
     ("extends", &[]),
     ("remappings", &["FOUNDRY_REMAPPINGS", "DAPP_REMAPPINGS"]),
-    ("libraries", &["FOUNDRY_LIBRARIES", "DAPP_LIBRARIES"]),
+    ("libraries", &[]),
+];
+
+/// Environment variables read by providers other than the prefixed ones, and the keys they set.
+const OTHER_ENV: &[(&str, &str)] = &[("ETHERSCAN_API_KEY", "etherscan_api_key")];
+
+/// User-facing types and accepted values of this crate's types with custom `Deserialize` impls,
+/// whose Rust shape doesn't describe what they accept.
+const CUSTOM_TYPES: &[(&str, &str, &[&str])] = &[
+    ("CachedChains", "\"all\", \"none\", or array of chain names or IDs", &[]),
+    ("CachedEndpoints", "\"all\", \"remote\", or string (regular expression)", &[]),
+    ("DenyLevel", "string or boolean", &["never", "warnings", "notes"]),
+    ("InvariantWorkers", "\"auto\" or integer", &[]),
+    ("Severity", "string", &["high", "medium", "low", "info", "gas", "code-size"]),
 ];
 
 /// User-facing types of types defined outside this crate.
@@ -87,6 +101,9 @@ struct Setting {
     /// Accepted values for an enumeration.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     values: Vec<String>,
+    /// Accepted values that need a Cargo feature, mapped to that feature.
+    #[serde(rename = "valueFeatures", skip_serializing_if = "BTreeMap::is_empty")]
+    value_features: BTreeMap<String, String>,
     /// Alternative names accepted for the key.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     aliases: Vec<String>,
@@ -195,6 +212,29 @@ fn string_value(meta: &Meta) -> Option<String> {
     }
 }
 
+/// Whether the item derives `name`, such as `Deserialize`.
+fn derives(attrs: &[Attribute], name: &str) -> bool {
+    attrs.iter().filter(|attr| attr.path().is_ident("derive")).any(|attr| {
+        attr.parse_args_with(Punctuated::<syn::Path, Comma>::parse_terminated).is_ok_and(|paths| {
+            paths.iter().any(|path| path.segments.last().is_some_and(|s| s.ident == name))
+        })
+    })
+}
+
+/// The Cargo feature in a `#[cfg(feature = "..")]` attribute.
+fn cfg_feature(attrs: &[Attribute]) -> Option<String> {
+    attrs.iter().filter(|attr| attr.path().is_ident("cfg")).find_map(|attr| {
+        let Meta::NameValue(nv) = attr.parse_args::<Meta>().ok()? else { return None };
+        if !nv.path.is_ident("feature") {
+            return None;
+        }
+        match nv.value {
+            Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => Some(s.value()),
+            _ => None,
+        }
+    })
+}
+
 fn is_doc_hidden(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
         attr.path().is_ident("doc")
@@ -284,6 +324,8 @@ struct Generator {
     defs: Definitions,
     defaults: Value,
     out: Vec<Setting>,
+    /// Types with custom `Deserialize` impls that need an entry in [`CUSTOM_TYPES`].
+    missing_types: RefCell<BTreeSet<String>>,
 }
 
 impl Generator {
@@ -309,7 +351,13 @@ impl Generator {
                 if let Some((_, external)) = EXTERNAL_TYPES.iter().find(|(n, _)| *n == name) {
                     return external.to_string();
                 }
-                if self.defs.enums.contains_key(&name) {
+                if let Some((_, ty, _)) = CUSTOM_TYPES.iter().find(|(n, _, _)| *n == name) {
+                    return ty.to_string();
+                }
+                if let Some(item) = self.defs.enums.get(&name) {
+                    if !derives(&item.attrs, "Deserialize") {
+                        self.missing_types.borrow_mut().insert(name);
+                    }
                     return "string".to_string();
                 }
                 if let Some(item) = self.defs.structs.get(&name) {
@@ -331,26 +379,43 @@ impl Generator {
         }
     }
 
-    /// Accepted values of a unit-only enum defined in this crate.
-    fn enum_values(&self, ty: &Type) -> Vec<String> {
-        let Some((name, _)) = segment(unwrap_option(ty)) else { return Vec::new() };
-        let Some(item) = self.defs.enums.get(&name) else { return Vec::new() };
-        if item.variants.iter().any(|v| !matches!(v.fields, Fields::Unit)) {
-            return Vec::new();
+    /// Accepted values of a unit-only enum, and the Cargo features that some of them need.
+    fn enum_values(&self, ty: &Type) -> (Vec<String>, BTreeMap<String, String>) {
+        let none = (Vec::new(), BTreeMap::new());
+        let Some((mut name, args)) = segment(unwrap_option(ty)) else { return none };
+        // The values of an array's elements.
+        if matches!(name.as_str(), "Vec" | "HashSet" | "BTreeSet")
+            && let [element] = args.as_slice()
+            && let Some((element, _)) = segment(element)
+        {
+            name = element;
+        }
+        if let Some((_, _, values)) = CUSTOM_TYPES.iter().find(|(n, _, _)| *n == name) {
+            return (values.iter().map(ToString::to_string).collect(), BTreeMap::new());
+        }
+        let Some(item) = self.defs.enums.get(&name) else { return none };
+        if !derives(&item.attrs, "Deserialize")
+            || item.variants.iter().any(|v| !matches!(v.fields, Fields::Unit))
+        {
+            return none;
         }
         let container = SerdeAttrs::parse(&item.attrs);
-        item.variants
-            .iter()
-            .filter_map(|variant| {
-                let attrs = SerdeAttrs::parse(&variant.attrs);
-                if attrs.skip {
-                    return None;
-                }
-                Some(attrs.rename.unwrap_or_else(|| {
-                    rename(&variant.ident.to_string(), container.rename_all.as_deref())
-                }))
-            })
-            .collect()
+        let mut values = Vec::new();
+        let mut features = BTreeMap::new();
+        for variant in &item.variants {
+            let attrs = SerdeAttrs::parse(&variant.attrs);
+            if attrs.skip {
+                continue;
+            }
+            let value = attrs.rename.unwrap_or_else(|| {
+                rename(&variant.ident.to_string(), container.rename_all.as_deref())
+            });
+            if let Some(feature) = cfg_feature(&variant.attrs) {
+                features.insert(value.clone(), feature);
+            }
+            values.push(value);
+        }
+        (values, features)
     }
 
     /// The struct that a field's settings are read from, if it is one of this crate's.
@@ -412,6 +477,7 @@ impl Generator {
                 .map(|(_, new)| new.to_string());
 
             let mut ty = self.type_name(&field.ty);
+            let (values, value_features) = self.enum_values(&field.ty);
             if ty == "table" && default.is_some_and(Value::is_array) {
                 ty = "array of table".to_string();
             }
@@ -425,7 +491,8 @@ impl Generator {
                 default: default
                     .filter(|value| !value.is_null() && children.is_none())
                     .map(toml_value),
-                values: self.enum_values(&field.ty),
+                values,
+                value_features,
                 aliases: attrs.aliases,
                 deprecated,
                 description: docs(&field.attrs),
@@ -440,25 +507,40 @@ impl Generator {
 
 /// Environment variables that set a key, following the providers in [`Config::figment`].
 fn env_vars(path: &[String], standalone: bool, table: bool) -> Vec<String> {
-    if let Some((_, vars)) = SPECIAL_ENV.iter().find(|(key, _)| path.len() == 1 && *key == path[0])
-    {
-        return vars.iter().map(ToString::to_string).collect();
-    }
-    let upper = path.iter().map(|part| part.to_uppercase()).collect::<Vec<_>>().join("_");
-    match path.len() {
-        1 if !standalone && !table => {
-            let mut vars = Vec::new();
-            if !Config::FOUNDRY_ENV_IGNORED.contains(&&*upper) {
+    let key = path.join(".");
+    let mut vars = Vec::new();
+    if let Some((_, special)) = SPECIAL_ENV.iter().find(|(k, _)| path.len() == 1 && *k == path[0]) {
+        vars.extend(special.iter().map(ToString::to_string));
+    } else if !table {
+        let upper = path.iter().map(|part| part.to_uppercase()).collect::<Vec<_>>().join("_");
+        // A variable is documented only if the provider's key mapping reaches this key.
+        let reaches = |mapped: &str| mapped.to_lowercase() == key;
+        match path.len() {
+            1 if !standalone => {
+                if !Config::FOUNDRY_ENV_IGNORED.contains(&&*upper)
+                    && reaches(&Config::foundry_env_key(&upper))
+                {
+                    vars.push(format!("FOUNDRY_{upper}"));
+                }
+                if !Config::DAPP_ENV_IGNORED.contains(&&*upper) {
+                    vars.push(format!("DAPP_{upper}"));
+                }
+                if !Config::DAPP_TEST_ENV_IGNORED.contains(&&*upper) {
+                    vars.push(format!("DAPP_TEST_{upper}"));
+                }
+            }
+            2 if standalone && reaches(&Config::foundry_env_key(&upper)) => {
                 vars.push(format!("FOUNDRY_{upper}"));
             }
-            if !Config::DAPP_ENV_IGNORED.contains(&&*upper) {
-                vars.push(format!("DAPP_{upper}"));
-            }
-            vars
+            _ => {}
         }
-        2 if standalone && !table => vec![format!("FOUNDRY_{upper}")],
-        _ => Vec::new(),
     }
+    for (var, target) in DAPP_ENV_COMPAT.iter().chain(OTHER_ENV) {
+        if *target == key && !vars.iter().any(|v| v == var) {
+            vars.push(var.to_string());
+        }
+    }
+    vars
 }
 
 /// Renders a JSON value as an inline TOML value.
@@ -504,8 +586,15 @@ fn generate() -> String {
     }
     let config = defs.structs.get("Config").expect("Config struct").clone();
     let defaults = serde_json::to_value(Config::default()).unwrap();
-    let mut generator = Generator { defs, defaults, out: Vec::new() };
+    let mut generator =
+        Generator { defs, defaults, out: Vec::new(), missing_types: Default::default() };
     generator.walk(&config, &[], false);
+
+    assert!(
+        generator.missing_types.borrow().is_empty(),
+        "add the accepted forms of these custom-deserialized types to CUSTOM_TYPES: {:?}",
+        generator.missing_types
+    );
 
     let mut seen = BTreeSet::new();
     let mut undocumented = Vec::new();

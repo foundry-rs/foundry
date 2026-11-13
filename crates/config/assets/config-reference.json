@@ -17,7 +17,8 @@
       "default": "\"src\"",
       "env": [
         "FOUNDRY_SRC",
-        "DAPP_SRC"
+        "DAPP_SRC",
+        "DAPP_TEST_SRC"
       ],
       "description": "Directory containing the project's contract sources, relative to the project root.\n\nWhen `src` is not set and the `src` directory does not exist but `contracts` does, Foundry\nuses `contracts` (the Hardhat layout). Foundry also adds a `src/=src/` style remapping for\nthis directory, so imports such as `import \"src/Counter.sol\";` resolve. The `--contracts`\n(`-C`) flag overrides this setting, and `--hardhat` sets it to `contracts`."
     },
@@ -29,7 +30,8 @@
       "default": "\"test\"",
       "env": [
         "FOUNDRY_TEST",
-        "DAPP_TEST"
+        "DAPP_TEST",
+        "DAPP_TEST_TEST"
       ],
       "description": "Directory containing the project's test contracts, relative to the project root.\n\nTest files are compiled together with the sources. When the directory exists, Foundry adds\na `test/=test/` style remapping for it, so imports such as `import \"test/Utils.sol\";`\nresolve."
     },
@@ -41,7 +43,8 @@
       "default": "\"script\"",
       "env": [
         "FOUNDRY_SCRIPT",
-        "DAPP_SCRIPT"
+        "DAPP_SCRIPT",
+        "DAPP_TEST_SCRIPT"
       ],
       "description": "Directory containing the project's Solidity scripts, relative to the project root.\n\nScript files are compiled together with the sources. When the directory exists, Foundry\nadds a `script/=script/` style remapping for it, so imports such as\n`import \"script/Base.s.sol\";` resolve."
     },
@@ -53,7 +56,8 @@
       "default": "\"out\"",
       "env": [
         "FOUNDRY_OUT",
-        "DAPP_OUT"
+        "DAPP_OUT",
+        "DAPP_TEST_OUT"
       ],
       "description": "Directory where compiled contract artifacts are written, relative to the project root.\n\nEach contract gets a JSON artifact such as `out/Counter.sol/Counter.json`, and build info\nfiles go to `<out>/build-info` unless `build_info_path` is set. When `out` is not set and\nthe `out` directory does not exist but `artifacts` does, Foundry uses `artifacts`. The\n`--out` (`-o`) flag overrides this setting."
     },
@@ -65,7 +69,8 @@
       "default": "[\"lib\"]",
       "env": [
         "FOUNDRY_LIBS",
-        "DAPP_LIBS"
+        "DAPP_LIBS",
+        "DAPP_TEST_LIBS"
       ],
       "description": "Directories containing dependency libraries, relative to the project root.\n\nWhen `auto_detect_remappings` is enabled, these directories are scanned for remappings, and\nsolc is always allowed to read files from them. `forge install` installs into the first\nentry that is not `node_modules` (or `lib` when there is none). When `libs` is not set,\nFoundry uses `lib`, `node_modules`, or both, depending on which of them exist. The\n`--lib-paths` flag overrides this setting, and `--hardhat` uses `node_modules`."
     },
@@ -89,7 +94,8 @@
       "default": "true",
       "env": [
         "FOUNDRY_AUTO_DETECT_REMAPPINGS",
-        "DAPP_AUTO_DETECT_REMAPPINGS"
+        "DAPP_AUTO_DETECT_REMAPPINGS",
+        "DAPP_TEST_AUTO_DETECT_REMAPPINGS"
       ],
       "description": "Whether to detect remappings automatically by scanning the `libs` directories.\n\nWhen enabled, Forge looks through each library directory for dependencies (including their\nown `foundry.toml` and `remappings.txt` files) and generates remappings for them, including\ncontextual remappings for nested dependencies. Remappings you configure explicitly always\ntake precedence over detected ones.\n\nWhen disabled, only the remappings from `remappings`, `remappings.txt`, the\n`FOUNDRY_REMAPPINGS` environment variable and `--remappings` are used."
     },
@@ -100,8 +106,8 @@
       "table": false,
       "default": "[]",
       "env": [
-        "FOUNDRY_LIBRARIES",
-        "DAPP_LIBRARIES"
+        "DAPP_LIBRARIES",
+        "FOUNDRY_LIBRARIES"
       ],
       "description": "Addresses of already deployed Solidity libraries to link against.\n\nEach entry has the form `<file>:<library>:<address>`:\n\n```toml\n[profile.default]\nlibraries = [\"src/MyLibrary.sol:MyLibrary:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4\"]\n```\n\nRemappings apply to `<file>`. Contracts that call external functions of a listed library\nare linked to the given address instead of having Forge deploy the library. These addresses\nare also granted cheatcode access in tests and scripts (useful on forks), even when no\ncontract references them.\n\nThe `--libraries` flag and the `FOUNDRY_LIBRARIES` environment variable (a list, or a\nsingle comma-separated string) set the same value. While `allow_linked_libraries` is\n`false`, these addresses are withheld from solc; see that setting."
     },
@@ -125,7 +131,8 @@
       "default": "\"cache\"",
       "env": [
         "FOUNDRY_CACHE_PATH",
-        "DAPP_CACHE_PATH"
+        "DAPP_CACHE_PATH",
+        "DAPP_TEST_CACHE_PATH"
       ],
       "description": "Directory for the compiler cache and other project caches, relative to the project root.\n\nIt holds the compiler cache file (`solidity-files-cache.json`), the `forge coverage` and\nexternal compiler caches, and the sensitive parts of `forge script` broadcast logs, such as\nRPC URLs, which are kept out of `broadcast`. `test_failures_file` and `mutation_dir`\ndefault to paths under `cache` but are set separately, so changing `cache_path` does not\nmove them. The `--cache-path` flag overrides this setting."
     },
@@ -137,7 +144,8 @@
       "default": "true",
       "env": [
         "FOUNDRY_DYNAMIC_TEST_LINKING",
-        "DAPP_DYNAMIC_TEST_LINKING"
+        "DAPP_DYNAMIC_TEST_LINKING",
+        "DAPP_TEST_DYNAMIC_TEST_LINKING"
       ],
       "description": "Whether to compile tests and scripts with dynamic test linking.\n\nDynamic test linking rewrites eligible `new Contract(...)` expressions in test and script\nsources to `vm.deployCode` and `vm.getCode` calls. Tests that deploy a contract then don't\ndepend on its bytecode at compile time, so changing a contract doesn't recompile every test\nthat deploys it.\n\nAs a result, test and script artifacts no longer contain the `linkReferences` of libraries\nused by the contracts they deploy. Tools that link libraries from artifacts should read\n`linkReferences` from the deployed contract's own artifact, or disable this setting.\nDisable it as well for external tools that don't support the generated cheatcode calls.\n\nIf a build with rewritten sources fails with an error the rewrite can cause (such as \"stack\ntoo deep\"), Forge warns and compiles again without it. `--no-dynamic-test-linking` disables\nit for one invocation; it cannot be combined with `--no-cache`. Mutation testing always\nenables it. It does not create Solidity library link references, so it works with\n`allow_linked_libraries = false`."
     },
@@ -149,7 +157,8 @@
       "default": "true",
       "env": [
         "FOUNDRY_ALLOW_LINKED_LIBRARIES",
-        "DAPP_ALLOW_LINKED_LIBRARIES"
+        "DAPP_ALLOW_LINKED_LIBRARIES",
+        "DAPP_TEST_ALLOW_LINKED_LIBRARIES"
       ],
       "description": "Whether compiled contracts may depend on externally linked Solidity libraries.\n\nLibrary functions declared `public` or `external` are called on a separately deployed\nlibrary, while `internal` ones are compiled into their callers. When set to `false`,\n`forge build`, `forge test`, `forge script`, `forge create` and `forge coverage` fail if\nthe creation or runtime bytecode of any compiled contract requires an external library. The\ncheck covers cached artifacts and the compilation used by mutation testing, and lists each\ncontract with the library it links. To fix a violation, make the called library functions\n`internal`.\n\nInternal libraries, unused public library functions and dynamic test linking remain\navailable. While disallowed, addresses configured in `libraries` are withheld from solc so\nthat actual dependencies stay visible in its link references; an unused address alone does\nnot fail the build.\n\nThe policy applies only to the artifacts selected for compilation, not to arbitrary\nexisting artifacts or code loaded at runtime through cheatcodes.\n`--disallow-linked-libraries` enforces it for one invocation and overrides both the profile\nand `FOUNDRY_ALLOW_LINKED_LIBRARIES`."
     },
@@ -161,7 +170,8 @@
       "default": "\"snapshots\"",
       "env": [
         "FOUNDRY_SNAPSHOTS",
-        "DAPP_SNAPSHOTS"
+        "DAPP_SNAPSHOTS",
+        "DAPP_TEST_SNAPSHOTS"
       ],
       "description": "Directory where gas snapshots recorded by the snapshot cheatcodes are stored.\n\n`forge test` writes one `<group>.json` file per group recorded with cheatcodes such as\n`vm.startSnapshotGas`, `vm.snapshotGasLastFrame` and `vm.snapshotValue`; see\n`gas_snapshot_check` and `gas_snapshot_emit`. The path is relative to the project root.\nThis is separate from the `.gas-snapshot` file written by `forge snapshot`."
     },
@@ -173,7 +183,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_GAS_SNAPSHOT_CHECK",
-        "DAPP_GAS_SNAPSHOT_CHECK"
+        "DAPP_GAS_SNAPSHOT_CHECK",
+        "DAPP_TEST_GAS_SNAPSHOT_CHECK"
       ],
       "description": "Whether `forge test` fails when recorded gas snapshots differ from those stored in\n`snapshots`.\n\nAfter the tests run, each snapshot group is compared with its stored file; groups without a\nfile are skipped. Changed values are printed and the command fails without writing new\nsnapshots. The `--gas-snapshot-check` flag or the `FORGE_SNAPSHOT_CHECK` environment\nvariable overrides this setting, so `--gas-snapshot-check=false` disables a check enabled\nhere."
     },
@@ -185,7 +196,8 @@
       "default": "true",
       "env": [
         "FOUNDRY_GAS_SNAPSHOT_EMIT",
-        "DAPP_GAS_SNAPSHOT_EMIT"
+        "DAPP_GAS_SNAPSHOT_EMIT",
+        "DAPP_TEST_GAS_SNAPSHOT_EMIT"
       ],
       "description": "Whether `forge test` writes the gas snapshots recorded by cheatcodes to `snapshots`.\n\nEach group is written to `<snapshots>/<group>.json`, replacing its previous values. Nothing\nis written when `gas_snapshot_check` finds differences. The `--gas-snapshot-emit` flag or\nthe `FORGE_SNAPSHOT_EMIT` environment variable overrides this setting."
     },
@@ -197,7 +209,8 @@
       "default": "\"broadcast\"",
       "env": [
         "FOUNDRY_BROADCAST",
-        "DAPP_BROADCAST"
+        "DAPP_BROADCAST",
+        "DAPP_TEST_BROADCAST"
       ],
       "description": "Directory where `forge script` writes broadcast transaction logs, relative to the project\nroot.\n\nEach run is written to `<broadcast>/<script file>/<chain id>/<function>-latest.json`, with\na timestamped `run-<timestamp>.json` copy, under an extra `dry-run` directory when the\nscript is only simulated. Sensitive values such as RPC URLs are written to the same\nrelative path under `cache_path` instead. Cheatcodes such as `vm.getBroadcast` and\n`vm.getDeployment` read the logs from this directory."
     },
@@ -209,7 +222,8 @@
       "default": "[]",
       "env": [
         "FOUNDRY_ALLOW_PATHS",
-        "DAPP_ALLOW_PATHS"
+        "DAPP_ALLOW_PATHS",
+        "DAPP_TEST_ALLOW_PATHS"
       ],
       "description": "Additional directories that solc may read sources from, passed to `solc --allow-paths`.\n\nPaths are relative to the project root. The project root and `libs` are always allowed, so\nthis is only needed for imports from outside the project, for example in workspaces managed\nby pnpm or similar tools. See\n<https://docs.soliditylang.org/en/latest/path-resolution.html#allowed-paths>."
     },
@@ -221,7 +235,8 @@
       "default": "[]",
       "env": [
         "FOUNDRY_INCLUDE_PATHS",
-        "DAPP_INCLUDE_PATHS"
+        "DAPP_INCLUDE_PATHS",
+        "DAPP_TEST_INCLUDE_PATHS"
       ],
       "description": "Additional source directories for import resolution, passed to `solc --include-path`.\n\nSolc resolves imports against these directories in addition to its base path, which Foundry\nsets to the project root. Use them to import contracts whose location is not fixed relative\nto the project, such as packages installed by a package manager. Paths are relative to the\nproject root. See [solc path\nresolution](https://docs.soliditylang.org/en/latest/path-resolution.html)."
     },
@@ -233,7 +248,8 @@
       "default": "[]",
       "env": [
         "FOUNDRY_SKIP",
-        "DAPP_SKIP"
+        "DAPP_SKIP",
+        "DAPP_TEST_SKIP"
       ],
       "description": "Glob patterns of source files to leave out of the build.\n\nEach pattern is matched against the file's absolute path and its path relative to the\nproject root, and also matches any file whose name contains the pattern, so `.t.sol` skips\nall tests. Skipped files produce no artifacts, though solc still compiles them when a built\nfile imports them. `forge lint` ignores them too. The `--skip` flag of build commands adds\npatterns, with `test` and `script` as shortcuts for `.t.sol` and `.s.sol`.\n\n```toml\n[profile.default]\nskip = [\"test/invariant/**/*\", \"script/**/*\"]\n```"
     },
@@ -245,7 +261,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_FORCE",
-        "DAPP_FORCE"
+        "DAPP_FORCE",
+        "DAPP_TEST_FORCE"
       ],
       "description": "Whether to delete all build artifacts and caches before compiling.\n\nThis has the same effect as passing `--force` to every command. Before building, Forge\nremoves the artifacts in `out`, the compiler cache, the coverage and external compiler\ncaches, `test_failures_file`, `mutation_dir`, and the fuzz and invariant failure and corpus\ndirectories, then compiles everything from scratch.\n\n**Warning:** this also discards persisted fuzz failures and corpora on every run."
     },
@@ -257,7 +274,8 @@
       "default": "\"osaka\"",
       "env": [
         "FOUNDRY_EVM_VERSION",
-        "DAPP_EVM_VERSION"
+        "DAPP_EVM_VERSION",
+        "DAPP_TEST_EVM_VERSION"
       ],
       "description": "The EVM version to compile contracts for and, unless `hardfork` is set, to execute them\nwith.\n\nThe value is an Ethereum hardfork name: `homestead`, `tangerineWhistle`, `spuriousDragon`,\n`byzantium`, `constantinople`, `petersburg`, `istanbul`, `berlin`, `london`, `paris`,\n`shanghai`, `cancun`, `prague`, `osaka` or `amsterdam` (case-insensitive). It is passed to\nthe compiler and, when `hardfork` is unset and a fork doesn't determine the hardfork,\nselects the EVM rules used by `forge test` and `forge script`.\n\nIf the selected compiler version doesn't support the configured EVM version, the newest one\nit supports is used for compilation. Pin the version if you rely on it for compatibility,\nsince the default follows new hardforks:\n\n```toml\n[profile.default]\nevm_version = \"paris\"\n```\n\n`--evm-version` overrides it for one invocation."
     },
@@ -269,7 +287,8 @@
       "default": null,
       "env": [
         "FOUNDRY_HARDFORK",
-        "DAPP_HARDFORK"
+        "DAPP_HARDFORK",
+        "DAPP_TEST_HARDFORK"
       ],
       "description": "The EVM hardfork used to execute tests, scripts and other local EVM runs.\n\nAccepts a plain Ethereum hardfork name, such as `osaka` or `cancun`, or a hardfork\nnamespaced by network, such as `optimism:holocene`, `base:Beryl` or `tempo:T6`. The\nnamespaces are `ethereum` (`eth`), `optimism` (`op`), `base`, `tempo` (`t`) and `monad`\n(`m`); the non-Ethereum namespaces other than `tempo` are only available in builds compiled\nwith the matching network feature.\n\nA namespaced hardfork also selects the matching network. A hardfork that conflicts with an\nexplicitly configured network, such as `hardfork = \"shanghai\"` with `network = \"tempo\"`, is\nrejected.\n\nWhen unset, execution follows `evm_version`, or the forked endpoint's own hardfork when\nforking. This setting only changes execution: contracts are still compiled for\n`evm_version`. The `--hardfork` flag overrides it.\n\n```toml\n[profile.default]\nhardfork = \"tempo:T6\"\n```\n\nFor Tempo projects, prefer `network = \"tempo\"` or a live Tempo fork for current behavior,\nand pin a Tempo hardfork only when you need deterministic behavior at a specific activation\npoint."
     },
@@ -281,7 +300,8 @@
       "default": "[\"*\"]",
       "env": [
         "FOUNDRY_GAS_REPORTS",
-        "DAPP_GAS_REPORTS"
+        "DAPP_GAS_REPORTS",
+        "DAPP_TEST_GAS_REPORTS"
       ],
       "description": "The contracts to include in gas reports generated by `forge test --gas-report`.\n\nEntries are exact contract names, without the source path. `\"*\"`, or an empty list, reports\nevery contract. A contract listed here is reported even if it also appears in\n`gas_reports_ignore`, and Forge prints a warning about the double listing.\n\n```toml\n[profile.default]\ngas_reports = [\"Counter\", \"Token\"]\n```"
     },
@@ -293,7 +313,8 @@
       "default": "[]",
       "env": [
         "FOUNDRY_GAS_REPORTS_IGNORE",
-        "DAPP_GAS_REPORTS_IGNORE"
+        "DAPP_GAS_REPORTS_IGNORE",
+        "DAPP_TEST_GAS_REPORTS_IGNORE"
       ],
       "description": "The contracts to leave out of gas reports.\n\nEntries are exact contract names, without the source path; patterns are not supported. A\ncontract that is also listed in `gas_reports` is still reported, with a warning.\n\n```toml\n[profile.default]\ngas_reports_ignore = [\"CounterTest\", \"Deploy\"]\n```"
     },
@@ -305,7 +326,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_GAS_REPORTS_INCLUDE_TESTS",
-        "DAPP_GAS_REPORTS_INCLUDE_TESTS"
+        "DAPP_GAS_REPORTS_INCLUDE_TESTS",
+        "DAPP_TEST_GAS_REPORTS_INCLUDE_TESTS"
       ],
       "description": "Whether gas reports include calls to test functions, such as `setUp` and `test*`.\n\nBy default, gas reports skip calls to functions Forge recognizes as test functions\n(`setUp`, `test*`, `invariant*`, `afterInvariant`, fixtures and similar), so they only show\nthe functions under test. Enable this to report those calls too. Contracts are still\nselected by `gas_reports` and `gas_reports_ignore`."
     },
@@ -317,7 +339,8 @@
       "default": null,
       "env": [
         "FOUNDRY_SOLC",
-        "DAPP_SOLC"
+        "DAPP_SOLC",
+        "DAPP_TEST_SOLC"
       ],
       "description": "The Solidity compiler to use for the whole project, instead of detecting versions per file.\n\nThe value can be:\n\n- an exact version, such as `\"0.8.28\"`, which is installed if it's missing (unless\n  `offline` is set, in which case the build fails);\n- `\"solar:<version>\"`, which pins an exact [Solar](https://github.com/paradigmxyz/solar)\n  release, 0.2.0 or later without pre-release or build metadata;\n- a path to a local compiler binary, or the name of an executable on `PATH`.\n\n```toml\n[profile.default]\nsolc = \"0.8.28\"\n# solc = \"solar:0.3.0\"\n# solc = \"custom-solc\"\n```\n\nVersion requirements such as `\"^0.8.0\"` are not supported. When set, version auto-detection\nis off and `auto_detect_solc` is ignored.\n\nA Solar release is used from `~/.foundry/solar/<version>`. If it's missing, Forge downloads\nit from the Solar GitHub release, checks it against the release's SHA-256 checksum file and\nthe version it reports, and installs it there. Releases are published for macOS, x86_64\nLinux, aarch64 Linux with glibc, and x86_64 Windows; on other platforms, set `solc` to the\npath of a `solar` binary instead.\n\nThe legacy key `solc_version` is still accepted and is used only when `solc` is not set.\nThe `FOUNDRY_SOLC_VERSION` environment variable overrides both, and `--use` overrides it\nfor one invocation (accepting the same values, plus a `solc:` prefix)."
     },
@@ -329,7 +352,8 @@
       "default": "true",
       "env": [
         "FOUNDRY_AUTO_DETECT_SOLC",
-        "DAPP_AUTO_DETECT_SOLC"
+        "DAPP_AUTO_DETECT_SOLC",
+        "DAPP_TEST_AUTO_DETECT_SOLC"
       ],
       "description": "Whether to detect the Solidity compiler versions to use from each file's `pragma solidity`.\n\nWith detection, Forge picks a compatible compiler version for each set of sources,\ninstalling it if needed (unless `offline` is set). Setting `solc` turns detection off and\nthis key is then ignored.\n\n`--no-auto-detect` sets this key to `false` for one invocation. Setting it to `false`\ndoesn't pin a compiler by itself: compilation still auto-detects when `solc` is unset, so\nset `solc` to use a single version."
     },
@@ -341,7 +365,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_OFFLINE",
-        "DAPP_OFFLINE"
+        "DAPP_OFFLINE",
+        "DAPP_TEST_OFFLINE"
       ],
       "description": "Whether to disallow network access for downloads and external lookups.\n\nWhen enabled:\n\n- missing solc versions and Solar releases are not installed; a build that needs one fails;\n- traces don't look up contract names on Etherscan or function signatures in online\n  signature databases;\n- `forge script` skips verifying external contracts, and `--verify-external` fails.\n\nWith `auto_detect_solc` enabled, the required compiler versions are still detected, but\nonly installed ones are used. `--offline` enables it for one invocation."
     },
@@ -353,7 +378,9 @@
       "default": null,
       "env": [
         "FOUNDRY_OPTIMIZER",
-        "DAPP_OPTIMIZER"
+        "DAPP_OPTIMIZER",
+        "DAPP_TEST_OPTIMIZER",
+        "DAPP_BUILD_OPTIMIZE"
       ],
       "description": "Whether to enable the Solidity optimizer.\n\nWhen unset, the optimizer is enabled if `optimizer_runs` is set to a value greater than 0,\nand disabled otherwise. Setting it explicitly always wins over that inference.\n`optimizer_details` can switch individual optimizer components on or off independently of\nthis setting.\n\n`--optimize` (or `--optimize=false`) overrides it for one invocation. `forge coverage`\ndisables the optimizer unless `--ir-minimum` is used."
     },
@@ -365,7 +392,9 @@
       "default": null,
       "env": [
         "FOUNDRY_OPTIMIZER_RUNS",
-        "DAPP_OPTIMIZER_RUNS"
+        "DAPP_OPTIMIZER_RUNS",
+        "DAPP_TEST_OPTIMIZER_RUNS",
+        "DAPP_BUILD_OPTIMIZE_RUNS"
       ],
       "description": "How many times each opcode of the deployed code is expected to run over the contract's\nlifetime.\n\nThis is a trade-off between code size (deployment cost) and execution cost after\ndeployment. A value of `1` produces short but expensive code; larger values produce longer\nbut more gas-efficient code. The maximum is `2**32-1`; larger values are rejected.\n\nIt does not set how many times the optimizer runs: the optimizer always runs as many times\nas it can still improve the code.\n\nIf `optimizer` is not set explicitly, a value greater than 0 enables the optimizer. When\nneither is set, 200 is used. `--optimizer-runs` overrides it for one invocation."
     },
@@ -377,7 +406,8 @@
       "default": null,
       "env": [
         "FOUNDRY_OPTIMIZER_DETAILS",
-        "DAPP_OPTIMIZER_DETAILS"
+        "DAPP_OPTIMIZER_DETAILS",
+        "DAPP_TEST_OPTIMIZER_DETAILS"
       ],
       "description": "Switches individual Solidity optimizer components on or off.\n\nThe table is passed to solc as `settings.optimizer.details` and uses solc's camelCase key\nnames. Each key is a boolean; omitted keys keep solc's default:\n\n- `peephole`: the peephole optimizer.\n- `inliner`: the inliner (solc 0.8.5 or later).\n- `jumpdestRemover`: removes unused jump destinations.\n- `orderLiterals`: sometimes reorders literals in commutative operations.\n- `deduplicate`: removes duplicate code blocks.\n- `cse`: common subexpression elimination.\n- `constantOptimizer`: optimizes the representation of literal numbers and strings.\n- `yul`: the Yul optimizer, which mostly operates on ABI coder v2 code and inline assembly.\n- `simpleCounterForLoopUncheckedIncrement`: unchecked increments of simple loop counters.\n\nThe `yulDetails` subtable tunes the Yul optimizer:\n\n- `stackAllocation`: improves the allocation of stack slots by freeing them up earlier.\n- `optimizerSteps`: the sequence of optimizer steps to apply.\n\n```toml\n[profile.default.optimizer_details]\nconstantOptimizer = true\nyul = true\n\n[profile.default.optimizer_details.yulDetails]\nstackAllocation = true\noptimizerSteps = \"dhfoDgvulfnTUtnIf\"\n```\n\nThe details apply even when `optimizer` is unset. If compiling with `via_ir` fails, try\nenabling `optimizer` and setting `optimizerSteps` to an empty string. See\n<https://docs.soliditylang.org/en/latest/using-the-compiler.html#input-description> for the\ndefaults."
     },
@@ -389,7 +419,8 @@
       "default": null,
       "env": [
         "FOUNDRY_MODEL_CHECKER",
-        "DAPP_MODEL_CHECKER"
+        "DAPP_MODEL_CHECKER",
+        "DAPP_TEST_MODEL_CHECKER"
       ],
       "description": "Settings for the Solidity SMTChecker, a formal verification module built into solc.\n\nWhen set, the model checker runs during `forge build` and its findings are reported as\ncompiler warnings. It is available in solc 0.8.7 or later on macOS and Linux, and needs the\nSMT solvers it uses (such as z3) to be installed.\n\nThe table uses solc's keys:\n\n- `contracts`: the contracts to check, as a table from source path to contract names.\n  Without it every contract is checked, which can take a long time.\n- `engine`: `chc` (constrained Horn clauses, recommended), `bmc` (bounded model checker),\n  `all` (both) or `none`. solc runs no engine unless one is set.\n- `timeout`: the solver timeout per query, in milliseconds.\n- `targets`: what to check: `assert`, `underflow`, `overflow`, `divByZero`,\n  `constantCondition`, `popEmptyArray`, `outOfBounds` and `balance`. When omitted, Forge\n  checks only `assert`, unlike solc, which checks all targets.\n- `invariants`: invariants to report: `contract` and `reentrancy` (solc 0.8.10 or later).\n- `solvers`: `cvc4`, `eld` (solc 0.8.18 or later), `smtlib2` and `z3`.\n- `showUnproved`, `showUnsupported` and `showProvedSafe`: whether to report unproved\n  targets, unsupported language features and targets proved safe (the last two need solc\n  0.8.20).\n- `divModWithSlacks`: whether to encode division and modulo with slack variables.\n\nThe `show*` and `divModWithSlacks` keys also accept snake_case names.\n\n```toml\n[profile.default.model_checker]\ncontracts = { \"src/Contract.sol\" = [\"Contract\"] }\nengine = \"chc\"\ntimeout = 10000\ntargets = [\"assert\"]\n```\n\nSee the [SMTChecker documentation](https://docs.soliditylang.org/en/latest/smtchecker.html)."
     },
@@ -401,7 +432,8 @@
       "default": "0",
       "env": [
         "FOUNDRY_VERBOSITY",
-        "DAPP_VERBOSITY"
+        "DAPP_VERBOSITY",
+        "DAPP_TEST_VERBOSITY"
       ],
       "description": "Default verbosity for test and script output, as if passed with `-v` flags.\n\n- `2` (`-vv`): logs emitted during tests are displayed.\n- `3` (`-vvv`): execution traces of failing tests are displayed.\n- `4` (`-vvvv`): execution traces of all tests, and setup traces of failing tests, are\n  displayed.\n- `5` (`-vvvvv`): execution and setup traces are always displayed, including storage\n  changes and backtraces with line numbers.\n\n`-v` flags on the command line replace this value. Trace rendering uses the higher of this\nvalue and `verbosity` in the `tracing` section."
     },
@@ -413,7 +445,8 @@
       "default": null,
       "env": [
         "FOUNDRY_ETH_RPC_URL",
-        "DAPP_ETH_RPC_URL"
+        "DAPP_ETH_RPC_URL",
+        "DAPP_TEST_ETH_RPC_URL"
       ],
       "description": "URL or alias of the RPC endpoint used for RPC calls and for the main fork in tests and\nscripts.\n\nAccepts an HTTP(S) or WebSocket URL, an IPC socket path, or an alias. An alias is resolved\nin this order: a key of `rpc_endpoints`, an endpoint known to MESC (queried under the\n`foundry` profile), then the built-in `tempo` and `moderato` aliases. Any other value is\nused as-is. `${VAR}` placeholders are only expanded through an `rpc_endpoints` alias, not\nin a URL written here directly.\n\nWhen set, `forge test` and `forge script` run against a fork of this endpoint, pinned to\n`fork_block_number` or to the latest block. Commands such as `cast` that need an endpoint\nfall back to `http://localhost:8545` when it is unset. The value also selects the\n`etherscan` entry of the same name when `etherscan_api_key` names none.\n\nThe `--rpc-url` (`--fork-url`) flag overrides it. `cast` also reads the `ETH_RPC_URL`\nenvironment variable; `forge` does not, so exporting it does not fork every test run.\n\n```toml\n[profile.default]\neth_rpc_url = \"mainnet\"\n\n[rpc_endpoints]\nmainnet = \"https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}\"\n```"
     },
@@ -425,7 +458,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_ETH_RPC_ACCEPT_INVALID_CERTS",
-        "DAPP_ETH_RPC_ACCEPT_INVALID_CERTS"
+        "DAPP_ETH_RPC_ACCEPT_INVALID_CERTS",
+        "DAPP_TEST_ETH_RPC_ACCEPT_INVALID_CERTS"
       ],
       "description": "Whether to accept invalid TLS certificates from the RPC endpoint.\n\nApplies to HTTP(S) transports, including fork providers. Enabling it disables certificate\nvalidation, so only use it for endpoints you trust, such as a local node with a self-signed\ncertificate. The `-k`/`--insecure` flag enables it for a single run."
     },
@@ -437,7 +471,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_ETH_RPC_NO_PROXY",
-        "DAPP_ETH_RPC_NO_PROXY"
+        "DAPP_ETH_RPC_NO_PROXY",
+        "DAPP_TEST_ETH_RPC_NO_PROXY"
       ],
       "description": "Whether to disable automatic proxy detection for the RPC endpoint.\n\nWhen enabled, the `HTTP_PROXY`/`HTTPS_PROXY` environment variables and system proxy\nsettings are ignored. This helps in sandboxed environments (such as the Cursor IDE sandbox\nor the macOS App Sandbox) where system proxy detection through SCDynamicStore crashes. The\n`--no-proxy` flag enables it for a single run."
     },
@@ -449,7 +484,8 @@
       "default": null,
       "env": [
         "FOUNDRY_ETH_RPC_JWT",
-        "DAPP_ETH_RPC_JWT"
+        "DAPP_ETH_RPC_JWT",
+        "DAPP_TEST_ETH_RPC_JWT"
       ],
       "description": "Hex-encoded JWT secret used to authenticate RPC calls.\n\nFor each connection Foundry signs a fresh token with this secret (with an `iat` claim set\nto the current time) and sends it as an `Authorization: Bearer` header, as the Engine API\nof execution clients expects. An invalid hex secret makes the connection fail. It also\napplies to fork providers. The `cast` flag `--jwt-secret` (or the `ETH_RPC_JWT_SECRET`\nenvironment variable) overrides it.\n\nAvoid committing the secret; prefer setting it from the environment."
     },
@@ -461,7 +497,8 @@
       "default": null,
       "env": [
         "FOUNDRY_ETH_RPC_TIMEOUT",
-        "DAPP_ETH_RPC_TIMEOUT"
+        "DAPP_ETH_RPC_TIMEOUT",
+        "DAPP_TEST_ETH_RPC_TIMEOUT"
       ],
       "description": "Timeout in seconds for each RPC request.\n\nThe timeout runs from when a request starts connecting until its response body has been\nread. When unset, requests time out after 45 seconds. It also applies to fork providers.\nThe `--rpc-timeout` flag or the `ETH_RPC_TIMEOUT` environment variable overrides it."
     },
@@ -473,7 +510,8 @@
       "default": null,
       "env": [
         "FOUNDRY_ETH_RPC_HEADERS",
-        "DAPP_ETH_RPC_HEADERS"
+        "DAPP_ETH_RPC_HEADERS",
+        "DAPP_TEST_ETH_RPC_HEADERS"
       ],
       "description": "Extra HTTP headers sent with every RPC request, each written as `name:value`.\n\nEach entry is split at its first `:`, and the name and value are trimmed; an entry without\na `:` or with an invalid header name is an error. The headers also apply to forks, except a\ncheatcode fork whose `rpc_endpoints` entry sets `auth`, which sends only its\n`Authorization` header. The `cast` flag `--rpc-headers` (or the `ETH_RPC_HEADERS`\nenvironment variable, with comma-separated entries) overrides it.\n\n```toml\n[profile.default]\neth_rpc_headers = [\"x-custom-header:value\", \"x-another-header:another-value\"]\n```"
     },
@@ -485,7 +523,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_ETH_RPC_CURL",
-        "DAPP_ETH_RPC_CURL"
+        "DAPP_ETH_RPC_CURL",
+        "DAPP_TEST_ETH_RPC_CURL"
       ],
       "description": "Whether to print the equivalent `curl` command for each RPC request instead of sending it.\n\nNo request reaches the endpoint: Foundry prints the command, including headers and any JWT,\nand continues with a placeholder response, so output that depends on the response is not\nmeaningful. It is not supported with multiple fork URLs. The `cast` flag `--curl` enables\nit for a single run."
     },
@@ -496,8 +535,9 @@
       "table": false,
       "default": null,
       "env": [
-        "FOUNDRY_ETHERSCAN_API_KEY",
-        "DAPP_ETHERSCAN_API_KEY"
+        "DAPP_ETHERSCAN_API_KEY",
+        "DAPP_TEST_ETHERSCAN_API_KEY",
+        "ETHERSCAN_API_KEY"
       ],
       "description": "Etherscan API key, or the name of an entry in the `etherscan` table.\n\nIf the value names an `etherscan` entry, that entry is used. Otherwise Foundry uses the\nfirst `etherscan` entry whose chain matches the current chain, with this value replacing\nthe entry's key, and with no matching entry it builds a config for the current chain from\nthis key and the chain's known explorer URL. With Etherscan API V2, one Etherscan key works\nfor every chain that Etherscan serves (such as BscScan, BaseScan or Polygonscan).\n\nThe key is used for contract verification, fetching verified sources and identifying\ncontracts in traces. The `--etherscan-api-key` flag and the `ETHERSCAN_API_KEY` environment\nvariable (ignored when empty) override it. Avoid committing the key; prefer the environment\nor an `etherscan` entry with a `${VAR}` placeholder."
     },
@@ -517,7 +557,8 @@
       "default": "[\"license\", \"code-size\", \"init-code-size\", \"transient-storage\", \"transfer-deprecated\", \"natspec-memory-safe-assembly-deprecated\"]",
       "env": [
         "FOUNDRY_IGNORED_ERROR_CODES",
-        "DAPP_IGNORED_ERROR_CODES"
+        "DAPP_IGNORED_ERROR_CODES",
+        "DAPP_TEST_IGNORED_ERROR_CODES"
       ],
       "description": "Solidity compiler warning codes to silence.\n\nEach entry is a numeric code or one of these names:\n\n- `license` (1878), `code-size` (5574), `init-code-size` (3860)\n- `func-mutability` (2018), `unused-var` (2072), `unused-param` (5667), `unused-return`\n  (9302)\n- `virtual-interfaces` (5815), `missing-receive-ether` (3628), `shadowing` (2519)\n- `same-varname` (8760), `unnamed-return` (6321), `unreachable` (5740)\n- `pragma-solidity` (3420), `constructor-visibility` (2462), `transient-storage` (2394)\n- `too-many-warnings` (4591), `transfer-deprecated` (9207)\n- `natspec-memory-safe-assembly-deprecated` (2424)\n\n```toml\n[profile.default]\nignored_error_codes = [\"license\", \"code-size\", 2394]\n```\n\nOnly warnings are silenced; errors are always reported. Silenced warnings don't fail the\nbuild when `deny` is set. Setting this key replaces the default list. The SPDX license\n(1878) and contract size (5574) warnings are always silenced in test files.\n`--ignored-error-codes` replaces the list for one invocation. To silence codes only for\nsome paths, use `ignored_error_codes_from`."
     },
@@ -529,7 +570,8 @@
       "default": "[]",
       "env": [
         "FOUNDRY_IGNORED_ERROR_CODES_FROM",
-        "DAPP_IGNORED_ERROR_CODES_FROM"
+        "DAPP_IGNORED_ERROR_CODES_FROM",
+        "DAPP_TEST_IGNORED_ERROR_CODES_FROM"
       ],
       "description": "Solidity compiler warning codes to silence only in files under given paths.\n\nEach entry is a pair of a path prefix, relative to the project root, and a list of codes\n(numbers or the names accepted by `ignored_error_codes`):\n\n```toml\n[profile.default]\nignored_error_codes_from = [\n    [\"src/generated\", [1878, 5574]],\n    [\"test/legacy\", [\"unused-var\"]],\n]\n```\n\nA warning is silenced when the file it points to starts with the prefix and its code is\nlisted. Only warnings are silenced, and silenced warnings don't fail the build when `deny`\nis set."
     },
@@ -541,14 +583,15 @@
       "default": "[]",
       "env": [
         "FOUNDRY_IGNORED_WARNINGS_FROM",
-        "DAPP_IGNORED_WARNINGS_FROM"
+        "DAPP_IGNORED_WARNINGS_FROM",
+        "DAPP_TEST_IGNORED_WARNINGS_FROM"
       ],
       "description": "Paths whose compiler warnings are silenced.\n\nEach entry is a file or directory path relative to the project root; a warning is silenced\nwhen the file it points to starts with one of them. This hides known warnings from vendored\nor generated code without affecting others:\n\n```toml\n[profile.default]\nignored_warnings_from = [\"lib/legacy\", \"src/Generated.sol\"]\n```\n\nOnly warnings are silenced; errors are always reported. Silenced warnings don't fail the\nbuild when `deny` is set. To silence only some codes, use `ignored_error_codes_from`."
     },
     {
       "key": "deny",
       "section": null,
-      "type": "string",
+      "type": "string or boolean",
       "table": false,
       "default": "\"never\"",
       "values": [
@@ -558,7 +601,8 @@
       ],
       "env": [
         "FOUNDRY_DENY",
-        "DAPP_DENY"
+        "DAPP_DENY",
+        "DAPP_TEST_DENY"
       ],
       "description": "The lowest diagnostic level that makes a command fail.\n\nValid values:\n\n- `never`: only errors fail; warnings and notes are reported.\n- `warnings`: warnings also fail.\n- `notes`: warnings and notes both fail.\n\nThis applies to compiler warnings (except those silenced by `ignored_error_codes`,\n`ignored_error_codes_from` and `ignored_warnings_from`), and to lint warnings and notes in\n`forge lint` and the lint pass of `forge build`. Compiler notes never fail a build. While\nwarnings are denied, a failing build writes no artifacts, and the compilation cache is not\nused, so warnings are reported on every build.\n\nValues are case-insensitive. For compatibility, `true` means `warnings` and `false` means\n`never`. `--deny` (`-D`) overrides it for one invocation."
     },
@@ -570,7 +614,8 @@
       "default": null,
       "env": [
         "FOUNDRY_DENY_WARNINGS",
-        "DAPP_DENY_WARNINGS"
+        "DAPP_DENY_WARNINGS",
+        "DAPP_TEST_DENY_WARNINGS"
       ],
       "deprecated": "deny = warnings",
       "description": "Deprecated: use `deny = \"warnings\"` instead.\n\n`deny_warnings = true` is read as `deny = \"warnings\"` and `false` as `deny = \"never\"`,\nunless `deny` is also set in the same profile, in which case `deny` wins. The\n`--deny-warnings` flag is deprecated in the same way in favor of `--deny warnings`."
@@ -583,7 +628,8 @@
       "default": null,
       "env": [
         "FOUNDRY_MATCH_TEST",
-        "DAPP_MATCH_TEST"
+        "DAPP_MATCH_TEST",
+        "DAPP_TEST_MATCH_TEST"
       ],
       "description": "Only run test functions whose signature matches this regular expression.\n\nThe pattern is searched for anywhere in the full function signature, such as\n`test_transfer(uint256)`; anchor it with `^` and `$` to match exactly. It applies to\n`forge test` and to the commands built on it, such as `forge coverage` and\n`forge snapshot`. The `--match-test` (`--mt`) flag replaces this value.\n\n```toml\n[profile.default]\nmatch_test = \"^test_transfer\"\n```"
     },
@@ -595,7 +641,8 @@
       "default": null,
       "env": [
         "FOUNDRY_NO_MATCH_TEST",
-        "DAPP_NO_MATCH_TEST"
+        "DAPP_NO_MATCH_TEST",
+        "DAPP_TEST_NO_MATCH_TEST"
       ],
       "description": "Skip test functions whose signature matches this regular expression.\n\nThe pattern is searched for anywhere in the full function signature, such as\n`test_transfer(uint256)`. It applies to `forge test` and to the commands built on it, such\nas `forge coverage` and `forge snapshot`. The `--no-match-test` (`--nmt`) flag replaces\nthis value."
     },
@@ -607,7 +654,8 @@
       "default": null,
       "env": [
         "FOUNDRY_MATCH_CONTRACT",
-        "DAPP_MATCH_CONTRACT"
+        "DAPP_MATCH_CONTRACT",
+        "DAPP_TEST_MATCH_CONTRACT"
       ],
       "description": "Only run tests in contracts whose name matches this regular expression.\n\nThe pattern is searched for anywhere in the contract name; anchor it with `^` and `$` to\nmatch exactly. It applies to `forge test` and to the commands built on it, such as\n`forge coverage` and `forge snapshot`. The `--match-contract` (`--mc`) flag replaces this\nvalue."
     },
@@ -619,7 +667,8 @@
       "default": null,
       "env": [
         "FOUNDRY_NO_MATCH_CONTRACT",
-        "DAPP_NO_MATCH_CONTRACT"
+        "DAPP_NO_MATCH_CONTRACT",
+        "DAPP_TEST_NO_MATCH_CONTRACT"
       ],
       "description": "Skip tests in contracts whose name matches this regular expression.\n\nThe pattern is searched for anywhere in the contract name. It applies to `forge test` and\nto the commands built on it, such as `forge coverage` and `forge snapshot`. The\n`--no-match-contract` (`--nmc`) flag replaces this value."
     },
@@ -631,7 +680,8 @@
       "default": null,
       "env": [
         "FOUNDRY_MATCH_PATH",
-        "DAPP_MATCH_PATH"
+        "DAPP_MATCH_PATH",
+        "DAPP_TEST_MATCH_PATH"
       ],
       "description": "Only run tests in source files whose path matches this glob pattern.\n\nPaths are matched relative to the project root, such as `test/unit/Counter.t.sol`. A file\nalso matches when its file name contains the pattern text. It applies to `forge test` and\nto the commands built on it, such as `forge coverage` and `forge snapshot`. The\n`--match-path` (`--mp`) flag replaces this value.\n\n```toml\n[profile.default]\nmatch_path = \"test/unit/*\"\n```"
     },
@@ -643,7 +693,8 @@
       "default": null,
       "env": [
         "FOUNDRY_NO_MATCH_PATH",
-        "DAPP_NO_MATCH_PATH"
+        "DAPP_NO_MATCH_PATH",
+        "DAPP_TEST_NO_MATCH_PATH"
       ],
       "description": "Skip tests in source files whose path matches this glob pattern.\n\nPaths are matched relative to the project root, such as `test/fork/Counter.t.sol`. A file\nalso matches when its file name contains the pattern text. It applies to `forge test` and\nto the commands built on it, such as `forge coverage` and `forge snapshot`. The\n`--no-match-path` (`--nmp`) flag replaces this value."
     },
@@ -655,7 +706,8 @@
       "default": null,
       "env": [
         "FOUNDRY_NO_MATCH_COVERAGE",
-        "DAPP_NO_MATCH_COVERAGE"
+        "DAPP_NO_MATCH_COVERAGE",
+        "DAPP_TEST_NO_MATCH_COVERAGE"
       ],
       "description": "Leave source files whose path matches this regular expression out of `forge coverage`\nreports.\n\nPaths are relative to the project root, and the pattern is searched for anywhere in the\npath. It only filters the report; it does not change which tests run. The\n`--no-match-coverage` (`--nmco`) flag replaces this value.\n\n```toml\n[profile.default]\nno_match_coverage = \"^(test|script)/\"\n```"
     },
@@ -667,7 +719,8 @@
       "default": "\"cache/test-failures\"",
       "env": [
         "FOUNDRY_TEST_FAILURES_FILE",
-        "DAPP_TEST_FAILURES_FILE"
+        "DAPP_TEST_FAILURES_FILE",
+        "DAPP_TEST_TEST_FAILURES_FILE"
       ],
       "description": "File where `forge test` records the tests that failed in the last run.\n\n`forge test --rerun` reads it to run only those tests again. It is rewritten after each run\nand removed when every test passes, by `forge clean`, and by `force`. The path is relative\nto the project root and does not follow `cache_path`."
     },
@@ -678,8 +731,8 @@
       "table": false,
       "default": "\"cache/mutation\"",
       "env": [
-        "FOUNDRY_MUTATION_DIR",
-        "DAPP_MUTATION_DIR"
+        "DAPP_MUTATION_DIR",
+        "DAPP_TEST_MUTATION_DIR"
       ],
       "description": "Directory where mutation testing caches mutants and results, so interrupted runs can\nresume.\n\n`forge test --mutate` stores generated mutants and their results here, keyed by build and\nmutation settings. The path is relative to the project root and does not follow\n`cache_path`. `forge clean` and `force` delete it."
     },
@@ -691,7 +744,8 @@
       "default": null,
       "env": [
         "FOUNDRY_THREADS",
-        "DAPP_THREADS"
+        "DAPP_THREADS",
+        "DAPP_TEST_THREADS"
       ],
       "description": "Number of threads for parallel work such as running tests; `0` uses all logical cores.\n\n**Note:** Forge currently sizes its thread pool only from the global `--threads` (`-j`,\n`--jobs`) flag, so this setting has no effect."
     },
@@ -703,7 +757,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_SHOW_PROGRESS",
-        "DAPP_SHOW_PROGRESS"
+        "DAPP_SHOW_PROGRESS",
+        "DAPP_TEST_SHOW_PROGRESS"
       ],
       "description": "Whether `forge test` shows live progress for the run and each test suite while tests\nexecute.\n\nThe `--show-progress` flag enables it for one run."
     },
@@ -722,7 +777,8 @@
       "table": false,
       "default": "256",
       "env": [
-        "FOUNDRY_FUZZ_RUNS"
+        "FOUNDRY_FUZZ_RUNS",
+        "DAPP_TEST_FUZZ_RUNS"
       ],
       "description": "Number of fuzz runs (generated inputs) to execute for each fuzz test.\n\nHigher values give more confidence in the results at the cost of testing speed. Must be\ngreater than 0. With `timeout` set, the campaign stops at whichever comes first."
     },
@@ -1159,7 +1215,8 @@
       "table": false,
       "default": "500",
       "env": [
-        "FOUNDRY_INVARIANT_DEPTH"
+        "FOUNDRY_INVARIANT_DEPTH",
+        "DAPP_TEST_DEPTH"
       ],
       "description": "Number of calls executed in one run to try to break the invariants.\n\nWith `depth_mode = \"random\"`, this is the maximum depth of a run."
     },
@@ -1192,7 +1249,7 @@
     {
       "key": "invariant.workers",
       "section": "invariant",
-      "type": "string",
+      "type": "\"auto\" or integer",
       "table": false,
       "default": "\"auto\"",
       "env": [
@@ -2045,6 +2102,14 @@
       "type": "array of string",
       "table": false,
       "default": "[\"summary\"]",
+      "values": [
+        "summary",
+        "lcov",
+        "debug",
+        "bytecode",
+        "attribution",
+        "gaps"
+      ],
       "env": [
         "FOUNDRY_COVERAGE_REPORT"
       ],
@@ -2130,6 +2195,16 @@
       "type": "array of string",
       "table": false,
       "default": "[]",
+      "values": [
+        "assembly",
+        "assignment",
+        "binary-op",
+        "delete-expression",
+        "elim-delegate",
+        "function-body",
+        "require",
+        "unary-op"
+      ],
       "env": [
         "FOUNDRY_MUTATION_INCLUDE_OPERATORS"
       ],
@@ -2141,6 +2216,16 @@
       "type": "array of string",
       "table": false,
       "default": "[]",
+      "values": [
+        "assembly",
+        "assignment",
+        "binary-op",
+        "delete-expression",
+        "elim-delegate",
+        "function-body",
+        "require",
+        "unary-op"
+      ],
       "env": [
         "FOUNDRY_MUTATION_EXCLUDE_OPERATORS"
       ],
@@ -2280,7 +2365,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_LIVE_LOGS",
-        "DAPP_LIVE_LOGS"
+        "DAPP_LIVE_LOGS",
+        "DAPP_TEST_LIVE_LOGS"
       ],
       "description": "Whether to print `console.log` output while tests and scripts run instead of after they\nfinish.\n\nIgnored when `--json`, or `--junit` for `forge test`, writes a report to stdout; logs are\nthen captured into the report. Otherwise logs print live instead of being captured, so\n`forge test --json-file` does not include them. The `--live-logs` flag enables it for one\nrun."
     },
@@ -2292,7 +2378,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_ALLOW_INTERNAL_EXPECT_REVERT",
-        "DAPP_ALLOW_INTERNAL_EXPECT_REVERT"
+        "DAPP_ALLOW_INTERNAL_EXPECT_REVERT",
+        "DAPP_TEST_ALLOW_INTERNAL_EXPECT_REVERT"
       ],
       "description": "Whether `vm.expectRevert` can be satisfied by a revert at the cheatcode's own call depth,\nsuch as one from an internal function.\n\nBy default, `expectRevert` applies to the next external call, and expecting a revert from\nan internal function fails with\n`call didn't revert at a lower depth than cheatcode call depth`. Enabling this lets a\nrevert at the same depth satisfy the expectation. It is often enabled for a single test\nwith inline config: `/// forge-config: default.allow_internal_expect_revert = true`."
     },
@@ -2304,7 +2391,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_ALWAYS_USE_CREATE_2_FACTORY",
-        "DAPP_ALWAYS_USE_CREATE_2_FACTORY"
+        "DAPP_ALWAYS_USE_CREATE_2_FACTORY",
+        "DAPP_TEST_ALWAYS_USE_CREATE_2_FACTORY"
       ],
       "description": "Whether to route salted `CREATE2` deployments through the CREATE2 deployer in tests and\nnon-broadcasting scripts too.\n\nBy default, Forge routes `new C{salt: s}()` through the `create2_deployer` contract only\nwhile a script broadcasts. With this enabled, the same routing applies in tests and\nsimulations, so addresses match the ones a broadcast produces. Only deployments made\ndirectly by the test or script contract, or at the depth of an active prank or broadcast,\nare routed. The `--always-use-create-2-factory` flag enables it for one run."
     },
@@ -2321,7 +2409,8 @@
       ],
       "env": [
         "FOUNDRY_EIP1559_FEE_ESTIMATE",
-        "DAPP_EIP1559_FEE_ESTIMATE"
+        "DAPP_EIP1559_FEE_ESTIMATE",
+        "DAPP_TEST_EIP1559_FEE_ESTIMATE"
       ],
       "description": "How to estimate EIP-1559 fees for the transactions Foundry sends.\n\nUsed when `forge script` broadcasts and when `forge create`, `cast send` and `cast mktx`\nfill in fees. The preset picks the `eth_feeHistory` reward percentile for the priority fee\nand the base-fee multiplier for `maxFeePerGas`:\n\n- `low`: 10th-percentile priority fee and `base_fee * 1.5`. This lowers only the tip and\n  the fee cap, not the base fee actually paid, and the transaction may stall if the base\n  fee rises.\n- `market`: 20th-percentile priority fee and `base_fee * 2`, Foundry's historical behavior.\n- `aggressive`: 50th-percentile priority fee and `base_fee * 2`, a larger tip for faster\n  inclusion.\n\nIgnored for legacy transactions (`--legacy`). `--with-gas-price` and `--priority-gas-price`\noverride `maxFeePerGas` and `maxPriorityFeePerGas` respectively, and\n`forge script --estimate` overrides the preset."
     },
@@ -2333,7 +2422,8 @@
       "default": "120",
       "env": [
         "FOUNDRY_PROMPT_TIMEOUT",
-        "DAPP_PROMPT_TIMEOUT"
+        "DAPP_PROMPT_TIMEOUT",
+        "DAPP_TEST_PROMPT_TIMEOUT"
       ],
       "description": "How many seconds `vm.prompt` and the related prompt cheatcodes wait for input before\nreverting.\n\nThe timeout keeps unattended runs, such as CI, from hanging on a prompt."
     },
@@ -2345,7 +2435,9 @@
       "default": "\"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38\"",
       "env": [
         "FOUNDRY_SENDER",
-        "DAPP_SENDER"
+        "DAPP_SENDER",
+        "DAPP_TEST_SENDER",
+        "DAPP_TEST_ADDRESS"
       ],
       "description": "The address that deploys test contracts and calls test functions, and the default script\nsender.\n\nIn `forge test`, this address deploys each test contract and calls `setUp` and the test\nfunctions, so it is `msg.sender` for those calls; its balance is set to `initial_balance`.\nIn `forge script`, it is the sender unless `--sender`, a private key, or a single\nconfigured wallet determines another. The `--sender` flag overrides it."
     },
@@ -2357,7 +2449,8 @@
       "default": "\"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38\"",
       "env": [
         "FOUNDRY_TX_ORIGIN",
-        "DAPP_TX_ORIGIN"
+        "DAPP_TX_ORIGIN",
+        "DAPP_TEST_TX_ORIGIN"
       ],
       "description": "The `tx.origin` value for EVM execution.\n\nFoundry currently does not apply this value: in tests and scripts, `tx.origin` is the\naccount that sends each top-level call, which is `sender` unless a prank or broadcast\nchanges it. Use `vm.prank(sender, origin)` or `vm.startPrank(sender, origin)` to set\n`tx.origin` for specific calls."
     },
@@ -2369,7 +2462,8 @@
       "default": "\"0xffffffffffffffffffffffff\"",
       "env": [
         "FOUNDRY_INITIAL_BALANCE",
-        "DAPP_INITIAL_BALANCE"
+        "DAPP_INITIAL_BALANCE",
+        "DAPP_TEST_INITIAL_BALANCE"
       ],
       "description": "The balance, in wei, given to each test contract and to the accounts that deploy and call\nit.\n\nForge sets it on the test contract before deployment, so it is available in the\nconstructor, and then resets the test `sender` and Forge's internal caller and library\ndeployer accounts to it. Accepts an integer or a string; write values above 64 bits as a\nstring, such as `\"0xffffffffffffffffffffffff\"`. The `--initial-balance` flag overrides it."
     },
@@ -2381,7 +2475,9 @@
       "default": "1",
       "env": [
         "FOUNDRY_BLOCK_NUMBER",
-        "DAPP_BLOCK_NUMBER"
+        "DAPP_BLOCK_NUMBER",
+        "DAPP_TEST_BLOCK_NUMBER",
+        "DAPP_TEST_NUMBER"
       ],
       "description": "The `block.number` value during local EVM execution.\n\nWhen forking, the fork block's number is used instead. The `--block-number` flag overrides\nit."
     },
@@ -2393,7 +2489,10 @@
       "default": null,
       "env": [
         "FOUNDRY_FORK_BLOCK_NUMBER",
-        "DAPP_FORK_BLOCK_NUMBER"
+        "DAPP_FORK_BLOCK_NUMBER",
+        "DAPP_TEST_FORK_BLOCK_NUMBER",
+        "DAPP_FORK_BLOCK",
+        "DAPP_TEST_NUMBER"
       ],
       "description": "Block number to pin the fork created from `eth_rpc_url` to.\n\nWhen unset, the fork starts at the endpoint's latest block. It has no effect without\n`eth_rpc_url`, and forks created by cheatcodes such as `vm.createFork` take their own block\ninstead. A pinned block reuses its disk cache across runs and is never warmed by\n`fork_prefetch`. The `--fork-block-number` flag, which requires `--rpc-url`, overrides it."
     },
@@ -2405,7 +2504,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_FORK_STATE_BY_NUMBER",
-        "DAPP_FORK_STATE_BY_NUMBER"
+        "DAPP_FORK_STATE_BY_NUMBER",
+        "DAPP_TEST_FORK_STATE_BY_NUMBER"
       ],
       "description": "Whether to read fork state by block number instead of block hash.\n\nUse it when the RPC serves state by number but rejects block-hash selectors or cannot serve\nolder state by hash. It does not restore historical state the RPC no longer has. It covers\n`forge test`, forks created or rolled to a block number by cheatcodes, and the state reads\nof `forge script`. It is a profile setting, not an `rpc_endpoints` option, so scope it to a\nnamed profile alongside that profile's `eth_rpc_url` when only one network needs it.\n\nNumber-based reads cannot guarantee the same state if the remote chain reorganizes.\nNumber-mode forks keep their state cache in memory and neither read nor write the disk\ncache. Forks created or rolled to a transaction hash, and `cast run`, still require\nhash-addressed state, and `vm.transact` rejects number-mode forks. `fork_block_number`\nalone selects the fork block without enabling this mode. The `--fork-state-by-number` flag\nenables it for a single run and takes precedence over configuration.\n\n```toml\n[profile.default]\nfork_state_by_number = true\n```"
     },
@@ -2420,7 +2520,8 @@
       ],
       "env": [
         "FOUNDRY_CHAIN_ID",
-        "DAPP_CHAIN_ID"
+        "DAPP_CHAIN_ID",
+        "DAPP_TEST_CHAIN_ID"
       ],
       "description": "The chain Foundry targets, as a chain name or EIP-155 chain ID.\n\nAccepts a name such as `\"mainnet\"` or `\"sepolia\"`, or a number such as `1`. It sets the\n`chainid` value during EVM execution: when unset, local execution uses 31337 and forks use\nthe chain ID reported by the RPC, and when set it overrides the fork's chain ID. Commands\nalso use it to choose the block explorer settings and API key from `[etherscan]`, and\n`cast` commands use it as the transaction chain. The key can also be written as `chain`.\nThe `--chain` (`--chain-id`) flag overrides it.\n\n```toml\n[profile.default]\nchain_id = \"sepolia\"\n```"
     },
@@ -2432,7 +2533,8 @@
       "default": "1073741824",
       "env": [
         "FOUNDRY_GAS_LIMIT",
-        "DAPP_GAS_LIMIT"
+        "DAPP_GAS_LIMIT",
+        "DAPP_TEST_GAS_LIMIT"
       ],
       "description": "The gas limit for each top-level call in tests and scripts, also used as `block.gaslimit`.\n\nForge gives every top-level call this much gas and sets `block.gaslimit` to the same value.\nWhen `block_gas_limit` is set, it replaces this value for both. Accepts an integer, a\nnumeric string, or `\"max\"` for the largest 64-bit value. TOML integers are signed 64-bit,\nso write larger values as a string:\n\n```toml\n[profile.default]\ngas_limit = \"max\"\n```\n\nThe CLI flag `--gas-limit` is an alias of `--block-gas-limit` and sets `block_gas_limit`,\nnot this key."
     },
@@ -2444,7 +2546,8 @@
       "default": null,
       "env": [
         "FOUNDRY_CODE_SIZE_LIMIT",
-        "DAPP_CODE_SIZE_LIMIT"
+        "DAPP_CODE_SIZE_LIMIT",
+        "DAPP_TEST_CODE_SIZE_LIMIT"
       ],
       "description": "The maximum deployed contract size, in bytes, enforced during local execution (EIP-170).\n\nWhen unset, tests and simulations enforce no contract size limit, so oversized contracts\nstill deploy. Setting it enforces this runtime code limit and an initcode limit of twice\nthe value. `forge script` also uses it for its pre-broadcast size check, which otherwise\nuses the network's limit (24,576 bytes on Ethereum) and which `--disable-code-size-limit`\nskips. The `--code-size-limit` flag overrides it.\n\n```toml\n[profile.default]\ncode_size_limit = 49152\n```"
     },
@@ -2456,7 +2559,8 @@
       "default": null,
       "env": [
         "FOUNDRY_GAS_PRICE",
-        "DAPP_GAS_PRICE"
+        "DAPP_GAS_PRICE",
+        "DAPP_TEST_GAS_PRICE"
       ],
       "description": "The `tx.gasprice` value, in wei, during EVM execution.\n\nWhen unset, local execution uses 0 and forks use the RPC's current gas price. This only\naffects simulated execution; the price of broadcast transactions is set by fee estimation\nand flags such as `--with-gas-price`. The `--gas-price` flag overrides it."
     },
@@ -2468,7 +2572,8 @@
       "default": "0",
       "env": [
         "FOUNDRY_BLOCK_BASE_FEE_PER_GAS",
-        "DAPP_BLOCK_BASE_FEE_PER_GAS"
+        "DAPP_BLOCK_BASE_FEE_PER_GAS",
+        "DAPP_TEST_BLOCK_BASE_FEE_PER_GAS"
       ],
       "description": "The `block.basefee` value, in wei, during local EVM execution.\n\nWhen forking, the fork block's base fee is used instead. The `--block-base-fee-per-gas`\n(`--base-fee`) flag overrides it."
     },
@@ -2480,7 +2585,8 @@
       "default": "\"0x0000000000000000000000000000000000000000\"",
       "env": [
         "FOUNDRY_BLOCK_COINBASE",
-        "DAPP_BLOCK_COINBASE"
+        "DAPP_BLOCK_COINBASE",
+        "DAPP_TEST_BLOCK_COINBASE"
       ],
       "description": "The `block.coinbase` value during local EVM execution.\n\nWhen forking, the fork block's beneficiary is used instead. The `--block-coinbase` flag\noverrides it."
     },
@@ -2492,7 +2598,9 @@
       "default": "1",
       "env": [
         "FOUNDRY_BLOCK_TIMESTAMP",
-        "DAPP_BLOCK_TIMESTAMP"
+        "DAPP_BLOCK_TIMESTAMP",
+        "DAPP_TEST_BLOCK_TIMESTAMP",
+        "DAPP_TEST_TIMESTAMP"
       ],
       "description": "The `block.timestamp` value, in seconds, during local EVM execution.\n\nWhen forking, the fork block's timestamp is used instead. The `--block-timestamp` flag\noverrides it."
     },
@@ -2504,7 +2612,8 @@
       "default": "0",
       "env": [
         "FOUNDRY_BLOCK_DIFFICULTY",
-        "DAPP_BLOCK_DIFFICULTY"
+        "DAPP_BLOCK_DIFFICULTY",
+        "DAPP_TEST_BLOCK_DIFFICULTY"
       ],
       "description": "The `block.difficulty` value during local EVM execution.\n\nSince the Merge (Paris), the `DIFFICULTY` opcode returns `block.prevrandao` instead, so\nthis value only applies to pre-Paris EVM versions; set `block_prevrandao` otherwise. When\nforking, the fork block's difficulty is used instead. The `--block-difficulty` flag\noverrides it."
     },
@@ -2516,7 +2625,8 @@
       "default": "\"0x0000000000000000000000000000000000000000000000000000000000000000\"",
       "env": [
         "FOUNDRY_BLOCK_PREVRANDAO",
-        "DAPP_BLOCK_PREVRANDAO"
+        "DAPP_BLOCK_PREVRANDAO",
+        "DAPP_TEST_BLOCK_PREVRANDAO"
       ],
       "description": "The `block.prevrandao` value during local EVM execution, as a 32-byte hex string.\n\nBefore the Merge, this field held the block's mix hash. When forking, the fork block's\nvalue is used instead. The `--block-prevrandao` flag overrides it."
     },
@@ -2528,7 +2638,8 @@
       "default": null,
       "env": [
         "FOUNDRY_BLOCK_GAS_LIMIT",
-        "DAPP_BLOCK_GAS_LIMIT"
+        "DAPP_BLOCK_GAS_LIMIT",
+        "DAPP_TEST_BLOCK_GAS_LIMIT"
       ],
       "description": "The `block.gaslimit` value and per-call gas limit, overriding `gas_limit` when set.\n\nWhen unset, `gas_limit` is used for both. Accepts an integer, a numeric string, or `\"max\"`.\nThe `--block-gas-limit` flag, also spelled `--gas-limit`, overrides it."
     },
@@ -2540,7 +2651,8 @@
       "default": "134217728",
       "env": [
         "FOUNDRY_MEMORY_LIMIT",
-        "DAPP_MEMORY_LIMIT"
+        "DAPP_MEMORY_LIMIT",
+        "DAPP_TEST_MEMORY_LIMIT"
       ],
       "description": "The maximum memory, in bytes, that a single EVM execution may use.\n\nAn execution that exceeds it halts with a `MemoryLimitOOG` error. The `--memory-limit` flag\noverrides it."
     },
@@ -2552,7 +2664,8 @@
       "default": "[]",
       "env": [
         "FOUNDRY_EXTRA_OUTPUT",
-        "DAPP_EXTRA_OUTPUT"
+        "DAPP_EXTRA_OUTPUT",
+        "DAPP_TEST_EXTRA_OUTPUT"
       ],
       "description": "Additional compiler output to include in each contract's artifact.\n\nValues are solc output selectors, such as `devdoc`, `userdoc`, `storageLayout`,\n`transientStorageLayout`, `ir`, `irOptimized`, `irOptimizedAst`, `evm.assembly`,\n`evm.legacyAssembly`, `evm.gasEstimates` or `ewasm.wasm`. See the [Solidity compiler\nAPI](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api) for the\nfull list.\n\nForge always requests what it needs, whatever this is set to: `abi`, the bytecode and\ndeployed bytecode objects, source maps and link references, immutable references, method\nidentifiers and `metadata`.\n\n```toml\n[profile.default]\nextra_output = [\"storageLayout\", \"devdoc\"]\n```\n\n`--extra-output` replaces it for one invocation. To write output to separate files instead,\nuse `extra_output_files`."
     },
@@ -2564,7 +2677,8 @@
       "default": "[]",
       "env": [
         "FOUNDRY_EXTRA_OUTPUT_FILES",
-        "DAPP_EXTRA_OUTPUT_FILES"
+        "DAPP_EXTRA_OUTPUT_FILES",
+        "DAPP_TEST_EXTRA_OUTPUT_FILES"
       ],
       "description": "Compiler output to write as separate files next to each contract's artifact.\n\nSupported values and the files they produce:\n\n- `abi`: `<Contract>.abi.json`\n- `metadata`: `<Contract>.metadata.json`\n- `ir`: `<Contract>.ir`\n- `irOptimized`: `<Contract>.iropt`\n- `ewasm`: `<Contract>.ewasm`\n- `evm.assembly`: `<Contract>.asm`\n- `evm.legacyAssembly`: `<Contract>.legacyAssembly.json`\n- `evm.bytecode.object`: `<Contract>.bin`\n- `evm.deployedBytecode.object`: `<Contract>.deployed-bin`\n- `evm.bytecode.sourceMap`: `<Contract>.sourcemap`\n- `evm.bytecode.generatedSources`: `<Contract>.gensources`\n\n```toml\n[profile.default]\nextra_output_files = [\"metadata\"]\n```\n\n`extra_output = [\"metadata\"]` puts the metadata in the contract's JSON artifact, while\n`extra_output_files = [\"metadata\"]` writes it to its own file. See [Contract\nMetadata](https://docs.soliditylang.org/en/latest/metadata.html). `--extra-output-files`\nreplaces it for one invocation."
     },
@@ -2576,7 +2690,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_NAMES",
-        "DAPP_NAMES"
+        "DAPP_NAMES",
+        "DAPP_TEST_NAMES"
       ],
       "description": "Whether `forge build` prints the names of the compiled contracts, grouped by compiler\nversion.\n\n**Note:** `forge build` currently reads only its `--names` flag, so this setting has no\neffect."
     },
@@ -2588,7 +2703,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_SIZES",
-        "DAPP_SIZES"
+        "DAPP_SIZES",
+        "DAPP_TEST_SIZES"
       ],
       "description": "Whether `forge build` prints the runtime and initcode sizes of the compiled contracts.\n\nWith `--sizes`, the build also fails when a contract exceeds the runtime size limit\n(EIP-170, or `code_size_limit`) or the initcode size limit (EIP-3860, unless\n`--ignore-eip-3860` is passed).\n\n**Note:** `forge build` currently reads only its `--sizes` flag, so this setting has no\neffect."
     },
@@ -2600,7 +2716,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_VIA_IR",
-        "DAPP_VIA_IR"
+        "DAPP_VIA_IR",
+        "DAPP_TEST_VIA_IR"
       ],
       "description": "Whether to compile through the Yul intermediate representation (IR) pipeline.\n\nThe IR pipeline can optimize across functions and avoid some \"stack too deep\" errors, but\ncompiles more slowly. It requires solc 0.7.5 or later and is ignored for older versions. It\nis also enabled when `via_ssa_cfg` is set.\n\n`--via-ir` enables it for one invocation. `forge coverage` disables it unless\n`--ir-minimum` is used. Per-file overrides are possible with `additional_compiler_profiles`\nand `compilation_restrictions`."
     },
@@ -2612,7 +2729,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_VIA_SSA_CFG",
-        "DAPP_VIA_SSA_CFG"
+        "DAPP_VIA_SSA_CFG",
+        "DAPP_TEST_VIA_SSA_CFG"
       ],
       "description": "Whether to generate code with solc's experimental SSA control-flow-graph backend.\n\nThis sets `viaSSACFG` in the compiler settings and always enables `via_ir` as well. It\nrequires solc 0.8.35 or later, where it is an experimental feature, so `experimental` must\nalso be enabled; for older compilers it is ignored.\n\n```toml\n[profile.default]\nexperimental = true\nvia_ssa_cfg = true\n```\n\n`--via-ssa-cfg` enables it for one invocation."
     },
@@ -2624,7 +2742,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_EXPERIMENTAL",
-        "DAPP_EXPERIMENTAL"
+        "DAPP_EXPERIMENTAL",
+        "DAPP_TEST_EXPERIMENTAL"
       ],
       "description": "Whether to enable solc's experimental mode, required for experimental compiler features.\n\nThis sets `experimental` in the compiler's standard JSON settings. Solidity 0.8.35 and\nlater require it for experimental features such as `via_ssa_cfg`; for older compilers it is\nignored. `--experimental` enables it for one invocation."
     },
@@ -2636,7 +2755,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_AST",
-        "DAPP_AST"
+        "DAPP_AST",
+        "DAPP_TEST_AST"
       ],
       "description": "Whether to include each source's AST as JSON in the compiler output and artifacts.\n\nThe AST is also included when `build_info` is enabled. `--ast` enables it for one\ninvocation."
     },
@@ -2651,7 +2771,7 @@
     {
       "key": "rpc_storage_caching.chains",
       "section": null,
-      "type": "string",
+      "type": "\"all\", \"none\", or array of chain names or IDs",
       "table": false,
       "default": "\"all\"",
       "description": "Chains whose fork state is cached.\n\nValid values:\n\n- `\"all\"`: cache every chain.\n- `\"none\"`: cache no chain.\n- An array of chain names or EIP-155 IDs, such as `[\"mainnet\", \"optimism\"]` or `[1, 10]`.\n\nLocal development chains (chain IDs 99, 1337 and 31337) are never cached."
@@ -2659,7 +2779,7 @@
     {
       "key": "rpc_storage_caching.endpoints",
       "section": null,
-      "type": "string",
+      "type": "\"all\", \"remote\", or string (regular expression)",
       "table": false,
       "default": "\"all\"",
       "description": "RPC endpoints whose fork state is cached.\n\nValid values:\n\n- `\"all\"`: cache every endpoint.\n- `\"remote\"`: cache endpoints whose URL contains neither `localhost:` nor `127.0.0.1:`.\n- Any other string: a regular expression; endpoints whose URL matches it are cached."
@@ -2672,7 +2792,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_NO_STORAGE_CACHING",
-        "DAPP_NO_STORAGE_CACHING"
+        "DAPP_NO_STORAGE_CACHING",
+        "DAPP_TEST_NO_STORAGE_CACHING"
       ],
       "description": "Whether to disable on-disk caching of fork state entirely.\n\nWhen enabled, every account and storage slot is fetched from the endpoint and nothing is\nread from or written to `~/.foundry/cache/rpc`, overriding `rpc_storage_caching`. This also\napplies to forks created by cheatcodes, and stops `fork_prefetch` from warming a new fork\nblock from an older cache. The `--no-storage-caching` flag enables it for a single run."
     },
@@ -2684,7 +2805,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_NO_FORK_BAL",
-        "DAPP_NO_FORK_BAL"
+        "DAPP_NO_FORK_BAL",
+        "DAPP_TEST_NO_FORK_BAL"
       ],
       "description": "Whether to disable prewarming the fork cache from the parent block's access list (BAL) for\nforks created at a transaction hash.\n\nWhen a fork is created or rolled to a transaction, Foundry by default tries to fetch the\nEIP-7928 block access list of the parent block to prewarm the fork's cache. This is\nindependent of disk storage caching, and the preceding transactions of the block are still\nreplayed when prewarming is enabled. Disable it for endpoints that serve BALs slowly or\nincorrectly. The `--no-fork-bal` flag enables it for a single run.\n\nEach fork keeps the value set when it was created, including for later transaction-hash\nrolls. Contract-level inline configuration applies to forks created in `setUp`.\nFunction-level inline configuration applies to forks created in that test, but does not\nchange forks already created by `setUp`."
     },
@@ -2696,7 +2818,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_FORK_PREFETCH",
-        "DAPP_FORK_PREFETCH"
+        "DAPP_FORK_PREFETCH",
+        "DAPP_TEST_FORK_PREFETCH"
       ],
       "description": "Whether to prefetch remote fork state before the EVM reads it.\n\nPrefetching works in two ways:\n\n- While reads miss the cache, each call into a fork contract is first simulated on the\n  endpoint with `eth_createAccessList`, and the accounts and slots it touches are fetched\n  in batches.\n- A fork of the latest block whose storage cache is empty is warmed in the background with\n  the accounts and slots cached for the newest older block on the same chain. This speeds\n  up forks of `latest`, which start cold on each new head, for example in CI. It needs\n  storage caching, so it does not run with `no_storage_caching`, for endpoints or chains\n  that `rpc_storage_caching` excludes, with a pinned `fork_block_number`, or with\n  `fork_state_by_number`.\n\nResults do not change, because every value comes from the fork block; keys the run does not\nread only cost extra RPC requests. The `--fork-prefetch` flag enables it for a single run.\n\n```toml\n[profile.ci]\nfork_prefetch = true\n```"
     },
@@ -2708,7 +2831,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_NO_RPC_RATE_LIMIT",
-        "DAPP_NO_RPC_RATE_LIMIT"
+        "DAPP_NO_RPC_RATE_LIMIT",
+        "DAPP_TEST_NO_RPC_RATE_LIMIT"
       ],
       "description": "Whether to disable client-side rate limiting of fork RPC requests.\n\nFork providers normally throttle requests to an assumed budget of compute units per second\n(`compute_units_per_second`, falling back to 330, Alchemy's free tier). Enabling this\nremoves the limit and overrides `compute_units_per_second`, including values set on\n`rpc_endpoints` entries. The `--no-rpc-rate-limit` (`--no-rate-limit`) flag enables it for\na single run."
     },
@@ -2728,7 +2852,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_USE_LITERAL_CONTENT",
-        "DAPP_USE_LITERAL_CONTENT"
+        "DAPP_USE_LITERAL_CONTENT",
+        "DAPP_TEST_USE_LITERAL_CONTENT"
       ],
       "description": "Whether to store the source code itself in the contract metadata instead of only\nreferences.\n\nWhen enabled, solc embeds the literal content of each source in the metadata instead of\nURLs to it, so the metadata is self-contained. `--use-literal-content` enables it for one\ninvocation."
     },
@@ -2740,7 +2865,8 @@
       "default": "\"ipfs\"",
       "env": [
         "FOUNDRY_BYTECODE_HASH",
-        "DAPP_BYTECODE_HASH"
+        "DAPP_BYTECODE_HASH",
+        "DAPP_TEST_BYTECODE_HASH"
       ],
       "description": "The hash of the contract metadata that solc appends to the bytecode.\n\nValid values:\n\n- `ipfs`: an IPFS hash of the metadata, as solc does by default.\n- `bzzr1`: a Swarm hash of the metadata.\n- `none`: no hash.\n\nThe hash depends on source contents, source paths and compiler settings, so the same\ncontract can produce different bytecode on different machines. Set `none` for bytecode that\ndoesn't depend on these, for example for deterministic deployments. This keeps the CBOR\nmetadata trailer; to omit it entirely, also set `cbor_metadata = false`, or pass\n`--no-metadata` to do both. See <https://docs.soliditylang.org/en/latest/metadata.html>."
     },
@@ -2752,7 +2878,8 @@
       "default": "true",
       "env": [
         "FOUNDRY_CBOR_METADATA",
-        "DAPP_CBOR_METADATA"
+        "DAPP_CBOR_METADATA",
+        "DAPP_TEST_CBOR_METADATA"
       ],
       "description": "Whether to append the CBOR-encoded metadata trailer to the bytecode.\n\nThe trailer holds the compiler version and the metadata hash chosen by `bytecode_hash`.\nBecause the hash is part of the trailer, also set `bytecode_hash = \"none\"` when disabling\nit; `--no-metadata` does both. It requires solc 0.8.18 or later and is ignored for older\nversions."
     },
@@ -2764,7 +2891,8 @@
       "default": null,
       "env": [
         "FOUNDRY_REVERT_STRINGS",
-        "DAPP_REVERT_STRINGS"
+        "DAPP_REVERT_STRINGS",
+        "DAPP_TEST_REVERT_STRINGS"
       ],
       "description": "How solc handles revert and require reason strings.\n\nValid values:\n\n- `default`: keeps reason strings you write and doesn't add any generated by the compiler.\n- `strip`: removes all reason strings where possible (when they are literals), keeping side\n  effects.\n- `debug`: adds strings for compiler-generated internal reverts (implemented for ABI\n  encoders V1 and V2).\n- `verboseDebug`: also appends further information to reason strings you write (not yet\n  implemented by solc).\n\nWhen unset, nothing is passed to solc and its default applies. `--revert-strings` overrides\nit for one invocation."
     },
@@ -2776,7 +2904,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_SPARSE_MODE",
-        "DAPP_SPARSE_MODE"
+        "DAPP_SPARSE_MODE",
+        "DAPP_TEST_SPARSE_MODE"
       ],
       "description": "Has no effect; kept so that existing configuration files still load.\n\nSparse output selection, which asks solc only for the output of the contracts a command\nneeds, is applied automatically when `skip` patterns are set."
     },
@@ -2788,7 +2917,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_BUILD_INFO",
-        "DAPP_BUILD_INFO"
+        "DAPP_BUILD_INFO",
+        "DAPP_TEST_BUILD_INFO"
       ],
       "description": "Whether to write build info files containing the complete compiler input and output.\n\nA build info file is written for each compiler run to `build_info_path`, or\n`<out>/build-info` when that is unset. For compatibility with Hardhat-based tools the files\nalways include the AST, which makes them large. The `--build-info` flag enables this for\none run."
     },
@@ -2800,7 +2930,8 @@
       "default": null,
       "env": [
         "FOUNDRY_BUILD_INFO_PATH",
-        "DAPP_BUILD_INFO_PATH"
+        "DAPP_BUILD_INFO_PATH",
+        "DAPP_TEST_BUILD_INFO_PATH"
       ],
       "description": "Directory where build info files are written when `build_info` is enabled.\n\nWhen unset, build info files go to `<out>/build-info`. Relative paths are resolved against\nthe project root. Setting this path does not enable `build_info` on its own. The\n`--build-info-path` flag overrides it and requires `--build-info`."
     },
@@ -3100,6 +3231,14 @@
       "type": "array of string",
       "table": false,
       "default": "[\"high\", \"medium\", \"low\"]",
+      "values": [
+        "high",
+        "medium",
+        "low",
+        "info",
+        "gas",
+        "code-size"
+      ],
       "env": [
         "FOUNDRY_LINT_SEVERITY"
       ],
@@ -3160,6 +3299,11 @@
       "type": "array of string",
       "table": false,
       "default": "[]",
+      "values": [
+        "interface",
+        "library",
+        "abstract_contract"
+      ],
       "description": "Contract kinds that the `multi-contract-file` lint ignores when a file declares more than\none.\n\n- `interface`: interfaces.\n- `library`: libraries.\n- `abstract_contract`: abstract contracts.\n\nRegular contracts can't be exempted: a file with more than one is always flagged."
     },
     {
@@ -3272,9 +3416,6 @@
       "type": "string (path)",
       "table": false,
       "default": "\"utils/JsonBindings.sol\"",
-      "env": [
-        "FOUNDRY_BIND_JSON_OUT"
-      ],
       "description": "Solidity file that `forge bind-json` writes the generated bindings to.\n\nA relative path is resolved from the project root; a path passed to `forge bind-json`\noverrides it. The EIP-712 cheatcodes (`vm.eip712HashType`, `vm.eip712HashStruct`) look up\ntype names in this file when no bindings path is given."
     },
     {
@@ -3283,9 +3424,6 @@
       "type": "array of string (glob)",
       "table": false,
       "default": "[]",
-      "env": [
-        "FOUNDRY_BIND_JSON_INCLUDE"
-      ],
       "description": "Glob patterns of the source files whose structs get bindings.\n\nWhen set, only matching files are included. When empty, all project source files are\nincluded except those in library directories."
     },
     {
@@ -3294,9 +3432,6 @@
       "type": "array of string (glob)",
       "table": false,
       "default": "[]",
-      "env": [
-        "FOUNDRY_BIND_JSON_EXCLUDE"
-      ],
       "description": "Glob patterns of source files whose structs get no bindings.\n\nApplied after `include`."
     },
     {
@@ -3315,7 +3450,8 @@
       "default": "true",
       "env": [
         "FOUNDRY_ISOLATE",
-        "DAPP_ISOLATE"
+        "DAPP_ISOLATE",
+        "DAPP_TEST_ISOLATE"
       ],
       "description": "Whether to execute each top-level call made by a test or script as its own transaction.\n\nIn isolation mode, every top-level external call runs as a separate transaction in a\nseparate EVM context, which gives more precise gas accounting and per-call transaction\nstate changes. A test function is therefore not equivalent to one transaction: repeated\ncalls to the same contract can be charged as cold again. Disable it for tests that depend\non warm accounts or storage carrying across calls.\n\nThe `--isolate` and `--no-isolate` flags override it, and `forge test --gas-report` always\nenables isolation. Tests can read the resolved value with `vm.isIsolateMode()`.\n\n```toml\n[profile.default]\nisolate = false\n```"
     },
@@ -3327,7 +3463,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_DISABLE_BLOCK_GAS_LIMIT",
-        "DAPP_DISABLE_BLOCK_GAS_LIMIT"
+        "DAPP_DISABLE_BLOCK_GAS_LIMIT",
+        "DAPP_TEST_DISABLE_BLOCK_GAS_LIMIT"
       ],
       "description": "Whether to skip the check that a transaction's gas limit fits within the block gas limit.\n\nThe `--disable-block-gas-limit` flag, also spelled `--no-block-gas-limit` or\n`--no-gas-limit`, enables it for one run."
     },
@@ -3339,7 +3476,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_ENABLE_TX_GAS_LIMIT",
-        "DAPP_ENABLE_TX_GAS_LIMIT"
+        "DAPP_ENABLE_TX_GAS_LIMIT",
+        "DAPP_TEST_ENABLE_TX_GAS_LIMIT"
       ],
       "description": "Whether to enforce the per-transaction gas limit cap introduced in Osaka (EIP-7825).\n\nThe cap is off by default, so tests and scripts can run calls that need more gas. Enable it\nto catch transactions that a chain enforcing the cap would reject. The\n`--enable-tx-gas-limit` (`--tx-gas-limit`) flag enables it for one run."
     },
@@ -3359,7 +3497,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_UNCHECKED_CHEATCODE_ARTIFACTS",
-        "DAPP_UNCHECKED_CHEATCODE_ARTIFACTS"
+        "DAPP_UNCHECKED_CHEATCODE_ARTIFACTS",
+        "DAPP_TEST_UNCHECKED_CHEATCODE_ARTIFACTS"
       ],
       "description": "Whether to let `vm.getCode` and `vm.getDeployedCode` read artifacts the current build did\nnot produce.\n\nBy default these cheatcodes only accept artifacts from the current compilation, so they\nnever return stale bytecode. When enabled, they can also load artifact files that were not\nrecompiled or are only present in the cache or output directory."
     },
@@ -3371,7 +3510,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_DECODE_EXTERNAL_STORAGE",
-        "DAPP_DECODE_EXTERNAL_STORAGE"
+        "DAPP_DECODE_EXTERNAL_STORAGE",
+        "DAPP_TEST_DECODE_EXTERNAL_STORAGE"
       ],
       "description": "Whether to decode the storage of contracts outside the local project in state diffs, using\nthe verified source a block explorer has for them.\n\nWhen enabled, `vm.getStateDiff()` and `vm.getStateDiffJson()` label the storage slots of\nsuch contracts. For each one written to during recording, Forge fetches the verified source\nfrom the block explorer configured for the chain, compiles it for its storage layout, and\ndecodes the slots with that layout. For a `delegatecall`, the layout of the implementation\nthat executed the write is used. Sourcify is not consulted, since its responses lack the\nsources needed to compile.\n\nLookups require an `[etherscan]` entry or `etherscan_api_key` for the forked chain, and are\nbounded by `tracing.external_identification_timeout`. Resolved layouts are cached under the\nblock explorer cache directory, so later runs skip the fetch and the compile;\n`forge cache clean` removes them. `forge test --decode-external-storage` enables it for one\nrun."
     },
@@ -3383,7 +3523,8 @@
       "default": "\"0x0000000000000000000000000000000000000000000000000000000000000000\"",
       "env": [
         "FOUNDRY_CREATE2_LIBRARY_SALT",
-        "DAPP_CREATE2_LIBRARY_SALT"
+        "DAPP_CREATE2_LIBRARY_SALT",
+        "DAPP_TEST_CREATE2_LIBRARY_SALT"
       ],
       "description": "The salt used to deploy linked libraries with CREATE2.\n\nWhen Forge links external libraries through the CREATE2 deployer, each library is deployed\nat an address derived from `create2_deployer`, this salt and the library's bytecode.\n`forge script` does this when the deployer is available and skips libraries already\ndeployed at the computed address; `forge test` does it when running without a fork and with\nthe default deployer. Otherwise libraries are linked at CREATE addresses derived from the\nsender's nonces. Addresses configured in `libraries` are always used as given.\n\n**Warning:** changing the salt changes library addresses, which changes the bytecode of\nevery contract that links to those libraries."
     },
@@ -3395,7 +3536,8 @@
       "default": "\"0x4e59b44847b379578588920ca78fbf26c0b4956c\"",
       "env": [
         "FOUNDRY_CREATE2_DEPLOYER",
-        "DAPP_CREATE2_DEPLOYER"
+        "DAPP_CREATE2_DEPLOYER",
+        "DAPP_TEST_CREATE2_DEPLOYER"
       ],
       "description": "The address of the CREATE2 deployer contract used for salted deployments and library\nlinking.\n\nForge routes `new C{salt: s}()` through this contract while a script broadcasts, or in\ntests and simulations when `always_use_create_2_factory` is enabled, and uses it to deploy\nlibraries with `create2_library_salt`. The address must hold the runtime bytecode of the\ndeterministic deployment proxy\n(<https://github.com/Arachnid/deterministic-deployment-proxy>); Forge rejects automatic\nrouting when it has no code or different code. For a factory with another interface, such\nas CreateX, call it explicitly instead. Local runs without a fork install the default\ndeployer automatically, but not one at a custom address. The `--create2-deployer` flag\noverrides it."
     },
@@ -3506,7 +3648,8 @@
       "default": null,
       "env": [
         "FOUNDRY_EXTERNAL_COMPILERS",
-        "DAPP_EXTERNAL_COMPILERS"
+        "DAPP_EXTERNAL_COMPILERS",
+        "DAPP_TEST_EXTERNAL_COMPILERS"
       ],
       "description": "External compiler adapters that build compiler-native EVM projects as part of the build.\n\nAdapters let Forge compile languages other than Solidity and Vyper through an executable\nthat speaks Foundry's adapter protocol. Each entry configures one adapter:\n\n- `id` (required): a unique identifier that namespaces the adapter's artifacts and cache\n  entries; ASCII letters, digits, `.`, `-` and `_`, but not `.` or `..`.\n- `command` (required): the adapter executable, absolute or relative to the project root.\n  It is run directly, without a shell or `PATH` lookup.\n- `args`: arguments passed to the executable.\n- `roots` (required): the compiler-native project roots, relative to the project root.\n- `settings`: a table passed to the adapter as JSON, without interpretation.\n\n```toml\n[[profile.default.external_compilers]]\nid = \"contracts\"\ncommand = \"/opt/toolchains/fe-foundry-adapter\"\nroots = [\"contracts\"]\n\n[profile.default.external_compilers.settings]\ncompiler = \"/opt/toolchains/fe\"\n```\n\nArtifacts are written under `<out>/.external/<id>/` and compile results are cached under\n`<cache_path>/external-compilers/`, so the contracts are available to `forge build`,\n`forge test`, `forge script`, `forge inspect` and other commands.\n\n**Warning:** a configured adapter runs with your privileges whenever Forge compiles. Forge\nclears its environment and starts it in the project root, but this is not a sandbox."
     },
@@ -3534,7 +3677,8 @@
       "default": "true",
       "env": [
         "FOUNDRY_ASSERTIONS_REVERT",
-        "DAPP_ASSERTIONS_REVERT"
+        "DAPP_ASSERTIONS_REVERT",
+        "DAPP_TEST_ASSERTIONS_REVERT"
       ],
       "description": "Whether a failed `vm.assert*` cheatcode assertion reverts.\n\nWhen enabled, a failing assertion reverts and stops the test. When disabled, Forge logs the\nfailure message, marks the test as failed, and lets execution continue. This only applies\nto assertions implemented as cheatcodes on the `Vm` contract, such as `vm.assertEq`; recent\nforge-std `assert*` helpers call these."
     },
@@ -3546,7 +3690,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_LEGACY_ASSERTIONS",
-        "DAPP_LEGACY_ASSERTIONS"
+        "DAPP_LEGACY_ASSERTIONS",
+        "DAPP_TEST_LEGACY_ASSERTIONS"
       ],
       "description": "Whether to also call the test contract's `failed()` function to decide whether a test\nfailed.\n\nOlder DSTest-style assertion libraries record failures in storage instead of reverting.\nWhen enabled, Forge calls `failed()` after a test that did not revert and treats `true` as\na failure. Otherwise a test fails only by reverting or through a failed cheatcode\nassertion."
     },
@@ -3558,7 +3703,8 @@
       "default": null,
       "env": [
         "FOUNDRY_EXTRA_ARGS",
-        "DAPP_EXTRA_ARGS"
+        "DAPP_EXTRA_ARGS",
+        "DAPP_TEST_EXTRA_ARGS"
       ],
       "description": "Extra command-line arguments to pass to the solc binary.\n\nThe arguments are added to every compiler invocation, and changing them invalidates the\nbuild cache. Use them for compiler options Foundry doesn't expose as settings. When\nbuilding with Solar, a `--threads`, `--jobs` or `-j` argument here replaces the thread\ncount Forge would otherwise pass.\n\n```toml\n[profile.default]\nextra_args = [\"--some-solc-flag\"]\n```"
     },
@@ -3575,9 +3721,15 @@
         "tempo",
         "monad"
       ],
+      "valueFeatures": {
+        "base": "base",
+        "monad": "monad",
+        "optimism": "optimism"
+      },
       "env": [
         "FOUNDRY_NETWORK",
-        "DAPP_NETWORK"
+        "DAPP_NETWORK",
+        "DAPP_TEST_NETWORK"
       ],
       "description": "Enable a specific network family."
     },
@@ -3589,7 +3741,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_CELO",
-        "DAPP_CELO"
+        "DAPP_CELO",
+        "DAPP_TEST_CELO"
       ],
       "description": "Enable Celo network features."
     },
@@ -3601,7 +3754,8 @@
       "default": "false",
       "env": [
         "FOUNDRY_BYPASS_PREVRANDAO",
-        "DAPP_BYPASS_PREVRANDAO"
+        "DAPP_BYPASS_PREVRANDAO",
+        "DAPP_TEST_BYPASS_PREVRANDAO"
       ],
       "description": "Whether to bypass prevrandao."
     },
@@ -3613,7 +3767,8 @@
       "default": "120",
       "env": [
         "FOUNDRY_TRANSACTION_TIMEOUT",
-        "DAPP_TRANSACTION_TIMEOUT"
+        "DAPP_TRANSACTION_TIMEOUT",
+        "DAPP_TEST_TRANSACTION_TIMEOUT"
       ],
       "description": "How many seconds to wait for a sent transaction's receipt before giving up.\n\nUsed by `forge script` broadcasts, `forge create`, `cast send` and `cast safe`. Their\n`--timeout` flag, or the `ETH_TIMEOUT` environment variable, overrides it."
     },
@@ -3625,7 +3780,8 @@
       "default": "[]",
       "env": [
         "FOUNDRY_ADDITIONAL_COMPILER_PROFILES",
-        "DAPP_ADDITIONAL_COMPILER_PROFILES"
+        "DAPP_ADDITIONAL_COMPILER_PROFILES",
+        "DAPP_TEST_ADDITIONAL_COMPILER_PROFILES"
       ],
       "description": "Extra compiler settings profiles that sources can be compiled with besides the main\nsettings.\n\nEach entry starts from the active profile's compiler settings and overrides only the fields\nit sets:\n\n- `name` (required): the profile's name, used in artifact names.\n- `via_ir`: whether to compile through the IR pipeline.\n- `evm_version`: the target EVM version, also applied to Vyper sources.\n- `optimizer`: whether to enable the optimizer.\n- `optimizer_runs`: the optimizer runs; a value above `0` also enables the optimizer unless\n  `optimizer` is set.\n- `bytecode_hash`: the metadata hash method: `ipfs`, `bzzr1` or `none`.\n\nFor each source file Forge uses the first profile, starting with the main settings, that\nsatisfies the `compilation_restrictions` of the file and of all its imports. A file\ncompiled with several profiles gets one artifact per profile, such as `Counter.json` for\nthe main settings and `Counter.via-ir.json` for a profile named `via-ir`.\n\n```toml\n[profile.default]\nadditional_compiler_profiles = [{ name = \"via-ir\", via_ir = true }]\ncompilation_restrictions = [{ paths = \"src/Heavy.sol\", via_ir = true }]\n```"
     },
@@ -3637,7 +3793,8 @@
       "default": "[]",
       "env": [
         "FOUNDRY_COMPILATION_RESTRICTIONS",
-        "DAPP_COMPILATION_RESTRICTIONS"
+        "DAPP_COMPILATION_RESTRICTIONS",
+        "DAPP_TEST_COMPILATION_RESTRICTIONS"
       ],
       "description": "Restrictions on the compiler settings that matching source files may be compiled with.\n\nA restriction applies to the files matched by `paths` and to every file that imports them.\nForge compiles each file with the first settings profile (the main settings, then\n`additional_compiler_profiles` in order) that satisfies all restrictions that apply to it.\nFields:\n\n- `paths` (required): a glob matched against source paths, absolute or relative to the\n  project root, such as `src/Counter.sol`, `src/{Counter,Factory}.sol` or `src/v1/**`.\n- `version`: a solc version requirement with an explicit operator, such as `=0.8.11`,\n  `>=0.8.11` or `>=0.8.11 <0.9.0`; bare versions such as `0.8.11` are rejected.\n- `via_ir`: the required `via_ir` setting.\n- `bytecode_hash`: the required metadata hash method.\n- `optimizer_runs`, or a range with `min_optimizer_runs` and/or `max_optimizer_runs`.\n- `evm_version`, or a range with `min_evm_version` and/or `max_evm_version`.\n\nAn exact value cannot be combined with a minimum or maximum for the same setting. When\nseveral entries match a file, their restrictions are merged; if they conflict, Forge warns\nand keeps the first.\n\n```toml\n[profile.default]\nadditional_compiler_profiles = [{ name = \"via-ir\", via_ir = true }]\ncompilation_restrictions = [\n    { paths = \"test/**\", via_ir = false },\n    { paths = \"src/Counter.sol\", via_ir = true },\n]\n```\n\nBecause restrictions extend to importing files, a test that imports a restricted contract\nmust satisfy the same restrictions unless it deploys the contract without importing it, for\nexample with `vm.deployCode`."
     },
@@ -3649,7 +3806,8 @@
       "default": "true",
       "env": [
         "FOUNDRY_SCRIPT_EXECUTION_PROTECTION",
-        "DAPP_SCRIPT_EXECUTION_PROTECTION"
+        "DAPP_SCRIPT_EXECUTION_PROTECTION",
+        "DAPP_TEST_SCRIPT_EXECUTION_PROTECTION"
       ],
       "description": "Whether `forge script` guards against relying on the script contract's address and caller.\n\nWhen enabled, Forge reverts:\n\n- any use of `address(this)` inside the script contract, since script contracts are\n  ephemeral and their address should not be relied upon;\n- a read of `msg.sender` in the script's broadcasting frame when it differs from the\n  broadcast sender. Pass the deployer address explicitly, or set it with `--sender`.\n\nThese are runtime opcode checks: they do not track values captured before broadcasting, and\ncompiler optimizations can move a read out of the guarded frame. Disabling the protection\ndoes not make the addresses equal."
     }

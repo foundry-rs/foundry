@@ -2030,6 +2030,23 @@ impl Config {
     pub const DAPP_ENV_IGNORED: &'static [&'static str] =
         &["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"];
 
+    /// Keys that `DAPP_TEST_` prefixed environment variables don't set directly.
+    pub const DAPP_TEST_ENV_IGNORED: &'static [&'static str] =
+        &["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"];
+
+    /// Maps the name of a `FOUNDRY_` environment variable, without its prefix, to the config key
+    /// it sets: a variable that starts with a standalone section's name sets a key in that section.
+    pub(crate) fn foundry_env_key(key: &str) -> String {
+        if Self::STANDALONE_SECTIONS
+            .iter()
+            .any(|section| key.starts_with(&format!("{}_", section.to_ascii_uppercase())))
+        {
+            key.replacen('_', ".", 1)
+        } else {
+            key.to_string()
+        }
+    }
+
     pub(crate) fn is_standalone_section<T: ?Sized + PartialEq<str>>(section: &T) -> bool {
         section == Self::PROFILE_SECTION
             || section == Self::EXTERNAL_SECTION
@@ -2354,7 +2371,7 @@ impl Config {
             .merge(Env::prefixed("DAPP_").ignore(Self::DAPP_ENV_IGNORED).global().legacy_labels())
             .merge(
                 Env::prefixed("DAPP_TEST_")
-                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                    .ignore(Self::DAPP_TEST_ENV_IGNORED)
                     .global()
                     .legacy_labels(),
             )
@@ -2363,16 +2380,7 @@ impl Config {
             .merge(
                 Env::prefixed("FOUNDRY_")
                     .ignore(Self::FOUNDRY_ENV_IGNORED)
-                    .map(|key| {
-                        let key = key.as_str();
-                        if Self::STANDALONE_SECTIONS.iter().any(|section| {
-                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
-                        }) {
-                            key.replacen('_', ".", 1).into()
-                        } else {
-                            key.into()
-                        }
-                    })
+                    .map(|key| Self::foundry_env_key(key.as_str()).into())
                     .global()
                     .legacy_labels(),
             )
@@ -4884,6 +4892,7 @@ mod tests {
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
     use std::{
+        collections::BTreeSet,
         fs::File,
         io::{self, Write},
         num::NonZeroUsize,
@@ -6866,6 +6875,42 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn dapp_env_compat_table_matches_provider() {
+        let value = |var: &str| match var {
+            "DAPP_TEST_ADDRESS" => format!("{:?}", Address::ZERO),
+            "DAPP_LIBRARIES" | "FOUNDRY_LIBRARIES" => "src/A.sol:A:0x0".to_string(),
+            "DAPP_BUILD_OPTIMIZE" => "1".to_string(),
+            _ => "7".to_string(),
+        };
+        let keys = |dict: &Dict| {
+            let mut keys = BTreeSet::new();
+            for (key, value) in dict {
+                match value.as_dict() {
+                    Some(inner) => keys.extend(inner.keys().map(|k| format!("{key}.{k}"))),
+                    None => {
+                        keys.insert(key.clone());
+                    }
+                }
+            }
+            keys
+        };
+        for (var, _) in DAPP_ENV_COMPAT {
+            figment::Jail::expect_with(|jail| {
+                jail.set_env(var, value(var));
+                let data = DappEnvCompatProvider.data().unwrap();
+                let set = keys(&data[&Config::selected_profile()]);
+                let documented = DAPP_ENV_COMPAT
+                    .iter()
+                    .filter(|(v, _)| v == var)
+                    .map(|(_, key)| key.to_string())
+                    .collect::<BTreeSet<_>>();
+                assert_eq!(set, documented, "{var}");
+                Ok(())
+            });
+        }
     }
 
     #[test]
