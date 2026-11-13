@@ -236,10 +236,9 @@ impl<'a> AnchorIndex<'a> {
     ) -> bool {
         match (self.starts_in(fallthrough.instruction, loc), self.starts_in(taken.instruction, loc))
         {
-            (true, false) => false,
+            (true, _) => false,
             (false, true) => true,
             (false, false) => self.fails(taken.instruction) && !self.fails(fallthrough.instruction),
-            (true, true) => false,
         }
     }
 
