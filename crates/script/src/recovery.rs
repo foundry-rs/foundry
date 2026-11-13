@@ -178,7 +178,7 @@ where
         }
         let timestamp = now().as_millis();
         for path in [&lock.path, &paths.0, &paths.1] {
-            if path.exists() {
+            if path.symlink_metadata().is_ok() {
                 let archive = path.with_extension(format!("{timestamp}.json"));
                 std::fs::rename(path, &archive)?;
                 sh_status!("Archived `{}` to `{}`", path.display(), archive.display())?;
@@ -1046,7 +1046,8 @@ where
             == Some(DRY_RUN_DIR.as_ref());
         let data = match data {
             Ok(data) => data,
-            Err(_) if dry_run || !paths.0.exists() => return Ok(false),
+            // A dangling link counts as an export, since publishing would follow it.
+            Err(_) if dry_run || paths.0.symlink_metadata().is_err() => return Ok(false),
             Err(err) => {
                 return Err(err).wrap_err(format!(
                     "the recovery snapshot `{}` of the previous broadcast `{}` is missing and the broadcast is unreadable, so forge cannot tell whether it left unfinished operations; restore the snapshot and finish with `{}`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
