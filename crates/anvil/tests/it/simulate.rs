@@ -1868,6 +1868,45 @@ async fn test_simulate_finalizes_call_and_transaction_metadata_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_defaults_transaction_chain_id_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = "0xc000000000000000000000000000000000000000";
+    let receiver = "0xc100000000000000000000000000000000000000";
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "calls": [
+                    {"from": sender, "to": receiver, "maxFeePerGas": "0x0"},
+                    {"from": sender, "to": receiver, "gasPrice": "0x0", "accessList": []},
+                    {"from": sender, "to": receiver, "gasPrice": "0x0"}
+                ]
+            }],
+            "returnFullTransactions": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    let transactions = response["result"][0]["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tx| json!({"type": tx["type"], "chainId": tx["chainId"]}))
+        .collect::<Vec<_>>();
+    // Typed transactions take the node's chain id; legacy ones stay unprotected.
+    assert_eq!(
+        transactions,
+        [
+            json!({"type": "0x2", "chainId": "0x7a69"}),
+            json!({"type": "0x1", "chainId": "0x7a69"}),
+            json!({"type": "0x0", "chainId": null}),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_prague_max_used_gas_includes_calldata_floor_rpc() {
     let config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::Prague.into()))
