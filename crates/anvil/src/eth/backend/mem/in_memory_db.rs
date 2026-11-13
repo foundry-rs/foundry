@@ -14,7 +14,6 @@ use alloy_primitives::{
     Address, B256, Bytes, U256,
     map::{AddressMap, B256Map, HashSet},
 };
-use alloy_rpc_types::BlockId;
 use evm2::evm::BlockStateAccumulator;
 use imbl::HashMap as PersistentMap;
 use parking_lot::Mutex;
@@ -258,40 +257,6 @@ impl PersistentStateDb {
         Self { accounts, contracts, block_hashes, full: OnceLock::new() }
     }
 
-    /// Returns the cached info of `address`, which is `Some(None)` if it is known not to exist.
-    pub(crate) fn cached_account(&self, address: Address) -> Option<Option<AccountInfo>> {
-        let account = self.accounts.get(&address)?;
-        Some((account.account_state != AccountState::NotExisting).then(|| account.info.clone()))
-    }
-
-    /// Returns the cached storage slot, which is zero if the account's storage is cleared.
-    pub(crate) fn cached_storage(&self, address: Address, index: U256) -> Option<U256> {
-        let account = self.accounts.get(&address)?;
-        match account.storage.get(&index) {
-            Some(value) => Some(*value),
-            None => account.account_state.is_storage_cleared().then_some(U256::ZERO),
-        }
-    }
-
-    /// Returns the cached bytecode for `code_hash`.
-    pub(crate) fn cached_code(&self, code_hash: B256) -> Option<Bytecode> {
-        self.contracts.get(&code_hash).cloned()
-    }
-
-    /// Returns the cached hash of block `number`.
-    pub(crate) fn cached_block_hash(&self, number: u64) -> Option<B256> {
-        self.block_hashes.get(&U256::from(number)).copied()
-    }
-
-    /// Returns the state as a [`Cache`], including the accounts known not to exist.
-    pub(crate) fn to_cache(&self) -> Cache {
-        let mut contracts = Cache::default().contracts;
-        contracts.extend(self.contracts.iter().map(|(hash, code)| (*hash, code.clone())));
-        let block_hashes =
-            self.block_hashes.iter().map(|(number, hash)| (*number, *hash)).collect();
-        Cache { accounts: self.full_db(true), contracts, block_hashes }
-    }
-
     fn state_snapshot(&self) -> StateSnapshot {
         StateSnapshot {
             accounts: self
@@ -338,6 +303,40 @@ impl PersistentStateDb {
                 )
             })
             .collect()
+    }
+
+    /// Returns the cached info of `address`, which is `Some(None)` if it is known not to exist.
+    pub(crate) fn cached_account(&self, address: Address) -> Option<Option<AccountInfo>> {
+        let account = self.accounts.get(&address)?;
+        Some((account.account_state != AccountState::NotExisting).then(|| account.info.clone()))
+    }
+
+    /// Returns the cached storage slot, which is zero if the account's storage is cleared.
+    pub(crate) fn cached_storage(&self, address: Address, index: U256) -> Option<U256> {
+        let account = self.accounts.get(&address)?;
+        match account.storage.get(&index) {
+            Some(value) => Some(*value),
+            None => account.account_state.is_storage_cleared().then_some(U256::ZERO),
+        }
+    }
+
+    /// Returns the cached bytecode for `code_hash`.
+    pub(crate) fn cached_code(&self, code_hash: B256) -> Option<Bytecode> {
+        self.contracts.get(&code_hash).cloned()
+    }
+
+    /// Returns the cached hash of block `number`.
+    pub(crate) fn cached_block_hash(&self, number: u64) -> Option<B256> {
+        self.block_hashes.get(&U256::from(number)).copied()
+    }
+
+    /// Returns the state as a [`Cache`], including the accounts known not to exist.
+    pub(crate) fn to_cache(&self) -> Cache {
+        let mut contracts = Cache::default().contracts;
+        contracts.extend(self.contracts.iter().map(|(hash, code)| (*hash, code.clone())));
+        let block_hashes =
+            self.block_hashes.iter().map(|(number, hash)| (*number, *hash)).collect();
+        Cache { accounts: self.full_db(true), contracts, block_hashes }
     }
 }
 
@@ -547,10 +546,6 @@ impl MaybeFullDatabase for StateRootDb {
 }
 
 impl MaybeForkedDatabase for StateRootDb {
-    fn maybe_reset(&mut self, urls: Vec<String>, block_number: BlockId) -> Result<(), String> {
-        self.inner.maybe_reset(urls, block_number)
-    }
-
     fn maybe_flush_cache(&self) -> Result<(), String> {
         self.inner.maybe_flush_cache()
     }
@@ -691,10 +686,6 @@ impl MaybeFullDatabase for MemDb {
 }
 
 impl MaybeForkedDatabase for MemDb {
-    fn maybe_reset(&mut self, _urls: Vec<String>, _block_number: BlockId) -> Result<(), String> {
-        Err("not supported".to_string())
-    }
-
     fn maybe_flush_cache(&self) -> Result<(), String> {
         Err("not supported".to_string())
     }

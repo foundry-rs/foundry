@@ -12,7 +12,6 @@ use crate::eth::backend::{
 };
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
-use alloy_rpc_types::BlockId;
 use evm2::evm::BlockStateAccumulator;
 use foundry_evm_core::evm::ForkCode;
 use foundry_fork_db::cache::MemDb as RemoteState;
@@ -119,11 +118,6 @@ impl<N: Network> ForkedDatabase<N> {
         }
     }
 
-    /// Discards the recorded history, so the next block state is rebuilt from the local state.
-    fn invalidate_history(&mut self) {
-        self.history.get_mut().invalidate();
-    }
-
     pub const fn database(&self) -> &CacheDB<RemoteDb<N>> {
         &self.cache_db
     }
@@ -159,6 +153,11 @@ impl<N: Network> ForkedDatabase<N> {
         self.invalidate_history();
         trace!(target: "backend::forkdb", "Reverted snapshot {}", id);
         true
+    }
+
+    /// Discards the recorded history, so the next block state is rebuilt from the local state.
+    fn invalidate_history(&mut self) {
+        self.history.get_mut().invalidate();
     }
 }
 
@@ -317,7 +316,7 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 
     fn clear(&mut self) {
         // Keeps the fork cache: it only holds unchanged remote state, which retained block states
-        // read and dump.
+        // read and dump. Rollback replaces the local accounts and block hashes itself.
     }
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
@@ -329,12 +328,6 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 }
 
 impl<N: Network> MaybeForkedDatabase for ForkedDatabase<N> {
-    // Retained block states read through the pinned backend, so a fork reset replaces the
-    // database instead of re-pinning it.
-    fn maybe_reset(&mut self, _urls: Vec<String>, _block_number: BlockId) -> Result<(), String> {
-        Err("not supported".to_string())
-    }
-
     fn maybe_flush_cache(&self) -> Result<(), String> {
         self.flush_cache();
         Ok(())
@@ -565,8 +558,8 @@ mod tests {
             AccountState::NotExisting;
         let state = db.current_state();
         assert!(state.maybe_as_full_db().unwrap().contains_key(&DELETED));
-        // Rollback clears the database and `evm_revert` reverts it, which must both keep the fork
-        // state block states fetched.
+        // Rollback clears the database and `evm_revert` reverts it; both must keep the fork state
+        // that block states read.
         db.clear();
         assert!(db.revert_state(snapshot, RevertStateSnapshotAction::RevertRemove));
 
