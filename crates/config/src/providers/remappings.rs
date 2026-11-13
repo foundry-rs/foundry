@@ -282,7 +282,7 @@ impl RemappingsProvider<'_> {
                 || self.find_nested_foundry_remappings(),
                 || self.auto_detect_remappings(),
             );
-            let nested_foundry_remappings = nested_foundry_remappings?;
+            let mut nested_foundry_remappings = nested_foundry_remappings?;
 
             let configured_package_entries = nested_foundry_remappings
                 .iter()
@@ -327,26 +327,24 @@ impl RemappingsProvider<'_> {
             contextual.retain(safe_alias);
             // Dependencies commonly omit nested checkouts and use a hoisted installation. A
             // missing declared target must not shadow that discovered package within its owner.
-            let nested_foundry_remappings = nested_foundry_remappings
-                .into_iter()
-                .filter(|(_, remapping, kind)| {
-                    *kind != NestedRemappingKind::Declaration
-                        || Path::new(&remapping.path).exists()
-                        || !global
-                            .iter()
-                            .any(|(_, auto)| remapping_name_is_prefix(&auto.name, &remapping.name))
-                })
-                .collect::<Vec<_>>();
+            nested_foundry_remappings.retain(|(_, remapping, kind)| {
+                *kind != NestedRemappingKind::Declaration
+                    || Path::new(&remapping.path).exists()
+                    || !global
+                        .iter()
+                        .any(|(_, auto)| remapping_name_is_prefix(&auto.name, &remapping.name))
+            });
             let mut targets_by_alias = BTreeMap::<_, BTreeSet<_>>::new();
             for remapping in global.iter().map(|(_, remapping)| remapping).chain(&contextual) {
                 targets_by_alias
-                    .entry(remapping.name.clone())
+                    .entry(remapping.name.as_str())
                     .or_default()
-                    .insert(PathBuf::from(&remapping.path));
+                    .insert(Path::new(&remapping.path));
             }
             let ambiguous_aliases = targets_by_alias
                 .into_iter()
-                .filter_map(|(name, targets)| (targets.len() > 1).then_some(name))
+                .filter(|(_, targets)| targets.len() > 1)
+                .map(|(name, _)| name.to_owned())
                 .collect::<BTreeSet<_>>();
             let mut lib_remappings = BTreeMap::new();
             let mut explicit_contextual_remappings = Vec::new();
@@ -417,7 +415,7 @@ impl RemappingsProvider<'_> {
                 .remappings
                 .iter()
                 .map(|r| relative_remapping_preserving_context_boundary(r.clone(), self.root))
-                .collect::<Vec<_>>();
+                .collect::<BTreeSet<_>>();
             sort_by_context_specificity(&mut explicit_contextual_remappings);
             let mut generated_remappings = Vec::new();
             for contextual in
