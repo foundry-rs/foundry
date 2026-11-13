@@ -130,6 +130,10 @@ struct AnchorIndex<'a> {
     branches: Vec<(usize, usize, &'a [u8])>,
     /// Straight-line instruction ranges ending in REVERT or INVALID, ordered by start.
     reverting_runs: Vec<Range<usize>>,
+    /// `(JUMPDEST, start of its straight-line run)` for every `JUMPDEST` that the previous
+    /// instruction falls through to, ordered. A run starts after a `JUMP`, `STOP`, `RETURN`,
+    /// `REVERT`, `INVALID` or `SELFDESTRUCT`.
+    fallen_into: Vec<(usize, usize)>,
     /// `(target pc, push instruction)` for every push that feeds a `JUMP` or `JUMPI`, sorted.
     jumps: Vec<(u32, usize)>,
 }
@@ -145,8 +149,24 @@ impl<'a> AnchorIndex<'a> {
         let mut branches = Vec::new();
         let mut reverting_runs = Vec::new();
         let mut jumps = Vec::new();
+        let mut fallen_into = Vec::new();
         let mut run_start = 0;
+        let mut straight_start = 0;
         for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
+            if inst.opcode.get() == opcode::JUMPDEST && straight_start < ic {
+                fallen_into.push((ic, straight_start));
+            }
+            if matches!(
+                inst.opcode.get(),
+                opcode::JUMP
+                    | opcode::STOP
+                    | opcode::RETURN
+                    | opcode::REVERT
+                    | opcode::INVALID
+                    | opcode::SELFDESTRUCT
+            ) {
+                straight_start = ic + 1;
+            }
             match inst.opcode.get() {
                 opcode::REVERT | opcode::INVALID => {
                     reverting_runs.push(run_start..ic + 1);
@@ -177,7 +197,7 @@ impl<'a> AnchorIndex<'a> {
             }
         }
         jumps.sort_unstable();
-        Self { source_map, ic_pc_map, entries, branches, reverting_runs, jumps }
+        Self { source_map, ic_pc_map, entries, branches, reverting_runs, fallen_into, jumps }
     }
 
     /// Finds the first opcode in the source range, preferring code outside a failure stub.
@@ -211,15 +231,18 @@ impl<'a> AnchorIndex<'a> {
     /// Compilers map the entry `JUMPDEST` to exactly the function's span, so it is preferred over
     /// the lowest instruction in the span, which can belong to a body block laid out before the
     /// entry. The entry is the exact-span instruction that code outside the function jumps to,
-    /// which excludes the function's exit label and inlined code. Falls back to [`Self::simple`]
-    /// when there is none, as for inlined constructors and fallbacks, and for functions that only
-    /// their own modifier wrapper jumps to, such as with solc via-IR and the optimizer.
+    /// which excludes the function's exit label and inlined code. A public function can have two
+    /// such instructions, its ABI wrapper and its body. The wrapper falls through into the body,
+    /// which internal calls jump to, so the body runs on both paths and is preferred. Falls back
+    /// to [`Self::simple`] when there is none, as for inlined constructors and fallbacks, and for
+    /// functions that only their own modifier wrapper jumps to, such as with solc via-IR and the
+    /// optimizer.
     fn function(&self, item_id: u32, loc: &SourceLocation) -> eyre::Result<ItemAnchor> {
         let source = loc.source_id as i32;
         let start = self
             .entries
             .partition_point(|&(id, offset, _)| (id, offset) < (source, loc.bytes.start));
-        let entry = self.entries[start..]
+        let candidates = self.entries[start..]
             .iter()
             .take_while(|&&(id, offset, _)| (id, offset) == (source, loc.bytes.start))
             .map(|&(_, _, instruction)| instruction)
@@ -227,23 +250,37 @@ impl<'a> AnchorIndex<'a> {
                 self.source_map[instruction].length() == loc.len()
                     && self.is_jumped_to_from_outside(instruction, loc)
             })
-            .min();
+            .collect::<Vec<_>>();
+        // The lowest candidate can fall through into a later one.
+        let entry = candidates.iter().copied().min().map(|lowest| {
+            candidates
+                .iter()
+                .copied()
+                .filter(|&instruction| self.falls_through_into(lowest, instruction))
+                .min()
+                .unwrap_or(lowest)
+        });
         match entry {
             Some(_) => ItemAnchor::from_instruction(entry, self.ic_pc_map, item_id, loc),
             None => self.simple(item_id, loc),
         }
     }
 
+    /// Returns whether execution can fall through from `from` into the `JUMPDEST` `to`.
+    fn falls_through_into(&self, from: usize, to: usize) -> bool {
+        self.fallen_into
+            .binary_search_by_key(&to, |&(jumpdest, _)| jumpdest)
+            .is_ok_and(|i| (self.fallen_into[i].1..to).contains(&from))
+    }
+
     /// Returns whether a static jump mapped outside `loc` targets `instruction`.
     fn is_jumped_to_from_outside(&self, instruction: usize, loc: &SourceLocation) -> bool {
         let Some(pc) = self.ic_pc_map.get(instruction as u32) else { return false };
         let start = self.jumps.partition_point(|&(target, _)| target < pc);
-        self.jumps[start..].iter().take_while(|&&(target, _)| target == pc).any(|&(_, push)| {
-            let jump = &self.source_map[push];
-            !(jump.index_i32() == loc.source_id as i32
-                && jump.offset() >= loc.bytes.start
-                && jump.offset() + jump.length() <= loc.bytes.start + loc.len())
-        })
+        self.jumps[start..]
+            .iter()
+            .take_while(|&&(target, _)| target == pc)
+            .any(|&(_, push)| !is_within_source_span(&self.source_map[push], loc))
     }
 
     /// Finds the fallthrough and taken anchors of a branch.
@@ -277,6 +314,13 @@ impl<'a> AnchorIndex<'a> {
         }
         anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
     }
+}
+
+/// Calculates whether `element` is entirely inside the span of `location`.
+fn is_within_source_span(element: &SourceElement, location: &SourceLocation) -> bool {
+    element.index_i32() == location.source_id as i32
+        && element.offset() >= location.bytes.start
+        && element.offset() + element.length() <= location.bytes.start + location.len()
 }
 
 /// Calculates whether `element` is within the range of the target `location`.
@@ -438,6 +482,47 @@ mod tests {
                 ],
                 "10:20:0;;;;;;12:3:0;;0:100:0;",
                 4,
+            ),
+            // A public function's ABI wrapper (jumped to by the dispatcher) falls into its body
+            // (jumped to by internal calls), which is the anchor that runs on both paths.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::POP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::PUSH1,
+                    0,
+                    opcode::JUMP,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "10:20:0;;;;;;0:100:0;;;",
+                3,
+            ),
+            // An exact-span block that other code jumps to, as an optimizer-merged exit, is not
+            // preferred when no other candidate falls through into it.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::PUSH1,
+                    0,
+                    opcode::JUMP,
+                    opcode::PUSH1,
+                    5,
+                    opcode::JUMP,
+                ],
+                "10:20:0;;;12:3:0;;10:20:0;;0:100:0;;;",
+                0,
             ),
         ] {
             let source_map = sourcemap::parse(source_map).unwrap();
