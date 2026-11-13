@@ -4246,7 +4246,7 @@ Compiler run successful!
 fn dependency_alias_migration_only_suggests_existing_targets(prj: _, cmd: _) {
     for name in ["z", "a"] {
         prj.create_file(
-            &format!("lib/{name}/foundry.toml"),
+            format!("lib/{name}/foundry.toml"),
             "[profile.default]\nremappings = [\"@custom/=src/\"]\n",
         );
         prj.add_lib(&format!("{name}/src/Dep.sol"), "contract Dep {}\n");
