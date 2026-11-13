@@ -3210,8 +3210,8 @@ contract SymbolicHostReads is Test {
 }
 
 // A timed campaign's shrink deadline passes during minimization, which must keep the candidates it
-// confirmed before then. Minimization replays skip `vm.sleep`, so the handler spends its time in the
-// EVM instead.
+// confirmed before then. Minimization replays skip `vm.sleep`, so the handler spends its time in
+// the EVM instead.
 #[forgetest_init]
 fn symbolic_invariant_keeps_minimization_at_shrink_deadline(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_keeps_minimization_at_shrink_deadline");
