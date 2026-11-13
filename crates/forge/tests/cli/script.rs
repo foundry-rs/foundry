@@ -11323,7 +11323,8 @@ contract CaGasScript is Script {
 /// not sent when one of them would fail, when they fit neither in one block nor in as many blocks
 /// as a node simulates,
 /// when the RPC caps the gas of the simulation, when one of them changes the account's
-/// configuration before another, or when they would use a nonce key.
+/// configuration before another, or when they would use a nonce key. On `--resume`, it also
+/// refuses an account that already sent the nonce planned for its first one.
 #[forgetest_init]
 async fn tempo_t14_script_offline_owner_export_checked_before_sending(prj: _, cmd: _) {
     let script = prj.add_script(
@@ -11481,4 +11482,64 @@ contract CaChecksScript is Script {
         assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0, "{error}");
         std::fs::remove_dir_all(prj.root().join("broadcast")).ok();
     }
+
+    // A `--broadcast` that the RPC stops before it sends anything is resumed after the account
+    // sent the nonce planned for its transaction elsewhere: the EOA transaction is not sent.
+    let (flaky, rejecting) =
+        rpc::spawn_rpc_proxy_rejecting_method_when_enabled(upstream.clone(), "eth_simulateV1")
+            .await;
+    rejecting.store(true, Ordering::SeqCst);
+    let runs = [
+        (
+            "--broadcast",
+            "cannot simulate the transactions in order to fix the gas limits of the ones awaiting \
+             owner approvals, so no more transactions are sent: [..]\n..."
+                .to_string(),
+        ),
+        (
+            "--resume",
+            format!(
+                "transaction 1 of {account} was planned with nonce 0, but the account already \
+                 sent nonce 0, as its next nonce is 1; broadcast the script anew with \
+                 --start-fresh"
+            ),
+        ),
+    ];
+    for (mode, error) in runs {
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--rpc-url",
+            flaky.as_str(),
+            "--sender",
+            &account_arg,
+            mode,
+            "--skip-simulation",
+            "--network",
+            "tempo",
+            "--tempo.fee-token",
+            &fee_token,
+            "--tempo.config",
+            &config,
+            "--private-keys",
+            &keys[0],
+            "--private-keys",
+            &eoa_key,
+        ]);
+        cmd.env("CA_EOA", eoa.to_string());
+        cmd.env("CA_TARGET", target.to_string());
+        cmd.env("CA_DATA", "0x");
+        cmd.env("CA_CALLS", "0");
+        cmd.assert_failure().stderr_eq(format!("...\nError: {error}\n"));
+        assert_eq!(provider.get_transaction_count(eoa).await.unwrap(), 0, "{error}");
+
+        if mode == "--broadcast" {
+            rejecting.store(false, Ordering::SeqCst);
+            cmd.cast_fuse()
+                .args(["send", &target.to_string(), "--from", &account_arg, "--rpc-url"])
+                .args([upstream.as_str(), "--private-key", &keys[0], "--tempo.fee-token"])
+                .args([fee_token.as_str(), "--tempo.config", &config, "--tempo.owner"])
+                .arg(format!("private-key://{}", keys[2]))
+                .assert_success();
+        }
+    }
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
 }
