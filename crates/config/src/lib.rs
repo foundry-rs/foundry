@@ -240,8 +240,8 @@ pub struct Config {
     /// Whether to autodetect remappings.
     ///
     /// Defaults to `true`. Dependency configuration remappings apply only within their owning
-    /// dependency. To use a dependency's custom alias from this project, declare it here
-    /// explicitly.
+    /// dependency, except when its source directory resolves outside the dependency. To use a
+    /// scoped dependency's custom alias from this project, declare it here explicitly.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
     ///

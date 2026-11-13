@@ -1435,7 +1435,7 @@ lib/a/:shared/=lib/a/lib/shared/custom-source/
 lib/b/:shared/=lib/b/lib/shared/src/
 a/=lib/a/src/
 b/=lib/b/src/
-shared/=lib/a/lib/shared/custom-source/
+shared/=lib/b/lib/shared/src/
 
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
@@ -3811,7 +3811,7 @@ fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) 
         for dependency in ["a-helper", "a-helper/lib/nested"] {
             prj.create_file(format!("lib/{dependency}/foundry.toml"), "[profile.default]\n");
         }
-        for source in [None, Some("src"), Some("lib/good/src"), Some("shared")] {
+        for source in [None, Some(format!("lib/{owner}/src"))] {
             let source = source
                 .map(|source| {
                     format!("src = {:?}\n", prj.root().join(source).display().to_string())
@@ -3829,7 +3829,7 @@ fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) 
 }
 
 #[forgetest]
-fn dependency_remappings_apply_to_external_source(prj: _, cmd: _) {
+fn external_sources_preserve_global_dependency_aliases(prj: _, cmd: _) {
     prj.add_lib("a/src/internal/Inner.sol", "contract Inner {}\n");
     for path in ["external/B.sol", "common/B.sol"] {
         prj.create_file(
@@ -3837,14 +3837,13 @@ fn dependency_remappings_apply_to_external_source(prj: _, cmd: _) {
             "import {Inner} from \"private-alias/Inner.sol\"; contract B is Inner {}\n",
         );
     }
-    prj.add_lib("private-alias/src/Inner.sol", "contract GlobalInner {}\n");
     prj.add_lib(
         "sibling/src/Sibling.sol",
-        "import {GlobalInner} from \"private-alias/Inner.sol\"; contract Sibling is GlobalInner {}\n",
+        "import {Inner} from \"private-alias/Inner.sol\"; contract Sibling is Inner {}\n",
     );
     prj.add_source(
         "Root.sol",
-        "import {A} from \"a/A.sol\"; import {GlobalInner} from \"private-alias/Inner.sol\"; import {Sibling} from \"sibling/Sibling.sol\"; contract Root is A, Sibling {} contract Direct is GlobalInner {}\n",
+        "import {A} from \"a/A.sol\"; import {Inner} from \"private-alias/Inner.sol\"; import {Sibling} from \"sibling/Sibling.sol\"; contract Root is A, Sibling {} contract Direct is Inner {}\n",
     );
 
     for source in [prj.root().join("external").display().to_string(), "../../external".into()] {
@@ -3886,28 +3885,119 @@ fn dependency_remappings_apply_to_external_source(prj: _, cmd: _) {
         fs::rename(prj.root().join("lib/a"), &physical).unwrap();
         symlink(&physical, prj.root().join("lib/a")).unwrap();
         cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    }
+}
 
-        let parent = physical.parent().unwrap();
-        fs::create_dir_all(parent.join("source")).unwrap();
-        fs::create_dir_all(parent.join("common")).unwrap();
-        fs::copy(external.path().join("source/A.sol"), parent.join("source/A.sol")).unwrap();
-        fs::copy(external.path().join("common/B.sol"), parent.join("common/B.sol")).unwrap();
-        prj.create_file(
-            "lib/a/foundry.toml",
-            "[profile.default]\nsrc = \"../source\"\nremappings = [\"private-alias/=src/internal/\"]\n",
+#[forgetest]
+fn external_source_bytecode_is_independent_of_project_root(prj: _, cmd: _) {
+    let mut artifacts = Vec::new();
+    for name in ["first", "second/deeper"] {
+        let project = prj.root().join(name);
+        for path in ["src", "lib/a", "external"] {
+            fs::create_dir_all(project.join(path)).unwrap();
+        }
+        fs::write(project.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+        fs::write(
+            project.join("lib/a/foundry.toml"),
+            "[profile.default]\nsrc = \"../../external\"\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join("external/A.sol"),
+            "pragma solidity >=0.8.0; contract A { function value() public pure returns (uint256) { return 7; } }\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join("src/Root.sol"),
+            "pragma solidity >=0.8.0; import {A} from \"a/A.sol\"; contract Root is A {}\n",
+        )
+        .unwrap();
+        cmd.forge_fuse()
+            .current_dir(&project)
+            .args(["build", "--no-lint", "--use", SOLC_VERSION])
+            .assert_success();
+        let artifact: Value =
+            serde_json::from_slice(&fs::read(project.join("out/Root.sol/Root.json")).unwrap())
+                .unwrap();
+        artifacts.push(artifact);
+    }
+    for field in ["bytecode", "deployedBytecode"] {
+        let bytecodes = artifacts
+            .iter()
+            .map(|artifact| {
+                let bytecode = artifact[field]["object"].as_str().expect("missing bytecode object");
+                assert!(!bytecode.is_empty() && bytecode != "0x", "empty {field} object");
+                bytecode
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bytecodes[0], bytecodes[1], "{field} differs between project roots");
+    }
+    for artifact in artifacts {
+        assert_eq!(
+            artifact["metadata"]["settings"]["remappings"],
+            serde_json::json!(["a/=lib/a/../../external/"])
         );
-        cmd.forge_fuse().args(["build", "--force"]).assert_success();
-        cmd.forge_fuse().arg("build").assert_success();
+    }
+}
 
-        fs::create_dir_all(physical.join("common")).unwrap();
-        fs::copy(parent.join("common/B.sol"), physical.join("common/B.sol")).unwrap();
-        fs::write(parent.join("common/B.sol"), "contract UnexpectedPhysicalB {}\n").unwrap();
-        symlink(parent.join("source"), physical.join("linked-source")).unwrap();
-        prj.create_file(
-            "lib/a/foundry.toml",
-            "[profile.default]\nsrc = \"linked-source\"\nremappings = [\"private-alias/=src/internal/\"]\n",
-        );
-        cmd.forge_fuse().args(["build", "--force"]).assert_success();
-        cmd.forge_fuse().arg("build").assert_success();
+#[forgetest]
+fn unique_dependency_alias_requires_root_declaration(prj: _, cmd: _) {
+    prj.create_file(
+        "lib/dependency/foundry.toml",
+        "[profile.default]\nremappings = [\"@custom/=src/\"]\n",
+    );
+    prj.add_lib(
+        "dependency/src/Inner.sol",
+        "library Inner { function value() internal pure returns (uint256) { return 7; } }\n",
+    );
+    prj.add_lib(
+        "dependency/src/Dep.sol",
+        "import {Inner} from \"@custom/Inner.sol\"; contract Dep { function value() public pure returns (uint256) { return Inner.value(); } }\n",
+    );
+    prj.add_source("Root.sol", "import {Dep} from \"@custom/Dep.sol\"; contract Root is Dep {}\n");
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/dependency/:@custom/=lib/dependency/src/
+dependency/=lib/dependency/src/
+
+"#]]);
+    cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stdout_eq(str![[
+        r#"
+Unable to resolve imports:
+      "@custom/Dep.sol" in "[..]"
+with remappings:
+      lib/dependency/:@custom/=[..]
+      dependency/=[..]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#
+    ]]);
+
+    prj.add_test(
+        "AliasMigration.t.sol",
+        r#"
+import {Root} from "../src/Root.sol";
+contract AliasMigrationTest {
+    function testAliasMigration() public {
+        assert(new Root().value() == 7);
+    }
+}
+"#,
+    );
+    let root_alias = "@custom/=lib/dependency/src/";
+    for source in ["toml", "cli"] {
+        prj.update_config(|config| {
+            config.remappings.clear();
+            if source == "toml" {
+                config.remappings.push(Remapping::from_str(root_alias).unwrap().into());
+            }
+        });
+        let command = cmd.forge_fuse();
+        command.args(["test", "--force", "--match-contract", "AliasMigrationTest"]);
+        if source == "cli" {
+            command.args(["--remappings", root_alias]);
+        }
+        command.assert_success();
     }
 }

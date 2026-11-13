@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use solar::{interface::MIN_SOLIDITY_VERSION, sema::ParsingContext};
 use std::{
     collections::HashSet,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 #[cfg(windows)]
@@ -207,10 +207,9 @@ pub fn get_solar_sources_from_compile_output(
     let (version, sources) = {
         let (mut max_version, mut sources) = (MIN_SOLIDITY_VERSION, Sources::new());
         for (id, _) in output.artifact_ids() {
-            // Remapping contexts match source-unit names, including dependency aliases and `..`.
-            // Keep the graph's spelling so Solar analyzes the same imports as solc.
-            let path = config.root.join(&id.source);
-            if source_paths.remove(&path) {
+            if let Ok(path) = canonicalize_path(&id.source)
+                && source_paths.remove(&path)
+            {
                 if id.version < MIN_SOLIDITY_VERSION {
                     continue;
                 } else if max_version < id.version {
@@ -280,13 +279,11 @@ pub fn configure_pcx_from_solc(
             .sources
             .par_iter()
             .filter_map(|(path, source)| {
-                // Match remapped source-unit names before Solar normalizes filesystem paths.
-                let path = solar_source_unit_path(path, &project_paths.root);
                 #[cfg(windows)]
                 let path = PathBuf::from(solar_slash_path(path));
                 #[cfg(not(windows))]
-                let path = path.to_path_buf();
-                pcx.sess.source_map().new_source_file_shared(path, source.content.clone()).ok()
+                let path = path.clone();
+                pcx.sess.source_map().new_source_file(path, source.content.as_str()).ok()
             })
             .collect::<Vec<_>>();
         pcx.add_files(sources);
@@ -309,30 +306,13 @@ fn configure_pcx_from_solc_cli(
         // used above instead of allowing mixed Windows separators to change prefix semantics.
         #[cfg(windows)]
         let context = solar_slash_path(Path::new(&context));
-        let path = solar_source_unit_path(Path::new(&remapping.path), &project_paths.root);
-        #[cfg(windows)]
-        let mut path = solar_slash_path(path);
-        #[cfg(not(windows))]
-        let mut path = path.display().to_string();
-        if remapping.path.ends_with('/') && !path.ends_with('/') {
-            path.push('/');
-        }
         pcx.file_resolver.add_import_remapping(solar::sema::interface::config::ImportRemapping {
             context,
             prefix: remapping.name.clone(),
-            path,
+            path: remapping.path.clone(),
         });
     }
     pcx.file_resolver.add_include_paths(cli_settings.include_paths.iter().cloned());
-}
-
-/// Keeps dependency source identities with `..` in the same form as their remapping targets.
-fn solar_source_unit_path<'a>(path: &'a Path, root: &Path) -> &'a Path {
-    if path.components().any(|component| component == Component::ParentDir) {
-        path.strip_prefix(root).unwrap_or(path)
-    } else {
-        path
-    }
 }
 
 #[cfg(all(test, windows))]

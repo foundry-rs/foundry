@@ -175,8 +175,8 @@ struct CachedNestedConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NestedRemappingKind {
     Declaration,
+    UnscopedDeclaration,
     PackageEntry,
-    SourceIdentity,
 }
 
 /// A figment provider that checks if the remappings were previously set and if they're unset looks
@@ -331,7 +331,7 @@ impl RemappingsProvider<'_> {
             // Dependencies commonly omit nested checkouts and use a hoisted installation. A
             // missing declared target must not shadow that discovered package within its owner.
             nested_foundry_remappings.retain(|(_, remapping, kind)| {
-                *kind != NestedRemappingKind::Declaration
+                *kind == NestedRemappingKind::PackageEntry
                     || Path::new(&remapping.path).exists()
                     || !global
                         .iter()
@@ -352,13 +352,24 @@ impl RemappingsProvider<'_> {
                 .collect::<BTreeSet<_>>();
             let mut lib_remappings = BTreeMap::new();
             let mut explicit_contextual_remappings = Vec::new();
-            for (lib, r, kind) in &nested_foundry_remappings {
-                if *kind == NestedRemappingKind::Declaration
-                    && r.context.is_some()
-                    && let Some(scoped) = scope_nested_remapping(r.clone(), lib)
+            let mut unscoped_contextual_remappings = BTreeSet::new();
+            for (lib, r, kind) in nested_foundry_remappings
+                .iter()
+                .filter(|(_, remapping, _)| remapping.context.is_some())
+            {
+                let scoped = match kind {
+                    NestedRemappingKind::Declaration => scope_nested_remapping(r.clone(), lib),
+                    NestedRemappingKind::UnscopedDeclaration => Some(r.clone()),
+                    NestedRemappingKind::PackageEntry => None,
+                };
+                if let Some(scoped) = scoped
                     && let Some(overlays) =
                         contextual_overlays(&authoritative_user_remappings, &scoped)
                 {
+                    if *kind == NestedRemappingKind::UnscopedDeclaration {
+                        unscoped_contextual_remappings.extend(overlays.iter().cloned());
+                        unscoped_contextual_remappings.insert(scoped.clone());
+                    }
                     explicit_contextual_remappings.extend(overlays);
                     explicit_contextual_remappings.push(scoped);
                 }
@@ -370,8 +381,9 @@ impl RemappingsProvider<'_> {
                 if r.context.is_some() {
                     continue;
                 }
-                // Dependency declarations apply only to imports from that dependency. Only
-                // discovered package entry points may introduce global aliases.
+                // Scope declarations when source identities stay within their dependency.
+                // External sources retain the existing global behavior until their physical
+                // paths can be separated from their owner-specific source-unit names.
                 if *kind == NestedRemappingKind::Declaration {
                     if let Some(contextual) = scope_nested_remapping(r.clone(), lib)
                         && let Some(overlays) =
@@ -382,6 +394,30 @@ impl RemappingsProvider<'_> {
                     }
                     continue;
                 }
+                // Preserve existing contextual refinements for external-source dependencies.
+                if *kind == NestedRemappingKind::UnscopedDeclaration
+                    && global.iter().map(|(_, remapping)| remapping).chain(&contextual).any(
+                        |auto| {
+                            auto.name == r.name
+                                && Path::new(&r.path) != Path::new(&auto.path)
+                                && (auto
+                                    .context
+                                    .as_deref()
+                                    .is_some_and(|context| Path::new(context) == lib)
+                                    || (auto.context == r.context
+                                        && Path::new(&r.path).starts_with(&auto.path)))
+                        },
+                    )
+                {
+                    let mut refinement = r.clone();
+                    refinement.context = Some(format!("{}{MAIN_SEPARATOR}", lib.display()));
+                    if let Some(overlays) =
+                        contextual_overlays(&authoritative_remappings, &refinement)
+                    {
+                        contextual_remappings.extend(overlays);
+                        contextual_remappings.push(refinement);
+                    }
+                }
                 insert_closest(
                     &mut lib_remappings,
                     r.context.clone(),
@@ -389,16 +425,6 @@ impl RemappingsProvider<'_> {
                     lib.clone(),
                     PathBuf::from(&r.path),
                 );
-            }
-            for (lib, remapping, kind) in &nested_foundry_remappings {
-                if *kind == NestedRemappingKind::SourceIdentity
-                    && let Some(identity) = scope_nested_remapping(remapping.clone(), lib)
-                    && let Some(overlays) =
-                        contextual_overlays(&authoritative_remappings, &identity)
-                {
-                    contextual_remappings.extend(overlays);
-                    contextual_remappings.push(identity);
-                }
             }
             for remapping in contextual
                 .into_iter()
@@ -429,6 +455,7 @@ impl RemappingsProvider<'_> {
                     relative_remapping_preserving_context_boundary(contextual.clone(), self.root);
                 if !explicit_remappings.contains(&relative)
                     && all_remappings.push(contextual.clone())
+                    && !unscoped_contextual_remappings.contains(&contextual)
                 {
                     generated_remappings.push(contextual);
                 }
@@ -489,18 +516,28 @@ impl RemappingsProvider<'_> {
                 continue;
             };
 
+            // Relative imports normalize away an external source's lexical owner. Preserve the
+            // old declaration scope rather than encoding the absolute checkout in source names.
+            let source = foundry_compilers::utils::canonicalized(entry.canonical.join(&config.src));
+            let source = normalize_remapping_context(&source);
+            let declaration_kind = if source.starts_with(&entry.canonical) {
+                NestedRemappingKind::Declaration
+            } else {
+                NestedRemappingKind::UnscopedDeclaration
+            };
+
             remappings.extend(config.remappings.iter().cloned().map(|remapping| {
                 (
                     entry.path.clone(),
                     rebase_nested_remapping(remapping, &entry.canonical, &entry.path),
-                    NestedRemappingKind::Declaration,
+                    declaration_kind,
                 )
             }));
             remappings.extend(config.file_remappings.iter().cloned().map(|remapping| {
                 (
                     entry.path.clone(),
                     RelativeRemapping::new(remapping, &entry.path).into(),
-                    NestedRemappingKind::Declaration,
+                    declaration_kind,
                 )
             }));
 
@@ -527,50 +564,13 @@ impl RemappingsProvider<'_> {
                 || !entry.canonical.join(&config.src).is_dir())
                 && let Some(name) = entry.path.file_name().and_then(|name| name.to_str())
             {
-                let mut source = entry.path.join(&config.src);
-                let owner_source = entry.canonical.join(&config.src);
-                // Relative imports collapse `..`, so sources outside the owner need the same
-                // identity recovery whether configured as absolute or relative paths.
-                if config.src.is_absolute()
-                    || !normalize_remapping_context(&owner_source).starts_with(&entry.canonical)
+                let source = if config.src.is_absolute()
+                    && let Ok(relative) = source.strip_prefix(&entry.canonical)
                 {
-                    let absolute = foundry_compilers::utils::canonicalized(owner_source);
-                    if let Ok(relative) = absolute.strip_prefix(&entry.canonical) {
-                        source = entry.path.join(relative);
-                    } else if let Some((anchored, anchored_root)) =
-                        anchored_dependency_source(&absolute, &entry.path, &entry.canonical)
-                    {
-                        source = anchored;
-                        // Relative imports are normalized by the compiler resolver. Reattach
-                        // those normalized paths to this lexical owner before loading them.
-                        if let Ok(normalized) =
-                            foundry_compilers::utils::normalize_solidity_import_path(
-                                &anchored_root,
-                                Path::new(""),
-                            )
-                        {
-                            let name = normalized.display().to_string();
-                            #[cfg(windows)]
-                            let name = name.replace('\\', "/");
-                            let mut name = name;
-                            if !name.ends_with('/') {
-                                name.push('/');
-                            }
-                            remappings.push((
-                                entry.path.clone(),
-                                Remapping {
-                                    context: Some(format!(
-                                        "{}{MAIN_SEPARATOR}",
-                                        entry.path.display()
-                                    )),
-                                    name,
-                                    path: format!("{}{MAIN_SEPARATOR}", anchored_root.display()),
-                                },
-                                NestedRemappingKind::SourceIdentity,
-                            ));
-                        }
-                    }
-                }
+                    entry.path.join(relative)
+                } else {
+                    entry.path.join(&config.src)
+                };
                 let mut remapping = Remapping {
                     context: None,
                     name: format!("{name}/"),
@@ -822,36 +822,6 @@ fn normalize_remapping_context(path: &Path) -> PathBuf {
         }
     }
     normalized
-}
-
-/// Keeps a source directory under its dependency's lexical identity without changing its target.
-fn anchored_dependency_source(
-    source: &Path,
-    owner: &Path,
-    canonical_owner: &Path,
-) -> Option<(PathBuf, PathBuf)> {
-    let owner = normalize_remapping_context(owner);
-    if owner.components().next() != source.components().next()
-        || canonical_owner.components().next() != source.components().next()
-    {
-        return None;
-    }
-    let mut anchored_root = owner.clone();
-    // `..` after a symlink follows its physical parent. Reach the filesystem root from both
-    // identities so relative imports can leave the source directory without losing their owner.
-    let depth = |path: &Path| {
-        path.components().filter(|component| matches!(component, Component::Normal(_))).count()
-    };
-    for _ in 0..depth(&owner).max(depth(canonical_owner)) {
-        anchored_root.push("..");
-    }
-    let mut anchored = anchored_root.clone();
-    for component in source.components() {
-        if let Component::Normal(_) | Component::ParentDir = component {
-            anchored.push(component);
-        }
-    }
-    Some((anchored, anchored_root))
 }
 
 /// Sorts by descending context depth, then by context, preserving order within each context.
@@ -1553,74 +1523,89 @@ mod tests {
     }
 
     #[test]
-    fn absolute_source_keeps_owner_scoped_identity() {
+    fn external_sources_preserve_dependency_declarations() {
         let temp = tempdir().unwrap();
         let root = dunce::canonicalize(temp.path()).unwrap();
         let owner = root.join("lib/a");
         let source = root.join("external");
-        fs::create_dir_all(owner.join("src")).unwrap();
+        fs::create_dir_all(owner.join("src/internal")).unwrap();
+        fs::create_dir_all(&source).unwrap();
+        fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+        fs::write(source.join("A.sol"), "contract A {}\n").unwrap();
+        fs::write(owner.join("remappings.txt"), "file-alias/=src/internal/\n").unwrap();
+
+        for src in [source.display().to_string(), "../../external".to_string()] {
+            fs::write(
+                owner.join(Config::FILE_NAME),
+                format!(
+                    "[profile.default]\nsrc = {src:?}\nremappings = [\"private/=src/internal/\", \"../../external/:contextual/=src/internal/\"]\n"
+                ),
+            )
+            .unwrap();
+            let config = Config::load_with_root(&root).unwrap();
+            let remappings = config.get_all_remappings().collect::<Vec<_>>();
+            let package = remappings.iter().find(|remapping| remapping.name == "a/").unwrap();
+            assert_eq!(dunce::canonicalize(root.join(&package.path)).unwrap(), source);
+            for alias in ["private/", "file-alias/"] {
+                let remapping =
+                    remappings.iter().find(|remapping| remapping.name == alias).unwrap();
+                assert_eq!(remapping.context, None);
+                assert_eq!(remapping.path, "lib/a/src/internal/");
+            }
+            let contextual =
+                remappings.iter().find(|remapping| remapping.name == "contextual/").unwrap();
+            assert_eq!(contextual.context.as_deref(), Some("external/"));
+            assert_eq!(remappings.len(), 4);
+        }
+    }
+
+    #[test]
+    fn absolute_internal_source_preserves_owner_scope() {
+        let temp = tempdir().unwrap();
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let owner = root.join("lib/a");
+        let source = owner.join("custom-source");
         fs::create_dir_all(&source).unwrap();
         fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
         fs::write(
             owner.join(Config::FILE_NAME),
-            format!("[profile.default]\nsrc = {:?}\n", source.display().to_string()),
+            format!(
+                "[profile.default]\nsrc = {:?}\nremappings = [\"private/=custom-source/\"]\n",
+                source.display().to_string()
+            ),
         )
         .unwrap();
         fs::write(source.join("A.sol"), "contract A {}\n").unwrap();
-
         let config = Config::load_with_root(&root).unwrap();
-        let remappings = config.get_all_remappings().collect::<Vec<_>>();
-        let package = remappings.iter().find(|remapping| remapping.name == "a/").unwrap();
-        assert!(Path::new(&package.path).starts_with("lib/a"));
-        let (_, anchored_root) = anchored_dependency_source(&source, &owner, &owner).unwrap();
-        let normalized_root =
-            foundry_compilers::utils::normalize_solidity_import_path(&anchored_root, Path::new(""))
-                .unwrap();
-        let name = normalized_root.display().to_string();
-        #[cfg(windows)]
-        let name = name.replace('\\', "/");
-        let name = if name.ends_with('/') { name } else { format!("{name}/") };
-        let identity = remappings.iter().find(|remapping| remapping.name == name).unwrap();
-        assert_eq!(identity.context.as_deref(), Some("lib/a/"));
-        assert!(root.join(&package.path).starts_with(root.join(&identity.path)));
-        assert_eq!(dunce::canonicalize(root.join(&package.path)).unwrap(), source);
-        assert_eq!(normalize_remapping_context(&root.join(&package.path)), source);
+        assert_eq!(
+            config.get_all_remappings().map(|remapping| remapping.to_string()).collect::<Vec<_>>(),
+            ["lib/a/:private/=lib/a/custom-source/", "a/=lib/a/custom-source/"]
+        );
     }
 
     #[cfg(unix)]
     #[test]
-    fn absolute_source_anchor_resolves_symlink_and_lexical_parents() {
+    fn symlinked_external_source_preserves_global_aliases() {
         let temp = tempdir().unwrap();
         let root = dunce::canonicalize(temp.path()).unwrap();
-        let canonical_owner = root.join("deep/external/owner");
-        let owner = root.join("lib/alias");
-        let source = root.join("source");
-        let sibling = root.join("common");
-        fs::create_dir_all(&canonical_owner).unwrap();
-        fs::create_dir_all(owner.parent().unwrap()).unwrap();
+        let owner = root.join("lib/a");
+        let source = root.join("external");
+        fs::create_dir_all(&owner).unwrap();
         fs::create_dir_all(&source).unwrap();
-        fs::create_dir_all(&sibling).unwrap();
-        symlink(&canonical_owner, &owner).unwrap();
-
-        let (anchored, anchored_root) =
-            anchored_dependency_source(&source, &owner, &canonical_owner).unwrap();
-        assert!(anchored.starts_with(&owner));
-        assert_eq!(dunce::canonicalize(&anchored).unwrap(), source);
-        let normalized =
-            foundry_compilers::utils::normalize_solidity_import_path(&anchored, Path::new(""))
-                .unwrap();
-        assert_eq!(dunce::canonicalize(normalized).unwrap(), source);
-        let normalized_root =
-            foundry_compilers::utils::normalize_solidity_import_path(&anchored_root, Path::new(""))
-                .unwrap();
-        let relative_import = foundry_compilers::utils::normalize_solidity_import_path(
-            &anchored,
-            Path::new("../common"),
+        fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+        fs::write(
+            owner.join(Config::FILE_NAME),
+            "[profile.default]\nremappings = [\"private/=src/\"]\n",
         )
         .unwrap();
-        let reanchored = anchored_root.join(relative_import.strip_prefix(normalized_root).unwrap());
-        assert!(reanchored.starts_with(&owner));
-        assert_eq!(dunce::canonicalize(reanchored).unwrap(), sibling);
+        fs::write(source.join("A.sol"), "contract A {}\n").unwrap();
+        symlink(&source, owner.join("src")).unwrap();
+
+        let config = Config::load_with_root(&root).unwrap();
+        let remapping =
+            config.get_all_remappings().find(|remapping| remapping.name == "private/").unwrap();
+        assert_eq!(remapping.context, None);
+        assert_eq!(remapping.path, "lib/a/src/");
     }
 
     #[test]
