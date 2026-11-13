@@ -28,6 +28,7 @@ solar.workspace = true
 
 [dev-dependencies]
 alloy-network.workspace = true
+serde_json.workspace = true
 
 [features]
 default = ["optimism"]

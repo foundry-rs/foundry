@@ -1,14 +1,17 @@
-//! Compiler-instrumented edge coverage and comparison logging through the `EDGECOV` and `CMPLOG`
-//! opcodes.
+//! Compiler-instrumented edge coverage, comparison logging, and source coverage through the
+//! `EDGECOV`, `CMPLOG`, and `COVERAGE` opcodes.
 //!
 //! Coverage builds of a compiler emit `PUSHn <id>; EDGECOV` on every control-flow edge and
 //! `PUSHn <site << 8 | cmp opcode>; CMPLOG` right before every `EQ`, `LT`, `GT`, `SLT` and `SGT`.
-//! Both opcodes are otherwise undefined. Foundry's EVMs carry them in their opcode tables, but
-//! they fail as undefined opcodes unless an [`EdgeCovGuard`] is alive on the thread.
+//! Source coverage builds, such as Solar's `-Zinstrument-coverage`, emit `PUSHn <counter>;
+//! COVERAGE` where a function, statement, or branch starts. The opcodes are otherwise undefined.
+//! Foundry's EVMs carry them in their opcode tables, but they fail as undefined opcodes unless an
+//! [`EdgeCovGuard`] is alive on the thread.
 //!
-//! While it is, `EDGECOV` pops the edge ID and bumps its AFL NeverZero hit counter, and `CMPLOG`
-//! pops its tag and records the two words below it, the operands of the comparison that follows.
-//! Both refund the 3 gas of the `PUSH` the compiler emits before them, so a probe costs no gas
+//! While it is, `EDGECOV` pops the edge ID and bumps its AFL NeverZero hit counter, `CMPLOG`
+//! pops its tag and records the two words below it, the operands of the comparison that follows,
+//! and `COVERAGE` pops its counter, which the line coverage inspector reads before it executes.
+//! All refund the 3 gas of the `PUSH` the compiler emits before them, so a probe costs no gas
 //! once it ran. Hits and operands are kept per thread in dense tables indexed by ID, and taken
 //! once the call ends.
 
@@ -25,6 +28,9 @@ const EDGECOV: u8 = 0xC0;
 
 /// The `CMPLOG` opcode byte.
 const CMPLOG: u8 = 0xC1;
+
+/// The `COVERAGE` opcode byte.
+pub const COVERAGE: u8 = 0xC2;
 
 /// Gas of the `PUSHn` that precedes every `EDGECOV` or `CMPLOG`, refunded by the instruction.
 const PUSH_GAS: u64 = 3;
@@ -254,12 +260,26 @@ fn cmplog(cx: _) -> Result {
     })
 }
 
-/// Adds the `EDGECOV` and `CMPLOG` instructions to `config`.
+/// The `COVERAGE` instruction: pops the counter and refunds the `PUSH` gas.
+#[instruction(dynamic_gas, no_stack_preamble)]
+fn coverage(cx: _) -> Result {
+    with_state(|state| {
+        if !state.enabled {
+            return Err(InstrStop::OpcodeNotFound);
+        }
+        stack.pop()?;
+        cx.gas.erase_cost(PUSH_GAS);
+        Ok(())
+    })
+}
+
+/// Adds the `EDGECOV`, `CMPLOG`, and `COVERAGE` instructions to `config`.
 pub(crate) const fn with_instrumentation<T: EvmTypesHost>(
     mut config: OpcodeConfig<T>,
 ) -> OpcodeConfig<T> {
     config.set_instruction::<edgecov<T>>(EDGECOV, 0);
     config.set_instruction::<cmplog<T>>(CMPLOG, 0);
+    config.set_instruction::<coverage<T>>(COVERAGE, 0);
     config
 }
 
@@ -326,7 +346,7 @@ mod tests {
             ExecutionConfig::<F::Types>::for_spec_and_version(spec, version).opcode_view();
         for opcode in 0..=u8::MAX {
             let expected = match opcode {
-                EDGECOV | CMPLOG => OpcodeChange::Instruction,
+                EDGECOV | CMPLOG | COVERAGE => OpcodeChange::Instruction,
                 _ => default.change(opcode),
             };
             assert_eq!(ours.change(opcode), expected, "opcode {opcode:#04x}");

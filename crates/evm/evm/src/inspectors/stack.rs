@@ -76,8 +76,8 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// - Some(true) for realtime console.log-ing.
     /// - Some(false) for log collection.
     pub logs: Option<bool>,
-    /// Whether line coverage info should be collected.
-    pub line_coverage: Option<bool>,
+    /// The line coverage collector, if line coverage info should be collected.
+    pub line_coverage: Option<LineCoverageCollector>,
     /// Whether to print all opcode traces into the console. Useful for debugging the EVM.
     pub print: Option<bool>,
     /// The chisel state inspector.
@@ -184,10 +184,10 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
-    /// Set whether to collect line coverage information.
+    /// Set the line coverage collector, if line coverage info should be collected.
     #[inline]
-    pub const fn line_coverage(mut self, yes: bool) -> Self {
-        self.line_coverage = Some(yes);
+    pub fn line_coverage(mut self, collector: Option<LineCoverageCollector>) -> Self {
+        self.line_coverage = collector;
         self
     }
 
@@ -286,7 +286,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         if let Some(chisel_state) = chisel_state {
             stack.set_chisel(chisel_state);
         }
-        stack.collect_line_coverage(line_coverage.unwrap_or(false));
+        stack.collect_line_coverage(line_coverage);
         stack.collect_logs(logs);
         stack.print(print.unwrap_or(false));
         stack.tracing_requirements(trace_requirements);
@@ -814,10 +814,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.refresh_static_step_end_dispatch();
     }
 
-    /// Set whether to enable the line coverage collector.
+    /// Set the line coverage collector, or disable line coverage.
     #[inline]
-    pub fn collect_line_coverage(&mut self, yes: bool) {
-        self.line_coverage = yes.then(Default::default);
+    pub fn collect_line_coverage(&mut self, collector: Option<LineCoverageCollector>) {
+        self.line_coverage = collector.map(Box::new);
         self.refresh_static_step_dispatch();
     }
 

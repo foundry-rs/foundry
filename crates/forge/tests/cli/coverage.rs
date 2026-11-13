@@ -4789,3 +4789,13 @@ contract AContractTest {
         .assert_success();
     assert_data_eq!(Data::read_from(&prj.root().join("crlf-gaps.json"), None), expected);
 }
+
+// `--instrumented` needs Solar, which instruments the code it generates.
+#[forgetest]
+fn instrumented_requires_solar(prj: _, cmd: _) {
+    prj.add_source("Counter.sol", "contract Counter {}");
+    cmd.args(["coverage", "--instrumented"]).assert_failure().stderr_eq(str![[r#"
+Error: `--instrumented` requires Solar as the compiler; set `solc = "/path/to/solar"` in `foundry.toml` or pass `--use`
+
+"#]]);
+}

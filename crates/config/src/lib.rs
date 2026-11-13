@@ -2279,6 +2279,8 @@ impl Config {
             experimental: Some(self.experimental),
             // Not used.
             stop_after: None,
+            // Set by `forge coverage --instrumented`.
+            solar: None,
             // Set in project paths.
             remappings: Vec::new(),
             // Set with `with_extra_output` below.

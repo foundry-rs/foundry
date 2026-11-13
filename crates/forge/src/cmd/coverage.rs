@@ -29,6 +29,7 @@ use foundry_compilers::{
     compilers::{
         Language,
         multi::{MultiCompilerLanguage, MultiCompilerParser},
+        solc::SolcCompiler,
     },
     error::SolcError,
     utils::source_files_iter,
@@ -98,6 +99,15 @@ pub struct CoverageArgs {
     #[arg(long)]
     ir_minimum: bool,
 
+    /// Count coverage with compiler instrumentation instead of source maps.
+    ///
+    /// Requires Solar as the compiler (`solc = "/path/to/solar"`), which instruments the code
+    /// it generates with coverage counters. The counters count every function, statement, and
+    /// branch exactly, also with the optimizer enabled, so the project's optimizer settings are
+    /// kept. The probes cost no gas, but they make the bytecode larger.
+    #[arg(long, conflicts_with = "ir_minimum")]
+    instrumented: bool,
+
     /// The path to output the report.
     ///
     /// Used only when a single file report is requested. If not specified, the
@@ -131,6 +141,8 @@ struct CoverageSettings {
     lcov_version: Version,
     /// Whether to enable viaIR with minimum optimization.
     ir_minimum: bool,
+    /// Whether to count coverage with compiler instrumentation.
+    instrumented: bool,
     /// The path to output a single file report to.
     report_file: Option<PathBuf>,
     /// Whether to include dependency sources in the coverage report.
@@ -209,7 +221,7 @@ impl CoverageArgs {
         let filter = self.test.filter(&config)?;
 
         let (paths, mut output) = {
-            let (project, output) = Self::build(&config, &filter, settings.ir_minimum)?;
+            let (project, output) = Self::build(&config, &filter, &settings)?;
             (project.paths, output)
         };
 
@@ -258,6 +270,7 @@ impl CoverageArgs {
                 .clone()
                 .unwrap_or_else(|| config.lcov_version.clone()),
             ir_minimum: self.ir_minimum || config.ir_minimum,
+            instrumented: self.instrumented,
             report_file: self.report_file.clone().or_else(|| config.report_file.clone()),
             include_libs: self.include_libs || config.include_libs,
             exclude_tests: self.exclude_tests || config.exclude_tests,
@@ -271,12 +284,14 @@ impl CoverageArgs {
     fn build(
         config: &Config,
         filter: &ProjectPathsAwareFilter,
-        ir_minimum: bool,
+        settings: &CoverageSettings,
     ) -> Result<(Project, ProjectCompileOutput)> {
+        let ir_minimum = settings.ir_minimum;
         let mut project = config.ephemeral_project()?;
         // A contended or unavailable cache retains ephemeral compilation. Keep the lock until
-        // artifacts and build contexts have been loaded or published together.
-        let cache = (config.cache && !config.deny.warnings())
+        // artifacts and build contexts have been loaded or published together. Instrumented
+        // builds are not cached: their coverage maps are compiler output, not artifacts.
+        let cache = (config.cache && !config.deny.warnings() && !settings.instrumented)
             .then(|| config.coverage_cache_path())
             .flatten()
             .and_then(|path| {
@@ -308,7 +323,27 @@ impl CoverageArgs {
             project.paths.slash_paths();
         }
 
-        if ir_minimum {
+        if settings.instrumented {
+            let is_solar = matches!(
+                config.solc_compiler()?,
+                SolcCompiler::Specific(solc) if solc.solar_version().is_some()
+            );
+            if !is_solar {
+                eyre::bail!(
+                    "`--instrumented` requires Solar as the compiler; \
+                     set `solc = \"/path/to/solar\"` in `foundry.toml` or pass `--use`"
+                );
+            }
+            // Standard JSON takes output-changing flags only from its input.
+            project
+                .settings
+                .solc
+                .settings
+                .solar
+                .get_or_insert_default()
+                .unstable
+                .push("instrument-coverage".into());
+        } else if ir_minimum {
             sh_warn!(
                 "`--ir-minimum` enables `viaIR` with minimum optimization, \
                  which can result in inaccurate source mappings.\n\
@@ -325,7 +360,9 @@ impl CoverageArgs {
             )?;
         }
 
-        config.disable_optimizations(&mut project, ir_minimum);
+        if !settings.instrumented {
+            config.disable_optimizations(&mut project, ir_minimum);
+        }
 
         let files = (filter.args().path_pattern.is_some()
             || filter.args().path_pattern_inverse.is_some())
@@ -466,6 +503,9 @@ impl CoverageArgs {
         project_paths: &ProjectPathsConfig,
         output: &mut ProjectCompileOutput,
     ) -> Result<CoverageReport> {
+        if settings.instrumented {
+            return Self::prepare_instrumented(settings, reporters, project_paths, output);
+        }
         let mut report = CoverageReport::default();
 
         output.parser_mut().solc_mut().compiler_mut().enter_mut(|compiler| {
@@ -556,6 +596,63 @@ impl CoverageArgs {
         Ok(report)
     }
 
+    /// Builds the coverage report of an instrumented build from the compiler's coverage maps.
+    fn prepare_instrumented(
+        settings: &CoverageSettings,
+        reporters: &[Box<dyn CoverageReporter>],
+        project_paths: &ProjectPathsConfig,
+        output: &ProjectCompileOutput,
+    ) -> Result<CoverageReport> {
+        if reporters.iter().any(|reporter| reporter.needs_source_maps()) {
+            eyre::bail!("`--instrumented` does not support the bytecode report");
+        }
+        let mut report = CoverageReport::default();
+        for (build_id, build) in output.builds() {
+            for (source_id, path) in &build.source_id_to_path {
+                let path = path.strip_prefix(&project_paths.root).unwrap_or(path);
+                report.add_source(build_id.clone(), *source_id as usize, path.to_path_buf());
+            }
+        }
+
+        let mut items_by_build = BTreeMap::<&str, (Vec<_>, Vec<_>)>::new();
+        for (path, files) in &output.output().sources.0 {
+            if path
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|ext| VYPER_EXTENSIONS.contains(&ext))
+            {
+                continue;
+            }
+            for file in files {
+                let Some(coverage) = &file.source_file.coverage else {
+                    eyre::bail!(
+                        "the compiler returned no coverage map for {}; \
+                         `--instrumented` requires a Solar version with `-Zinstrument-coverage`",
+                        path.display()
+                    );
+                };
+                if (!settings.include_libs && project_paths.has_library_ancestor(path))
+                    || (settings.exclude_tests && project_paths.is_test(path))
+                {
+                    continue;
+                }
+                let source = fs::read_to_string(project_paths.root.join(path))?;
+                let (items, counts) = items_by_build.entry(&file.build_id).or_default();
+                crate::coverage::instrumented::source_items(
+                    file.source_file.id as usize,
+                    &source,
+                    coverage,
+                    items,
+                    counts,
+                );
+            }
+        }
+        for (build_id, (items, counts)) in items_by_build {
+            report.add_instrumented_items(build_id.to_string(), items, counts);
+        }
+        Ok(report)
+    }
+
     /// Runs tests, collects coverage data and generates the final report.
     #[instrument(name = "Coverage::collect", skip_all)]
     #[allow(clippy::too_many_arguments)]
@@ -579,7 +676,7 @@ impl CoverageArgs {
                 evm_opts,
                 output,
                 &filter,
-                TestExecutionOptions::coverage(inline_config),
+                TestExecutionOptions::coverage(inline_config, settings.instrumented),
             )
             .await?;
 

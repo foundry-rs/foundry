@@ -301,6 +301,8 @@ impl From<ShowmapDomainArg> for ShowmapDomain {
 #[derive(Clone, Debug)]
 pub(crate) struct TestExecutionOptions {
     pub(crate) coverage: bool,
+    /// Whether coverage counts compiler-instrumented coverage counters.
+    pub(crate) coverage_counters: bool,
     pub(crate) decode_internal: InternalTraceMode,
     pub(crate) multi_network: MultiNetworkConfig,
     pub(crate) fuzz_input: Option<FuzzFailureReplayConfig>,
@@ -313,6 +315,7 @@ impl TestExecutionOptions {
     pub(crate) fn default_run(inline_config: Arc<InlineConfig>) -> Self {
         Self {
             coverage: false,
+            coverage_counters: false,
             decode_internal: InternalTraceMode::None,
             multi_network: MultiNetworkConfig::default(),
             fuzz_input: None,
@@ -322,8 +325,8 @@ impl TestExecutionOptions {
         }
     }
 
-    pub(crate) fn coverage(inline_config: Arc<InlineConfig>) -> Self {
-        Self { coverage: true, ..Self::default_run(inline_config) }
+    pub(crate) fn coverage(inline_config: Arc<InlineConfig>, counters: bool) -> Self {
+        Self { coverage: true, coverage_counters: counters, ..Self::default_run(inline_config) }
     }
 }
 
@@ -2207,6 +2210,7 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .set_coverage(execution.coverage)
+            .set_coverage_counters(execution.coverage_counters)
             .with_multi_network(execution.multi_network)
             .with_showmap(self.showmap_config()?)
             .with_fuzz_only(self.fuzz_only)

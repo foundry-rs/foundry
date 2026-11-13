@@ -17,7 +17,7 @@ use alloy_primitives::{
 };
 use analysis::SourceAnalysis;
 use eyre::Result;
-use foundry_compilers::artifacts::sourcemap::SourceMap;
+use foundry_compilers::artifacts::{CoverageCount, sourcemap::SourceMap};
 use semver::Version;
 use std::{
     collections::BTreeMap,
@@ -30,6 +30,7 @@ use std::{
 
 pub mod analysis;
 pub mod anchors;
+pub mod instrumented;
 
 mod edge;
 pub use edge::{
@@ -62,6 +63,9 @@ pub struct CoverageReport {
     pub bytecode_hits: HashMap<ContractId, HitMap>,
     /// The bytecode -> source mappings.
     pub source_maps: HashMap<ContractId, (SourceMap, SourceMap)>,
+    /// The counter expressions of the items of compiler-instrumented builds, by build ID and item
+    /// ID. The hit maps of these builds count counters instead of program counters.
+    counters: HashMap<String, Vec<CoverageCount>>,
 }
 
 impl CoverageReport {
@@ -92,6 +96,19 @@ impl CoverageReport {
     /// Add a [`SourceAnalysis`] to this report.
     pub fn add_analysis(&mut self, build_id: String, analysis: SourceAnalysis) {
         self.analyses.insert(build_id, analysis);
+    }
+
+    /// Adds the items of a compiler-instrumented build with the counter expression of each, as
+    /// built by [`instrumented::source_items`].
+    pub fn add_instrumented_items(
+        &mut self,
+        build_id: String,
+        items: Vec<CoverageItem>,
+        counts: Vec<CoverageCount>,
+    ) {
+        debug_assert_eq!(items.len(), counts.len());
+        self.analyses.insert(build_id.clone(), SourceAnalysis::from_items(items));
+        self.counters.insert(build_id, counts);
     }
 
     /// Add anchors to this report.
@@ -169,6 +186,18 @@ impl CoverageReport {
         hit_map: &HitMap,
         is_deployed_code: bool,
     ) -> Result<()> {
+        if let Some(counts) = self.counters.get(&contract_id.build_id) {
+            let items = self
+                .analyses
+                .get_mut(&contract_id.build_id)
+                .expect("instrumented build has items")
+                .all_items_mut();
+            for (item, count) in items.iter_mut().zip(counts) {
+                item.hits = item.hits.saturating_add(counter_hits(count, hit_map));
+            }
+            return Ok(());
+        }
+
         // Add bytecode level hits.
         match self.bytecode_hits.get_mut(contract_id) {
             Some(hits) => hits.merge(hit_map),
@@ -211,6 +240,15 @@ impl CoverageReport {
         hit_map: &HitMap,
         is_deployed_code: bool,
     ) -> Vec<(&'a CoverageItem, u32)> {
+        if let Some(counts) = self.counters.get(&contract_id.build_id) {
+            let items = self.analyses[&contract_id.build_id].all_items();
+            return items
+                .iter()
+                .zip(counts)
+                .map(|(item, count)| (item, counter_hits(count, hit_map)))
+                .filter(|&(_, hits)| hits > 0)
+                .collect();
+        }
         let Some(anchors) = self.anchors.get(contract_id) else { return Vec::new() };
         let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
 
@@ -257,6 +295,12 @@ impl CoverageReport {
             !paths.is_empty()
         });
     }
+}
+
+/// Evaluates a counter expression with the counter hits of a hit map.
+fn counter_hits(count: &CoverageCount, hit_map: &HitMap) -> u32 {
+    let hits = count.eval(|counter| hit_map.get(counter).map_or(0, |hits| hits.get().into()));
+    u32::try_from(hits).unwrap_or(u32::MAX)
 }
 
 /// A collection of [`HitMap`]s.

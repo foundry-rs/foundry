@@ -704,6 +704,20 @@ impl SourceAnalysis {
         })
     }
 
+    /// Creates an analysis of the given items, ordered by source ID.
+    pub(crate) fn from_items(all_items: Vec<CoverageItem>) -> Self {
+        let len = all_items.iter().map(|item| item.loc.source_id + 1).max().unwrap_or(0);
+        let mut map = vec![(u32::MAX, 0); len];
+        for (index, item) in all_items.iter().enumerate() {
+            let (offset, len) = &mut map[item.loc.source_id];
+            if *offset == u32::MAX {
+                *offset = index as u32;
+            }
+            *len += 1;
+        }
+        Self { all_items, map, ..Default::default() }
+    }
+
     pub(crate) fn is_ternary_branch(&self, source_id: u32, branch_id: u32) -> bool {
         self.ternary_branches.contains(&(source_id, branch_id))
     }

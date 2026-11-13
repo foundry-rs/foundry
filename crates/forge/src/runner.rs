@@ -73,7 +73,10 @@ use foundry_evm::{
         },
         strategies::EvmFuzzState,
     },
-    inspectors::{CmpOperands, EdgeCovConfig, EdgeCovKind, cheatcodes::Vm::AccountAccess},
+    inspectors::{
+        CmpOperands, EdgeCovConfig, EdgeCovKind, LineCoverageCollector,
+        cheatcodes::Vm::AccountAccess,
+    },
     traces::{TraceKind, TraceRequirements, load_contracts},
 };
 use foundry_evm_networks::NetworkVariant;
@@ -5456,7 +5459,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.clone_executor()
         };
         let domain = showmap.domain;
-        executor.inspector_mut().collect_line_coverage(domain.includes_evm());
+        executor
+            .inspector_mut()
+            .collect_line_coverage(domain.includes_evm().then(LineCoverageCollector::default));
         executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
 
         // Fold test identity into the approach dir so each `<approach>/` contains

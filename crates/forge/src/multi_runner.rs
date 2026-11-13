@@ -33,7 +33,7 @@ use foundry_evm::{
         BaseCounterExample, BasicTxDetails,
         strategies::{EnumBounds, LiteralsDictionary},
     },
-    inspectors::{CheatsConfig, EdgeIndexMap},
+    inspectors::{CheatsConfig, EdgeIndexMap, LineCoverageCollector},
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements},
 };
@@ -488,6 +488,9 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
 
     /// Whether to collect line coverage info
     pub line_coverage: bool,
+    /// Whether line coverage counts compiler-instrumented coverage counters instead of program
+    /// counters.
+    pub coverage_counters: bool,
     /// Whether to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
@@ -557,7 +560,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             cheatcodes.core.config = Arc::new(config);
         }
         inspector.tracing_requirements(self.trace_requirements());
-        inspector.collect_line_coverage(self.line_coverage);
+        inspector.collect_line_coverage(self.line_coverage_collector());
         inspector.enable_isolation(self.isolation);
         inspector.enable_edgecov_opcode(self.edgecov_opcode());
         inspector.fork_prefetch(self.evm_opts.fork_prefetch);
@@ -590,7 +593,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
                     .logs(self.config.live_logs)
                     .cheatcodes(cheats_config)
                     .trace_requirements(self.trace_requirements())
-                    .line_coverage(self.line_coverage)
+                    .line_coverage(self.line_coverage_collector())
                     .enable_isolation(self.isolation)
                     .fork_prefetch(self.evm_opts.fork_prefetch)
                     .create2_deployer(self.evm_opts.create2_deployer)
@@ -604,11 +607,24 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         executor
     }
 
-    /// Whether test executors run the compiler-instrumented `EDGECOV` and `CMPLOG` opcodes, so
-    /// that instrumented artifacts also deploy and run outside coverage-guided campaigns.
+    /// Whether test executors run the compiler-instrumented `EDGECOV`, `CMPLOG`, and `COVERAGE`
+    /// opcodes, so that instrumented artifacts also deploy and run outside coverage-guided
+    /// campaigns.
     fn edgecov_opcode(&self) -> bool {
-        self.config.fuzz.corpus.collect_instrumented_edges()
+        self.coverage_counters
+            || self.config.fuzz.corpus.collect_instrumented_edges()
             || self.config.invariant.corpus.collect_instrumented_edges()
+    }
+
+    /// Returns the line coverage collector, if line coverage is collected.
+    fn line_coverage_collector(&self) -> Option<LineCoverageCollector> {
+        self.line_coverage.then(|| {
+            if self.coverage_counters {
+                LineCoverageCollector::counters()
+            } else {
+                LineCoverageCollector::default()
+            }
+        })
     }
 
     fn trace_requirements(&self) -> TraceRequirements {
@@ -635,6 +651,8 @@ pub struct MultiContractRunnerBuilder {
     pub inline_config: Arc<InlineConfig>,
     /// Whether or not to collect line coverage info
     pub line_coverage: bool,
+    /// Whether line coverage counts compiler-instrumented coverage counters.
+    pub coverage_counters: bool,
     /// Whether or not to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
@@ -681,6 +699,7 @@ impl MultiContractRunnerBuilder {
             sender: None,
             initial_balance: U256::ZERO,
             line_coverage: false,
+            coverage_counters: false,
             debug: false,
             isolation: false,
             decode_internal: Default::default(),
@@ -741,6 +760,13 @@ impl MultiContractRunnerBuilder {
 
     pub const fn set_coverage(mut self, enable: bool) -> Self {
         self.line_coverage = enable;
+        self
+    }
+
+    /// Sets whether line coverage counts compiler-instrumented coverage counters instead of
+    /// program counters.
+    pub const fn set_coverage_counters(mut self, enable: bool) -> Self {
+        self.coverage_counters = enable;
         self
     }
 
@@ -993,6 +1019,7 @@ impl MultiContractRunnerBuilder {
                 fork_hardfork,
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
+                coverage_counters: self.coverage_counters,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 record_all_steps: self.record_all_steps,
