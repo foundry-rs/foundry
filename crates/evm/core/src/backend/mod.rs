@@ -1233,8 +1233,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Prefetches the remote state a call is about to read, if the active context is an RPC fork.
     ///
     /// A `top_level` call is simulated with the local state that differs from the remote, such as
-    /// the test contract, as overrides. A nested call is simulated as is. A `precompile` of the
-    /// running EVM is not skipped for lacking code on the remote.
+    /// the test contract, as overrides. A nested call is simulated as is.
     pub fn prefetch_call(
         &self,
         caller: Address,
@@ -1242,11 +1241,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         value: U256,
         input: Bytes,
         top_level: bool,
-        precompile: bool,
     ) {
         let context = self.lifecycle.active();
-        let local = context.cache.as_deref();
-        context.db.prefetch_call(caller, target, value, input, local, top_level, precompile);
+        context.db.prefetch_call(caller, target, value, input, context.cache.as_deref(), top_level);
     }
 
     // ---- Snapshots ----

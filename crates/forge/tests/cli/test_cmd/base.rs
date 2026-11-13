@@ -7,7 +7,7 @@ use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
 use base_common_consensus::BaseTxEnvelope;
 use foundry_evm::hardforks::BaseUpgrade;
-use foundry_test_utils::{rpc::spawn_rpc_proxy_recording_method, util::OutputExt};
+use foundry_test_utils::util::OutputExt;
 use serde_json::json;
 
 #[forgetest]
@@ -731,62 +731,4 @@ Ran 1 test for test/BaseForkIsolatedReplayFees.t.sol:BaseForkIsolatedReplayFeesT
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-}
-
-#[forgetest]
-async fn base_fork_prefetch_simulates_code_less_precompiles(prj: _, cmd: _) {
-    const NONCE_MANAGER: &str = "0x813000000000000000000000000000000000aa01";
-    let (_api, handle) =
-        spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()))).await;
-    let (rpc, simulations) =
-        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_createAccessList").await;
-
-    prj.add_test(
-        "BaseForkPrefetch.t.sol",
-        r#"
-interface INonceManager {
-    function getNonce(address account, uint256 nonceKey) external view returns (uint64);
-}
-
-contract BaseForkPrefetchTest {
-    INonceManager constant NONCE_MANAGER =
-        INonceManager(0x813000000000000000000000000000000000aa01);
-
-    function test_get_nonce() public view {
-        // Loads the nonce manager from the endpoint, which has no code there.
-        require(address(NONCE_MANAGER).code.length == 0, "code");
-        require(NONCE_MANAGER.getNonce(address(this), 1) == 0, "nonce");
-    }
-}
-"#,
-    );
-
-    cmd.args([
-        "test",
-        "--network",
-        "base",
-        "--hardfork",
-        "base:Cobalt",
-        "--fork-url",
-        &rpc,
-        "--fork-prefetch",
-        "--no-storage-caching",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-...
-Ran 1 test for test/BaseForkPrefetch.t.sol:BaseForkPrefetchTest
-[PASS] test_get_nonce() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
-
-    // The nonce manager runs natively, so its call is simulated although it has no code.
-    let simulations = simulations.lock().unwrap();
-    assert!(
-        simulations.iter().any(|params| params[0]["to"]
-            .as_str()
-            .is_some_and(|to| to.eq_ignore_ascii_case(NONCE_MANAGER))),
-        "{simulations:?}"
-    );
 }

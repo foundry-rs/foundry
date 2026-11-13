@@ -220,11 +220,9 @@ pub(crate) fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverr
 
 /// Simulates a call on the fork's endpoint and prefetches the state it touches, see
 /// [`SharedBackend::prefetch_access_list`]. With `overrides`, the `local` state over the fork goes
-/// along as overrides; without, a call into an account without code on the endpoint, unless it is a
-/// native `precompile` of the running EVM above `P256VERIFY`, or into one the context holds but the
-/// fork never loaded from it, is skipped. Calls to precompiles, up to `P256VERIFY` at `0x100`, the
-/// cheatcode contract and the console are skipped.
-#[allow(clippy::too_many_arguments)]
+/// along as overrides; without, a call into an account without code on the endpoint, or one the
+/// context holds but the fork never loaded from it, is skipped. Calls to precompiles, up to
+/// `P256VERIFY` at `0x100`, the cheatcode contract and the console are skipped.
 pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
     backend: &SharedBackend<N, B>,
     caller: Address,
@@ -233,7 +231,6 @@ pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
     input: Bytes,
     local: Option<&Cache>,
     overrides: bool,
-    precompile: bool,
 ) {
     if target <= P256_VERIFY || target == CHEATCODE_ADDRESS || target == HARDHAT_CONSOLE_ADDRESS {
         return;
@@ -253,12 +250,11 @@ pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
     }
     let overrides = local.filter(|_| overrides).and_then(|local| state_override(&remote, local));
     // Without overrides, the endpoint runs its own code at the target, so a call is skipped when
-    // the target has no code there, such as an account created on the fork, unless it is a
-    // precompile, which runs without code, or when the context holds the target but never loaded
-    // it from the endpoint, such as an account created before the fork was selected.
+    // the target has no code there, such as an account created on the fork, or when the context
+    // holds the target but never loaded it from the endpoint, such as an account created before
+    // the fork was selected.
     if overrides.is_none()
-        && remote_code
-            .map_or(local_account.is_some(), |remote| remote == KECCAK256_EMPTY && !precompile)
+        && remote_code.map_or(local_account.is_some(), |remote| remote == KECCAK256_EMPTY)
     {
         return;
     }
