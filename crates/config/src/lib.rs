@@ -234,10 +234,14 @@ pub struct Config {
     pub out: PathBuf,
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
-    /// Remappings to use for this repo
+    /// Remappings to use for this repo.
     #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
+    ///
+    /// Defaults to `true`. Dependency configuration remappings apply only within their owning
+    /// dependency. To use a dependency's custom alias from this project, declare it here
+    /// explicitly.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
     ///

@@ -1003,12 +1003,11 @@ fn can_detect_lib_foundry_toml(prj: _, cmd: _) {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            // default
+            // Dependency declarations apply only within their owner.
+            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
+            // Global package entry points remain available.
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
-            // remapping is local to the lib
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
-            // global
-            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -1026,14 +1025,13 @@ fn can_detect_lib_foundry_toml(prj: _, cmd: _) {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            // local to the lib
+            "lib/nested-lib/lib/another-lib/:nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/"
+                .parse()
+                .unwrap(),
+            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "another-lib/=lib/nested-lib/lib/another-lib/src/".parse().unwrap(),
-            // global
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
-            // remappings local to the lib
-            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
-            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -1044,14 +1042,13 @@ fn can_detect_lib_foundry_toml(prj: _, cmd: _) {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            // local to the lib
+            "lib/nested-lib/lib/another-lib/:nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/"
+                .parse()
+                .unwrap(),
+            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
-            // global
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
-            // remappings local to the lib
-            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
-            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -1063,14 +1060,13 @@ fn can_detect_lib_foundry_toml(prj: _, cmd: _) {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            // local to the lib
+            "lib/nested-lib/lib/another-lib/:nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/"
+                .parse()
+                .unwrap(),
+            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
-            // global
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
-            // remappings local to the lib
-            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
-            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 }
@@ -1099,6 +1095,18 @@ fn can_prioritise_closer_lib_remappings(prj: _, cmd: _) {
             "forge-std/=lib/forge-std/src/".parse().unwrap()
         ]
     );
+
+    // A missing nested checkout must use the hoisted package installed by the root project.
+    prj.add_lib("forge-std/src/HoistedMarker.sol", "contract HoistedMarker {}\n");
+    prj.add_lib(
+        "dep1/src/Dep.sol",
+        "import {HoistedMarker} from \"forge-std/HoistedMarker.sol\"; contract Dep is HoistedMarker {}\n",
+    );
+    prj.add_source(
+        "UsesDep.sol",
+        "import {Dep} from \"dep1/Dep.sol\"; contract UsesDep is Dep {}\n",
+    );
+    cmd.forge_fuse().arg("build").assert_success();
 }
 
 // Test that remappings within root of the project have priority over remappings of sub-projects.
@@ -1151,13 +1159,15 @@ fn can_prioritise_project_remappings(prj: _, cmd: _) {
 @utils/libraries/Contract.sol=src/Contract.sol
 @utils/=src/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/
-@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
 dep1/=lib/dep1/src/
 forge-std/=lib/forge-std/src/
+lib/dep1/:@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
 
 "#]])
         .stderr_eq(str![[r#"
 Global:
+
+Context: lib/dep1/
 
 
 "#]]);
@@ -1425,7 +1435,7 @@ lib/a/:shared/=lib/a/lib/shared/custom-source/
 lib/b/:shared/=lib/b/lib/shared/src/
 a/=lib/a/src/
 b/=lib/b/src/
-shared/=lib/b/lib/shared/src/
+shared/=lib/a/lib/shared/custom-source/
 
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
@@ -1497,9 +1507,20 @@ fn explicit_context_precedes_nested_auto_remapping(prj: _, cmd: _) {
 fn slashless_context_is_a_lexical_prefix(prj: _, cmd: _) {
     let abc = prj.root().join("lib/abc");
     let shared = abc.join("lib/shared/src");
-    pretty_err(&abc, fs::create_dir_all(abc.join("src")));
+    pretty_err(&abc, fs::create_dir_all(abc.join("src/pinned")));
     pretty_err(&shared, fs::create_dir_all(&shared));
     pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/override")));
+    pretty_err(
+        &abc,
+        fs::write(
+            abc.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"shared/=src/pinned/\"]\n",
+        ),
+    );
+    pretty_err(
+        &abc,
+        fs::write(abc.join("src/pinned/Version.sol"), "contract DependencySelected {}\n"),
+    );
     pretty_err(
         prj.root(),
         fs::write(prj.root().join("src/override/Version.sol"), "contract Selected {}\n"),
@@ -1561,13 +1582,13 @@ fn nested_auto_remapping_preserves_declared_precedence(prj: _, cmd: _) {
         ),
     );
     pretty_err(&shared_x, fs::write(shared_x.join("src/Version.sol"), "contract VersionX {}\n"));
-    prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"shared/Marker.sol\"; contract UsesA is A, Marker {}\n");
+    prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"a/pinned/Marker.sol\"; contract UsesA is A, Marker {}\n");
 
     cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
 lib/a/lib/x/:shared/=lib/a/lib/x/lib/shared/src/
 lib/a/:shared/=lib/a/src/pinned/
 a/=lib/a/src/
-shared/=lib/a/src/pinned/
+shared/=lib/a/lib/shared/src/
 x/=lib/a/lib/x/src/
 
 "#]]);
@@ -3681,4 +3702,141 @@ optimizer_runs = 456
             str![[r#"{ "optimizer_runs": 456, "...": "{...}" }"#]],
         )
         .stderr_eq(str![""]);
+}
+
+#[forgetest]
+fn dependency_remappings_only_affect_their_owner(prj: _, cmd: _) {
+    for (path, name, value) in [
+        ("lib/victim/src/Directory.sol", "DirectoryValue", 1),
+        ("lib/helper/src/alternate/Directory.sol", "DirectoryValue", 2),
+        ("lib/victim/src/File.sol", "FileValue", 3),
+        ("lib/helper/src/File.sol", "FileValue", 4),
+    ] {
+        let path = prj.root().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            format!(
+                "pragma solidity >=0.8.0; library {name} {{ function value() internal pure returns (uint256) {{ return {value}; }} }}\n"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        prj.root().join("lib/helper/foundry.toml"),
+        "[profile.default]\nremappings = [\"victim/=src/alternate/\"]\n",
+    )
+    .unwrap();
+    fs::write(prj.root().join("lib/helper/remappings.txt"), "victim/File.sol=src/File.sol\n")
+        .unwrap();
+
+    for (path, name) in [
+        ("src/Root.sol", "Root"),
+        ("lib/helper/src/Owner.sol", "Owner"),
+        ("lib/helper-other/src/Sibling.sol", "Sibling"),
+    ] {
+        let path = prj.root().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            format!(
+                r#"
+pragma solidity >=0.8.0;
+import {{DirectoryValue}} from "victim/Directory.sol";
+import {{FileValue}} from "victim/File.sol";
+contract {name} {{
+    function value() public pure returns (uint256) {{
+        return DirectoryValue.value() + FileValue.value();
+    }}
+}}
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    // Root aliases remain authoritative inside dependencies across all configuration providers.
+    let trusted_remapping = "victim/=lib/victim/src/";
+    for source in ["auto", "toml", "file", "env", "cli"] {
+        prj.update_config(|config| {
+            config.remappings.clear();
+            if source == "toml" {
+                config.remappings.push(Remapping::from_str(trusted_remapping).unwrap().into());
+            }
+        });
+        let owner_value = if source == "auto" { 6 } else { 4 };
+        prj.add_test(
+            "RemappingScope.t.sol",
+            &format!(
+                r#"
+import {{Root}} from "../src/Root.sol";
+import {{Owner}} from "helper/Owner.sol";
+import {{Sibling}} from "helper-other/Sibling.sol";
+contract RemappingScopeTest {{
+    function testRemappingScope() public {{
+        assert(new Root().value() == 4);
+        assert(new Owner().value() == {owner_value});
+        assert(new Sibling().value() == 4);
+    }}
+}}
+"#
+            ),
+        );
+        let command = cmd.forge_fuse();
+        command.args(["test", "--match-contract", "RemappingScopeTest"]);
+        if source == "cli" {
+            command.args(["--remappings", trusted_remapping]);
+        } else if source == "env" {
+            command.env("FOUNDRY_REMAPPINGS", trusted_remapping);
+        } else if source == "file" {
+            fs::write(prj.root().join("remappings.txt"), trusted_remapping).unwrap();
+        }
+        command.assert_success();
+        if source == "file" {
+            fs::remove_file(prj.root().join("remappings.txt")).unwrap();
+        }
+    }
+}
+
+#[forgetest]
+fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) {
+    prj.add_source("Base.sol", "contract RootBase {}\n");
+    prj.add_source(
+        "Root.sol",
+        "import {RootBase} from \"src/Base.sol\"; import {Good} from \"good/Good.sol\"; contract Root is RootBase, Good {}\n",
+    );
+    prj.add_lib(
+        "good/src/Good.sol",
+        "import {OnlyGood} from \"private-alias/OnlyGood.sol\"; contract Good is OnlyGood {}\n",
+    );
+    prj.add_lib("good/src/internal/OnlyGood.sol", "contract OnlyGood {}\n");
+    fs::write(
+        prj.root().join("lib/good/foundry.toml"),
+        "[profile.default]\nremappings = [\"private-alias/=src/internal/\"]\n",
+    )
+    .unwrap();
+
+    for owner in ["a-helper", "a-helper/lib/nested"] {
+        prj.add_lib(&format!("{owner}/src/Substitute.sol"), "contract AttackerBase {}\n");
+        prj.add_lib(&format!("{owner}/src/OnlyGood.sol"), "contract WrongOwner {}\n");
+    }
+    for (owner, root_alias) in [
+        ("a-helper", "src/Base.sol=src/Substitute.sol"),
+        ("a-helper", "../../src/:src/Base.sol=src/Substitute.sol"),
+        ("a-helper/lib/nested", "src/Base.sol=src/Substitute.sol"),
+    ] {
+        for dependency in ["a-helper", "a-helper/lib/nested"] {
+            fs::write(
+                prj.root().join(format!("lib/{dependency}/foundry.toml")),
+                "[profile.default]\n",
+            )
+            .unwrap();
+        }
+        fs::write(
+            prj.root().join(format!("lib/{owner}/foundry.toml")),
+            format!("[profile.default]\nremappings = [{root_alias:?}, \"private-alias/=src/\"]\n"),
+        )
+        .unwrap();
+        cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    }
 }
