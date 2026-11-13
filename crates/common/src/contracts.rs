@@ -279,7 +279,7 @@ impl ContractsByArtifact {
         })
     }
 
-    /// Finds the artifact whose creation code starts `code`.
+    /// Finds the artifact whose creation code `code` starts with.
     /// Library addresses are skipped, so unlinked artifacts match.
     /// If nothing matches, metadata hashes are skipped too, and only one artifact may match.
     pub fn find_by_creation_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
@@ -427,7 +427,7 @@ impl ContractsByArtifact {
         let mut partial_match = None;
         let mut exact_match = None;
         let mut ambiguous_partial = false;
-        'contracts: for (id, contract) in self.iter() {
+        for (id, contract) in self.iter() {
             let Some(deployed_bytecode) = &contract.deployed_bytecode else {
                 continue;
             };
@@ -485,52 +485,13 @@ impl ContractsByArtifact {
             // Merge ranges from independent sources before slicing between them.
             normalize_offsets(&mut ignored);
 
-            let mut left = 0;
-            for offset in ignored {
-                let right = offset.start as usize;
-
-                let matched = match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => bytes[left..right] == code[left..right],
-                    BytecodeObject::Unlinked(bytes) => {
-                        if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..right * 2]) {
-                            bytes == code[left..right]
-                        } else {
-                            false
-                        }
-                    }
-                };
-
-                if !matched {
-                    continue 'contracts;
-                }
-
-                left = right + offset.length as usize;
-            }
-
-            let is_partial = if left < code.len() {
-                match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => bytes[left..] == code[left..],
-                    BytecodeObject::Unlinked(bytes) => {
-                        if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..]) {
-                            bytes == code[left..]
-                        } else {
-                            false
-                        }
-                    }
-                }
-            } else {
-                true
-            };
-
-            if !is_partial {
+            let Some(deployed_code) = strip_bytecode_placeholders(deployed_code) else { continue };
+            if !matches_outside(&deployed_code, code, &ignored) {
                 continue;
             }
 
-            let matches_metadata = metadata_start.is_none_or(|metadata| match deployed_code {
-                BytecodeObject::Bytecode(bytes) => bytes[metadata..] == code[metadata..],
-                BytecodeObject::Unlinked(bytes) => Bytes::from_str(&bytes[metadata * 2..])
-                    .is_ok_and(|bytes| bytes == code[metadata..]),
-            });
+            let matches_metadata =
+                metadata_start.is_none_or(|metadata| deployed_code[metadata..] == code[metadata..]);
 
             if matches_metadata {
                 if unique && exact_match.is_some() {
