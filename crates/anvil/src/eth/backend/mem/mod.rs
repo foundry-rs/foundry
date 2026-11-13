@@ -9854,6 +9854,8 @@ impl Backend<FoundryNetwork> {
                         ));
                     }
                     let is_ethereum_request = classified_request.is_ethereum();
+                    let defaults_chain_id = is_ethereum_request
+                        || matches!(classified_request, FoundryTransactionRequest::Celo(_));
                     let mut parsed_request = self.is_tempo().then_some(classified_request);
                     if is_ethereum_request {
                         request.populate_blob_hashes();
@@ -10084,6 +10086,12 @@ impl Backend<FoundryNetwork> {
                     } else {
                         if request.to.is_none() {
                             request.to = Some(TxKind::Create);
+                        }
+                        // Simulated transactions default to the node's chain id.
+                        if defaults_chain_id
+                            && request.preferred_type() != alloy_consensus::TxType::Legacy
+                        {
+                            request.chain_id.get_or_insert(evm_env.cfg_env.chain_id);
                         }
                         let mut request = self.parse_transaction_request(request)?;
                         request.prep_for_submission();
