@@ -132,7 +132,8 @@ struct AnchorIndex<'a> {
     reverting_runs: Vec<Range<usize>>,
     /// `(JUMPDEST, start of its straight-line run)` for every `JUMPDEST` that the previous
     /// instruction falls through to, ordered. A run starts after a `JUMP`, `STOP`, `RETURN`,
-    /// `REVERT`, `INVALID` or `SELFDESTRUCT`.
+    /// `REVERT`, `INVALID`, `SELFDESTRUCT`, or a `JUMPI` that can skip to something other than a
+    /// failure stub.
     fallen_into: Vec<(usize, usize)>,
     /// `(target pc, push instruction)` for every push that feeds a `JUMP` or `JUMPI`, sorted.
     jumps: Vec<(u32, usize)>,
@@ -149,25 +150,29 @@ impl<'a> AnchorIndex<'a> {
         let mut branches = Vec::new();
         let mut reverting_runs = Vec::new();
         let mut jumps = Vec::new();
-        let mut fallen_into = Vec::new();
+        // `(pc, instruction)` of every `JUMPDEST`.
+        let mut jumpdests = Vec::new();
+        // Instructions that end a straight-line run, and `(JUMPI, static target pc)` pairs.
+        let mut run_ends = Vec::new();
+        let mut conditional_jumps = Vec::new();
         let mut run_start = 0;
-        let mut straight_start = 0;
         let mut prev = opcode::STOP;
+        let mut prev_target = None;
         for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
-            if inst.opcode.get() == opcode::JUMPDEST && straight_start < ic {
-                fallen_into.push((ic, straight_start));
-            }
-            if matches!(
-                inst.opcode.get(),
+            match inst.opcode.get() {
+                opcode::JUMPDEST => jumpdests.push((pc, ic)),
+                opcode::JUMPI => conditional_jumps.push((ic, prev_target)),
                 opcode::JUMP
-                    | opcode::STOP
-                    | opcode::RETURN
-                    | opcode::REVERT
-                    | opcode::INVALID
-                    | opcode::SELFDESTRUCT
-            ) {
-                straight_start = ic + 1;
+                | opcode::STOP
+                | opcode::RETURN
+                | opcode::REVERT
+                | opcode::INVALID
+                | opcode::SELFDESTRUCT => run_ends.push(ic),
+                _ => {}
             }
+            prev_target = (opcode::PUSH1..=opcode::PUSH4)
+                .contains(&inst.opcode.get())
+                .then(|| inst.immediate.iter().fold(0, |acc, &byte| acc << 8 | byte as usize));
             match inst.opcode.get() {
                 opcode::REVERT | opcode::INVALID => {
                     reverting_runs.push(run_start..ic + 1);
@@ -201,6 +206,23 @@ impl<'a> AnchorIndex<'a> {
             }
         }
         jumps.sort_unstable();
+        // A `JUMPI` ends a run unless it can only skip to a failure stub.
+        run_ends.extend(conditional_jumps.into_iter().filter_map(|(ic, target)| {
+            let target_ic = target
+                .and_then(|target| jumpdests.binary_search_by_key(&target, |&(pc, _)| pc).ok())
+                .map(|i| jumpdests[i].1);
+            (!target_ic.is_some_and(|target| in_reverting_run(&reverting_runs, target)))
+                .then_some(ic)
+        }));
+        run_ends.sort_unstable();
+        let fallen_into = jumpdests
+            .iter()
+            .filter_map(|&(_, ic)| {
+                let run_start = run_ends.partition_point(|&end| end < ic).checked_sub(1);
+                let run_start = run_start.map_or(0, |i| run_ends[i] + 1);
+                (run_start < ic).then_some((ic, run_start))
+            })
+            .collect();
         Self { source_map, ic_pc_map, entries, branches, reverting_runs, fallen_into, jumps }
     }
 
@@ -221,10 +243,7 @@ impl<'a> AnchorIndex<'a> {
         // A revert statement itself may have only failure-path candidates, so retain the fallback.
         let instruction = candidates
             .clone()
-            .filter(|&instruction| {
-                let next = self.reverting_runs.partition_point(|run| run.end <= instruction);
-                !self.reverting_runs.get(next).is_some_and(|run| run.contains(&instruction))
-            })
+            .filter(|&instruction| !in_reverting_run(&self.reverting_runs, instruction))
             .min()
             .or_else(|| candidates.min());
         ItemAnchor::from_instruction(instruction, self.ic_pc_map, item_id, loc)
@@ -318,6 +337,12 @@ impl<'a> AnchorIndex<'a> {
         }
         anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
     }
+}
+
+/// Returns whether `instruction` is in one of the ordered, disjoint `runs`.
+fn in_reverting_run(runs: &[Range<usize>], instruction: usize) -> bool {
+    let next = runs.partition_point(|run| run.end <= instruction);
+    runs.get(next).is_some_and(|run| run.contains(&instruction))
 }
 
 /// Calculates whether `element` is entirely inside the span of `location`.
@@ -548,6 +573,52 @@ mod tests {
                 ],
                 "10:20:0;;;;;;0:100:0;;;",
                 3,
+            ),
+            // A `JUMPI` to a failure stub does not end the run, so the wrapper still falls into
+            // the body.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    13,
+                    opcode::JUMPI,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::PUSH1,
+                    0,
+                    opcode::JUMP,
+                    opcode::PUSH1,
+                    4,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                ],
+                "10:20:0;;;;;;0:100:0;;;;10:20:0;;;",
+                4,
+            ),
+            // A `JUMPI` to other code ends the run, as with `&&` and `||` join blocks, so the
+            // lowest candidate does not fall into a tail shared with other code.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    4,
+                    opcode::JUMPI,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::PUSH1,
+                    0,
+                    opcode::JUMP,
+                    opcode::PUSH1,
+                    4,
+                    opcode::JUMP,
+                ],
+                "10:20:0;;;;;;0:100:0;;;",
+                0,
             ),
             // An exact-span block that other code jumps to, as an optimizer-merged exit, is not
             // preferred when no other candidate falls through into it.
