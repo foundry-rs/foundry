@@ -11,7 +11,10 @@ use alloy_signer_local::{
     },
 };
 use alloy_sol_types::SolValue;
-use foundry_common::wallet::{derive_private_key, derive_private_key_with_language};
+use foundry_common::{
+    tempo::configurable_account::quorum,
+    wallet::{derive_private_key, derive_private_key_with_language},
+};
 use k256::{
     AffinePoint, EncodedPoint, FieldBytes, FieldElement, ProjectivePoint, Scalar,
     ecdsa::{SigningKey, hazmat},
@@ -27,11 +30,19 @@ use p256::ecdsa::{
     Signature as P256Signature, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner,
 };
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_consensus::{
     Signature as Ed25519Signature, SigningKey as Ed25519SigningKey,
     VerificationKey as Ed25519VerificationKey,
 };
-use tempo_primitives::transaction::{KeychainSignature, PrimitiveSignature, TempoSignature};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use tempo_primitives::transaction::{
+    ConfigurableAccountConfig as TempoAccountConfig, ConfigurableAccountOwner as TempoAccountOwner,
+    ConfigurableAccountSignature, KeychainSignature, MAX_CONFIGURABLE_ACCOUNT_SIGNATURES,
+    PrimitiveSignature, TempoSignature, configurable_account_digest,
+    tt_signature::{P256SignatureWithPreHash, WebAuthnSignature, derive_p256_address},
+};
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -87,6 +98,75 @@ impl Cheatcode for signKeychainAdminCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, account, digest } = self;
         sign_keychain(state, privateKey, account, digest)
+    }
+}
+
+impl Cheatcode for deriveConfigurableAccountCall {
+    fn apply_context_free(&self) -> Result {
+        let Self { config } = self;
+        let account =
+            tempo_account_config(config).derive_account().map_err(|err| fmt_err!("{err}"))?;
+        Ok(account.abi_encode())
+    }
+}
+
+impl Cheatcode for configurableAccountDigestCall {
+    fn apply_context_free(&self) -> Result {
+        let Self { account, configVersion, digest } = self;
+        Ok(configurable_account_digest(*digest, *account, *configVersion).abi_encode())
+    }
+}
+
+impl Cheatcode for encodeConfigurableAccountSignatureCall {
+    fn apply_context_free(&self) -> Result {
+        let Self { account, config, ownerSignatures } = self;
+        let approvals = ownerSignatures
+            .iter()
+            .enumerate()
+            .map(|(index, signature)| {
+                PrimitiveSignature::from_bytes(signature)
+                    .map_err(|err| fmt_err!("invalid owner signature at index {index}: {err}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let signature = ConfigurableAccountSignature::try_new(
+            *account,
+            tempo_account_config(config),
+            approvals,
+        )
+        .map_err(|err| fmt_err!("{err}"))?;
+        Ok(TempoSignature::ConfigurableAccount(signature).to_bytes().abi_encode())
+    }
+}
+
+impl Cheatcode for signConfigurableAccount_0Call {
+    fn apply_context_free(&self) -> Result {
+        let Self { privateKeys, account, config, digest } = self;
+        let keys = privateKeys
+            .iter()
+            .map(|&key| OwnerKey { keyType: OwnerKeyType::Secp256k1, privateKey: key })
+            .collect::<Vec<_>>();
+        let signature = sign_configurable_account(&keys, *account, config, *digest)?;
+        Ok(TempoSignature::ConfigurableAccount(signature).to_bytes().abi_encode())
+    }
+}
+
+impl Cheatcode for signConfigurableAccount_1Call {
+    fn apply_context_free(&self) -> Result {
+        let Self { ownerKeys, account, config, digest } = self;
+        let signature = sign_configurable_account(ownerKeys, *account, config, *digest)?;
+        Ok(TempoSignature::ConfigurableAccount(signature).to_bytes().abi_encode())
+    }
+}
+
+impl Cheatcode for signKeychainConfigurableAccountCall {
+    fn apply_context_free(&self) -> Result {
+        let Self { ownerKeys, configurableAccount, config, account, digest } = self;
+        // A configurable access key's owners approve the keychain V2 hash (TIP-1111).
+        let signing_hash = KeychainSignature::signing_hash(*digest, *account);
+        let inner =
+            sign_configurable_account(ownerKeys, *configurableAccount, config, signing_hash)?;
+        let signature = TempoSignature::Keychain(KeychainSignature::new(*account, inner));
+        Ok(signature.to_bytes().abi_encode())
     }
 }
 
@@ -388,6 +468,151 @@ fn sign_keychain(
     Ok(signature.to_bytes().abi_encode())
 }
 
+/// Converts a cheatcode configurable account config to Tempo's.
+fn tempo_account_config(config: &ConfigurableAccountConfig) -> TempoAccountConfig {
+    TempoAccountConfig {
+        salt: config.salt,
+        version: config.version,
+        threshold: config.threshold,
+        owners: config
+            .owners
+            .iter()
+            .map(|owner| TempoAccountOwner { owner: owner.owner, weight: owner.weight })
+            .collect(),
+    }
+}
+
+/// Signs `inner` as the configurable account `account` with the fewest of `keys` that form a
+/// quorum the node accepts: at most 8 approvals, sorted by owner, the last of which reaches the
+/// threshold.
+fn sign_configurable_account(
+    keys: &[OwnerKey],
+    account: Address,
+    config: &ConfigurableAccountConfig,
+    inner: B256,
+) -> Result<ConfigurableAccountSignature> {
+    let config = tempo_account_config(config);
+    // Owner lookups below assume a valid, sorted owner list.
+    config.validate_for_account(account).map_err(|err| fmt_err!("{err}"))?;
+    // An unchanged account still has its initial config, which must derive its address.
+    if config.version == 0 {
+        let derived = config.derive_account().map_err(|err| fmt_err!("{err}"))?;
+        ensure!(
+            derived == account,
+            "configurable account config with version 0 derives {derived}, not {account}"
+        );
+    }
+    let mut by_owner = BTreeMap::new();
+    for key in keys {
+        let owner = owner_key_address(key)?;
+        ensure!(
+            config.owner_weight(owner).is_some(),
+            "{owner} is not an owner of configurable account {account}"
+        );
+        by_owner.entry(owner).or_insert(key);
+    }
+
+    let owners = by_owner
+        .keys()
+        .map(|&owner| TempoAccountOwner {
+            owner,
+            weight: config.owner_weight(owner).unwrap_or_default(),
+        })
+        .collect::<Vec<_>>();
+    let selected = quorum(&owners, config.threshold, false);
+    let threshold = u16::from(config.threshold);
+    if selected.is_empty() {
+        let weight = owners.iter().map(|owner| u16::from(owner.weight)).sum::<u16>();
+        ensure!(
+            weight < threshold,
+            "no {MAX_CONFIGURABLE_ACCOUNT_SIGNATURES} of the owner keys reach the threshold \
+             {threshold} of configurable account {account}"
+        );
+        bail!(
+            "owner keys reach weight {weight}, but configurable account {account} requires \
+             {threshold}"
+        );
+    }
+
+    let digest = configurable_account_digest(inner, account, config.version);
+    let approvals = selected
+        .iter()
+        .map(|owner| sign_owner_approval(by_owner[owner], &digest))
+        .collect::<Result<Vec<_>>>()?;
+    ConfigurableAccountSignature::try_new(account, config, approvals)
+        .map_err(|err| fmt_err!("{err}"))
+}
+
+/// Returns the owner address of `key`.
+fn owner_key_address(key: &OwnerKey) -> Result<Address> {
+    match key.keyType {
+        OwnerKeyType::Secp256k1 => Ok(parse_wallet(&key.privateKey)?.address()),
+        OwnerKeyType::P256 | OwnerKeyType::WebAuthn => {
+            let (x, y) = p256_public_key(&parse_private_key_p256(&key.privateKey)?);
+            Ok(derive_p256_address(&x, &y))
+        }
+        _ => bail!("invalid owner key type"),
+    }
+}
+
+/// Returns the affine coordinates of a P-256 key's public key.
+fn p256_public_key(key: &P256SigningKey) -> (B256, B256) {
+    let point = key.verifying_key().to_encoded_point(false);
+    (B256::from_slice(point.x().unwrap()), B256::from_slice(point.y().unwrap()))
+}
+
+/// Signs `digest` with an owner key as a Tempo primitive signature.
+fn sign_owner_approval(key: &OwnerKey, digest: &B256) -> Result<PrimitiveSignature> {
+    let sign_low_s = |key: &P256SigningKey, message: &[u8]| -> Result<(B256, B256)> {
+        let signature: P256Signature = key.sign_prehash(message)?;
+        // Tempo only accepts low-s P-256 signatures.
+        let signature = signature.normalize_s().unwrap_or(signature);
+        let (r, s) = signature.split_bytes();
+        Ok((B256::from_slice(&r), B256::from_slice(&s)))
+    };
+    match key.keyType {
+        OwnerKeyType::Secp256k1 => {
+            Ok(PrimitiveSignature::Secp256k1(sign(&key.privateKey, digest)?))
+        }
+        OwnerKeyType::P256 => {
+            let signing_key = parse_private_key_p256(&key.privateKey)?;
+            let (r, s) = sign_low_s(&signing_key, digest.as_slice())?;
+            let (pub_key_x, pub_key_y) = p256_public_key(&signing_key);
+            Ok(PrimitiveSignature::P256(P256SignatureWithPreHash {
+                r,
+                s,
+                pub_key_x,
+                pub_key_y,
+                pre_hash: false,
+            }))
+        }
+        OwnerKeyType::WebAuthn => {
+            let signing_key = parse_private_key_p256(&key.privateKey)?;
+            // An assertion for the RP ID `localhost` with the user present and verified flags.
+            let mut webauthn_data = Sha256::digest(b"localhost").to_vec();
+            webauthn_data.extend_from_slice(&[0x05, 0, 0, 0, 0]);
+            let client_data = format!(
+                r#"{{"type":"webauthn.get","challenge":"{}","origin":"http://localhost","crossOrigin":false}}"#,
+                URL_SAFE_NO_PAD.encode(digest)
+            );
+            let message = Sha256::new()
+                .chain_update(&webauthn_data)
+                .chain_update(Sha256::digest(&client_data));
+            let (r, s) = sign_low_s(&signing_key, &message.finalize())?;
+            let (pub_key_x, pub_key_y) = p256_public_key(&signing_key);
+            webauthn_data.extend_from_slice(client_data.as_bytes());
+            Ok(PrimitiveSignature::WebAuthn(WebAuthnSignature {
+                r,
+                s,
+                pub_key_x,
+                pub_key_y,
+                webauthn_data: webauthn_data.into(),
+            }))
+        }
+        _ => bail!("invalid owner key type"),
+    }
+}
+
 /// Signs `digest` on secp256k1 using a user-supplied ephemeral nonce `k` (no RFC6979).
 /// - `private_key` and `nonce` must be in (0, n)
 /// - `digest` is a 32-byte prehash.
@@ -475,6 +700,7 @@ fn sign_with_wallet(
 ) -> Result<alloy_primitives::Signature> {
     let mut wallets = state.wallets().inner.lock();
     let maybe_provided_sender = wallets.provided_sender;
+    let sender_owner = wallets.sender_owner;
     let signers = wallets.multi_wallet.signers()?;
     if signers.is_empty() {
         bail!("no wallets available");
@@ -483,7 +709,7 @@ fn sign_with_wallet(
     let signer = if let Some(signer) = signer {
         signer
     } else if let Some(provided_sender) = maybe_provided_sender {
-        provided_sender
+        sender_owner.unwrap_or(provided_sender)
     } else if signers.len() == 1 {
         *signers.keys().next().unwrap()
     } else {
@@ -722,22 +948,22 @@ fn derive_wallets<W: Wordlist>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{FixedBytes, LogData, hex::FromHex};
+    use alloy_primitives::{Bytes, FixedBytes, LogData, hex::FromHex};
     use alloy_sol_types::SolCall;
+    use evm2::evm::{AccountInfo, StateCheckpoint};
     use k256::{Secp256k1, elliptic_curve::Curve};
     use p256::ecdsa::{VerifyingKey, signature::hazmat::PrehashVerifier};
-    use revm::{
-        context::journaled_state::JournalCheckpoint,
-        state::{AccountInfo, Bytecode},
-    };
-    use tempo_contracts::precompiles::{IAccountKeychain, ISignatureVerifier};
+    use tempo_contracts::precompiles::ISignatureVerifier;
     use tempo_hardfork::TempoHardfork;
     use tempo_precompiles::{
         Precompile,
-        account_keychain::{AccountKeychain, KeyRestrictions, SignatureType},
+        account_keychain::{AccountKeychain, IAccountKeychain, KeyRestrictions, SignatureType},
         error::Result as PrecompileResult,
         signature_verifier::SignatureVerifier,
-        storage::{PrecompileStorageProvider, StorageCtx, hashmap::HashMapStorageProvider},
+        storage::{
+            ConfigCommitmentWriteGas, PrecompileStorageProvider, StorageCtx,
+            hashmap::HashMapStorageProvider,
+        },
     };
     use tempo_primitives::TempoBlockEnv;
 
@@ -749,13 +975,13 @@ mod tests {
 
     impl TimestampedStorage {
         fn new(chain_id: u64, spec: TempoHardfork, timestamp: u64) -> Self {
-            let mut block_env = TempoBlockEnv::default();
-            block_env.inner.timestamp = U256::from(timestamp);
+            let block_env =
+                TempoBlockEnv { timestamp: U256::from(timestamp), ..Default::default() };
             Self { inner: HashMapStorageProvider::new_with_spec(chain_id, spec), block_env }
         }
 
         fn set_timestamp(&mut self, timestamp: u64) {
-            self.block_env.inner.timestamp = U256::from(timestamp);
+            self.block_env.timestamp = U256::from(timestamp);
         }
     }
 
@@ -768,7 +994,7 @@ mod tests {
             &self.block_env
         }
 
-        fn set_code(&mut self, address: Address, code: Bytecode) -> PrecompileResult<()> {
+        fn set_code(&mut self, address: Address, code: Bytes) -> PrecompileResult<()> {
             self.inner.set_code(address, code)
         }
 
@@ -780,8 +1006,12 @@ mod tests {
             self.inner.with_account_info(address, f)
         }
 
-        fn account_code(&mut self, address: Address) -> PrecompileResult<(B256, Bytecode)> {
-            self.inner.account_code(address)
+        fn with_warm_caller_info(
+            &mut self,
+            address: Address,
+            f: &mut dyn FnMut(&AccountInfo),
+        ) -> PrecompileResult<()> {
+            self.inner.with_warm_caller_info(address, f)
         }
 
         fn sload(&mut self, address: Address, key: U256) -> PrecompileResult<U256> {
@@ -848,20 +1078,33 @@ mod tests {
             self.inner.is_static()
         }
 
-        fn checkpoint(&mut self) -> JournalCheckpoint {
+        fn checkpoint(&mut self) -> StateCheckpoint {
             self.inner.checkpoint()
         }
 
-        fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) {
+        fn checkpoint_commit(&mut self, checkpoint: StateCheckpoint) {
             self.inner.checkpoint_commit(checkpoint)
         }
 
-        fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
+        fn checkpoint_revert(&mut self, checkpoint: StateCheckpoint) {
             self.inner.checkpoint_revert(checkpoint)
         }
 
         fn set_tip1060_storage_credits(&mut self, enabled: bool) {
             self.inner.set_tip1060_storage_credits(enabled)
+        }
+
+        fn config_commitment(&mut self, address: Address) -> PrecompileResult<B256> {
+            self.inner.config_commitment(address)
+        }
+
+        fn set_config_commitment(
+            &mut self,
+            address: Address,
+            commitment: B256,
+            gas: ConfigCommitmentWriteGas,
+        ) -> PrecompileResult<()> {
+            self.inner.set_config_commitment(address, commitment, gas)
         }
     }
 
@@ -1117,8 +1360,7 @@ mod tests {
                 .abi_encode();
 
         let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
-        assert!(!output.is_revert(), "verifyKeychain reverted: {:?}", output.bytes);
-        ISignatureVerifier::verifyKeychainCall::abi_decode_returns(&output.bytes).unwrap()
+        ISignatureVerifier::verifyKeychainCall::abi_decode_returns(output.bytes()).unwrap()
     }
 
     fn verify_keychain_admin(account: Address, hash: B256, signature: Vec<u8>) -> bool {
@@ -1130,8 +1372,7 @@ mod tests {
         .abi_encode();
 
         let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
-        assert!(!output.is_revert(), "verifyKeychainAdmin reverted: {:?}", output.bytes);
-        ISignatureVerifier::verifyKeychainAdminCall::abi_decode_returns(&output.bytes).unwrap()
+        ISignatureVerifier::verifyKeychainAdminCall::abi_decode_returns(output.bytes()).unwrap()
     }
 
     fn assert_keychain_signature_reverts(account: Address, hash: B256, signature: Vec<u8>) {
@@ -1139,8 +1380,11 @@ mod tests {
             ISignatureVerifier::verifyKeychainCall { account, hash, signature: signature.into() }
                 .abi_encode();
 
-        let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
-        assert!(output.is_revert(), "malformed keychain signature should revert");
+        let output = SignatureVerifier::new().call(&calldata, Address::ZERO);
+        assert!(
+            matches!(output, Err(evm2::precompiles::PrecompileError::Revert(_))),
+            "malformed keychain signature should revert"
+        );
     }
 
     #[test]

@@ -26,11 +26,13 @@ pub struct SignaturesCache {
 }
 
 /// Disk representation of the signatures cache.
+///
+/// `S` is the signature string type: owned when the cache is loaded, borrowed when it is saved.
 #[derive(Serialize, Deserialize)]
-struct SignaturesDiskCache {
-    functions: BTreeMap<Selector, String>,
-    errors: BTreeMap<Selector, String>,
-    events: BTreeMap<B256, String>,
+struct SignaturesDiskCache<S = String> {
+    functions: BTreeMap<Selector, S>,
+    errors: BTreeMap<Selector, S>,
+    events: BTreeMap<B256, S>,
 }
 
 impl From<SignaturesDiskCache> for SignaturesCache {
@@ -57,15 +59,15 @@ impl From<SignaturesDiskCache> for SignaturesCache {
     }
 }
 
-impl From<&SignaturesCache> for SignaturesDiskCache {
-    fn from(value: &SignaturesCache) -> Self {
+impl<'a, S: From<&'a str>> From<&'a SignaturesCache> for SignaturesDiskCache<S> {
+    fn from(value: &'a SignaturesCache) -> Self {
         let (functions, errors, events) = value.signatures.iter().fold(
             (BTreeMap::new(), BTreeMap::new(), BTreeMap::new()),
             |mut acc, (kind, signature)| {
                 // Only persist resolved signatures. Unknown selectors (None) are kept
                 // in-memory for session dedup but not written to disk, so they can be
                 // re-queried in future sessions once the signature database is updated.
-                if let Some(value) = signature.clone() {
+                if let Some(value) = signature.as_deref().map(S::from) {
                     match *kind {
                         SelectorKind::Function(selector) => _ = acc.0.insert(selector, value),
                         SelectorKind::Error(selector) => _ = acc.1.insert(selector, value),
@@ -84,7 +86,7 @@ impl Serialize for SignaturesCache {
     where
         S: serde::Serializer,
     {
-        SignaturesDiskCache::from(self).serialize(serializer)
+        SignaturesDiskCache::<&str>::from(self).serialize(serializer)
     }
 }
 

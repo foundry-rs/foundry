@@ -10,7 +10,7 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend,
-    core::evm::FoundryEvmNetwork,
+    core::evm::{EvmFactoryFor, FoundryEvmNetwork},
     decode::decode_console_logs,
     inspectors::CheatsConfig,
     opts::{ExecutionSpecContext, resolve_execution_spec},
@@ -20,7 +20,7 @@ use solar::{
     ast::{ElementaryType, LitKind, StmtKind as AstStmtKind, StrKind, UnOpKind, yul},
     interface::Session,
     sema::{
-        hir::{Event, Expr, ExprKind, StmtKind},
+        hir::{Block, Event, Expr, ExprKind, StmtKind},
         ty::{Gcx, Ty, TyKind},
     },
 };
@@ -87,13 +87,28 @@ fn yul_inspection(input: &str, session_source: &str) -> Option<YulInspection> {
         let mut assembly = input.to_string();
         assembly.replace_range(expr_range.clone(), &format!("{result_var} := {expression}"));
         let inspector_input = format!(
-            "uint256 {result_var}; {assembly}\nbytes memory inspectoor = abi.encode({result_var});"
+            "uint256 {result_var}; {assembly}\nbytes memory inspectoor = abi.encode({result_var}); \
+             assembly {{ return(add(inspectoor, 0x20), mload(inspectoor)) }}"
         );
 
         let mut replay_input = input.to_string();
         replay_input.replace_range(expr_range, &format!("pop({expression})"));
         Some(YulInspection { inspector_input, replay_input })
     })
+}
+
+/// Type of the expression passed to the generated `abi.encode` in `inspectoor`.
+fn inspectoor_type<'gcx>(gcx: Gcx<'gcx>, block: Block<'gcx>) -> Option<(bool, DynSolType)> {
+    let var = block.iter().rev().find_map(|stmt| {
+        let StmtKind::DeclSingle(vid) = stmt.kind else { return None };
+        let var = gcx.hir.variable(vid);
+        let is_inspectoor = var.name.is_some_and(|name| name.as_str() == "inspectoor");
+        is_inspectoor.then_some(var)
+    })?;
+    let init = var.initializer?;
+    let ExprKind::Call(_callee, args) = &init.kind else { return None };
+    let inner_expr = args.exprs().next()?;
+    Some((should_continue(inner_expr), expr_to_dyn(gcx, inner_expr)?))
 }
 
 /// Executor implementation for [SessionSource]
@@ -131,7 +146,12 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     ///
     /// If the input is valid, returns its [`InspectResult`].
     pub async fn inspect(&self, input: &str) -> Result<InspectResult> {
-        let line = format!("bytes memory inspectoor = abi.encode({input});");
+        // Return the encoding from `run()`: solar does not leave the `inspectoor` pointer on the
+        // stack, so reading it from the final stack and memory only works with solc.
+        let line = format!(
+            "bytes memory inspectoor = abi.encode({input}); \
+             assembly {{ return(add(inspectoor, 0x20), mload(inspectoor)) }}"
+        );
         let (mut source, replay_input) = match self.clone_with_new_line(line) {
             Ok((source, _)) => (source, None),
             Err(err) => {
@@ -222,7 +242,9 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         }
         drop(source_without_inspector);
 
-        let Some((stack, memory)) = &res.state else {
+        // The inspector epilogue returns the `abi.encode` payload with either compiler.
+        let data = res.returned.clone();
+        if !res.success || data.is_empty() {
             // Show traces and logs, if there are any, and return an error
             if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await {
                 ChiselDispatcher::<FEN>::show_traces(&decoder, &mut res).await?;
@@ -236,7 +258,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             }
 
             return Err(eyre::eyre!("Failed to inspect expression"));
-        };
+        }
 
         // Either the expression referred to by `input`, or the last expression,
         // which was wrapped in `abi.encode`.
@@ -244,44 +266,16 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
 
         // Inside the compiler closure, infer the DynSolType of the inspected expression and
         // determine whether the REPL should continue.
-        let res_ty = generated_output.enter(|out| -> Option<(bool, DynSolType)> {
-            let gcx = out.gcx();
-
-            // Find the appended `bytes memory inspectoor = abi.encode(<input>);` and pull out the
-            // first call argument.
-            let block = out.run_func_body();
-            let last = block.last()?;
-            let StmtKind::DeclSingle(vid) = last.kind else { return None };
-            let var = gcx.hir.variable(vid);
-            let init = var.initializer?;
-            let ExprKind::Call(_callee, args) = &init.kind else { return None };
-            let inner_expr = args.exprs().next()?;
-
-            let ty = expr_to_dyn(gcx, inner_expr)?;
-            Some((should_continue(inner_expr), ty))
-        });
+        let res_ty = generated_output.enter(|out| inspectoor_type(out.gcx(), out.run_func_body()));
 
         let Some((cont, ty)) = res_ty else {
             return Ok(InspectResult::empty(ControlFlow::Continue(())));
         };
 
-        // the file compiled correctly, thus the last stack item must be the memory offset of
-        // the `bytes memory inspectoor` value
-        let data = (|| -> Option<_> {
-            let mut offset: usize = stack.last()?.try_into().ok()?;
-            debug!("inspect memory @ {offset}: {}", hex::encode(memory));
-            let mem_offset = memory.get(offset..offset + 32)?;
-            let len: usize = U256::try_from_be_slice(mem_offset)?.try_into().ok()?;
-            offset += 32;
-            memory.get(offset..offset + len)
-        })();
-        let Some(data) = data else {
-            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory");
-        };
         let clear_last_result = dyn_ty_contains_function(&ty);
         let last_result = (!clear_last_result)
-            .then(|| format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data)));
-        let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
+            .then(|| format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(&data)));
+        let token = ty.abi_decode(&data).wrap_err("Could not decode inspected values")?;
         let c = if cont || replay_input.is_some() {
             ControlFlow::Continue(())
         } else {
@@ -301,20 +295,23 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             backend.clone()
         } else {
             let opts = &self.config.evm_opts;
-            let backend = Backend::spawn(opts.get_fork(
-                &self.config.foundry_config,
-                opts.env.chain_id.unwrap_or_default(),
-                None,
-            ))?;
+            let backend = Backend::spawn_source(
+                opts.get_fork(
+                    &self.config.foundry_config,
+                    opts.env.chain_id.unwrap_or_default(),
+                    None,
+                ),
+                opts.local_evm_env::<FEN>(),
+            )?;
             self.config.cached_backend = Some(backend.clone());
             backend
         };
-        let (mut evm_env, tx_env) = backend.env(&self.config.evm_opts).await?;
-        let fork_context = backend.fork()?.as_ref().map(|fork| fork.context());
+        let (mut evm_env, tx) = backend.env(&self.config.evm_opts).await?;
+        let fork_context = backend.fork().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.config.source_chain_id = fork_chain_id;
-        self.config.resolved_hardfork = resolve_execution_spec(
+        self.config.resolved_hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
             self.config.foundry_config.evm_version,
             self.config.foundry_config.hardfork,
             &mut evm_env,
@@ -344,7 +341,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             })
             .gas_limit(self.config.evm_opts.gas_limit())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
-            .build(evm_env, tx_env, backend, self.config.evm_opts.networks);
+            .build(evm_env, tx, backend, self.config.evm_opts.networks);
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
@@ -393,7 +390,7 @@ fn format_token(token: DynSolValue) -> String {
             format!(
                 "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
                 format!("uint{bit_len}").red(),
-                format!("0x{i:x}").cyan(),
+                format!("{i:#x}").cyan(),
                 hex::encode_prefixed(B256::from(i)).cyan(),
                 i.cyan()
             )

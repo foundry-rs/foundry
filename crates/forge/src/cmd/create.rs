@@ -4,9 +4,11 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
 use alloy_network::{Ethereum, EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256, hex};
-use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_provider::{
+    PendingTransactionBuilder, PendingTransactionError, Provider,
+    ProviderBuilder as AlloyProviderBuilder,
+};
 use alloy_signer::{Signature, Signer};
-use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
 use eyre::{Context, ContextCompat, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, parse_etherscan_license_type};
@@ -24,8 +26,12 @@ use foundry_common::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     },
+    retry::Retry,
     shell,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{
+        configurable_account::ConfigurableAccountSigner, mark_sponsored_gas_estimation,
+        maybe_print_fee_token, resolve_and_set_fee_token,
+    },
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -158,8 +164,46 @@ impl CreateArgs {
             // deployment into a Tempo transaction.
             wallet.from = None;
         }
-        let (signer, tempo_access_key) =
+        let (mut signer, tempo_access_key) =
             foundry_common::tempo::maybe_signer(&wallet, Some(chain.id())).await?;
+
+        // A configurable account sender deploys with its owners' approvals.
+        let is_tempo = tempo_access_key.is_some() || self.tx.tempo.is_tempo() || chain.is_tempo();
+        let configurable_account = if !is_tempo
+            || tempo_access_key.is_some()
+            || self.unlocked
+            || self.browser.browser
+            || (self.load_config()?.eth_rpc_curl
+                && !self.tx.tempo.has_configurable_account_options())
+        {
+            eyre::ensure!(
+                !self.tx.tempo.has_configurable_account_options(),
+                "Tempo configurable accounts need a Tempo network and an RPC, and cannot be \
+                 combined with --unlocked, --browser or an access key"
+            );
+            None
+        } else {
+            let config = self.load_config()?;
+            let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+            let signers = signer.take().map(Arc::new).into_iter().collect::<Vec<_>>();
+            let linked = self.tx.tempo.linked_account(&self.eth.wallet)?;
+            let account = self
+                .tx
+                .tempo
+                .configurable_account_signer(
+                    &provider,
+                    self.eth.wallet.from,
+                    linked,
+                    &signers,
+                    "forge create needs the owner keys locally: pass the other owners with \
+                     --tempo.owner, or keep them in the Tempo Accounts store.",
+                )
+                .await?;
+            if account.is_none() {
+                signer = signers.into_iter().next().and_then(Arc::into_inner);
+            }
+            account
+        };
 
         // Never deploy from an account other than the one explicitly selected by the user. Unlocked
         // and browser deployments do not use the resolved signer.
@@ -167,7 +211,8 @@ impl CreateArgs {
             .as_ref()
             .map(|signer| signer.address())
             .or_else(|| tempo_access_key.as_ref().map(|ak| ak.account()));
-        if !self.unlocked
+        if configurable_account.is_none()
+            && !self.unlocked
             && !self.browser.browser
             && let Some(from) = self.eth.wallet.from
             && let Some(deployer) = deployer
@@ -179,10 +224,10 @@ impl CreateArgs {
             );
         }
 
-        if tempo_access_key.is_some() || self.tx.tempo.is_tempo() || chain.is_tempo() {
-            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
+        if is_tempo {
+            self.run_generic::<TempoNetwork>(signer, tempo_access_key, configurable_account).await
         } else {
-            self.run_generic::<Ethereum>(signer, None).await
+            self.run_generic::<Ethereum>(signer, None, None).await
         }
     }
 
@@ -190,6 +235,7 @@ impl CreateArgs {
         mut self,
         pre_resolved_signer: Option<WalletSigner>,
         access_key: Option<TempoAccountsWallet>,
+        configurable_account: Option<ConfigurableAccountSigner>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -288,7 +334,7 @@ impl CreateArgs {
                 config.transaction_timeout,
                 id,
                 dry_run,
-                None,
+                TempoSigner::None,
                 Some(browser),
                 resolved_lane,
                 expires_at,
@@ -308,7 +354,26 @@ impl CreateArgs {
                 config.transaction_timeout,
                 id,
                 dry_run,
+                TempoSigner::None,
                 None,
+                resolved_lane,
+                expires_at,
+                resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
+            )
+            .await
+        } else if let Some(account) = configurable_account {
+            let deployer_address = account.account();
+            self.deploy(
+                abi,
+                bin,
+                params,
+                provider,
+                deployer_address,
+                config.transaction_timeout,
+                id,
+                dry_run,
+                TempoSigner::ConfigurableAccount(account),
                 None,
                 resolved_lane,
                 expires_at,
@@ -327,7 +392,7 @@ impl CreateArgs {
                 config.transaction_timeout,
                 id,
                 dry_run,
-                Some(ak),
+                TempoSigner::AccessKey(ak),
                 None,
                 resolved_lane,
                 expires_at,
@@ -354,7 +419,7 @@ impl CreateArgs {
                 config.transaction_timeout,
                 id,
                 dry_run,
-                None,
+                TempoSigner::None,
                 None,
                 resolved_lane,
                 expires_at,
@@ -451,7 +516,7 @@ impl CreateArgs {
         timeout: u64,
         id: ArtifactId,
         dry_run: bool,
-        mut tempo_keychain: Option<TempoAccountsWallet>,
+        mut tempo_signer: TempoSigner,
         browser_signer: Option<BrowserSigner<N>>,
         resolved_lane: Option<ResolvedLane>,
         expires_at: Option<u64>,
@@ -497,12 +562,17 @@ impl CreateArgs {
         // Convert only AA CREATE transactions into a call entry. Plain Tempo
         // CREATE transactions remain Ethereum transactions, while AA requests
         // (for example, an expiring nonce) require a non-empty `calls` list.
+        match &tempo_signer {
+            TempoSigner::AccessKey(_) if deployer.tx.nonce_key().is_none() => {
+                deployer.tx.set_nonce_key(U256::ZERO);
+            }
+            TempoSigner::ConfigurableAccount(account) => {
+                account.prepare_request::<N>(&mut deployer.tx);
+            }
+            _ => {}
+        }
         if deployer.tx.is_tempo_aa() {
             deployer.tx.convert_create_to_call();
-        }
-
-        if tempo_keychain.is_some() && deployer.tx.nonce_key().is_none() {
-            deployer.tx.set_nonce_key(U256::ZERO);
         }
 
         // Fetch defaults from provider for values not specified by user.
@@ -512,9 +582,10 @@ impl CreateArgs {
 
         maybe_print_resolved_lane(resolved_lane.as_ref(), deployer.tx.nonce().unwrap_or_default())?;
 
-        if let Some(wallet) = tempo_keychain.as_ref() {
-            tempo_keychain =
-                Some(deployer.tx.prepare_with_tempo_wallet(provider.as_ref(), wallet).await?);
+        if let TempoSigner::AccessKey(wallet) = &tempo_signer {
+            tempo_signer = TempoSigner::AccessKey(
+                deployer.tx.prepare_with_tempo_wallet(provider.as_ref(), wallet).await?,
+            );
         }
 
         if is_legacy {
@@ -566,11 +637,14 @@ impl CreateArgs {
         }
 
         if self.tx.gas_limit.is_none() {
-            let request = if browser_signer.is_some() {
+            let mut request = if browser_signer.is_some() {
                 deployer.tx.browser_wallet_gas_estimation_request()
             } else {
                 deployer.tx.clone()
             };
+            if self.tx.tempo.is_sponsored() {
+                mark_sponsored_gas_estimation(&provider, &mut request).await;
+            }
             let estimated = provider.estimate_gas(request).await?;
             deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(
                 estimated,
@@ -646,43 +720,23 @@ impl CreateArgs {
         let (deployed_contract, receipt) = if let Some(browser) = browser_signer {
             // Browser wallet signs and sends the transaction
             let tx_hash = browser.send_transaction_via_browser(deployer.tx).await?;
-
-            // Wait for the transaction to be confirmed, then fetch the receipt.
-            provider
-                .watch_pending_transaction(alloy_provider::PendingTransactionConfig::new(tx_hash))
+            wait_for_deployment(PendingTransactionBuilder::new(provider.root().clone(), tx_hash))
                 .await?
-                .await?;
-
-            let receipt = provider
-                .get_transaction_receipt(tx_hash)
-                .await?
-                .ok_or_else(|| eyre::eyre!("could not get transaction receipt for {tx_hash}"))?;
-
-            if !receipt.status() {
-                eyre::bail!("deployment transaction failed (receipt status 0): {tx_hash}");
+        } else if let Some(raw_tx) = match &tempo_signer {
+            TempoSigner::AccessKey(wallet) => {
+                Some(deployer.tx.clone().sign_with_tempo_wallet(wallet).await?)
             }
-
-            let address = receipt
-                .contract_address()
-                .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
-
-            (address, receipt)
-        } else if let Some(wallet) = tempo_keychain {
-            let raw_tx = deployer.tx.sign_with_tempo_wallet(&wallet).await?;
-
-            let receipt = provider
+            TempoSigner::ConfigurableAccount(account) => {
+                Some(deployer.tx.clone().sign_with_configurable_account(account).await?)
+            }
+            TempoSigner::None => None,
+        } {
+            let pending = provider
                 .send_raw_transaction(&raw_tx)
                 .await?
                 .with_required_confirmations(1)
-                .with_timeout(Some(Duration::from_secs(timeout)))
-                .get_receipt()
-                .await?;
-
-            let address = receipt
-                .contract_address()
-                .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
-
-            (address, receipt)
+                .with_timeout(Some(Duration::from_secs(timeout)));
+            wait_for_deployment(pending).await?
         } else {
             deployer.send_with_receipt().await?
         };
@@ -812,28 +866,57 @@ impl<N: Network, P: Provider<N>> Deployer<N, P> {
     /// Broadcasts the contract deployment transaction and after waiting for it to
     /// be sufficiently confirmed (default: 1), it returns a tuple with the [`Address`] at the
     /// deployed contract's address and the corresponding receipt.
-    pub async fn send_with_receipt(
-        self,
-    ) -> Result<(Address, N::ReceiptResponse), ContractDeploymentError> {
-        let receipt = self
+    pub async fn send_with_receipt(self) -> Result<(Address, N::ReceiptResponse)> {
+        let pending = self
             .client
             .borrow()
             .send_transaction(self.tx)
             .await?
             .with_required_confirmations(self.confs as u64)
-            .with_timeout(Some(Duration::from_secs(self.timeout)))
-            .get_receipt()
-            .await?;
-
-        if !receipt.status() {
-            return Err(ContractDeploymentError::DeploymentFailed(receipt.transaction_hash()));
-        }
-
-        let address =
-            receipt.contract_address().ok_or(ContractDeploymentError::ContractNotDeployed)?;
-
-        Ok((address, receipt))
+            .with_timeout(Some(Duration::from_secs(self.timeout)));
+        wait_for_deployment(pending).await
     }
+}
+
+/// How a Tempo deployment is signed, besides a wallet-filled provider or a browser wallet.
+enum TempoSigner {
+    None,
+    /// A Tempo access key.
+    AccessKey(TempoAccountsWallet),
+    /// A configurable account's local owners.
+    ConfigurableAccount(ConfigurableAccountSigner),
+}
+
+/// Waits for a deployment transaction's receipt and returns the deployed address with it.
+///
+/// A load-balanced RPC can report the transaction as mined before the node that serves
+/// `eth_getTransactionReceipt` has its receipt, which alloy reports as a null response. The
+/// deployment went through, so keep polling for the receipt instead of failing it.
+async fn wait_for_deployment<N: Network>(
+    pending: PendingTransactionBuilder<N>,
+) -> Result<(Address, N::ReceiptResponse)> {
+    let tx_hash = *pending.tx_hash();
+    let provider = pending.provider().clone();
+    let receipt = match pending.get_receipt().await {
+        Err(PendingTransactionError::TransportError(err)) if err.is_null_resp() => {
+            Retry::new(15, Duration::from_secs(1))
+                .run_async(|| async {
+                    provider
+                        .get_transaction_receipt(tx_hash)
+                        .await?
+                        .wrap_err("the RPC has no receipt for the mined transaction yet")
+                })
+                .await
+        }
+        res => res.map_err(Into::into),
+    }
+    .wrap_err_with(|| {
+        format!("transaction {tx_hash} was sent, but waiting for its receipt failed")
+    })?;
+
+    eyre::ensure!(receipt.status(), "deployment transaction failed (receipt status 0): {tx_hash}");
+    let address = receipt.contract_address().wrap_err("contract was not deployed")?;
+    Ok((address, receipt))
 }
 
 /// To deploy a contract to the Ethereum network, a [`DeploymentTxFactory`] can be
@@ -893,18 +976,6 @@ pub enum ContractDeploymentError {
     ConstructorError,
     #[error(transparent)]
     DetokenizationError(#[from] alloy_dyn_abi::Error),
-    #[error("contract was not deployed")]
-    ContractNotDeployed,
-    #[error("deployment transaction failed (receipt status 0): {0}")]
-    DeploymentFailed(alloy_primitives::TxHash),
-    #[error(transparent)]
-    RpcError(#[from] TransportError),
-}
-
-impl From<PendingTransactionError> for ContractDeploymentError {
-    fn from(_err: PendingTransactionError) -> Self {
-        Self::ContractNotDeployed
-    }
 }
 
 #[cfg(test)]

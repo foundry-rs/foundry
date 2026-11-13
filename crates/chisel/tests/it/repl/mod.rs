@@ -686,3 +686,13 @@ fn imported_repl_does_not_shadow_wrapper() {
         }
     }
 }
+
+// Issue #18203: Solar does not leave the inspected value's pointer on the stack.
+repl_test!(solar_inspection, "--use solar:0.3.0", |repl| {
+    repl.sendln("uint256 val = 1;");
+    repl.sendln("val");
+    repl.expect("Decimal: 1");
+    repl.sendln("string memory s = \"hello\";");
+    repl.sendln("s");
+    repl.expect("UTF-8: hello");
+});

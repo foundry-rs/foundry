@@ -214,6 +214,7 @@ evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
+instrumented_edges = false
 corpus_random_sequence_weight = 10
 payable_value_weight = 0
 mutation_weight_splice = 1
@@ -253,6 +254,7 @@ evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
+instrumented_edges = false
 corpus_random_sequence_weight = 10
 payable_value_weight = 15
 mutation_weight_splice = 1
@@ -2306,6 +2308,7 @@ fn test_default_config(prj: _, cmd: _) {
     "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
+    "instrumented_edges": false,
     "corpus_random_sequence_weight": 10,
     "payable_value_weight": 0,
     "mutation_weight_splice": 1,
@@ -2348,6 +2351,7 @@ fn test_default_config(prj: _, cmd: _) {
     "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
+    "instrumented_edges": false,
     "corpus_random_sequence_weight": 10,
     "payable_value_weight": 15,
     "mutation_weight_splice": 1,
@@ -2363,7 +2367,8 @@ fn test_default_config(prj: _, cmd: _) {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
-    "check_interval": 1
+    "check_interval": 1,
+    "call_gas_limit": null
   },
   "symbolic": {
     "enabled": false,

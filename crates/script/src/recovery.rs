@@ -93,11 +93,17 @@ pub(crate) enum DelegatedStatus {
     OutcomeUnknown,
 }
 
+/// For each operation by sequence and index, its fingerprint and the digest of the transaction
+/// last found to match it.
+type VerifiedOperations = Vec<Vec<Option<(B256, B256)>>>;
+
 /// Owns the authoritative recovery snapshot and its process-lifetime writer lock.
 pub(crate) struct RecoveryStore<N: Network> {
     path: PathBuf,
     _lock: RecoveryLock,
     plan: RecoveryPlan<N>,
+    /// Lets each save skip fingerprinting transactions that did not change since the last one.
+    verified: VerifiedOperations,
 }
 
 pub(crate) struct RecoveryLock {
@@ -200,7 +206,7 @@ where
         };
         plan.restore_sensitive();
         plan.data.set_paths(paths.clone());
-        plan.validate(batch)?;
+        plan.validate(batch, &mut Default::default())?;
         plan.validate_signed_payloads()?;
         if recover_pending {
             commit_pending_plan(&pending, &lock.path)?;
@@ -231,11 +237,11 @@ where
                 std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
             }
         }
-        Ok(Self { path: lock.path.clone(), _lock: lock, plan })
+        Ok(Self { path: lock.path.clone(), _lock: lock, plan, verified: Vec::new() })
     }
 
-    pub(crate) fn save(&self) -> Result<()> {
-        self.plan.validate(self.plan.batch)?;
+    pub(crate) fn save(&mut self) -> Result<()> {
+        self.plan.validate(self.plan.batch, &mut self.verified)?;
         write_snapshot(&self.path, &self.plan)
     }
 
@@ -631,8 +637,8 @@ where
         if path.exists() {
             let existing: RecoveryPlan<N> = foundry_common::fs::read_json_file(path)
                 .wrap_err_with(|| format!("recovery snapshot `{}` is corrupt", path.display()))?;
-            existing.validate(self.plan.batch)?;
-            self.plan.validate(self.plan.batch)?;
+            existing.validate(self.plan.batch, &mut Default::default())?;
+            self.plan.validate(self.plan.batch, &mut Default::default())?;
             if serde_json::to_value(existing.deployments)?
                 != serde_json::to_value(&self.plan.deployments)?
             {
@@ -770,7 +776,9 @@ where
         Ok(())
     }
 
-    fn validate(&self, batch: bool) -> Result<()> {
+    /// Checks the snapshot's mode and generation, and that its operations still match the script's
+    /// transactions. `verified` caches matching transactions across calls.
+    fn validate(&self, batch: bool, verified: &mut VerifiedOperations) -> Result<()> {
         if self.version != RECOVERY_VERSION {
             bail!(
                 "unsupported recovery snapshot version {}; expected version {}",
@@ -789,15 +797,54 @@ where
         {
             bail!("recovery snapshot contains inconsistent generations");
         }
-        let mut saved = self.deployments.clone();
-        for deployment in &mut saved {
-            deployment.attempts.clear();
-        }
-        let expected = Self::new(self.data.clone(), self.batch, self.generation)?;
-        if serde_json::to_value(saved)? != serde_json::to_value(&expected.deployments)? {
+        if !self.operations_match(verified)? {
             bail!("recovery snapshot does not match the script operations; refusing to resume");
         }
         Ok(())
+    }
+
+    /// Returns true if the deployments are the ones [`Self::new`] would plan for the current
+    /// transactions, ignoring attempts.
+    ///
+    /// Fingerprinting dominates a save, so a transaction is fingerprinted again only when its
+    /// serialized form changed since it last matched its operation.
+    fn operations_match(&self, verified: &mut VerifiedOperations) -> Result<bool> {
+        let sequences = self.data.sequences();
+        if self.deployments.len() != sequences.len() {
+            return Ok(false);
+        }
+        verified.resize_with(sequences.len(), Vec::new);
+        for (sequence, ((deployment, data), verified)) in
+            self.deployments.iter().zip(sequences).zip(verified.iter_mut()).enumerate()
+        {
+            let sequence = u32::try_from(sequence).expect("too many sequences");
+            if deployment.chain != data.chain
+                || deployment.batch_id != self.batch.then_some(sequence)
+                || deployment.operations.len() != data.transactions.len()
+            {
+                return Ok(false);
+            }
+            verified.resize(data.transactions.len(), None);
+            for (index, ((operation, transaction), verified)) in
+                deployment.operations.iter().zip(&data.transactions).zip(verified).enumerate()
+            {
+                let index = u32::try_from(index).expect("too many operations");
+                if operation.id != (OperationId { sequence, index })
+                    || operation.rpc != transaction.rpc
+                {
+                    return Ok(false);
+                }
+                let digest = keccak256(serde_json::to_vec(transaction)?);
+                if *verified == Some((operation.fingerprint, digest)) {
+                    continue;
+                }
+                if operation_fingerprint(transaction)? != operation.fingerprint {
+                    return Ok(false);
+                }
+                *verified = Some((operation.fingerprint, digest));
+            }
+        }
+        Ok(true)
     }
 
     fn validate_signed_payloads(&self) -> Result<()>
@@ -1246,10 +1293,7 @@ mod tests {
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{
-        AASigned, TempoSignature,
-        transaction::{Call, PrimitiveSignature},
-    };
+    use tempo_primitives::{AASigned, TempoSignature, transaction::Call};
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1485,6 +1529,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = RecoveryStore::create(sequence(dir.path()), false, None).unwrap();
         store.data_mut().sequences_mut()[0].transactions.clear();
+        assert!(store.save().unwrap_err().to_string().contains("does not match"));
+    }
+
+    #[test]
+    fn save_rechecks_operations_changed_after_an_earlier_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = RecoveryStore::create(sequence(dir.path()), false, None).unwrap();
+        store.save().unwrap();
+        store.data_mut().sequences_mut()[0].transactions[0].hash = Some(B256::repeat_byte(0x11));
+        store.save().unwrap();
+        store.data_mut().sequences_mut()[0].transactions[0].function = Some("f()".to_string());
         assert!(store.save().unwrap_err().to_string().contains("does not match"));
     }
 
@@ -2074,11 +2129,8 @@ mod tests {
         let tx = request.build_aa().unwrap();
         let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
         Bytes::from(
-            TempoTxEnvelope::AA(AASigned::new_unhashed(
-                tx,
-                TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-            ))
-            .encoded_2718(),
+            TempoTxEnvelope::AA(AASigned::new_unhashed(tx, TempoSignature::from(signature)))
+                .encoded_2718(),
         )
     }
 

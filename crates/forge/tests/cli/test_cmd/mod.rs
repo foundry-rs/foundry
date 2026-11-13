@@ -5,7 +5,9 @@ use alloy_primitives::{Address, B256, Bytes, U256, address};
 use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_common::LIBRARY_DEPLOYER;
+use foundry_compilers::artifacts::ConfigurableContractArtifact;
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
+use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand,
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
@@ -21,7 +23,10 @@ use std::fs;
 #[cfg(feature = "base")]
 mod base;
 mod brutalize;
+mod cheatcode_access;
+mod cheatcode_libraries;
 mod core;
+mod discovery;
 mod exact_fork;
 mod fork_bal;
 mod fork_state_by_number;
@@ -39,6 +44,7 @@ mod symbolic_cheatcodes;
 mod symbolic_conformance;
 mod symbolic_creates;
 mod symbolic_engine_capabilities;
+mod symbolic_equivalence;
 mod symbolic_false_pass_prevention;
 mod symbolic_helpers;
 mod symbolic_invariant;
@@ -513,6 +519,7 @@ contract DecodeDelegatecallStorageTest is Test {
         Implementation implementation = new Implementation();
         Proxy proxy = new Proxy(address(implementation));
 
+        vm.chainId(42);
         vm.startStateDiffRecording();
         Implementation(address(proxy)).setValue(42);
         string memory diff = vm.getStateDiffJson();
@@ -551,6 +558,507 @@ Ran 1 test for test/DecodeDelegatecallStorage.t.sol:DecodeDelegatecallStorageTes
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
+}
+
+// Proxy storage written by both the proxy's own code and its implementations decodes each slot
+// with the layout of the code that wrote it last, even for proxies created during the recording.
+// Libraries write with their caller's layout under both the legacy and the IR pipeline.
+#[forgetest_init]
+fn state_diff_decodes_proxy_storage_by_writer(prj: _, cmd: _) {
+    prj.add_test(
+        "StateDiffProxy.t.sol",
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+library MintLib {
+    struct Stats {
+        uint256 minted;
+    }
+
+    function add(Stats storage stats, uint256 amount) external {
+        stats.minted += amount;
+    }
+}
+
+contract TokenV1 {
+    address public owner;
+    uint256 public value;
+    MintLib.Stats public stats;
+
+    function initialize(address owner_) external {
+        owner = owner_;
+    }
+
+    function setValue(uint256 value_) external {
+        value = value_;
+    }
+
+    function mint(uint256 amount) external {
+        MintLib.add(stats, amount);
+    }
+}
+
+contract TokenV2 {
+    address public owner;
+    uint256 public balance;
+    MintLib.Stats public stats;
+    uint256 public extra;
+
+    function setExtra(uint256 extra_) external {
+        extra = extra_;
+    }
+}
+
+contract ERC1967Proxy {
+    bytes32 private constant IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    constructor(address implementation, bytes memory data) {
+        _upgradeTo(implementation, data);
+    }
+
+    function upgradeTo(address implementation) external {
+        _upgradeTo(implementation, "");
+    }
+
+    function _upgradeTo(address implementation, bytes memory data) internal {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            sstore(slot, implementation)
+        }
+        if (data.length > 0) {
+            (bool success,) = implementation.delegatecall(data);
+            require(success);
+        }
+    }
+
+    receive() external payable {}
+
+    fallback() external payable {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            let implementation := sload(slot)
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+
+contract LegacyImplementation {
+    address private reserved;
+    uint256 public value;
+
+    function setValue(uint256 value_) external {
+        value = value_;
+    }
+}
+
+contract LegacyProxy {
+    address public target;
+
+    function upgradeTo(address target_) external {
+        target = target_;
+    }
+
+    receive() external payable {}
+
+    fallback() external payable {
+        address implementation = target;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+
+contract FacetA {
+    uint256 public a;
+
+    function setA(uint256 a_) external {
+        a = a_;
+    }
+}
+
+contract FacetB {
+    uint256 private reservedB;
+    uint256 public b;
+
+    function setB(uint256 b_) external {
+        b = b_;
+    }
+}
+
+contract Router {
+    address private immutable FACET_A;
+    address private immutable FACET_B;
+
+    constructor(address facetA, address facetB) {
+        FACET_A = facetA;
+        FACET_B = facetB;
+    }
+
+    receive() external payable {}
+
+    fallback() external payable {
+        address facet = msg.sig == FacetA.setA.selector ? FACET_A : FACET_B;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), facet, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+
+contract StateDiffProxyTest is Test {
+    function test_createdProxy() public {
+        TokenV1 implementation = new TokenV1();
+
+        vm.startStateDiffRecording();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(implementation), abi.encodeCall(TokenV1.initialize, (address(0xBEEF)))
+        );
+        TokenV1(address(proxy)).mint(5);
+        console.log(vm.getStateDiff());
+    }
+
+    function test_upgradedProxy() public {
+        TokenV1 v1 = new TokenV1();
+        TokenV2 v2 = new TokenV2();
+        ERC1967Proxy proxy = new ERC1967Proxy(address(v1), "");
+
+        vm.startStateDiffRecording();
+        TokenV1(address(proxy)).setValue(7);
+        ERC1967Proxy(payable(address(proxy))).upgradeTo(address(v2));
+        TokenV2(address(proxy)).setExtra(9);
+        console.log(vm.getStateDiff());
+    }
+
+    function test_disjointFacets() public {
+        Router router = new Router(address(new FacetA()), address(new FacetB()));
+
+        vm.startStateDiffRecording();
+        FacetA(address(router)).setA(1);
+        FacetB(address(router)).setB(2);
+        console.log(vm.getStateDiff());
+    }
+
+    function test_legacyProxy() public {
+        LegacyImplementation implementation = new LegacyImplementation();
+        LegacyProxy proxy = new LegacyProxy();
+
+        vm.startStateDiffRecording();
+        proxy.upgradeTo(address(implementation));
+        LegacyImplementation(address(proxy)).setValue(3);
+        console.log(vm.getStateDiff());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-vv", "--mc", "StateDiffProxyTest", "--extra-output", "storageLayout"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 4 tests for test/StateDiffProxy.t.sol:StateDiffProxyTest
+[PASS] test_createdProxy() ([GAS])
+Logs:
+  0x2e234DAe75C793f67A35089C9d99245E1C58470b
+  contract: test/StateDiffProxy.t.sol:ERC1967Proxy
+  - nonce diff: 0 → 1
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (owner, address): 0x0000000000000000000000000000000000000000 → 0x000000000000000000000000000000000000bEEF
+  @ 0x0000000000000000000000000000000000000000000000000000000000000002 (stats, (uint256,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000005
+      minted (uint256): 0 → 5
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f
+  
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  contract: test/StateDiffProxy.t.sol:MintLib
+  - nonce diff: 0 → 1
+  
+
+[PASS] test_disjointFacets() ([GAS])
+Logs:
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  - nonce diff: 0 → 1
+  
+  0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+  contract: test/StateDiffProxy.t.sol:Router
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (a, uint256): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000001 (b, uint256): 0 → 2
+  
+
+[PASS] test_legacyProxy() ([GAS])
+Logs:
+  0x2e234DAe75C793f67A35089C9d99245E1C58470b
+  contract: test/StateDiffProxy.t.sol:LegacyProxy
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (target, address): 0x0000000000000000000000000000000000000000 → 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  @ 0x0000000000000000000000000000000000000000000000000000000000000001 (value, uint256): 0 → 3
+  
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  - nonce diff: 0 → 1
+  
+
+[PASS] test_upgradedProxy() ([GAS])
+Logs:
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  - nonce diff: 0 → 1
+  
+  0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+  contract: test/StateDiffProxy.t.sol:ERC1967Proxy
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000001 (value, uint256): 0 → 7
+  @ 0x0000000000000000000000000000000000000000000000000000000000000003 (extra, uint256): 0 → 9
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f → 0x0000000000000000000000002e234dae75c793f67a35089c9d99245e1c58470b
+  
+
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "-vv",
+            "--mt",
+            "test_createdProxy",
+            "--extra-output",
+            "storageLayout",
+            "--via-ir",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/StateDiffProxy.t.sol:StateDiffProxyTest
+[PASS] test_createdProxy() ([GAS])
+Logs:
+  0x2e234DAe75C793f67A35089C9d99245E1C58470b
+  contract: test/StateDiffProxy.t.sol:ERC1967Proxy
+  - nonce diff: 0 → 1
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (owner, address): 0x0000000000000000000000000000000000000000 → 0x000000000000000000000000000000000000bEEF
+  @ 0x0000000000000000000000000000000000000000000000000000000000000002 (stats, (uint256,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000005
+      minted (uint256): 0 → 5
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f
+  
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xe02a92Ef2BAD4e4763e2545e18f3b15b2d39B049
+  contract: test/StateDiffProxy.t.sol:MintLib
+  - nonce diff: 0 → 1
+  
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
+// Library attribution must not guess a missing caller or use code from another chain context.
+#[forgetest_init]
+fn state_diff_library_writer_context(prj: _, cmd: _) {
+    prj.add_test(
+        "LibraryWriter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
+
+library WriterLib {
+    struct Stats { uint256 amount; }
+    function set(Stats storage stats) external { stats.amount = 42; }
+}
+
+contract LibraryWriter {
+    WriterLib.Stats public stats;
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function recordAndSet() external returns (string memory) {
+        vm.startStateDiffRecording();
+        // Clear pending runner accesses so the enclosing frame is absent.
+        vm.startStateDiffRecording();
+        WriterLib.set(stats);
+        return vm.getStateDiffJson();
+    }
+
+    function set() external { WriterLib.set(stats); }
+
+    function switchContextAndSet() external returns (string memory) {
+        vm.chainId(2);
+        vm.etch(address(0x2000), type(Caller).runtimeCode);
+        WriterLib.set(stats);
+        return vm.getStateDiffJson();
+    }
+}
+
+contract Caller {
+    uint256 public actual;
+    function set() external { actual = 42; }
+    function run(address target) external returns (string memory) {
+        return LibraryWriter(target).recordAndSet();
+    }
+}
+
+contract Proxy {
+    uint256 public proxyDecoy;
+    fallback() external {
+        (bool ok, bytes memory result) = address(0x2000).delegatecall(msg.data);
+        require(ok);
+        assembly { return(add(result, 32), mload(result)) }
+    }
+}
+
+contract PrefixWriterTest {
+    WriterLib.Stats public stats;
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_completedPrefix() public {
+        vm.etch(0x4e59b44847b379578588920cA78FbF26c0B4956C, type(Caller).runtimeCode);
+        vm.startStateDiffRecording();
+        WriterLib.set(stats);
+        string memory slot = string.concat(
+            ".", vm.toLowercase(vm.toString(address(this))), ".stateDiff.", vm.toString(bytes32(0))
+        );
+        string memory diff = vm.getStateDiffJson();
+        require(vm.parseJsonKeys(diff, slot).length == 2, "unrecorded parent must stay raw");
+        require(vm.parseJsonBytes32(diff, string.concat(slot, ".newValue")) == bytes32(uint256(42)));
+    }
+}
+
+contract LibraryWriterTest is Test {
+    string constant SLOT = ".0x0000000000000000000000000000000000001000.stateDiff.0x0000000000000000000000000000000000000000000000000000000000000000";
+
+    function assertRaw(string memory diff) internal pure {
+        assertEq(vm.parseJsonKeys(diff, SLOT).length, 2);
+        assertEq(vm.parseJsonBytes32(diff, string.concat(SLOT, ".newValue")), bytes32(uint256(42)));
+        assertEq(vm.parseJsonBytes32(diff, string.concat(SLOT, ".previousValue")), bytes32(0));
+    }
+
+    function test_missingParentDirect() public {
+        vm.etch(address(0x1000), type(LibraryWriter).runtimeCode);
+        assertRaw(new Caller().run(address(0x1000)));
+    }
+
+    function test_missingParentDelegated() public {
+        vm.etch(address(0x1000), type(Proxy).runtimeCode);
+        vm.etch(address(0x2000), type(LibraryWriter).runtimeCode);
+        assertRaw(new Caller().run(address(0x1000)));
+    }
+
+    function test_recordedParent() public {
+        vm.etch(address(0x1000), type(LibraryWriter).runtimeCode);
+        vm.startStateDiffRecording();
+        vm.startStateDiffRecording();
+        LibraryWriter(address(0x1000)).set();
+        assertEq(vm.parseJsonString(vm.getStateDiffJson(), string.concat(SLOT, ".label")), "stats");
+    }
+
+    function test_parentContextChanged() public {
+        vm.etch(address(0x1000), type(Proxy).runtimeCode);
+        vm.etch(address(0x2000), type(LibraryWriter).runtimeCode);
+        vm.chainId(1);
+        vm.startStateDiffRecording();
+        vm.startStateDiffRecording();
+        assertRaw(LibraryWriter(address(0x1000)).switchContextAndSet());
+    }
+
+    function checkPriorContext(bool replaceCode) internal {
+        vm.etch(address(0x1000), type(Proxy).runtimeCode);
+        vm.etch(address(0x2000), type(Caller).runtimeCode);
+        vm.chainId(1);
+        vm.startStateDiffRecording();
+        vm.startStateDiffRecording();
+        Caller(address(0x1000)).set();
+        vm.chainId(2);
+        if (replaceCode) vm.etch(address(0x2000), type(WriterLib).runtimeCode);
+        string memory diff = vm.getStateDiffJson();
+        assertEq(vm.parseJsonString(diff, string.concat(SLOT, ".label")), "actual");
+        assertEq(vm.parseJsonBytes32(diff, string.concat(SLOT, ".newValue")), bytes32(uint256(42)));
+    }
+
+    function test_priorContextChangedCode() public { checkPriorContext(true); }
+    function test_priorContextControl() public { checkPriorContext(false); }
+}
+"#,
+    );
+
+    let solc = foundry_compilers::compilers::solc::Solc::find_svm_installed_version(
+        &SOLC_VERSION.parse().unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    prj.update_config(|config| config.solc = Some(foundry_config::SolcReq::Local(solc.solc)));
+    cmd.args(["build", "--extra-output", "storageLayout"]).assert_success();
+
+    // Resolve external layouts without network access or modifying the user's cache.
+    let home = tempfile::tempdir().unwrap();
+    let cache = home.path().join(".foundry/cache/etherscan/mainnet/storage_layouts");
+    std::fs::create_dir_all(&cache).unwrap();
+    for (address, contract) in [(0x1000, "Proxy"), (0x2000, "Caller")] {
+        let artifact = foundry_common::fs::read_json_file::<ConfigurableContractArtifact>(
+            &prj.artifacts().join(format!("LibraryWriter.t.sol/{contract}.json")),
+        )
+        .unwrap();
+        let layout = serde_json::json!({
+            "version": 3,
+            "contractName": contract,
+            "storageLayout": artifact.storage_layout.unwrap(),
+        });
+        foundry_common::fs::write_json_file(&cache.join(format!("0x{address:040x}.json")), &layout)
+            .unwrap();
+    }
+
+    for via_ir in [false, true] {
+        cmd.forge_fuse();
+        cmd.env("HOME", home.path());
+        cmd.env("USERPROFILE", home.path());
+        cmd.args([
+            "test",
+            "--mc",
+            "LibraryWriterTest|PrefixWriterTest",
+            "--decode-external-storage",
+            "--extra-output",
+            "storageLayout",
+        ]);
+        if via_ir {
+            cmd.arg("--via-ir");
+        }
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 7 tests passed, 0 failed, 0 skipped (7 total tests)
+...
+"#]]);
+    }
 }
 
 // tests that a warning is displayed if there are tests but none match a non-empty filter
@@ -1837,6 +2345,55 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// `vm.transact` executes a Celo CIP-64 transaction as its EIP-1559 body with native fees.
+#[forgetest]
+async fn fork_transact_celo_cip64(prj: _, cmd: _) {
+    let config = NodeConfig::test().with_chain_id(Some(42_220u64));
+    let (api, handle) = spawn(config.with_networks(NetworkConfigs::with_celo())).await;
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let request = serde_json::json!({
+        "from": sender,
+        "to": "0x0000000000000000000000000000000000001234",
+        "value": "0x1",
+        "feeCurrency": "0x2222222222222222222222222222222222222222",
+    });
+    let hash = api.send_transaction(serde_json::from_value(request).unwrap()).await.unwrap();
+    let tx = handle.http_provider().get_transaction_by_hash(hash).await.unwrap().unwrap();
+    assert_eq!(serde_json::to_value(tx).unwrap()["type"], "0x7b");
+
+    prj.add_test(
+        "Cip64Transact.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, bytes32 txHash) external returns (uint256);
+    function getNonce(address account) external view returns (uint64);
+    function transact(bytes32 txHash) external;
+}
+
+contract Cip64TransactTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testTransact() external {
+        vm.createSelectFork("<rpc>", <hash>);
+        require(address(0x1234).balance == 0, "recipient before");
+        vm.transact(<hash>);
+        require(address(0x1234).balance == 1, "recipient after");
+        require(vm.getNonce(<sender>) == 1, "sender nonce");
+    }
+}
+"#
+        .replace("<rpc>", &handle.http_endpoint())
+        .replace("<hash>", &hash.to_string())
+        .replace("<sender>", &sender.to_checksum(None)),
+    );
+
+    cmd.args(["test", "--match-test", "testTransact"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testTransact() ([GAS])
+...
+"#]]);
+}
+
 // A cheatcode fork whose alias auth differs from the `--fork-url` credentials must not reuse the
 // endpoint identity discovered for the same URL, since the credentials may reach another backend.
 #[forgetest]
@@ -2246,6 +2803,44 @@ contract TransientTest is Test {
     );
 
     cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
+}
+
+// An isolated call restarts the call-depth limit at its nested transaction.
+#[forgetest_init]
+fn can_test_call_depth_limit_with_isolation(prj: _, cmd: _) {
+    prj.add_test(
+        "CallDepth.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Descender {
+    function descend(uint256 remaining) external returns (uint256) {
+        if (remaining == 0) return 0;
+        (bool ok, bytes memory out) = address(this).call(abi.encodeCall(this.descend, (remaining - 1)));
+        return ok ? abi.decode(out, (uint256)) + 1 : 0;
+    }
+}
+
+contract CallDepthTest is Test {
+    /// forge-config: default.isolate = true
+    function testIsolatedCallDepth() public {
+        assertEq(new Descender().descend(1025), 1024);
+    }
+
+    /// forge-config: default.isolate = false
+    function testCallDepth() public {
+        assertEq(new Descender().descend(1025), 1023);
+    }
+}
+   "#,
+    );
+    // Leave enough gas after the 63/64 rule at every depth.
+    prj.update_config(|config| {
+        config.gas_limit = (1u64 << 60).into();
+        config.block_gas_limit = Some((1u64 << 60).into());
+    });
+
+    cmd.args(["test", "--evm-version", "cancun"]).assert_success();
 }
 
 #[forgetest_init]
@@ -5913,7 +6508,7 @@ Traces:
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [..] SLOAD
+    ├─ [..] SLOAD 0x1f → (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f01)
     ├─ [..] MLOAD
     ├─ [..] MLOAD
     ├─ [..] Counter::number() [staticcall]
@@ -7302,6 +7897,112 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
     assert_eq!(diagnostic_nodes[0]["trace"]["output"], "0x");
 }
 
+// After `vm.chainId`, calls run on a frame EVM built with the new chain ID, and the diagnostic
+// still explains the caller's empty revert.
+#[forgetest_init]
+fn detailed_revert_when_calling_non_contract_address_after_chain_id(prj: _, cmd: _) {
+    prj.add_test(
+        "NonContractCallAfterChainIdTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ICounter {
+    function number() external returns (uint256);
+}
+
+contract NonContractCallAfterChainIdTest is Test {
+    function test_non_contract_call_after_chain_id() public {
+        vm.chainId(5);
+        ICounter(0xdEADBEeF00000000000000000000000000000000).number();
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mc", "NonContractCallAfterChainIdTest", "-vvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: EvmError: Revert] test_non_contract_call_after_chain_id() ([GAS])
+Traces:
+  [..] NonContractCallAfterChainIdTest::test_non_contract_call_after_chain_id()
+    ├─ [0] VM::chainId(5)
+    │   └─ ← [Return]
+    ├─ [..] 0xdEADBEeF00000000000000000000000000000000::number()
+    │   └─ ← [Stop]
+    └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
+...
+"#]]);
+}
+
+// After `vm.chainId`, calls run on a frame EVM, and the debugger records the calling step with the
+// caller's stack and gas.
+#[forgetest]
+fn debug_dump_records_call_step_after_chain_id(prj: _, cmd: _) {
+    prj.add_test(
+        "DebugCallAfterChainId.t.sol",
+        r#"
+interface Vm {
+    function chainId(uint256 newChainId) external;
+}
+
+contract Counter {
+    function number() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract DebugCallAfterChainIdTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testCallAfterChainId() public {
+        Counter counter = new Counter();
+        vm.chainId(5);
+        counter.number();
+    }
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("chain_id_dump");
+    cmd.args([
+        "test",
+        "--mt",
+        "testCallAfterChainId",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ])
+    .assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path.join("trace.json")).unwrap())
+            .unwrap();
+    let steps = dump["steps"].as_array().unwrap();
+    let call = steps.iter().find(|step| step["op"] == "STATICCALL").unwrap();
+    // The call costs the gas it forwards and the account access, and the stack holds the caller's
+    // words and the call inputs.
+    assert_eq!(call["gas_cost"], 1056819103, "{call:#}");
+    assert_eq!(
+        call["stack"],
+        serde_json::json!([
+            "0x9f09e3a1",
+            "0x35",
+            "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+            "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+            "0x8381f58a",
+            "0x84",
+            "0x20",
+            "0x80",
+            "0x4",
+            "0x80",
+            "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+            "0x3ffdbe97"
+        ]),
+        "{call:#}"
+    );
+}
+
 #[forgetest_init]
 fn detailed_revert_when_delegatecalling_unlinked_library(prj: _, cmd: _) {
     prj.add_test(
@@ -7978,4 +8679,212 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
+}
+
+// Rolling the active fork keeps the state of a non-default test sender, which is not persistent
+// by default, as the caller of the test.
+#[forgetest_init]
+fn fork_roll_keeps_sender_state(prj: _, cmd: _) {
+    let endpoint = rpc::next_http_archive_rpc_url();
+    prj.add_test(
+        "ForkRollSender.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForkRollSenderTest is Test {
+    function test_rollKeepsSenderBalance() public {
+        vm.createSelectFork("<url>", 21_000_000);
+        vm.deal(msg.sender, 123 ether);
+        vm.rollFork(21_000_001);
+        assertEq(msg.sender.balance, 123 ether);
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args([
+        "test",
+        "--mt",
+        "test_rollKeepsSenderBalance",
+        "--sender",
+        "0x000000000000000000000000000000000000Ab0B",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+[PASS] test_rollKeepsSenderBalance() ([GAS])
+...
+"#]]);
+}
+
+// Slots that an account created in an earlier transaction, or by an isolated call that switched
+// forks, never wrote read as zero on a fork rather than as the fork's storage at its address.
+#[forgetest]
+async fn fork_created_account_unwritten_storage(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // The test contract and the contracts it creates: at nonce 1 in `setUp`, and at nonce 2, or 3
+    // when the switching call is an isolated transaction.
+    let test = address!("0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496");
+    for account in [test, test.create(1), test.create(2), test.create(3)] {
+        api.anvil_set_storage_at(account, U256::from(100), B256::with_last_byte(1)).await.unwrap();
+    }
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    prj.add_test(
+        "CreatedStorage.t.sol",
+        &r#"
+interface Vm {
+    function createFork(string calldata url) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function makePersistent(address account) external;
+}
+
+contract Store {
+    uint256 public written = 1;
+
+    function get() external view returns (uint256 value) {
+        assembly {
+            value := sload(100)
+        }
+    }
+}
+
+contract CreatedStorageForkTest is Store {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Store created;
+    uint256 fork;
+
+    function setUp() public {
+        created = new Store();
+        vm.makePersistent(address(created));
+        fork = vm.createFork("<url>");
+    }
+
+    function selectAndCreate() external returns (Store) {
+        vm.selectFork(fork);
+        return new Store();
+    }
+
+    function poke() external {}
+
+    function testForkCreatedInEarlierTransaction() public {
+        vm.selectFork(fork);
+        require(created.get() == 0, "created in setUp");
+        require(created.written() == 1, "written in setUp");
+        require(this.get() == 0, "test contract");
+    }
+
+    function testForkCreatedInSwitchingCall() public {
+        Store store = this.selectAndCreate();
+        require(store.get() == 0, "created in a switching call");
+        require(store.written() == 1, "written in a switching call");
+        this.poke();
+        require(store.written() == 1, "written after a later call");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint()),
+    );
+
+    let output = str![[r#"
+...
+Ran 2 tests for test/CreatedStorage.t.sol:CreatedStorageForkTest
+[PASS] testForkCreatedInEarlierTransaction() ([GAS])
+[PASS] testForkCreatedInSwitchingCall() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// A creation that `vm.transact` replays on the active fork discards the storage at its address
+// only until the call that replayed it reverts.
+#[forgetest]
+async fn fork_transact_reverted_creation_keeps_storage(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    // The fork holds storage at the address the creation writes to, with a slot for each replay
+    // to read only after the creation.
+    let created = from.create(0);
+    api.anvil_set_balance(created, U256::ONE).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(1), B256::with_last_byte(5)).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(2), B256::with_last_byte(6)).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(3), B256::with_last_byte(8)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    // Init code that stores 1 at slot 1 and deploys an empty contract.
+    let tx_hash: B256 = provider
+        .raw_request(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({ "from": from, "data": "0x600160015500" }),),
+        )
+        .await
+        .unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
+    assert_eq!(receipt.contract_address, Some(created));
+
+    prj.add_test(
+        "TransactCreation.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, bytes32 txHash) external returns (uint256);
+    function transact(bytes32 txHash) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
+    function etch(address target, bytes calldata code) external;
+}
+
+contract TransactCreationForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant CREATED = <created>;
+
+    function replayAndRevert(bytes32 unloaded) external {
+        vm.transact(<tx>);
+        require(vm.load(CREATED, bytes32(0)) == 0, "replayed creation");
+        require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(1)), "replayed write");
+        require(vm.load(CREATED, unloaded) == 0, "replayed unloaded slot");
+        revert("rolled back");
+    }
+
+    function testForkTransactRevertedCreation() public {
+        vm.createSelectFork("<url>", <tx>);
+        vm.store(CREATED, bytes32(0), bytes32(uint256(7)));
+        try this.replayAndRevert(bytes32(uint256(2))) {} catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("rolled back"), reason);
+        }
+        require(CREATED.code.length == 0, "rolled back creation");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "seeded");
+        require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(5)), "fork storage");
+        require(vm.load(CREATED, bytes32(uint256(2))) == bytes32(uint256(6)), "slot read in replay");
+        // Clearing that slot costs a clean slot's SSTORE, so its original is its fork value.
+        vm.etch(CREATED, hex"5a5f6002555a90035f5260205ff3");
+        (, bytes memory used) = CREATED.call("");
+        require(abi.decode(used, (uint256)) >= 2900, "original of slot read in replay");
+        vm.etch(CREATED, "");
+        // A slot loaded before another replay keeps its value after the replay reverts.
+        vm.store(CREATED, bytes32(uint256(2)), 0);
+        try this.replayAndRevert(bytes32(uint256(3))) {} catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("rolled back"), reason);
+        }
+        require(vm.load(CREATED, bytes32(uint256(2))) == 0, "slot stored before replay");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<tx>", &tx_hash.to_string())
+        .replace("<created>", &created.to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkTransactRevertedCreation() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
 }

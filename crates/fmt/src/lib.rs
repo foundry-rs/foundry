@@ -6,7 +6,7 @@ const DEBUG: bool = false || option_env!("FMT_DEBUG").is_some();
 const DEBUG_INDENT: bool = false || option_env!("FMT_DEBUG").is_some();
 
 use foundry_common::comments::{
-    Comment, Comments,
+    Comments,
     inline_config::{InlineConfig, InlineConfigItem},
 };
 
@@ -16,7 +16,7 @@ mod pp;
 
 use solar::{
     parse::{
-        ast::{SourceUnit, Span},
+        ast::SourceUnit,
         interface::{Session, diagnostics::EmittedDiagnostics, source_map::SourceFile},
     },
     sema::{Compiler, Gcx, Source},
@@ -245,15 +245,8 @@ fn parse_inline_config<'ast>(
     comments: &Comments,
     ast: &'ast SourceUnit<'ast>,
 ) -> InlineConfig<()> {
-    let parse_item = |mut item: &str, cmnt: &Comment| -> Option<(Span, InlineConfigItem<()>)> {
-        if let Some(prefix) = cmnt.prefix() {
-            item = item.strip_prefix(prefix).unwrap_or(item);
-        }
-        if let Some(suffix) = cmnt.suffix() {
-            item = item.strip_suffix(suffix).unwrap_or(item);
-        }
-        let item = item.trim_start().strip_prefix("forgefmt:")?.trim();
-        match item.parse::<InlineConfigItem<()>>() {
+    let items = comments.iter().flat_map(|cmnt| {
+        cmnt.format_directives().filter_map(|item| match item {
             Ok(InlineConfigItem::DisableLine(())) if cmnt.style.is_isolated() => {
                 Some((cmnt.span, InlineConfigItem::DisableNextItem(())))
             }
@@ -262,25 +255,7 @@ fn parse_inline_config<'ast>(
                 sess.dcx.warn(e.to_string()).span(cmnt.span).emit();
                 None
             }
-        }
-    };
-
-    let items = comments.iter().flat_map(|cmnt| {
-        let mut found_items = Vec::with_capacity(2);
-        // Always process the first line.
-        if let Some(line) = cmnt.lines.first()
-            && let Some(item) = parse_item(line, cmnt)
-        {
-            found_items.push(item);
-        }
-        // If the comment has more than one line, process the last line.
-        if cmnt.lines.len() > 1
-            && let Some(line) = cmnt.lines.last()
-            && let Some(item) = parse_item(line, cmnt)
-        {
-            found_items.push(item);
-        }
-        found_items
+        })
     });
 
     InlineConfig::from_ast(items, ast, sess.source_map())

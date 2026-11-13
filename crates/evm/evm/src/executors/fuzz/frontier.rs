@@ -4,9 +4,9 @@ use alloy_primitives::{
     Address, I256, U256,
     map::{Entry, HashMap},
 };
+use evm2::interpreter::op as opcode;
 use foundry_common::fs;
 use foundry_evm_fuzz::{BasicTxDetails, FuzzRunMetadata};
-use revm::bytecode::opcode;
 use serde::{Serialize, Serializer};
 use std::{
     path::Path,
@@ -298,7 +298,7 @@ impl FuzzFrontierRecorder {
         };
 
         for cmp in cmp_values {
-            let result = comparison_result(cmp);
+            let Some(result) = comparison_result(cmp) else { continue };
             let key = FuzzBranchFrontierKey::new(cmp, result);
             let operand_delta = operand_delta(cmp);
 
@@ -462,16 +462,18 @@ where
     serializer.collect_seq(sequences.iter().map(|sequence| &sequence.calls[..sequence.len]))
 }
 
-pub(in crate::executors) fn comparison_result(cmp: &CmpOperands) -> bool {
-    match cmp.opcode {
+/// Returns the result of a comparison opcode, or `None` for operands logged from other opcodes,
+/// such as `SUB`, which symbolic branch targets cannot match.
+pub(in crate::executors) fn comparison_result(cmp: &CmpOperands) -> Option<bool> {
+    Some(match cmp.opcode {
         opcode::EQ => cmp.op1 == cmp.op2,
         opcode::LT => cmp.op1 < cmp.op2,
         opcode::GT => cmp.op1 > cmp.op2,
         opcode::SLT => I256::from_raw(cmp.op1) < I256::from_raw(cmp.op2),
         opcode::SGT => I256::from_raw(cmp.op1) > I256::from_raw(cmp.op2),
         opcode::ISZERO => cmp.op1.is_zero(),
-        _ => false,
-    }
+        _ => return None,
+    })
 }
 
 fn operand_delta(cmp: &CmpOperands) -> U256 {
@@ -736,5 +738,31 @@ mod tests {
     #[test]
     fn merge_frontiers_with_zero_limit_is_empty() {
         assert!(merge_frontiers(0, [frontier(1, false, 1)]).is_empty());
+    }
+
+    #[test]
+    fn sub_comparisons_are_not_frontiers() {
+        let tx = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: CallDetails {
+                target: Address::ZERO,
+                calldata: Bytes::from_static(&[1, 2, 3, 4]),
+                value: None,
+            },
+        };
+        let cmp = CmpOperands {
+            op1: U256::ZERO,
+            op2: U256::ONE,
+            pc: 1,
+            address: Address::ZERO,
+            opcode: opcode::SUB,
+        };
+        let mut recorder = FuzzFrontierRecorder::new(1);
+
+        recorder.capture_call(None, std::slice::from_ref(&tx), 0, &[cmp], Some(true));
+
+        assert!(recorder.into_frontiers().is_empty());
     }
 }

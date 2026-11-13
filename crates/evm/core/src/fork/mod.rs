@@ -12,7 +12,8 @@ use std::{
     sync::Arc,
 };
 
-pub mod database;
+mod block_env;
+pub use block_env::{BlobExcessGasAndPrice, BlockEnv};
 
 mod multi;
 pub use multi::{ForkId, ForkResult, MultiFork, MultiForkHandler};

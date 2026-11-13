@@ -1,11 +1,7 @@
 use alloy_primitives::U256;
-use revm::{
-    Inspector,
-    context::{ContextTr, JournalTr},
-    interpreter::{
-        Interpreter,
-        interpreter_types::{Jumps, LoopControl},
-    },
+use evm2::{
+    EvmTypesHost, Inspector,
+    interpreter::{Host, Interpreter},
 };
 
 /// An inspector for Chisel.
@@ -28,35 +24,38 @@ impl ChiselState {
     }
 }
 
-impl<CTX: ContextTr> Inspector<CTX> for ChiselState {
-    fn initialize_interp(&mut self, _interpreter: &mut Interpreter, context: &mut CTX) {
-        if context.journal().depth() == 1 {
+/// Returns whether `interp` runs the root frame of the transaction.
+fn is_root_frame<T: EvmTypesHost>(interp: &mut Interpreter<'_, '_, T>) -> bool {
+    interp.message().depth == interp.host().initial_call_depth()
+}
+
+impl<T: EvmTypesHost> Inspector<T> for ChiselState {
+    fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, T>) {
+        if is_root_frame(interp) {
             self.state = None;
             self.at_final_pc = false;
         }
     }
 
     #[cold]
-    fn step(&mut self, interpreter: &mut Interpreter, context: &mut CTX) {
-        if context.journal().depth() == 1 {
-            // Read the PC before execution: PUSH and JUMP do not advance it by one byte.
-            self.at_final_pc = self.final_pc == Some(interpreter.bytecode.pc());
+    fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
+        if is_root_frame(interp) {
+            // Read the PC before execution: PUSH and JUMP do not advance it by one byte, and evm2
+            // leaves it on an instruction that halts.
+            self.at_final_pc = self.final_pc == Some(interp.pc());
         }
     }
 
     #[cold]
-    fn step_end(&mut self, interpreter: &mut Interpreter, context: &mut CTX) {
+    fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         // A source span may be absent or map to an instruction that never executes. In that case,
         // capture the completed root frame, not PC zero or a nested call's stack and memory.
-        // `instruction_result` excludes CALL/CREATE yields, which do not end the REPL call.
-        if context.journal().depth() == 1
-            && (self.at_final_pc
-                || (self.state.is_none() && interpreter.bytecode.instruction_result().is_some()))
+        // The result is only an error after the instruction that halts the frame.
+        if is_root_frame(interp)
+            && (self.at_final_pc || (self.state.is_none() && interp.result().is_err()))
         {
-            self.state = Some((
-                interpreter.stack.data().clone(),
-                interpreter.memory.context_memory().to_vec(),
-            ));
+            self.state =
+                Some((interp.stack().as_slice().to_vec(), interp.memory().as_slice().to_vec()));
         }
     }
 }
@@ -64,45 +63,52 @@ impl<CTX: ContextTr> Inspector<CTX> for ChiselState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Address, TxKind, hex};
-    use revm::{
-        Context, InspectEvm, MainBuilder, MainContext,
-        context::TxEnv,
-        database::InMemoryDB,
-        state::{AccountInfo, Bytecode},
+    use alloy_network::TransactionBuilder;
+    use alloy_primitives::{Address, hex};
+    use evm2::{
+        bytecode::Bytecode,
+        evm::{AccountInfo, InMemoryDB},
+    };
+    use foundry_evm_core::evm::{
+        EthEvmNetwork, EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryTxConversion, SpecFor,
+        TransactionRequestFor, TypesFor,
     };
 
-    fn execute(inspector: &mut ChiselState, code: &str) {
+    fn execute(inspector: ChiselState, code: &str) -> ChiselState {
         let target = Address::with_last_byte(0x40);
         let child = Address::with_last_byte(0x20);
         let mut db = InMemoryDB::default();
         for (address, code) in [(target, code), (child, "61cafe5f52600700")] {
             db.insert_account_info(
-                address,
-                AccountInfo::from_bytecode(Bytecode::new_raw(hex::decode(code).unwrap().into())),
+                &address,
+                AccountInfo::default()
+                    .with_code(Bytecode::new_legacy(hex::decode(code).unwrap().into())),
             );
         }
-        let result = Context::mainnet()
-            .with_db(db)
-            .build_mainnet_with_inspector(inspector)
-            .inspect_one_tx(
-                TxEnv::builder()
-                    .caller(Address::with_last_byte(0x30))
-                    .kind(TxKind::Call(target))
-                    .gas_limit(1_000_000)
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert!(result.is_success());
+        let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+        let spec = SpecFor::<EthEvmNetwork>::default();
+        let mut evm =
+            factory.create_evm(db, EvmEnv::new(spec, factory.version(spec, 1), Default::default()));
+        evm.set_inspector(inspector);
+        let request = TransactionRequestFor::<EthEvmNetwork>::default()
+            .with_from(Address::with_last_byte(0x30))
+            .with_to(target)
+            .with_nonce(0)
+            .with_chain_id(1)
+            .with_gas_limit(1_000_000)
+            .with_max_fee_per_gas(0)
+            .with_max_priority_fee_per_gas(0);
+        let tx = TypesFor::<EthEvmNetwork>::tx_from_request(request).unwrap();
+        let result = evm.transact(&tx).unwrap().commit();
+        assert!(result.status);
+        *evm.clear_inspector_as::<ChiselState>().unwrap()
     }
 
     #[test]
     fn captures_final_state_without_an_executed_source_match() {
         for final_pc in [None, Some(100)] {
-            let mut inspector = ChiselState::new(final_pc);
             // MSTORE(0, 0x1337), PUSH1 42, STOP.
-            execute(&mut inspector, "6113375f52602a00");
+            let inspector = execute(ChiselState::new(final_pc), "6113375f52602a00");
             assert_eq!(
                 inspector.state,
                 Some((vec![U256::from(42)], U256::from(0x1337).to_be_bytes::<32>().to_vec()))
@@ -118,8 +124,7 @@ mod tests {
             // PUSH1 42, PUSH1 6, JUMP, INVALID, JUMPDEST, POP, STOP.
             ("602a600656fe5b5000", 4, vec![U256::from(42)]),
         ] {
-            let mut inspector = ChiselState::new(Some(final_pc));
-            execute(&mut inspector, code);
+            let inspector = execute(ChiselState::new(Some(final_pc)), code);
             assert_eq!(inspector.state, Some((expected_stack, vec![])));
         }
     }
@@ -127,10 +132,10 @@ mod tests {
     #[test]
     fn nested_calls_do_not_replace_root_state() {
         for (final_pc, expected_stack) in [(None, vec![U256::from(42)]), (Some(4), vec![])] {
-            let mut inspector = ChiselState::new(final_pc);
             // MSTORE(0, 0x1337), CALL child, POP success, PUSH1 42, STOP. The child also executes
             // MSTORE at PC 4, but writes 0xcafe and leaves 7 on its stack.
-            execute(&mut inspector, "6113375f525f5f5f5f5f60205af150602a00");
+            let inspector =
+                execute(ChiselState::new(final_pc), "6113375f525f5f5f5f5f60205af150602a00");
             assert_eq!(
                 inspector.state,
                 Some((expected_stack, U256::from(0x1337).to_be_bytes::<32>().to_vec()))
@@ -140,10 +145,9 @@ mod tests {
 
     #[test]
     fn resets_snapshot_between_executions() {
-        let mut inspector = ChiselState::new(Some(4));
-        execute(&mut inspector, "6113375f52602a00");
+        let inspector = execute(ChiselState::new(Some(4)), "6113375f52602a00");
         // The second execution never reaches PC 4 and must use its own terminal snapshot.
-        execute(&mut inspector, "602b00");
+        let inspector = execute(inspector, "602b00");
         assert_eq!(inspector.state, Some((vec![U256::from(43)], vec![])));
     }
 }

@@ -1,24 +1,32 @@
 //! CLI tests for shared Tempo transaction options.
 
-use alloy_eips::eip2718::Decodable2718;
-use alloy_network::{ReceiptResponse, TransactionBuilder};
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+use alloy_network::{AnyNetwork, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, U256, address, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::{SolEvent, SolValue};
+use alloy_signer::Signer;
+use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use anvil::NodeConfig;
 use foundry_cli::utils::parse_json;
-use foundry_evm::core::tempo::PATH_USD_ADDRESS;
+use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
 use foundry_test_utils::util::OutputExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempo_contracts::precompiles::{
-    CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee, IReceivePolicyGuard, IRolesAuth, ITIP20,
-    ITIP20Factory, ITIP403Registry, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS,
+    CONFIGURABLE_ACCOUNT_ADDRESS, CURRENT_COMMITTEE_ADDRESS, IConfigurableAccount,
+    ICurrentCommittee, IReceivePolicyGuard, IRolesAuth, ITIP20, ITIP20Factory, ITIP403Registry,
+    TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
 use tempo_hardfork::TempoHardfork;
-use tempo_primitives::TempoTxEnvelope;
+use tempo_primitives::{
+    TempoSignature, TempoTransaction, TempoTxEnvelope,
+    transaction::{
+        Call, ConfigurableAccountConfig, ConfigurableAccountOwner, ConfigurableAccountSignature,
+        PrimitiveSignature, configurable_account_digest,
+    },
+};
 
 fn json_success_data(output: &str) -> serde_json::Value {
     let envelope: serde_json::Value = parse_json(output.trim()).expect("command emits JSON");
@@ -1809,4 +1817,262 @@ error: invalid value 'minter' for '<ROLE>': unknown TIP-20 role `minter`; expect
 For more information, try '--help'.
 
 "#]]);
+}
+
+/// Returns a protocol-lane Tempo transaction with `nonce` that pays its fees in PathUSD.
+async fn t14_tempo_tx(
+    provider: &impl Provider<AnyNetwork>,
+    nonce: u64,
+    calls: Vec<Call>,
+) -> TempoTransaction {
+    let base_fee = provider.get_gas_price().await.unwrap();
+    TempoTransaction {
+        chain_id: provider.get_chain_id().await.unwrap(),
+        fee_token: Some(ALPHA_USD_ADDRESS),
+        max_priority_fee_per_gas: base_fee / 10,
+        max_fee_per_gas: base_fee * 2,
+        gas_limit: 5_000_000,
+        calls,
+        nonce,
+        ..Default::default()
+    }
+}
+
+/// Returns the approval of every owner of `config` whose key is in `owners` over `tx` for the
+/// configurable `account`.
+async fn configurable_account_signature(
+    account: Address,
+    config: &ConfigurableAccountConfig,
+    owners: &[PrivateKeySigner],
+    tx: &TempoTransaction,
+) -> TempoSignature {
+    let digest = configurable_account_digest(tx.signature_hash(), account, config.version);
+    let mut signatures = Vec::new();
+    for owner in &config.owners {
+        if let Some(key) = owners.iter().find(|key| key.address() == owner.owner) {
+            signatures.push(PrimitiveSignature::Secp256k1(key.sign_hash(&digest).await.unwrap()));
+        }
+    }
+    TempoSignature::ConfigurableAccount(
+        ConfigurableAccountSignature::try_new(account, config.clone(), signatures).unwrap(),
+    )
+}
+
+/// Returns `config`'s owners as `IConfigurableAccount` encodes them.
+fn abi_owners(
+    config: &ConfigurableAccountConfig,
+) -> Vec<IConfigurableAccount::ConfigurableAccountOwner> {
+    config
+        .owners
+        .iter()
+        .map(|owner| IConfigurableAccount::ConfigurableAccountOwner {
+            owner: owner.owner,
+            weight: owner.weight,
+        })
+        .collect()
+}
+
+/// `cast run` forks a T14 node at the parent of each `0x05` transaction of a configurable account,
+/// replays the block up to it, and reproduces the status and gas the node charged: the
+/// transaction that registers the account, its `updateConfig`, and a later transaction that the
+/// updated owners authorize. The last two read the configuration commitment, which the account
+/// extension stores, from the fork. No public Tempo network schedules T14 yet, so the node is a
+/// local Anvil T14 node.
+#[casttest]
+async fn tempo_t14_configurable_account_run_fork_replay_matches_node(cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let provider = handle.http_provider();
+    let rpc = handle.http_endpoint();
+    let sender = handle.dev_wallets().next().unwrap();
+
+    let owners =
+        [0x11, 0x22].map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
+    let mut config = ConfigurableAccountConfig {
+        salt: B256::repeat_byte(0x5a),
+        version: 0,
+        threshold: 2,
+        owners: owners
+            .iter()
+            .map(|key| ConfigurableAccountOwner { owner: key.address(), weight: 1 })
+            .collect(),
+    };
+    config.owners.sort_by_key(|owner| owner.owner);
+    let account = config.derive_account().unwrap();
+    api.anvil_deal_tip20(account, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+
+    let call = |to: Address, input: Vec<u8>| Call {
+        to: to.into(),
+        value: U256::ZERO,
+        input: input.into(),
+    };
+    let get_commitment = IConfigurableAccount::getConfigCommitmentCall { account }.abi_encode();
+    let target = Address::repeat_byte(0x73);
+
+    // A primitive transaction precedes the registration in its block, so replay has to run it
+    // first. The registration batch calls the same target twice, which T14 charges as one cold
+    // access.
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let tx = t14_tempo_tx(&provider, 0, vec![call(target, vec![])]).await;
+    let signature = sender.sign_hash(&tx.signature_hash()).await.unwrap();
+    let primitive = *provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(tx.into_signed(signature.into())).encoded_2718())
+        .await
+        .unwrap()
+        .tx_hash();
+    let tx = t14_tempo_tx(
+        &provider,
+        0,
+        vec![
+            call(CONFIGURABLE_ACCOUNT_ADDRESS, get_commitment),
+            call(target, vec![]),
+            call(target, vec![]),
+        ],
+    )
+    .await;
+    let signature = configurable_account_signature(account, &config, &owners, &tx).await;
+    let registration = *provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(tx.into_signed(signature)).encoded_2718())
+        .await
+        .unwrap()
+        .tx_hash();
+    api.evm_mine(None).await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    let primitive = provider.get_transaction_receipt(primitive).await.unwrap().unwrap();
+    let registered = provider.get_transaction_receipt(registration).await.unwrap().unwrap();
+    assert_eq!(registered.block_number, primitive.block_number);
+    assert_eq!(registered.transaction_index, Some(1));
+
+    // The registered account rotates its owners to threshold one over keys `0x22..22` and
+    // `0x44..44`, then key `0x44..44` alone authorizes a transaction, each in a later block.
+    let keys =
+        [0x22, 0x44].map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
+    let mut rotated = ConfigurableAccountConfig {
+        salt: config.salt,
+        version: 1,
+        threshold: 1,
+        owners: keys
+            .iter()
+            .map(|key| ConfigurableAccountOwner { owner: key.address(), weight: 1 })
+            .collect(),
+    };
+    rotated.owners.sort_by_key(|owner| owner.owner);
+    let update = IConfigurableAccount::updateConfigCall {
+        current: IConfigurableAccount::ConfigurableAccountConfig {
+            salt: config.salt,
+            version: config.version,
+            threshold: config.threshold,
+            owners: abi_owners(&config),
+        },
+        threshold: rotated.threshold,
+        owners: abi_owners(&rotated),
+    };
+    let tx = t14_tempo_tx(
+        &provider,
+        1,
+        vec![call(CONFIGURABLE_ACCOUNT_ADDRESS, update.abi_encode()), call(target, vec![])],
+    )
+    .await;
+    let signature = configurable_account_signature(account, &config, &owners, &tx).await;
+    let update = provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(tx.into_signed(signature)).encoded_2718())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash();
+    let get_commitment = IConfigurableAccount::getConfigCommitmentCall { account }.abi_encode();
+    let tx = t14_tempo_tx(
+        &provider,
+        2,
+        vec![call(CONFIGURABLE_ACCOUNT_ADDRESS, get_commitment), call(target, vec![])],
+    )
+    .await;
+    let signature = configurable_account_signature(account, &rotated, &keys[1..], &tx).await;
+    let rotated_tx = provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(tx.into_signed(signature)).encoded_2718())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash();
+
+    // Replay forks at each transaction's parent block. The account is unregistered at the
+    // registration's parent and registered with its commitment at the others'.
+    let hashes = [(registration, true), (update, true), (rotated_tx, true)];
+    for (hash, succeeds) in hashes {
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert_eq!(receipt.status(), succeeds, "{receipt:?}");
+        assert_eq!(receipt.from, account);
+        let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        assert!(signed.signature().is_configurable_account());
+
+        cmd.cast_fuse();
+        cmd.env("FOUNDRY_HARDFORK", "tempo:T14");
+        let output = cmd.args(["run", &hash.to_string(), "--rpc-url", &rpc]).assert_success();
+        let stdout = output.get_output().stdout_lossy();
+        let stderr = output.get_output().stderr_lossy();
+        assert_eq!(stdout.contains("Transaction successfully executed."), succeeds, "{stdout}");
+        assert_eq!(stderr.contains("Error: Transaction failed."), !succeeds, "{stderr}");
+        let gas = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("Gas used: ")?.trim().parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("`cast run` printed no gas for {hash}:\n{stdout}"));
+        assert_eq!(gas, receipt.gas_used, "replayed {hash}:\n{stdout}");
+    }
+}
+
+// From T14 a sponsored transaction pays to load its fee payer's account, which checks the fee
+// payer's root key, so its gas estimate must include that access. Before T14 it must not.
+#[casttest]
+async fn tempo_sponsored_send_estimate_covers_fee_payer_access(cmd: _) {
+    for hardfork in [TempoHardfork::T13, TempoHardfork::T14] {
+        let (_, handle) =
+            anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+        let rpc = handle.http_endpoint();
+        let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
+        let sponsor_key =
+            format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
+
+        let receipt = cmd
+            .cast_fuse()
+            .args([
+                "send",
+                "0x7373737373737373737373737373737373737373",
+                "--private-key",
+                &hex::encode_prefixed(wallets[0].credential().to_bytes()),
+                "--tempo.sponsor",
+                &wallets[1].address().to_string(),
+                "--tempo.sponsor-signer",
+                &sponsor_key,
+                "--json",
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let hash = serde_json::from_str::<serde_json::Value>(&receipt).unwrap()["transactionHash"]
+            .as_str()
+            .unwrap()
+            .parse::<B256>()
+            .unwrap();
+
+        let provider = handle.http_provider();
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status(), "{hardfork:?}: {receipt:?}");
+        let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
+        let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+            panic!("expected a Tempo transaction");
+        };
+        assert!(signed.tx().fee_payer_signature.is_some());
+        assert_eq!(signed.tx().gas_limit, receipt.gas_used, "{hardfork:?}");
+    }
 }
