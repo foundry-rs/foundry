@@ -170,6 +170,56 @@ contract InvariantAfterInvariantCallsTest {
         .stdout_eq(empty_sequence);
 }
 
+// Tests that an empty `afterInvariant` counterexample is persisted after the anchor already broke.
+#[forgetest]
+fn invariant_after_invariant_empty_sequence_after_anchor_failure(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 4;
+    });
+    prj.add_test(
+        "InvariantAnchorThenHook.t.sol",
+        r#"
+contract Counter {
+    uint256 public count;
+
+    function inc() external {
+        count++;
+    }
+}
+
+contract InvariantAnchorThenHookTest {
+    Counter counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    // Breaks in run 1, so the hook only runs in run 2.
+    function invariant_a() public view {
+        require(counter.count() == 0, "a broken");
+    }
+
+    function invariant_b() public view {}
+
+    function afterInvariant() public pure {
+        revert("hook");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure();
+    cmd.forge_fuse().args(["fuzz", "replay", "--mt", "invariant_a"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: hook]
+	[Sequence] (original: 0, shrunk: 0)
+...
+"#]],
+    );
+}
+
 #[forgetest_init]
 fn invariant_assume(prj: _, cmd: _) {
     prj.update_config(|config| {

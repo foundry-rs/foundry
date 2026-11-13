@@ -4959,10 +4959,27 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         progress.as_ref(),
                         Some((position, total_broken)),
                     ) {
-                        // An `afterInvariant` failure can need no calls, so its empty sequence is
-                        // still persisted for replay.
+                        // An `afterInvariant` failure can need no calls, so an empty sequence is
+                        // still persisted when replaying it fails the same way in that hook.
                         Ok(replayed)
-                            if !replayed.call_sequence.is_empty() || case_data.after_invariant =>
+                            if !replayed.call_sequence.is_empty()
+                                || (is_anchor
+                                    && self
+                                        .replay_persisted_call_sequence(
+                                            &invariant_contract,
+                                            &mut [],
+                                            case_data.assertion_failure,
+                                            storage,
+                                        )
+                                        .is_ok_and(|(_, outcome)| {
+                                            matches!(
+                                                outcome.failure_site,
+                                                Some(
+                                                    CheckSequenceFailureSite::AfterInvariant { .. }
+                                                )
+                                            ) && outcome.reason.as_deref()
+                                                == Some(case_data.revert_reason.as_str())
+                                        })) =>
                         {
                             if single_failure {
                                 fork_block_number =

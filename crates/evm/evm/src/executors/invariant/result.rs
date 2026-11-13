@@ -447,18 +447,13 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
     // `afterInvariant` failures are contract-wide (no specific invariant body executed),
     // so attribute to the campaign anchor.
     let anchor = invariant_contract.anchor();
-    let mut case_data = InvariantRunCtx {
+    let case_data = InvariantRunCtx {
         contract: invariant_contract,
         config: invariant_config,
         targeted_contracts: &invariant_test.targeted_contracts,
         calldata: &invariant_run.inputs,
     }
     .failed_case(anchor, invariant_config.fail_on_revert, false, call_result, &[]);
-    // Keep the flag only while every earlier failure of the anchor came from this hook; after any
-    // other failure, for example right after `setUp`, replaying can hit that failure instead.
-    case_data.after_invariant = invariant_test.test_data.failures.get_failure(anchor).is_none_or(
-        |prev| matches!(prev, InvariantFuzzError::BrokenInvariant(prev) if prev.after_invariant),
-    );
     invariant_test
         .test_data
         .failures
