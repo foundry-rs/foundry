@@ -15,13 +15,15 @@ use alloy_eips::{
 };
 use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U64, U256, address, b256, bytes, hex, uint};
+use alloy_primitives::{
+    Address, B256, Bytes, TxKind, U64, U256, address, b256, bytes, hex, keccak256, uint,
+};
 use alloy_provider::{
     Provider,
     ext::{DebugApi, TxPoolApi},
 };
 use alloy_rpc_types::{
-    AccountInfo, BlockId, BlockNumberOrTag, Index,
+    AccountInfo, BlockId, BlockNumberOrTag, EIP1186AccountProofResponse, Index,
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
@@ -32,6 +34,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_trie::{Nibbles, proof::verify_proof};
 use anvil::{
     EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory,
     eth::{
@@ -4366,6 +4369,57 @@ async fn test_fork_get_account() {
     let alice_acc_prev_block = provider.get_account(alice).number(init_block).await.unwrap();
 
     assert_eq!(alice_acc_init, alice_acc_prev_block);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_get_account_and_proof_read_uncached_state() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // WETH has fork state that was never touched locally.
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let balance = provider.get_balance(weth).await.unwrap();
+    let nonce = provider.get_transaction_count(weth).await.unwrap();
+    let code_hash = keccak256(provider.get_code_at(weth).await.unwrap());
+    let slot = provider.get_storage_at(weth, U256::ZERO).await.unwrap();
+    assert!(!balance.is_zero());
+    assert!(!slot.is_zero());
+    let expected = (balance, nonce, code_hash);
+
+    let account = provider.get_account(weth).await.unwrap();
+    assert_eq!((account.balance, account.nonce, account.code_hash), expected);
+
+    // Proofs at the fork block are delegated, so mine past it to exercise the local path.
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+    for block in [BlockId::number(BLOCK_NUMBER + 1), BlockId::latest(), BlockId::pending()] {
+        let account = provider.get_account(weth).block_id(block).await.unwrap();
+        assert_eq!((account.balance, account.nonce, account.code_hash), expected);
+        let proof = provider.get_proof(weth, vec![B256::ZERO]).block_id(block).await.unwrap();
+        assert_eq!((proof.balance, proof.nonce, proof.code_hash), expected);
+        assert_eq!(proof.storage_proof[0].value, slot);
+        assert_storage_proofs(&proof);
+    }
+
+    // Touching another slot caches the account locally; the untouched slot must still resolve.
+    let touched = B256::with_last_byte(100);
+    api.anvil_set_storage_at(weth, touched.into(), B256::with_last_byte(1)).await.unwrap();
+    let proof = provider.get_proof(weth, vec![B256::ZERO, touched]).await.unwrap();
+    assert_eq!(proof.storage_proof[0].value, slot);
+    assert_eq!(proof.storage_proof[1].value, U256::ONE);
+    assert_storage_proofs(&proof);
+}
+
+fn assert_storage_proofs(proof: &EIP1186AccountProofResponse) {
+    for storage in &proof.storage_proof {
+        verify_proof(
+            proof.storage_hash,
+            Nibbles::unpack(keccak256(storage.key.as_b256())),
+            (!storage.value.is_zero()).then(|| alloy_rlp::encode(storage.value)),
+            &storage.proof,
+        )
+        .unwrap();
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
