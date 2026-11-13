@@ -168,7 +168,10 @@ impl SymbolicExecutor {
         }
 
         if let Some(to) = target_address {
-            if !state.function_mocks.is_empty() {
+            let code_address = if state.function_mocks.is_empty() {
+                to
+            } else {
+                let callee = self.call_code_account(executor, state, to)?;
                 let pre_call_state =
                     pre_call_state.as_ref().expect("function mocks require pre-call state");
                 if self.branch_symbolic_function_mock_if_needed(
@@ -176,16 +179,12 @@ impl SymbolicExecutor {
                     worklist,
                     pre_call_state,
                     call_pc,
-                    to,
+                    callee,
                     &call_input,
                 )? {
                     return Ok(StepOutcome::Forked);
                 }
-            }
-            let code_address = if state.function_mocks.is_empty() {
-                to
-            } else {
-                self.function_mock_target(state, to, &call_input)?.unwrap_or(to)
+                self.function_mock_target(state, callee, &call_input)?.unwrap_or(to)
             };
             if !state.expected_calls.is_empty() || !state.call_mocks.is_empty() {
                 let pre_call_state =
@@ -535,6 +534,23 @@ impl SymbolicExecutor {
             }
         }
         Ok(None)
+    }
+
+    /// Returns the account whose code a call to `to` runs, the delegate of an EIP-7702 delegated
+    /// account as in evm2, by which `vm.mockFunction` is keyed.
+    pub(super) fn call_code_account(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        to: Address,
+    ) -> Result<Address, SymbolicError> {
+        // `vm.etch` rejects precompiles, so they never hold a delegation designator.
+        if !executor.eip7702_delegations || is_precompile_for_spec(to, executor.spec_id) {
+            return Ok(to);
+        }
+        let delegate =
+            state.world.extcode(&mut self.cx, executor, to)?.eip7702_delegate(&mut self.cx)?;
+        Ok(delegate.unwrap_or(to))
     }
 
     pub(super) fn expected_call_match_constraints(
@@ -1202,7 +1218,9 @@ impl SymbolicExecutor {
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
         // `vm.mockFunction` swaps the code that runs, and the concrete inspector matches
         // `vm.expectCall` against that address, so resolve the redirect before observing.
-        let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
+        let code_account = self.call_code_account(executor, state, to)?;
+        let function_mock = self.function_mock_target(state, code_account, &call_input)?;
+        let code_address = function_mock.unwrap_or(to);
         if !state.expected_calls.is_empty() {
             let concrete_value = self.transfer_value(state, kind, &value);
             if !self.observe_expected_call(
@@ -1391,6 +1409,8 @@ impl SymbolicExecutor {
             );
         }
 
+        // Like the concrete inspector, a mock target's own delegation is not resolved.
+        let code_address = function_mock.unwrap_or(code_account);
         if self.equivalence.is_some()
             && state.world.is_unknown_account(&mut self.cx, executor, code_address)?
         {
@@ -2118,9 +2138,15 @@ impl SymbolicExecutor {
             }
 
             // Decide mock matches before executing either the mocked or real call.
-            for mut branch in
-                self.split_symbolic_target_candidate(branch, kind, to, &value, &gas, &call_input)?
-            {
+            for mut branch in self.split_symbolic_target_candidate(
+                executor,
+                branch,
+                kind,
+                to,
+                &value,
+                &gas,
+                &call_input,
+            )? {
                 let mut branch_worklist = VecDeque::new();
                 match self.call_concrete_target(
                     executor,
@@ -2159,17 +2185,24 @@ impl SymbolicExecutor {
     }
 
     /// Decides mock and expectation matches before executing a symbolic-target candidate.
+    #[expect(clippy::too_many_arguments)]
     fn split_symbolic_target_candidate(
         &mut self,
-        branch: PathState,
+        executor: &ExecutorView<'_>,
+        mut branch: PathState,
         kind: CallKind,
         to: Address,
         value: &SymExpr,
         gas: &SymExpr,
         call_input: &SymBytes,
     ) -> Result<Vec<PathState>, SymbolicError> {
+        let callee = if branch.function_mocks.is_empty() {
+            to
+        } else {
+            self.call_code_account(executor, &mut branch, to)?
+        };
         let mut branches = vec![branch];
-        for condition in self.function_mock_conditions(&branches[0], to, call_input) {
+        for condition in self.function_mock_conditions(&branches[0], callee, call_input) {
             branches = self.split_branches_on(branches, condition)?;
         }
 
@@ -2178,7 +2211,7 @@ impl SymbolicExecutor {
             let code_address = if branch.function_mocks.is_empty() {
                 to
             } else {
-                self.function_mock_target(&mut branch, to, call_input)?.unwrap_or(to)
+                self.function_mock_target(&mut branch, callee, call_input)?.unwrap_or(to)
             };
 
             let mut value_branches = vec![branch];

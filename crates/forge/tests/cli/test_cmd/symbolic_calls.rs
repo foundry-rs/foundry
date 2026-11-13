@@ -2205,3 +2205,194 @@ Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+// A call to an account holding an EIP-7702 delegation designator runs the delegate's code in the
+// account's context, one hop only, as in the concrete EVM.
+#[forgetest_init]
+fn symbolic_call_runs_eip7702_delegate_code(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_call_runs_eip7702_delegate_code");
+
+    prj.add_test(
+        "SymbolicEip7702Delegation.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract DelegateImpl {
+    uint256 constant SLOT = 0x7702;
+
+    function foo() external pure returns (uint256) {
+        return 42;
+    }
+
+    function bump() external payable {
+        assembly ("memory-safe") {
+            sstore(SLOT, add(sload(SLOT), 1))
+        }
+    }
+
+    function self() external view returns (address) {
+        return address(this);
+    }
+
+    function size() external pure returns (uint256 s) {
+        assembly ("memory-safe") {
+            s := codesize()
+        }
+    }
+
+    fallback() external {}
+}
+
+contract DelegateMock {
+    function foo() external pure returns (uint256) {
+        return 7;
+    }
+}
+
+contract SymbolicEip7702Delegation is Test {
+    bytes32 constant SLOT = bytes32(uint256(0x7702));
+    uint256 constant PK = 0xa11ce;
+
+    DelegateImpl impl;
+    address alice;
+    address bob = address(0xb0b);
+    address eve = address(0xe7e);
+
+    function setUp() public {
+        impl = new DelegateImpl();
+        alice = vm.addr(PK);
+        vm.signAndAttachDelegation(address(impl), PK);
+        vm.etch(bob, abi.encodePacked(hex"ef0100", address(impl)));
+        vm.etch(eve, abi.encodePacked(hex"ef0100", address(impl)));
+    }
+
+    function checkCallsRunDelegateCode() public view {
+        assertEq(DelegateImpl(alice).foo(), 42);
+        assertEq(DelegateImpl(bob).foo(), 42);
+        assertEq(DelegateImpl(bob).self(), bob);
+        assertEq(bob.code.length, 23);
+        assertEq(DelegateImpl(bob).size(), address(impl).code.length);
+    }
+
+    function checkDelegatedCallWritesDelegatingAccountStorage() public {
+        DelegateImpl(bob).bump();
+        DelegateImpl(bob).bump{value: 3}();
+        assertEq(uint256(vm.load(bob, SLOT)), 2);
+        assertEq(uint256(vm.load(address(impl), SLOT)), 0);
+        assertEq(bob.balance, 3);
+        assertEq(address(impl).balance, 0);
+    }
+
+    function checkDelegatecallAndCallcodeRunDelegateCode() public {
+        bytes memory data = abi.encodeCall(DelegateImpl.bump, ());
+        (bool ok,) = bob.delegatecall(data);
+        assertTrue(ok);
+        address target = bob;
+        assembly ("memory-safe") {
+            ok := callcode(gas(), target, 0, add(data, 0x20), mload(data), 0, 0)
+        }
+        assertTrue(ok);
+        assertEq(uint256(vm.load(address(this), SLOT)), 2);
+        assertEq(uint256(vm.load(bob, SLOT)), 0);
+    }
+
+    function checkChainedDelegationRunsOneHop() public {
+        address carol = address(0xca401);
+        vm.etch(carol, abi.encodePacked(hex"ef0100", bob));
+        (bool ok,) = carol.call(abi.encodeCall(DelegateImpl.foo, ()));
+        assertFalse(ok);
+    }
+
+    function checkDelegationToPrecompileRunsEmptyCode() public {
+        address dave = address(0xda7e);
+        vm.etch(dave, abi.encodePacked(hex"ef0100", address(4)));
+        (bool ok, bytes memory ret) = dave.call("echo");
+        assertTrue(ok);
+        assertEq(ret.length, 0);
+    }
+
+    function checkMockFunctionIsKeyedByDelegate() public {
+        DelegateMock mock = new DelegateMock();
+        bytes memory data = abi.encodeCall(DelegateImpl.foo, ());
+        vm.mockFunction(bob, address(mock), data);
+        assertEq(DelegateImpl(bob).foo(), 42);
+        vm.mockFunction(address(impl), address(mock), data);
+        assertEq(DelegateImpl(bob).foo(), 7);
+    }
+
+    function checkMockFunctionOnDelegateWithSymbolicSelector(bytes4 selector) public {
+        bytes memory data = abi.encodePacked(DelegateImpl.foo.selector);
+        vm.mockFunction(address(impl), address(new DelegateMock()), data);
+        (bool ok, bytes memory ret) = bob.call(abi.encodePacked(selector));
+        assertTrue(ok);
+        assertEq(ret.length, 32, "unmocked selector");
+    }
+
+    function checkSymbolicTargetMockFunctionOnDelegate(address target, bytes4 selector) public {
+        vm.assume(target == bob || target == eve);
+        bytes memory data = abi.encodePacked(DelegateImpl.foo.selector);
+        vm.mockFunction(address(impl), address(new DelegateMock()), data);
+        (bool ok, bytes memory ret) = target.call(abi.encodePacked(selector));
+        assertTrue(ok);
+        assertEq(ret.length, 32, "unmocked selector");
+    }
+
+    function checkExpectRevertOnDelegatedCall() public {
+        vm.expectRevert();
+        DelegateImpl(bob).bump();
+    }
+}
+
+/// forge-config: default.evm_version = "cancun"
+contract SymbolicEip7702DelegationCancun is Test {
+    address bob = address(0xb0b);
+
+    function setUp() public {
+        vm.etch(bob, abi.encodePacked(hex"ef0100", address(new DelegateImpl())));
+    }
+
+    function checkCallRunsDelegateCode() public view {
+        assertEq(DelegateImpl(bob).foo(), 42);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "^SymbolicEip7702Delegation$",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 9 tests for test/SymbolicEip7702Delegation.t.sol:SymbolicEip7702Delegation
+[PASS] checkCallsRunDelegateCode() ([METRICS])
+[PASS] checkChainedDelegationRunsOneHop() ([METRICS])
+[PASS] checkDelegatecallAndCallcodeRunDelegateCode() ([METRICS])
+[PASS] checkDelegatedCallWritesDelegatingAccountStorage() ([METRICS])
+[PASS] checkDelegationToPrecompileRunsEmptyCode() ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectRevertOnDelegatedCall() ([METRICS])
+[PASS] checkMockFunctionIsKeyedByDelegate() ([METRICS])
+[FAIL: unmocked selector: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockFunctionOnDelegateWithSymbolicSelector(bytes4) ([METRICS])
+[FAIL: unmocked selector: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicTargetMockFunctionOnDelegate(address,bytes4) ([METRICS])
+Suite result: FAILED. 6 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Delegations are resolved before Prague too, since the concrete EVM enables EIP-7702 on
+    // every spec.
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicEip7702DelegationCancun",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+[PASS] checkCallRunsDelegateCode() ([METRICS])
+...
+"#]]);
+}
