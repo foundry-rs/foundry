@@ -427,6 +427,25 @@ pub async fn spawn_rpc_proxy_internal_error_after(
     .await
 }
 
+/// Spawns an RPC proxy that answers every `method` request with the JSON-RPC error `code` and
+/// `message`.
+pub async fn spawn_rpc_proxy_method_error(
+    endpoint: String,
+    method: &'static str,
+    code: i64,
+    message: &'static str,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::After(0),
+        StatusCode::OK,
+        code,
+        message,
+    )
+    .await
+}
+
 /// Spawns an RPC proxy that answers `method` with `result` instead of forwarding it upstream.
 ///
 /// All other methods are forwarded. The returned counter tracks how many `method` calls reached the
