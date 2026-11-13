@@ -1317,6 +1317,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     .logs(self.config.live_logs)
                     .trace_requirements(script_trace_requirements(&self.config, debug))
                     .create2_deployer(self.evm_opts.create2_deployer)
+                    .fork_prefetch(self.evm_opts.fork_prefetch)
             })
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
