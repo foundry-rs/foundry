@@ -303,8 +303,8 @@ impl SymbolicExecutor {
 
         // The sender pays the call value, which it must hold, to the programs' account.
         if env.value.as_const() != Some(U256::ZERO) {
-            let sender = root.world.balance_word_for_address(cx, &input.executor, input.sender);
-            let target = root.world.balance_word_for_address(cx, &input.executor, input.address);
+            let sender = root.world.balance_word_for_address(cx, &input.executor, input.sender)?;
+            let target = root.world.balance_word_for_address(cx, &input.executor, input.address)?;
             let can_pay = SymBoolExpr::cmp(cx, SymCmpOp::Uge, sender.clone(), env.value.clone());
             let max_value = SymExpr::constant(cx, U256::MAX);
             let room = SymExpr::binop(cx, SymBinOp::Sub, max_value, target.clone());
@@ -391,8 +391,8 @@ impl SymbolicExecutor {
             }
         }
         for account in union(state_a.world.balance_addresses(), state_b.world.balance_addresses()) {
-            let left = state_a.world.balance_word_for_address(&mut self.cx, executor, account);
-            let right = state_b.world.balance_word_for_address(&mut self.cx, executor, account);
+            let left = state_a.world.balance_word_for_address(&mut self.cx, executor, account)?;
+            let right = state_b.world.balance_word_for_address(&mut self.cx, executor, account)?;
             diffs.push(SymBoolExpr::eq(&mut self.cx, left, right).not(&mut self.cx));
         }
         for account in union(state_a.world.nonce_addresses(), state_b.world.nonce_addresses()) {
@@ -458,7 +458,7 @@ impl SymbolicExecutor {
         let cx = &mut self.cx;
         let world =
             state.unknown_world.clone().unwrap_or_else(|| SymExpr::var(cx, "unknown_world_0"));
-        let caller_balance = state.world.balance_word_for_address(cx, executor, caller);
+        let caller_balance = state.world.balance_word_for_address(cx, executor, caller)?;
         let caller_world = state.world.clone();
 
         let success = state.fresh_word(cx, "unknown_call_success");
@@ -490,7 +490,7 @@ impl SymbolicExecutor {
             let room = SymExpr::binop(cx, SymBinOp::Sub, max_value, left.clone());
             state.constraints.push(SymBoolExpr::cmp(cx, SymCmpOp::Ule, ether_in.clone(), room));
             if to != caller {
-                let callee = state.world.balance_word_for_address(cx, executor, to);
+                let callee = state.world.balance_word_for_address(cx, executor, to)?;
                 let callee = SymExpr::binop(cx, SymBinOp::Add, callee, moved);
                 state.world.set_balance_word(to, callee);
             }
