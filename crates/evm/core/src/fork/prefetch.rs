@@ -220,9 +220,11 @@ pub(crate) fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverr
 
 /// Simulates a call on the fork's endpoint and prefetches the state it touches, see
 /// [`SharedBackend::prefetch_access_list`]. With `overrides`, the `local` state over the fork goes
-/// along as overrides; without, a call into an account without code on the endpoint, or one the
-/// context holds but the fork never loaded from it, is skipped. Calls to precompiles, up to
-/// `P256VERIFY` at `0x100`, the cheatcode contract and the console are skipped.
+/// along as overrides.
+///
+/// Calls to precompiles up to `P256VERIFY` at `0x100`, to the cheatcode contract and to the console
+/// are skipped. A call sent without overrides is skipped when the fork loaded its target without
+/// code. It is also skipped when `local` holds its target but the fork never loaded it.
 pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
     backend: &SharedBackend<N, B>,
     caller: Address,
@@ -249,10 +251,11 @@ pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
         return;
     }
     let overrides = local.filter(|_| overrides).and_then(|local| state_override(&remote, local));
-    // Without overrides, the endpoint runs its own code at the target, so a call is skipped when
-    // the target has no code there, such as an account created on the fork, or when the context
-    // holds the target but never loaded it from the endpoint, such as an account created before
-    // the fork was selected.
+    // Without overrides, the endpoint runs its own code at the target. A target the fork loaded
+    // without code, such as a contract created on the fork, runs no code there. A native
+    // precompile without code runs no opcodes, so the endpoint lists none of its reads either. A
+    // target the context holds but the fork never loaded, such as a contract created before the
+    // fork was selected, is unknown there.
     if overrides.is_none()
         && remote_code.map_or(local_account.is_some(), |remote| remote == KECCAK256_EMPTY)
     {

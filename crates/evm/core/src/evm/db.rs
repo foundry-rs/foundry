@@ -46,9 +46,9 @@ pub trait FoundryDatabase: DynDatabase {
     fn set_eip161(&self, _eip161: bool) {}
 
     /// Prefetches the remote state a call is about to read, if this database reads a remote
-    /// fork. With `overrides`, the `local` state over this database goes along as overrides;
-    /// without, a call into an account without code on the endpoint, or one the context holds but
-    /// the fork never loaded from it, is skipped.
+    /// fork. With `overrides`, the `local` state over this database goes along as overrides.
+    /// A call sent without overrides is skipped when the fork loaded its target without code. It
+    /// is also skipped when `local` holds its target but the fork never loaded it.
     fn prefetch_call(
         &self,
         _caller: Address,
