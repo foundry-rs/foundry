@@ -133,7 +133,7 @@ struct AnchorIndex<'a> {
     /// `(JUMPDEST, start of its straight-line run)` for every `JUMPDEST` that the previous
     /// instruction falls through to, ordered. A run starts after a `JUMP`, `STOP`, `RETURN`,
     /// `REVERT`, `INVALID`, `SELFDESTRUCT`, or a `JUMPI` that can skip to something other than a
-    /// failure stub.
+    /// failure stub. A `JUMP` that no source element maps does not end a run.
     fallen_into: Vec<(usize, usize)>,
     /// `(target pc, push instruction)` for every push that feeds a `JUMP` or `JUMPI`, sorted.
     jumps: Vec<(u32, usize)>,
@@ -162,6 +162,9 @@ impl<'a> AnchorIndex<'a> {
             match inst.opcode.get() {
                 opcode::JUMPDEST => jumpdests.push((pc, ic)),
                 opcode::JUMPI => conditional_jumps.push((ic, prev_target)),
+                // A compiler-generated helper, such as an ABI decoder, returns to the code that
+                // called it, so its `JUMP` does not end the caller's run.
+                opcode::JUMP if source_map.get(ic).is_some_and(|e| e.index().is_none()) => {}
                 opcode::JUMP
                 | opcode::STOP
                 | opcode::RETURN
@@ -618,6 +621,46 @@ mod tests {
                     opcode::JUMP,
                 ],
                 "10:20:0;;;;;;0:100:0;;;",
+                0,
+            ),
+            // An unmapped helper `JUMP`, such as an ABI decoder returning to the wrapper, does not
+            // end the run, but a mapped `JUMP` does.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    4,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::PUSH1,
+                    0,
+                    opcode::JUMP,
+                    opcode::PUSH1,
+                    4,
+                    opcode::JUMP,
+                ],
+                "10:20:0;;-1:-1:-1;10:20:0;;;0:100:0;;;",
+                4,
+            ),
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    4,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::PUSH1,
+                    0,
+                    opcode::JUMP,
+                    opcode::PUSH1,
+                    4,
+                    opcode::JUMP,
+                ],
+                "10:20:0;;12:3:0;10:20:0;;;0:100:0;;;",
                 0,
             ),
             // An exact-span block that other code jumps to, as an optimizer-merged exit, is not
