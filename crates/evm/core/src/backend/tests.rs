@@ -9,7 +9,7 @@ use alloy_consensus::{Signed, TxEnvelope, TxLegacy};
 use alloy_network::{
     AnyHeader, AnyRpcHeader, AnyTxEnvelope, AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction,
 };
-use alloy_primitives::{Bytes, Signature};
+use alloy_primitives::Signature;
 use alloy_provider::Provider;
 use alloy_rpc_types::{Block, Transaction as RpcTransaction};
 use alloy_serde::WithOtherFields;

@@ -83,8 +83,8 @@ pub struct RecordedFrame {
 /// The debug recorder and the SolDB frontend both convert steps through this.
 #[derive(Debug, Default)]
 pub struct StepConverter {
-    /// The last return data buffer and its hex encoding.
-    return_data: Option<(Bytes, Arc<str>)>,
+    /// The return data buffer of the last step.
+    return_data: Option<Bytes>,
     /// The storage of the steps that touch no slot.
     no_storage: Arc<BTreeMap<String, String>>,
 }
@@ -101,21 +101,23 @@ pub struct StepStorage {
 }
 
 impl StepConverter {
-    /// The hex encoding of the return data `buffer`.
-    pub fn return_data(&mut self, buffer: &Bytes) -> Arc<str> {
+    /// The hex encoding of the return data `buffer`, or `None` if it is the buffer passed last,
+    /// so a step record with it keeps the previous step's return data.
+    ///
+    /// The step of each call must be appended to the same table, in order.
+    pub fn return_data(&mut self, buffer: &Bytes) -> Option<Arc<str>> {
         match &self.return_data {
             // Unchanged return data is the same buffer, so comparing the pointers first skips
             // most full comparisons.
-            Some((last, hex))
+            Some(last)
                 if (last.as_ptr() == buffer.as_ptr() && last.len() == buffer.len())
                     || last == buffer =>
             {
-                hex.clone()
+                None
             }
             _ => {
-                let hex = Arc::<str>::from(hex::encode(buffer));
-                self.return_data = Some((buffer.clone(), hex.clone()));
-                hex
+                self.return_data = Some(buffer.clone());
+                Some(Arc::from(hex::encode(buffer)))
             }
         }
     }

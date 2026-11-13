@@ -68,20 +68,6 @@ impl<T> Hash for HashConsed<T> {
     }
 }
 
-impl<T: PartialOrd> PartialOrd for HashConsed<T> {
-    #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.value().partial_cmp(other.value())
-    }
-}
-
-impl<T: Ord> Ord for HashConsed<T> {
-    #[inline]
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.value().cmp(other.value())
-    }
-}
-
 impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.value().fmt(f)

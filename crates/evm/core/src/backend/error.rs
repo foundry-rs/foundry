@@ -69,5 +69,16 @@ pub fn transaction_error(err: HandlerError) -> eyre::Report {
         | HandlerError::BlobVersionNotSupported => err.to_string(),
         _ => return eyre::Report::new(err),
     };
-    eyre::eyre!("transaction validation error: {reason}")
+    eyre::Report::new(TransactionValidationError { reason, error: err })
+}
+
+/// A transaction evm2 rejected, with Foundry's wording of the reason. The evm2 error stays
+/// available to callers that downcast the report.
+#[derive(Debug, thiserror::Error)]
+#[error("transaction validation error: {reason}")]
+pub struct TransactionValidationError {
+    /// Foundry's wording of the rejection.
+    pub reason: String,
+    /// The evm2 rejection.
+    pub error: HandlerError,
 }

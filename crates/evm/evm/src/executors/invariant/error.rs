@@ -102,12 +102,19 @@ impl<'a> InvariantRunCtx<'a> {
     }
 
     /// Decodes the revert/assert reason without allocating a full [`FailedInvariantCaseData`].
-    /// Used by callers that only need the reason (e.g. handler-bug recording).
+    /// Used by callers that only need the reason (e.g. handler-bug recording). A failed
+    /// `vm.assert*` reports its own message when it caused the failure, since the revert data may
+    /// come from a later revert.
     pub fn decode_revert_reason<FEN: FoundryEvmNetwork>(
         &self,
         call_result: &RawCallResult<FEN>,
         assertion_failure: bool,
     ) -> String {
+        if (assertion_failure || !call_result.reverted)
+            && let Some(message) = &call_result.failed_assertion
+        {
+            return message.clone();
+        }
         let revert_reason = RevertDecoder::new()
             .with_abis(self.targeted_contracts.targets().values().map(|c| &c.abi))
             .with_abi(self.contract.abi)
@@ -317,10 +324,14 @@ impl InvariantFailures {
     }
 
     pub fn has_failure(&self, invariant: &Function) -> bool {
-        self.failures.contains_key(&FailureKey::Invariant(invariant.name.clone()))
+        self.get_failure(invariant).is_some()
     }
 
     pub fn get_failure(&self, invariant: &Function) -> Option<&InvariantFuzzError> {
+        // Most checks run before any invariant fails; skip the key allocation for them.
+        if self.invariant_count == 0 {
+            return None;
+        }
         self.failures.get(&FailureKey::Invariant(invariant.name.clone()))
     }
 

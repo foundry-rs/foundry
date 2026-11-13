@@ -597,7 +597,7 @@ impl<'ast> State<'_, 'ast> {
         match block_format {
             BlockFormat::NoBraces(None) => {
                 if !self.handle_span(self.cursor.span(block_lo), false) {
-                    self.print_comments(block_lo, CommentConfig::default());
+                    self.print_comments(block_lo, CommentConfig::skip_ws());
                 }
                 self.s.cbox(0);
             }

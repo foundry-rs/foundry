@@ -7,6 +7,11 @@ sol! {
         function createBytes(string calldata name) external returns (bytes memory value);
         function createBytes(uint256 len, string calldata name) external returns (bytes memory value);
         function createCalldata(string calldata name) external returns (bytes memory value);
+        function createCalldata(string calldata name, bool includeViewAndPureFunctions) external returns (bytes memory value);
+        function createCalldata(string calldata filename, string calldata name) external returns (bytes memory value);
+        function createCalldata(string calldata filename, string calldata name, bool includeViewAndPureFunctions) external returns (bytes memory value);
+        function createCalldata(address target) external returns (bytes memory value);
+        function createCalldata(address target, bool includeViewAndPureFunctions) external returns (bytes memory value);
         function createInt(uint256 bits, string calldata name) external returns (int256 value);
         function createString(string calldata name) external returns (string memory value);
         function createString(uint256 len, string calldata name) external returns (string memory value);

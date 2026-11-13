@@ -221,7 +221,7 @@ impl SlotInfo {
             if length_byte & 1 == 1 {
                 // Long bytes/string - populate members
                 let length: U256 = Into::<U256>::into(*base_value) >> 1;
-                let byte_len = length.try_into().unwrap_or(usize::MAX);
+                let byte_len = length.saturating_to::<usize>();
                 let num_slots = byte_len.div_ceil(32).min(256);
                 let data_start = Into::<U256>::into(keccak256(base_slot.0));
 
@@ -961,8 +961,7 @@ impl SlotIdentifier {
 
         // Check if it could be a data slot for this long bytes/string
         // Calculate where data slots would start for this variable
-        let data_start =
-            Into::<U256>::into(alloy_primitives::keccak256(base_slot.to_be_bytes::<32>()));
+        let data_start = Into::<U256>::into(keccak256(B256::from(base_slot)));
 
         // Get the length from the base slot value to calculate exact number of slots
         // For long bytes/strings, the length is stored as (length * 2 + 1) in the base slot
@@ -975,7 +974,7 @@ impl SlotIdentifier {
 
             // Check if our slot is within the data region
             if slot >= data_start && slot < data_start + num_slots {
-                let slot_index = (slot - data_start).try_into().unwrap_or(usize::MAX);
+                let slot_index = (slot - data_start).saturating_to::<usize>();
 
                 return Some(SlotInfo {
                     label: format!("{}[{}]", storage.label, slot_index),
