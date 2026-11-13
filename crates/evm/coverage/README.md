@@ -41,7 +41,7 @@ cargo nextest run -p forge --test cli --run-ignored only \
   coverage_shared_reverts_and_storage_aliases
 ```
 
-Both compilers must match the same full LCOV snapshot: 10/10 lines, 2/2 branches
+Both compilers must match the same full LCOV snapshot: 12/12 lines, 2/2 branches
 and 4/4 functions. The test is explicitly ignored until a released Solar carries
 the required changes; it fails when run with Solar 0.3.0 rather than blessing its
 missing coverage. Remove the ignore and pin the release when it is available.
