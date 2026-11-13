@@ -814,8 +814,15 @@ Suite result: FAILED. 3 passed; 6 failed; 0 skipped; [ELAPSED]
 fn symbolic_recompiles_cached_artifacts_without_storage_layouts(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_recompiles_cached_artifacts_without_storage_layouts");
 
-    prj.update_config(|config| config.optimizer = Some(true));
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.ast = true;
+    });
+    // A source without contracts has an artifact without a layout, which must stay cached.
+    prj.add_source("Helpers.sol", "function five() pure returns (uint256) { return 5; }");
     let source = r#"
+import {five} from "../src/Helpers.sol";
+
 contract FoldedStore {
     mapping(uint256 => uint256) public values;
 
@@ -824,7 +831,7 @@ contract FoldedStore {
     }
 
     function readFive() external view returns (uint256) {
-        return values[5];
+        return values[five()];
     }
 }
 
@@ -857,7 +864,8 @@ contract SymbolicStaleLayout {
     // The recompiled artifacts have layouts, so the next run reuses them.
     assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(str![[r#"
 No files changed, compilation skipped
-...
+
+Ran 1 test for test/SymbolicStaleLayout.t.sol:SymbolicStaleLayout
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
 ...
 "#]]);

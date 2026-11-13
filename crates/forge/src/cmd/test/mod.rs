@@ -50,7 +50,7 @@ use foundry_common::{
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{
-        BytecodeObject, ConfigurableContractArtifact, Libraries,
+        BytecodeObject, ConfigurableContractArtifact, Libraries, ast::NodeType,
         output_selection::ContractOutputSelection,
     },
     compilers::{
@@ -1765,13 +1765,22 @@ impl TestArgs {
             let mut output = compile();
             // A build without storage layouts keeps a cached profile that requested them, so its
             // artifacts are reused here without layouts. Delete them so they are recompiled.
+            // Artifacts of sources without contracts never have layouts, and their AST has no
+            // contract definition.
             if config.extra_output.contains(&ContractOutputSelection::StorageLayout)
                 && let Ok(compiled) = &output
             {
                 let stale = compiled
                     .cached_artifacts()
                     .artifact_files()
-                    .filter(|file| file.artifact.storage_layout.is_none())
+                    .filter(|file| {
+                        file.artifact.storage_layout.is_none()
+                            && file.artifact.ast.as_ref().is_none_or(|ast| {
+                                ast.nodes
+                                    .iter()
+                                    .any(|node| node.node_type == NodeType::ContractDefinition)
+                            })
+                    })
                     .map(|file| file.file.clone())
                     .collect::<Vec<_>>();
                 if !stale.is_empty() {
