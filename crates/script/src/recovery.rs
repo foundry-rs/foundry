@@ -1001,11 +1001,12 @@ where
 /// Returns whether the previous execution at `paths` submitted anything and left an operation, on
 /// any chain, with neither a receipt nor a recorded revert. Without a recovery snapshot, progress
 /// saved before snapshots existed is read from the broadcast export. An unreadable snapshot counts
-/// as unfinished, as resume would refuse it too; an unreadable export counts as finished.
+/// as unfinished, as resume would refuse it too.
 ///
 /// Errors when a broadcast export written with a snapshot has such an operation but the snapshot
 /// is missing, for example in a checkout without `cache/`: only the snapshot records submission
-/// attempts, so the export cannot show a submission whose response was lost.
+/// attempts, so the export cannot show a submission whose response was lost. Without a snapshot,
+/// an existing but unreadable export of a non-dry run errors too, as it cannot show anything.
 fn previous_unfinished<N: Network>(
     snapshot: &Path,
     paths: &(PathBuf, PathBuf),
@@ -1039,11 +1040,22 @@ where
             foundry_common::fs::read_json_file::<ScriptSequence<N>>(&paths.0)
                 .map(|sequence| SequenceData::Single(Box::new(sequence)))
         };
-        let Ok(data) = data else { return Ok(false) };
         // Dry runs never submit. Their exports sit under `DRY_RUN_DIR`, as laid out by
         // `ScriptSequence::get_paths` and `MultiChainSequence::get_paths`.
         let dry_run = paths.0.ancestors().nth(if multi { 2 } else { 1 }).and_then(Path::file_name)
             == Some(DRY_RUN_DIR.as_ref());
+        let data = match data {
+            Ok(data) => data,
+            Err(_) if dry_run || !paths.0.exists() => return Ok(false),
+            Err(err) => {
+                return Err(err).wrap_err(format!(
+                    "the recovery snapshot `{}` of the previous broadcast `{}` is missing and the broadcast is unreadable, so forge cannot tell whether it left unfinished operations; restore the snapshot and finish with `{}`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
+                    snapshot.display(),
+                    paths.0.display(),
+                    if multi { "--multi --resume" } else { "--resume" }
+                ));
+            }
+        };
         if data.has_recovery_generation() && !dry_run && incomplete(&data) {
             bail!(
                 "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so forge cannot tell which of its unfinished operations were sent; restore the snapshot and finish with `{}`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
@@ -2204,6 +2216,21 @@ mod tests {
             create().unwrap_err().to_string(),
             format!(
                 "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so forge cannot tell which of its unfinished operations were sent; restore the snapshot and finish with `--resume`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
+                snapshot.display(),
+                paths.0.display()
+            )
+        );
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        assert!(!paths.0.exists());
+        create().unwrap();
+
+        // Without its snapshot, an unreadable export blocks until archived.
+        std::fs::remove_file(&snapshot).unwrap();
+        std::fs::write(&paths.0, r#"{"transactions":["#).unwrap();
+        assert_eq!(
+            create().unwrap_err().to_string(),
+            format!(
+                "the recovery snapshot `{}` of the previous broadcast `{}` is missing and the broadcast is unreadable, so forge cannot tell whether it left unfinished operations; restore the snapshot and finish with `--resume`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
                 snapshot.display(),
                 paths.0.display()
             )
