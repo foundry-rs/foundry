@@ -221,8 +221,10 @@ impl<'a> AnchorIndex<'a> {
     /// Returns whether the taken side of a `require` branch is its failing side.
     ///
     /// A side that starts inside the `require` span is the failing side, because the failure
-    /// code carries the span while the passing side continues with the next statement. Without
-    /// a single such side, the side that reverts without another conditional branch is.
+    /// code carries the span while the passing side continues with the next statement. If
+    /// neither side starts inside it, the side that reverts without another conditional branch
+    /// is. If both do, the source map cannot tell them apart, and the revert check cannot follow
+    /// the failure code's dynamic returns, so the positional default stays.
     fn taken_fails(
         &self,
         (fallthrough, taken): &(ItemAnchor, ItemAnchor),
@@ -232,7 +234,8 @@ impl<'a> AnchorIndex<'a> {
         {
             (true, false) => false,
             (false, true) => true,
-            _ => self.fails(taken.instruction) && !self.fails(fallthrough.instruction),
+            (false, false) => self.fails(taken.instruction) && !self.fails(fallthrough.instruction),
+            (true, true) => false,
         }
     }
 
@@ -495,6 +498,8 @@ mod tests {
         ];
         for (bytecode, source_map, expected) in [
             (&solc[..], "10:20:0;;;;;;50:13:0;;;", [(5, None), (7, Some(4))]),
+            // Both sides start inside the span, as for `require(c, E(1)); assembly { invalid() }`.
+            (&solc[..], "10:20:0;;;;;;;;;", [(5, None), (7, Some(4))]),
             (&solar[..], "10:20:0;;;50:5:0;-1:-1:-1;10:20:0;", [(6, Some(4)), (5, None)]),
         ] {
             assert_eq!(require_anchors(bytecode, &[10], source_map), expected);
@@ -529,9 +534,11 @@ mod tests {
             opcode::PUSH0,
             opcode::REVERT,
         ];
-        // The first require maps the first three instructions, the second the rest.
-        let source_map =
-            format!("10:20:0;;;40:20:0{}", ";".repeat(InstIter::new(&bytecode).count() - 4));
+        // Each require maps its condition and jump. Other code lies outside both spans.
+        let source_map = format!(
+            "10:20:0;;;40:20:0;;;90:5:0{}",
+            ";".repeat(InstIter::new(&bytecode).count() - 7)
+        );
         assert_eq!(
             require_anchors(&bytecode, &[10, 40], &source_map),
             [(15, Some(4)), (5, None), (19, Some(9)), (10, None)]
