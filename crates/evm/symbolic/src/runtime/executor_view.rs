@@ -63,6 +63,9 @@ pub struct ExecutorView<'a> {
     /// Gas limit of the calls and deployments the executor runs.
     pub(crate) gas_limit: u64,
     pub(crate) max_code_size: usize,
+    /// Initcode size limit of CREATE, CREATE2, and `vm.deployCode`, or `usize::MAX` before
+    /// EIP-3860.
+    pub(crate) max_initcode_size: usize,
     /// Whether calls to EIP-7702 delegated accounts run the delegate's code.
     pub(crate) eip7702_delegations: bool,
     pub(crate) active_fork_id: Option<U256>,
@@ -141,6 +144,11 @@ impl<'a> ExecutorView<'a> {
             memory_limit: evm_env.version.memory_limit,
             gas_limit: executor.gas_limit(),
             max_code_size: evm_env.version.max_code_size,
+            max_initcode_size: if evm_env.version.feature(EvmFeatures::EIP3860) {
+                evm_env.version.max_initcode_size
+            } else {
+                usize::MAX
+            },
             eip7702_delegations: evm_env.version.feature(EvmFeatures::EIP7702),
             active_fork_id: backend.active_fork_id(),
             account_addresses,

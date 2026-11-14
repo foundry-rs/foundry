@@ -24,19 +24,28 @@ impl SymbolicExecutor {
         let offset = state.stack.pop()?;
         let size = state.stack.pop()?;
         let size = match state.constrained_usize_checked(&mut self.cx, &size) {
+            // EIP-3860: initcode above the limit halts the creating frame.
+            Some(Ok(size)) if size > executor.max_initcode_size => {
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                return Ok(StepOutcome::ExceptionalHalt);
+            }
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 return Ok(StepOutcome::Revert);
             }
             None => {
-                let max_limit = self.config.max_calldata_bytes as usize;
-                let max_size = self.solver_upper_bound_usize(
-                    state,
-                    &size,
-                    max_limit,
-                    "symbolic CREATE initcode size",
-                )?;
+                // A symbolic size that may exceed the initcode limit reports incomplete.
+                let (max_limit, reason) =
+                    if executor.max_initcode_size <= self.config.max_calldata_bytes as usize {
+                        (
+                            executor.max_initcode_size,
+                            "symbolic CREATE initcode size beyond the EIP-3860 limit",
+                        )
+                    } else {
+                        (self.config.max_calldata_bytes as usize, "symbolic CREATE initcode size")
+                    };
+                let max_size = self.solver_upper_bound_usize(state, &size, max_limit, reason)?;
                 BoundedCopySize::Symbolic { size, max_size }
             }
         };
@@ -291,7 +300,7 @@ impl SymbolicExecutor {
     }
 }
 
-fn runtime_exceeds_code_size_limit(
+pub(super) fn runtime_exceeds_code_size_limit(
     max_code_size: usize,
     spec_id: SpecId,
     runtime: &SymReturnData,
@@ -301,7 +310,7 @@ fn runtime_exceeds_code_size_limit(
         && runtime.len() > max_code_size
 }
 
-fn runtime_has_rejected_prefix(
+pub(super) fn runtime_has_rejected_prefix(
     cx: &mut SymCx,
     spec_id: SpecId,
     runtime: &SymReturnData,

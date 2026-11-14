@@ -192,7 +192,10 @@ impl SymbolicExecutor {
                     });
                 }
                 CallStatus::Success => {
-                    let reason = if expected.matched_any() || executor.internal_expect_revert {
+                    let reason = if expected.matched_any()
+                        || expected.deeper_frame_ran()
+                        || executor.internal_expect_revert
+                    {
                         "next call did not revert as expected"
                     } else {
                         DEPTH_REASON
@@ -202,6 +205,14 @@ impl SymbolicExecutor {
                         child: outcome.state,
                         unmet_expected_revert: Some(reason),
                     });
+                }
+                // A frame ran deeper, so Forge's depth check passes and the revert is matched
+                // against the expectation like a failed call below.
+                CallStatus::Revert
+                    if expected.deeper_frame_ran() && parent.expected_revert.is_none() =>
+                {
+                    parent.expected_revert = Some(expected);
+                    parent.first_failed_callee = outcome.state.first_failed_callee;
                 }
                 CallStatus::Revert
                     if !executor.internal_expect_revert && !expected.matched_any() =>
