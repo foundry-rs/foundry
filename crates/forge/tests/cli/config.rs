@@ -298,6 +298,7 @@ storage_layout = "solidity"
 report = ["summary"]
 lcov_version = "1.0.0"
 ir_minimum = false
+keep_optimizer = false
 include_libs = false
 exclude_tests = false
 skip_files = []
@@ -2465,6 +2466,7 @@ fn test_default_config(prj: _, cmd: _) {
     ],
     "lcov_version": "1.0.0",
     "ir_minimum": false,
+    "keep_optimizer": false,
     "report_file": null,
     "include_libs": false,
     "exclude_tests": false,

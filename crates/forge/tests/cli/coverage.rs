@@ -2703,6 +2703,185 @@ contract AContract {
 "#]]);
 }
 
+// `--keep-optimizer` keeps the optimizer, which folds away the always-true `x == x` condition.
+#[forgetest]
+fn keep_optimizer(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public y;
+
+    function f(uint256 x) public {
+        if (x == x) {
+            y = 2;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_f() public {
+        new AContract().f(1);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--optimize"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--ir-minimum"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: `ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.coverage.keep_optimizer = true;
+        config.optimizer = Some(true);
+    });
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.coverage.keep_optimizer = false;
+        config.coverage.ir_minimum = true;
+    });
+    cmd.forge_fuse().args(["coverage", "--keep-optimizer"]).assert_failure().stderr_eq(str![[r#"
+Error: `ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled
+
+"#]]);
+}
+
+// Same as `keep_optimizer`, with the Solar compiler.
+#[forgetest]
+fn keep_optimizer_solar(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public y;
+
+    function f(uint256 x) public {
+        if (x == x) {
+            y = 2;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_f() public {
+        new AContract().f(1);
+    }
+}
+    "#,
+    );
+
+    let solar = prj.ensure_foundry_bin("solar");
+    cmd.arg("coverage").arg("--use").arg(&solar).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with Solar 0.8.38
+Solar 0.8.38 [ELAPSED]
+Compiler run successful!
+Analysing contracts...
+Running tests...
+
+Ran 1 test for src/AContractTest.sol:AContractTest
+[PASS] test_f() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--optimize", "--use"])
+        .arg(&solar)
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with Solar 0.8.38
+Solar 0.8.38 [ELAPSED]
+Compiler run successful!
+Analysing contracts...
+Running tests...
+
+Ran 1 test for src/AContractTest.sol:AContractTest
+[PASS] test_f() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+}
+
 #[forgetest]
 fn no_artifacts_written(prj: _, cmd: _) {
     prj.insert_ds_test();

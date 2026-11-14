@@ -47,6 +47,12 @@ pub struct CoverageConfig {
     #[serde(default)]
     pub ir_minimum: bool,
 
+    /// Whether to keep the project's optimizer and `viaIR` settings instead of disabling them.
+    /// Optimized builds can miss or merge coverage items. Cannot be combined with `ir_minimum`,
+    /// including the `--ir-minimum` flag, so enabling it here also rules out that flag.
+    #[serde(default)]
+    pub keep_optimizer: bool,
+
     /// Path to write the coverage report to (relative to the project root). If
     /// unset, the report is written to the project root.
     #[serde(default)]
@@ -81,6 +87,7 @@ impl Default for CoverageConfig {
             report: default_report_kinds(),
             lcov_version: default_lcov_version(),
             ir_minimum: false,
+            keep_optimizer: false,
             report_file: None,
             include_libs: false,
             exclude_tests: false,
@@ -129,6 +136,7 @@ mod tests {
         assert_eq!(cfg.report, vec![CoverageReportKind::Summary]);
         assert_eq!(cfg.lcov_version, default_lcov_version());
         assert!(!cfg.ir_minimum);
+        assert!(!cfg.keep_optimizer);
         assert!(cfg.report_file.is_none());
         assert!(!cfg.include_libs);
         assert!(!cfg.exclude_tests);
@@ -141,6 +149,7 @@ mod tests {
             report = ["summary", "lcov"]
             lcov_version = "2.2.0"
             ir_minimum = true
+            keep_optimizer = true
             report_file = "out/lcov.info"
             include_libs = true
             exclude_tests = true
@@ -150,6 +159,7 @@ mod tests {
         assert_eq!(cfg.report, vec![CoverageReportKind::Summary, CoverageReportKind::Lcov]);
         assert_eq!(cfg.lcov_version, Version::new(2, 2, 0));
         assert!(cfg.ir_minimum);
+        assert!(cfg.keep_optimizer);
         assert_eq!(cfg.report_file.as_deref(), Some(std::path::Path::new("out/lcov.info")));
         assert!(cfg.include_libs);
         assert!(cfg.exclude_tests);
