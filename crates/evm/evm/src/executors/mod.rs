@@ -1408,7 +1408,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub has_state_snapshot_failure: bool,
     /// The raw result of the call.
     pub result: Bytes,
-    /// The gas used for the call
+    /// Gas consumed by the call, including intrinsic gas, calldata floors and refunds.
+    /// Excludes unused gas a network may charge.
     pub gas_used: u64,
     /// Refunded gas
     pub gas_refunded: u64,
@@ -2628,7 +2629,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             error.root_cause().to_string(),
-            "invalid Monad protocol system transaction: gas limit must be zero, got 100000"
+            "invalid Monad protocol transaction: gas limit must be zero, got 100000"
         );
         assert_eq!(executor.get_nonce(system).unwrap(), 3);
     }
@@ -3062,6 +3063,40 @@ mod tests {
             executor.commit(&mut restored);
             assert_eq!(executor.is_raw_call_mut_success(target, &mut restored), legacy);
         }
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn monad_simulation_reports_consumption_for_success_revert_and_halt() {
+        let target = Address::repeat_byte(0x11);
+        for limit in [100_000, 1_000_000] {
+            let mut executor = test_executor::<MonadEvmNetwork>(
+                ExecutorBuilder::default().gas_limit(limit),
+                NetworkConfigs::with_monad(),
+            );
+            for (code, stop, gas_used) in [
+                (bytes!("00"), InstrStop::Stop, 21_000),
+                (bytes!("5f5ffd"), InstrStop::Revert, 21_004),
+                (bytes!("fe"), InstrStop::InvalidFEOpcode, limit),
+            ] {
+                executor.set_code(target, Bytecode::new_raw(code)).unwrap();
+                let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+                assert_eq!(result.exit_reason, Some(stop));
+                assert_eq!(result.gas_used, gas_used);
+                assert_eq!(result.gas_refunded, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn simulation_retains_enabled_calldata_floor() {
+        let executor =
+            eth_executor(ExecutorBuilder::default().spec_id(SpecId::PRAGUE).gas_limit(100_000));
+        let result = executor
+            .call_raw(CALLER, Address::repeat_byte(0x11), vec![1; 1_000].into(), U256::ZERO)
+            .unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.gas_used, 61_000);
     }
 
     /// Returns code that forwards its calldata to `target` `calls` times and bubbles the error of

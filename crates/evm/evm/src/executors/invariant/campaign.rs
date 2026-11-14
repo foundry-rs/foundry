@@ -539,6 +539,7 @@ mod tests {
             assertion_failure: false,
             fork_block_number: None,
             campaign_failure: None,
+            after_invariant: false,
         })
     }
 

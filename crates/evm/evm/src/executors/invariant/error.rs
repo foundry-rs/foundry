@@ -118,6 +118,7 @@ impl<'a> InvariantRunCtx<'a> {
             assertion_failure,
             fork_block_number: call_result.fork_block_number,
             campaign_failure,
+            after_invariant: false,
         }
     }
 
@@ -167,8 +168,7 @@ pub fn handler_edge_fingerprint(
 }
 
 /// Records a handler-side assertion bug (if strictly shorter than the existing repro for
-/// this site) and pops the just-asserted reverted input from `inputs`. Shared by the
-/// periodic-check path and the inline check-skipped path.
+/// this site) and pops the just-asserted reverted input from `inputs`.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn record_handler_assertion_bug<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
@@ -475,6 +475,7 @@ impl InvariantFuzzError {
             assertion_failure,
             fork_block_number: None,
             campaign_failure: None,
+            after_invariant: false,
         };
         if is_revert { Self::Revert(failure) } else { Self::BrokenInvariant(failure) }
     }
@@ -546,6 +547,8 @@ pub struct FailedInvariantCaseData {
     /// Site and observable outcome of the campaign's failing call, to check that a replay
     /// reproduced it. `None` when its failure provenance was not recorded.
     pub campaign_failure: Option<(CheckSequenceFailureSite, RawFailure)>,
+    /// Whether `afterInvariant` failed, which can happen without any calls.
+    pub after_invariant: bool,
 }
 
 #[cfg(test)]
