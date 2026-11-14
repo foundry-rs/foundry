@@ -557,8 +557,12 @@ impl SymbolicExecutor {
                 JoinedCallOutcome::Revert { mut parent, child } => {
                     if rejected_runtime {
                         // Like Forge, the failed cheatcode call is the reverter for
-                        // `vm.assumeNoRevert` unless a call reverted earlier.
+                        // `vm.assumeNoRevert` unless a call reverted earlier, also for an
+                        // assumption this frame set.
                         parent.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
+                        if let Some(assumption) = &mut parent.assume_no_revert_next_call {
+                            assumption.reverted_by.get_or_insert(CHEATCODE_ADDRESS);
+                        }
                         parent.expected_revert.clone_from(&state.expected_revert);
                         // The constructor ran a frame deeper, so a revert of this frame can meet
                         // the pending expectation.

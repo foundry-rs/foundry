@@ -206,13 +206,36 @@ impl SymbolicExecutor {
                         unmet_expected_revert: Some(reason),
                     });
                 }
-                // A frame ran deeper, so Forge's depth check passes and the revert is matched
-                // against the expectation like a failed call below.
+                // A frame ran deeper, so Forge's depth check passes and a matching revert is
+                // handled like a failed call below. A mismatch reverts with a `CheatcodeError`
+                // the caller can catch, with a shorter message than Forge's. Like Forge,
+                // `vm.assumeNoRevert` handles the revert first.
                 CallStatus::Revert
                     if expected.deeper_frame_ran() && parent.expected_revert.is_none() =>
                 {
-                    parent.expected_revert = Some(expected);
-                    parent.first_failed_callee = outcome.state.first_failed_callee;
+                    let reverter = expected.reverted_by(
+                        failed_callee,
+                        outcome.state.first_failed_callee.or(failed_callee),
+                    );
+                    let constraints = parent.constraints.len();
+                    if assume_no_revert.is_some()
+                        || self.expected_revert_matches(
+                            &mut parent,
+                            &expected,
+                            reverter,
+                            &outcome.state.frame.return_data,
+                        )?
+                    {
+                        parent.expected_revert = Some(expected);
+                        parent.first_failed_callee = outcome.state.first_failed_callee;
+                    } else if parent.constraints.len() != constraints {
+                        return Err(SymbolicError::Unsupported(
+                            "ambiguous symbolic vm.expectRevert match",
+                        ));
+                    } else {
+                        outcome.state.frame.return_data =
+                            error_string_return_data(&mut self.cx, "Error != expected error");
+                    }
                 }
                 CallStatus::Revert
                     if !executor.internal_expect_revert && !expected.matched_any() =>

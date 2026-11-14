@@ -444,6 +444,23 @@ contract SymbolicCreateEip3541 is Test {
         caller.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
     }
 
+    function checkDeployCodeRejectedPrefixAssumeNoRevertInCaller() public {
+        try caller.assumeNoRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this))) {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256("FOUNDRY::ASSUME"));
+        }
+    }
+
+    function checkDeployCodeRejectedPrefixExpectRevertMismatchInCaller() public {
+        // The caller's expectation fails when its frame reverts, which the test can catch.
+        (bool ok, bytes memory err) = address(caller).call(abi.encodeCall(
+            DeployCodeCaller.expectOtherRevertDeployCode,
+            ("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)))));
+        assert(!ok);
+        assert(bytes4(err) == bytes4(keccak256("CheatcodeError(string)")));
+    }
+
     function checkRejectedPrefixExpectedCallsAndRevert() public {
         checkExpectedCallAndRevert(address(0x2001), false);
         checkExpectedCallAndRevert(address(0x2002), true);
@@ -586,6 +603,16 @@ contract DeployCodeCaller {
     function expectRevertCatchDeployCode(string memory what, bytes memory args) external {
         vm.expectRevert();
         try vm.deployCode(what, args) returns (address) {} catch {}
+    }
+
+    function expectOtherRevertDeployCode(string memory what, bytes memory args) external {
+        vm.expectRevert(bytes("other"));
+        vm.deployCode(what, args);
+    }
+
+    function assumeNoRevertDeployCode(string memory what, bytes memory args) external {
+        vm.assumeNoRevert(VmSafe.PotentialRevert(address(vm), false, hex"ef"));
+        vm.deployCode(what, args);
     }
 }
 "#,
