@@ -8,7 +8,8 @@ use foundry_test_utils::{forgetest_init, str};
 // Source equivalent: crytic/medusa/tests/contracts/assertions/* — assert that
 // a specific symbolic input does NOT hit a particular branch. The symbolic
 // engine should find the magic value directly via Z3.
-forgetest_init!(medusa_assertion_magic_constant, |prj, cmd| {
+#[forgetest_init]
+fn medusa_assertion_magic_constant(prj: _, cmd: _) {
     skip_unless_z3!("medusa_assertion_magic_constant");
 
     prj.add_test(
@@ -38,4 +39,4 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}

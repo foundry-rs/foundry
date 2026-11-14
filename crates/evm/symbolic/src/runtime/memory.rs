@@ -1,11 +1,12 @@
 use super::*;
+use evm2::constants::STACK_LIMIT;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymStack(Vec<SymExpr>);
 
 impl SymStack {
     pub(crate) fn push(&mut self, value: SymExpr) -> Result<(), SymbolicError> {
-        if self.0.len() >= EVM_STACK_LIMIT {
+        if self.0.len() >= STACK_LIMIT {
             return Err(SymbolicError::StackOverflow);
         }
         self.0.push(value);
@@ -27,11 +28,20 @@ impl SymStack {
             .ok_or(SymbolicError::StackUnderflow)
     }
 
-    pub(crate) fn swap(&mut self, index_from_top: usize) -> Result<(), SymbolicError> {
-        let len = self.0.len();
-        let other = len.checked_sub(index_from_top + 1).ok_or(SymbolicError::StackUnderflow)?;
-        self.0.swap(len - 1, other);
+    /// Swaps the `n`th and `m`th items from the top, where `n < m`.
+    pub(crate) fn exchange(&mut self, n: usize, m: usize) -> Result<(), SymbolicError> {
+        let top = self.0.len().checked_sub(1).ok_or(SymbolicError::StackUnderflow)?;
+        let other = top.checked_sub(m).ok_or(SymbolicError::StackUnderflow)?;
+        self.0.swap(top - n, other);
         Ok(())
+    }
+
+    pub(crate) const fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &SymExpr> {
+        self.0.iter()
     }
 }
 
@@ -73,9 +83,9 @@ impl SymbolicMemoryWrite {
 }
 
 impl SymMemory {
-    fn saturating_add_word(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> SymExpr {
+    pub(crate) fn saturating_add_word(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> SymExpr {
         let sum = SymExpr::binop(cx, SymBinOp::Add, left.clone(), right);
-        let overflow = SymBoolExpr::cmp(cx, SymCmpOp::Ult, sum.clone(), left);
+        let overflow = SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Ult, &sum, left);
         let max = SymExpr::constant(cx, U256::MAX);
         SymExpr::ite(cx, overflow, max, sum)
     }
@@ -110,7 +120,7 @@ impl SymMemory {
         if left == right {
             left
         } else {
-            let condition = SymBoolExpr::cmp(cx, SymCmpOp::Ult, left.clone(), right.clone());
+            let condition = SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Ult, &left, right.clone());
             SymExpr::ite(cx, condition, right, left)
         }
     }
@@ -572,6 +582,19 @@ impl SymMemory {
         self.logical_size.clone().unwrap_or_else(|| SymExpr::zero(cx))
     }
 
+    /// Returns expressions that together identify the whole contents of this memory: equal
+    /// lists mean equal memory.
+    pub(crate) fn identity_exprs(&self, cx: &mut SymCx) -> Vec<SymExpr> {
+        let mut exprs = self.read_bytes(cx, 0, self.materialized_size).materialize(cx);
+        exprs.push(SymExpr::constant(cx, U256::from(self.materialized_size)));
+        for write in &self.symbolic_writes {
+            exprs.push(write.offset.clone());
+            exprs.push(SymExpr::constant(cx, U256::from(write.bytes.len())));
+            exprs.extend(write.bytes.materialize(cx));
+        }
+        exprs
+    }
+
     pub(crate) fn size_after_range_expansion_word(
         &self,
         cx: &mut SymCx,
@@ -596,10 +619,6 @@ impl SymMemory {
         }
         let size = Self::size_after_range_word(cx, offset, size);
         self.expand_to(cx, size);
-    }
-
-    pub(crate) fn copy_bytes_offset(&mut self, cx: &mut SymCx, dest: SymExpr, src: SymBytes) {
-        self.store_bytes_offset(cx, dest, src);
     }
 
     pub(crate) fn copy_bytes_size_offset(
@@ -654,21 +673,13 @@ impl SymMemory {
         offset: SymExpr,
         size: usize,
         calldata: &SymCalldata,
-    ) -> Result<(), SymbolicError> {
-        if let Some(offset) = offset.as_const() {
-            let Ok(offset) = usize::try_from(offset) else {
-                let bytes = SymBytes::concrete(cx, vec![0; size]);
-                self.copy_bytes_offset(cx, dest, bytes);
-                return Ok(());
-            };
-            let offset = SymExpr::constant(cx, U256::from(offset));
-            let bytes = calldata.read_bytes_offset(cx, offset, size);
-            self.store_bytes_offset(cx, dest, bytes);
+    ) {
+        let bytes = if offset.as_const().is_some_and(|offset| usize::try_from(offset).is_err()) {
+            SymBytes::concrete(cx, vec![0; size])
         } else {
-            let bytes = calldata.read_bytes_offset(cx, offset, size);
-            self.store_bytes_offset(cx, dest, bytes);
-        }
-        Ok(())
+            calldata.read_bytes_offset(cx, offset, size)
+        };
+        self.store_bytes_offset(cx, dest, bytes);
     }
 
     pub(crate) fn copy_calldata_symbolic_size(
@@ -680,14 +691,7 @@ impl SymMemory {
         max_size: usize,
         calldata: &SymCalldata,
     ) -> Result<(), SymbolicError> {
-        let bytes = if let Some(offset) = offset.as_const()
-            && let Ok(offset) = usize::try_from(offset)
-        {
-            let offset = SymExpr::constant(cx, U256::from(offset));
-            calldata.read_bytes_offset(cx, offset, max_size)
-        } else {
-            calldata.read_bytes_offset(cx, offset, max_size)
-        };
+        let bytes = calldata.read_bytes_offset(cx, offset, max_size);
         self.copy_bytes_size_offset(cx, dest, size, bytes)
     }
 
@@ -774,7 +778,7 @@ impl SymMemory {
             BoundedCopySize::Concrete(size) => {
                 if *size != 0 {
                     let copy_size = (*size).min(return_data.len());
-                    let bytes = if return_data.has_symbolic_len() {
+                    let bytes = if return_data.len_word.as_const().is_none() {
                         let bytes = (0..copy_size)
                             .map(|idx| self.call_output_byte(cx, &dest, idx, None, return_data))
                             .collect::<Vec<_>>();
@@ -817,9 +821,14 @@ impl SymMemory {
             let idx_expr = SymExpr::constant(cx, U256::from(idx));
             guards.push(SymBoolExpr::cmp(cx, SymCmpOp::Ult, idx_expr, output_size.clone()));
         }
-        if return_data.has_symbolic_len() {
+        if return_data.len_word.as_const().is_none() {
             let idx_expr = SymExpr::constant(cx, U256::from(idx));
-            guards.push(SymBoolExpr::cmp(cx, SymCmpOp::Ult, idx_expr, return_data.len_expr()));
+            guards.push(SymBoolExpr::cmp(
+                cx,
+                SymCmpOp::Ult,
+                idx_expr,
+                return_data.len_word.clone(),
+            ));
         }
         let guard = SymBoolExpr::and(cx, guards);
         match guard.as_const() {
@@ -896,10 +905,10 @@ impl SymMemory {
         size: SymExpr,
         max_size: usize,
     ) -> Result<SymReturnData, SymbolicError> {
-        Ok(SymReturnData::from_bytes_with_len(
-            self.read_bytes_symbolic_size(cx, offset, size.clone(), max_size),
-            size,
-        ))
+        Ok(SymReturnData {
+            bytes: self.read_bytes_symbolic_size(cx, offset, size.clone(), max_size),
+            len_word: size,
+        })
     }
 }
 
@@ -907,6 +916,11 @@ impl SymMemory {
 pub(crate) struct SymCode {
     bytes: SymBytes,
     jump_table: JumpTable,
+    /// Whether revm stores this code as legacy bytecode, which is never an EIP-7702 delegation.
+    legacy: bool,
+    /// The first opcode position with a symbolic byte. That byte may be a `JUMPDEST` or a `PUSH`
+    /// that hides later ones, so the jump table is unknown from this position on.
+    symbolic_jumpdests_from: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -918,7 +932,12 @@ pub(crate) enum GuardedOpcode {
 
 impl SymCode {
     pub(crate) fn empty(cx: &mut SymCx) -> Self {
-        Self { bytes: SymBytes::empty(cx), jump_table: JumpTable::default() }
+        Self {
+            bytes: SymBytes::empty(cx),
+            jump_table: JumpTable::default(),
+            legacy: true,
+            symbolic_jumpdests_from: None,
+        }
     }
 
     pub(crate) fn from_byte_exprs(cx: &mut SymCx, bytes: Vec<SymExpr>) -> Self {
@@ -927,18 +946,21 @@ impl SymCode {
     }
 
     pub(crate) fn from_bytes(cx: &mut SymCx, bytes: SymBytes) -> Self {
-        let analysis = if let Some(bytes) = bytes.as_concrete_slice() {
-            bytes.to_vec()
+        let (analysis, symbolic_jumpdests_from) = if let Some(bytes) = bytes.as_concrete_slice() {
+            (bytes.to_vec(), None)
         } else {
-            (0..bytes.len())
-                .map(|idx| {
-                    bytes.byte(cx, idx).as_const().map_or(opcode::STOP, |value| value.to::<u8>())
-                })
-                .collect::<Vec<_>>()
+            let bytes = (0..bytes.len())
+                .map(|idx| bytes.byte(cx, idx).as_const().map(|value| value.to::<u8>()))
+                .collect::<Vec<_>>();
+            let symbolic_jumpdests_from = first_symbolic_opcode(&bytes);
+            (
+                bytes.into_iter().map(|byte| byte.unwrap_or(opcode::STOP)).collect(),
+                symbolic_jumpdests_from,
+            )
         };
         let analyzed = Bytecode::new_legacy(Bytes::from(analysis));
         let jump_table = analyzed.legacy_jump_table().cloned().unwrap_or_default();
-        Self { bytes, jump_table }
+        Self { bytes, jump_table, legacy: false, symbolic_jumpdests_from }
     }
 
     pub(crate) fn concrete(cx: &mut SymCx, bytes: Vec<u8>) -> Self {
@@ -948,7 +970,7 @@ impl SymCode {
     pub(crate) fn from_bytecode(cx: &mut SymCx, bytecode: &Bytecode) -> Self {
         let bytes = SymBytes::concrete(cx, bytecode.original_byte_slice().to_vec());
         let jump_table = bytecode.legacy_jump_table().cloned().unwrap_or_default();
-        Self { bytes, jump_table }
+        Self { bytes, jump_table, legacy: !bytecode.is_eip7702(), symbolic_jumpdests_from: None }
     }
 
     pub(crate) fn from_memory_offset(
@@ -980,8 +1002,38 @@ impl SymCode {
         self.bytes.is_empty()
     }
 
-    pub(crate) const fn jump_table(&self) -> &JumpTable {
-        &self.jump_table
+    /// Returns whether `dest` is a valid jump destination.
+    ///
+    /// Fails when a symbolic code byte at or before `dest` can change the jump table.
+    pub(crate) fn is_valid_jumpdest(&self, dest: usize) -> Result<bool, SymbolicError> {
+        if self.symbolic_jumpdests_from.is_some_and(|from| dest >= from) {
+            return Err(SymbolicError::Unsupported("symbolic bytecode jump table"));
+        }
+        Ok(self.jump_table.is_valid(dest))
+    }
+
+    pub(crate) const fn is_legacy(&self) -> bool {
+        self.legacy
+    }
+
+    /// Returns the delegate of an EIP-7702 delegation designator, `0xef0100 || delegate`, as its
+    /// 20 bytes, which may be symbolic.
+    pub(crate) fn eip7702_delegate(
+        &self,
+        cx: &mut SymCx,
+    ) -> Result<Option<SymBytes>, SymbolicError> {
+        if self.legacy || self.len() != EIP7702_BYTECODE_LEN {
+            return Ok(None);
+        }
+        let prefix = SymBytes::concrete(cx, vec![0xef, 0x01, 0x00]);
+        let Some(delegated) = self.read_bytes(cx, 0, prefix.len()).prefix_condition(cx, &prefix)
+        else {
+            return Ok(None);
+        };
+        if delegated.as_const() != Some(true) {
+            return Err(SymbolicError::Unsupported("symbolic EIP-7702 delegation"));
+        }
+        Ok(Some(self.read_bytes(cx, prefix.len(), 20)))
     }
 
     pub(crate) fn opcode(&self, cx: &mut SymCx, pc: usize) -> Result<Option<u8>, SymbolicError> {
@@ -1099,10 +1151,23 @@ impl SymCode {
     }
 }
 
+/// Returns the first opcode position that holds a symbolic byte, skipping concrete push data.
+fn first_symbolic_opcode(bytes: &[Option<u8>]) -> Option<usize> {
+    let mut pc = 0;
+    while let Some(byte) = bytes.get(pc) {
+        let Some(op) = *byte else { return Some(pc) };
+        pc += 1;
+        if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
+            pc += usize::from(op - opcode::PUSH1) + 1;
+        }
+    }
+    None
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SymReturnData {
-    len_word: SymExpr,
-    bytes: SymBytes,
+    pub(crate) len_word: SymExpr,
+    pub(crate) bytes: SymBytes,
 }
 
 impl SymReturnData {
@@ -1131,24 +1196,8 @@ impl SymReturnData {
         Self { len_word: SymExpr::constant(cx, U256::from(len)), bytes }
     }
 
-    pub(crate) const fn from_bytes_with_len(bytes: SymBytes, len_word: SymExpr) -> Self {
-        Self { len_word, bytes }
-    }
-
-    pub(crate) fn len_word(&self) -> SymExpr {
-        self.len_word.clone()
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.bytes.len()
-    }
-
-    pub(crate) fn len_expr(&self) -> SymExpr {
-        self.len_word.clone()
-    }
-
-    pub(crate) fn has_symbolic_len(&self) -> bool {
-        self.len_word.as_const().is_none()
     }
 
     pub(crate) fn byte(&self, cx: &mut SymCx, offset: usize) -> SymExpr {
@@ -1173,11 +1222,12 @@ impl SymReturnData {
     }
 
     pub(crate) fn to_code(&self, cx: &mut SymCx) -> Result<SymCode, SymbolicError> {
-        if self.has_symbolic_len() {
+        if self.len_word.as_const().is_none() {
             return Err(SymbolicError::Unsupported(
                 "CREATE with symbolic runtime size not modeled",
             ));
         }
-        Ok(SymCode::from_bytes(cx, self.bytes.clone()))
+        // Like revm, CREATE stores runtime code as legacy bytecode.
+        Ok(SymCode { legacy: true, ..SymCode::from_bytes(cx, self.bytes.clone()) })
     }
 }

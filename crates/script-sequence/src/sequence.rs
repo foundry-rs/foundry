@@ -1,8 +1,10 @@
 use crate::transaction::TransactionWithMetadata;
 use alloy_network::{Network, ReceiptResponse};
-use alloy_primitives::{TxHash, hex, map::HashMap};
+use alloy_primitives::{Address, B256, Bytes, TxHash, hex, map::HashMap};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, fs, shell};
+use foundry_common::{
+    SELECTOR_LEN, TransactionMaybeSigned, fs, shell, tempo::configurable_account::ConfigJson,
+};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -30,6 +32,8 @@ pub struct SensitiveTransactionMetadata {
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveScriptSequence {
     pub transactions: VecDeque<SensitiveTransactionMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_generation: Option<TxHash>,
 }
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
@@ -52,6 +56,38 @@ pub struct ScriptSequence<N: Network> {
     pub timestamp: u128,
     pub chain: u64,
     pub commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_generation: Option<TxHash>,
+    /// Hashes of mined transactions that reverted. They are kept out of `receipts`, which
+    /// consumers treat as successful, and resume never resubmits them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reverted: Vec<TxHash>,
+    /// Tempo configurable account transactions that wait for their owners' approvals. Resume
+    /// sends them once the approvals reach the account's threshold.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub awaiting_owners: Vec<AwaitingOwners>,
+}
+
+/// A Tempo configurable account transaction whose nonce, fees and gas limit are fixed, waiting for
+/// its owners to approve its digest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwaitingOwners {
+    /// The index of the transaction in the sequence's `transactions`.
+    pub index: usize,
+    /// The configurable account that sends the transaction.
+    pub account: Address,
+    /// The account's configuration, as `--tempo.config` takes it.
+    pub config: ConfigJson,
+    /// The unsigned Tempo transaction, as `cast mktx --raw-unsigned` prints it.
+    pub unsigned_tx: Bytes,
+    /// The digest that each owner signs.
+    pub digest: B256,
+    /// The owner approvals of `digest` collected so far, as Tempo primitive signatures. Resume
+    /// signs the transaction with them once they reach the threshold, and records it as a
+    /// submission attempt only when it sends it, in order.
+    #[serde(default)]
+    pub approvals: Vec<Bytes>,
 }
 
 impl<N: Network> Default for ScriptSequence<N> {
@@ -66,6 +102,9 @@ impl<N: Network> Default for ScriptSequence<N> {
             timestamp: Default::default(),
             chain: Default::default(),
             commit: Default::default(),
+            recovery_generation: Default::default(),
+            reverted: Default::default(),
+            awaiting_owners: Default::default(),
         }
     }
 }
@@ -78,6 +117,7 @@ impl<N: Network> From<&ScriptSequence<N>> for SensitiveScriptSequence {
                 .iter()
                 .map(|tx| SensitiveTransactionMetadata { rpc: tx.rpc.clone() })
                 .collect(),
+            recovery_generation: sequence.recovery_generation,
         }
     }
 }
@@ -237,6 +277,11 @@ impl<N: Network> ScriptSequence<N> {
 
     /// Copies RPC URLs from a matching sensitive-cache sequence.
     pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) -> Result<()> {
+        if self.recovery_generation != sensitive.recovery_generation {
+            eyre::bail!(
+                "the broadcast file and its sensitive-cache counterpart belong to different recovery generations"
+            );
+        }
         let transactions_len = self.transactions.len();
         let sensitive_len = sensitive.transactions.len();
         if transactions_len != sensitive_len {
@@ -262,7 +307,7 @@ pub fn sig_to_file_name(sig: &str) -> String {
         return name.to_string();
     }
     // assume calldata if `sig` is hex
-    if let Ok(calldata) = hex::decode(sig.strip_prefix("0x").unwrap_or(sig)) {
+    if let Ok(calldata) = hex::decode(sig) {
         // in which case we return the function selector if available
         if let Some(selector) = calldata.get(..SELECTOR_LEN) {
             return hex::encode(selector);
@@ -303,6 +348,7 @@ mod tests {
                 transactions: (0..count)
                     .map(|_| SensitiveTransactionMetadata { rpc: "replacement".to_string() })
                     .collect(),
+                recovery_generation: None,
             };
             assert_eq!(
                 sequence.fill_sensitive(&sensitive).unwrap_err().to_string(),
@@ -326,11 +372,27 @@ mod tests {
                 .into_iter()
                 .map(|rpc| SensitiveTransactionMetadata { rpc: rpc.to_string() })
                 .collect(),
+            recovery_generation: None,
         };
         sequence.fill_sensitive(&sensitive).unwrap();
         assert_eq!(
             sequence.transactions.iter().map(|tx| tx.rpc.as_str()).collect::<Vec<_>>(),
             ["restored-first", "restored-second"]
+        );
+    }
+
+    #[test]
+    fn fill_sensitive_rejects_a_different_recovery_generation() {
+        let mut sequence = sequence_with_two_transactions();
+        sequence.recovery_generation = Some(TxHash::ZERO);
+        let sensitive = SensitiveScriptSequence {
+            transactions: Default::default(),
+            recovery_generation: Some(TxHash::with_last_byte(1)),
+        };
+
+        assert_eq!(
+            sequence.fill_sensitive(&sensitive).unwrap_err().to_string(),
+            "the broadcast file and its sensitive-cache counterpart belong to different recovery generations"
         );
     }
 

@@ -1,4 +1,5 @@
 use crate::HeaderValue;
+use axum::http::header::InvalidHeaderValue;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::str::FromStr;
 
@@ -47,7 +48,7 @@ impl Default for ServerConfig {
 pub struct HeaderValueWrapper(pub HeaderValue);
 
 impl FromStr for HeaderValueWrapper {
-    type Err = <HeaderValue as FromStr>::Err;
+    type Err = InvalidHeaderValue;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(s.parse()?))

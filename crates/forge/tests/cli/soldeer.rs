@@ -2,9 +2,8 @@
 
 use std::{fs, path::Path};
 
-use foundry_test_utils::forgesoldeer;
-
-forgesoldeer!(install_dependency, |prj, cmd| {
+#[forgetest_init]
+fn install_dependency(prj: _, cmd: _) {
     let command = "install";
     let dependency = "forge-std~1.8.1";
 
@@ -47,9 +46,10 @@ forge-std = "1.8.1"
 "#;
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
-});
+}
 
-forgesoldeer!(install_dependency_git, |prj, cmd| {
+#[forgetest_init]
+fn install_dependency_git(prj: _, cmd: _) {
     let command = "install";
     let dependency = "forge-std~1.8.1";
     let git_arg = "--git";
@@ -93,9 +93,10 @@ forge-std = { version = "1.8.1", git = "https://gitlab.com/mario4582928/Mario.gi
 "#;
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
-});
+}
 
-forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
+#[forgetest_init]
+fn install_dependency_git_commit(prj: _, cmd: _) {
     let command = "install";
     let dependency = "forge-std~1.8.1";
     let git_arg = "--git";
@@ -142,9 +143,10 @@ forge-std = { version = "1.8.1", git = "https://gitlab.com/mario4582928/Mario.gi
 "#;
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
-});
+}
 
-forgesoldeer!(update_dependencies, |prj, cmd| {
+#[forgetest_init]
+fn update_dependencies(prj: _, cmd: _) {
     let command = "update";
 
     // We need to write this into the foundry.toml to make the update install the dependency
@@ -208,9 +210,10 @@ mario-custom-tag = { version = "1.0", git = "https://gitlab.com/mario4582928/Mar
 mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", tag = "custom-branch" }
 "#;
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
-});
+}
 
-forgesoldeer!(update_dependencies_simple_version, |prj, cmd| {
+#[forgetest_init]
+fn update_dependencies_simple_version(prj: _, cmd: _) {
     let command = "update";
 
     // We need to write this into the foundry.toml to make the update install the dependency, this
@@ -255,9 +258,10 @@ forge-std = "1.8.1"
 "#;
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
-});
+}
 
-forgesoldeer!(install_dependency_with_remappings_config, |prj, cmd| {
+#[forgetest_init]
+fn install_dependency_with_remappings_config(prj: _, cmd: _) {
     let command = "install";
     let dependency = "forge-std~1.8.1";
     let foundry_updates = r#"[profile.default]
@@ -312,9 +316,10 @@ forge-std = "1.8.1"
 "#;
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
-});
+}
 
-forgesoldeer!(install_dependency_with_remappings_txt, |prj, cmd| {
+#[forgetest_init]
+fn install_dependency_with_remappings_txt(prj: _, cmd: _) {
     let command = "install";
     let dependency = "forge-std~1.8.1";
     let foundry_updates = r#"
@@ -348,15 +353,17 @@ remappings_regenerate = true
 "#;
     let remappings_file = prj.root().join("remappings.txt");
     assert_data_eq!(read_file_to_string(&remappings_file), remappings_content);
-});
+}
 
-forgesoldeer!(login, |prj, cmd| {
+#[forgetest_init]
+fn login(cmd: _) {
     let command = "login";
 
     let _ = cmd.arg("soldeer").arg(command).assert_failure();
-});
+}
 
-forgesoldeer!(clean, |prj, cmd| {
+#[forgetest_init]
+fn clean(prj: _, cmd: _) {
     let dependency = "forge-std~1.8.1";
     let foundry_contents = r#"[profile.default]
 src = "src"
@@ -381,9 +388,10 @@ libs = ["lib", "dependencies"]
     cmd.arg("soldeer").args([command]).assert_success();
     // Dependencies should have been removed from disk
     assert!(!prj.root().join("dependencies").exists());
-});
+}
 
-forgesoldeer!(detect_project_root, |prj, cmd| {
+#[forgetest_init]
+fn detect_project_root(prj: _, cmd: _) {
     let command = "update";
 
     let foundry_updates = r#"[profile.default]
@@ -408,7 +416,7 @@ forge-std = "1.8.1"
     let path_dep_forge =
         prj.root().join("dependencies").join("forge-std-1.8.1").join("foundry.toml");
     assert!(path_dep_forge.exists());
-});
+}
 
 fn read_file_to_string(path: &Path) -> String {
     let contents: String = fs::read_to_string(path).unwrap_or_default();

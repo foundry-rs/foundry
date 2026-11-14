@@ -23,11 +23,12 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
+    tempo::{configurable_account::ConfigurableAccountSigner, maybe_print_fee_token},
 };
-use foundry_config::{Chain, Config};
-use foundry_wallets::{TempoAccountsWallet, WalletSigner, wallet_browser::signer::BrowserSigner};
+use foundry_config::Config;
+use foundry_wallets::{WalletSigner, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr};
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet};
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 use url::Url;
@@ -191,7 +192,7 @@ impl SendTxArgs {
 
     async fn run_generic_inner<N: Network>(
         self,
-        pre_resolved_signer: Option<WalletSigner>,
+        mut pre_resolved_signer: Option<WalletSigner>,
         mut access_key: Option<TempoAccountsWallet>,
         pre_resolved_browser: Option<BrowserSigner<N>>,
     ) -> Result<()>
@@ -296,7 +297,30 @@ impl SendTxArgs {
             tx.tempo.key_id = Some(ak.key_id()?);
         }
 
-        let builder = CastTxBuilder::new(&provider, tx, &config)
+        // A configurable account sender signs with its owners, which the RPC, a browser wallet or
+        // an access key cannot do.
+        let configurable_account = if access_key.is_some()
+            || unlocked
+            || send_tx.browser.browser
+            || pre_resolved_browser.is_some()
+        {
+            eyre::ensure!(
+                !tx.tempo.has_configurable_account_options(),
+                "Tempo configurable accounts cannot be combined with --unlocked, --browser or an \
+                 access key"
+            );
+            None
+        } else {
+            tempo::resolve_configurable_account::<N>(
+                &tx.tempo,
+                &config,
+                &send_tx.eth.wallet,
+                &mut pre_resolved_signer,
+            )
+            .await?
+        };
+
+        let mut builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_gas_estimate_multiplier(gas_estimate_multiplier)
             .with_to(to)
@@ -305,6 +329,9 @@ impl SendTxArgs {
             .await?
             .with_blob_data(blob_data)?;
         let chain = builder.chain();
+        if let Some(account) = &configurable_account {
+            account.prepare_request::<N>(builder.tx_mut());
+        }
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
@@ -316,6 +343,13 @@ impl SendTxArgs {
                     return Ok(());
                 };
                 (tx, prepared.account())
+            } else if let Some(account) = &configurable_account {
+                let Some(tx) =
+                    confirm_and_build(builder, account.account(), force, None, false).await?
+                else {
+                    return Ok(());
+                };
+                (tx, account.account())
             } else {
                 let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
                     eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
@@ -325,8 +359,7 @@ impl SendTxArgs {
                 };
                 (tx, signer.address())
             };
-            let hash =
-                tempo::sponsor_hash(fee_provider, chain, &mut tx, from, sponsor_fee_payer).await?;
+            let hash = tempo::sponsor_hash(fee_provider, &mut tx, from, sponsor_fee_payer).await?;
             sh_println!("{hash:?}")?;
             return Ok(());
         }
@@ -335,8 +368,7 @@ impl SendTxArgs {
 
         // Without a sponsor the fee token is resolved for the sender while sending.
         let send_opts = SendOptions::new(&send_tx, &config);
-        let fee_send_opts =
-            send_opts.resolving_fee_token(tempo_sponsor.is_none().then_some(chain), &config);
+        let fee_send_opts = send_opts.resolving_fee_token(tempo_sponsor.is_none(), &config);
 
         // --sponsor-url is valid with local signers and Tempo access keys. Bail early rather than
         // silently ignoring it in signing paths that cannot produce a raw transaction locally.
@@ -371,7 +403,7 @@ impl SendTxArgs {
                         .raw_request::<_, ()>(
                             "wallet_switchEthereumChain".into(),
                             [serde_json::json!({
-                                "chainId": format!("0x{:x}", config_chain_id),
+                                "chainId": format!("{config_chain_id:#x}"),
                             })],
                         )
                         .await?;
@@ -386,7 +418,6 @@ impl SendTxArgs {
             tempo::maybe_attach_sponsor(
                 tempo_sponsor.as_ref(),
                 fee_provider,
-                chain,
                 &mut tx_request,
                 config.sender,
             )
@@ -405,7 +436,6 @@ impl SendTxArgs {
             tempo::apply_fee_payment::<N, _>(
                 tempo_sponsor.as_ref(),
                 fee_provider,
-                chain,
                 &mut tx_request,
                 from,
             )
@@ -429,7 +459,6 @@ impl SendTxArgs {
             tempo::maybe_attach_sponsor(
                 tempo_sponsor.as_ref(),
                 fee_provider,
-                chain,
                 &mut tx_request,
                 prepared.account(),
             )
@@ -447,7 +476,43 @@ impl SendTxArgs {
                 cast_send_with_tempo_wallet(&provider, tx_request, &prepared, &fee_send_opts)
                     .await?;
             }
-        // Case 4: a local signer.
+        // Case 4: a Tempo configurable account signed by its local owners.
+        } else if let Some(account) = configurable_account {
+            let from = account.account();
+            let Some(mut tx_request) = confirm_and_build(builder, from, force, lane, false).await?
+            else {
+                return Ok(());
+            };
+            if let Some(sponsor_url) = sponsor_url.as_deref() {
+                // The relay selects the fee token and adds its fee-payer signature.
+                tx_request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
+                let connector = tempo::sponsor_relay_connector(&provider, sponsor_url)?;
+                let sponsor_provider =
+                    AlloyProviderBuilder::<_, _, N>::default().connect_with(&connector).await?;
+                cast_send_with_configurable_account(
+                    &sponsor_provider,
+                    tx_request,
+                    &account,
+                    &send_opts,
+                )
+                .await?;
+            } else {
+                tempo::maybe_attach_sponsor(
+                    tempo_sponsor.as_ref(),
+                    fee_provider,
+                    &mut tx_request,
+                    from,
+                )
+                .await?;
+                cast_send_with_configurable_account(
+                    &provider,
+                    tx_request,
+                    &account,
+                    &fee_send_opts,
+                )
+                .await?;
+            }
+        // Case 5: a local signer.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
         // enough information to sign and we must bail.
         } else {
@@ -473,7 +538,6 @@ impl SendTxArgs {
                 tempo::maybe_attach_sponsor(
                     tempo_sponsor.as_ref(),
                     fee_provider,
-                    chain,
                     &mut tx_request,
                     from,
                 )
@@ -498,11 +562,29 @@ pub(crate) struct SendOptions {
     sync: bool,
     confirmations: u64,
     timeout: u64,
-    /// Chain used to resolve a missing Tempo fee token for the sender before sending. `None`
-    /// leaves the fee token as built, e.g. when a sponsor already selected it.
-    fee_chain: Option<Chain>,
+    /// How the Tempo fee token is handled before sending.
+    fee_token: FeeTokenMode,
+}
+
+/// How [`cast_send`] handles the Tempo fee token of a transaction before sending it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FeeTokenMode {
+    /// Leave the fee token as built, e.g. when a sponsor already selected it, and print it
+    /// without querying the provider.
+    AsBuilt,
+    /// Resolve a missing fee token for the sender, querying the provider for the stored fee token
+    /// and its symbol.
+    Resolve,
+    /// Resolve a missing fee token for the sender without querying the provider, e.g. when the
+    /// request is only rendered as `curl`.
+    ResolveOffline,
+}
+
+impl FeeTokenMode {
     /// Whether the provider may be queried for the stored fee token and its symbol.
-    query_fee_token: bool,
+    const fn queries_provider(self) -> bool {
+        matches!(self, Self::Resolve)
+    }
 }
 
 impl SendOptions {
@@ -513,15 +595,21 @@ impl SendOptions {
             sync: send_tx.sync,
             confirmations: send_tx.confirmations,
             timeout: send_tx.timeout.unwrap_or(config.transaction_timeout),
-            fee_chain: None,
-            query_fee_token: false,
+            fee_token: FeeTokenMode::AsBuilt,
         }
     }
 
-    /// Resolves the sender's fee token on `chain` before sending, querying the RPC unless the
-    /// request is only rendered as `curl`.
-    pub(crate) const fn resolving_fee_token(self, chain: Option<Chain>, config: &Config) -> Self {
-        Self { fee_chain: chain, query_fee_token: chain.is_some() && !config.eth_rpc_curl, ..self }
+    /// Resolves the sender's fee token before sending when `resolve` is set, querying the RPC
+    /// unless the request is only rendered as `curl`.
+    pub(crate) const fn resolving_fee_token(self, resolve: bool, config: &Config) -> Self {
+        let fee_token = if !resolve {
+            FeeTokenMode::AsBuilt
+        } else if config.eth_rpc_curl {
+            FeeTokenMode::ResolveOffline
+        } else {
+            FeeTokenMode::Resolve
+        };
+        Self { fee_token, ..self }
     }
 
     /// Prints the hash of a submitted transaction, or its receipt unless `--async` was passed.
@@ -540,7 +628,7 @@ impl SendOptions {
     }
 
     /// Prints a sync receipt, or the hash / polled receipt of a pending transaction.
-    async fn print_send_result<N: Network, P: Provider<N>>(
+    pub(crate) async fn print_send_result<N: Network, P: Provider<N>>(
         &self,
         provider: P,
         tx_hash: B256,
@@ -563,15 +651,15 @@ impl SendOptions {
         tx: &mut N::TransactionRequest,
     ) -> Result<()>
     where
-        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        tempo::resolve_and_print_fee_token(
-            self.query_fee_token.then_some(provider),
-            self.fee_chain,
-            tx,
-            None,
-        )
-        .await
+        let provider = self.fee_token.queries_provider().then_some(provider);
+        match self.fee_token {
+            FeeTokenMode::AsBuilt => maybe_print_fee_token(provider, tx.fee_token()).await,
+            FeeTokenMode::Resolve | FeeTokenMode::ResolveOffline => {
+                tempo::resolve_and_print_fee_token(provider, tx, None).await
+            }
+        }
     }
 }
 
@@ -583,7 +671,7 @@ pub(crate) async fn cast_send<N: Network, P: Provider<N>>(
     opts: &SendOptions,
 ) -> Result<B256>
 where
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     opts.resolve_and_print_fee_token(&provider, &mut tx).await?;
@@ -624,11 +712,29 @@ pub(crate) async fn cast_send_with_tempo_wallet<N: Network, P: Provider<N>>(
     opts: &SendOptions,
 ) -> Result<B256>
 where
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     opts.resolve_and_print_fee_token(provider, &mut tx).await?;
     let raw_tx = tx.sign_with_tempo_wallet(wallet).await?;
+    let (tx_hash, receipt) = cast_send_raw(provider, &raw_tx, opts.sync).await?;
+    opts.print_send_result(provider, tx_hash, receipt).await
+}
+
+/// Signs a prepared transaction as a Tempo configurable account with its owners' approvals and
+/// sends it as a raw transaction.
+pub(crate) async fn cast_send_with_configurable_account<N: Network, P: Provider<N>>(
+    provider: &P,
+    mut tx: N::TransactionRequest,
+    account: &ConfigurableAccountSigner,
+    opts: &SendOptions,
+) -> Result<B256>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+{
+    opts.resolve_and_print_fee_token(provider, &mut tx).await?;
+    let raw_tx = tx.sign_with_configurable_account(account).await?;
     let (tx_hash, receipt) = cast_send_raw(provider, &raw_tx, opts.sync).await?;
     opts.print_send_result(provider, tx_hash, receipt).await
 }
@@ -644,7 +750,7 @@ pub(crate) async fn cast_send_with_tempo_wallet_via_sponsor<N: Network, P: Provi
     opts: &SendOptions,
 ) -> Result<B256>
 where
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     tx.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
@@ -778,8 +884,7 @@ mod tests {
             sync: true,
             confirmations: 1,
             timeout: 1,
-            fee_chain: None,
-            query_fee_token: false,
+            fee_token: FeeTokenMode::AsBuilt,
         };
         let actual_hash = cast_send_with_tempo_wallet(&provider, tx, &wallet, &opts).await.unwrap();
 

@@ -212,7 +212,8 @@ impl<'gcx> hir::Visit<'gcx> for ParamEscapeFinder<'_, 'gcx> {
             }
             ExprKind::Delete(inner) => self.is_param(inner),
             ExprKind::Unary(op, inner) => op.kind.has_side_effects() && self.is_param(inner),
-            ExprKind::Call(callee, args, opts) => {
+            ExprKind::Call(callee, args) => {
+                let (callee, opts) = callee.split_call_options();
                 !self
                     .gcx
                     .type_of_expr(callee.id)

@@ -92,22 +92,30 @@ impl<'a> InvariantRunCtx<'a> {
             return_reason: "".into(),
             revert_reason,
             addr: self.contract.address,
-            calldata: broken_fn.selector().to_vec().into(),
+            calldata: broken_fn.selector().into(),
             inner_sequence: inner_sequence.to_vec(),
             shrink_run_limit: self.config.shrink_run_limit,
             fail_on_revert,
             assertion_failure,
             fork_block_number: call_result.fork_block_number,
+            after_invariant: false,
         }
     }
 
     /// Decodes the revert/assert reason without allocating a full [`FailedInvariantCaseData`].
-    /// Used by callers that only need the reason (e.g. handler-bug recording).
+    /// Used by callers that only need the reason (e.g. handler-bug recording). A failed
+    /// `vm.assert*` reports its own message when it caused the failure, since the revert data may
+    /// come from a later revert.
     pub fn decode_revert_reason<FEN: FoundryEvmNetwork>(
         &self,
         call_result: &RawCallResult<FEN>,
         assertion_failure: bool,
     ) -> String {
+        if (assertion_failure || !call_result.reverted)
+            && let Some(message) = &call_result.failed_assertion
+        {
+            return message.clone();
+        }
         let revert_reason = RevertDecoder::new()
             .with_abis(self.targeted_contracts.targets().values().map(|c| &c.abi))
             .with_abi(self.contract.abi)
@@ -140,8 +148,7 @@ pub fn handler_edge_fingerprint(
 }
 
 /// Records a handler-side assertion bug (if strictly shorter than the existing repro for
-/// this site) and pops the just-asserted reverted input from `inputs`. Shared by the
-/// periodic-check path and the inline check-skipped path.
+/// this site) and pops the just-asserted reverted input from `inputs`.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn record_handler_assertion_bug<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
@@ -216,6 +223,17 @@ pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
     }
     match edges {
         EdgeCoverage::Hash(edges) => Some(keccak256(edges)),
+        EdgeCoverage::Instrumented(hits) => {
+            // Hits are in first-hit order; sort for a fingerprint independent of it.
+            let mut sorted = hits.clone();
+            sorted.sort_unstable();
+            let mut bytes = Vec::with_capacity(sorted.len() * 5);
+            for hit in sorted {
+                bytes.extend_from_slice(&hit.id.to_le_bytes());
+                bytes.push(hit.count);
+            }
+            Some(keccak256(bytes))
+        }
         EdgeCoverage::CollisionFree(hits) => {
             // `From<EdgeCovInspector>` does not sort on the per-call drain path,
             // so sort here for a deterministic fingerprint across runs regardless
@@ -306,10 +324,14 @@ impl InvariantFailures {
     }
 
     pub fn has_failure(&self, invariant: &Function) -> bool {
-        self.failures.contains_key(&FailureKey::Invariant(invariant.name.clone()))
+        self.get_failure(invariant).is_some()
     }
 
     pub fn get_failure(&self, invariant: &Function) -> Option<&InvariantFuzzError> {
+        // Most checks run before any invariant fails; skip the key allocation for them.
+        if self.invariant_count == 0 {
+            return None;
+        }
         self.failures.get(&FailureKey::Invariant(invariant.name.clone()))
     }
 
@@ -426,12 +448,13 @@ impl InvariantFuzzError {
             return_reason: "".into(),
             revert_reason,
             addr: invariant_address,
-            calldata: invariant.selector().to_vec().into(),
+            calldata: invariant.selector().into(),
             inner_sequence: Vec::new(),
             shrink_run_limit: config.shrink_run_limit,
             fail_on_revert,
             assertion_failure,
             fork_block_number: None,
+            after_invariant: false,
         };
         if is_revert { Self::Revert(failure) } else { Self::BrokenInvariant(failure) }
     }
@@ -500,6 +523,8 @@ pub struct FailedInvariantCaseData {
     pub assertion_failure: bool,
     /// Active fork block when the failure was observed, if any.
     pub fork_block_number: Option<u64>,
+    /// Whether `afterInvariant` failed, which can happen without any calls.
+    pub after_invariant: bool,
 }
 
 #[cfg(test)]

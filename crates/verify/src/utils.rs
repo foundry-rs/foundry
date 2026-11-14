@@ -1,10 +1,11 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
-use alloy_network::{AnyNetwork, AnyRpcBlock};
-use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
+use alloy_network::{AnyNetwork, AnyRpcBlock, TransactionBuilder};
+use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U256};
 use alloy_provider::{Provider, network::BlockResponse};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
+use evm2::bytecode::Bytecode;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
     contract::{ContractCreationData, ContractMetadata, Metadata},
@@ -13,8 +14,8 @@ use foundry_block_explorers::{
 };
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{
-    abi::encode_args, compile::ProjectCompiler, find_matching_contract_artifact,
-    ignore_metadata_hash, shell,
+    FoundryTransactionBuilder, abi::encode_args, compile::ProjectCompiler,
+    find_matching_contract_artifact, ignore_metadata_hash, shell,
 };
 use foundry_compilers::{
     Graph,
@@ -27,9 +28,11 @@ use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
-        FoundryBlock as _,
         decode::RevertDecoder,
-        evm::{BlockEnvFor, ChainFor, EvmEnvFor, FoundryEvmNetwork, TxEnvFor},
+        evm::{
+            ChainFor, EvmEnvFor, FoundryEvmNetwork, FoundryTxConversion, TransactionRequestFor,
+            TypesFor,
+        },
     },
     executors::{ExecutorBuilder, TracingExecutor},
     opts::EvmOpts,
@@ -38,7 +41,6 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
-use revm::{bytecode::Bytecode, context::Block as _, database::Database};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
@@ -198,9 +200,16 @@ fn is_partial_match(
         return false;
     }
 
-    // If not runtime, extract constructor args from the end of the bytecode
-    bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
-    local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
+    // If not runtime, extract constructor args from the end of the bytecode.
+    // The args come from the caller, so neither buffer is known to be that long.
+    let (Some(bytecode_head), Some(local_head)) = (
+        bytecode.len().checked_sub(constructor_args.len()).map(|n| &bytecode[..n]),
+        local_bytecode.len().checked_sub(constructor_args.len()).map(|n| &local_bytecode[..n]),
+    ) else {
+        return false;
+    };
+    bytecode = bytecode_head;
+    local_bytecode = local_head;
 
     try_extract_and_compare_bytecode(local_bytecode, bytecode)
 }
@@ -360,7 +369,7 @@ pub async fn get_tracing_executor<FEN>(
     execution_block: Option<&AnyRpcBlock>,
     evm_opts: EvmOpts,
     executor_builder: ExecutorBuilder<FEN>,
-) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>, TracingExecutor<FEN>)>
+) -> Result<(EvmEnvFor<FEN>, TracingExecutor<FEN>)>
 where
     FEN: FoundryEvmNetwork,
 {
@@ -370,7 +379,7 @@ where
     let mut fork = TracingExecutor::<FEN>::get_fork(fork_config, evm_opts).await?;
     let context = fork.context();
 
-    fork.evm_env.block_env.set_number(U256::from(execution_blk_num));
+    fork.evm_env.block.number = U256::from(execution_blk_num);
     if let Some(block) = execution_block {
         configure_env_block::<FEN>(
             &mut fork.evm_env,
@@ -382,8 +391,7 @@ where
     fork.resolve_spec(fork_config, None);
     fork.extend_precompile_labels(fork_config);
 
-    let evm_env = fork.evm_env.clone();
-    let tx_env = fork.tx_env.clone();
+    let evm_env = fork.evm_env;
     let executor = fork.into_executor(
         executor_builder,
         TraceRequirements::none().with_calls(true),
@@ -391,7 +399,7 @@ where
         None,
     )?;
 
-    Ok((evm_env, tx_env, executor))
+    Ok((evm_env, executor))
 }
 
 #[cfg(all(test, feature = "monad"))]
@@ -421,10 +429,10 @@ pub fn configure_env_block<FEN>(
 ) where
     FEN: FoundryEvmNetwork,
 {
-    let number = evm_env.block_env.number();
-    evm_env.block_env = block_env_from_header::<BlockEnvFor<FEN>>(block.header());
-    evm_env.block_env.set_number(number);
-    apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+    let number = evm_env.block.number;
+    evm_env.block = block_env_from_header::<TypesFor<FEN>>(block.header());
+    evm_env.block.number = number;
+    apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _>(
         evm_env,
         block,
         source_chain_id,
@@ -432,64 +440,71 @@ pub fn configure_env_block<FEN>(
     );
 }
 
+/// Executes the creation `tx` (converted from `request`) with `evm_env` and `ext` or extension
+/// state prepared for it, and returns the address of the contract it deployed.
 pub fn deploy_contract<FEN>(
     executor: &mut TracingExecutor<FEN>,
     evm_env: &EvmEnvFor<FEN>,
-    tx_env: &TxEnvFor<FEN>,
-    to: TxKind,
-    chain_context: ChainFor<FEN>,
+    request: TransactionRequestFor<FEN>,
+    ext: Option<ChainFor<FEN>>,
 ) -> Result<Address, eyre::ErrReport>
 where
     FEN: FoundryEvmNetwork,
 {
-    if let TxKind::Call(to) = to {
+    // Derive the created address up front: batched transactions return the last call's result,
+    // not the deployment's.
+    let (to, input) = creation_call::<FEN>(&request);
+    let address = if let TxKind::Call(to) = to {
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!(
                 "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
             );
         }
-        let result = executor.transact_with_env_and_context(
-            evm_env.clone(),
-            tx_env.clone(),
-            chain_context,
-        )?;
-
-        trace!(transact_result = ?result.exit_reason);
-
-        if result.reverted {
-            let decoded_reason = if result.result.is_empty() {
-                String::new()
-            } else {
-                format!(": {}", RevertDecoder::default().decode(&result.result, result.exit_reason))
-            };
-            eyre::bail!(
-                "Failed to deploy contract via CREATE2 on fork at block{decoded_reason}.\n\
-                This typically happens when your local bytecode differs from what was actually deployed.\n\
-                Common causes:\n\
-                - Your contract source is not at the same commit used during deployment\n\
-                - Cached build artifacts are stale (try `forge clean && forge build`)\n\
-                - Compiler settings (optimizer, evm_version, via_ir) don't match the deployment"
-            );
-        }
-
-        if result.result.len() != 20 {
-            eyre::bail!(
-                "Failed to deploy contract via CREATE2 on fork at block: deployer returned {} bytes instead of 20.\n\
-                This may indicate a bytecode mismatch - ensure your source code matches the deployed contract.",
-                result.result.len()
-            );
-        }
-
-        Ok(Address::from_slice(&result.result))
+        let (salt, init_code) = input.split_at(32);
+        DEFAULT_CREATE2_DEPLOYER.create2_from_code(B256::from_slice(salt), init_code)
     } else {
-        let deploy_result = executor.deploy_with_env_and_context(
-            evm_env.clone(),
-            tx_env.clone(),
-            chain_context,
-            None,
-        )?;
-        trace!(deploy_result = ?deploy_result.raw.exit_reason);
-        Ok(deploy_result.address)
+        let caller = request.from().unwrap_or_default();
+        caller.create(executor.backend_mut().basic(caller)?.map_or(0, |info| info.nonce))
+    };
+
+    let tx = TypesFor::<FEN>::tx_from_request(request)?;
+    let result = executor.transact_tx(*evm_env, &tx, ext)?;
+    trace!(transact_result = ?result.exit_reason);
+
+    if result.reverted {
+        let decoded_reason = RevertDecoder::new().decode(&result.result, result.exit_reason);
+        eyre::bail!(
+            "Failed to deploy contract on fork at block: {decoded_reason}.\n\
+            This typically happens when your local bytecode differs from what was actually deployed.\n\
+            Common causes:\n\
+            - Your contract source is not at the same commit used during deployment\n\
+            - Cached build artifacts are stale (try `forge clean && forge build`)\n\
+            - Compiler settings (optimizer, evm_version, via_ir) don't match the deployment"
+        );
+    }
+    if !result
+        .state_changeset
+        .account_changes()
+        .any(|account| account.address == address && account.created)
+    {
+        eyre::bail!("Transaction did not deploy a contract at the expected address {address}");
+    }
+
+    Ok(address)
+}
+
+/// Returns the kind and input of the call that deploys the contract: the first call of a Tempo AA
+/// transaction, or the transaction itself.
+pub fn creation_call<FEN: FoundryEvmNetwork>(
+    request: &TransactionRequestFor<FEN>,
+) -> (TxKind, Bytes) {
+    match request.tempo_calls().first() {
+        Some(&(kind, input)) if request.has_tempo_call_list() => {
+            (kind, Bytes::copy_from_slice(input))
+        }
+        _ => {
+            (request.kind().unwrap_or(TxKind::Create), request.input().cloned().unwrap_or_default())
+        }
     }
 }
 
@@ -590,16 +605,20 @@ pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 mod tests {
     use super::*;
     use crate::verify::VerifierArgs;
+    use alloy_json_abi::JsonAbi;
     use foundry_cli::opts::EtherscanOpts;
     use foundry_compilers::PathStyle;
     use foundry_config::NamedChain;
-    use foundry_test_utils::TestProject;
+    use foundry_test_utils::{TestProject, util::SOLC_VERSION};
 
     #[cfg(feature = "monad")]
-    fn monad_env(timestamp: u64) -> EvmEnvFor<foundry_evm::core::evm::MonadEvmNetwork> {
-        let mut env = EvmEnvFor::<foundry_evm::core::evm::MonadEvmNetwork>::default();
-        env.cfg_env.chain_id = NamedChain::Monad as u64;
-        env.block_env.set_timestamp(U256::from(timestamp));
+    use foundry_evm::core::evm::MonadEvmNetwork;
+
+    #[cfg(feature = "monad")]
+    fn monad_env(timestamp: u64) -> EvmEnvFor<MonadEvmNetwork> {
+        let mut env = EvmOpts::default().local_evm_env::<MonadEvmNetwork>();
+        env.set_chain_id(NamedChain::Monad as u64);
+        env.block.timestamp = U256::from(timestamp);
         env
     }
 
@@ -616,7 +635,7 @@ mod tests {
             .unwrap()
             .constructor()
             .unwrap()
-            .abi_encode_input(&[DynSolValue::Uint(U256::from(1), 256)])
+            .abi_encode_input(&[DynSolValue::Uint(U256::ONE, 256)])
             .unwrap();
 
         assert_eq!(validate_encoded_constructor_args(&artifact, args.clone()).unwrap(), args);
@@ -630,7 +649,7 @@ mod tests {
     #[test]
     fn typed_constructor_args_require_a_constructor() {
         let artifact = CompactContractBytecode {
-            abi: Some(alloy_json_abi::JsonAbi::default()),
+            abi: Some(JsonAbi::new()),
             bytecode: None,
             deployed_bytecode: None,
         };
@@ -700,7 +719,7 @@ mod tests {
         prj.add_source(
             "Counter.sol",
             r#"
-pragma solidity 0.8.16;
+pragma solidity ^0.8.0;
 
 contract Counter {
     uint256 public number;
@@ -710,7 +729,7 @@ contract Counter {
         prj.add_source(
             "Broken.sol",
             r#"
-pragma solidity 0.8.16;
+pragma solidity ^0.8.0;
 
 contract Broken {
     this is not valid Solidity
@@ -719,7 +738,7 @@ contract Broken {
         );
 
         let mut config = Config::load_with_root(prj.root()).unwrap();
-        config.solc = Some("0.8.16".into());
+        config.solc = Some(SOLC_VERSION.into());
         let args = VerifyBytecodeArgs {
             address: Address::ZERO,
             contract: "src/Counter.sol:Counter".parse().unwrap(),
@@ -763,8 +782,8 @@ contract Broken {
             ..Default::default()
         };
         let mut before_env = monad_env(monad_nine_timestamp - 1);
-        before_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
-        let before = resolve_runtime_spec::<foundry_evm::core::evm::MonadEvmNetwork>(
+        before_env.set_chain_id(NamedChain::Mainnet as u64);
+        let before = resolve_runtime_spec::<MonadEvmNetwork>(
             &before_config,
             NamedChain::Monad as u64,
             None,
@@ -775,15 +794,15 @@ contract Broken {
             before,
             Some(FoundryHardfork::Monad(foundry_evm::hardforks::MonadHardfork::MonadEight))
         );
-        assert_eq!(before_env.cfg_env.spec, foundry_evm::hardforks::MonadHardfork::MonadEight);
-        assert_eq!(before_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
+        assert_eq!(before_env.spec, foundry_evm::hardforks::MonadHardfork::MonadEight);
+        assert_eq!(before_env.chain_id(), NamedChain::Mainnet as u64);
 
         let after_config = Config {
             evm_version: foundry_compilers::artifacts::EvmVersion::Prague,
             ..Default::default()
         };
         let mut after_env = monad_env(monad_nine_timestamp);
-        let after = resolve_runtime_spec::<foundry_evm::core::evm::MonadEvmNetwork>(
+        let after = resolve_runtime_spec::<MonadEvmNetwork>(
             &after_config,
             NamedChain::Monad as u64,
             None,
@@ -794,7 +813,7 @@ contract Broken {
             after,
             Some(FoundryHardfork::Monad(foundry_evm::hardforks::MonadHardfork::MonadNine))
         );
-        assert_eq!(after_env.cfg_env.spec, foundry_evm::hardforks::MonadHardfork::MonadNine);
+        assert_eq!(after_env.spec, foundry_evm::hardforks::MonadHardfork::MonadNine);
     }
 
     #[test]
@@ -811,13 +830,13 @@ contract Broken {
         );
         let networks = NetworkConfigs::with_monad();
 
-        let resolved = resolve_runtime_spec::<foundry_evm::core::evm::MonadEvmNetwork>(
+        let resolved = resolve_runtime_spec::<MonadEvmNetwork>(
             &config,
             NamedChain::Monad as u64,
             Some(foundry_evm::hardforks::MonadHardfork::MonadNine.into()),
             &mut env,
         );
-        TracingExecutor::<foundry_evm::core::evm::MonadEvmNetwork>::extend_precompile_labels(
+        TracingExecutor::<MonadEvmNetwork>::extend_precompile_labels(
             &mut config,
             networks,
             resolved,
@@ -827,7 +846,7 @@ contract Broken {
             resolved,
             Some(FoundryHardfork::Monad(foundry_evm::hardforks::MonadHardfork::MonadEight))
         );
-        assert_eq!(env.cfg_env.spec, foundry_evm::hardforks::MonadHardfork::MonadEight);
+        assert_eq!(env.spec, foundry_evm::hardforks::MonadHardfork::MonadEight);
         assert!(config.labels.values().any(|label| label == "Staking"));
         assert!(!config.labels.values().any(|label| label == "ReserveBalance"));
     }
@@ -887,5 +906,18 @@ contract Broken {
         assert!(!msg.contains("user"));
         assert!(!msg.contains("secret"));
         assert!(!msg.contains("api_key"));
+    }
+
+    /// Args longer than the code at the address leave nothing to strip them from,
+    /// which is a mismatch rather than a crash.
+    #[test]
+    fn match_bytecodes_survives_constructor_args_longer_than_bytecode() {
+        let local = [0x60u8, 0x80, 0x60, 0x40];
+        let onchain = [0x60u8, 0x80];
+        let args = [0x11u8; 32];
+        assert_eq!(match_bytecodes(&local, &onchain, &args, false, BytecodeHash::Ipfs), None);
+
+        // Matching onchain args must not allow stripping past the local buffer.
+        assert_eq!(match_bytecodes(&local, &args, &args, false, BytecodeHash::Ipfs), None);
     }
 }

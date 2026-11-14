@@ -1,9 +1,12 @@
 //! Regression tests for specific GitHub issues
 
+use alloy_primitives::{U256, address, bytes};
+use anvil::{NodeConfig, spawn};
 use foundry_test_utils::str;
 
 // https://github.com/foundry-rs/foundry/issues/3055
-forgetest_init!(issue_3055, |prj, cmd| {
+#[forgetest_init]
+fn issue_3055(prj: _, cmd: _) {
     prj.add_test(
         "Issue3055.t.sol",
         r#"
@@ -37,13 +40,23 @@ contract Issue3055Test is Test {
         vm.revertToState(snapshotId);
     }
 }
+
+/// forge-config: default.assertions_revert = false
+/// forge-config: default.isolate = false
+contract Issue3055NonIsolatedTest is Issue3055Test {}
 "#,
     );
 
-    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+Ran 3 tests for test/Issue3055.t.sol:Issue3055NonIsolatedTest
+[FAIL] test_snapshot() ([GAS])
+[FAIL] test_snapshot2() ([GAS])
+[FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 
 Ran 3 tests for test/Issue3055.t.sol:Issue3055Test
 [FAIL] test_snapshot() ([GAS])
@@ -51,25 +64,31 @@ Ran 3 tests for test/Issue3055.t.sol:Issue3055Test
 [FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
 Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 0 tests passed, 3 failed, 0 skipped (3 total tests)
+Ran 2 test suites [ELAPSED]: 0 tests passed, 6 failed, 0 skipped (6 total tests)
 
 Failing tests:
+Encountered 3 failing tests in test/Issue3055.t.sol:Issue3055NonIsolatedTest
+[FAIL] test_snapshot() ([GAS])
+[FAIL] test_snapshot2() ([GAS])
+[FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
+
 Encountered 3 failing tests in test/Issue3055.t.sol:Issue3055Test
 [FAIL] test_snapshot() ([GAS])
 [FAIL] test_snapshot2() ([GAS])
 [FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
 
-Encountered a total of 3 failing tests, 0 tests succeeded
+Encountered a total of 6 failing tests, 0 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 3 failed tests
+Tip: Run `forge test --rerun` to retry only the 6 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
 
-forgetest_init!(isolated_snapshot_enclosing_revert, |prj, cmd| {
+#[forgetest_init]
+fn isolated_snapshot_enclosing_revert(prj: _, cmd: _) {
     prj.add_test(
         "IsolatedSnapshotEnclosingRevert.t.sol",
         r#"
@@ -257,10 +276,11 @@ contract SuccessfulDeployment {}
 [PASS] test_successful_restore_survives_reverted_sibling() ([GAS])
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/3189
-forgetest_init!(issue_3189, |prj, cmd| {
+#[forgetest_init]
+fn issue_3189(prj: _, cmd: _) {
     prj.add_test(
         "Issue3189.t.sol",
         r#"
@@ -312,10 +332,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/3596
-forgetest_init!(issue_3596, |prj, cmd| {
+#[forgetest_init]
+fn issue_3596(prj: _, cmd: _) {
     prj.add_test(
         "Issue3596.t.sol",
         r#"
@@ -364,10 +385,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/2851
-forgetest_init!(issue_2851, |prj, cmd| {
+#[forgetest_init]
+fn issue_2851(prj: _, cmd: _) {
     prj.add_test(
         "Issue2851.t.sol",
         r#"
@@ -411,10 +433,11 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/6170
-forgetest_init!(issue_6170, |prj, cmd| {
+#[forgetest_init]
+fn issue_6170(prj: _, cmd: _) {
     prj.add_test(
         "Issue6170.t.sol",
         r#"
@@ -463,10 +486,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/6355
-forgetest_init!(issue_6355, |prj, cmd| {
+#[forgetest_init]
+fn issue_6355(prj: _, cmd: _) {
     prj.add_test(
         "Issue6355.t.sol",
         r#"
@@ -527,10 +551,11 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/3347
-forgetest_init!(issue_3347, |prj, cmd| {
+#[forgetest_init]
+fn issue_3347(prj: _, cmd: _) {
     prj.add_test(
         "Issue3347.t.sol",
         r#"
@@ -563,11 +588,12 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/6501
 // Make sure we decode Hardhat-style `console.log`s correctly, in both logs and traces.
-forgetest_init!(issue_6501, |prj, cmd| {
+#[forgetest_init]
+fn issue_6501(prj: _, cmd: _) {
     prj.add_test(
         "Issue6501.t.sol",
         r#"
@@ -607,10 +633,11 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/8383
-forgetest_init!(issue_8383, |prj, cmd| {
+#[forgetest_init]
+fn issue_8383(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.optimizer = Some(true);
         config.optimizer_runs = Some(200);
@@ -948,10 +975,11 @@ Ran 1 test for test/Issue8383.t.sol:Issue8383Test
 [PASS] testP256VerifyOutOfBounds() (gas: 3139)
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/9272
-forgetest_init!(issue_9272, |prj, cmd| {
+#[forgetest_init]
+fn issue_9272(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.allow_paths.push("..".into());
     });
@@ -976,10 +1004,11 @@ ParserError: Source "Missing.sol" not found: File not found. Searched the follow
   | ^^^^^^^^^^^^^^^^^^^^^^^^
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/10463
-forgetest_init!(issue_10463, |prj, cmd| {
+#[forgetest_init]
+fn issue_10463(prj: _, cmd: _) {
     prj.add_test(
         "Issue10463.t.sol",
         r#"
@@ -1036,11 +1065,12 @@ Ran 3 tests for test/Issue10463.t.sol:Issue10463Test
 Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test gas underflow prevention on Cancun (no EIP-7702 gas floor)
-forgetest_init!(issue_12803_cancun, |prj, cmd| {
+#[forgetest_init]
+fn issue_12803_cancun(prj: _, cmd: _) {
     prj.add_test(
         "Issue12803.t.sol",
         r#"
@@ -1066,11 +1096,12 @@ Ran 1 test for test/Issue12803.t.sol:Issue12803Test
 ...
 "#
     ]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test gas underflow prevention on Shanghai (also no EIP-7702 gas floor)
-forgetest_init!(issue_12803_shanghai, |prj, cmd| {
+#[forgetest_init]
+fn issue_12803_shanghai(prj: _, cmd: _) {
     prj.add_test(
         "Issue12803.t.sol",
         r#"
@@ -1096,14 +1127,15 @@ Ran 1 test for test/Issue12803.t.sol:Issue12803Test
 ...
 "#]
     ]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/13766
 // vm.expectRevert(bytes("")) should not panic when actual revert has data.
 // https://github.com/foundry-rs/foundry/issues/15545
 // An expected reason shorter than 4 bytes (e.g. bytes("C38")) must not panic
 // when it cannot be decoded as an `Error(string)`; it should report a mismatch.
-forgetest_init!(issue_13766, |prj, cmd| {
+#[forgetest_init]
+fn issue_13766(prj: _, cmd: _) {
     prj.add_test(
         "Issue13766.t.sol",
         r#"
@@ -1138,11 +1170,12 @@ contract Issue13766Test is Test {
 [FAIL: Error != expected error: some other message != C38] test_expectRevertShortReason() ([GAS])
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test multiple storage deletions (higher refund) don't cause underflow
-forgetest_init!(issue_12803_multiple_deletes, |prj, cmd| {
+#[forgetest_init]
+fn issue_12803_multiple_deletes(prj: _, cmd: _) {
     prj.add_test(
         "Issue12803Multi.t.sol",
         r#"
@@ -1174,7 +1207,66 @@ Ran 1 test for test/Issue12803Multi.t.sol:Issue12803MultiTest
 ...
 "#
     ]]);
-});
+}
+
+#[forgetest]
+async fn revert_in_memory_snapshot_clears_active_fork(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(4242u64))).await;
+    let rpc = handle.http_endpoint();
+
+    prj.add_test(
+        "RevertInMemorySnapshot.t.sol",
+        &r#"
+interface Vm {
+    function activeFork() external view returns (uint256);
+    function chainId(uint256) external;
+    function createSelectFork(string calldata) external returns (uint256);
+    function revertToState(uint256) external returns (bool);
+    function selectFork(uint256) external;
+    function snapshotState() external returns (uint256);
+}
+
+contract RevertInMemorySnapshotTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant ANVIL_DEFAULT_ACCOUNT = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    function test_revertInMemorySnapshotClearsActiveFork() public {
+        vm.chainId(7777);
+        uint256 snapshotId = vm.snapshotState();
+
+        uint256 forkId = vm.createSelectFork("<rpc>");
+        require(vm.activeFork() == forkId, "fork was not selected");
+        require(block.chainid == 4242, "fork chain ID was not installed");
+        require(ANVIL_DEFAULT_ACCOUNT.balance > 0, "fork account was not funded");
+
+        require(vm.revertToState(snapshotId), "snapshot revert failed");
+        require(block.chainid == 7777, "local chain ID was not restored");
+        (bool hasActiveFork,) = address(vm).call(abi.encodeWithSignature("activeFork()"));
+        require(!hasActiveFork, "fork remained active");
+        require(ANVIL_DEFAULT_ACCOUNT.balance == 0, "read still used fork database");
+
+        vm.selectFork(forkId);
+        require(vm.activeFork() == forkId, "fork could not be reselected");
+        require(ANVIL_DEFAULT_ACCOUNT.balance > 0, "reselected fork lost state");
+    }
+}
+"#
+        .replace("<rpc>", &rpc),
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/RevertInMemorySnapshot.t.sol:RevertInMemorySnapshotTest
+[PASS] test_revertInMemorySnapshotClearsActiveFork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
 
 // Regression: `revertToState` / `revertToStateAndDelete` taken before any
 // `vm.blobhashes` override must exercise the `None` arm of
@@ -1185,7 +1277,8 @@ Ran 1 test for test/Issue12803Multi.t.sol:Issue12803MultiTest
 // NOTE: Testing restoration of *non-empty* native blob hashes (EIP-4844 fork
 // mode where tx.blob_hashes is non-empty without a cheatcode) is not reachable
 // from Solidity.
-forgetest_init!(issue_blobhashes_pre_override_snapshot, |prj, cmd| {
+#[forgetest_init]
+fn issue_blobhashes_pre_override_snapshot(prj: _, cmd: _) {
     prj.add_test(
         "BlobhashesPreOverride.t.sol",
         r#"
@@ -1237,11 +1330,12 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
-});
+}
 
 // Regression: `revertToState` taken before `vm.txGasPrice` must restore the
 // configured pre override gas price, not zero.
-forgetest_init!(issue_txgasprice_pre_override_snapshot, |prj, cmd| {
+#[forgetest_init]
+fn issue_txgasprice_pre_override_snapshot(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.gas_price = Some(10_000_000_000); // 10 gwei
     });
@@ -1274,6 +1368,11 @@ contract TxGasPricePreOverrideSnapshotTest is Test {
         vm.revertToStateAndDelete(id);
         assertEq(tx.gasprice, pre_override, "should restore pre override gas price after revertAndDelete");
     }
+
+    function test_configured_gas_price_visible_while_recording() public {
+        vm.record();
+        assertEq(tx.gasprice, 10 gwei, "configured gas price should be visible while recording");
+    }
 }
 "#,
     );
@@ -1283,18 +1382,121 @@ contract TxGasPricePreOverrideSnapshotTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 2 tests for test/TxGasPricePreOverride.t.sol:TxGasPricePreOverrideSnapshotTest
+Ran 3 tests for test/TxGasPricePreOverride.t.sol:TxGasPricePreOverrideSnapshotTest
+[PASS] test_configured_gas_price_visible_while_recording() ([GAS])
 [PASS] test_pre_override_gas_price_restored_after_revert() ([GAS])
 [PASS] test_pre_override_gas_price_restored_after_revertAndDelete() ([GAS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 "#]]);
-});
+}
+
+// A log that fails `expectEmit` reverts its frame even when no call follows it.
+#[forgetest_init]
+fn expect_emit_fails_on_log_without_following_call(prj: _, cmd: _) {
+    prj.add_test(
+        "ExpectEmitLog.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ExpectEmitLogTest is Test {
+    event E();
+    event Anonymous() anonymous;
+
+    function test_unexpected_count() public {
+        vm.expectEmit(0);
+        emit E();
+        emit E();
+    }
+
+    function test_topicless_anonymous() public {
+        vm.expectEmit();
+        emit Anonymous();
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "ExpectEmitLogTest"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/ExpectEmitLog.t.sol:ExpectEmitLogTest
+[FAIL: use vm.expectEmitAnonymous to match anonymous events] test_topicless_anonymous() ([GAS])
+[FAIL: log emitted but expected 0 times] test_unexpected_count() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/ExpectEmitLog.t.sol:ExpectEmitLogTest
+[FAIL: use vm.expectEmitAnonymous to match anonymous events] test_topicless_anonymous() ([GAS])
+[FAIL: log emitted but expected 0 times] test_unexpected_count() ([GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+}
+
+// `vm.breakpoint` records its calling instruction, also in frames that run without steps.
+#[forgetest_init]
+fn breakpoint_records_calling_pc(prj: _, cmd: _) {
+    prj.add_test(
+        "BreakpointPc.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract BreakpointPcTest is Test {
+    function test_breakpoint() public {
+        vm.breakpoint("a");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--json"]).assert_json_stdout(str![[r#"
+{
+  "test/BreakpointPc.t.sol:BreakpointPcTest": {
+    "duration": "{...}",
+    "test_results": {
+      "test_breakpoint()": {
+        "status": "Success",
+        "reason": null,
+        "counterexample": null,
+        "logs": [],
+        "decoded_logs": [],
+        "kind": {
+          "Unit": {
+            "gas": 3272
+          }
+        },
+        "traces": [],
+        "labeled_addresses": {},
+        "duration": "{...}",
+        "breakpoints": {
+          "a": [
+            "0x7fa9385be102ac3eac297483dd6233d62b3e1496",
+            2409
+          ]
+        },
+        "gas_snapshots": {}
+      }
+    },
+    "warnings": []
+  }
+}
+"#]]);
+}
 
 // https://github.com/foundry-rs/foundry/issues/16197
-forgetest_init!(issue_16197, |prj, cmd| {
+#[forgetest_init]
+fn issue_16197(prj: _, cmd: _) {
     prj.add_test(
         "Issue16197.t.sol",
         r#"
@@ -1341,4 +1543,133 @@ Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 
 "#]]);
-});
+}
+
+#[forgetest_init]
+async fn fork_replay_rejects_context_changes(prj: _, cmd: _) {
+    let (api, handle) = spawn(
+        NodeConfig::test().with_chain_id(Some(1u64)).with_base_fee(Some(1)).with_no_mining(true),
+    )
+    .await;
+    api.anvil_set_balance(
+        address!("5316812db67073c4d4af8bb3000c5b86c2877e94"),
+        U256::from(10).pow(U256::from(18)),
+    )
+    .await
+    .unwrap();
+    let raw = bytes!(
+        "f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+    );
+    let transaction = api.send_raw_transaction(raw).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    prj.add_test(
+        "ReplayFork.t.sol",
+        &r#"
+import "forge-std/Test.sol";
+
+contract ReplayForkTarget {
+    bytes operation;
+    bytes expectedError;
+    uint256 public observedBlock;
+    uint256 public observedChain;
+    uint256 public observedBasefee;
+
+    function configure(bytes memory data, bytes memory reason) external {
+        operation = data;
+        expectedError = reason;
+        observedBlock = 0;
+    }
+
+    fallback() external payable {
+        (bool ok, bytes memory reason) = address(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).call(operation);
+        require(!ok, "fork operation succeeded in replay");
+        require(keccak256(reason) == keccak256(expectedError), "unexpected cheatcode error");
+        observedBlock = block.number;
+        observedChain = block.chainid;
+        observedBasefee = block.basefee;
+    }
+}
+
+/// forge-config: default.isolate = true
+contract ReplayForkTest is Test {
+    function test_rawReplay() public { check(false); }
+    function test_fork_transactReplay() public { check(true); }
+
+    function check(bool mined) internal {
+        uint256 fork = vm.createFork("<rpc>", uint256(0));
+        if (mined) vm.selectFork(fork);
+        uint256 chain = mined ? 99 : 1;
+        uint256 fee = mined ? 123 : 23;
+        vm.chainId(chain);
+        vm.fee(fee);
+        vm.roll(50);
+        address sender = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+        address target = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
+        vm.deal(sender, 1 ether);
+        vm.etch(target, address(new ReplayForkTarget()).code);
+        vm.allowCheatcodes(target);
+        uint256 snapshot = vm.snapshotState();
+        bytes[] memory operations = new bytes[](3);
+        operations[0] = abi.encodeWithSignature("selectFork(uint256)", fork);
+        operations[1] = abi.encodeWithSignature("rollFork(uint256,uint256)", fork, 0);
+        operations[2] = abi.encodeWithSignature("createSelectFork(string,uint256)", "<rpc>", 0);
+        for (uint256 i; i < operations.length; ++i) {
+            string memory name = i == 0 ? "selectFork" : i == 1 ? "rollFork" : "createSelectFork";
+            ReplayForkTarget(payable(target)).configure(operations[i], abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                string.concat("vm.", name, ": cannot select or roll forks in a replayed transaction")
+            ));
+            vm.setNonceUnsafe(sender, 0);
+            if (mined) {
+                vm.transact(<tx>);
+            } else {
+                vm.broadcastRawTransaction(hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856");
+            }
+            assertEq(ReplayForkTarget(payable(target)).observedBlock(), mined ? 1 : 50);
+            assertEq(ReplayForkTarget(payable(target)).observedChain(), mined ? 1 : chain);
+            assertEq(ReplayForkTarget(payable(target)).observedBasefee(), mined ? 1 : fee);
+            assertEq(block.number, 50);
+            assertEq(block.chainid, chain);
+            assertEq(block.basefee, fee);
+            if (mined) assertEq(vm.activeFork(), fork);
+            else {
+                (bool active,) = address(vm).call(abi.encodeWithSignature("activeFork()"));
+                require(!active, "replay selected an outer fork");
+            }
+        }
+        if (mined) {
+            vm.deal(sender, 0);
+            try vm.transact(<tx>) {
+                revert("replayed an unfunded transaction");
+            } catch (bytes memory reason) {
+                assertEq(reason, abi.encodeWithSignature(
+                    "CheatcodeError(string)",
+                    "vm.transact: backend: failed committing transaction; transaction validation error: lack of funds (0) for max fee (20000017)"
+                ));
+            }
+            assertEq(block.chainid, chain);
+            assertEq(block.basefee, fee);
+        }
+        vm.chainId(77);
+        vm.fee(29);
+        assertTrue(vm.revertToStateAndDelete(snapshot));
+        assertEq(block.chainid, chain);
+        assertEq(block.basefee, fee);
+        vm.selectFork(fork);
+    }
+}
+
+/// forge-config: default.isolate = false
+contract ReplayForkNonIsolatedTest is ReplayForkTest {}
+"#
+        .replace("<rpc>", &handle.http_endpoint())
+        .replace("<tx>", &format!("bytes32({transaction})")),
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+}

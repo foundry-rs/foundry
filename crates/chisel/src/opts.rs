@@ -52,12 +52,14 @@ pub enum ChiselSubcommand {
     List,
 
     /// Load a cached session.
+    ///
+    /// Credentials come from this invocation. Supply --fork-url to restore a forked session.
     Load {
         /// The ID of the session to load.
         id: String,
     },
 
-    /// View the source of a cached session.
+    /// View the source of a cached session without restoring RPC credentials or compiling it.
     View {
         /// The ID of the session to load.
         id: String,

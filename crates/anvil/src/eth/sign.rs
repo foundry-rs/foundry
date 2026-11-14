@@ -122,6 +122,10 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
                 let sig = signer.sign_transaction_sync(&mut t)?;
                 FoundryTxEnvelope::Eip2930(t.into_signed(sig))
             }
+            FoundryTypedTx::Celo(mut t) => {
+                let sig = signer.sign_transaction_sync(&mut t)?;
+                FoundryTxEnvelope::Celo(t.into_signed(sig))
+            }
             FoundryTypedTx::Eip1559(mut t) => {
                 let sig = signer.sign_transaction_sync(&mut t)?;
                 FoundryTxEnvelope::Eip1559(t.into_signed(sig))

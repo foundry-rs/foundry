@@ -15,12 +15,11 @@ workspace = true
 
 [dependencies]
 forge-verify.workspace = true
-foundry-cli.workspace = true
+foundry-cli = { workspace = true, features = ["soldeer"] }
 foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
-alloy-evm.workspace = true
 foundry-debugger.workspace = true
 foundry-cheatcodes.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
@@ -30,7 +29,6 @@ forge-script-sequence.workspace = true
 serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
-dunce.workspace = true
 foundry-compilers.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 tracing.workspace = true
@@ -43,7 +41,6 @@ tempfile.workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
 yansi.workspace = true
-revm-inspectors.workspace = true
 alloy-rpc-types.workspace = true
 alloy-json-abi.workspace = true
 dialoguer.workspace = true
@@ -58,6 +55,7 @@ alloy-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 thiserror.workspace = true
+evm2.workspace = true
 
 tempo-alloy.workspace = true
 tempo-primitives.workspace = true
@@ -65,6 +63,7 @@ tempo-primitives.workspace = true
 [dev-dependencies]
 anvil.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+alloy-signer-local.workspace = true
 
 [features]
 default = ["optimism"]

@@ -4,56 +4,35 @@
 use crate::utils::{self, EnvExternalities};
 use alloy_chains::NamedChain;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, U256, hex};
+use alloy_primitives::{Address, U256, address, hex};
 use anvil::{NodeConfig, spawn};
 use axum::{
-    Router,
+    Form, Router,
     extract::Query,
     http::{StatusCode, header},
     response::IntoResponse,
+    routing::post,
 };
 use forge_script_sequence::ScriptSequence;
+use foundry_cli::utils::parse_json;
 use foundry_common::retry::Retry;
 use foundry_compilers::PathStyle;
 use foundry_evm::traces::CallKind;
 use foundry_test_utils::{
-    forgetest, forgetest_async, str,
+    forgetest,
+    rpc::spawn_rpc_proxy_recording_method,
+    str,
     util::{OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use tokio::net::TcpListener;
-
-/// Adds a `Unique` contract to the source directory of the project that can be imported as
-/// `import {Unique} from "./unique.sol";`
-fn add_unique(prj: &TestProject) {
-    let timestamp = utils::millis_since_epoch();
-    prj.add_source(
-        "unique",
-        &format!(
-            r#"
-contract Unique {{
-    uint public _timestamp = {timestamp};
-}}
-"#
-        ),
-    );
-}
-
-fn add_verify_target(prj: &TestProject) {
-    prj.add_source(
-        "Verify.sol",
-        r#"
-import {Unique} from "./unique.sol";
-contract Verify is Unique {
-function doStuff() external {}
-}
-"#,
-    );
-}
 
 fn add_single_verify_target_file(prj: &TestProject) {
     let timestamp = utils::millis_since_epoch();
@@ -71,23 +50,6 @@ function doStuff() external {{}}
     prj.add_source("Verify.sol", &contract);
 }
 
-fn add_verify_target_with_constructor(prj: &TestProject) {
-    prj.add_source(
-        "Verify.sol",
-        r#"
-import {Unique} from "./unique.sol";
-contract Verify is Unique {
-    struct SomeStruct {
-        uint256 a;
-        string str;
-    }
-
-    constructor(SomeStruct memory st, address owner) {}
-}
-"#,
-    );
-}
-
 fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Result<()> {
     // Give Etherscan some time to verify the contract.
     Retry::new(retries, Duration::from_secs(30)).run(|| -> eyre::Result<()> {
@@ -103,162 +65,6 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
         }
         eyre::bail!("Failed to get verification, stdout: {stdout}, stderr: {stderr}");
     })
-}
-
-fn verify_check(
-    guid: String,
-    chain: String,
-    etherscan_api_key: Option<String>,
-    verifier: Option<String>,
-    mut cmd: TestCommand,
-) {
-    let mut args = vec!["verify-check", &guid, "--chain-id", &chain];
-
-    if let Some(etherscan_api_key) = &etherscan_api_key {
-        args.push("--etherscan-api-key");
-        args.push(etherscan_api_key);
-    }
-
-    if let Some(verifier) = &verifier {
-        args.push("--verifier");
-        args.push(verifier);
-    }
-    cmd.forge_fuse().args(args);
-
-    parse_verification_result(&mut cmd, 6).expect("Failed to verify check")
-}
-
-fn await_verification_response(info: EnvExternalities, mut cmd: TestCommand) {
-    let guid = {
-        // Give Etherscan some time to detect the transaction.
-        Retry::new(5, Duration::from_secs(60))
-            .run(|| -> eyre::Result<String> {
-                let output = cmd.execute();
-                let out = String::from_utf8_lossy(&output.stdout);
-                utils::parse_verification_guid(&out).ok_or_else(|| {
-                    eyre::eyre!(
-                        "Failed to get guid, stdout: {}, stderr: {}",
-                        out,
-                        String::from_utf8_lossy(&output.stderr)
-                    )
-                })
-            })
-            .expect("Failed to get verify guid")
-    };
-
-    // verify-check
-    let etherscan = (!info.etherscan.is_empty()).then_some(info.etherscan.clone());
-    let verifier = (!info.verifier.is_empty()).then_some(info.verifier.clone());
-    verify_check(guid, info.chain.to_string(), etherscan, verifier, cmd);
-}
-
-fn deploy_contract(
-    info: &EnvExternalities,
-    contract_path: &str,
-    prj: TestProject,
-    cmd: &mut TestCommand,
-) -> String {
-    add_unique(&prj);
-    add_verify_target(&prj);
-    let output = cmd
-        .forge_fuse()
-        .arg("create")
-        .args(info.create_args())
-        .arg(contract_path)
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    utils::parse_deployed_address(output.as_str())
-        .unwrap_or_else(|| panic!("Failed to parse deployer {output}"))
-}
-
-fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
-    // only execute if keys present
-    if let Some(info) = info {
-        test_debug!("verifying on {}", info.chain);
-
-        let contract_path = "src/Verify.sol:Verify";
-        let address = deploy_contract(&info, contract_path, prj, &mut cmd);
-
-        let mut args = vec![
-            "--chain-id".to_string(),
-            info.chain.to_string(),
-            address,
-            contract_path.to_string(),
-        ];
-
-        if !info.etherscan.is_empty() {
-            args.push("--etherscan-api-key".to_string());
-            args.push(info.etherscan.clone());
-        }
-
-        if !info.verifier.is_empty() {
-            args.push("--verifier".to_string());
-            args.push(info.verifier.clone());
-        }
-        cmd.forge_fuse().arg("verify-contract").root_arg().args(args);
-
-        await_verification_response(info, cmd)
-    }
-}
-
-fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
-    // only execute if keys present
-    if let Some(info) = info {
-        test_debug!("verifying on {}", info.chain);
-        add_unique(&prj);
-        add_verify_target_with_constructor(&prj);
-
-        let contract_path = "src/Verify.sol:Verify";
-        let output = cmd
-            .arg("create")
-            .args(info.create_args())
-            .arg(contract_path)
-            .args(vec![
-                "--constructor-args",
-                "(239,SomeString)",
-                "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-            ])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-
-        let address = utils::parse_deployed_address(output.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
-
-        cmd.forge_fuse().arg("verify-contract").root_arg().args([
-            "--rpc-url".to_string(),
-            info.rpc.clone(),
-            address,
-            contract_path.to_string(),
-            "--etherscan-api-key".to_string(),
-            info.etherscan.clone(),
-            "--verifier".to_string(),
-            info.verifier.clone(),
-            "--guess-constructor-args".to_string(),
-        ]);
-
-        await_verification_response(info, cmd)
-    }
-}
-
-/// Executes create --verify on the given chain
-fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
-    // only execute if keys present
-    if let Some(info) = info {
-        test_debug!("verifying on {}", info.chain);
-        add_single_verify_target_file(&prj);
-
-        let contract_path = "src/Verify.sol:Verify";
-        let assert = cmd
-            .arg("create")
-            .args(info.create_args())
-            .args([contract_path, "--etherscan-api-key", info.etherscan.as_str(), "--verify"])
-            .assert_success();
-        let output = assert.get_output();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("Contract successfully verified"), "stderr: {stderr}");
-    }
 }
 
 /// Deploys a freshly stamped contract and verifies it, as two separate commands.
@@ -319,157 +125,6 @@ fn deploy_and_verify_on_chain(
         .unwrap_or_else(|err| panic!("Failed to verify on {}: {err}", info.chain));
 }
 
-// tests `create && contract-verify && verify-check` on Fantom testnet if correct env vars are set
-forgetest!(can_verify_random_contract_fantom_testnet, |prj, cmd| {
-    verify_on_chain(EnvExternalities::ftm_testnet(), prj, cmd);
-});
-
-// tests `create && contract-verify && verify-check` on Optimism kovan if correct env vars are set
-forgetest!(can_verify_random_contract_optimism_kovan, |prj, cmd| {
-    verify_on_chain(EnvExternalities::optimism_kovan(), prj, cmd);
-});
-
-// tests `create && contract-verify && verify-check` on Sepolia testnet if correct env vars are set
-forgetest!(can_verify_random_contract_sepolia, |prj, cmd| {
-    // Implicitly tests `--verifier etherscan` on Sepolia testnet
-    verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
-});
-
-// tests that `verify-contract --verifier etherscan` also submits to Sourcify on Sepolia
-forgetest!(can_verify_contract_sepolia_etherscan_also_runs_sourcify, |prj, cmd| {
-    if let Some(info) = EnvExternalities::sepolia_etherscan() {
-        test_debug!("verifying on {}", info.chain);
-        add_unique(&prj);
-        add_verify_target(&prj);
-        let contract_path = "src/Verify.sol:Verify";
-
-        let deploy_output = cmd
-            .forge_fuse()
-            .arg("create")
-            .args(info.create_args())
-            .args([contract_path, "--broadcast"])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-        let address = utils::parse_deployed_address(deploy_output.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {deploy_output}"));
-
-        let output = cmd
-            .forge_fuse()
-            .arg("verify-contract")
-            .root_arg()
-            .args([
-                "--chain-id",
-                info.chain.as_ref(),
-                &address,
-                contract_path,
-                "--etherscan-api-key",
-                info.etherscan.as_str(),
-                "--verifier",
-                info.verifier.as_str(),
-            ])
-            .assert_success()
-            .get_output()
-            .stderr_lossy();
-
-        assert!(output.contains("Verifying on etherscan"), "Etherscan run missing: {output}");
-        assert!(
-            output.contains("Verification Job ID")
-                || output.contains("Contract source code already fully verified"),
-            "Sourcify submission did not succeed: {output}"
-        );
-        assert!(
-            !output.contains("sourcify verification failed"),
-            "Sourcify failure warning logged: {output}"
-        );
-    }
-});
-
-// tests `create --verify on Sepolia testnet if correct env vars are set
-// SEPOLIA_RPC_URL=https://rpc.sepolia.org
-// TESTNET_DEPLOYER_PRIVATE_KEY=0x...
-// ETHERSCAN_API_KEY=<API_KEY>
-forgetest!(can_create_verify_random_contract_sepolia_etherscan, |prj, cmd| {
-    // Implicitly tests `--verifier etherscan` on Sepolia testnet
-    create_verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
-});
-
-// tests that `create --verify --verifier etherscan` also submits to Sourcify on Sepolia
-forgetest!(can_create_verify_sepolia_etherscan_also_runs_sourcify, |prj, cmd| {
-    if let Some(info) = EnvExternalities::sepolia_etherscan() {
-        test_debug!("verifying on {}", info.chain);
-        add_single_verify_target_file(&prj);
-
-        let contract_path = "src/Verify.sol:Verify";
-        let output = cmd
-            .arg("create")
-            .args(info.create_args())
-            .args([
-                contract_path,
-                "--etherscan-api-key",
-                info.etherscan.as_str(),
-                "--verify",
-                "--broadcast",
-            ])
-            .assert_success()
-            .get_output()
-            .stderr_lossy();
-
-        assert!(output.contains("Verifying on etherscan"), "Etherscan run missing: {output}");
-        assert!(
-            output.contains("Verification Job ID")
-                || output.contains("Contract source code already fully verified"),
-            "Sourcify submission did not succeed: {output}"
-        );
-        assert!(
-            !output.contains("sourcify verification failed"),
-            "Sourcify failure warning logged: {output}"
-        );
-    }
-});
-
-// tests `create --verify --verifier sourcify` on Sepolia testnet
-forgetest!(can_create_verify_random_contract_sepolia_sourcify, |prj, cmd| {
-    verify_on_chain(EnvExternalities::sepolia_sourcify(), prj, cmd);
-});
-
-// tests `create --verify --verifier sourcify` with etherscan api key set
-// <https://github.com/foundry-rs/foundry/issues/10000>
-forgetest!(
-    can_create_verify_random_contract_sepolia_sourcify_with_etherscan_api_key_set,
-    |prj, cmd| {
-        verify_on_chain(EnvExternalities::sepolia_sourcify_with_etherscan_api_key_set(), prj, cmd);
-    }
-);
-
-// tests `create --verify --verifier blockscout` on Sepolia testnet
-forgetest!(can_create_verify_random_contract_sepolia_blockscout, |prj, cmd| {
-    verify_on_chain(EnvExternalities::sepolia_blockscout(), prj, cmd);
-});
-
-// tests `create --verify --verifier blockscout` on Sepolia testnet with etherscan api key set
-forgetest!(
-    can_create_verify_random_contract_sepolia_blockscout_with_etherscan_api_key_set,
-    |prj, cmd| {
-        verify_on_chain(
-            EnvExternalities::sepolia_blockscout_with_etherscan_api_key_set(),
-            prj,
-            cmd,
-        );
-    }
-);
-
-// tests `create && contract-verify --guess-constructor-args && verify-check` on Goerli testnet if
-// correct env vars are set
-forgetest!(can_guess_constructor_args, |prj, cmd| {
-    guess_constructor_args(EnvExternalities::goerli(), prj, cmd);
-});
-
-// tests `create && verify-contract && verify-check` on sepolia with default sourcify verifier
-forgetest!(can_verify_random_contract_sepolia_default_sourcify, |prj, cmd| {
-    verify_on_chain(EnvExternalities::sepolia_empty_verifier(), prj, cmd);
-});
-
 // Blockscout instances are per-chain deployments with no shared registry, so `--verifier
 // blockscout` has to be given the URL explicitly.
 const SEPOLIA_BLOCKSCOUT_URL: &str = "https://eth-sepolia.blockscout.com/api";
@@ -486,13 +141,14 @@ const ROBINHOOD_TESTNET_BLOCKSCOUT_URL: &str = "https://explorer.testnet.chain.r
 /// instead. HyperEVM testnet (998) is covered by Sourcify.
 macro_rules! deploy_verify_tests {
     ($($name:ident: $chain:expr, $network:literal, $verifier:literal, $url:expr;)*) => {$(
-        forgetest!($name, |prj, cmd| {
+        #[forgetest]
+        fn $name(prj: _, cmd: _) {
             deploy_and_verify_on_chain(
                 EnvExternalities::deploy_verify($chain, $network, $verifier, $url),
                 prj,
                 cmd,
             );
-        });
+        }
     )*};
 }
 
@@ -531,23 +187,34 @@ deploy_verify_tests! {
 
 // Tests that verify properly validates verifier arguments.
 // <https://github.com/foundry-rs/foundry/issues/11430>
-forgetest_async!(can_validate_verifier_settings, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn can_validate_verifier_settings(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // Build the project to create the cache.
     cmd.forge_fuse().arg("build").assert_success();
     // Argument validation should not depend on a public block explorer being available.
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let verifier_url = format!("http://{}", listener.local_addr().unwrap());
-    let app = Router::new().fallback(|Query(query): Query<HashMap<String, String>>| async move {
-        assert_eq!(query.get("module").map(String::as_str), Some("contract"));
-        assert_eq!(query.get("action").map(String::as_str), Some("getabi"));
-        assert_eq!(
-            query["address"].parse::<Address>().unwrap(),
-            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse::<Address>().unwrap()
-        );
-        r#"{"status":"1","message":"OK","result":"[]"}"#
-    });
+    let app = Router::new()
+        .route(
+            "/api",
+            post(|Form(form): Form<HashMap<String, String>>| async move {
+                if form.get("apikey").map(String::as_str) == Some("verifier-key") {
+                    r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#
+                } else {
+                    r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#
+                }
+            }),
+        )
+        .fallback(|Query(query): Query<HashMap<String, String>>| async move {
+            assert_eq!(query.get("module").map(String::as_str), Some("contract"));
+            assert_eq!(query.get("action").map(String::as_str), Some("getabi"));
+            assert_eq!(
+                query["address"].parse::<Address>().unwrap(),
+                address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+            );
+            r#"{"status":"1","message":"OK","result":"[]"}"#
+        });
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
     // Use the explicit chain ID so validation does not depend on a public RPC endpoint.
@@ -636,13 +303,29 @@ Verifying on blockscout...
 Contract [src/Counter.sol:Counter] "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" is already verified. Skipping verification.
 
 "#]]);
+    // Status checks prefer the verifier key over the Etherscan key.
+    cmd.forge_fuse()
+        .args(["verify-check", "job-id", "--verifier", "custom"])
+        .args(["--verifier-url", &format!("{verifier_url}/api")])
+        .args(["--verifier-api-key", "verifier-key", "--etherscan-api-key", "fallback-key"])
+        .args(["--chain", "1", "--retries", "1", "--delay", "0"])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Checking verification status on mainnet
+Contract verification status:
+Response: `OK`
+Details: `Pass - Verified`
+Contract successfully verified
+
+"#]]);
     server.abort();
-});
+}
 
 // Tests that `forge script --broadcast --verify` fails before broadcasting when
 // the verifier rejects the API key (credential preflight check).
-forgetest_async!(script_fails_early_on_bad_verifier_credentials, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn script_fails_early_on_bad_verifier_credentials(prj: _, cmd: _) {
     prj.add_script(
         "Deploy.s.sol",
         r#"
@@ -698,7 +381,7 @@ contract Deploy is Script {
         !stdout.contains("ONCHAIN EXECUTION COMPLETE") && !stdout.contains("Sending transactions"),
         "transactions were broadcast but preflight check should have prevented it: {stdout}"
     );
-});
+}
 
 /// Spawns a local HTTP server that returns the given body for Etherscan-style ABI requests.
 async fn spawn_mock_verifier(body: &'static str) -> (String, tokio::task::JoinHandle<()>) {
@@ -749,7 +432,8 @@ async fn spawn_full_mock_verifier() -> (String, &'static str, tokio::task::JoinH
 // Tests that `forge create --broadcast --verify --json` keeps stdout clean (valid JSON only) and
 // does not leak the verification submission GUID/URL into stdout, while still reporting it on
 // stderr. <https://github.com/foundry-rs/foundry/issues/1976>
-forgetest_async!(create_verify_json_keeps_stdout_clean, |prj, cmd| {
+#[forgetest]
+async fn create_verify_json_keeps_stdout_clean(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -790,13 +474,13 @@ forgetest_async!(create_verify_json_keeps_stdout_clean, |prj, cmd| {
     // The GUID/URL is still reported to the user on stderr.
     let stderr = output.stderr_lossy();
     assert!(stderr.contains(guid), "expected verification GUID on stderr, got: {stderr}");
-});
+}
 
 // Tests that `forge script --broadcast --verify --json` keeps stdout clean (valid JSON Lines only)
 // and does not leak the verification submission GUID/URL into stdout, while still reporting it on
 // stderr. <https://github.com/foundry-rs/foundry/issues/1976>
-forgetest_async!(script_verify_json_keeps_stdout_clean, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn script_verify_json_keeps_stdout_clean(prj: _, cmd: _) {
     prj.add_script(
         "Deploy.s.sol",
         r#"
@@ -850,16 +534,16 @@ contract Deploy is Script {
 
     let stderr = output.stderr_lossy();
     assert!(stderr.contains(guid), "expected verification GUID on stderr, got: {stderr}");
-});
+}
 
 // Regression test for <https://github.com/foundry-rs/foundry/issues/10164>. The contract created
 // by the script is compiled in a different project and can only be identified from its factory's
 // verified Standard JSON input.
-forgetest_async!(script_verifies_external_create2_contract, |prj, cmd| {
+#[forgetest_init]
+async fn script_verifies_external_create2_contract(prj: _, cmd: _) {
     const SUBMISSION_KEY: &str = "submission-key";
     const GUID: &str = "external-create2-guid";
 
-    foundry_test_utils::util::initialize(prj.root());
     let external = TestProject::new("external-create2", PathStyle::Dapptools);
     foundry_test_utils::util::initialize(external.root());
     external.add_source(
@@ -915,7 +599,7 @@ contract ExternalFactory {
         .post(rpc.as_str())
         .json(&serde_json::json!({
             "jsonrpc": "2.0", "id": 1, "method": "eth_call",
-            "params": [{"to": factory, "data": format!("0x{}", hex::encode(selector))}, "latest"]
+            "params": [{"to": factory, "data": hex::encode_prefixed(selector)}, "latest"]
         }))
         .send()
         .await
@@ -948,7 +632,7 @@ contract ExternalFactory {
     )
     .unwrap();
     let metadata: serde_json::Value =
-        serde_json::from_str(artifact["rawMetadata"].as_str().unwrap()).unwrap();
+        parse_json(artifact["rawMetadata"].as_str().unwrap()).unwrap();
     let compiler_version = format!("v{}", metadata["compiler"]["version"].as_str().unwrap());
 
     #[derive(Default)]
@@ -1108,7 +792,7 @@ contract Deploy is Script {{
         .post(rpc.as_str())
         .json(&serde_json::json!({
             "jsonrpc": "2.0", "id": 2, "method": "eth_call",
-            "params": [{"to": child_address, "data": format!("0x{}", hex::encode(value_selector))}, "latest"]
+            "params": [{"to": child_address, "data": hex::encode_prefixed(value_selector)}, "latest"]
         }))
         .send()
         .await
@@ -1128,7 +812,14 @@ contract Deploy is Script {{
         .unwrap()
         .creator_code_addresses
         .clear();
+    sequence.recovery_generation = None;
     std::fs::write(&broadcast_path, serde_json::to_vec_pretty(&sequence).unwrap()).unwrap();
+    let cache_path = prj.root().join("cache/Deploy.s.sol/31337/run-latest.json");
+    let mut cache: serde_json::Value = foundry_common::fs::read_json_file(&cache_path).unwrap();
+    cache.as_object_mut().unwrap().remove("recovery_generation");
+    std::fs::write(cache_path, serde_json::to_vec_pretty(&cache).unwrap()).unwrap();
+    std::fs::remove_file(prj.root().join("cache/Deploy.s.sol/31337/run-latest.json.recovery.json"))
+        .unwrap();
 
     let failed = prj
         .forge_command()
@@ -1157,11 +848,12 @@ contract Deploy is Script {{
     assert!(stderr.contains("creator provenance is unavailable"), "{stderr}");
     assert!(stderr.contains("Not all (0 / 1) contracts were verified"), "{stderr}");
     assert!(!stderr.contains("All (0) contracts were verified"), "{stderr}");
-});
+}
 
 // Tests that the preflight check passes (does not block deploy) when the verifier responds
 // with ContractCodeNotVerified (the normal "valid key, unknown address" response).
-forgetest_async!(create_preflight_passes_on_contract_not_verified, |prj, cmd| {
+#[forgetest]
+async fn create_preflight_passes_on_contract_not_verified(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -1199,11 +891,12 @@ forgetest_async!(create_preflight_passes_on_contract_not_verified, |prj, cmd| {
         !stderr.contains("Verification preflight check failed"),
         "preflight should not block on ContractCodeNotVerified, got: {stderr}"
     );
-});
+}
 
 // Tests that the preflight check fails (blocks deploy) when the verifier explicitly
 // rejects the API key with an InvalidApiKey response.
-forgetest_async!(create_preflight_fails_on_invalid_api_key, |prj, cmd| {
+#[forgetest]
+async fn create_preflight_fails_on_invalid_api_key(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -1243,11 +936,12 @@ forgetest_async!(create_preflight_fails_on_invalid_api_key, |prj, cmd| {
         !stdout.contains("Contract Address"),
         "contract was deployed but preflight check should have prevented it"
     );
-});
+}
 
 // Tests that the preflight check does NOT block deployment when the verifier responds
 // with a rate-limit error (transient, not an auth failure).
-forgetest_async!(create_preflight_warns_on_rate_limit, |prj, cmd| {
+#[forgetest]
+async fn create_preflight_warns_on_rate_limit(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -1288,4 +982,447 @@ forgetest_async!(create_preflight_warns_on_rate_limit, |prj, cmd| {
         stderr.contains("verifier credential check inconclusive"),
         "preflight should warn on rate limit, got: {stderr}"
     );
-});
+}
+
+// Tests that `--resume --verify` fails when contracts that exactly matched a project artifact at
+// broadcast time, top-level and nested, no longer match one, while other unmatched contracts only
+// warn.
+#[forgetest_init]
+async fn script_verify_fails_when_deployed_contract_no_longer_matches(prj: _, cmd: _) {
+    prj.add_source(
+        "Alpha.sol",
+        "contract Child { uint256 public x = 1; } contract Alpha { Child public child = new Child(); }",
+    );
+    prj.add_source("Beta.sol", "contract Beta { uint256 public y = 1; }");
+    prj.add_raw_source("Alpha.vy", "x: public(uint256)\n");
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Alpha} from "../src/Alpha.sol";
+import {Beta} from "../src/Beta.sol";
+bytes constant RAW = hex"600a600c600039600a6000f3602a60005260206000f3";
+contract DeployUnmatched is Script {
+    function run() external {
+        bytes memory raw = RAW;
+        bytes memory lookalike = type(Beta).creationCode;
+        lookalike[lookalike.length - 1] ^= bytes1(0x01);
+        vm.startBroadcast();
+        assembly {
+            pop(create(0, add(raw, 0x20), mload(raw)))
+            pop(create(0, add(lookalike, 0x20), mload(lookalike)))
+        }
+        vm.stopBroadcast();
+    }
+}
+contract DeployVyper is Script {
+    function run() external {
+        vm.startBroadcast();
+        vm.deployCode("src/Alpha.vy:Alpha");
+        vm.stopBroadcast();
+    }
+}
+contract DeployAlpha is Script {
+    function run() external {
+        bytes memory raw = RAW;
+        vm.startBroadcast();
+        new Alpha();
+        vm.deployCode("src/Alpha.vy:Alpha");
+        assembly { pop(create(0, add(raw, 0x20), mload(raw))) }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    let rpc = handle.http_endpoint();
+    let (verifier_url, _, _server) = spawn_full_mock_verifier().await;
+    let script = |target: &str| {
+        [
+            "script".to_string(),
+            format!("script/Deploy.s.sol:{target}"),
+            "--rpc-url".to_string(),
+            rpc.clone(),
+            "--private-key".to_string(),
+            pk.clone(),
+            "--broadcast".to_string(),
+        ]
+    };
+    let verify = [
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        verifier_url.as_str(),
+        "--verifier-api-key",
+        "VALID_KEY",
+    ];
+
+    // Unmatched contracts that never exactly matched a project artifact only warn and count as
+    // skipped, on a fresh run and on resume: raw bytecode has no recorded name, and `Beta` with a
+    // flipped metadata byte is only named by fuzzy matching.
+    cmd.forge_fuse().args(script("DeployUnmatched")).args(verify).assert_success().stderr_eq(str![[r#"
+
+Deployed contracts (chain 31337):
+  -     0x5FbDB2315678afecb367f032d93F642f64180aa3
+  Beta  0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+Warning: We haven't found any matching bytecode for the following contracts: [0x5fbdb2315678afecb367f032d93f642f64180aa3, 0xe7f1725e7734ce288f8367e1bb143e90bb3f0512].
+
+This may occur when resuming a verification, but the underlying source code or compiler version has changed.
+Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.
+##
+Start verification for (0) contracts
+Verified (0) contracts; skipped (2) contracts (see warnings above).
+
+"#]]);
+    cmd.forge_fuse()
+        .args(script("DeployUnmatched"))
+        .arg("--resume")
+        .args(verify)
+        .assert_success()
+        .stderr_eq(str![[r#"
+
+Deployed contracts (chain 31337):
+  -     0x5FbDB2315678afecb367f032d93F642f64180aa3
+  Beta  0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+Warning: We haven't found any matching bytecode for the following contracts: [0x5fbdb2315678afecb367f032d93f642f64180aa3, 0xe7f1725e7734ce288f8367e1bb143e90bb3f0512].
+
+This may occur when resuming a verification, but the underlying source code or compiler version has changed.
+Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.
+##
+Start verification for (0) contracts
+Verified (0) contracts; skipped (2) contracts (see warnings above).
+
+"#]]);
+
+    let broadcast: serde_json::Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/Deploy.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert_eq!(broadcast["transactions"][1]["contractName"], "Beta");
+
+    // A Vyper contract is skipped even when a Solidity contract shares its name.
+    cmd.forge_fuse().args(script("DeployVyper")).args(verify).assert_success().stderr_eq(str![[r#"
+
+Deployed contracts (chain 31337):
+  Alpha  0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+Warning: We haven't found any matching bytecode for the following contracts: [0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0].
+
+This may occur when resuming a verification, but the underlying source code or compiler version has changed.
+Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.
+##
+Start verification for (0) contracts
+Verified (0) contracts; skipped (1) contracts (see warnings above).
+
+"#]]);
+
+    // After both `Alpha` sources change, the Solidity `Alpha` and its nested `Child` fail, while
+    // the Vyper `Alpha` and raw bytecode only warn.
+    cmd.forge_fuse().args(script("DeployAlpha")).assert_success();
+    prj.add_raw_source("Alpha.vy", "x: public(uint256)\nz: public(uint256)\n");
+    prj.add_source(
+        "Alpha.sol",
+        "contract Child { uint256 public x = 2; } contract Alpha { Child public child = new Child(); }",
+    );
+    cmd.forge_fuse()
+        .args(script("DeployAlpha"))
+        .arg("--resume")
+        .args(verify)
+        .assert_failure()
+        .stderr_eq(str![[r#"
+
+Deployed contracts (chain 31337):
+  Alpha  0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
+  Child  0xd8058efe0198ae9dD7D563e1b4938Dcbc86A1F81
+  Alpha  0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
+  -      0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
+Warning: We haven't found any matching bytecode for the following contracts: [0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9, 0xd8058efe0198ae9dd7d563e1b4938dcbc86a1f81, 0xdc64a140aa3e981100a9beca4e685f962f0cf6c9, 0x5fc8d32690cc91d4c39d9d3abcbd16989f875707].
+
+This may occur when resuming a verification, but the underlying source code or compiler version has changed.
+Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.
+##
+Start verification for (2) contracts
+Error: Not all (0 / 2) contracts were verified; no local artifact matches the creation code of Alpha at 0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9, Child at 0xd8058efe0198ae9dD7D563e1b4938Dcbc86A1F81!
+
+"#]]);
+}
+
+// Equal sender nonces on different chains must not make one deployment inherit the other's
+// artifact identity when deciding whether verification is required.
+#[forgetest_init]
+async fn script_verify_fork_same_address_different_artifacts(prj: _, cmd: _) {
+    prj.add_source("Alpha.sol", "contract Alpha { uint256 public x = 1; }");
+    prj.add_source("Beta.sol", "contract Beta { uint256 public y = 2; }");
+    let (_api1, handle1) = spawn(NodeConfig::test()).await;
+    let (_api2, handle2) = spawn(NodeConfig::test().with_chain_id(Some(31338u64))).await;
+    let wallet = handle1.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    prj.add_script(
+        "Deploy.s.sol",
+        &r#"
+import "forge-std/Script.sol";
+import {Alpha} from "../src/Alpha.sol";
+import {Beta} from "../src/Beta.sol";
+contract Deploy is Script {
+    function run() external {
+        vm.createSelectFork("<RPC1>");
+        vm.startBroadcast();
+        address alpha = address(new Alpha());
+        vm.stopBroadcast();
+        vm.createSelectFork("<RPC2>");
+        vm.startBroadcast();
+        address beta = address(new Beta());
+        vm.stopBroadcast();
+        require(alpha == beta, "deployment addresses differ");
+    }
+}
+"#
+        .replace("<RPC1>", &handle1.http_endpoint())
+        .replace("<RPC2>", &handle2.http_endpoint()),
+    );
+    let script = ["script", "script/Deploy.s.sol:Deploy", "--broadcast", "--private-key", &pk];
+    cmd.forge_fuse().args(script).assert_success();
+
+    let (verifier_url, _, _server) = spawn_full_mock_verifier().await;
+    let resume = [
+        "--resume",
+        "--multi",
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        verifier_url.as_str(),
+        "--verifier-api-key",
+        "VALID_KEY",
+    ];
+    // Both deployments can be verified against the original artifacts.
+    cmd.forge_fuse().args(script).args(resume).assert_success();
+    prj.add_source("Beta.sol", "contract Beta { uint256 public y = 3; }");
+    cmd.forge_fuse().args(script).args(resume).assert_failure().stderr_eq(str![[r#"
+...
+Error: chain 31338: Not all (0 / 1) contracts were verified; no local artifact matches the creation code of Beta at 0x5FbDB2315678afecb367f032d93F642f64180aa3!
+
+"#]]);
+}
+
+// The EVM permits ignored trailing bytes even without an ABI constructor. Such input must use
+// the same artifact-prefix matching rule when recording deployments and verifying them.
+#[forgetest_init]
+async fn script_verify_nested_creation_with_trailing_data(prj: _, cmd: _) {
+    prj.add_source("Child.sol", "contract Child { uint256 public x = 1; }");
+    prj.add_source(
+        "Factory.sol",
+        r#"
+contract Factory {
+    function deploy(bytes memory code) external {
+        assembly { pop(create(0, add(code, 0x20), mload(code))) }
+    }
+}
+"#,
+    );
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Child} from "../src/Child.sol";
+import {Factory} from "../src/Factory.sol";
+contract Deploy is Script {
+    function run() external {
+        bytes memory code = bytes.concat(type(Child).creationCode, new bytes(1024));
+        vm.startBroadcast();
+        Factory factory = new Factory();
+        factory.deploy(code);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    let rpc = handle.http_endpoint();
+    let script = [
+        "script",
+        "script/Deploy.s.sol:Deploy",
+        "--rpc-url",
+        rpc.as_str(),
+        "--broadcast",
+        "--private-key",
+        &pk,
+    ];
+    cmd.forge_fuse().args(script).assert_success();
+    let sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/Deploy.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert_eq!(sequence.transactions[1].additional_contracts.len(), 1);
+
+    let (verifier_url, _, _server) = spawn_full_mock_verifier().await;
+    let resume = [
+        "--resume",
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        verifier_url.as_str(),
+        "--verifier-api-key",
+        "VALID_KEY",
+    ];
+    cmd.forge_fuse().args(script).args(resume).assert_success();
+    prj.add_source("Child.sol", "contract Child { uint256 public x = 2; }");
+    cmd.forge_fuse().args(script).args(resume).assert_failure().stderr_eq(str![[r#"
+...
+Error: Not all (1 / 2) contracts were verified; no local artifact matches the creation code of Child at 0xa16E02E87b7454126E5E10d957A927A7F5B5d2be!
+
+"#]]);
+}
+
+// A chain whose verification fails does not stop the contracts of later chains from being
+// submitted, and the error names the failing chain.
+#[forgetest_init]
+async fn script_verifies_every_chain_after_a_failure(prj: _, cmd: _) {
+    prj.add_source(
+        "Contracts.sol",
+        r#"
+contract Alpha { function id() external pure returns (uint256) { return 1111; } }
+contract Beta { function id() external pure returns (uint256) { return 2222; } }
+"#,
+    );
+    let script = prj.add_script(
+        "MultiVerify.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Alpha, Beta} from "../src/Contracts.sol";
+
+contract MultiVerify is Script {
+    function run(string memory rpc1, string memory rpc2) external {
+        vm.createSelectFork(rpc1);
+        vm.startBroadcast();
+        new Alpha();
+        vm.stopBroadcast();
+
+        vm.createSelectFork(rpc2);
+        vm.startBroadcast();
+        new Beta();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api1, handle1) = spawn(NodeConfig::test().with_chain_id(Some(1111u64))).await;
+    let (_api2, handle2) = spawn(NodeConfig::test().with_chain_id(Some(2222u64))).await;
+    let (rpc1, transactions1) =
+        spawn_rpc_proxy_recording_method(handle1.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc2, transactions2) =
+        spawn_rpc_proxy_recording_method(handle2.http_endpoint(), "eth_sendRawTransaction").await;
+
+    // Initially reject only Alpha, then both contracts, then accept Alpha with Beta already
+    // verified.
+    let attempt = Arc::new(AtomicUsize::new(0));
+    let verifier_attempt = attempt.clone();
+    let submissions = Arc::new(Mutex::new(Vec::new()));
+    let state = submissions.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let verifier_url = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new().fallback(move |uri: axum::http::Uri, body: String| {
+        let state = state.clone();
+        let attempt = verifier_attempt.load(Ordering::SeqCst);
+        async move {
+            let encoded = if body.is_empty() { uri.query().unwrap_or_default() } else { &body };
+            let form = url::form_urlencoded::parse(encoded.as_bytes())
+                .into_owned()
+                .collect::<HashMap<_, _>>();
+            match form.get("action").map(String::as_str) {
+                Some("verifysourcecode") => {
+                    let name = form["contractname"].clone();
+                    let alpha = name.ends_with(":Alpha");
+                    state.lock().unwrap().push(name);
+                    if attempt == 1 || (attempt == 0 && alpha) {
+                        r#"{"status":"0","message":"NOTOK","result":"mock failure"}"#
+                    } else if attempt == 2 && !alpha {
+                        r#"{"status":"0","message":"NOTOK","result":"Contract source code already verified"}"#
+                    } else {
+                        r#"{"status":"1","message":"OK","result":"guid"}"#
+                    }
+                }
+                Some("checkverifystatus") => {
+                    r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#
+                }
+                _ => r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#,
+            }
+        }
+    });
+    let _server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let args = [
+        "script",
+        script.to_str().unwrap(),
+        "--sig",
+        "run(string,string)",
+        &rpc1,
+        &rpc2,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        &verifier_url,
+        "--verifier-api-key",
+        "KEY",
+        "--retries",
+        "1",
+        "--delay",
+        "0",
+    ];
+    cmd.forge_fuse().args(args);
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: chain 1111: Not all (0 / 1) contracts were verified!
+
+"#]]);
+
+    // `--retries 1` submits `Alpha` twice before chain 2222 is verified.
+    assert_eq!(
+        *submissions.lock().unwrap(),
+        ["src/Contracts.sol:Alpha", "src/Contracts.sol:Alpha", "src/Contracts.sol:Beta"]
+    );
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
+
+    // A retry that fails on both chains reports both failures, in sequence order.
+    attempt.store(1, Ordering::SeqCst);
+    submissions.lock().unwrap().clear();
+    cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: chain 1111: Not all (0 / 1) contracts were verified!
+chain 2222: Not all (0 / 1) contracts were verified!
+
+"#]]);
+    assert_eq!(
+        *submissions.lock().unwrap(),
+        [
+            "src/Contracts.sol:Alpha",
+            "src/Contracts.sol:Alpha",
+            "src/Contracts.sol:Beta",
+            "src/Contracts.sol:Beta",
+        ]
+    );
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
+
+    // Resume retries verification on every chain, counting an already-verified response as success
+    // without rebroadcasting completed deployments.
+    attempt.store(2, Ordering::SeqCst);
+    submissions.lock().unwrap().clear();
+    cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
+    cmd.assert_success();
+    assert_eq!(*submissions.lock().unwrap(), ["src/Contracts.sol:Alpha", "src/Contracts.sol:Beta"]);
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
+}

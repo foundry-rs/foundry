@@ -8,7 +8,7 @@ use foundry_common::{
     comments::{Comment, CommentStyle, Comments, estimate_line_width, line_with_tabs},
     iter::IterDelimited,
 };
-use foundry_config::fmt::{DocCommentStyle, IndentStyle};
+use foundry_config::fmt::{DocCommentStyle, IndentStyle, IntTypes};
 use solar::parse::{
     ast::{self, Span},
     interface::{BytePos, source_map::SourceFile},
@@ -112,6 +112,8 @@ pub(super) struct State<'sess, 'ast> {
     config: Arc<FormatterConfig>,
     inline_config: InlineConfig<()>,
     cursor: SourcePos,
+    /// Contiguous line doc groups whose directives require preserving their style and line breaks.
+    directive_doc_groups: Vec<Span>,
 
     // FORMATTING CONTEXT:
     // Whether the source file uses CRLF (`\r\n`) line endings.
@@ -139,6 +141,8 @@ pub(super) struct State<'sess, 'ast> {
     emit_or_revert: bool,
     // Whether inside a variable initialization expression, or not.
     var_init: bool,
+    // Whether assignments belong to a certified inline body or a normalized sizing probe.
+    inline_assignments: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -213,6 +217,7 @@ impl<'sess> State<'sess, '_> {
         inline_config: InlineConfig<()>,
         comments: Comments,
     ) -> Self {
+        let directive_doc_groups = Self::directive_doc_groups(file, &comments);
         Self {
             s: pp::Printer::new(
                 config.line_length,
@@ -224,6 +229,7 @@ impl<'sess> State<'sess, '_> {
             config,
             inline_config,
             cursor: SourcePos { pos: file.start_pos, enabled: true },
+            directive_doc_groups,
             has_crlf: false,
             contract: None,
             single_line_stmt: None,
@@ -234,6 +240,7 @@ impl<'sess> State<'sess, '_> {
             return_bin_expr: false,
             emit_or_revert: false,
             var_init: false,
+            inline_assignments: false,
             block_depth: 0,
             call_stack: CallStack::default(),
         }
@@ -455,12 +462,133 @@ impl<'sess> State<'sess, '_> {
         self.print_word(")");
     }
 
+    /// Account for brace spacing, ignoring literal and comment text.
+    fn brace_spacing_delta(
+        &self,
+        line: &str,
+        in_block_comment: &mut bool,
+        quote: &mut Option<u8>,
+    ) -> isize {
+        let bytes = line.as_bytes();
+        let mut delta = 0;
+        let mut i = 0;
+        while i < bytes.len() {
+            if let Some(delimiter) = *quote {
+                match bytes[i] {
+                    b'\\' => i = (i + 2).min(bytes.len()),
+                    c if c == delimiter => {
+                        *quote = None;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
+                continue;
+            }
+            if *in_block_comment {
+                if bytes.get(i..i + 2) == Some(b"*/") {
+                    *in_block_comment = false;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            match bytes[i] {
+                b'/' if bytes.get(i + 1) == Some(&b'/') => break,
+                b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                    *in_block_comment = true;
+                    i += 2;
+                }
+                delimiter @ (b'\'' | b'"') => {
+                    *quote = Some(delimiter);
+                    i += 1;
+                }
+                b'{' | b'}' => {
+                    let inner = if bytes[i] == b'{' {
+                        bytes.get(i + 1)
+                    } else {
+                        i.checked_sub(1).and_then(|j| bytes.get(j))
+                    };
+                    if let Some(&inner) = inner
+                        && !matches!(inner, b'{' | b'}')
+                    {
+                        delta += match (matches!(inner, b' ' | b'\t'), self.config.bracket_spacing)
+                        {
+                            (true, false) => -1,
+                            (false, true) => 1,
+                            _ => 0,
+                        };
+                    }
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+        delta
+    }
+
+    /// Measure integer type spelling from parsed types so identifiers and literal text do not
+    /// affect the estimate.
+    fn int_type_delta(&self, ty: &ast::Type<'_>) -> isize {
+        match &ty.kind {
+            ast::TypeKind::Elementary(
+                ast::ElementaryType::Int(size) | ast::ElementaryType::UInt(size),
+            ) => match (self.config.int_types, size.bits_raw()) {
+                (IntTypes::Long, 0) => 3,
+                (IntTypes::Short, 256) => -3,
+                _ => 0,
+            },
+            ast::TypeKind::Array(array) => self.int_type_delta(&array.element),
+            ast::TypeKind::Mapping(mapping) => {
+                self.int_type_delta(&mapping.key) + self.int_type_delta(&mapping.value)
+            }
+            ast::TypeKind::Function(function) => {
+                let params: isize = function
+                    .parameters
+                    .vars
+                    .iter()
+                    .map(|param| self.int_type_delta(&param.ty))
+                    .sum();
+                let returns: isize = function.returns.as_ref().map_or(0, |returns| {
+                    returns.vars.iter().map(|ret| self.int_type_delta(&ret.ty)).sum()
+                });
+                params + returns
+            }
+            _ => 0,
+        }
+    }
+
+    fn estimate_type_size(&self, ty: &ast::Type<'_>) -> usize {
+        self.estimate_size(ty.span).saturating_add_signed(self.int_type_delta(ty))
+    }
+
     fn estimate_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, false)
+    }
+
+    /// Call argument layout needs printed delimiter widths. Keep other layout decisions on their
+    /// existing estimate so already stable source does not change formatting.
+    fn estimate_call_args_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, true)
+    }
+
+    /// Parentheses and index brackets have no inner padding in the printed assignment.
+    /// Keep comment-bearing expressions on their existing estimate.
+    fn estimate_assignment_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, !self.has_comment_between(span.lo(), span.hi()))
+    }
+
+    fn estimate_size_inner(&self, span: Span, normalize_delimiters: bool) -> usize {
         if let Some(snip) = self.snippet(span) {
             let (mut size, mut first, mut prev_needs_space) = (0, true, false);
+            let (mut in_block_comment, mut quote) = (false, None);
 
             for line in snip.lines() {
                 let line = line.trim();
+                // A blank line must not consume or reset the separator owed by the previous line.
+                if line.is_empty() {
+                    continue;
+                }
 
                 if prev_needs_space {
                     size += 1;
@@ -472,7 +600,13 @@ impl<'sess> State<'sess, '_> {
                     match char {
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
                         | ':' => size += 1,
-                        '}' | ')' | ']' if self.config.bracket_spacing => size += 1,
+                        ')' | ']'
+                            if self.config.bracket_spacing
+                                && (!normalize_delimiters || quote.is_some()) =>
+                        {
+                            size += 1
+                        }
+                        '}' if self.config.bracket_spacing => size += 1,
                         _ => (),
                     }
                 }
@@ -492,6 +626,8 @@ impl<'sess> State<'sess, '_> {
                         break;
                     }
                 }
+                let brace_delta = self.brace_spacing_delta(line, &mut in_block_comment, &mut quote);
+                size = size.saturating_add_signed(brace_delta);
 
                 // Next line requires a line break if this one:
                 // - ends with a bracket and fmt config forces bracket spacing.
@@ -499,7 +635,10 @@ impl<'sess> State<'sess, '_> {
                 // - ends with ';' a line break is required.
                 // - ends with an operator, mirroring lines that start with one.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('[' | '(' | '{') => self.config.bracket_spacing,
+                    Some('{') => self.config.bracket_spacing,
+                    Some('[' | '(') => {
+                        self.config.bracket_spacing && (!normalize_delimiters || quote.is_some())
+                    }
                     Some(',' | ';') => true,
                     Some(
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?' | ':',
@@ -525,7 +664,12 @@ impl<'sess> State<'sess, '_> {
     fn handle_comment(&mut self, cmnt: Comment, skip_break: bool) -> Option<Comment> {
         if self.cursor.enabled {
             if self.inline_config.is_disabled(cmnt.span) {
-                if cmnt.style.is_trailing() && !self.last_token_is_space() {
+                // The comment is copied verbatim below, which appends it to whatever was printed
+                // last. An isolated comment had a line of its own in the source, so give it that
+                // line back rather than gluing it to the previous statement.
+                if cmnt.style.is_isolated() {
+                    self.hardbreak_if_not_bol();
+                } else if cmnt.style.is_trailing() && !self.last_token_is_space() {
                     self.nbsp();
                 }
                 self.print_span_cold(cmnt.span);
@@ -570,11 +714,13 @@ impl<'sess> State<'sess, '_> {
             if self.config.docs_style == foundry_config::fmt::DocCommentStyle::Block
                 && cmnt.is_doc
                 && cmnt.kind == ast::CommentKind::Line
+                && !self.preserve_doc_comment(&cmnt)
             {
                 let mut ref_line = self.source_line(cmnt.span.hi());
                 while let Some(next_cmnt) = self.peek_comment() {
                     if !next_cmnt.is_doc
                         || next_cmnt.kind != ast::CommentKind::Line
+                        || self.preserve_doc_comment(next_cmnt)
                         || ref_line + 1 != self.source_line(next_cmnt.span.lo())
                     {
                         break;
@@ -827,7 +973,9 @@ impl<'sess> State<'sess, '_> {
     fn print_comment(&mut self, mut cmnt: Comment, mut config: CommentConfig) {
         self.cursor.advance_to(cmnt.span.hi(), true);
 
-        if cmnt.is_doc {
+        let preserve = self.preserve_doc_comment(&cmnt);
+        let wrap_comments = self.config.wrap_comments && !preserve;
+        if cmnt.is_doc && !preserve {
             cmnt = style_doc_comment(self.config.docs_style, cmnt);
         }
 
@@ -844,7 +992,7 @@ impl<'sess> State<'sess, '_> {
                         (true, false) => (),
                     };
                 }
-                if self.config.wrap_comments {
+                if wrap_comments {
                     // Merge and wrap comments
                     if starts_line {
                         self.ibox(config.offset);
@@ -876,7 +1024,7 @@ impl<'sess> State<'sess, '_> {
                     if config.mixed_post_glued {
                         self.nbsp();
                     } else {
-                        config.nbsp_or_space(self.config.wrap_comments, &mut self.s);
+                        config.nbsp_or_space(wrap_comments, &mut self.s);
                     }
                     self.cursor.advance(1);
                 } else if !config.mixed_no_break_post {
@@ -890,7 +1038,7 @@ impl<'sess> State<'sess, '_> {
                     config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
                 }
 
-                if self.config.wrap_comments {
+                if wrap_comments {
                     // Merge and wrap comments
                     let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
                     for (pos, line) in merged_lines.into_iter().delimited() {
@@ -968,9 +1116,9 @@ impl<'sess> State<'sess, '_> {
                     self.nbsp();
                 }
 
-                if !self.config.wrap_comments && cmnt.lines.len() == 1 {
+                if !wrap_comments && cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
-                } else if self.config.wrap_comments {
+                } else if wrap_comments {
                     if cmnt.is_doc || matches!(cmnt.kind, ast::CommentKind::Line) {
                         config.offset = 0;
                     } else {
@@ -1067,7 +1215,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn has_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
-        self.comments.iter().filter(|c| c.pos() > start_pos && c.pos() < end_pos).any(|_| true)
+        self.has_comment_before_with(end_pos, |c| c.pos() > start_pos)
     }
 
     fn has_breakable_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
@@ -1146,6 +1294,39 @@ impl<'sess> State<'sess, '_> {
                 self.hardbreak();
             }
         }
+    }
+
+    /// Keeps directive syntax and NatSpec attachment intact across all comment printing paths.
+    fn preserve_doc_comment(&self, cmnt: &Comment) -> bool {
+        self.directive_doc_groups.iter().any(|span| span.contains(cmnt.span))
+    }
+
+    fn directive_doc_groups(file: &SourceFile, comments: &Comments) -> Vec<Span> {
+        let line = |pos| file.lookup_line(file.relative_position(pos)).unwrap();
+        let mut groups = Vec::new();
+        let mut comments = comments.iter().peekable();
+        while let Some(cmnt) = comments.next() {
+            if !cmnt.is_doc || cmnt.kind != ast::CommentKind::Line {
+                continue;
+            }
+
+            let mut span = cmnt.span;
+            let mut has_directive = cmnt.format_directives().next().is_some();
+            while let Some(next) = comments.peek()
+                && next.is_doc
+                && next.kind == ast::CommentKind::Line
+                && next.style.is_isolated()
+                && line(span.hi()) + 1 == line(next.span.lo())
+            {
+                has_directive |= next.format_directives().next().is_some();
+                span = span.to(next.span);
+                comments.next();
+            }
+            if has_directive {
+                groups.push(span);
+            }
+        }
+        groups
     }
 }
 

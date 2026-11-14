@@ -7,20 +7,23 @@ use foundry_cli::utils;
 pub fn run() -> Result<()> {
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Anvil>();
 
-    setup()?;
+    let warnings = setup()?;
 
     let mut args = Anvil::parse();
     args.global.init()?;
+    for warning in warnings {
+        let _ = foundry_common::sh_warn!("{warning}");
+    }
     args.node.evm.resolve_rpc_alias();
 
     run_command(args)
 }
 
 /// Setup the exception handler and other utilities.
-pub fn setup() -> Result<()> {
-    utils::common_setup();
+pub fn setup() -> Result<Vec<String>> {
+    let warnings = utils::common_setup();
 
-    Ok(())
+    Ok(warnings)
 }
 
 /// Run the subcommand.

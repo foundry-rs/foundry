@@ -2,10 +2,7 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::{
-    prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper},
-    source::CachedBackend,
-};
+use crate::prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
 use alloy_primitives::{Address, B256, U256, hex};
@@ -13,7 +10,7 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend,
-    core::evm::{BlockEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    core::evm::{EvmFactoryFor, FoundryEvmNetwork},
     decode::decode_console_logs,
     inspectors::CheatsConfig,
     opts::{ExecutionSpecContext, resolve_execution_spec},
@@ -23,12 +20,15 @@ use solar::{
     ast::{ElementaryType, LitKind, StmtKind as AstStmtKind, StrKind, UnOpKind, yul},
     interface::Session,
     sema::{
-        hir::{Event, Expr, ExprKind, StmtKind},
+        hir::{Block, Event, Expr, ExprKind, StmtKind},
         ty::{Gcx, Ty, TyKind},
     },
 };
 use std::ops::ControlFlow;
 use yansi::Paint;
+
+/// Distinguishes inspection output from an early inline assembly return in the user's code.
+const INSPECTION_RESULT_PREFIX: B256 = B256::new(*b"chisel expression result\0\0\0\0\0\0\0\0");
 
 /// Result of inspecting a Solidity snippet.
 #[derive(Debug)]
@@ -39,13 +39,21 @@ pub struct InspectResult {
     pub formatted_output: Option<String>,
     /// An expression that recreates the inspected value, if any.
     pub last_result: Option<String>,
+    /// Whether the previous reusable result should be cleared.
+    pub clear_last_result: bool,
     /// Input to execute and persist after inspection, if it differs from the original input.
     pub replay_input: Option<String>,
 }
 
 impl InspectResult {
     const fn empty(control_flow: ControlFlow<()>) -> Self {
-        Self { control_flow, formatted_output: None, last_result: None, replay_input: None }
+        Self {
+            control_flow,
+            formatted_output: None,
+            last_result: None,
+            clear_last_result: false,
+            replay_input: None,
+        }
     }
 }
 
@@ -91,10 +99,28 @@ fn yul_inspection(input: &str, session_source: &str) -> Option<YulInspection> {
     })
 }
 
+/// Type of the expression passed to the generated `abi.encode` in `inspectoor`.
+fn inspectoor_type<'gcx>(gcx: Gcx<'gcx>, block: Block<'gcx>) -> Option<(bool, DynSolType)> {
+    let var = block.iter().rev().find_map(|stmt| {
+        let StmtKind::DeclSingle(vid) = stmt.kind else { return None };
+        let var = gcx.hir.variable(vid);
+        let is_inspectoor = var.name.is_some_and(|name| name.as_str() == "inspectoor");
+        is_inspectoor.then_some(var)
+    })?;
+    let init = var.initializer?;
+    let ExprKind::Call(_callee, args) = &init.kind else { return None };
+    let inner_expr = args.exprs().next()?;
+    Some((should_continue(inner_expr), expr_to_dyn(gcx, inner_expr)?))
+}
+
 /// Executor implementation for [SessionSource]
 impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     /// Runs the source with the [ChiselRunner]
     pub async fn execute(&mut self) -> Result<ChiselResult> {
+        eyre::ensure!(
+            !self.config.fork_url_required || self.config.evm_opts.fork_url.is_some(),
+            "this saved Chisel session requires a current fork endpoint before execution"
+        );
         // Recompile the project and ensure no errors occurred.
         let output = self.build()?;
 
@@ -144,6 +170,15 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             }
         };
 
+        // Return the encoded value explicitly: source maps and local variable stack positions
+        // depend on the compiler and its optimization pipeline. Replace the bytes length with a
+        // marker so an early assembly return cannot be mistaken for an inspected value.
+        source.add_run_code(&format!(
+            "assembly {{ mstore(0, mload(inspectoor)) \
+             mstore(inspectoor, {}) return(inspectoor, add(mload(0), 32)) }}",
+            hex::encode_prefixed(INSPECTION_RESULT_PREFIX)
+        ));
+
         let mut source_without_inspector = self.clone();
 
         // Events and tuples fails compilation due to it not being able to be encoded in
@@ -164,7 +199,9 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                                 let body = output.run_func_body();
                                 let Some(last) = body.last() else { return false };
                                 let StmtKind::Expr(expr) = last.kind else { return false };
-                                should_continue(expr)
+                                // A call that returns nothing cannot be inspected, but runs
+                                // like any statement: `revert("x")`, `require(...)`, `f()`.
+                                should_continue(expr) || matches!(expr.kind, ExprKind::Call(..))
                             })
                         })
                     })
@@ -197,6 +234,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                     control_flow: ControlFlow::Break(()),
                     formatted_output: Some(formatted_event?),
                     last_result: None,
+                    clear_last_result: false,
                     replay_input: None,
                 });
             }
@@ -211,7 +249,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         }
         drop(source_without_inspector);
 
-        let Some((stack, memory)) = &res.state else {
+        if !res.success || !res.returned.starts_with(INSPECTION_RESULT_PREFIX.as_slice()) {
             // Show traces and logs, if there are any, and return an error
             if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await {
                 ChiselDispatcher::<FEN>::show_traces(&decoder, &mut res).await?;
@@ -225,7 +263,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             }
 
             return Err(eyre::eyre!("Failed to inspect expression"));
-        };
+        }
 
         // Either the expression referred to by `input`, or the last expression,
         // which was wrapped in `abi.encode`.
@@ -233,41 +271,16 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
 
         // Inside the compiler closure, infer the DynSolType of the inspected expression and
         // determine whether the REPL should continue.
-        let res_ty = generated_output.enter(|out| -> Option<(bool, DynSolType)> {
-            let gcx = out.gcx();
-
-            // Find the appended `bytes memory inspectoor = abi.encode(<input>);` and pull out the
-            // first call argument.
-            let block = out.run_func_body();
-            let last = block.last()?;
-            let StmtKind::DeclSingle(vid) = last.kind else { return None };
-            let var = gcx.hir.variable(vid);
-            let init = var.initializer?;
-            let ExprKind::Call(_callee, args, _) = &init.kind else { return None };
-            let inner_expr = args.exprs().next()?;
-
-            let ty = expr_to_dyn(gcx, inner_expr)?;
-            Some((should_continue(inner_expr), ty))
-        });
+        let res_ty = generated_output.enter(|out| inspectoor_type(out.gcx(), out.run_func_body()));
 
         let Some((cont, ty)) = res_ty else {
             return Ok(InspectResult::empty(ControlFlow::Continue(())));
         };
 
-        // the file compiled correctly, thus the last stack item must be the memory offset of
-        // the `bytes memory inspectoor` value
-        let data = (|| -> Option<_> {
-            let mut offset: usize = stack.last()?.try_into().ok()?;
-            debug!("inspect memory @ {offset}: {}", hex::encode(memory));
-            let mem_offset = memory.get(offset..offset + 32)?;
-            let len: usize = U256::try_from_be_slice(mem_offset)?.try_into().ok()?;
-            offset += 32;
-            memory.get(offset..offset + len)
-        })();
-        let Some(data) = data else {
-            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory");
-        };
-        let last_result = format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data));
+        let data = &res.returned[INSPECTION_RESULT_PREFIX.len()..];
+        let clear_last_result = dyn_ty_contains_function(&ty);
+        let last_result = (!clear_last_result)
+            .then(|| format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data)));
         let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
         let c = if cont || replay_input.is_some() {
             ControlFlow::Continue(())
@@ -277,48 +290,34 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         Ok(InspectResult {
             control_flow: c,
             formatted_output: Some(format_token(token)),
-            last_result: Some(last_result),
+            last_result,
+            clear_last_result,
             replay_input,
         })
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
-        let (mut evm_env, tx_env, backend, resolved_fork) = match self.config.cached_backend.clone()
-        {
-            Some(CachedBackend { backend, resolved_fork }) => {
-                let (evm_env, tx_env) = self
-                    .config
-                    .evm_opts
-                    .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(
-                        resolved_fork.as_ref(),
-                    )
-                    .await?;
-                (evm_env, tx_env, backend, resolved_fork)
-            }
-            None => {
-                let (evm_env, tx_env, resolved_fork) = self
-                    .config
-                    .evm_opts
-                    .env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
-                    .await?;
-                let fork = self.config.evm_opts.get_fork_resolved(
+        let backend = if let Some(backend) = &self.config.cached_backend {
+            backend.clone()
+        } else {
+            let opts = &self.config.evm_opts;
+            let backend = Backend::spawn_source(
+                opts.get_fork(
                     &self.config.foundry_config,
-                    evm_env.cfg_env.chain_id,
-                    resolved_fork.as_ref(),
-                );
-                let backend = Backend::spawn(fork)?;
-                self.config.cached_backend = Some(CachedBackend {
-                    backend: backend.clone(),
-                    resolved_fork: resolved_fork.clone(),
-                });
-                (evm_env, tx_env, backend, resolved_fork)
-            }
+                    opts.env.chain_id.unwrap_or_default(),
+                    None,
+                ),
+                opts.local_evm_env::<FEN>(),
+            )?;
+            self.config.cached_backend = Some(backend.clone());
+            backend
         };
-        let fork_context = resolved_fork.as_ref().map(|fork| fork.context());
+        let (mut evm_env, tx) = backend.env(&self.config.evm_opts).await?;
+        let fork_context = backend.fork().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.config.source_chain_id = fork_chain_id;
-        self.config.resolved_hardfork = resolve_execution_spec(
+        self.config.resolved_hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
             self.config.foundry_config.evm_version,
             self.config.foundry_config.hardfork,
             &mut evm_env,
@@ -348,7 +347,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             })
             .gas_limit(self.config.evm_opts.gas_limit())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
-            .build(evm_env, tx_env, backend, self.config.evm_opts.networks);
+            .build(evm_env, tx, backend, self.config.evm_opts.networks);
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
@@ -360,6 +359,15 @@ fn format_token(token: DynSolValue) -> String {
     match token {
         DynSolValue::Address(a) => {
             format!("Type: {}\n└ Data: {}", "address".red(), a.cyan())
+        }
+        DynSolValue::Function(f) => {
+            let (address, selector) = f.as_address_and_selector();
+            format!(
+                "Type: {}\n├ Address: {}\n└ Selector: {}",
+                "function".red(),
+                address.cyan(),
+                selector.cyan()
+            )
         }
         DynSolValue::FixedBytes(b, byte_len) => {
             format!(
@@ -388,7 +396,7 @@ fn format_token(token: DynSolValue) -> String {
             format!(
                 "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
                 format!("uint{bit_len}").red(),
-                format!("0x{i:x}").cyan(),
+                format!("{i:#x}").cyan(),
                 hex::encode_prefixed(B256::from(i)).cyan(),
                 i.cyan()
             )
@@ -529,7 +537,7 @@ fn should_continue(expr: &Expr<'_>) -> bool {
             UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
         ),
         // Array.pop()
-        ExprKind::Call(callee, _, _) => match &callee.kind {
+        ExprKind::Call(callee, _) => match &callee.kind {
             ExprKind::Member(_, ident) => ident.as_str() == "pop",
             _ => false,
         },
@@ -547,9 +555,18 @@ const fn elementary_to_dyn(et: ElementaryType) -> Option<DynSolType> {
         ElementaryType::Int(size) => DynSolType::Int(size.bits() as usize),
         ElementaryType::UInt(size) => DynSolType::Uint(size.bits() as usize),
         ElementaryType::FixedBytes(size) => DynSolType::FixedBytes(size.bytes() as usize),
-        // Fixed-point numbers are not yet representable as DynSolType.
-        ElementaryType::Fixed(_, _) | ElementaryType::UFixed(_, _) => return None,
     })
+}
+
+fn dyn_ty_contains_function(ty: &DynSolType) -> bool {
+    match ty {
+        DynSolType::Function => true,
+        DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
+            dyn_ty_contains_function(inner)
+        }
+        DynSolType::Tuple(types) => types.iter().any(dyn_ty_contains_function),
+        _ => false,
+    }
 }
 
 /// Maps a solar [`Ty`] to a [`DynSolType`].
@@ -590,21 +607,12 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
         TyKind::Enum(_) => Some(DynSolType::Uint(8)),
         TyKind::Udvt(inner, _) => solar_ty_to_dyn(gcx, inner),
         TyKind::Contract(_) => Some(DynSolType::Address),
-        // For a function-pointer type we return the ABI type of what the call *produces*, not a
-        // representation of the pointer itself. This is intentional: chisel inspects values, so
-        // the interesting type is the returned value.  A zero-return function pointer has no
-        // inspectable value, so we return `None`.
-        TyKind::Fn(f) => match f.returns.len() {
-            0 => None,
-            1 => solar_ty_to_dyn(gcx, f.returns[0]),
-            _ => Some(DynSolType::Tuple(
-                f.returns.iter().filter_map(|t| solar_ty_to_dyn(gcx, *t)).collect(),
-            )),
-        },
+        TyKind::Fn(f) if f.is_external() => Some(DynSolType::Function),
+        TyKind::Fn(_) => None,
         TyKind::Type(inner) => solar_ty_to_dyn(gcx, inner),
         TyKind::Meta(inner) => solar_ty_to_dyn(gcx, inner),
         TyKind::IntLiteral(neg, size, _) => {
-            let bits = (size.bits() as usize).max(8);
+            let bits = (size as usize).max(8);
             // Round up to the nearest multiple of 8 bits, capped at 256.
             let bits = bits.div_ceil(8) * 8;
             let bits = bits.min(256);
@@ -636,15 +644,41 @@ mod tests {
     use crate::source::SessionSourceConfig;
     use foundry_compilers::{error::SolcError, solc::Solc};
     use foundry_config::Config;
-    use foundry_evm::{core::evm::EthEvmNetwork, executors::ExecutorBuilder, opts::EvmOpts};
+    use foundry_evm::{core::evm::EthEvmNetwork, opts::EvmOpts};
     use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
+    use foundry_test_utils::util::SOLC_VERSION;
     use solar::sema::Compiler;
     use std::sync::Mutex;
 
     #[cfg(feature = "monad")]
-    use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
+    use foundry_evm::{
+        core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork},
+        executors::ExecutorBuilder,
+    };
 
     type TestSessionSource = SessionSource<EthEvmNetwork>;
+
+    #[tokio::test]
+    async fn saved_fork_cannot_execute_without_a_current_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut source = TestSessionSource::new(SessionSourceConfig {
+            foundry_config: Config {
+                solc: Some(foundry_config::SolcReq::Local(dir.path().join("missing-solc"))),
+                ..Default::default()
+            },
+            fork_url_required: true,
+            no_vm: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let error = source.execute().await.unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "this saved Chisel session requires a current fork endpoint before execution"
+        );
+    }
 
     async fn assert_celo_transfer_precompile(config: SessionSourceConfig<EthEvmNetwork>) {
         let mut source = SessionSource::<EthEvmNetwork>::new(config).unwrap();
@@ -653,7 +687,7 @@ mod tests {
         let to = Address::with_last_byte(2);
         let amount = U256::from(4);
         runner.executor.set_balance(from, U256::from(10)).unwrap();
-        runner.executor.set_balance(to, U256::from(1)).unwrap();
+        runner.executor.set_balance(to, U256::ONE).unwrap();
 
         let mut input = vec![0u8; 96];
         input[12..32].copy_from_slice(from.as_slice());
@@ -972,7 +1006,7 @@ mod tests {
 
         // on some CI targets installing results in weird malformed solc files, we try installing it
         // multiple times
-        let version = "0.8.20";
+        let version = SOLC_VERSION;
         for _ in 0..3 {
             let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
             if !*is_preinstalled {

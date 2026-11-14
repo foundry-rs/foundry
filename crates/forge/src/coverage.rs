@@ -6,8 +6,9 @@ use comfy_table::{
     Attribute, Cell, Color, Row, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
-use evm_disassembler::disassemble_bytes;
 use foundry_common::{fs, shell};
+use foundry_compilers::artifacts::Source;
+use foundry_evm::core::bytecode::InstIter;
 use semver::Version;
 use serde::{Serialize, ser::SerializeSeq};
 use std::{
@@ -57,7 +58,7 @@ impl Default for CoverageSummaryReporter {
             Cell::new("% Funcs"),
         ]);
 
-        Self { table, total: CoverageSummary::default() }
+        Self { table, total: CoverageSummary::new() }
     }
 }
 
@@ -103,19 +104,6 @@ fn format_cell(hits: usize, total: usize) -> Cell {
         _ if percentage < 0.75 => Color::Yellow,
         _ => Color::Green,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn empty_summary_cell_is_not_applicable() {
-        assert_eq!(
-            format_cell(0, 0),
-            Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
-        );
-    }
 }
 
 /// Writes the coverage report in [LCOV]'s [tracefile format].
@@ -540,22 +528,20 @@ impl CoverageReporter for BytecodeReporter {
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
 
         for (contract_id, hits) in &report.bytecode_hits {
-            let ops = disassemble_bytes(hits.bytecode().to_vec())?;
             let mut formatted = String::new();
 
             let source_elements =
                 report.source_maps.get(contract_id).map(|sm| &sm.1).unwrap_or(&no_source_elements);
 
-            for (code, source_element) in std::iter::zip(ops.iter(), source_elements) {
-                let hits = hits
-                    .get(code.offset)
-                    .map(|h| format!("[{h:03}]"))
-                    .unwrap_or("     ".to_owned());
+            let ops = InstIter::new(hits.bytecode()).with_pc();
+            for ((pc, inst), source_element) in std::iter::zip(ops, source_elements) {
+                let hits =
+                    hits.get(pc as u32).map(|h| format!("[{h:03}]")).unwrap_or("     ".to_owned());
                 let source_id = source_element.index();
                 let source_path = source_id
                     .and_then(|i| report.get_source_path(&contract_id.build_id, i as usize));
 
-                let code = format!("{code:?}");
+                let code = format!("{pc:08x}: {inst}");
                 let start = source_element.offset() as usize;
                 let end = (source_element.offset() + source_element.length()) as usize;
 
@@ -621,5 +607,146 @@ impl LineNumberCache {
         };
         let pos = offset - line_offsets.get(lo).unwrap() + 1;
         Ok((lo, pos))
+    }
+}
+
+/// Writes the uncovered coverage items of each source file as JSON.
+pub struct GapsReporter {
+    root: PathBuf,
+    path: PathBuf,
+}
+
+impl GapsReporter {
+    /// Create a new gaps reporter.
+    pub const fn new(root: PathBuf, path: PathBuf) -> Self {
+        Self { root, path }
+    }
+}
+
+impl CoverageReporter for GapsReporter {
+    fn name(&self) -> &'static str {
+        "gaps"
+    }
+
+    fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
+        let mut files = BTreeMap::new();
+        for (path, items) in report.items_by_file() {
+            if items.iter().all(|item| item.hits > 0) {
+                continue;
+            }
+
+            // Item offsets refer to the source the compiler read, with CRLF normalized to LF.
+            let src = Source::read(&self.root.join(path))?.content;
+            let functions = items
+                .iter()
+                .filter_map(|item| match &item.kind {
+                    CoverageItemKind::Function { name } => Some((&item.loc.bytes, name)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let mut uncovered = items
+                .iter()
+                .filter(|item| item.hits == 0)
+                .map(|item| {
+                    let (kind, name, branch_id, path_id) = coverage_item_kind_fields(&item.kind);
+                    let function = name.or_else(|| {
+                        functions
+                            .iter()
+                            .find(|(bytes, _)| {
+                                bytes.start <= item.loc.bytes.start
+                                    && item.loc.bytes.end <= bytes.end
+                            })
+                            .map(|(_, name)| name.to_string())
+                    });
+                    let snippet = src
+                        .get(item.loc.bytes())
+                        .and_then(|text| text.lines().next())
+                        .unwrap_or_default()
+                        .trim_end();
+                    // A line item reuses the location of the first item on its line, so keep only
+                    // that line. `lines` is half-open, so subtract 1 to get the last included line.
+                    let (line_end, byte_end) = if matches!(item.kind, CoverageItemKind::Line) {
+                        (item.loc.lines.start, item.loc.bytes.start + snippet.len() as u32)
+                    } else {
+                        (item.loc.lines.end - 1, item.loc.bytes.end)
+                    };
+                    GapItem {
+                        kind,
+                        contract: item.loc.contract_name.to_string(),
+                        function,
+                        line_start: item.loc.lines.start,
+                        line_end,
+                        byte_start: item.loc.bytes.start,
+                        byte_end,
+                        snippet: snippet.to_string(),
+                        branch_id,
+                        path_id,
+                    }
+                })
+                .collect::<Vec<_>>();
+            // Drop statements that only repeat a line item.
+            let lines = uncovered
+                .iter()
+                .filter(|item| item.kind == "line")
+                .map(|item| (item.byte_start, item.byte_end))
+                .collect::<HashSet<_>>();
+            uncovered.retain(|item| {
+                item.kind != "statement" || !lines.contains(&(item.byte_start, item.byte_end))
+            });
+            files.insert(path, uncovered);
+        }
+
+        let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
+        serde_json::to_writer_pretty(&mut out, &GapsReport { version: 1, files })?;
+        writeln!(out)?;
+        out.flush()?;
+
+        sh_println!("Wrote coverage gaps report.")?;
+
+        Ok(())
+    }
+}
+
+/// Top-level JSON payload for the coverage gaps report.
+#[derive(Serialize)]
+struct GapsReport<'a> {
+    version: u8,
+    files: BTreeMap<&'a Path, Vec<GapItem>>,
+}
+
+/// An uncovered coverage item.
+#[derive(Serialize)]
+struct GapItem {
+    kind: &'static str,
+    contract: String,
+    /// The function that contains the item.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    function: Option<String>,
+    /// The first line of the item, 1-based.
+    line_start: u32,
+    /// The last line of the item, 1-based and inclusive.
+    line_end: u32,
+    /// The start of a 0-based byte range in the LF-normalized source.
+    byte_start: u32,
+    /// The end of the byte range, exclusive.
+    byte_end: u32,
+    /// The first source line of the item.
+    snippet: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_id: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_summary_cell_is_not_applicable() {
+        assert_eq!(
+            format_cell(0, 0),
+            Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
+        );
     }
 }

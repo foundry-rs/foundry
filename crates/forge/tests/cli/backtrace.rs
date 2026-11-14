@@ -2,7 +2,8 @@
 
 use foundry_test_utils::rpc::{next_etherscan_api_key, next_http_rpc_endpoint};
 
-forgetest!(test_backtraces, |prj, cmd| {
+#[forgetest]
+fn test_backtraces(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.add_source("SimpleRevert.sol", include_str!("../fixtures/backtraces/SimpleRevert.sol"));
@@ -96,9 +97,10 @@ Backtrace:
 Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest!(test_backtrace_with_mixed_compilation, |prj, cmd| {
+#[forgetest]
+fn test_backtrace_with_mixed_compilation(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -261,9 +263,10 @@ Backtrace:
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest!(test_library_backtrace, |prj, cmd| {
+#[forgetest]
+fn test_library_backtrace(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -369,9 +372,10 @@ Backtrace:
 Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest!(test_multiple_libraries_same_file, |prj, cmd| {
+#[forgetest]
+fn test_multiple_libraries_same_file(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -429,9 +433,10 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 
 ...
 "#]]);
-});
+}
 
-forgetest!(test_fork_backtrace, |prj, cmd| {
+#[forgetest]
+fn test_fork_backtrace(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -520,9 +525,10 @@ Backtrace:
   at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:9)
 ...
 "#]]);
-});
+}
 
-forgetest!(test_backtrace_via_ir_disables_source_lines, |prj, cmd| {
+#[forgetest]
+fn test_backtrace_via_ir_disables_source_lines(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.add_source("SimpleRevert.sol", include_str!("../fixtures/backtraces/SimpleRevert.sol"));
@@ -547,11 +553,12 @@ Backtrace:
   at BacktraceTest.testStaticCallRequire
 ...
 "#]]);
-});
+}
 
 // Test that backtraces only appear at verbosity 5 (-vvvvv).
 // Runs the same failing test at every verbosity level to assert correct output.
-forgetest!(test_backtrace_verbosity_levels, |prj, cmd| {
+#[forgetest]
+fn test_backtrace_verbosity_levels(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -684,4 +691,81 @@ Backtrace:
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
+
+// Dynamic test linking compiles rewritten tests, so test-file locations must be mapped back to
+// the files on disk.
+#[forgetest]
+fn test_backtrace_dynamic_test_linking(prj: _, cmd: _) {
+    prj.add_source(
+        "Vault.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Vault {
+    error Locked(uint256 until);
+
+    uint256 public total;
+
+    constructor(uint256 initial) {
+        total = initial;
+    }
+
+    function withdraw(uint256 until) external pure {
+        revert Locked(until);
+    }
+
+    function share(uint256 parts) external view returns (uint256) {
+        return total / parts;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Vault.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {Vault} from "../src/Vault.sol";
+
+contract VaultTest {
+    Vault vault;
+
+    function setUp() public {
+        vault = new Vault(1);
+    }
+
+    function test_CustomErrorUncaught() public {
+        uint256 x = 1;
+        x += 1;
+        vault.withdraw(x);
+    }
+
+    function test_DivByZero() public view {
+        uint256 parts = 0;
+        vault.share(parts);
+    }
+}
+"#,
+    );
+
+    let backtraces = r#"Backtrace:
+  at Vault.withdraw (src/Vault.sol:15:16)
+  at VaultTest.test_CustomErrorUncaught (test/Vault.t.sol:17:9)
+...
+Backtrace:
+  at Vault.share
+  at VaultTest.test_DivByZero (test/Vault.t.sol:22:9)
+...
+"#;
+    cmd.args(["test", "-vvvvv"]).assert_failure().stdout_eq(format!("...\n{backtraces}"));
+
+    // Cached builds keep the preprocessor edits.
+    cmd.forge_fuse()
+        .args(["test", "-vvvvv"])
+        .assert_failure()
+        .stdout_eq(format!("No files changed, compilation skipped\n...\n{backtraces}"));
+}

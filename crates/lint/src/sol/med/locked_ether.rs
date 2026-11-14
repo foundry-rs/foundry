@@ -125,7 +125,7 @@ impl<'gcx> Visit<'gcx> for SendChecker<'gcx> {
     /// Inline assembly can contain ETH-sending opcodes (`call`, `selfdestruct`, ...): bail
     /// conservatively, as if an exit was found.
     fn visit_stmt(&mut self, stmt: &'gcx hir::Stmt<'gcx>) -> ControlFlow<()> {
-        if matches!(stmt.kind, StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_))
+        if matches!(stmt.kind, StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) | StmtKind::Err(_))
         {
             return ControlFlow::Break(());
         }
@@ -167,8 +167,7 @@ impl<'gcx> Visit<'gcx> for SendChecker<'gcx> {
 /// (drainable via `selfdestruct`), or the `selfdestruct` builtin. Only literal `0` is treated as
 /// a zero amount, and sends targeting this contract's own address are not exits.
 fn expr_sends_ether<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) -> bool {
-    let ExprKind::Call(callee, args, opts) = &expr.kind else { return false };
-    let callee = callee.peel_parens();
+    let Some((callee, args, opts)) = expr.as_call() else { return false };
     let receiver = match &callee.kind {
         ExprKind::Member(receiver, _) => Some(receiver),
         _ => None,

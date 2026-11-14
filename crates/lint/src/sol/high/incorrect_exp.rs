@@ -66,7 +66,7 @@ fn plain_decimal_int_lit(ctx: &LintContext, expr: &Expr<'_>) -> Option<U256> {
 /// `bytesN` bit pattern is a legitimate operation.
 fn peel_int_casts<'a, 'gcx>(expr: &'a Expr<'gcx>) -> &'a Expr<'gcx> {
     let expr = expr.peel_parens();
-    if let ExprKind::Call(callee, args, _) = &expr.kind
+    if let ExprKind::Call(callee, args) = &expr.kind
         && let ExprKind::Type(hir::Type {
             kind: TypeKind::Elementary(ElementaryType::Int(_) | ElementaryType::UInt(_)),
             ..

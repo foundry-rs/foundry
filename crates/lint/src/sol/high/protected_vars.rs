@@ -609,7 +609,7 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 false
             }
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => self.analyze_block(block),
-            StmtKind::AssemblyBlock(block) => {
+            StmtKind::AssemblyBlock(block, _) => {
                 self.assembly_depth += 1;
                 let continues = self.analyze_block(block);
                 self.assembly_depth -= 1;
@@ -654,10 +654,11 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 }
                 false
             }
-            StmtKind::Placeholder => match self.modifier_continuations.last().copied() {
-                Some(cont) => self.analyze_modifier_chain(cont.modifiers, cont.next, cont.body),
-                None => true,
-            },
+            StmtKind::Placeholder => self
+                .modifier_continuations
+                .last()
+                .copied()
+                .is_none_or(|c| self.analyze_modifier_chain(c.modifiers, c.next, c.body)),
             StmtKind::Err(_) => true,
         }
     }
@@ -763,7 +764,8 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 }
                 true
             }
-            ExprKind::Call(callee, args, options) => {
+            ExprKind::Call(callee, args) => {
+                let (callee, options) = callee.split_call_options();
                 if !(self.analyze_expr(callee)
                     && options
                         .iter()
@@ -807,6 +809,10 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                     return summary.completes;
                 }
                 true
+            }
+            ExprKind::CallOptions(callee, options) => {
+                self.analyze_expr(callee)
+                    && options.args.iter().all(|option| self.analyze_expr(&option.value))
             }
             ExprKind::Binary(lhs, operator, rhs) => {
                 self.analyze_expr(lhs)
@@ -1125,7 +1131,8 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 roots.extend(self.call_returns[&expression.id].iter().flatten());
             }
             // Any other expression may propagate a slot computed from its operands.
-            ExprKind::Call(callee, args, options) => {
+            ExprKind::Call(callee, args) => {
+                let (callee, options) = callee.split_call_options();
                 self.collect_slot_roots(callee, roots);
                 for option in options.iter().flat_map(|options| options.args) {
                     self.collect_slot_roots(&option.value, roots);

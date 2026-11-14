@@ -1,10 +1,16 @@
 use alloy_json_abi::Function;
 use clap::Parser;
-use foundry_common::{TestFilter, TestFunctionKind};
+use foundry_common::{
+    TestFilter, TestFunctionKind,
+    fs::{canonicalize_path, normalize_path},
+};
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::{Config, filter::GlobMatcher};
 use serde::{Deserialize, Serialize};
-use std::{fmt, path::Path};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 /// A failed test persisted for `forge test --rerun`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -97,6 +103,16 @@ impl FilterArgs {
             args_filter: self,
             paths: config.project_paths(),
             rerun_failures: None,
+            external_compiler_roots: config
+                .external_compilers
+                .iter()
+                .flat_map(|compiler| &compiler.roots)
+                // External artifacts use canonical source paths, including through symlink roots.
+                .map(|root| {
+                    let path = config.root.join(root);
+                    canonicalize_path(&path).unwrap_or_else(|_| normalize_path(&path))
+                })
+                .collect(),
         }
     }
 
@@ -167,6 +183,7 @@ pub struct ProjectPathsAwareFilter {
     args_filter: FilterArgs,
     paths: ProjectPathsConfig,
     rerun_failures: Option<Vec<RerunFailure>>,
+    external_compiler_roots: Vec<PathBuf>,
 }
 
 impl ProjectPathsAwareFilter {
@@ -219,8 +236,8 @@ impl ProjectPathsAwareFilter {
                 return path.to_path_buf();
             }
             if path.is_absolute()
-                && let Ok(root) = dunce::canonicalize(&self.paths.root)
-                && let Ok(path) = dunce::canonicalize(path)
+                && let Ok(root) = canonicalize_path(&self.paths.root)
+                && let Ok(path) = canonicalize_path(path)
                 && let Ok(path) = path.strip_prefix(root)
             {
                 return path.to_path_buf();
@@ -250,10 +267,20 @@ impl TestFilter for ProjectPathsAwareFilter {
         self.args_filter.matches_contract(contract_name)
     }
 
-    fn matches_path(&self, mut path: &Path) -> bool {
-        // we don't want to test files that belong to a library
-        path = path.strip_prefix(&self.paths.root).unwrap_or(path);
-        self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
+    fn matches_path(&self, path: &Path) -> bool {
+        let relative_path = path.strip_prefix(&self.paths.root).unwrap_or(path);
+        if !self.args_filter.matches_path(relative_path) {
+            return false;
+        }
+
+        // Imported dependencies are compiled too, but only project files may run as test suites.
+        // Normalize `..` without resolving links, which the compiler's walker preserves.
+        let path = normalize_path(&self.paths.root.join(path));
+        [&self.paths.sources, &self.paths.tests, &self.paths.scripts]
+            .into_iter()
+            .chain(&self.external_compiler_roots)
+            .any(|dir| path.starts_with(self.paths.root.join(dir)))
+            && !self.paths.has_library_ancestor(&path)
     }
 
     fn matches_test_function_kind_in_contract(
@@ -278,5 +305,80 @@ impl TestFilter for ProjectPathsAwareFilter {
 impl fmt::Display for ProjectPathsAwareFilter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.args_filter.fmt(f)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_config::ExternalCompiler;
+
+    #[cfg(unix)]
+    use std::{fs, os::unix::fs::symlink};
+
+    #[test]
+    fn only_matches_configured_project_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let mut config = Config::with_root(root.path());
+        config.src = "contracts".into();
+        config.test = external.path().into();
+        config.script = "tasks".into();
+        config.libs = vec!["contracts/vendor".into(), "lib".into()];
+        config.external_compilers.push(ExternalCompiler {
+            id: "fixture".into(),
+            command: "adapter".into(),
+            args: Vec::new(),
+            roots: vec!["native".into(), "lib".into()],
+            settings: Default::default(),
+        });
+        let config = config.sanitized();
+        let filter = FilterArgs::default().merge_with_config(&config);
+
+        for (path, expected) in [
+            ("contracts/Source.sol", true),
+            ("tasks/Script.sol", true),
+            ("contracts/../tasks/Script.sol", true),
+            ("contracts/../node_modules/Dependency.sol", false),
+            ("contracts-other/Dependency.sol", false),
+            ("contracts/vendor/Dependency.sol", false),
+            ("node_modules/Dependency.sol", false),
+            ("Dependency.sol", false),
+            ("src/Source.sol", false),
+            ("test/Test.sol", false),
+            ("script/Script.sol", false),
+            ("native/Counter.fe", true),
+            ("native/Counter.sol", true),
+            ("native-other/Counter.fe", false),
+            ("native/../dependency/Counter.fe", false),
+            ("lib/Counter.fe", false),
+            ("contracts/../lib/Counter.fe", false),
+        ] {
+            assert_eq!(filter.matches_path(Path::new(path)), expected, "{path}");
+            assert_eq!(filter.matches_path(&config.root.join(path)), expected, "{path}");
+        }
+        assert!(filter.matches_path(&config.test.join("Test.sol")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn matches_external_artifacts_through_symlinked_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        fs::write(external.path().join("Counter.fe"), "").unwrap();
+        symlink(external.path(), root.path().join("native")).unwrap();
+        let mut config = Config::with_root(root.path());
+        config.external_compilers.push(ExternalCompiler {
+            id: "fixture".into(),
+            command: "adapter".into(),
+            args: Vec::new(),
+            roots: vec!["native".into()],
+            settings: Default::default(),
+        });
+        let config = config.sanitized();
+        let filter = FilterArgs::default().merge_with_config(&config);
+        let source = canonicalize_path(root.path().join("native/Counter.fe")).unwrap();
+
+        assert!(filter.matches_path(&source));
     }
 }

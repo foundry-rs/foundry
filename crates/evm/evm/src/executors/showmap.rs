@@ -311,7 +311,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         let mut last_accepted_checked_invariant = false;
         let mut entry_failure: Option<ReplayFailure> = None;
         for tx in &tx_seq {
-            if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
+            if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts, None) {
                 continue;
             }
 
@@ -503,7 +503,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
     let mut last_accepted_checked_invariant = false;
     let mut last_accepted_handlers_succeeded = false;
     for tx in input.sequence {
-        if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
+        if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts, None) {
             observation.unmatched += 1;
             continue;
         }
@@ -706,7 +706,7 @@ fn fuzz_replay_call_succeeded<FEN: FoundryEvmNetwork>(
         target_addr,
         call_result.reverter,
         executor.inspector().extra_cheatcode_addresses(),
-    ) || executor.is_raw_call_mut_success(target_addr, call_result, false)
+    ) || executor.is_raw_call_mut_success(target_addr, call_result)
 }
 
 fn newly_broken_invariants<FEN: FoundryEvmNetwork>(
@@ -866,8 +866,8 @@ fn write_sancov<W: Write>(out: &mut W, bitmap: &[u64]) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::executors::{RawCallResult, corpus_io::canonical_replay_dirs};
+    use evm2::interpreter::InstrStop;
     use foundry_evm_core::evm::EthEvmNetwork;
-    use revm::interpreter::InstructionResult;
     use uuid::Uuid;
 
     fn temp_dir() -> PathBuf {
@@ -1053,7 +1053,7 @@ mod tests {
     fn invariant_replay_failures_ignore_plain_revert() {
         let call_result = RawCallResult::<EthEvmNetwork> {
             reverted: true,
-            exit_reason: Some(InstructionResult::Revert),
+            exit_reason: Some(InstrStop::Revert),
             ..Default::default()
         };
         let failures = invariant_replay_failures(
@@ -1071,7 +1071,7 @@ mod tests {
     fn invariant_replay_failures_report_every_fail_on_revert_invariant() {
         let call_result = RawCallResult::<EthEvmNetwork> {
             reverted: true,
-            exit_reason: Some(InstructionResult::Revert),
+            exit_reason: Some(InstrStop::Revert),
             ..Default::default()
         };
         let first = serde_json::from_value::<Function>(serde_json::json!({
@@ -1127,7 +1127,7 @@ mod tests {
     fn invariant_replay_failures_prefer_assertion_over_fail_on_revert() {
         let call_result = RawCallResult::<EthEvmNetwork> {
             reverted: true,
-            exit_reason: Some(InstructionResult::Revert),
+            exit_reason: Some(InstrStop::Revert),
             ..Default::default()
         };
         let invariant = serde_json::from_value::<Function>(serde_json::json!({

@@ -98,4 +98,16 @@ contract ParseTest is Test {
         string memory stringBool = vm.toString(testBool);
         assertEq(testBool, vm.parseBool(stringBool));
     }
+
+    function testParseErrorBytes() public {
+        (bool success, bytes memory data) = address(vm).call(abi.encodeCall(vm.parseUint, ("ff")));
+        assertTrue(!success);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.parseUint: failed parsing \"ff\" as type `uint256`: missing hex prefix (\"0x\") for hex string"
+            )
+        );
+    }
 }

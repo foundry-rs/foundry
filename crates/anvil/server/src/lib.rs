@@ -8,7 +8,7 @@ extern crate tracing;
 
 use anvil_rpc::{
     error::RpcError,
-    request::RpcMethodCall,
+    request::{Id, RpcMethodCall},
     response::{ResponseResult, RpcResponse},
 };
 use axum::{
@@ -20,6 +20,95 @@ use axum::{
 use serde::de::DeserializeOwned;
 use std::fmt;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
+
+/// Redacts sensitive information from RPC request parameters for TRACE logging.
+///
+/// This function redacts:
+/// - Fork URLs in `anvil_reset`, `hardhat_reset`, and `anvil_setRpcUrl` methods.
+/// - Signed transaction data in submission, signing, classification, and tracing methods.
+fn redact_params(method: &str, params: &serde_json::Value) -> serde_json::Value {
+    match method {
+        // Redact signed transaction data, but keep transaction hashes visible
+        "eth_sendRawTransaction"
+        | "eth_sendRawTransactionSync"
+        | "eth_sendRawTransactionConditional"
+        | "eth_signRawTransaction"
+        | "anvil_classifyTransaction"
+        | "trace_rawTransaction" => {
+            if let Some(array) = params.as_array() {
+                if array.is_empty() {
+                    params.clone()
+                } else {
+                    // Keep the first param as "[SIGNED_TX]" for visibility that a tx was sent
+                    let mut redacted = vec![serde_json::Value::String("[SIGNED_TX]".to_string())];
+                    // Keep other params (e.g., timeout, conditional) visible as they're not
+                    // sensitive
+                    redacted.extend(array.iter().skip(1).cloned());
+                    serde_json::Value::Array(redacted)
+                }
+            } else {
+                params.clone()
+            }
+        }
+        _ => {
+            let mut redacted = params.clone();
+            redact_fork_credentials(method, &mut redacted);
+            redacted
+        }
+    }
+}
+
+/// Redacts fork credentials while preserving the rest of a failed request dump.
+/// Signed transactions remain available in failed dumps for reproduction.
+fn redact_fork_credentials(method: &str, params: &mut serde_json::Value) {
+    match method {
+        "anvil_reset" | "hardhat_reset" => redact_fork_params(params),
+        "anvil_setRpcUrl" => {
+            if let Some(serde_json::Value::String(url)) = params.get_mut(0) {
+                *url = redact_url_credentials(url);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Follows reset wrappers and positional URL slots while preserving other fields.
+fn redact_fork_params(param: &mut serde_json::Value) {
+    match param {
+        serde_json::Value::Array(array) => {
+            // Serde accepts Params, tagged forking, and ForkOpts as sequences. Their first
+            // element is the next wrapper or the URL; the block number follows the URL.
+            if let Some(first) = array.first_mut() {
+                redact_fork_params(first);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for (key, value) in object {
+                if matches!(key.as_str(), "params" | "forking" | "jsonRpcUrl") {
+                    redact_fork_params(value);
+                }
+            }
+        }
+        serde_json::Value::String(url) => *url = redact_url_credentials(url),
+        _ => {}
+    }
+}
+
+/// Keeps only the URL's scheme, host, and port, or fully redacts URLs without a host.
+fn redact_url_credentials(url: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(url) else { return "[REDACTED_URL]".to_string() };
+    // A scheme-less credential string can parse with its username as the scheme.
+    if parsed.host().is_none() {
+        return "[REDACTED_URL]".to_string();
+    }
+    // Credentials can occur in userinfo, paths, queries, or fragments regardless of length.
+    let _ = parsed.set_username("");
+    let _ = parsed.set_password(None);
+    parsed.set_path("");
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    parsed.to_string()
+}
 
 mod config;
 pub use config::ServerConfig;
@@ -54,10 +143,13 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// "<name>", "params": "<params>" }`
     fn on_call(&self, call: RpcMethodCall) -> impl Future<Output = RpcResponse> + Send {
         async move {
-            trace!(target: "rpc",  id = ?call.id , method = ?call.method, params = ?call.params, "received method call");
             let RpcMethodCall { method, params, id, .. } = call;
 
-            let params: serde_json::Value = params.into();
+            let mut params: serde_json::Value = params.into();
+
+            // Log with redacted sensitive parameters
+            trace!(target: "rpc", id = ?id, method = ?method, params = ?redact_params(&method, &params), "received method call");
+
             let call = serde_json::json!({
                 "method": &method,
                 "params": params
@@ -66,6 +158,10 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
             match serde_json::from_value::<Self::Request>(call) {
                 Ok(req) => {
                     let result = self.on_request(req).await;
+                    if let ResponseResult::Error(error) = &result {
+                        redact_fork_credentials(&method, &mut params);
+                        self.on_request_error(&method, &id, &params, error);
+                    }
                     RpcResponse::new(id, result)
                 }
                 Err(err) => {
@@ -75,15 +171,27 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
                     )
                     .is_err_and(|err| err.to_string().contains("unknown variant"));
                     if method_not_found {
-                        error!(target: "rpc", ?method, "failed to deserialize method due to unknown variant");
+                        error!(target: "rpc", ?id, ?method, "failed to deserialize method due to unknown variant");
                         RpcResponse::new(id, RpcError::method_not_found())
                     } else {
-                        error!(target: "rpc", ?method, ?err, "failed to deserialize method");
+                        error!(target: "rpc", ?id, ?method, ?err, "failed to deserialize method");
                         RpcResponse::new(id, RpcError::invalid_params(err))
                     }
                 }
             }
         }
+    }
+
+    /// Invoked when a deserialized request returns an error from [`Self::on_request`].
+    /// Parameters retain their original shape with fork URL credentials redacted.
+    /// Deserialization errors are excluded because their messages can contain request parameters.
+    fn on_request_error(
+        &self,
+        _method: &str,
+        _id: &Id,
+        _params: &serde_json::Value,
+        _error: &RpcError,
+    ) {
     }
 }
 
@@ -129,4 +237,106 @@ fn router_inner<S: Clone + Send + Sync + 'static>(
         router = router.layer(DefaultBodyLimit::disable());
     }
     router
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn redacts_url_credentials() {
+        for (url, expected) in [
+            ("https://user:pass@example.invalid:8545/", "https://example.invalid:8545/"),
+            ("https://example.invalid:8545/key?token=x#secret", "https://example.invalid:8545/"),
+            (
+                "https://example.invalid:8545/abcdefghijklmnop?api_key=abcdefghijklmnop",
+                "https://example.invalid:8545/",
+            ),
+            ("invalid secret URL", "[REDACTED_URL]"),
+            ("https://user:pass@invalid host/secret", "[REDACTED_URL]"),
+            ("mykey:secret@example.invalid/rpc/key", "[REDACTED_URL]"),
+            ("mykey:/secret@example.invalid/rpc/key", "[REDACTED_URL]"),
+        ] {
+            assert_eq!(redact_url_credentials(url), expected, "{url}");
+        }
+    }
+
+    #[test]
+    fn redacts_fork_parameter_shapes_without_losing_context() {
+        let url = "https://user:pass@example.invalid:8545/key?token=x#secret";
+        let safe = "https://example.invalid:8545/";
+        for (params, expected) in [
+            (json!([{"forking": {"jsonRpcUrl": url}}]), json!([{"forking": {"jsonRpcUrl": safe}}])),
+            (json!({"forking": {"jsonRpcUrl": url}}), json!({"forking": {"jsonRpcUrl": safe}})),
+            (json!({"jsonRpcUrl": url}), json!({"jsonRpcUrl": safe})),
+            (
+                json!({"params": {"forking": {"jsonRpcUrl": url, "blockNumber": 42}}}),
+                json!({"params": {"forking": {"jsonRpcUrl": safe, "blockNumber": 42}}}),
+            ),
+            (json!([[url, "0x2a"]]), json!([[safe, "0x2a"]])),
+            (json!([{"forking": [url, 42]}]), json!([{"forking": [safe, 42]}])),
+            (json!({"params": [url, 42]}), json!({"params": [safe, 42]})),
+            (json!([[[url, 42]]]), json!([[[safe, 42]]])),
+            (json!({"params": [[url, 42]]}), json!({"params": [[safe, 42]]})),
+            (json!([[url]]), json!([[safe]])),
+            (json!([[null, "0x2a"]]), json!([[null, "0x2a"]])),
+            (
+                json!({"params": {"blockNumber": "0x2a", "extra": ["diagnostic"]}}),
+                json!({"params": {"blockNumber": "0x2a", "extra": ["diagnostic"]}}),
+            ),
+            (
+                json!({"params": {"forking": [null, 42], "extra": ["diagnostic"]}}),
+                json!({"params": {"forking": [null, 42], "extra": ["diagnostic"]}}),
+            ),
+        ] {
+            for method in ["anvil_reset", "hardhat_reset"] {
+                assert_eq!(redact_params(method, &params), expected, "{method}: {params}");
+                let mut failed = params.clone();
+                redact_fork_credentials(method, &mut failed);
+                assert_eq!(failed, expected, "{method}: {params}");
+            }
+        }
+        for (mut params, expected) in [
+            (json!([url]), json!([safe])),
+            (json!(["invalid secret URL"]), json!(["[REDACTED_URL]"])),
+        ] {
+            assert_eq!(redact_params("anvil_setRpcUrl", &params), expected);
+            redact_fork_credentials("anvil_setRpcUrl", &mut params);
+            assert_eq!(params, expected);
+        }
+    }
+
+    #[test]
+    fn preserves_failure_params_and_redacts_only_trace_transactions() {
+        for method in [
+            "eth_sendRawTransaction",
+            "eth_sendRawTransactionSync",
+            "eth_sendRawTransactionConditional",
+            "eth_signRawTransaction",
+            "anvil_classifyTransaction",
+            "trace_rawTransaction",
+        ] {
+            for (params, expected) in [
+                (json!(["0x12345678"]), json!(["[SIGNED_TX]"])),
+                (json!(["0x12345678", 5000]), json!(["[SIGNED_TX]", 5000])),
+                (
+                    json!(["0x12345678", ["trace", "stateDiff"], "0x2a"]),
+                    json!(["[SIGNED_TX]", ["trace", "stateDiff"], "0x2a"]),
+                ),
+                (json!([]), json!([])),
+                (json!(null), json!(null)),
+            ] {
+                assert_eq!(redact_params(method, &params), expected, "{method}");
+                let mut failed = params.clone();
+                redact_fork_credentials(method, &mut failed);
+                assert_eq!(failed, params, "{method}");
+            }
+        }
+        let params = json!([{"to": "0x1111111111111111111111111111111111111111", "data": "0x12345678"}, "0x100000"]);
+        assert_eq!(redact_params("eth_call", &params), params);
+        let mut failed = params.clone();
+        redact_fork_credentials("eth_call", &mut failed);
+        assert_eq!(failed, params);
+    }
 }

@@ -60,7 +60,7 @@ where
         let start = tokio::time::Instant::now() + filters.keep_alive();
         let filter_eviction_interval = tokio::time::interval_at(start, filters.keep_alive());
         Self {
-            block_producer: BlockProducer::new(backend, pool.clone()),
+            block_producer: BlockProducer::new(backend, pool.clone(), miner.clone()),
             pool,
             miner,
             fee_history,
@@ -132,15 +132,23 @@ enum BlockProduction {
     Skipped,
 }
 
+/// Whether the [`BlockProducer`] owns the backend or lent it to a block mining task.
+enum ProducerState<N: Network> {
+    /// No block is being mined; the producer holds the backend.
+    Idle(Arc<Backend<N>>),
+    /// A single task is mining a block and hands the backend back when it completes.
+    Mining(JoinHandle<MiningResult<N>>),
+}
+
 /// A type that exclusively mines one block at a time
 #[must_use = "streams do nothing unless polled"]
 struct BlockProducer<N: Network> {
-    /// Holds the backend if no block is being mined
-    idle_backend: Option<Arc<Backend<N>>>,
+    /// Owns the backend while idle, or the task mining the current block.
+    state: ProducerState<N>,
     /// Pool used to select transactions while holding the mining lock.
     pool: Arc<Pool<N::TxEnvelope>>,
-    /// Single active future that mines a new block
-    block_mining: Option<JoinHandle<MiningResult<N>>>,
+    /// Miner to wake when a mined block leaves ready transactions behind.
+    miner: Miner<N::TxEnvelope>,
     /// backlog of sets of transactions ready to be mined
     queued: VecDeque<crate::eth::miner::MiningWork<N::TxEnvelope>>,
 }
@@ -150,12 +158,16 @@ where
     Backend<N>: TransactionValidator<N::TxEnvelope>,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
-    fn new(backend: Arc<Backend<N>>, pool: Arc<Pool<N::TxEnvelope>>) -> Self {
-        Self { idle_backend: Some(backend), pool, block_mining: None, queued: Default::default() }
+    fn new(
+        backend: Arc<Backend<N>>,
+        pool: Arc<Pool<N::TxEnvelope>>,
+        miner: Miner<N::TxEnvelope>,
+    ) -> Self {
+        Self { state: ProducerState::Idle(backend), pool, miner, queued: Default::default() }
     }
 
     fn is_idle(&self) -> bool {
-        self.idle_backend.is_some() && self.block_mining.is_none() && self.queued.is_empty()
+        matches!(self.state, ProducerState::Idle(_)) && self.queued.is_empty()
     }
 }
 
@@ -169,63 +181,67 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
 
-        if !pin.queued.is_empty() {
-            // only spawn a building task if there's none in progress already
-            if let Some(backend) = pin.idle_backend.take() {
-                let work = pin.queued.pop_front().expect("not empty; qed");
-                let generation = work.generation;
-                let selected = work.transactions.len();
-                let pool = pin.pool.clone();
+        // only spawn a building task if there's none in progress already
+        if let ProducerState::Idle(backend) = &pin.state
+            && let Some(work) = pin.queued.pop_front()
+        {
+            let backend = backend.clone();
+            let generation = work.generation;
+            let pause_epoch = work.pause_epoch;
+            let selected = work.transactions.len();
+            let pool = pin.pool.clone();
+            let miner = pin.miner.clone();
 
-                // we spawn this on as blocking task because this can be blocking for a while in
-                // forking mode, because of all the rpc calls to fetch the required state
-                let handle = tokio::runtime::Handle::current();
-                let mining = tokio::task::spawn_blocking(move || {
-                    handle.block_on(async move {
-                        let mining_guard = backend.lock_mining_owned().await;
-                        let transactions =
-                            pool.ready_transactions().take(selected).collect::<Vec<_>>();
-                        if selected > 0 && transactions.is_empty() {
-                            return (Ok(None), backend, generation);
-                        }
-                        trace!(target: "miner", "creating new block");
-                        let result = backend.mine_block_locked(transactions).await.map(|outcome| {
+            // we spawn this on as blocking task because this can be blocking for a while in
+            // forking mode, because of all the rpc calls to fetch the required state
+            let handle = tokio::runtime::Handle::current();
+            let mining = tokio::task::spawn_blocking(move || {
+                handle.block_on(async move {
+                    let mining_guard = backend.lock_mining_owned().await;
+                    // Mining was paused after this candidate was selected, so skip it even if
+                    // it has resumed since. Ready transactions are mined by auto mining on
+                    // resume, or by the next tick.
+                    if miner.is_stale(pause_epoch) {
+                        return (Ok(None), backend, generation);
+                    }
+                    let transactions = pool.ready_transactions().take(selected).collect::<Vec<_>>();
+                    if selected > 0 && transactions.is_empty() {
+                        return (Ok(None), backend, generation);
+                    }
+                    trace!(target: "miner", "creating new block");
+                    let result =
+                        backend.mine_block_locked(transactions, false).await.map(|outcome| {
                             let block_number = outcome.block_number;
-                            pool.on_mined_block(outcome);
+                            if pool.on_mined_block(outcome) {
+                                miner.retry_ready_transactions();
+                            }
                             trace!(target: "miner", "created new block: {block_number}");
                             Some(block_number)
                         });
-                        drop(mining_guard);
-                        (result, backend, generation)
-                    })
-                });
-                pin.block_mining = Some(mining);
-            }
+                    drop(mining_guard);
+                    (result, backend, generation)
+                })
+            });
+            pin.state = ProducerState::Mining(mining);
         }
 
-        if let Some(mut mining) = pin.block_mining.take() {
-            if let Poll::Ready(res) = mining.poll_unpin(cx) {
-                return match res {
-                    Ok((Ok(Some(block_number)), backend, _)) => {
-                        pin.idle_backend = Some(backend);
-                        Poll::Ready(Some(BlockProduction::Mined(block_number)))
-                    }
-                    Ok((Ok(None), backend, _)) => {
-                        pin.idle_backend = Some(backend);
-                        Poll::Ready(Some(BlockProduction::Skipped))
-                    }
-                    Ok((Err(error), backend, generation)) => {
-                        pin.idle_backend = Some(backend);
-                        pin.queued.clear();
-                        warn!(target: "miner", %error, "failed to finalize block");
-                        Poll::Ready(Some(BlockProduction::Failed(generation)))
-                    }
-                    Err(err) => {
-                        panic!("miner task failed: {err}");
-                    }
-                };
-            }
-            pin.block_mining = Some(mining)
+        if let ProducerState::Mining(mining) = &mut pin.state
+            && let Poll::Ready(res) = mining.poll_unpin(cx)
+        {
+            let (result, backend, generation) = match res {
+                Ok(output) => output,
+                Err(err) => panic!("miner task failed: {err}"),
+            };
+            pin.state = ProducerState::Idle(backend);
+            return Poll::Ready(Some(match result {
+                Ok(Some(block_number)) => BlockProduction::Mined(block_number),
+                Ok(None) => BlockProduction::Skipped,
+                Err(error) => {
+                    pin.queued.clear();
+                    warn!(target: "miner", %error, "failed to finalize block");
+                    BlockProduction::Failed(generation)
+                }
+            }));
         }
 
         Poll::Pending

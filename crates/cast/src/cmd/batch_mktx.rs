@@ -33,9 +33,12 @@ pub struct BatchMakeTxArgs {
     /// Call specifications in format: `to[:<value>][:<sig>[:<args>]]` or `to[:<value>][:<0xdata>]`
     ///
     /// Examples:
-    ///   --call "0x123:0.1ether" (ETH transfer)
-    ///   --call "0x456::transfer(address,uint256):0x789,1000" (ERC20 transfer)
-    ///   --call "0xabc::0x123def" (raw calldata)
+    ///   --call "0x1234567890123456789012345678901234567890:0.1ether" (ETH transfer)
+    ///   --call "0x1234567890123456789012345678901234567890::transfer(address,uint256):
+    /// 0x0987654321098765432109876543210987654321,1000" (ERC20 transfer)
+    ///   --call "0x1234567890123456789012345678901234567890::0x123def" (raw calldata)
+    ///   --call "0x1234567890123456789012345678901234567890:1ether:deposit()" (value + function
+    /// call)
     #[arg(long = "call", value_name = "SPEC", required = true)]
     pub calls: Vec<String>,
 
@@ -81,8 +84,8 @@ impl BatchMakeTxArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         // A raw unsigned transaction needs no signer, but the access-key metadata still shapes
         // the request.
-        let (signer, tempo_access_key) = if raw_unsigned {
-            (None, eth.wallet.maybe_signer_for_chain(chain.id()).await?.1)
+        let (mut signer, tempo_access_key) = if raw_unsigned {
+            (None, foundry_common::tempo::maybe_signer(&eth.wallet, Some(chain.id())).await?.1)
         } else {
             tempo::resolve_session_or_wallet_signer(&tx.tempo, &eth.wallet, chain.id()).await?
         };
@@ -92,8 +95,23 @@ impl BatchMakeTxArgs {
             tx.tempo.key_id = Some(access_key.key_id()?);
         }
 
+        let configurable_account = if raw_unsigned || ethsign || tempo_access_key.is_some() {
+            None
+        } else {
+            tempo::resolve_configurable_account::<TempoNetwork>(
+                &tx.tempo,
+                &config,
+                &eth.wallet,
+                &mut signer,
+            )
+            .await?
+        };
+
         let builder = CastTxBuilder::<TempoNetwork, _, _>::new(&provider, tx, &config).await?;
-        let tx_builder = with_batch_calls(&calls, builder, &provider).await?;
+        let mut tx_builder = with_batch_calls(&calls, builder, &provider).await?;
+        if let Some(account) = &configurable_account {
+            account.prepare_request::<TempoNetwork>(tx_builder.tx_mut());
+        }
         tempo::print_expires(expires_at)?;
 
         if raw_unsigned {
@@ -108,8 +126,7 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut tx, Some(from))
-                .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(from)).await?;
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
             sh_println!("{raw_tx}")?;
             return Ok(());
@@ -121,13 +138,7 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(
-                fee_provider,
-                Some(chain),
-                &mut tx,
-                Some(config.sender),
-            )
-            .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(config.sender)).await?;
             let signed_tx = provider.sign_transaction(tx).await?;
             sh_println!("{signed_tx}")?;
             return Ok(());
@@ -139,22 +150,24 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(
-                fee_provider,
-                Some(chain),
-                &mut tx,
-                Some(prepared.account()),
-            )
-            .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(prepared.account()))
+                .await?;
             tx.sign_with_tempo_wallet(&prepared).await?
+        } else if let Some(account) = &configurable_account {
+            let from = account.account();
+            let Some(mut tx) = confirm_and_build(tx_builder, from, force, lane, false).await?
+            else {
+                return Ok(());
+            };
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(from)).await?;
+            tx.sign_with_configurable_account(account).await?
         } else {
             let (signer, from) = tx::resolve_send_signer(signer, &eth).await?;
             let Some(mut tx) = confirm_and_build(tx_builder, &signer, force, lane, false).await?
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut tx, Some(from))
-                .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(from)).await?;
             tx.build(&EthereumWallet::new(signer)).await?.encoded_2718()
         };
 

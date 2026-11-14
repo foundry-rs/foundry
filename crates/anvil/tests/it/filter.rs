@@ -49,6 +49,7 @@ async fn new_filter_seeds_historic_logs_only_with_from_block() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
     let wallet = handle.dev_wallets().next().unwrap();
+    let account = wallet.address();
     let signer: EthereumWallet = wallet.into();
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
@@ -73,6 +74,32 @@ async fn new_filter_seeds_historic_logs_only_with_from_block() {
     let changes: Vec<Log> =
         provider.client().request("eth_getFilterChanges", (live_id,)).await.unwrap();
     assert!(changes.is_empty(), "expected no historic logs, got {changes:?}");
+
+    // A future range starts reporting logs only when its first block is mined.
+    let start = provider.get_block_number().await.unwrap() + 2;
+    let future = Filter::new().address(*contract.address()).from_block(start);
+    let future_id: String = provider.client().request("eth_newFilter", (future,)).await.unwrap();
+    contract
+        .setValue("before range".to_string())
+        .from(account)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let receipt = contract
+        .setValue("in range".to_string())
+        .from(account)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let changes: Vec<Log> =
+        provider.client().request("eth_getFilterChanges", (future_id,)).await.unwrap();
+    assert_eq!(changes, receipt.inner.inner.logs());
 }
 
 #[tokio::test(flavor = "multi_thread")]

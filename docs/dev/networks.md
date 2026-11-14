@@ -1,7 +1,7 @@
 # Custom EVM integrations
 
 Foundry supports execution families whose transaction types, hardforks, precompiles, or state differ
-from Ethereum. An integration crosses Foundry, Alloy, and REVM, so it must define ownership at each
+from Ethereum. An integration crosses Foundry, Alloy, and evm2, so it must define ownership at each
 layer and preserve that contract across Forge, Cast, Anvil, Chisel, scripts, cheatcodes, and traces.
 
 ## Mental model
@@ -72,21 +72,40 @@ network's execution semantics.
 | Layer | Owns |
 | --- | --- |
 | Alloy `Network` | RPC transaction requests, envelopes, receipts, and response types |
-| Alloy `EvmFactory` and Foundry's `FoundryEvmFactory` adapter | Spec, block and transaction environments, halt reasons, precompiles, and construction of the concrete EVM context |
-| REVM context and journal | Execution-time state mutation, checkpoints, commits, and reverts |
+| `FoundryEvmNetwork` | Association of an Alloy network with a compatible execution factory; no behavior |
+| `FoundryEvmFactory` and its evm2 type family | Spec, block and transaction environments, transaction registry, results, precompiles, and network extension state |
+| `FoundryTxConversion` on the evm2 type family | Conversion from native Alloy requests, signed envelopes, and RPC transactions into execution transactions |
+| `FoundryExecutionHooks` on the evm2 type family | Synchronization of derived running-transaction state around Foundry's out-of-band state changes, independently of factory configuration |
+| evm2 `State` | Execution-time state mutation, journaling, warmth, checkpoints, commits, and reverts |
+| `ExecutionLifecycle` | Accepted state of inactive forks, persistent accounts, snapshots, and nested transactions |
 | `NetworkConfigs` and hardfork types | Pre-dispatch selection, chain and endpoint inference, feature configuration, and hardfork validation |
 | Foundry tools | CLI/config plumbing, one authoritative dispatch per execution entry point, and tool-specific workflows and user-visible behavior |
 
 After dispatch, `SpecFor<FEN>` owns hardfork resolution through `ExecutionSpec`: checked
 namespaced conversion, native source-chain schedules, local-fork behavior, and metadata for direct
-spec overrides. The shared resolver accepts one typed explicit spec and derives its reported
-hardfork from that same value. Tracing carries the result, including absent metadata for an
-Ethereum or Optimism version override, directly into decoding. Keep the source chain ID separate
-from an overridden execution chain ID when supplying historical context.
+spec overrides. Script forks follow an Ethereum source chain that is ahead of `evm_version`,
+because the script simulation sets broadcast gas limits. The shared resolver accepts one typed
+explicit spec and derives its reported hardfork from that same value. Tracing carries the result,
+including absent metadata for an Ethereum or Optimism version override, directly into decoding.
+Keep the source chain ID separate from an overridden execution chain ID when supplying historical
+context.
 
 Do not encode protocol behavior only as a chain-ID branch in a tool. Put execution semantics in the
 network factory or context, selection in the network configuration layer, and tool-specific workflow
 behavior in the relevant tool.
+
+Fork creation is the boundary between a request and selected remote state. `CreateFork` contains
+only the request; `MultiFork` prepares the client, block, and identity and owns them with the remote
+backend. Scripts, tests, Chisel, and tracing create a pristine `Backend<FEN>` before preflight and
+clone it for execution. Nonce reads, CREATE2 checks, and environments use that backend's selected
+block. They do not carry a separate resolved snapshot alongside it. `EvmOpts` retains the requested
+selector, so preparing `latest` does not rewrite the request.
+
+Changing a script RPC explicitly selects another backend through the same fork manager. Exact
+identity governs remote-cache reuse; each runner retains its own mutable execution state. Mutation
+testing dispatches once for the campaign and shares the pristine typed backend across its baseline
+and workers. Each mutation run scopes its fork registry so cheatcode-created forks are released
+when the run finishes. Endpoint checks still reject resets and execution-profile changes.
 
 ## Adding an execution family
 
@@ -99,8 +118,9 @@ state. Then implement the integration in layers.
    known-chain inference, endpoint metadata, compatibility with fork sources, and legacy aliases if
    required.
 3. Add the concrete `FoundryEvmNetwork` and `FoundryEvmFactory` adapter under
-   `crates/evm/core/src/evm/`. Keep conversions between RPC types and execution types at this
-   boundary.
+   `crates/evm/core/src/evm/`. Implement `FoundryTxConversion` and `FoundryExecutionHooks` on the
+   evm2 type family. Keep conversions between RPC types and execution types at this boundary;
+   running-state hooks must use the supplied EVM, not a reconstructed factory.
 4. Thread the associated spec, block, transaction, halt, context, and journal types through typed
    execution code. Keep custom-family state and algorithms in concrete implementations instead of
    adding optional custom state to the generic backend. Avoid converting back to Ethereum types in
@@ -117,6 +137,23 @@ state. Then implement the integration in layers.
 Large integrations should be split into reviewable layers when possible: hardfork and configuration,
 core execution, individual tool surfaces, then CI and documentation. Each layer should retain working
 non-custom execution paths.
+
+## Compiler targets and execution hardforks
+
+Keep the Solidity compiler target (`evm_version`), execution family (`network`), and protocol
+revision (`hardfork`) distinct. A Tempo revision uses an Osaka instruction-set baseline with
+Tempo's own gas schedule, precompiles, and transaction rules; an Ethereum version name does not
+identify a Tempo revision.
+
+`vm.setEvmVersion` selects execution rules using the active network's version mappings; it does
+not change the Solidity compiler target. Existing Ethereum aliases and native Tempo revision names
+remain accepted. Calls and creates started after a runtime change run with the selected version's
+instructions, gas schedule and precompiles, while the running frame keeps its own; configure
+`hardfork = "tempo:T7"` (or the required revision) to select a revision for whole transactions.
+
+The runtime version, including its gas parameters, and the execution config come from the selected
+`FoundryEvmFactory`. Tempo's factory supplies its own gas parameters instead of Ethereum prices
+derived from its instruction-set baseline.
 
 ## State lifecycle
 
@@ -138,22 +175,27 @@ or journal boundary. Do not rely on cloning the ordinary account database to pre
 another component. Do not add optional custom-family state to a generic context or return generic
 "context update" signals when only one concrete family can use them.
 
-Both cheatcode inspector adapters use
-[`with_inherited_evm`](../../crates/evm/core/src/evm/mod.rs) to pair inherited context setup
-with successful write-back. Inspector assembly stays with the adapter, and EVM factories retain
-construction ownership. This shared operation still uses the existing Monad journal bridge; it
-is not a replacement for the deferred native journal, snapshot, and fork lifecycle migrations.
+Account state can include a chain-specific extension (evm2's `AccountInfo::extension`), such as
+the configuration commitment of a Tempo configurable account from T14. The fork source's account
+fetch policy, chosen at fork creation, decides whether the fork cache fetches it with
+`eth_getAccountInfo` and stores it; Anvil carries it through state dumps, historical states, and its
+`eth_getAccount` and `eth_getAccountInfo` responses. A path that rebuilds accounts from balance,
+nonce, and code alone drops it.
 
-Isolated calls and `executeTransaction` share account-state preparation and settlement through
-[`prepare_child_state` and `merge_child_state`](../../crates/evm/core/src/evm/mod.rs).
-Their transaction context, environment restoration, and native journal handling remain distinct:
-an isolated call belongs to its enclosing transaction, while `executeTransaction` runs a fresh one.
+Isolated calls, `vm.executeTransaction`, and `vm.transact` run as nested transactions on an EVM
+that [`ExecutionLifecycle::nested_evm`](../../crates/evm/core/src/evm/lifecycle.rs) builds from
+the running transaction's state, with network extension state derived from the running EVM. Their
+transaction context remains distinct: an isolated call belongs to its enclosing transaction and
+continues its derived state (`FoundryEvmExt::set_preserve_transaction_state`), while
+`executeTransaction` runs a fresh one.
 
 Historical replay retains the RPC envelope's system classification after transaction conversion.
-The default nested replay behavior deliberately skips system envelopes unsupported by the selected
-execution family without mutating state. A family that supports protocol system envelopes must
-override that behavior in its concrete nested EVM and test canonical execution, foreign-envelope
-skips, malformed envelopes, and rollback after failed protocol prestate.
+Replay deliberately skips system envelopes unsupported by the selected execution family without
+mutating state. A family that supports protocol system envelopes implements
+`FoundryEvmExt::is_protocol_transaction` and `set_protocol_replay`; only trusted historical
+execution (block prefix and target replay, Anvil forced and mined replays) enables the latter,
+per transaction, and pool admission never does. Test canonical execution, foreign-envelope skips,
+malformed envelopes, and rollback after failed protocol prestate.
 
 ## Tool coverage
 
@@ -175,9 +217,9 @@ profile.
 
 ### Script recovery
 
-The requirements in this subsection are proposed and are not guarantees of the current script
-broadcaster. Network integrations must satisfy them as the durable recovery architecture is
-implemented.
+The script broadcaster meets these requirements for its supported networks, within the limitations
+listed in the [Forge scripting recovery contract](./scripting.md#recovery-contract). A new network
+integration must also meet them.
 
 Custom transaction fields remain owned by the selected Alloy `Network` and concrete execution
 family, but `forge script` must carry their final values through durable submission and resume. A
@@ -215,9 +257,116 @@ Use a layered test plan:
 Keep feature propagation synchronized across workspace manifests, the root `Makefile`, and the
 release and Docker workflows. Tests that use forks must contain `fork` in their names.
 
+### Tempo certificate and storage proofs
+
+The supported trust model is **application-level verification**. An application chooses a specific
+Anvil development consensus public key and deploys the
+[receiver fixture](../../testdata/fixtures/TempoProofVerifier.sol) with that key. The receiver fixes
+its trust anchor at deployment; submitted evidence cannot replace it. The producer's
+`anvil_tempoConsensusIdentity` response can supply the public key for this configuration, but an
+untrusted RPC response or a key bundled with evidence does not establish trust by itself.
+
+Here, **attach** means assembling an off-chain `TempoProofVerifier.Evidence` value from one retained,
+sealed block and passing it to `TempoProofReceiver.submit` with the expected height, account, slot
+and value:
+
+1. Read `consensus_getFinalization` at a fixed height and decode its finalization subject, vote and
+   seed signatures.
+2. Read the full native header with `debug_getRawHeader` at that height. Its Keccak-256 digest must
+   equal the certificate payload. The receiver verifies both signatures under its configured key,
+   requires a finalization subject, and checks the signed header's height and consensus context.
+3. Read `eth_getProof` for the account and slot at the same height. The receiver verifies the account
+   proof against the signed header's state root, then the storage proof against that account's
+   storage root, and checks the expected value.
+
+The certificate and proofs accompany the unchanged raw header. Attachment does not insert a
+certificate into the header, import a block, or change the canonical chain. There is no additional
+attach RPC. Mixing artifacts with incompatible header digests or trie roots must fail verification
+even when each artifact is valid separately. Anyone may relay the evidence; the receiver authenticates
+the configured signing key and claim rather than the transaction sender.
+
+On Unix, the [Forge test](../../crates/forge/tests/cli/tempo_proofs.rs) verifies fresh Anvil certificates,
+key rotation and account/storage proofs in Solidity, including a local two-node fork pinned to a
+fixed upstream height. It deploys and updates a contract on the fork, then checks that late upstream
+reads and later writes preserve the earlier certified proofs. It also writes to an upstream account
+and verifies its inclusion in a later sealed partial trie while preserving its earlier exclusion.
+The application submission smoke test deploys the receiver on a separate local Tempo Anvil node,
+sends evidence to `submit` over HTTP, and checks the mined transaction receipt and acceptance event.
+Uncached runs download pinned sources and Solc.
+
+The receiver reuses the [verifier fixture](../../testdata/fixtures/TempoProofVerifier.sol). Its `submit`
+entry point reverts on invalid evidence or a mismatched value, and emits
+`ProofAccepted(digest, height, account, slot, value)` only after verification succeeds. It has no
+freshness requirement, replay protection, source-chain identity check or automatic key rotation.
+Repeated valid submissions may emit the same event, and historical evidence remains acceptable
+under the configured key. The verifier's separate authenticated key-handoff tests do not update the
+receiver's trust anchor.
+
+Development keys are predictable, and an operator can rewind or reset Anvil and sign conflicting
+histories at the same height. A valid proof therefore authenticates a claim under the chosen
+development key; it does not establish unique canonical history or production consensus safety.
+Applications needing those policies must define them separately before using this fixture beyond
+development tests.
+
+Fork certificates authenticate the sealed trie of cached local state, not the complete upstream
+state. An uncached upstream account remains absent from an earlier sealed trie even after a later
+RPC read loads it. The fork uses an explicit local development consensus identity distinct from the
+upstream identity; this test does not authenticate an upstream committee handoff to that local key.
+
+These tests exercise Solidity application acceptance, including a local HTTP transaction. They do
+not make a native Tempo validator accept the Anvil block or certificate. Native consensus acceptance
+would require the actual validator, DKG, committee membership and quorum; this receiver and its
+attachment semantics provide no such integration. From T15, once `ValidatorConfigV2` is initialized
+in the parent state, Tempo's execution also checks each boundary block's DKG outcome against it.
+Anvil does not update that registry, so its rotation boundaries, and boundaries on forks of real
+validator sets, fail that check when the registry is initialized.
+
+```sh
+cargo nextest run -p forge --test cli tempo_proofs
+```
+
+The opt-in [native-source fork test](../../crates/forge/tests/cli/tempo_proofs/native.rs) reads a real
+Tempo testnet RPC and records its anchor height and hash separately from a later locally mined
+height. It collects the certificate, raw header and account/storage proofs at that local height.
+The existing Solidity verifier binds the signatures to the header digest and state root, then to
+the account, slot and expected value; a wrong value must fail. Real Tempo provides the fork anchor,
+while Anvil's development committee certifies the local sealed partial trie.
+
+The test uses the epoch length from the pinned Moderato chain specification and configures Anvil
+explicitly. It checks the RPC chain ID and genesis hash, verifies the anchor's native epoch, then
+checks native headers on both sides of the expected epoch boundary, including their parent hash
+linkage. These source-header checks validate the epoch length independently of Anvil; the genesis
+hash alone does not authenticate it. The public RPC rejects `debug_chainConfig`, so this test does
+not exercise Anvil's automatic epoch metadata probe. It leaves the hardfork unset and checks Anvil's
+selection against `tempo_forkSchedule` at the anchor timestamp.
+It only reads the upstream chain and runs on nightly CI or manual testnet dispatches, using the
+public Moderato RPC when no private endpoint is configured. Run it explicitly with a Moderato
+endpoint:
+
+```sh
+TEMPO_TESTNET_RPC_URL=https://rpc.moderato.tempo.xyz \
+  cargo test --locked -p forge --test cli \
+  tempo_proofs::native::tempo_proofs_native_fork -- --ignored --exact --nocapture
+```
+
 ## Documentation and releases
 
 User-facing selection, configuration, and workflows belong in the
 [Foundry Book](https://getfoundry.sh). CLI option text belongs in the Clap definitions and is
 generated into the book. Trait, context, and state invariants belong in Rustdoc next to their
 implementation. Cross-crate integration guidance belongs here.
+
+### Anvil CIP-64 compatibility
+
+Anvil in Celo mode accepts CIP-64 (`0x7b`) envelopes and preserves `feeCurrency` in
+transaction and receipt RPC responses. `eth_fillTransaction` returns a CIP-64 envelope
+when a fee currency is supplied. This is a compatibility mode for local payload execution
+and client integration testing: it uses native EIP-1559 fee accounting, interpreting the
+numeric fee fields as native currency amounts without exchange-rate conversion. Senders
+need native funds. Fee tokens are not debited, and Celo fee-hook gas and logs are not
+reproduced. Local receipts use the ordinary receipt payload with the CIP-64 type byte.
+
+This mode does not initialize Celo core contracts or provide protocol-accurate fee-currency
+simulation. A signed transaction priced for a live fee currency can fail native base-fee
+or balance checks. Other Anvil execution profiles reject CIP-64 submission and imported
+CIP-64 block history.

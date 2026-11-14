@@ -1,10 +1,12 @@
 use foundry_test_utils::{
-    assert_data_eq,
-    snapbox::Data,
+    TestProject, assert_data_eq,
+    snapbox::{Data, IntoData},
     str,
     util::{RemoteProject, setup_forge_remote},
 };
 use std::fs;
+
+mod site;
 
 #[test]
 fn can_generate_solmate_docs() {
@@ -13,7 +15,8 @@ fn can_generate_solmate_docs() {
     prj.forge_command().args(["doc"]).assert_success();
 }
 
-forgetest_init!(doc_does_not_write_artifacts, |prj, cmd| {
+#[forgetest_init]
+fn doc_does_not_write_artifacts(prj: _, cmd: _) {
     prj.add_source(
         "DocTarget.sol",
         r#"
@@ -39,21 +42,24 @@ contract DocTarget {
     cmd.forge_fuse().args(["doc"]).assert_success();
     let after = fs::read(&artifact).unwrap();
     assert_eq!(after, b"sentinel");
-});
+}
 
-forgetest_init!(doc_supports_empty_projects, |_prj, cmd| {
+#[forgetest_init]
+fn doc_supports_empty_projects(cmd: _) {
     cmd.arg("doc").assert_success();
-});
+}
 
-forgetest_init!(doc_supports_ignoring_all_sources, |prj, cmd| {
+#[forgetest_init]
+fn doc_supports_ignoring_all_sources(prj: _, cmd: _) {
     prj.add_source("Ignored.sol", "contract Ignored {}");
     prj.update_config(|config| config.doc.ignore = vec!["src/**".to_string()]);
 
     cmd.arg("doc").assert_success();
     assert!(prj.root().join("docs/src/pages/.forge-doc-manifest").exists());
-});
+}
 
-forgetest_init!(doc_uses_configured_commit_for_source_links, |prj, cmd| {
+#[forgetest_init]
+fn doc_uses_configured_commit_for_source_links(prj: _, cmd: _) {
     prj.add_source(
         "Revision.sol",
         r#"
@@ -69,17 +75,18 @@ contract Revision {}
 
     cmd.arg("doc").assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Revision.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Revision.mdx",
         str![[r#"
 ...
 [Git Source](https://github.com/foundry-rs/foundry/blob/v1.2.3/src/Revision.sol)
 ...
 "#]],
     );
-});
+}
 
-forgetest!(doc_supports_mixed_solidity_versions, |prj, cmd| {
+#[forgetest]
+fn doc_supports_mixed_solidity_versions(prj: _, cmd: _) {
     prj.add_source(
         "New.sol",
         r#"
@@ -100,10 +107,11 @@ contract Old {}
     cmd.arg("doc").assert_success();
     assert!(prj.root().join("docs/src/pages/src/contract.New.mdx").exists());
     assert!(prj.root().join("docs/src/pages/src/contract.Old.mdx").exists());
-});
+}
 
 #[cfg(unix)]
-forgetest_init!(doc_does_not_run_solc, |prj, cmd| {
+#[forgetest_init]
+fn doc_does_not_run_solc(prj: _, cmd: _) {
     use std::os::unix::fs::PermissionsExt;
 
     prj.add_source(
@@ -155,17 +163,15 @@ exit 1
     cmd.arg("doc").assert_success();
     assert!(!invoked.exists(), "forge doc invoked the configured solc binary");
     assert!(!prj.root().join("docs/src/pages/src/contract.Skipped.mdx").exists());
-});
+}
 
 // Test that overloaded functions in interfaces inherit the correct NatSpec comments
 // fixes <https://github.com/foundry-rs/foundry/issues/11823>
-forgetest_init!(can_generate_docs_for_overloaded_functions, |prj, cmd| {
+#[forgetest_init]
+fn can_generate_docs_for_overloaded_functions(prj: _, cmd: _) {
     prj.add_source(
         "IExample.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IExample {
     /// @notice Deposit tokens into the vault
     /// @param amount The amount to deposit
@@ -181,9 +187,6 @@ interface IExample {
     prj.add_source(
         "Example.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./IExample.sol";
 
 contract Example is IExample {
@@ -227,18 +230,16 @@ Withdraw tokens from the vault
 ...
 "#]],
     );
-});
+}
 
 // Test that natspec is inherited implicitly from a base interface when the override carries
 // no `@inheritdoc` tag.
 // fixes <https://github.com/foundry-rs/foundry/issues/4070>
-forgetest_init!(natspec_is_inherited_implicitly, |prj, cmd| {
+#[forgetest_init]
+fn natspec_is_inherited_implicitly(prj: _, cmd: _) {
     prj.add_source(
         "IExample.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IExample {
     /// @notice Deposit tokens into the vault
     /// @param amount The amount to deposit
@@ -251,9 +252,6 @@ interface IExample {
     prj.add_source(
         "Example.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./IExample.sol";
 
 contract Example is IExample {
@@ -292,15 +290,13 @@ function deposit(uint256 amount) external override returns (uint256 shares);
 ...
 "#]],
     );
-});
+}
 
-forgetest_init!(inheritdoc_uses_effective_positional_natspec, |prj, cmd| {
+#[forgetest_init]
+fn inheritdoc_uses_effective_positional_natspec(prj: _, cmd: _) {
     prj.add_source(
         "IRoot.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IRoot {
     /// @notice Root notice
     /// @dev Root dev
@@ -317,9 +313,6 @@ interface IRoot {
     prj.add_source(
         "Effective.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import {IRoot as RootAlias} from "./IRoot.sol";
 
 interface IMid is RootAlias {
@@ -344,31 +337,52 @@ contract Effective is IMid {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Effective.mdx")).unwrap();
-    assert!(rendered.contains("Root notice"), "{rendered}");
-    assert!(rendered.contains("Mid dev"), "{rendered}");
-    assert!(!rendered.contains("Root dev"), "{rendered}");
-    assert!(rendered.contains("| currentLeft | `uint256` | Local left |"), "{rendered}");
-    assert!(rendered.contains("| currentRight | `uint256` |  |"), "{rendered}");
-    assert!(!rendered.contains("| currentRight | `uint256` | Root second |"), "{rendered}");
-    assert!(
-        rendered.contains("| currentLeftResult | `uint256` | Root first result |"),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains("| currentRightResult | `uint256` | Root second result |"),
-        "{rendered}"
-    );
-});
+    prj.assert_doc_functions(
+        "src/contract.Effective.mdx",
+        str![[r#"
+<a id="run-uint256-uint256"></a>
 
-forgetest_init!(inheritdoc_documents_unnamed_parameters, |prj, cmd| {
+### run
+
+Root notice
+
+<i>
+
+Mid dev
+
+</i>
+
+```solidity
+function run(uint256 currentLeft, uint256 currentRight)
+        external
+        override
+        returns (uint256 currentLeftResult, uint256 currentRightResult);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| currentLeft | `uint256` | Local left |
+| currentRight | `uint256` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| currentLeftResult | `uint256` | Root first result |
+| currentRightResult | `uint256` | Root second result |
+
+
+"#]],
+    );
+}
+
+#[forgetest_init]
+fn inheritdoc_documents_unnamed_parameters(prj: _, cmd: _) {
     prj.add_source(
         "Unnamed.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IProcessor {
     /// @param amount The amount to process
     function single(uint256 amount) external;
@@ -404,8 +418,8 @@ contract Processor is IProcessor {
     );
 
     cmd.args(["doc"]).assert_success();
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Processor.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Processor.mdx",
         str![[r#"
 ...
 ### single
@@ -438,15 +452,13 @@ contract Processor is IProcessor {
 ...
 "#]],
     );
-});
+}
 
-forgetest_init!(inheritdoc_mapping_getter_uses_generated_signature, |prj, cmd| {
+#[forgetest_init]
+fn inheritdoc_mapping_getter_uses_generated_signature(prj: _, cmd: _) {
     prj.add_source(
         "ExplicitGetter.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IValues {
     /// @notice Reads a value
     /// @param key The lookup key
@@ -462,8 +474,8 @@ contract ExplicitGetter is IValues {
     );
 
     cmd.args(["doc"]).assert_success();
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.ExplicitGetter.mdx"), None,),
+    prj.assert_doc_page(
+        "src/contract.ExplicitGetter.mdx",
         str![[r#"
 ...
 ### values
@@ -488,15 +500,13 @@ mapping(uint256 => uint256) public override values;
 ...
 "#]],
     );
-});
+}
 
-forgetest_init!(inheritdoc_does_not_skip_exact_custom_documentation, |prj, cmd| {
+#[forgetest_init]
+fn inheritdoc_does_not_skip_exact_custom_documentation(prj: _, cmd: _) {
     prj.add_source(
         "Exact.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 abstract contract Root {
     /// @notice Must not leak through Mid
     function run(uint256 value) public virtual {}
@@ -515,18 +525,33 @@ contract Exact is Mid {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Exact.mdx")).unwrap();
-    assert!(!rendered.contains("Must not leak"), "{rendered}");
-});
+    prj.assert_doc_functions(
+        "src/contract.Exact.mdx",
+        str![[r#"
+<a id="run-uint256"></a>
 
-forgetest_init!(implicit_inheritance_requires_compatible_override, |prj, cmd| {
+### run
+
+```solidity
+function run(uint256 value) public override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| value | `uint256` |  |
+
+
+"#]],
+    );
+}
+
+#[forgetest_init]
+fn implicit_inheritance_requires_compatible_override(prj: _, cmd: _) {
     prj.add_source(
         "Compatibility.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 abstract contract CompatibilityBase {
     /// @notice Must not inherit from a non-virtual function
     function nonVirtual() public {}
@@ -551,19 +576,57 @@ contract Compatibility is CompatibilityBase {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Compatibility.mdx"))
-            .unwrap();
-    assert!(!rendered.contains("Must not inherit"), "{rendered}");
-});
+    prj.assert_doc_functions(
+        "src/contract.Compatibility.mdx",
+        str![[r#"
+<a id="nonvirtual"></a>
 
-forgetest_init!(inheritdoc_getter_handles_malformed_return_arity, |prj, cmd| {
+### nonVirtual
+
+```solidity
+function nonVirtual() public override;
+```
+
+<a id="visibilitychange"></a>
+
+### visibilityChange
+
+```solidity
+function visibilityChange() external override;
+```
+
+<a id="mutabilitychange"></a>
+
+### mutabilityChange
+
+```solidity
+function mutabilityChange() public override;
+```
+
+<a id="returnchange"></a>
+
+### returnChange
+
+```solidity
+function returnChange() public override returns (address);
+```
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `address` |  |
+
+
+"#]],
+    );
+}
+
+#[forgetest_init]
+fn inheritdoc_getter_handles_malformed_return_arity(prj: _, cmd: _) {
     prj.add_source(
         "MalformedGetter.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IFlag {
     /// @notice Reads the flag
     function flag() external view;
@@ -581,15 +644,13 @@ contract MalformedGetter is IFlag {
         fs::read_to_string(prj.root().join("docs/src/pages/src/contract.MalformedGetter.mdx"))
             .unwrap();
     assert!(rendered.contains("Reads the flag"), "{rendered}");
-});
+}
 
-forgetest_init!(inheritdoc_uses_first_duplicate_target, |prj, cmd| {
+#[forgetest_init]
+fn inheritdoc_uses_first_duplicate_target(prj: _, cmd: _) {
     prj.add_source(
         "DuplicateInheritdoc.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 abstract contract RootA {
     /// @notice First target
     function run() public virtual {}
@@ -622,15 +683,13 @@ contract DuplicateInheritdoc is A, B {
             .unwrap();
     assert!(rendered.contains("First target"), "{rendered}");
     assert!(!rendered.contains("Second target"), "{rendered}");
-});
+}
 
-forgetest_init!(implicit_inheritance_matches_constant_getter_mutability, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_matches_constant_getter_mutability(prj: _, cmd: _) {
     prj.add_source(
         "ConstantGetter.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IConstant {
     /// @notice The constant value
     function VALUE() external pure returns (uint256);
@@ -647,15 +706,13 @@ contract ConstantGetter is IConstant {
         fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ConstantGetter.mdx"))
             .unwrap();
     assert!(rendered.contains("The constant value"), "{rendered}");
-});
+}
 
-forgetest_init!(implicit_inheritance_rejects_external_return_location_mismatch, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_rejects_external_return_location_mismatch(prj: _, cmd: _) {
     prj.add_source(
         "ReturnLocation.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 abstract contract ReturnBase {
     /// @notice Must not cross a return-location mismatch
     function data() external view virtual returns (bytes memory);
@@ -672,22 +729,36 @@ contract ReturnLocation is ReturnBase {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ReturnLocation.mdx"))
-            .unwrap();
-    assert!(!rendered.contains("Must not cross"), "{rendered}");
-});
+    prj.assert_doc_functions(
+        "src/contract.ReturnLocation.mdx",
+        str![[r#"
+<a id="data"></a>
+
+### data
+
+```solidity
+function data() public view override returns (bytes storage value);
+```
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| value | `bytes` |  |
+
+
+"#]],
+    );
+}
 
 // NatSpec text must never reach the MDX page as executable ESM: MDX runs a line whose first
 // token is `import`/`export` as code. The text can even be inherited from another contract
 // through `@inheritdoc`, so a dependency's doc comment could inject into the derived page.
-forgetest_init!(natspec_neutralizes_esm_statement_lines, |prj, cmd| {
+#[forgetest_init]
+fn natspec_neutralizes_esm_statement_lines(prj: _, cmd: _) {
     prj.add_source(
         "EsmBase.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IEsm {
     /// @notice export const injected = 1
     function act(uint256 v) external;
@@ -697,9 +768,6 @@ interface IEsm {
     prj.add_source(
         "EsmChild.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./EsmBase.sol";
 
 /// @notice import somesecret from the outside
@@ -711,8 +779,8 @@ contract EsmChild is IEsm {
     );
 
     cmd.args(["doc"]).assert_success();
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.EsmChild.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.EsmChild.mdx",
         str![[r#"
 ---
 title: "EsmChild"
@@ -746,15 +814,58 @@ function act(uint256 v) external override;
 
 "#]],
     );
-});
+}
 
-forgetest_init!(natspec_fences_are_limited_to_standalone_descriptions, |prj, cmd| {
+#[forgetest_init]
+fn homepage_neutralizes_esm_statement_lines(prj: _, cmd: _) {
+    prj.add_source("Probe.sol", "contract Probe {}");
+    fs::write(
+        prj.root().join("README.md"),
+        concat!(
+            "\u{feff}",
+            r#"import fs from "node:fs"
+
+# Probe
+
+export const generated = fs.writeFileSync("marker", "")
+
+Replace <TOKEN>, see `wrapped
+import span` here.
+
+```js
+import inert from "fenced"
+```
+"#
+        ),
+    )
+    .unwrap();
+
+    cmd.args(["doc"]).assert_success();
+    prj.assert_doc_page(
+        "index.mdx",
+        str![[r#"
+&#105;&#109;port fs from "node:fs"
+
+# Probe
+
+&#101;xport const generated = fs.writeFileSync("marker", "")
+
+Replace &lt;TOKEN>, see `wrapped
+import span` here.
+
+```js
+import inert from "fenced"
+```
+
+"#]],
+    );
+}
+
+#[forgetest_init]
+fn natspec_fences_are_limited_to_standalone_descriptions(prj: _, cmd: _) {
     prj.add_source(
         "FenceScope.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IFenced {
     /// @dev Example:
     /// ```solidity
@@ -822,8 +933,8 @@ Outside &lt; and &#123;
 "#]],
         );
     }
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Metadata.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Metadata.mdx",
         str![[r#"
 ...
 # Metadata
@@ -852,15 +963,13 @@ Outside &lt; and &#123;
 ...
 "#]],
     );
-});
+}
 
-forgetest_init!(multiline_notice_populates_frontmatter_description, |prj, cmd| {
+#[forgetest_init]
+fn multiline_notice_populates_frontmatter_description(prj: _, cmd: _) {
     prj.add_source(
         "Vault.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 /// @notice Stores deposited assets for users
 ///         and enforces withdrawal limits.
 contract Vault {}
@@ -868,8 +977,8 @@ contract Vault {}
     );
 
     cmd.args(["doc"]).assert_success();
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Vault.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Vault.mdx",
         str![[r#"
 ---
 title: "Vault"
@@ -884,17 +993,15 @@ and enforces withdrawal limits.
 
 "#]],
     );
-});
+}
 
 // An override inherits the base overload with the matching signature, continuing past a nearer
 // base that declares a different same-name overload.
-forgetest_init!(implicit_inheritance_matches_the_overload_signature, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_matches_the_overload_signature(prj: _, cmd: _) {
     prj.add_source(
         "Bases.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface INear {
     function g(address a) external returns (bool);
 }
@@ -909,9 +1016,6 @@ interface IFar {
     prj.add_source(
         "Impl.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./Bases.sol";
 
 contract Impl is INear, IFar {
@@ -923,57 +1027,63 @@ contract Impl is INear, IFar {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.Impl.mdx");
-    let rendered = fs::read_to_string(&doc_path).unwrap();
-    assert!(rendered.contains("Far documents g(uint256)"), "{rendered}");
-});
+    prj.assert_doc_functions(
+        "src/contract.Impl.mdx",
+        str![[r#"
+<a id="g-uint256"></a>
 
-// Implicit inheritance matches through resolved types as well: the same divergent spellings
-// must still inherit when the override carries no NatSpec at all.
-forgetest_init!(implicit_inheritance_matches_semantic_types, |prj, cmd| {
-    prj.add_source(
-        "Store.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+### g
 
-abstract contract Store {
-    /// @notice Configures the store
-    function configure(mapping(uint => uint) storage store_) internal virtual;
-}
-"#,
+Far documents g(uint256)
+
+```solidity
+function g(uint256 n) external override(IFar) returns (bool);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| n | `uint256` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `bool` |  |
+
+<a id="g-address"></a>
+
+### g
+
+```solidity
+function g(address a) external override(INear) returns (bool);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| a | `address` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `bool` |  |
+
+
+"#]],
     );
-
-    prj.add_source(
-        "MyStore.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import "./Store.sol";
-
-contract MyStore is Store {
-    function configure(mapping(uint=>uint) storage store_) internal override {}
 }
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-
-    let doc_path = prj.root().join("docs/src/pages/src/contract.MyStore.mdx");
-    let rendered = fs::read_to_string(&doc_path).unwrap();
-    assert!(rendered.contains("Configures the store"), "{rendered}");
-});
 
 // A public mapping variable inherits the NatSpec of the interface getter it implements, matched
 // through the getter's generated signature (`balanceOf(address)`).
-forgetest_init!(implicit_inheritance_matches_mapping_getter_signature, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_matches_mapping_getter_signature(prj: _, cmd: _) {
     prj.add_source(
         "IERC.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IERC {
     /// @notice The balance of an account
     function balanceOf(address account) external view returns (uint256);
@@ -984,9 +1094,6 @@ interface IERC {
     prj.add_source(
         "Token.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./IERC.sol";
 
 contract Token is IERC {
@@ -1000,17 +1107,15 @@ contract Token is IERC {
     let doc_path = prj.root().join("docs/src/pages/src/contract.Token.mdx");
     let rendered = fs::read_to_string(&doc_path).unwrap();
     assert!(rendered.contains("The balance of an account"), "{rendered}");
-});
+}
 
 // A public mapping with a `string` key inherits through its synthetic getter: the getter's
 // generated signature matches the interface function with the location normalized.
-forgetest_init!(implicit_inheritance_matches_string_key_getter, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_matches_string_key_getter(prj: _, cmd: _) {
     prj.add_source(
         "IRegistry.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IRegistry {
     /// @notice The balance registered for a name
     function balances(string memory name) external view returns (uint256);
@@ -1021,9 +1126,6 @@ interface IRegistry {
     prj.add_source(
         "Registry.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./IRegistry.sol";
 
 contract Registry is IRegistry {
@@ -1037,17 +1139,15 @@ contract Registry is IRegistry {
     let doc_path = prj.root().join("docs/src/pages/src/contract.Registry.mdx");
     let rendered = fs::read_to_string(&doc_path).unwrap();
     assert!(rendered.contains("The balance registered for a name"), "{rendered}");
-});
+}
 
 // `calldata` in a base member and `memory` in the override are the same signature: locations
 // are normalized before comparison and the NatSpec is inherited.
-forgetest_init!(implicit_inheritance_normalizes_calldata_location, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_normalizes_calldata_location(prj: _, cmd: _) {
     prj.add_source(
         "Base.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface Base {
     /// @notice Configures the value
     function configure(bytes calldata data) external;
@@ -1058,9 +1158,6 @@ interface Base {
     prj.add_source(
         "Child.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./Base.sol";
 
 contract Child is Base {
@@ -1074,17 +1171,15 @@ contract Child is Base {
     let doc_path = prj.root().join("docs/src/pages/src/contract.Child.mdx");
     let rendered = fs::read_to_string(&doc_path).unwrap();
     assert!(rendered.contains("Configures the value"), "{rendered}");
-});
+}
 
-// A documented base overload with a different non-ABI signature must NOT be inherited: the
-// signature gate stays strict even when the base has a single name match.
-forgetest_init!(implicit_inheritance_rejects_non_abi_overload_mismatch, |prj, cmd| {
+// Implicit inheritance normalizes divergent mapping spellings, but must not document a
+// different mapping overload even when the base has a single same-name declaration.
+#[forgetest_init]
+fn implicit_inheritance_rejects_non_abi_overload_mismatch(prj: _, cmd: _) {
     prj.add_source(
         "Store.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 abstract contract Store {
     /// @notice Configures the store
     function configure(mapping(uint => uint) storage store_) internal virtual;
@@ -1095,13 +1190,10 @@ abstract contract Store {
     prj.add_source(
         "MyStore.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./Store.sol";
 
 contract MyStore is Store {
-    function configure(mapping(uint => uint) storage store_) internal override {}
+    function configure(mapping(uint=>uint) storage store_) internal override {}
     function configure(mapping(address => address) storage other) internal {}
 }
 "#,
@@ -1109,21 +1201,50 @@ contract MyStore is Store {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.MyStore.mdx");
-    let rendered = fs::read_to_string(&doc_path).unwrap();
-    let occurrences = rendered.matches("Configures the store").count();
-    assert_eq!(occurrences, 1, "only the matching overload may inherit:\n{rendered}");
-});
+    prj.assert_doc_functions(
+        "src/contract.MyStore.mdx",
+        str![[r#"
+<a id="configure-mapping-uint256-uint256"></a>
 
+### configure
+
+Configures the store
+
+```solidity
+function configure(mapping(uint=>uint) storage store_) internal override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| store_ | `mapping(uint=>uint)` |  |
+
+<a id="configure-mapping-address-address"></a>
+
+### configure
+
+```solidity
+function configure(mapping(address => address) storage other) internal;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| other | `mapping(address => address)` |  |
+
+
+"#]],
+    );
+}
 // Point 2 (mablr review): names are compared at every level. A leaf cannot jump across an
 // intermediate rename just because it restores the original name.
-forgetest_init!(implicit_inheritance_requires_matching_param_names, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_requires_matching_param_names(prj: _, cmd: _) {
     prj.add_source(
         "Rename.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract Base {
     /// @notice Deposits into the vault
     function deposit(uint256 amount) public virtual returns (uint256) {}
@@ -1147,17 +1268,15 @@ contract Leaf is Mid {
         .unwrap();
         assert!(!rendered.contains("Deposits into the vault"), "{rendered}");
     }
-});
+}
 
 // Point 3 (mablr review): the target needs a public getter, and the source needs to be an
 // external function implemented by that getter. A same-name base variable is not a source.
-forgetest_init!(implicit_inheritance_requires_public_getter_and_function_source, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_requires_public_getter_and_function_source(prj: _, cmd: _) {
     prj.add_source(
         "Variables.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract Base {
     /// @notice Must not reach a private target
     uint256 private privateTarget;
@@ -1178,17 +1297,15 @@ contract Child is Base {
         fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Child.mdx")).unwrap();
     assert!(!rendered.contains("Must not reach a private target"), "{rendered}");
     assert!(!rendered.contains("A variable is not a getter function"), "{rendered}");
-});
+}
 
 // Point 1 (mablr review): automatic inheritance needs one semantic base function. Distinct
 // declarations on separate branches are ambiguous; a declaration shared by both branches is not.
-forgetest_init!(implicit_inheritance_resolves_base_ambiguity_per_branch, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_resolves_base_ambiguity_per_branch(prj: _, cmd: _) {
     prj.add_source(
         "Ambiguity.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IAlpha {
     /// @notice From IAlpha
     function direct(uint256 x) external;
@@ -1238,8 +1355,8 @@ contract Shared is Left, Right {
     );
 
     cmd.args(["doc"]).assert_success();
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Direct.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Direct.mdx",
         str![[r#"
 ...
 ### direct
@@ -1250,8 +1367,8 @@ function direct(uint256 x) external override(IAlpha, IBeta);
 ...
 "#]],
     );
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Asymmetric.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Asymmetric.mdx",
         str![[r#"
 ...
 ### act
@@ -1262,8 +1379,8 @@ function act(uint256 x) public virtual override(A, Root);
 ...
 "#]],
     );
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Leaf.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Leaf.mdx",
         str![[r#"
 ...
 ### act
@@ -1274,8 +1391,8 @@ function act(uint256 x) public override;
 ...
 "#]],
     );
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Shared.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Shared.mdx",
         str![[r#"
 ...
 ### shared
@@ -1288,17 +1405,15 @@ function shared(uint256 x) public override;
 ...
 "#]],
     );
-});
+}
 
 // Point 5 (mablr review): any local NatSpec item suppresses automatic inheritance. A leaf
 // cannot reach around an intermediate override carrying only a custom tag.
-forgetest_init!(implicit_inheritance_skips_custom_tagged_members, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_skips_custom_tagged_members(prj: _, cmd: _) {
     prj.add_source(
         "Tagged.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract Base {
     /// @notice Base notice
     function run(uint256 amount) public virtual returns (uint256) {}
@@ -1323,17 +1438,15 @@ contract Leaf is Mid {
         .unwrap();
         assert!(!rendered.contains("Base notice"), "{rendered}");
     }
-});
+}
 
 // Implicit inheritance only runs when the override has no NatSpec of its own: a local `@notice`
 // keeps the base `@param`/`@return` from being pulled in.
-forgetest_init!(implicit_inheritance_skips_documented_members, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_skips_documented_members(prj: _, cmd: _) {
     prj.add_source(
         "IExample.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IExample {
     /// @notice Base notice
     /// @param amount base amount doc
@@ -1346,9 +1459,6 @@ interface IExample {
     prj.add_source(
         "Example.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./IExample.sol";
 
 contract Example is IExample {
@@ -1367,17 +1477,15 @@ contract Example is IExample {
     // The base param and return docs are not pulled in, since the override is documented.
     assert!(!rendered.contains("base amount doc"), "{rendered}");
     assert!(!rendered.contains("base shares doc"), "{rendered}");
-});
+}
 
 // Point 4 (mablr review): render every parameter and return of the implemented getter. A
 // missing parameter tag leaves its own row empty instead of borrowing another description.
-forgetest_init!(inherited_getter_renders_param_and_return, |prj, cmd| {
+#[forgetest_init]
+fn inherited_getter_renders_param_and_return(prj: _, cmd: _) {
     prj.add_source(
         "Entries.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 struct Entry {
     uint256 amount;
     bool active;
@@ -1407,18 +1515,16 @@ contract Entries is IEntries {
     assert!(rendered.contains("| id | `uint256` |  |"), "{rendered}");
     assert!(rendered.contains("| amount | `uint256` | the stored amount |"), "{rendered}");
     assert!(rendered.contains("| active | `bool` | whether the entry is active |"), "{rendered}");
-});
+}
 
 // steven review: an intermediate override's `@inheritdoc` is resolved and merged, not treated
 // as terminal, so documentation propagates through it. A (documented) -> B (@inheritdoc A) ->
 // C (undocumented): C receives A's documentation through B.
-forgetest_init!(implicit_inheritance_resolves_intermediate_inheritdoc, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_resolves_intermediate_inheritdoc(prj: _, cmd: _) {
     prj.add_source(
         "Chain.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IChainBase {
     /// @notice Documented on the interface
     function act(uint256 amount) external;
@@ -1439,17 +1545,15 @@ contract ChainLeaf is ChainMid {
     let rendered =
         fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ChainLeaf.mdx")).unwrap();
     assert!(rendered.contains("Documented on the interface"), "{rendered}");
-});
+}
 
 // steven review: an inherited `@return` maps positionally onto a renamed override's return
 // slot, instead of gluing the base return name into the description.
-forgetest_init!(implicit_inheritance_remaps_renamed_returns, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_remaps_renamed_returns(prj: _, cmd: _) {
     prj.add_source(
         "Renamed.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IRenamed {
     /// @notice Reads a value
     /// @return first the first result
@@ -1467,18 +1571,16 @@ contract Renamed is IRenamed {
         fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Renamed.mdx")).unwrap();
     assert!(rendered.contains("| renamedFirst | `uint256` | the first result |"), "{rendered}");
     assert!(!rendered.contains("first the first result"), "{rendered}");
-});
+}
 
 // Regression: return-name resolution for the implicit path must not leak into the explicit
 // `@inheritdoc` path. With a partial local `@return` over a named-return override, the local
 // description must win and the base's other returns must not be injected (matches master).
-forgetest_init!(explicit_inheritdoc_partial_return_keeps_local_and_skips_base, |prj, cmd| {
+#[forgetest_init]
+fn explicit_inheritdoc_partial_return_keeps_local_and_skips_base(prj: _, cmd: _) {
     prj.add_source(
         "PartialReturn.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IPartial {
     /// @notice Base notice
     /// @return a base A-text
@@ -1495,23 +1597,39 @@ contract Partial is IPartial {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Partial.mdx")).unwrap();
-    assert!(rendered.contains("local A-text"), "{rendered}");
-    assert!(!rendered.contains("base A-text"), "{rendered}");
-    assert!(!rendered.contains("base B-text"), "{rendered}");
-});
+    prj.assert_doc_functions(
+        "src/contract.Partial.mdx",
+        str![[r#"
+<a id="f"></a>
+
+### f
+
+Base notice
+
+```solidity
+function f() external view override returns (uint256 a, uint256 b);
+```
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| a | `uint256` | local A-text |
+| b | `uint256` |  |
+
+
+"#]],
+    );
+}
 
 // A public state variable's generated getter inherits implicitly through an interface chain:
 // a base function redeclared without NatSpec still propagates its ancestor's documentation, like
 // solc (Impl.data() resolves to IRoot's `@notice` through the undocumented IMid redeclaration).
-forgetest_init!(implicit_getter_inherits_through_interface_chain, |prj, cmd| {
+#[forgetest_init]
+fn implicit_getter_inherits_through_interface_chain(prj: _, cmd: _) {
     prj.add_source(
         "GetterChain.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IRoot {
     /// @notice Root getter doc
     /// @return value the stored value
@@ -1533,19 +1651,17 @@ contract Impl is IMid {
         fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Impl.mdx")).unwrap();
     assert!(rendered.contains("Root getter doc"), "{rendered}");
     assert!(rendered.contains("the stored value"), "{rendered}");
-});
+}
 
 // A private base function is not overridden by a same-signature child function and cannot donate
 // its documentation to it.
 // `forge doc` can render parseable sources that Solidity would reject later. A private
 // same-signature declaration is still not a valid override source for inherited docs.
-forgetest_init!(implicit_inheritance_rejects_private_base, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_rejects_private_base(prj: _, cmd: _) {
     prj.add_source(
         "PrivateBase.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract PrivateBase {
     /// @notice Must not escape a private declaration
     function privateCandidate(uint256 value) private {}
@@ -1558,21 +1674,36 @@ contract PrivateLeaf is PrivateBase {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.PrivateLeaf.mdx")).unwrap();
-    assert!(!rendered.contains("Must not escape"), "{rendered}");
-});
+    prj.assert_doc_functions(
+        "src/contract.PrivateLeaf.mdx",
+        str![[r#"
+<a id="privatecandidate-uint256"></a>
+
+### privateCandidate
+
+```solidity
+function privateCandidate(uint256 value) public;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| value | `uint256` |  |
+
+
+"#]],
+    );
+}
 
 // A lowered Yul helper is not part of Solidity's override frontier. It must not shadow the real
 // Solidity declaration in the next ancestor. Solar lowers Yul helpers as private, so this pins the
 // effective boundary instead of proving `is_yul` independently from private visibility.
-forgetest_init!(implicit_inheritance_ignores_yul_shadow, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_ignores_yul_shadow(prj: _, cmd: _) {
     prj.add_source(
         "YulShadow.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract YulRoot {
     /// @notice Must pass through the Yul-only intermediate declaration
     function yulCandidate(uint256 value) public virtual {}
@@ -1606,16 +1737,14 @@ contract YulLeaf is YulMid2 {
     let rendered =
         fs::read_to_string(prj.root().join("docs/src/pages/src/contract.YulLeaf.mdx")).unwrap();
     assert!(rendered.contains("Must pass through"), "{rendered}");
-});
+}
 
 // A generated getter is not an ordinary function declaration on the override frontier.
-forgetest_init!(implicit_inheritance_rejects_generated_getter_base, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_rejects_generated_getter_base(prj: _, cmd: _) {
     prj.add_source(
         "GetterBase.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract GetterBase {
     /// @notice Must not escape a generated getter
     uint256 public getterCandidate;
@@ -1628,20 +1757,29 @@ contract GetterLeaf is GetterBase {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.GetterLeaf.mdx")).unwrap();
-    assert!(!rendered.contains("Must not escape"), "{rendered}");
-});
+    prj.assert_doc_functions(
+        "src/contract.GetterLeaf.mdx",
+        str![[r#"
+<a id="gettercandidate"></a>
+
+### getterCandidate
+
+```solidity
+function getterCandidate() public;
+```
+
+
+"#]],
+    );
+}
 
 // `forge doc` lowers parseable sources without running Solidity's full override validation.
 // Even for an invalid cross-domain collision, it must not copy modifier docs onto a function.
-forgetest_init!(implicit_inheritance_keeps_function_modifier_domains_separate, |prj, cmd| {
+#[forgetest_init]
+fn implicit_inheritance_keeps_function_modifier_domains_separate(prj: _, cmd: _) {
     prj.add_source(
         "FunctionModifier.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract ModifierBase {
     /// @notice A modifier is not a function override
     modifier sameSpelling() { _; }
@@ -1654,21 +1792,29 @@ contract FunctionLeaf is ModifierBase {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.FunctionLeaf.mdx"))
-            .unwrap();
-    assert!(!rendered.contains("A modifier is not"), "{rendered}");
-});
+    prj.assert_doc_functions(
+        "src/contract.FunctionLeaf.mdx",
+        str![[r#"
+<a id="samespelling"></a>
+
+### sameSpelling
+
+```solidity
+function sameSpelling() public;
+```
+
+
+"#]],
+    );
+}
 
 // Fallback and receive have no AST header name, but they still take part in explicit and
 // implicit NatSpec inheritance through their HIR function kinds.
-forgetest_init!(inheritance_supports_fallback_and_receive, |prj, cmd| {
+#[forgetest_init]
+fn inheritance_supports_fallback_and_receive(prj: _, cmd: _) {
     prj.add_source(
         "SpecialFunctions.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 abstract contract SpecialBase {
     /// @notice Base fallback documentation
     fallback() external virtual {}
@@ -1710,17 +1856,15 @@ contract SpecialExplicit is SpecialBase {
         assert!(receive.contains("Base receive documentation"), "{rendered}");
         assert!(!receive.contains("Base fallback documentation"), "{rendered}");
     }
-});
+}
 
 // Return descriptions are remapped at each override hop before a generated getter consumes
 // them. The final rows use the getter field names, not either interface's return names.
-forgetest_init!(implicit_getter_remaps_returns_at_every_hop, |prj, cmd| {
+#[forgetest_init]
+fn implicit_getter_remaps_returns_at_every_hop(prj: _, cmd: _) {
     prj.add_source(
         "ReturnChain.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 struct Pair {
     uint256 getterFirst;
     uint256 getterSecond;
@@ -1760,16 +1904,14 @@ contract PairStore is IMiddlePair {
         rendered.contains("| getterSecond | `uint256` | second value documentation |"),
         "{rendered}"
     );
-});
+}
 
 // An explicit `@inheritdoc` relay remaps inherited return names before the getter consumes them.
-forgetest_init!(implicit_getter_remaps_returns_after_inheritdoc_relay, |prj, cmd| {
+#[forgetest_init]
+fn implicit_getter_remaps_returns_after_inheritdoc_relay(prj: _, cmd: _) {
     prj.add_source(
         "ExplicitReturnChain.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 struct ExplicitPair {
     uint256 getterFirst;
     uint256 getterSecond;
@@ -1801,11 +1943,8 @@ contract ExplicitPairStore is IExplicitMiddle {
     );
 
     cmd.args(["doc"]).assert_success();
-    assert_data_eq!(
-        Data::read_from(
-            &prj.root().join("docs/src/pages/src/contract.ExplicitPairStore.mdx"),
-            None,
-        ),
+    prj.assert_doc_page(
+        "src/contract.ExplicitPairStore.mdx",
         str![[r#"
 ...
 ### relayedPair
@@ -1821,17 +1960,15 @@ Relayed through the middle interface
 ...
 "#]],
     );
-});
+}
 
 // Getter tables use the same NatSpec sanitizer as ordinary functions, including the escaped
 // placeholder for an unnamed generated return.
-forgetest_init!(inherited_getter_sanitizes_mdx_and_unnamed_returns, |prj, cmd| {
+#[forgetest_init]
+fn inherited_getter_sanitizes_mdx_and_unnamed_returns(prj: _, cmd: _) {
     prj.add_source(
         "UnsafeGetter.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IUnsafeGetter {
     /// @param key Locate <amount> with {Reference}
     /// @return Result <amount> from {Reference}
@@ -1845,8 +1982,8 @@ contract UnsafeGetter is IUnsafeGetter {
     );
 
     cmd.args(["doc"]).assert_success();
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.UnsafeGetter.mdx"), None,),
+    prj.assert_doc_page(
+        "src/contract.UnsafeGetter.mdx",
         str![[r#"
 ...
 **Parameters**
@@ -1863,17 +2000,15 @@ contract UnsafeGetter is IUnsafeGetter {
 ...
 "#]],
     );
-});
+}
 
 // Test that {Ident} cross-references resolve to root-relative vocs links.
 // fixes <https://github.com/foundry-rs/foundry/issues/12361>
-forgetest_init!(hyperlinks_use_relative_paths, |prj, cmd| {
+#[forgetest_init]
+fn hyperlinks_use_relative_paths(prj: _, cmd: _) {
     prj.add_source(
         "IBase.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IBase {
     function baseFunction() external;
 }
@@ -1883,9 +2018,6 @@ interface IBase {
     prj.add_source(
         "Derived.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./IBase.sol";
 
 /// @dev Inherits: {IBase}
@@ -1897,72 +2029,24 @@ contract Derived is IBase {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Derived.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Derived.mdx",
         str![[r#"
 ...
 Inherits: [IBase](/src/interface.IBase)
 ...
 "#]],
     );
-});
-
-forgetest_init!(doc_without_manifest_preserves_user_pages, |prj, cmd| {
-    prj.add_source(
-        "Counter.sol",
-        r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.0;
-
-contract Counter {
-    uint256 public value;
 }
-"#,
-    );
 
-    let user_page = prj.root().join("docs/src/pages/src/overview.mdx");
-    std::fs::create_dir_all(user_page.parent().unwrap()).unwrap();
-    std::fs::write(&user_page, "# Overview\n\nHand-written page.\n").unwrap();
-
-    cmd.args(["doc"]).assert_success();
-
-    assert!(user_page.exists(), "user-authored page should survive first run without manifest");
-    assert!(prj.root().join("docs/src/pages/.forge-doc-manifest").exists());
-});
-
-// Test that constants and immutables are documented under "Constants" section when only constants
-// are present.
-// fixes <https://github.com/foundry-rs/foundry/issues/4611>
-forgetest_init!(constants_and_immutables_are_documented_under_constants_section, |prj, cmd| {
-    prj.add_source(
-        "CounterConstants.sol",
-        r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.8.19;
-
-contract CounterConstants {
-    uint256 public constant FOO = 1;
-    uint256 public immutable BAR;
-
-    constructor() {
-        BAR = 2;
-    }
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.CounterConstants.mdx"), None),
-        str![[r#"
----
-title: "CounterConstants"
----
-
-# CounterConstants
-
-## Constants
+// Keep constants-only, state-only, and mixed layouts covered independently.
+#[forgetest_init]
+fn variable_sections(prj: _, cmd: _) {
+    let constants = "uint256 public constant FOO = 1;\nuint256 public immutable BAR;";
+    let state = "uint256 public baz;";
+    let constructor = "constructor() { BAR = 2; }";
+    let increment = "function increment() public { baz++; }";
+    let constants_page = r#"## Constants
 
 ### FOO
 
@@ -1976,9 +2060,17 @@ uint256 public constant FOO = 1;
 uint256 public immutable BAR;
 ```
 
-## Functions
+"#;
+    let state_page = r#"## State Variables
 
-<a id="constructor"></a>
+### baz
+
+```solidity
+uint256 public baz;
+```
+
+"#;
+    let constructor_page = r#"<a id="constructor"></a>
 
 ### constructor
 
@@ -1986,165 +2078,65 @@ uint256 public immutable BAR;
 constructor();
 ```
 
+"#;
+    let increment_page = r#"<a id="increment"></a>
 
-"#]],
-    );
-});
+### increment
 
-// Test that state variables are documented under "State Variables" section when only state
-// variables are present.
-// fixes <https://github.com/foundry-rs/foundry/issues/4611>
-forgetest_init!(state_variables_are_documented_under_state_variables_section, |prj, cmd| {
-    prj.add_source(
-        "CounterStateVariables.sol",
-        r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.8.19;
+```solidity
+function increment() public;
+```
 
-contract CounterStateVariables {
-    uint256 public baz;
-
-    function increment() public {
-        baz++;
-    }
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-
-    assert_data_eq!(
-        Data::read_from(
-            &prj.root().join("docs/src/pages/src/contract.CounterStateVariables.mdx"),
-            None,
+"#;
+    let cases = [
+        (
+            "CounterConstants",
+            constants.to_string(),
+            constructor.to_string(),
+            constants_page.to_string(),
+            constructor_page.to_string(),
         ),
-        str![[r#"
----
-title: "CounterStateVariables"
----
-
-# CounterStateVariables
-
-## State Variables
-
-### baz
-
-```solidity
-uint256 public baz;
-```
-
-## Functions
-
-<a id="increment"></a>
-
-### increment
-
-```solidity
-function increment() public;
-```
-
-
-"#]],
-    );
-});
-
-// Test that constants/immutables and state-variables are documented under separate sections when
-// both are present.
-// fixes <https://github.com/foundry-rs/foundry/issues/4611>
-forgetest_init!(
-    constants_and_immutables_and_state_variables_are_documented_under_separate_sections,
-    |prj, cmd| {
+        (
+            "CounterStateVariables",
+            state.to_string(),
+            increment.to_string(),
+            state_page.to_string(),
+            increment_page.to_string(),
+        ),
+        (
+            "CounterMixedVariables",
+            format!("{constants}\n{state}"),
+            format!("{constructor}\n{increment}"),
+            format!("{constants_page}{state_page}"),
+            format!("{constructor_page}{increment_page}"),
+        ),
+    ];
+    for (name, declarations, functions, _, _) in &cases {
         prj.add_source(
-            "CounterMixedVariables.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.8.19;
-
-contract CounterMixedVariables {
-    uint256 public constant FOO = 1;
-    uint256 public immutable BAR;
-    uint256 public baz;
-
-    constructor() {
-        BAR = 2;
+            &format!("{name}.sol"),
+            &format!(
+                "pragma solidity >=0.8.19;\ncontract {name} {{\n{declarations}\n{functions}\n}}"
+            ),
+        );
     }
-
-    function increment() public {
-        baz++;
+    cmd.arg("doc").assert_success();
+    for (name, _, _, sections, function_sections) in cases {
+        prj.assert_doc_page(
+            &format!("src/contract.{name}.mdx"),
+            format!(
+                "---\ntitle: \"{name}\"\n---\n\n# {name}\n\n{sections}## Functions\n\n{function_sections}"
+            ),
+        );
     }
 }
-"#,
-        );
-
-        cmd.args(["doc"]).assert_success();
-
-        assert_data_eq!(
-            Data::read_from(
-                &prj.root().join("docs/src/pages/src/contract.CounterMixedVariables.mdx"),
-                None,
-            ),
-            str![[r#"
----
-title: "CounterMixedVariables"
----
-
-# CounterMixedVariables
-
-## Constants
-
-### FOO
-
-```solidity
-uint256 public constant FOO = 1;
-```
-
-### BAR
-
-```solidity
-uint256 public immutable BAR;
-```
-
-## State Variables
-
-### baz
-
-```solidity
-uint256 public baz;
-```
-
-## Functions
-
-<a id="constructor"></a>
-
-### constructor
-
-```solidity
-constructor();
-```
-
-<a id="increment"></a>
-
-### increment
-
-```solidity
-function increment() public;
-```
-
-
-"#]],
-        );
-    }
-);
 
 // Test that MDX-unsafe content coming through @inheritdoc is still escaped, and that
 // unnamed return values are rendered as `&lt;none&gt;`.
-forgetest_init!(inheritdoc_mdx_safety_and_unnamed_returns, |prj, cmd| {
+#[forgetest_init]
+fn inheritdoc_mdx_safety_and_unnamed_returns(prj: _, cmd: _) {
     prj.add_source(
         "IUnsafe.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IUnsafe {
     /// @notice Transfer <amount> tokens using {magic} spell
     /// @param amount The value { in wei }
@@ -2157,9 +2149,6 @@ interface IUnsafe {
     prj.add_source(
         "Safe.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./IUnsafe.sol";
 
 contract Safe is IUnsafe {
@@ -2177,8 +2166,8 @@ contract Safe is IUnsafe {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Safe.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Safe.mdx",
         str![[r#"
 ...
 ### transfer
@@ -2210,16 +2199,14 @@ function transfer(uint256 amount) external returns (uint256);
 ...
 "#]],
     );
-});
+}
 
 // Test that inline-link labels containing MDX-sensitive characters are escaped.
-forgetest_init!(inline_link_label_safety, |prj, cmd| {
+#[forgetest_init]
+fn inline_link_label_safety(prj: _, cmd: _) {
     prj.add_source(
         "Token.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract Token {
     function transfer(uint256 amount) external {}
 }
@@ -2229,9 +2216,6 @@ contract Token {
     prj.add_source(
         "Vault.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./Token.sol";
 
 /// @dev See {Token}[Token <contract>] for details
@@ -2243,33 +2227,32 @@ contract Vault {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Vault.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Vault.mdx",
         str![[r#"
 ...
 See [Token &lt;contract>](/src/contract.Token) for details
 ...
 "#]],
     );
-});
+}
 
 // Test that the removed `--serve` flag prints a helpful migration message instead of a raw
 // clap parse error.
-forgetest_init!(serve_flag_prints_migration_message, |prj, cmd| {
+#[forgetest_init]
+fn serve_flag_prints_migration_message(cmd: _) {
     cmd.args(["doc", "--serve"]).assert_failure().stderr_eq(str![[r#"
 Error: `--serve` has been removed. Generate the docs with `forge doc`, then run `npm run dev` from the generated docs directory.
 
 "#]]);
-});
+}
 
 // Test that MDX-unsafe characters in NatSpec are properly escaped in the generated output.
-forgetest_init!(mdx_safety_escaping, |prj, cmd| {
+#[forgetest_init]
+fn mdx_safety_escaping(prj: _, cmd: _) {
     prj.add_source(
         "Escaping.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 /// @notice Contains a bare < angle bracket and a bare { brace.
 /// @dev Reference to {UnresolvableRef} should become inline code.
 contract Escaping {
@@ -2282,8 +2265,8 @@ contract Escaping {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Escaping.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Escaping.mdx",
         str![[r#"
 ...
 Contains a bare &lt; angle bracket and a bare &#123; brace.
@@ -2309,16 +2292,14 @@ function transfer(uint256 amount) external;
 
 "#]],
     );
-});
+}
 
 // Test that multiline @param and @return descriptions (continuation lines) are preserved.
-forgetest_init!(param_return_multiline_continuation, |prj, cmd| {
+#[forgetest_init]
+fn param_return_multiline_continuation(prj: _, cmd: _) {
     prj.add_source(
         "Multiline.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IMultiline {
     /// @notice Do something
     /// @param value The first line of the description.
@@ -2332,8 +2313,8 @@ interface IMultiline {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/interface.IMultiline.mdx"), None),
+    prj.assert_doc_page(
+        "src/interface.IMultiline.mdx",
         str![[r#"
 ...
 **Parameters**
@@ -2350,15 +2331,13 @@ interface IMultiline {
 ...
 "#]],
     );
-});
+}
 
-forgetest_init!(inheritdoc_multiline_param_preserves_inherited_notice, |prj, cmd| {
+#[forgetest_init]
+fn inheritdoc_multiline_param_preserves_inherited_notice(prj: _, cmd: _) {
     prj.add_source(
         "MultilineInheritdoc.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface Root {
     /// @notice Runs the operation
     /// @param value The input value
@@ -2379,8 +2358,8 @@ contract Child is Mid {
     );
 
     cmd.args(["doc"]).assert_success();
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Child.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Child.mdx",
         str![[r#"
 ...
 ### run
@@ -2391,16 +2370,14 @@ Runs the operation
 ...
 "#]],
     );
-});
+}
 
 // Inherited multiline NatSpec retains continuation lines and strips block-comment decorations.
-forgetest_init!(inherited_param_return_multiline_continuation, |prj, cmd| {
+#[forgetest_init]
+fn inherited_param_return_multiline_continuation(prj: _, cmd: _) {
     prj.add_source(
         "InheritedMultiline.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IInheritedMultiline {
     /// @param value The first explicit parameter line.
     ///        The second explicit parameter line.
@@ -2469,11 +2446,8 @@ contract InheritedMultiline is IInheritedMultiline {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(
-            &prj.root().join("docs/src/pages/src/contract.InheritedMultiline.mdx"),
-            None,
-        ),
+    prj.assert_doc_page(
+        "src/contract.InheritedMultiline.mdx",
         str![[r#"
 ...
 ### explicitAction
@@ -2505,9 +2479,19 @@ A separate inherited notice.
 | value | `uint256` | The parameter description. |
 ...
 ### replacedParameter
-...
+
+```solidity
+function replacedParameter(uint256 value) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
 | value | `uint256` | The local parameter description. |
-...
+
+<a id="indentedblock-uint256"></a>
+
 ### indentedBlock
 ...
 | value | `uint256` | Run this code:<br/>    value += 1; |
@@ -2518,17 +2502,16 @@ A separate inherited notice.
 ...
 "#]],
     );
-});
+}
 
-// Test that overload matching uses canonical HIR/ABI parameter types so that
-// `Base.configure(uint)` is correctly matched by `Child.configure(uint256)`.
-forgetest_init!(inheritdoc_overload_matches_uint_alias, |prj, cmd| {
-    prj.add_source(
-        "I.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
+// Explicit inheritance must select the correct overload across canonical type spellings,
+// qualified enums, and non-ABI-printable mapping parameters.
+#[forgetest_init]
+fn inheritdoc_overload_matching(prj: _, cmd: _) {
+    for (base, child, expected) in [
+        // uint_alias.
+        (
+            r#"
 interface I {
     /// @notice Configure by amount.
     /// @param amount The configured amount
@@ -2539,14 +2522,7 @@ interface I {
     function configure(address account) external;
 }
 "#,
-    );
-
-    prj.add_source(
-        "C.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
+            r#"
 import "./I.sol";
 
 contract C is I {
@@ -2557,13 +2533,7 @@ contract C is I {
     function configure(address account) external override {}
 }
 "#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
-        str![[r#"
+            str![[r#"
 ...
 <a id="configure-uint256"></a>
 
@@ -2588,134 +2558,10 @@ function configure(uint256 amount) external override;
 Configure by account.
 ...
 "#]],
-    );
-});
-
-// Test that @inheritdoc parameter descriptions are matched when an implementation
-// prefixes or suffixes interface parameter names with underscores.
-forgetest_init!(inheritdoc_matches_underscore_wrapped_param_names, |prj, cmd| {
-    prj.add_source(
-        "I.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-interface I {
-    /// @notice Mints tokens.
-    /// @param recipient The account receiving minted tokens.
-    /// @param amount The number of tokens to mint.
-    function mint(address recipient, uint256 amount) external;
-}
-"#,
-    );
-
-    prj.add_source(
-        "C.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import "./I.sol";
-
-contract C is I {
-    /// @inheritdoc I
-    function mint(address recipient_, uint256 _amount) external override {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
-        str![[r#"
-...
-### mint
-
-Mints tokens.
-
-```solidity
-function mint(address recipient_, uint256 _amount) external override;
-```
-
-**Parameters**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| recipient_ | `address` | The account receiving minted tokens. |
-| _amount | `uint256` | The number of tokens to mint. |
-...
-"#]],
-    );
-});
-
-// Explicit inheritance maps parameters positionally, even when an override renames one to a name
-// that would have been ambiguous under the old fuzzy name matching.
-forgetest_init!(inheritdoc_maps_ambiguous_renames_positionally, |prj, cmd| {
-    prj.add_source(
-        "I.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-interface I {
-    /// @notice Updates values.
-    /// @param amount Docs for first param.
-    /// @param _amount Docs for second param.
-    function update(uint256 amount, uint256 _amount) external;
-}
-"#,
-    );
-
-    prj.add_source(
-        "C.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import "./I.sol";
-
-contract C is I {
-    /// @inheritdoc I
-    function update(uint256 other, uint256 _amount) external override {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
-        str![[r#"
-...
-### update
-
-Updates values.
-
-```solidity
-function update(uint256 other, uint256 _amount) external override;
-```
-
-**Parameters**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| other | `uint256` | Docs for first param. |
-| _amount | `uint256` | Docs for second param. |
-...
-"#]],
-    );
-});
-
-// Test that overload matching uses canonical HIR/ABI parameter types so that
-// `Base.batch(uint[])` is correctly matched by `Child.batch(uint256[])`.
-forgetest_init!(inheritdoc_overload_matches_uint_array_alias, |prj, cmd| {
-    prj.add_source(
-        "I.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
+        ),
+        // uint_array_alias.
+        (
+            r#"
 interface I {
     /// @notice Batch values.
     /// @param values The input array
@@ -2726,14 +2572,7 @@ interface I {
     function batch(address[] calldata accounts) external;
 }
 "#,
-    );
-
-    prj.add_source(
-        "C.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
+            r#"
 import "./I.sol";
 
 contract C is I {
@@ -2744,13 +2583,7 @@ contract C is I {
     function batch(address[] calldata accounts) external override {}
 }
 "#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
-        str![[r#"
+            str![[r#"
 ...
 <a id="batch-uint256"></a>
 
@@ -2775,18 +2608,10 @@ function batch(uint256[] calldata values) external override;
 Batch accounts.
 ...
 "#]],
-    );
-});
-
-// Test that overload matching uses canonical HIR/ABI parameter types so that
-// semantically identical type spellings (`I.Status` vs `Status`) still match.
-forgetest_init!(inheritdoc_overload_matches_qualified_enum_alias, |prj, cmd| {
-    prj.add_source(
-        "I.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
+        ),
+        // qualified_enum_alias.
+        (
+            r#"
 interface I {
     enum Status { Inactive, Active }
 
@@ -2799,14 +2624,7 @@ interface I {
     function configure(uint256 id) external;
 }
 "#,
-    );
-
-    prj.add_source(
-        "C.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
+            r#"
 import "./I.sol";
 
 contract C is I {
@@ -2817,13 +2635,7 @@ contract C is I {
     function configure(uint256 id) external override {}
 }
 "#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
-        str![[r#"
+            str![[r#"
 ...
 <a id="configure-status"></a>
 
@@ -2848,18 +2660,10 @@ function configure(Status s) external override;
 Configures by raw id.
 ...
 "#]],
-    );
-});
-
-// Test that internal overloads with non-ABI-printable parameters use source text
-// as a fallback instead of panicking while resolving @inheritdoc.
-forgetest_init!(inheritdoc_overload_matches_mapping_fallback, |prj, cmd| {
-    prj.add_source(
-        "Base.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
+        ),
+        // mapping_fallback.
+        (
+            r#"
 abstract contract Base {
     /// @notice Configure by store.
     /// @param store The storage mapping
@@ -2870,15 +2674,8 @@ abstract contract Base {
     function configure(address account) internal virtual;
 }
 "#,
-    );
-
-    prj.add_source(
-        "C.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import "./Base.sol";
+            r#"
+import "./I.sol";
 
 contract C is Base {
     /// @inheritdoc Base
@@ -2888,13 +2685,7 @@ contract C is Base {
     function configure(address account) internal override {}
 }
 "#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
-        str![[r#"
+            str![[r#"
 ...
 <a id="configure-mapping-uint256-uint256"></a>
 
@@ -2919,18 +2710,128 @@ function configure(mapping(uint256 => uint256) storage store) internal override;
 Configure by account.
 ...
 "#]],
+        ),
+    ] {
+        prj.add_source("I.sol", base);
+        prj.add_source("C.sol", child);
+        cmd.forge_fuse().args(["doc"]).assert_success();
+        prj.assert_doc_page("src/contract.C.mdx", expected);
+    }
+}
+
+// Test that @inheritdoc parameter descriptions are matched when an implementation
+// prefixes or suffixes interface parameter names with underscores.
+#[forgetest_init]
+fn inheritdoc_matches_underscore_wrapped_param_names(prj: _, cmd: _) {
+    prj.add_source(
+        "I.sol",
+        r#"
+interface I {
+    /// @notice Mints tokens.
+    /// @param recipient The account receiving minted tokens.
+    /// @param amount The number of tokens to mint.
+    function mint(address recipient, uint256 amount) external;
+}
+"#,
     );
-});
+
+    prj.add_source(
+        "C.sol",
+        r#"
+import "./I.sol";
+
+contract C is I {
+    /// @inheritdoc I
+    function mint(address recipient_, uint256 _amount) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    prj.assert_doc_page(
+        "src/contract.C.mdx",
+        str![[r#"
+...
+### mint
+
+Mints tokens.
+
+```solidity
+function mint(address recipient_, uint256 _amount) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| recipient_ | `address` | The account receiving minted tokens. |
+| _amount | `uint256` | The number of tokens to mint. |
+...
+"#]],
+    );
+}
+
+// Explicit inheritance maps parameters positionally, even when an override renames one to a name
+// that would have been ambiguous under the old fuzzy name matching.
+#[forgetest_init]
+fn inheritdoc_maps_ambiguous_renames_positionally(prj: _, cmd: _) {
+    prj.add_source(
+        "I.sol",
+        r#"
+interface I {
+    /// @notice Updates values.
+    /// @param amount Docs for first param.
+    /// @param _amount Docs for second param.
+    function update(uint256 amount, uint256 _amount) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "C.sol",
+        r#"
+import "./I.sol";
+
+contract C is I {
+    /// @inheritdoc I
+    function update(uint256 other, uint256 _amount) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    prj.assert_doc_page(
+        "src/contract.C.mdx",
+        str![[r#"
+...
+### update
+
+Updates values.
+
+```solidity
+function update(uint256 other, uint256 _amount) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| other | `uint256` | Docs for first param. |
+| _amount | `uint256` | Docs for second param. |
+...
+"#]],
+    );
+}
 
 // Test that @inheritdoc resolves docs from a deeply inherited chain
 // (Base inherits from an interface without redeclaring NatSpec).
-forgetest_init!(inheritdoc_resolves_deep_chain, |prj, cmd| {
+#[forgetest_init]
+fn inheritdoc_resolves_deep_chain(prj: _, cmd: _) {
     prj.add_source(
         "IBase.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IBase {
     /// @notice Perform the action
     /// @param value The input value
@@ -2942,9 +2843,6 @@ interface IBase {
     prj.add_source(
         "Base.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./IBase.sol";
 
 abstract contract Base is IBase {
@@ -2957,9 +2855,6 @@ abstract contract Base is IBase {
     prj.add_source(
         "Derived.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./Base.sol";
 
 contract Derived is Base {
@@ -2971,8 +2866,8 @@ contract Derived is Base {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Derived.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Derived.mdx",
         str![[r#"
 ...
 ### action
@@ -2991,19 +2886,17 @@ function action(uint256 value) external override;
 ...
 "#]],
     );
-});
+}
 
 // Test two rendering behaviors together:
 // 1. /** */ block comments are stripped of their ` * ` line decoration.
 // 2. `@dev` paragraphs are wrapped in `<i>...</i>` so multi-paragraph content and embedded lists
 //    render as italic without breaking block-level markdown.
-forgetest_init!(block_comments_strip_star_and_dev_renders_italic, |prj, cmd| {
+#[forgetest_init]
+fn block_comments_strip_star_and_dev_renders_italic(prj: _, cmd: _) {
     prj.add_source(
-        "ECDSA.sol",
+"ECDSA.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 /**
  * @notice Library for verifying ECDSA signatures.
  * @dev Elliptic Curve Digital Signature Algorithm (ECDSA) operations.
@@ -3043,8 +2936,8 @@ library ECDSA {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/library.ECDSA.mdx"), None),
+    prj.assert_doc_page(
+        "src/library.ECDSA.mdx",
         str![[r#"
 ---
 title: "ECDSA"
@@ -3140,18 +3033,16 @@ function tryRecover(bytes32 hash, uint8 v, bytes32 r, bytes32 s) internal pure r
 
 "#]],
     );
-});
+}
 
 // Test that @inheritdoc on a public state variable resolves docs from the interface getter
 // function (e.g. ERC20's `totalSupply()`).
 // fixes <https://github.com/foundry-rs/foundry/pull/14568>
-forgetest_init!(inheritdoc_variable_resolves_interface_getter, |prj, cmd| {
+#[forgetest_init]
+fn inheritdoc_variable_resolves_interface_getter(prj: _, cmd: _) {
     prj.add_source(
         "IERC20.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 interface IERC20 {
     /// @notice Returns the total token supply.
     /// @return The total supply.
@@ -3163,9 +3054,6 @@ interface IERC20 {
     prj.add_source(
         "ERC20.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import "./IERC20.sol";
 
 contract ERC20 is IERC20 {
@@ -3177,8 +3065,8 @@ contract ERC20 is IERC20 {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.ERC20.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.ERC20.mdx",
         str![[r#"
 ...
 ### totalSupply
@@ -3197,7 +3085,7 @@ uint256 public totalSupply;
 ...
 "#]],
     );
-});
+}
 
 // Test that `**Inherits:**` links resolve to the actually-inherited contract even
 // when another contract with the same name lives in a directory closer to the
@@ -3207,15 +3095,13 @@ uint256 public totalSupply;
 // links on the same page ({member} and {Contract-member} self-references), and that
 // same-file inheritance links to the same-file base instead of a same-named decoy.
 // fixes <https://github.com/foundry-rs/foundry/issues/11677>
-forgetest_init!(same_contract_references_resolve_to_anchors, |prj, cmd| {
+#[forgetest_init]
+fn same_contract_references_resolve_to_anchors(prj: _, cmd: _) {
     // Decoys: same-named library and interface in a sibling directory that sorts
     // first; references in `external/OlympusERC20.sol` must not resolve to them.
     prj.add_source(
         "decoys/Decoys.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 library ECDSA {
     function tryRecover(bytes32 hash) internal pure returns (address) {}
 }
@@ -3229,9 +3115,6 @@ interface IERC20 {
     prj.add_source(
         "external/OlympusERC20.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 library ECDSA {
     /// @dev A safe way to ensure this is by receiving a hash of the original
     /// message and then calling {toEthSignedMessageHash} on it.
@@ -3256,8 +3139,8 @@ interface IOHM is IERC20 {
     cmd.args(["doc"]).assert_success();
 
     // Same-contract member references become anchor-only links.
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/external/library.ECDSA.mdx"), None),
+    prj.assert_doc_page(
+        "src/external/library.ECDSA.mdx",
         str![[r#"
 ---
 title: "ECDSA"
@@ -3346,8 +3229,8 @@ function toEthSignedMessageHash(bytes32 hash) internal pure returns (bytes32);
     );
 
     // Same-file inheritance links to the same-file interface, not the decoy.
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/external/interface.IOHM.mdx"), None),
+    prj.assert_doc_page(
+        "src/external/interface.IOHM.mdx",
         str![[r#"
 ---
 title: "IOHM"
@@ -3376,15 +3259,13 @@ function mint(address account_) external;
 
 "#]],
     );
-});
+}
 
-forgetest_init!(inherited_member_references_resolve_to_base_page, |prj, cmd| {
+#[forgetest_init]
+fn inherited_member_references_resolve_to_base_page(prj: _, cmd: _) {
     prj.add_source(
         "base/A.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract A {
     struct Payload {
         uint256 value;
@@ -3412,9 +3293,6 @@ contract A {
     prj.add_source(
         "consumer/A.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract A {
     function foo() external {}
 }
@@ -3427,9 +3305,6 @@ contract Utility {
     prj.add_source(
         "consumer/B.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import {A as BaseA} from "../base/A.sol";
 
 contract B is BaseA {
@@ -3447,8 +3322,8 @@ contract B is BaseA {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/consumer/contract.B.mdx"), None),
+    prj.assert_doc_page(
+        "src/consumer/contract.B.mdx",
         str![[r#"
 ...
 See [foo](/src/base/contract.A#foo) or [A.foo](/src/base/contract.A#foo).
@@ -3461,15 +3336,13 @@ Non-inherited qualified reference [Utility.work](/src/consumer/contract.Utility#
 ...
 "#]],
     );
-});
+}
 
-forgetest_init!(unrendered_override_does_not_link_to_ancestor, |prj, cmd| {
+#[forgetest_init]
+fn unrendered_override_does_not_link_to_ancestor(prj: _, cmd: _) {
     prj.add_source(
         "ancestor/A.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract A {
     function foo() public virtual {}
 }
@@ -3478,9 +3351,6 @@ contract A {
     prj.add_source(
         "hidden/Middle.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import {A} from "../ancestor/A.sol";
 
 contract Middle is A {
@@ -3491,9 +3361,6 @@ contract Middle is A {
     prj.add_source(
         "Middle.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract Middle {
     function foo() public {}
 }
@@ -3502,9 +3369,6 @@ contract Middle {
     prj.add_source(
         "Child.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import {Middle} from "./hidden/Middle.sol";
 
 contract Child is Middle {
@@ -3517,23 +3381,21 @@ contract Child is Middle {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Child.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Child.mdx",
         str![[r#"
 ...
 See `foo` and `Middle`.
 ...
 "#]],
     );
-});
+}
 
-forgetest_init!(ambiguous_inherited_contract_name_does_not_link, |prj, cmd| {
+#[forgetest_init]
+fn ambiguous_inherited_contract_name_does_not_link(prj: _, cmd: _) {
     prj.add_source(
         "left/A.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract A {
     function left() external {}
 }
@@ -3542,9 +3404,6 @@ contract A {
     prj.add_source(
         "right/A.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract A {
     function right() external {}
 }
@@ -3553,9 +3412,6 @@ contract A {
     prj.add_source(
         "Child.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import {A as LeftA} from "./left/A.sol";
 import {A as RightA} from "./right/A.sol";
 
@@ -3568,23 +3424,21 @@ contract Child is LeftA, RightA {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Child.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Child.mdx",
         str![[r#"
 ...
 See `A`.
 ...
 "#]],
     );
-});
+}
 
-forgetest_init!(inherited_special_function_links_use_declaring_page, |prj, cmd| {
+#[forgetest_init]
+fn inherited_special_function_links_use_declaring_page(prj: _, cmd: _) {
     prj.add_source(
         "Special.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract A {
     constructor() {}
     fallback() external payable {}
@@ -3604,8 +3458,8 @@ contract Child is Middle {
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Child.mdx"), None),
+    prj.assert_doc_page(
+        "src/contract.Child.mdx",
         str![[r#"
 ...
 Bare `constructor`, [fallback](/src/contract.A#fallback), and [receive](/src/contract.A#receive).
@@ -3614,25 +3468,20 @@ A [A.constructor](/src/contract.A#constructor), [A.fallback](/src/contract.A#fal
 ...
 "#]],
     );
-});
+}
 
-forgetest_init!(inheritance_links_use_exact_base_id, |prj, cmd| {
+#[forgetest_init]
+fn inheritance_links_use_exact_base_id(prj: _, cmd: _) {
     // Two unrelated `Token` contracts in sibling directories.
     prj.add_source(
         "a/Token.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract Token {}
 "#,
     );
     prj.add_source(
         "b/Token.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 contract Token {}
 "#,
     );
@@ -3641,9 +3490,6 @@ contract Token {}
     prj.add_source(
         "a/Consumer.sol",
         r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 import {Token} from "../b/Token.sol";
 
 contract Consumer is Token {}
@@ -3652,8 +3498,8 @@ contract Consumer is Token {}
 
     cmd.args(["doc"]).assert_success();
 
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/a/contract.Consumer.mdx"), None),
+    prj.assert_doc_page(
+        "src/a/contract.Consumer.mdx",
         str![[r#"
 ---
 title: "Consumer"
@@ -3666,4 +3512,26 @@ title: "Consumer"
 
 "#]],
     );
-});
+}
+
+trait DocProject {
+    fn assert_doc_page(&self, page: &str, expected: impl IntoData);
+    fn assert_doc_functions(&self, page: &str, expected: impl IntoData);
+}
+
+impl DocProject for TestProject {
+    #[track_caller]
+    fn assert_doc_page(&self, page: &str, expected: impl IntoData) {
+        assert_data_eq!(
+            fs::read_to_string(self.root().join("docs/src/pages").join(page)).unwrap(),
+            expected
+        );
+    }
+
+    #[track_caller]
+    fn assert_doc_functions(&self, page: &str, expected: impl IntoData) {
+        let page = fs::read_to_string(self.root().join("docs/src/pages").join(page)).unwrap();
+        let (_, functions) = page.split_once("## Functions\n\n").expect("missing function section");
+        assert_data_eq!(functions, expected);
+    }
+}

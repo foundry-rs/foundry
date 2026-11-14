@@ -11,6 +11,7 @@ use crate::{
 };
 use solar::{
     ast::{ContractKind, StateMutability},
+    data_structures::map::FxIndexSet,
     interface::Span,
     sema::{
         Gcx,
@@ -300,7 +301,7 @@ impl<'gcx> Visit<'gcx> for UseAnalyzer<'_, 'gcx> {
 
 // --- Writes without events --------------------------------------------------------------------
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct StateWrite {
     var_id: VariableId,
     span: Span,
@@ -311,8 +312,9 @@ struct StateWrite {
 struct WriteState {
     /// Locals holding a value that is not a compile-time constant.
     dynamic: HashSet<VariableId>,
-    /// Target writes not yet followed by an `emit`.
-    writes: Vec<StateWrite>,
+    /// Unique target writes not yet followed by an `emit`, in first-seen order.
+    /// Deduplication prevents branch joins from multiplying identical pending writes.
+    writes: FxIndexSet<StateWrite>,
 }
 
 fn merge(lhs: Option<WriteState>, rhs: Option<WriteState>) -> Option<WriteState> {
@@ -360,10 +362,12 @@ struct WriteAnalyzer<'a, 'gcx> {
 }
 
 impl<'gcx> WriteAnalyzer<'_, 'gcx> {
-    fn analyze_entry_point(&mut self, func_id: FunctionId) -> Vec<StateWrite> {
+    fn analyze_entry_point(&mut self, func_id: FunctionId) -> FxIndexSet<StateWrite> {
         let func = self.gcx.hir.function(func_id);
-        let state =
-            WriteState { dynamic: func.parameters.iter().copied().collect(), writes: Vec::new() };
+        let state = WriteState {
+            dynamic: func.parameters.iter().copied().collect(),
+            writes: FxIndexSet::default(),
+        };
         let mut state = self.analyze_function(func_id, state).merged();
         // Modifier code after `_` runs once the body finished, innermost modifier first, and may
         // still emit for the body's writes.
@@ -522,7 +526,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     fn record_writes(&self, state: &mut WriteState, lhs: &Expr<'_>) {
         for var_id in state_lhs_vars(self.gcx, lhs) {
             if self.targets.contains(&var_id) {
-                state.writes.push(StateWrite { var_id, span: lhs.span });
+                state.writes.insert(StateWrite { var_id, span: lhs.span });
             }
         }
     }
@@ -556,5 +560,35 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
             if dynamic { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
         })
         .is_break()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solar::interface::BytePos;
+
+    #[test]
+    fn merge_deduplicates_writes_in_order() {
+        let first = StateWrite { var_id: VariableId::new(0), span: Span::DUMMY };
+        let another_span =
+            StateWrite { var_id: first.var_id, span: Span::new(BytePos(1), BytePos(2)) };
+        let another_var = StateWrite { var_id: VariableId::new(1), span: first.span };
+        let lhs = WriteState { writes: [first].into_iter().collect(), ..Default::default() };
+        let rhs = WriteState {
+            writes: [first, another_span, another_var].into_iter().collect(),
+            ..Default::default()
+        };
+        let mut state = merge(Some(lhs), Some(rhs)).unwrap();
+        let expected = [first, another_span, another_var].map(|write| (write.var_id, write.span));
+
+        // Each join must retain one copy per write site, even after repeated branching.
+        for _ in 0..32 {
+            assert_eq!(
+                state.writes.iter().map(|write| (write.var_id, write.span)).collect::<Vec<_>>(),
+                expected,
+            );
+            state = merge(Some(state.clone()), Some(state)).unwrap();
+        }
     }
 }

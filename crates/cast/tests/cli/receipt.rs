@@ -4,7 +4,8 @@ use super::*;
 
 // tests that revert reason is only present if transaction has reverted.
 
-casttest!(receipt_revert_reason, |_prj, cmd| {
+#[casttest]
+fn receipt_revert_reason(cmd: _) {
     let rpc = next_http_archive_rpc_url();
 
     // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
@@ -66,12 +67,13 @@ blobGasUsed          {}
 to                   0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
 revertReason         [..]Transaction too old, data: "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000135472616e73616374696f6e20746f6f206f6c6400000000000000000000000000"
 "#,"","","",""));
-});
+}
 
 // tests that the revert reason is loaded using the correct `from` address.
 // Flaky: Sepolia RPC may not return the revertReason field depending on provider
 // support for debug/trace APIs.
-casttest!(flaky_revert_reason_from, |_prj, cmd| {
+#[casttest]
+fn flaky_revert_reason_from(cmd: _) {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     // https://sepolia.etherscan.io/tx/0x10ee70cf9f5ced5c515e8d53bfab5ea9f5c72cd61b25fba455c8355ee286c4e4
     cmd.args([
@@ -101,4 +103,4 @@ blobGasUsed          {}
 to                   0x91b5d4111a4C038153b24e31F75ccdC47123595d
 ...
 "#, "", "", "", ""));
-});
+}

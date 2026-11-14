@@ -7,6 +7,8 @@ use alloy_primitives::{U256, hex};
 use eyre::{Result, bail};
 use foundry_common::{TestFunctionExt, contracts::ContractsByArtifact, fs, sh_warn};
 use foundry_config::Config;
+use foundry_evm::constants::CALLER;
+use foundry_evm_symbolic::SYMBOLIC_VM_COMPAT_ADDRESS;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Write,
@@ -231,9 +233,21 @@ fn plan_symbolic_regression(
     writeln!(contents)?;
     writeln!(contents, "interface {vm_interface} {{")?;
     writeln!(contents, "    function deal(address who, uint256 newBalance) external;")?;
+    if artifact.calls.iter().any(|call| !call.svm_returns.is_empty()) {
+        writeln!(
+            contents,
+            "    function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;"
+        )?;
+    }
     writeln!(contents, "    function prank(address msgSender) external;")?;
     writeln!(contents, "    function roll(uint256 newHeight) external;")?;
     writeln!(contents, "    function warp(uint256 newTimestamp) external;")?;
+    if !artifact.storage.is_empty() {
+        writeln!(
+            contents,
+            "    function store(address target, bytes32 slot, bytes32 value) external;"
+        )?;
+    }
     writeln!(contents, "}}")?;
     writeln!(contents)?;
     writeln!(contents, "contract {generated_contract} is {contract} {{")?;
@@ -250,6 +264,15 @@ fn plan_symbolic_regression(
     writeln!(contents, "    }}")?;
     writeln!(contents)?;
     writeln!(contents, "    function {generated_test}() public payable {{")?;
+    for assignment in &artifact.storage {
+        writeln!(
+            contents,
+            "        __foundrySymbolicVm.store({}, bytes32(uint256({})), bytes32(uint256({})));",
+            assignment.address,
+            u256_literal(assignment.slot),
+            u256_literal(assignment.value)
+        )?;
+    }
     match artifact.kind {
         SymbolicCounterexampleArtifactKind::SingleCall => {
             let call = artifact.calls.first().expect("single-call artifact has at least one call");
@@ -266,12 +289,14 @@ fn plan_symbolic_regression(
                     Some(index),
                 )?;
             }
+            writeln!(contents, "        __foundrySymbolicVm.prank({CALLER});")?;
             writeln!(
                 contents,
                 "        __foundrySymbolicRegressionCall(address(this), hex\"{}\", 0, true);",
                 hex::encode(selector_from_signature(&artifact.test.test))
             )?;
             if call_after_invariant {
+                writeln!(contents, "        __foundrySymbolicVm.prank({CALLER});")?;
                 writeln!(
                     contents,
                     "        __foundrySymbolicRegressionCall(address(this), hex\"{}\", 0, true);",
@@ -405,6 +430,22 @@ fn write_call(
             )?;
         }
     }
+    if !call.svm_returns.is_empty() {
+        writeln!(out, "        {{")?;
+        writeln!(
+            out,
+            "            bytes[] memory svmReturns = new bytes[]({});",
+            call.svm_returns.len()
+        )?;
+        for (index, data) in call.svm_returns.iter().enumerate() {
+            writeln!(out, "            svmReturns[{index}] = hex\"{}\";", hex::encode(data))?;
+        }
+        writeln!(
+            out,
+            "            __foundrySymbolicVm.mockCalls({SYMBOLIC_VM_COMPAT_ADDRESS}, \"\", svmReturns);"
+        )?;
+        writeln!(out, "        }}")?;
+    }
     writeln!(out, "        __foundrySymbolicVm.prank({});", call.sender)?;
     let value = sequence_call_index
         .filter(|_| call.value.is_some_and(|value| !value.is_zero()))
@@ -457,7 +498,7 @@ fn selector_from_signature(signature: &str) -> [u8; 4] {
 }
 
 fn u256_literal(value: U256) -> String {
-    if value <= U256::from(u128::MAX) { value.to_string() } else { format!("0x{value:x}") }
+    if value <= U256::from(u128::MAX) { value.to_string() } else { format!("{value:#x}") }
 }
 
 fn sanitize_identifier(value: &str) -> String {
@@ -556,6 +597,7 @@ mod tests {
                 args: None,
                 raw_args: None,
                 value: call.value,
+                svm_returns: Vec::new(),
             },
         );
         let mut artifact = SymbolicCounterexampleArtifact::new(
@@ -585,6 +627,7 @@ mod tests {
             signature: None,
             args: None,
             raw_args: None,
+            svm_returns: Vec::new(),
         }
     }
 

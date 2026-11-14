@@ -1,0 +1,18 @@
+# Runs `cargo update` weekly, resolving only releases older than the 7-day cooldown.
+
+name: Dependencies
+
+on:
+  schedule:
+    - cron: "0 0 * * SUN"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  update:
+    if: github.repository == 'foundry-rs/foundry'
+    permissions:
+      contents: read
+      id-token: write
+    uses: tempoxyz/gh-actions/.github/workflows/cargo-update-pr.yml@75284a9f2d71122060d00c1b37bc0fa99568c5e5 # 2026-10-26T18-30-39Z-75284a9f

@@ -11,6 +11,8 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
+use evm2::interpreter::opcode::OpCode;
+use evm2_inspectors::ColorChoice;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     shell,
@@ -18,8 +20,6 @@ use foundry_common::{
 use foundry_config::{Chain, Config};
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
-use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::{OpcodeFilter, types::DecodedTraceStep};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -85,12 +85,13 @@ impl TraceContext {
     }
 }
 
-pub use revm_inspectors::tracing::{
+pub use evm2_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
-        CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
-        DecodedCallTrace, TraceMemberOrder,
+        CallKind, CallLog, CallTrace, CallTraceNode, CallTraceStep, DecodedCallData,
+        DecodedCallLog, DecodedCallTrace, DecodedInternalCall, DecodedTraceStep, RecordedMemory,
+        StorageChange, StorageChangeReason, TraceMemberOrder,
     },
 };
 
@@ -110,6 +111,8 @@ pub mod folded_stack_trace;
 
 pub mod backtrace;
 pub mod speedscope;
+
+pub mod erc8021;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
@@ -147,6 +150,9 @@ pub struct SparsedTraceArena {
     /// Presentation-only revert diagnostics, keyed by trace node index.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub diagnostics: HashMap<usize, RevertDiagnostic>,
+    /// The opcode steps recorded for the debugger, if a debug recorder ran.
+    #[serde(skip)]
+    pub debug_steps: Option<debug::DebugRecording>,
 }
 
 impl Serialize for SparsedTraceArena {
@@ -202,15 +208,12 @@ impl SparsedTraceArena {
                 ignored: &HashMap<(usize, usize), (usize, usize)>,
                 cur_ignore_end: &mut Option<(usize, usize)>,
             ) {
-                // Prepend an additional None item to the ordering to handle the beginning of the
-                // trace.
-                let items = std::iter::once(None)
-                    .chain(nodes[node_idx].ordering.clone().into_iter().map(Some))
-                    .enumerate();
-
                 let mut internal_calls = Vec::new();
                 let mut items_to_remove = BTreeSet::new();
-                for (item_idx, item) in items {
+                // Item 0 is an additional None item before the ordering to handle the beginning
+                // of the trace. The ordering of this node only changes after the loop.
+                for item_idx in 0..=nodes[node_idx].ordering.len() {
+                    let item = item_idx.checked_sub(1).map(|idx| nodes[node_idx].ordering[idx]);
                     if let Some(end_node) = ignored.get(&(node_idx, item_idx)) {
                         *cur_ignore_end = Some(*end_node);
                     }
@@ -278,6 +281,43 @@ impl SparsedTraceArena {
             self.apply_diagnostics(&mut arena);
 
             Cow::Owned(arena)
+        }
+    }
+
+    /// Makes a single top-level call that ran below the transaction the root node, one level up.
+    ///
+    /// A transaction handler can run the top-level calls one level below the transaction, such as
+    /// Tempo's for the calls of an AA transaction. The tracer then keeps an empty root node above
+    /// them. With more than one top-level call, that root groups the calls and stays.
+    ///
+    /// The debug recorder already records the steps of a single such call one level up, so only
+    /// its frames move here.
+    pub fn lift_single_top_level_call(&mut self) {
+        let nodes = self.arena.nodes_mut();
+        if nodes.len() < 2 || nodes[0].children.len() != 1 || nodes[0].trace != CallTrace::default()
+        {
+            return;
+        }
+        nodes.remove(0);
+        for node in nodes {
+            node.idx -= 1;
+            node.parent = node.parent.and_then(|parent| parent.checked_sub(1));
+            node.children.iter_mut().for_each(|child| *child -= 1);
+            node.trace.depth -= 1;
+        }
+        self.ignored = std::mem::take(&mut self.ignored)
+            .into_iter()
+            .map(|((start_node, start_step), (end_node, end_step))| {
+                ((start_node.saturating_sub(1), start_step), (end_node.saturating_sub(1), end_step))
+            })
+            .collect();
+        self.diagnostics = std::mem::take(&mut self.diagnostics)
+            .into_iter()
+            .filter_map(|(node_idx, diagnostic)| Some((node_idx.checked_sub(1)?, diagnostic)))
+            .collect();
+        if let Some(debug_steps) = &mut self.debug_steps {
+            debug_steps.frames.remove(0);
+            debug_steps.frames.iter_mut().for_each(|frame| frame.depth -= 1);
         }
     }
 }
@@ -375,7 +415,12 @@ pub fn trace_arena_at_depth(arena: &SparsedTraceArena, depth: usize) -> SparsedT
         }
     }
 
-    SparsedTraceArena { arena, ignored: Default::default(), diagnostics: Default::default() }
+    SparsedTraceArena {
+        arena,
+        ignored: Default::default(),
+        diagnostics: Default::default(),
+        debug_steps: None,
+    }
 }
 
 /// Render a collection of call traces to a string optionally including contract creation bytecodes
@@ -485,8 +530,8 @@ fn format_channel_state(value: U256) -> String {
 }
 
 fn decode_channel_state(value: U256) -> (U256, U256, u32) {
-    let mask96 = (U256::from(1) << 96) - U256::from(1);
-    let mask32 = (U256::from(1) << 32) - U256::from(1);
+    let mask96 = (U256::ONE << 96) - U256::ONE;
+    let mask32 = (U256::ONE << 32) - U256::ONE;
     let settled: U256 = value & mask96;
     let deposit: U256 = (value >> 96usize) & mask96;
     let close_requested_at_word: U256 = (value >> 192usize) & mask32;
@@ -495,14 +540,14 @@ fn decode_channel_state(value: U256) -> (U256, U256, u32) {
 }
 
 fn format_storage_word(value: U256) -> String {
-    if value < U256::from(1_000_000u64) { value.to_string() } else { format!("0x{value:x}") }
+    if value < U256::from(1_000_000u64) { value.to_string() } else { format!("{value:#x}") }
 }
 
-const fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
+const fn convert_color_choice(choice: shell::ColorChoice) -> ColorChoice {
     match choice {
-        shell::ColorChoice::Auto => revm_inspectors::ColorChoice::Auto,
-        shell::ColorChoice::Always => revm_inspectors::ColorChoice::Always,
-        shell::ColorChoice::Never => revm_inspectors::ColorChoice::Never,
+        shell::ColorChoice::Auto => ColorChoice::Auto,
+        shell::ColorChoice::Always => ColorChoice::Always,
+        shell::ColorChoice::Never => ColorChoice::Never,
     }
 }
 
@@ -601,6 +646,8 @@ pub struct TraceRequirements {
     returndata_snapshots: bool,
     immediate_bytes: bool,
     state_diff: bool,
+    bytecode: bool,
+    debug_recording: bool,
 }
 
 impl TraceRequirements {
@@ -613,6 +660,8 @@ impl TraceRequirements {
             returndata_snapshots: false,
             immediate_bytes: false,
             state_diff: false,
+            bytecode: false,
+            debug_recording: false,
         }
     }
 
@@ -629,6 +678,8 @@ impl TraceRequirements {
         self.returndata_snapshots |= other.returndata_snapshots;
         self.immediate_bytes |= other.immediate_bytes;
         self.state_diff |= other.state_diff;
+        self.bytecode |= other.bytecode;
+        self.debug_recording |= other.debug_recording;
         self
     }
 
@@ -656,8 +707,27 @@ impl TraceRequirements {
             self.returndata_snapshots = true;
             self.immediate_bytes = true;
             self.state_diff = true;
+            self.bytecode = true;
         }
         self
+    }
+
+    /// Records the debugger's opcode steps with a debug recorder instead of the tracer.
+    ///
+    /// The tracer keeps the call trace and the bytecode of each call; the steps go straight into
+    /// one step table, see [`debug::DebugRecording`].
+    pub const fn with_debug_recording(mut self, yes: bool) -> Self {
+        if yes {
+            self.calls = true;
+            self.bytecode = true;
+            self.debug_recording = true;
+        }
+        self
+    }
+
+    /// Whether a debug recorder records the opcode steps.
+    pub const fn debug_recording(&self) -> bool {
+        self.debug_recording
     }
 
     pub const fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
@@ -690,7 +760,9 @@ impl TraceRequirements {
         match verbosity {
             0..3 => self,
             3..=4 => self.with_calls(true),
-            _ if matches!(self.steps, StepRecording::All) => self.with_calls(true),
+            _ if matches!(self.steps, StepRecording::All) || self.debug_recording => {
+                self.with_calls(true)
+            }
             _ => self.with_state_changes(true),
         }
     }
@@ -703,6 +775,9 @@ impl TraceRequirements {
         let steps = if self.state_diff { StepRecording::All } else { self.steps };
         TracingInspectorConfig {
             record_steps: steps != StepRecording::None,
+            record_inputs: true,
+            record_bytecode: self.bytecode,
+            step_limit: None,
             record_memory_snapshots: self.memory_snapshots,
             record_stack_snapshots: if self.stack_snapshots {
                 StackSnapshotType::Full
@@ -715,11 +790,12 @@ impl TraceRequirements {
             record_opcodes_filter: match steps {
                 StepRecording::None | StepRecording::All => None,
                 StepRecording::Jumps => {
-                    Some(OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST))
+                    Some([OpCode::JUMP, OpCode::JUMPDEST].into_iter().map(OpCode::get).collect())
                 }
             },
-            exclude_precompile_calls: false,
+            record_precompile_calls: false,
             record_immediate_bytes: self.immediate_bytes,
+            record_step_deltas: false,
         }
         .into()
     }
@@ -728,10 +804,94 @@ impl TraceRequirements {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::TransactionBuilder;
     use alloy_primitives::Bytes;
-    use foundry_config::NamedChain;
-    use revm::interpreter::InstructionResult;
-    use revm_inspectors::tracing::types::{CallTraceStep, StorageChange, StorageChangeReason};
+    use evm2::{
+        bytecode::Bytecode,
+        evm::{AccountInfo, InMemoryDB},
+        interpreter::InstrStop,
+    };
+    use foundry_evm_core::evm::{
+        EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxConversion, SpecFor,
+        TransactionRequestFor, TypesFor,
+    };
+    use snapbox::{assert_data_eq, str};
+
+    /// Traces a call to a contract whose sub-call reverts without data on `FEN`'s default spec, and
+    /// renders the decoded trace.
+    async fn render_reverting_subcall<FEN: FoundryEvmNetwork>() -> String
+    where
+        TransactionRequestFor<FEN>: Default,
+    {
+        let (caller, target, reverter) = (
+            Address::with_last_byte(0xCA),
+            Address::with_last_byte(0xC0),
+            Address::with_last_byte(0xC1),
+        );
+        // `call(gas(), reverter, 0, 0, 0, 0, 0); stop`.
+        let mut code = [0x60, 0x00].repeat(5);
+        code.push(0x73);
+        code.extend_from_slice(reverter.as_slice());
+        code.extend([0x5a, 0xf1, 0x00]);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(&caller, AccountInfo::default().with_balance(U256::from(1e18)));
+        for (address, code) in [(target, &code[..]), (reverter, &[0x60, 0x00, 0x60, 0x00, 0xfd])] {
+            let code = Bytecode::new_legacy(Bytes::copy_from_slice(code));
+            db.insert_account_info(&address, AccountInfo::default().with_code(code));
+        }
+        let factory = EvmFactoryFor::<FEN>::default();
+        let spec = SpecFor::<FEN>::default();
+        let env = EvmEnv::new(spec, factory.version(spec, 31337), Default::default());
+        let mut evm = factory.create_evm(db, env);
+        evm.set_inspector(TracingInspector::new(TracingInspectorConfig::default_parity()));
+        let request = TransactionRequestFor::<FEN>::default()
+            .with_from(caller)
+            .with_to(target)
+            .with_nonce(0)
+            .with_chain_id(31337)
+            .with_gas_limit(1_000_000)
+            .with_max_fee_per_gas(0)
+            .with_max_priority_fee_per_gas(0);
+        let tx = TypesFor::<FEN>::tx_from_request(request).unwrap();
+        assert!(evm.transact(&tx).unwrap().commit().status);
+
+        let mut arena = evm.clear_inspector_as::<TracingInspector>().unwrap().into_traces();
+        decode_trace_arena(&mut arena, &CallTraceDecoder::new().clone()).await;
+        render_trace_arena(&SparsedTraceArena {
+            arena,
+            ignored: Default::default(),
+            diagnostics: Default::default(),
+            debug_steps: None,
+        })
+    }
+
+    async fn tracing_suite<FEN: FoundryEvmNetwork>()
+    where
+        TransactionRequestFor<FEN>: Default,
+    {
+        assert_data_eq!(
+            render_reverting_subcall::<FEN>().await,
+            str![[r#"
+  [..] 0x00000000000000000000000000000000000000C0::fallback()
+    ├─ [..] 0x00000000000000000000000000000000000000C1::fallback()
+    │   └─ ← [Revert] EvmError: Revert
+    └─ ← [Stop]
+
+"#]]
+        );
+    }
+
+    #[tokio::test]
+    async fn tracing() {
+        tracing_suite::<foundry_evm_core::evm::EthEvmNetwork>().await;
+        tracing_suite::<foundry_evm_core::evm::TempoEvmNetwork>().await;
+        #[cfg(feature = "optimism")]
+        tracing_suite::<foundry_evm_core::evm::OpEvmNetwork>().await;
+        #[cfg(feature = "base")]
+        tracing_suite::<foundry_evm_core::evm::BaseEvmNetwork>().await;
+        #[cfg(feature = "monad")]
+        tracing_suite::<foundry_evm_core::evm::MonadEvmNetwork>().await;
+    }
 
     #[test]
     fn trace_context_uses_the_execution_network_hardfork_namespace() {
@@ -741,11 +901,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let context = TraceContext::new(
-            Chain::from_named(NamedChain::Tempo),
-            NetworkConfigs::with_tempo(),
-            None,
-        );
+        let context = TraceContext::new(Chain::tempo_mainnet(), NetworkConfigs::with_tempo(), None);
 
         assert!(matches!(context.decoding_hardfork(&config), Some(FoundryHardfork::Tempo(_))));
     }
@@ -782,6 +938,7 @@ mod tests {
             arena,
             ignored: Default::default(),
             diagnostics: Default::default(),
+            debug_steps: None,
         };
 
         let arena = trace_arena_at_depth(&arena, 1);
@@ -827,18 +984,17 @@ mod tests {
                 returndata: Bytes::new(),
                 gas_remaining: 0,
                 gas_refund_counter: 0,
-                gas_used: 0,
                 gas_cost: 0,
                 state_gas_cost: None,
                 state_gas_reservoir: None,
                 state_gas_spent: 0,
                 storage_change: Some(Box::new(StorageChange {
-                    key: U256::from(1),
+                    key: U256::ONE,
                     value: U256::from(2),
-                    had_value: Some(U256::from(1)),
+                    had_value: Some(U256::ONE),
                     reason: StorageChangeReason::SSTORE,
                 })),
-                status: Some(InstructionResult::Stop),
+                status: Some(InstrStop::Stop),
                 immediate_bytes: None,
                 decoded: None,
             }],
@@ -850,6 +1006,7 @@ mod tests {
                 arena,
                 ignored: Default::default(),
                 diagnostics: Default::default(),
+                debug_steps: None,
             },
             false,
             true,
@@ -868,6 +1025,7 @@ mod tests {
                 0,
                 RevertDiagnostic::CallToNonContract(alloy_primitives::Address::ZERO),
             )]),
+            debug_steps: None,
         };
 
         let resolved = traces.resolve_arena();
@@ -895,6 +1053,7 @@ mod tests {
                 0,
                 RevertDiagnostic::CallToNonContract(alloy_primitives::Address::ZERO),
             )]),
+            debug_steps: None,
         };
 
         let serialized = ron::to_string(&traces).unwrap();

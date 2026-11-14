@@ -555,7 +555,7 @@ contract WriteJsonTest is Test {
 
     function test_serializeNotSimpleJson() public {
         string memory json3 = "json3";
-        string memory path = "fixtures/Json/write_complex_test.json";
+        string memory path = "fixtures/Json/write_complex_test_serialize.json";
         vm.serializeUint(json3, "a", uint256(123));
         string memory semiFinal = vm.serializeString(json3, "b", "test");
         string memory finalJson = vm.serializeString(json3, "c", semiFinal);
@@ -564,6 +564,7 @@ contract WriteJsonTest is Test {
         string memory json = vm.readFile(path);
         bytes memory data = vm.parseJson(json);
         notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+        vm.removeFile(path);
     }
 
     function test_retrieveEntireJson() public {
@@ -599,7 +600,7 @@ contract WriteJsonTest is Test {
 
     function test_writeJson() public {
         string memory json3 = "json3";
-        string memory path = "fixtures/Json/write_test.json";
+        string memory path = "fixtures/Json/write_test_overwrite.json";
         vm.serializeUint(json3, "a", uint256(123));
         string memory finalJson = vm.serializeString(json3, "b", "test");
         vm.writeJson(finalJson, path);
@@ -626,10 +627,12 @@ contract WriteJsonTest is Test {
         data = vm.parseJson(json, ".b");
         address decodedAddress = abi.decode(data, (address));
         assertEq(decodedAddress, ex);
+        vm.removeFile(path);
     }
 
     function test_writeJson_createKeys() public {
-        string memory path = "fixtures/Json/write_test.json";
+        string memory path = "fixtures/Json/write_test_create_keys.json";
+        vm.copyFile("fixtures/Json/write_test.json", path);
         string memory json = vm.readFile(path);
 
         bool exists = vm.keyExistsJson(json, ".parent");
@@ -647,9 +650,53 @@ contract WriteJsonTest is Test {
         uint256 value = abi.decode(vm.parseJson(json, ".parent.child.value"), (uint256));
         assertEq(value, 42);
 
-        // Clean up the test file by removing the parent key we added
         vm.removeFile(path);
-        vm.writeJson("{\"a\": 123, \"b\": \"0x000000000000000000000000000000000000bEEF\"}", path);
+    }
+
+    function test_writeJson_quotedObjectKeys() public {
+        string memory path = "fixtures/Json/write_test_quoted_keys.json";
+        vm.writeFile(path, '{"a.b":1,"x":{"0xAb.c":2}}');
+
+        vm.writeJson("3", path, '.["a.b"]');
+        vm.writeJson("4", path, "$['a.b']");
+        vm.writeJson("5", path, '.x["0xAb.c"]');
+        vm.writeJson("6", path, ".x.['0xAb.c']");
+
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonUint(json, '.["a.b"]'), 4);
+        assertEq(vm.parseJsonUint(json, "$['a.b']"), 4);
+        assertEq(vm.parseJsonUint(json, '.x["0xAb.c"]'), 6);
+        assertEq(vm.parseJsonUint(json, ".x.['0xAb.c']"), 6);
+        assertEq(vm.parseJsonKeys(json, "$").length, 2);
+        assertEq(vm.parseJsonKeys(json, ".x").length, 1);
+        vm.removeFile(path);
+    }
+
+    function test_writeJson_quotedKeysCreateAndRejectUnsupportedPaths() public {
+        string memory path = "fixtures/Json/write_test_quoted_keys_create.json";
+        vm.writeFile(path, "{}");
+
+        vm.writeJson("7", path, ".new['child.key'].value");
+        vm.writeJson("8", path, ".parent.child.value");
+
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonUint(json, ".new['child.key'].value"), 7);
+        assertEq(vm.parseJsonUint(json, ".parent.child.value"), 8);
+        assertEq(vm.parseJsonKeys(json, "$").length, 2);
+        assertEq(vm.parseJsonKeys(json, ".new").length, 1);
+        assertEq(vm.parseJsonKeys(json, ".new['child.key']").length, 1);
+        assertEq(vm.parseJsonKeys(json, ".parent").length, 1);
+        assertEq(vm.parseJsonKeys(json, ".parent.child").length, 1);
+
+        vm._expectCheatcodeRevert();
+        vm.writeJson("9", path, ".new[0]");
+        assertEq(vm.readFile(path), json);
+
+        vm._expectCheatcodeRevert();
+        vm.writeJson("9", path, ".new['unterminated]");
+        assertEq(vm.readFile(path), json);
+
+        vm.removeFile(path);
     }
 
     function test_writeJson_createFile() public {

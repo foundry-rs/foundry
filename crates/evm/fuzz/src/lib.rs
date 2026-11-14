@@ -134,6 +134,9 @@ pub struct BaseCounterExample {
     /// Fuzz metadata needed to reproduce this counterexample.
     #[serde(flatten)]
     pub fuzz: FuzzRunMetadata,
+    /// Active fork block after setup when this counterexample was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_block_number: Option<u64>,
 }
 
 impl BaseCounterExample {
@@ -172,6 +175,7 @@ impl BaseCounterExample {
                     traces,
                     show_solidity,
                     fuzz: FuzzRunMetadata::default(),
+                    fork_block_number: None,
                 };
             }
         }
@@ -191,6 +195,7 @@ impl BaseCounterExample {
             traces,
             show_solidity: false,
             fuzz: FuzzRunMetadata::default(),
+            fork_block_number: None,
         }
     }
 
@@ -215,6 +220,7 @@ impl BaseCounterExample {
             traces,
             show_solidity: false,
             fuzz: FuzzRunMetadata::default(),
+            fork_block_number: None,
         }
     }
 
@@ -239,6 +245,7 @@ impl BaseCounterExample {
             traces,
             show_solidity: false,
             fuzz: FuzzRunMetadata::default(),
+            fork_block_number: None,
         }
     }
 
@@ -344,14 +351,12 @@ pub struct FuzzTestResult {
     /// Gas usage (gas_used, call_stipend) per cases
     pub gas_by_case: Vec<(u64, u64)>,
     /// Whether the test case was successful. This means that the transaction executed
-    /// properly, or that there was a revert and that the test was expected to fail
-    /// (prefixed with `testFail`)
+    /// properly.
     pub success: bool,
     /// Whether the test case was skipped. `reason` will contain the skip reason, if any.
     pub skipped: bool,
 
-    /// If there was a revert, this field will be populated. Note that the test can
-    /// still be successful (i.e self.success == true) when it's expected to fail.
+    /// If there was a revert, this field will be populated.
     pub reason: Option<String>,
 
     /// Minimal reproduction test case for failing fuzz tests
@@ -521,11 +526,9 @@ impl FuzzFixtures {
 
     /// Returns configured fixtures for `param_name` fuzzed parameter.
     pub fn param_fixtures(&self, param_name: &str) -> Option<&[DynSolValue]> {
-        if let Some(param_fixtures) = self.inner.get(&normalize_fixture(param_name)) {
-            param_fixtures.as_fixed_array().or_else(|| param_fixtures.as_array())
-        } else {
-            None
-        }
+        self.inner
+            .get(&normalize_fixture(param_name))
+            .and_then(|fixtures| fixtures.as_fixed_array().or_else(|| fixtures.as_array()))
     }
 
     /// Returns the variant count for an enum identified by an optional contract qualifier and name

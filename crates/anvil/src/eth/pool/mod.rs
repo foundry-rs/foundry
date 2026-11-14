@@ -29,6 +29,7 @@
 use crate::{
     eth::{
         error::PoolError,
+        fees::FeeManager,
         pool::transactions::{
             PendingPoolTransaction, PendingTransactions, PoolTransaction, ReadyTransactions,
             TransactionsIterator, TxMarker,
@@ -54,7 +55,14 @@ pub struct Pool<T> {
     /// processes all pending transactions
     inner: RwLock<PoolInner<T>>,
     /// listeners for new ready transactions
-    transaction_listener: Mutex<Vec<Sender<TxHash>>>,
+    transaction_listener: Mutex<Vec<ReadyListener>>,
+    /// source of the base fee that ready transactions are ranked at.
+    fees: Option<FeeManager>,
+}
+
+struct ReadyListener {
+    sender: Sender<TxHash>,
+    close_on_full: bool,
 }
 
 /// An independent snapshot of a transaction pool.
@@ -65,13 +73,27 @@ pub(crate) struct PoolSnapshot<T> {
 
 impl<T> Default for Pool<T> {
     fn default() -> Self {
-        Self { inner: RwLock::new(PoolInner::default()), transaction_listener: Default::default() }
+        Self {
+            inner: RwLock::new(PoolInner::default()),
+            transaction_listener: Default::default(),
+            fees: None,
+        }
     }
 }
 
 // == impl Pool ==
 
 impl<T> Pool<T> {
+    /// Creates a pool that ranks ready transactions at the base fee of the given fee manager.
+    pub fn new(fees: FeeManager) -> Self {
+        Self { fees: Some(fees), ..Default::default() }
+    }
+
+    /// Returns the base fee of the next block.
+    fn base_fee(&self) -> u64 {
+        self.fees.as_ref().map_or(0, FeeManager::base_fee)
+    }
+
     /// Returns an independent snapshot of the pool.
     pub(crate) fn snapshot(&self) -> PoolSnapshot<T> {
         let pool = self.inner.read();
@@ -88,7 +110,7 @@ impl<T> Pool<T> {
         let ready = {
             let mut pool = self.inner.write();
             *pool = snapshot.inner;
-            pool.ready_transactions().map(|tx| tx.hash()).collect::<Vec<_>>()
+            pool.ready_transactions(self.base_fee()).map(|tx| tx.hash()).collect::<Vec<_>>()
         };
         for hash in ready {
             self.notify_listener(hash);
@@ -97,7 +119,7 @@ impl<T> Pool<T> {
 
     /// Returns an iterator that yields all transactions that are currently ready
     pub fn ready_transactions(&self) -> TransactionsIterator<T> {
-        self.inner.read().ready_transactions()
+        self.inner.read().ready_transactions(self.base_fee())
     }
 
     /// Returns all transactions that are not ready to be included in a block yet
@@ -111,24 +133,34 @@ impl<T> Pool<T> {
         let pool = self.inner.read();
         pool.pending_transactions
             .transactions()
-            .chain(pool.ready_transactions.get_transactions())
+            .chain(pool.ready_transactions(self.base_fee()))
             .collect()
     }
 
     /// Returns the number of tx that are ready and queued for further execution
     pub fn txpool_status(&self) -> TxpoolStatus {
         // Note: naming differs here compared to geth's `TxpoolStatus`
-        let pending: u64 = self.inner.read().ready_transactions.len().try_into().unwrap_or(0);
-        let queued: u64 = self.inner.read().pending_transactions.len().try_into().unwrap_or(0);
+        let pool = self.inner.read();
+        let pending: u64 = pool.ready_transactions.len().try_into().unwrap_or(0);
+        let queued: u64 = pool.pending_transactions.len().try_into().unwrap_or(0);
         TxpoolStatus { pending, queued }
     }
 
     /// Adds a new transaction listener to the pool that gets notified about every new ready
     /// transaction
     pub fn add_ready_listener(&self) -> Receiver<TxHash> {
+        self.add_ready_listener_with_policy(false)
+    }
+
+    /// Adds a subscription listener that closes instead of dropping notifications on overflow.
+    pub(crate) fn add_ready_subscription_listener(&self) -> Receiver<TxHash> {
+        self.add_ready_listener_with_policy(true)
+    }
+
+    fn add_ready_listener_with_policy(&self, close_on_full: bool) -> Receiver<TxHash> {
         const TX_LISTENER_BUFFER_SIZE: usize = 2048;
         let (tx, rx) = channel(TX_LISTENER_BUFFER_SIZE);
-        self.transaction_listener.lock().push(tx);
+        self.transaction_listener.lock().push(ReadyListener { sender: tx, close_on_full });
         rx
     }
 
@@ -213,7 +245,7 @@ impl<T> Pool<T> {
         // this is basically a retain but with mut reference
         for n in (0..listener.len()).rev() {
             let mut listener_tx = listener.swap_remove(n);
-            let retain = match listener_tx.try_send(hash) {
+            let retain = match listener_tx.sender.try_send(hash) {
                 Ok(()) => true,
                 Err(e) => {
                     if e.is_full() {
@@ -222,7 +254,7 @@ impl<T> Pool<T> {
                             "[{:?}] Failed to send tx notification because channel is full",
                             hash,
                         );
-                        true
+                        !listener_tx.close_on_full
                     } else {
                         false
                     }
@@ -246,15 +278,25 @@ impl<T: Transaction> Pool<T> {
     /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.
     ///
     /// This will remove the transactions from the pool.
-    pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
-        let MinedBlockOutcome { block_number, included, invalid, not_yet_valid } = outcome;
+    ///
+    /// Returns `true` if ready transactions left behind by the block can be included by mining
+    /// again right away, e.g. because the block hit `max_transactions` or ran out of gas.
+    pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> bool {
+        let MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid } = outcome;
+        // Requiring txs to leave the pool keeps this retry from mining empty blocks for txs that
+        // can never be included. Not-yet-valid txs and their dependents are retried by the delayed
+        // re-notify.
+        let made_progress = !included.is_empty() || !stale.is_empty() || !invalid.is_empty();
+        let retry_ready = made_progress && not_yet_valid.is_empty();
 
         // remove invalid transactions from the pool
         self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
 
-        // prune all the markers the mined transactions provide
-        let res = self
-            .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
+        // Prune mined and stale markers; both are satisfied by the resulting state.
+        let res = self.prune_markers(
+            block_number,
+            included.into_iter().chain(stale).flat_map(|tx| tx.provides.clone()),
+        );
         trace!(target: "txpool", "pruned transaction markers {:?}", res);
 
         // Re-notify the miner about not-yet-valid transactions so they'll be retried.
@@ -271,7 +313,7 @@ impl<T: Transaction> Pool<T> {
             });
         }
 
-        res
+        retry_ready && !self.inner.read().ready_transactions.is_empty()
     }
 
     /// Removes ready transactions for the given iterator of identifying markers.
@@ -310,7 +352,7 @@ impl<T: Typed2718> Pool<T> {
             let pool = self.inner.read();
             pool.pending_transactions
                 .transactions()
-                .chain(pool.ready_transactions.get_transactions())
+                .chain(pool.ready_transactions(self.base_fee()))
                 .filter_map(|tx| {
                     (tx.pending_transaction.transaction.ty() == tx_type).then_some(tx.hash())
                 })
@@ -339,8 +381,8 @@ impl<T> Default for PoolInner<T> {
 
 impl<T> PoolInner<T> {
     /// Returns an iterator over transactions that are ready.
-    fn ready_transactions(&self) -> TransactionsIterator<T> {
-        self.ready_transactions.get_transactions()
+    fn ready_transactions(&self, base_fee: u64) -> TransactionsIterator<T> {
+        self.ready_transactions.get_transactions(base_fee)
     }
 
     /// Clears
@@ -361,7 +403,8 @@ impl<T> PoolInner<T> {
 
         let ready_txs = self
             .ready_transactions
-            .get_transactions()
+            // Only membership matters here, so the ranking base fee is irrelevant.
+            .get_transactions(0)
             .filter(move |tx| tx.pending_transaction.sender().eq(&sender));
 
         pending_txs.chain(ready_txs)
@@ -599,5 +642,47 @@ impl<T> AddedTransaction<T> {
             Self::Ready(tx) => &tx.hash,
             Self::Pending { hash } => hash,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::U256;
+    use futures::StreamExt;
+    use std::task::{Context, Poll, Waker};
+
+    #[test]
+    fn subscription_listener_closes_on_overflow_without_closing_ordinary_listener() {
+        let pool = Pool::<()>::default();
+        let mut ordinary = pool.add_ready_listener();
+        let mut subscription = pool.add_ready_subscription_listener();
+        let hashes = (0..4_096).map(|index| TxHash::from(U256::from(index))).collect::<Vec<_>>();
+
+        // Overflow both listeners without draining either.
+        for &hash in &hashes {
+            pool.notify_listener(hash);
+        }
+
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut expected = Vec::new();
+        while let Poll::Ready(Some(hash)) = ordinary.poll_next_unpin(&mut cx) {
+            expected.push(hash);
+        }
+        assert!(!expected.is_empty());
+        assert!(expected.len() < hashes.len());
+        assert_eq!(expected, hashes[..expected.len()]);
+        assert_eq!(ordinary.poll_next_unpin(&mut cx), Poll::Pending);
+
+        let mut received = Vec::new();
+        while let Poll::Ready(Some(hash)) = subscription.poll_next_unpin(&mut cx) {
+            received.push(hash);
+        }
+        assert_eq!(received, expected);
+        assert_eq!(subscription.poll_next_unpin(&mut cx), Poll::Ready(None));
+
+        let hash = TxHash::from(U256::MAX);
+        pool.notify_listener(hash);
+        assert_eq!(ordinary.poll_next_unpin(&mut cx), Poll::Ready(Some(hash)));
     }
 }

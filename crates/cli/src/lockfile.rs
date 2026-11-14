@@ -3,6 +3,7 @@
 use crate::utils::{Git, SubmoduleCheckoutStatus};
 use alloy_primitives::map::HashMap;
 use eyre::{Context, OptionExt, Result};
+use foundry_common::fs::canonicalize_path;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, hash_map::Entry},
@@ -119,12 +120,8 @@ impl<'a> Lockfile<'a> {
     /// - The lockfile does not exist.
     /// - The lockfile is out of sync with the git submodules.
     pub fn sync(&mut self, lib: &Path) -> Result<Option<DepMap>> {
-        match self.read() {
-            Ok(_) => {}
-            Err(e) if !e.to_string().contains("Lockfile not found") => {
-                return Err(e);
-            }
-            _ => {}
+        if self.exists() {
+            self.read()?;
         }
 
         if let Some(git) = &self.git {
@@ -192,7 +189,7 @@ impl<'a> Lockfile<'a> {
 
         let git = self.git.ok_or_eyre("Git is required to check foundry.lock")?;
         let project_root =
-            dunce::canonicalize(self.lockfile_path.parent().expect("lockfile path has a parent"))?;
+            canonicalize_path(self.lockfile_path.parent().expect("lockfile path has a parent"))?;
         let git_root = match Git::root_of(git.root) {
             Ok(root) => root,
             Err(_)
@@ -302,7 +299,10 @@ impl<'a> Lockfile<'a> {
     /// Writes the lockfile to the project root.
     pub fn write(&self) -> Result<()> {
         let ordered_deps: BTreeMap<_, _> = self.deps.clone().into_iter().collect();
-        foundry_common::fs::write_pretty_json_file(&self.lockfile_path, &ordered_deps)?;
+        let mut contents = serde_json::to_string_pretty(&ordered_deps)?;
+        // End the file with a newline, as editors and formatters expect for text files.
+        contents.push('\n');
+        foundry_common::fs::write(&self.lockfile_path, contents)?;
         trace!(at= ?self.lockfile_path, "wrote lockfile");
 
         Ok(())
@@ -471,11 +471,13 @@ impl DepIdentifier {
     }
 
     /// Get the name/rev to checkout at.
+    ///
+    /// Tags are checked out at their locked revision, since a tag name can be shadowed by a
+    /// branch with the same name.
     pub fn checkout_id(&self) -> &str {
         match self {
             Self::Branch { name, .. } => name,
-            Self::Tag { name, .. } => name,
-            Self::Rev { rev, .. } => rev,
+            Self::Tag { rev, .. } | Self::Rev { rev, .. } => rev,
         }
     }
 
@@ -589,8 +591,9 @@ mod tests {
   "z_dep": {
     "rev": "3"
   }
-}"#;
-        assert_eq!(contents.trim(), expected.trim());
+}
+"#;
+        assert_eq!(contents, expected);
 
         let mut lockfile = Lockfile::new(dir.path());
         lockfile.read().unwrap();
@@ -613,7 +616,30 @@ mod tests {
   "z_dep": {
     "rev": "3"
   }
-}"#;
-        assert_eq!(contents.trim(), expected.trim());
+}
+"#;
+        assert_eq!(contents, expected);
+    }
+
+    #[test]
+    fn sync_propagates_errors_containing_missing_lockfile_message() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(FOUNDRY_LOCK), r#""Lockfile not found""#).unwrap();
+        let mut lockfile = Lockfile::new(dir.path());
+
+        let err = lockfile.sync(Path::new("lib")).unwrap_err();
+        assert!(err.downcast_ref::<serde_json::Error>().is_some());
+    }
+
+    #[test]
+    fn sync_preserves_dependencies_without_lockfile() {
+        let dir = tempdir().unwrap();
+        let mut lockfile = Lockfile::new(dir.path());
+        let dep = DepIdentifier::Rev { rev: "1".to_string(), r#override: false };
+        lockfile.insert(PathBuf::from("lib/dep"), dep.clone());
+
+        assert_eq!(lockfile.sync(Path::new("lib")).unwrap(), None);
+        assert_eq!(lockfile.get(Path::new("lib/dep")), Some(&dep));
+        assert!(!lockfile.exists());
     }
 }

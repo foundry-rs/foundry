@@ -1,7 +1,10 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
     config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
-    eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
+    eth::{
+        EthApi, backend::db::SerializableState, miner::INSTANT_COALESCE_WINDOW,
+        pool::transactions::TransactionOrder,
+    },
 };
 use alloy_genesis::Genesis;
 use alloy_network::Network;
@@ -12,13 +15,14 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm::hardfork::FoundryHardfork;
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
 use rand_08::{SeedableRng, rngs::StdRng};
 use std::{
     net::IpAddr,
+    num::NonZeroU64,
     path::{Path, PathBuf},
     pin::Pin,
     str::FromStr,
@@ -87,6 +91,19 @@ pub struct NodeArgs {
     #[arg(long = "tempo.fee-payer", value_name = "ADDRESS")]
     pub tempo_fee_payer: Option<Address>,
 
+    /// Number of block heights in a Tempo consensus epoch. Only used on Tempo networks.
+    ///
+    /// Defaults to the fork source's epoch length when it reports one, otherwise 21600.
+    #[arg(long = "tempo.epoch-length", value_name = "BLOCKS")]
+    pub tempo_epoch_length: Option<NonZeroU64>,
+
+    /// Development consensus seed for Tempo, as 32 bytes of hex.
+    ///
+    /// Defaults to a domain-separated hash of the dev-account mnemonic. Only used on Tempo
+    /// networks.
+    #[arg(long = "tempo.consensus-seed", value_name = "SEED")]
+    pub tempo_consensus_seed: Option<B256>,
+
     /// The EVM hardfork to use.
     ///
     /// Choose the hardfork by name, e.g. `prague`, `cancun`, `shanghai`, `paris`, `london`, etc...
@@ -102,6 +119,11 @@ pub struct NodeArgs {
     /// Block time in seconds for interval mining.
     #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS", value_parser = duration_from_secs_f64)]
     pub block_time: Option<Duration>,
+
+    /// Time in milliseconds to group ready transactions into one auto-mined block.
+    /// Defaults to 0 (no delay). Set a positive value to enable transaction coalescing.
+    #[arg(long, value_name = "MILLISECONDS", default_value_t = INSTANT_COALESCE_WINDOW.as_millis() as u64)]
+    pub transaction_coalescing_window: u64,
 
     /// Slots in an epoch
     #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = DEFAULT_SLOTS_IN_AN_EPOCH)]
@@ -202,7 +224,10 @@ pub struct NodeArgs {
     #[arg(long)]
     pub prune_history: Option<Option<usize>>,
 
-    /// Max number of states to persist on disk.
+    /// Max number of older states to keep, beyond the most recent ones.
+    ///
+    /// Block states of local and forked chains share unchanged data and stay in memory; states
+    /// loaded from a dump are persisted on disk.
     ///
     /// Note that `prune_history` will overwrite `max_persisted_states` to 0.
     #[arg(long, conflicts_with = "prune_history")]
@@ -297,6 +322,9 @@ impl NodeArgs {
             .with_gas_price(self.evm.gas_price)
             .with_hardfork(hardfork)
             .with_blocktime(self.block_time)
+            .with_transaction_coalescing_window(Duration::from_millis(
+                self.transaction_coalescing_window,
+            ))
             .with_no_mining(self.no_mining)
             .with_mixed_mining(self.mixed_mining, self.block_time)
             .with_account_generator(self.account_generator())?
@@ -350,6 +378,8 @@ impl NodeArgs {
             // execution chain ID. Fork source discovery can refine an unresolved network later.
             .with_networks(networks)
             .with_tempo_fee_payer(self.tempo_fee_payer)
+            .with_tempo_epoch_length(self.tempo_epoch_length)
+            .with_tempo_consensus_seed(self.tempo_consensus_seed)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
@@ -664,6 +694,9 @@ pub struct AnvilEvmArgs {
     pub disable_block_gas_limit: bool,
 
     /// Enable the transaction gas limit check as imposed by EIP-7825 (Osaka hardfork).
+    ///
+    /// From Amsterdam, the cap always applies to regular gas only, and gas above it becomes the
+    /// EIP-8037 state gas reservoir.
     #[arg(long, visible_alias = "tx-gas-limit", help_heading = "Environment config")]
     pub enable_tx_gas_limit: bool,
 
@@ -703,6 +736,10 @@ pub struct AnvilEvmArgs {
     pub chain_id: Option<Chain>,
 
     /// Enable steps tracing used for debug calls returning geth-style traces
+    ///
+    /// Steps are recorded by replaying the transaction from its parent block's state, so they
+    /// are unavailable once that state is pruned or when loading a state dump created without
+    /// `--preserve-historical-states`.
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
@@ -809,9 +846,11 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> PeriodicStateDumper<N
         Self { in_progress_dump: None, api, dump_state, preserve_historical_states, interval }
     }
 
-    async fn dump(&self) {
-        if let Some(state) = self.dump_state.clone() {
-            Self::dump_state(self.api.clone(), state, self.preserve_historical_states).await
+    async fn dump(mut self) {
+        // Shutdown no longer polls the periodic future, so release its locks first.
+        self.in_progress_dump = None;
+        if let Some(state) = self.dump_state {
+            Self::dump_state(self.api, state, self.preserve_historical_states).await
         }
     }
 
@@ -967,15 +1006,45 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::hardfork::EthereumHardfork;
+    use foundry_evm_hardforks::EthereumHardfork;
     use std::{env, net::Ipv4Addr};
     use tempo_hardfork::TempoHardfork;
 
     #[cfg(feature = "base")]
-    use foundry_evm::hardforks::BaseUpgrade;
+    use foundry_evm_hardforks::BaseUpgrade;
 
     #[cfg(feature = "optimism")]
-    use foundry_evm::hardfork::OpHardfork;
+    use foundry_evm_hardforks::OpHardfork;
+
+    #[tokio::test]
+    async fn final_dump_cancels_suspended_periodic_dump() {
+        for queued_for_mining in [false, true] {
+            let (api, _handle) = crate::spawn(NodeConfig::test().with_no_mining(true)).await;
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("state.json");
+            let mining =
+                if queued_for_mining { Some(api.backend.lock_mining().await) } else { None };
+            let db = api.backend.get_db().write().await;
+            let mut dumper = PeriodicStateDumper::new(
+                api.clone(),
+                Some(path.clone()),
+                Duration::from_secs(60),
+                false,
+            );
+            dumper.in_progress_dump =
+                Some(Box::pin(PeriodicStateDumper::dump_state(api.clone(), path.clone(), false)));
+            assert!(futures::poll!(&mut dumper).is_pending());
+
+            // Shutdown stops polling the periodic dumper before starting the final dump.
+            drop(db);
+            drop(mining);
+            tokio::time::timeout(Duration::from_secs(2), dumper.dump())
+                .await
+                .expect("final dump waited for a suspended periodic dump");
+            let state = foundry_common::fs::read_json_file::<SerializableState>(&path).unwrap();
+            assert_eq!(state.best_block_number, Some(0));
+        }
+    }
 
     #[cfg(feature = "base")]
     #[test]
@@ -1418,7 +1487,7 @@ mod tests {
         let args: NodeArgs =
             NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
         let config = args.into_node_config().unwrap();
-        assert_eq!(config.hardfork, Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
+        assert_eq!(config.hardfork, Some(foundry_evm_hardforks::MonadHardfork::MonadNine.into()));
         assert!(config.networks.is_monad());
     }
 
@@ -1428,7 +1497,7 @@ mod tests {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, None);
-        assert_eq!(config.get_hardfork(), foundry_evm::hardfork::MonadHardfork::default().into());
+        assert_eq!(config.get_hardfork(), foundry_evm_hardforks::MonadHardfork::default().into());
         assert!(config.networks.is_monad());
     }
 
@@ -1607,5 +1676,79 @@ mod tests {
             let result = NodeArgs::try_parse_from(args);
             assert!(result.is_err(), "expected error when using {:?} without --fork-url", args[1]);
         }
+    }
+
+    #[test]
+    fn transaction_coalescing_window_cli() {
+        for (args, expected) in [
+            (vec!["anvil"], 0),
+            (vec!["anvil", "--transaction-coalescing-window", "0"], 0),
+            (vec!["anvil", "--transaction-coalescing-window", "20"], 20),
+        ] {
+            let config = NodeArgs::parse_from(args).into_node_config().unwrap();
+            assert_eq!(config.transaction_coalescing_window, Duration::from_millis(expected));
+        }
+        assert!(
+            NodeArgs::try_parse_from(["anvil", "--transaction-coalescing-window", "-1"]).is_err()
+        );
+    }
+
+    #[test]
+    fn tempo_consensus_arguments() {
+        for epoch_length in ["1", "21600", "18446744073709551615"] {
+            let config = NodeArgs::try_parse_from([
+                "anvil",
+                "--network",
+                "tempo",
+                "--tempo.epoch-length",
+                epoch_length,
+                "--tempo.consensus-seed",
+                "0x0101010101010101010101010101010101010101010101010101010101010101",
+            ])
+            .unwrap()
+            .into_node_config()
+            .unwrap();
+            assert_eq!(config.tempo_epoch_length, epoch_length.parse().ok());
+            assert_eq!(config.tempo_consensus_seed(), B256::repeat_byte(1));
+        }
+        for epoch_length in ["0", "-1", "18446744073709551616"] {
+            assert!(
+                NodeArgs::try_parse_from(["anvil", "--tempo.epoch-length", epoch_length,]).is_err()
+            );
+        }
+        for seed in ["0x01".to_owned(), "11".repeat(33), "zz".repeat(32)] {
+            assert!(NodeArgs::try_parse_from(["anvil", "--tempo.consensus-seed", &seed]).is_err());
+        }
+    }
+
+    #[test]
+    fn tempo_consensus_seed_uses_effective_mnemonic() {
+        let default = NodeArgs::parse_from(["anvil"]).into_node_config().unwrap();
+        assert_eq!(default.tempo_epoch_length, None);
+        assert_eq!(default.tempo_consensus_seed(), NodeConfig::default().tempo_consensus_seed());
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let custom =
+            NodeArgs::parse_from(["anvil", "--mnemonic", mnemonic]).into_node_config().unwrap();
+        assert_ne!(custom.tempo_consensus_seed(), default.tempo_consensus_seed());
+        let seed = B256::repeat_byte(7);
+        let explicit = NodeArgs::parse_from([
+            "anvil",
+            "--mnemonic",
+            mnemonic,
+            "--tempo.consensus-seed",
+            &seed.to_string(),
+        ])
+        .into_node_config()
+        .unwrap();
+        assert_eq!(explicit.tempo_consensus_seed(), seed);
+        assert_eq!(explicit.genesis_accounts, custom.genesis_accounts);
+        let seeded = NodeArgs::parse_from(["anvil", "--mnemonic-seed-unsafe", "42"])
+            .into_node_config()
+            .unwrap();
+        let repeated = NodeArgs::parse_from(["anvil", "--mnemonic-seed-unsafe", "42"])
+            .into_node_config()
+            .unwrap();
+        assert_ne!(seeded.tempo_consensus_seed(), default.tempo_consensus_seed());
+        assert_eq!(seeded.tempo_consensus_seed(), repeated.tempo_consensus_seed());
     }
 }

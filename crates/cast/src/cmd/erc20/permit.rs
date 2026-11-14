@@ -354,7 +354,7 @@ mod tests {
             fields: [0x14].into(),
             name: "ignored".into(),
             version: "ignored".into(),
-            chainId: U256::from(1),
+            chainId: U256::ONE,
             verifyingContract: Address::ZERO,
             salt: B256::repeat_byte(42),
             extensions: vec![],
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(
             domain,
             Eip712Domain {
-                chain_id: Some(U256::from(1)),
+                chain_id: Some(U256::ONE),
                 salt: Some(B256::repeat_byte(42)),
                 ..Default::default()
             }
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn domain_discovery_rejects_extensions_and_unknown_fields() {
-        for (fields, extensions) in [(0x20, vec![]), (0x0f, vec![U256::from(1)])] {
+        for (fields, extensions) in [(0x20, vec![]), (0x0f, vec![U256::ONE])] {
             assert!(
                 discovered_domain(IERC2612::eip712DomainReturn {
                     fields: [fields].into(),
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn domain_validation_rejects_mismatched_separator_chain_and_contract() {
-        let chain = U256::from(1);
+        let chain = U256::ONE;
         let token = Address::repeat_byte(1);
         let domain = Eip712Domain {
             name: Some("Token".into()),

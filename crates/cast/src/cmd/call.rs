@@ -8,34 +8,29 @@ use super::{
 };
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
-    rpc_trace::call_frame_to_arena,
+    rpc_trace::{call_frame_to_arena, call_tracer_config},
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind, read_only_sender},
 };
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, transaction::Recovered};
 use alloy_dyn_abi::FunctionExt;
 use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
-use alloy_network::{
-    BlockResponse, NetworkTransactionBuilder, TransactionBuilder, primitives::HeaderResponse,
-};
+use alloy_network::{BlockResponse, Ethereum, TransactionBuilder, primitives::HeaderResponse};
 use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag,
-    trace::geth::{
-        CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
-        GethDebugTracingOptions,
-    },
+    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
+    trace::geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
 };
 use clap::Parser;
+use evm2::EvmFeatures;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TracingArgs, TransactionOpts},
-    utils::{TraceResult, load_config_from_provider, parse_ether_value},
+    utils::{TraceResult, get_provider, load_config_from_provider, parse_ether_value},
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
     abi::{encode_function_args, get_func},
     fmt::{format_token, serialize_value_as_json},
     provider::{ProviderBuilder, curl_transport::generate_curl_command},
@@ -51,15 +46,17 @@ use foundry_config::{
 };
 use foundry_evm::{
     core::{
-        FoundryBlock, FoundryTransaction,
         decode::RevertDecoder,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+        evm::{
+            BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory,
+            FoundryEvmNetwork, FoundryTxConversion, TempoEvmNetwork, TxFor, TypesFor,
+        },
     },
-    executors::{ExecutorBuilder, TracingExecutor},
+    executors::{Executor, ExecutorBuilder, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 
@@ -87,11 +84,11 @@ use foundry_evm::core::evm::OpEvmNetwork;
 ///
 /// ```bash
 /// cast call 0x... "transfer(address,uint256)" 0x... 100 \
-///   --override-balance 0x123:0x1234 \
-///   --override-nonce 0x123:1 \
-///   --override-code 0x123:0x1234 \
-///   --override-state 0x123:0x1:0x1234
-///   --override-state-diff 0x123:0x1:0x1234
+///   --override-balance 0x0000000000000000000000000000000000000001:0x1234 \
+///   --override-nonce 0x0000000000000000000000000000000000000001:1 \
+///   --override-code 0x0000000000000000000000000000000000000001:0x1234 \
+///   --override-state 0x0000000000000000000000000000000000000001:0x1:0x1234 \
+///   --override-state-diff 0x0000000000000000000000000000000000000001:0x1:0x1234
 /// ```
 ///
 /// `--delegate` builds on the same mechanism: it overrides the code of the `--from` address with
@@ -229,11 +226,8 @@ pub enum CallSubcommands {
 
 /// The `callTracer` options shared by `--debug-trace-call` and its `--curl` rendering.
 fn call_tracer_options() -> GethDebugTracingCallOptions {
-    GethDebugTracingCallOptions::default().with_tracing_options(
-        GethDebugTracingOptions::default()
-            .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
-            .with_call_config(CallConfig::default().with_log()),
-    )
+    GethDebugTracingCallOptions::default()
+        .with_tracing_options(GethDebugTracingOptions::call_tracer(call_tracer_config()))
 }
 
 impl CallArgs {
@@ -250,6 +244,11 @@ impl CallArgs {
 
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
+            if self.trace {
+                eyre::bail!(
+                    "--trace cannot be combined with --curl; use --debug-trace-call --curl instead"
+                );
+            }
             if self.browser.browser {
                 eyre::bail!("--browser cannot be combined with --curl; use --from <ADDRESS>");
             }
@@ -257,6 +256,12 @@ impl CallArgs {
                 // The code override that makes the call a `delegatecall` is read from the node,
                 // which `--curl` deliberately never contacts.
                 eyre::bail!("--delegate cannot be combined with --curl");
+            }
+            if !self.tx.auth.is_empty() {
+                eyre::bail!("--auth cannot be combined with --curl");
+            }
+            if self.command.is_some() {
+                eyre::bail!("--create cannot be combined with --curl");
             }
             return self.run_curl().await;
         }
@@ -290,61 +295,57 @@ impl CallArgs {
             config.chain = Some(chain);
         }
 
-        if evm_opts.networks.is_tempo() {
-            return self
-                .run_with_network_and_opts::<TempoEvmNetwork>(
+        match evm_opts.networks.execution_network() {
+            NetworkVariant::Tempo => {
+                self.run_with_network_and_opts::<TempoEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "base")]
-        if evm_opts.networks.is_base() {
-            super::validate_base_transaction_options(&self.tx)?;
-            return self
-                .run_with_network_and_opts::<BaseEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                super::validate_base_transaction_options(&self.tx)?;
+                self.run_with_network_and_opts::<BaseEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<BaseEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return self
-                .run_with_network_and_opts::<MonadEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => {
+                self.run_with_network_and_opts::<MonadEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return self
-                .run_with_network_and_opts::<OpEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "optimism")]
+            NetworkVariant::Optimism => {
+                self.run_with_network_and_opts::<OpEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<OpEvmNetwork>::new(),
                 )
-                .await;
+                .await
+            }
+            NetworkVariant::Ethereum => {
+                self.run_with_network_and_opts::<EthEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
+                )
+                .await
+            }
         }
-
-        self.run_with_network_and_opts::<EthEvmNetwork>(
-            config,
-            evm_opts,
-            auth_preflight,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
-        )
-        .await
     }
 
     /// Returns whether resolving this call can disclose an authorization before the transaction
@@ -367,7 +368,7 @@ impl CallArgs {
         let sender = if self.browser.browser {
             None
         } else {
-            Some(SenderKind::from_wallet_opts(self.wallet.clone()).await?)
+            Some(SenderKind::from_wallet_opts(self.wallet.clone(), &self.tx.auth).await?)
         };
         let browser_sender = SenderKind::from(self.wallet.from.unwrap_or_default());
         let validation_sender = sender.as_ref().unwrap_or(&browser_sender);
@@ -439,7 +440,7 @@ impl CallArgs {
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
         let endpoint_identity =
-            if debug_trace_call { Some(evm_opts.discover_fork_endpoint().await?) } else { None };
+            if debug_trace_call { Some(evm_opts.fork_endpoint_identity().await?) } else { None };
         let sender = match auth_sender {
             Some(sender) => sender,
             None => {
@@ -447,7 +448,7 @@ impl CallArgs {
                     Some(chain) => chain.id(),
                     None => provider.get_chain_id().await?,
                 };
-                read_only_sender::<FEN::Network>(&browser, wallet, &tx.tempo, chain_id).await?.0
+                read_only_sender::<FEN::Network>(&browser, wallet, &tx, chain_id).await?.0
             }
         };
         let from = sender.address();
@@ -525,7 +526,7 @@ impl CallArgs {
         if debug_trace_call {
             let endpoint_identity = endpoint_identity
                 .ok_or_else(|| eyre::eyre!("remote trace endpoint identity was not captured"))?;
-            let requested_block = block.unwrap_or(BlockId::latest());
+            let requested_block = block.unwrap_or_default();
             let fetched_block = provider.get_block(requested_block).await?;
             let resolved_canonical_block =
                 if matches!(requested_block, BlockId::Number(_)) && !requested_block.is_pending() {
@@ -570,6 +571,7 @@ impl CallArgs {
                 arena: call_frame_to_arena(&frame, None),
                 ignored: Default::default(),
                 diagnostics: Default::default(),
+                debug_steps: None,
             };
             let result = TraceResult {
                 success: frame.error.is_none() && frame.revert_reason.is_none(),
@@ -591,7 +593,7 @@ impl CallArgs {
             } else {
                 Default::default()
             };
-            let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+            let final_endpoint_identity = evm_opts.fork_endpoint_identity().await?;
             ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 
             // The remote node executed this trace, so its reported family is authoritative for
@@ -635,17 +637,18 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
+            let fork_prefetch = evm_opts.fork_prefetch;
             let mut fork = TracingExecutor::<FEN>::get_fork(&mut config, evm_opts).await?;
             // Modify settings usually set in eth_call while keeping execution gas bounded.
-            fork.evm_env.cfg_env.disable_block_gas_limit = true;
-            fork.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+            fork.evm_env.set_feature(EvmFeatures::BLOCK_GAS_LIMIT_CHECK, false);
+            fork.evm_env.version.tx_gas_limit_cap = u64::MAX;
 
             if let Some(block_overrides) = block_overrides {
                 if let Some(number) = block_overrides.number {
-                    fork.evm_env.block_env.set_number(number.to());
+                    fork.evm_env.block.number = number.to();
                 }
                 if let Some(time) = block_overrides.time {
-                    fork.evm_env.block_env.set_timestamp(U256::from(time));
+                    fork.evm_env.block.timestamp = U256::from(time);
                 }
             }
             fork.resolve_spec(&config, evm_version);
@@ -654,7 +657,7 @@ impl CallArgs {
 
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
-                .with_debug(debug)
+                .with_debug_recording(debug)
                 .with_decode_internal(if tracing.decode_internal {
                     InternalTraceMode::Full
                 } else {
@@ -667,50 +670,76 @@ impl CallArgs {
                 create2_deployer,
                 state_overrides,
             )?;
+            executor.inspector_mut().fork_prefetch(fork_prefetch);
 
             let value = tx.value().unwrap_or_default();
             let input = tx.input().cloned().unwrap_or_default();
             let tx_kind = tx.kind().expect("set by builder");
 
             // Apply a user-provided `--gas-limit` to the executor. `prepare_call_env` propagates
-            // the executor's gas limit to the executed call/deploy, so setting it here
-            // is what takes effect; writing it onto the tx env directly would be
-            // overwritten.
+            // the executor's gas limit to the executed call/deploy and the block.
             if let Some(gas_limit) = tx.gas_limit() {
                 executor.set_gas_limit(gas_limit);
             }
 
-            // Set transaction options with --trace
-            let env_tx = executor.tx_env_mut();
-            if let Some(gas_price) = tx.max_fee_per_gas().or(tx.gas_price()) {
-                env_tx.set_gas_price(gas_price);
+            // Execute the built request, which keeps the transaction type, fees, nonce, access
+            // and authorization lists of the transaction options, with the executor's gas limit
+            // and chain ID. Like `eth_call`, honour the requested fees without requiring the
+            // caller to afford them. Monad ignores the disabled fee charge, so reject priced
+            // traces there. Zero fees keep the zeroed base fee of `prepare_call_env`, skipping
+            // base fee validation like `eth_call`.
+            let (mut evm_env, call_defaults) =
+                executor.prepare_call_env(from, tx_kind, input, value);
+            let priority_fee = tx.max_priority_fee_per_gas().unwrap_or_default();
+            let gas_price = tx.max_fee_per_gas().or(tx.gas_price()).unwrap_or_default();
+            if gas_price != 0 || priority_fee != 0 {
+                eyre::ensure!(
+                    !config.networks.execution_network().is_monad(),
+                    "Nonzero fees are not supported for local Monad traces; use --debug-trace-call instead"
+                );
+                evm_env.set_feature(EvmFeatures::FEE_CHARGE, false);
+                evm_env.set_feature(EvmFeatures::BALANCE_CHECK, false);
+                evm_env.set_feature(EvmFeatures::BALANCE_TOP_UP, false);
+                evm_env.block.basefee = executor.evm_env().block.basefee;
             }
-            if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas() {
-                env_tx.set_gas_priority_fee(Some(max_priority_fee_per_gas));
+            if tx.gas_price().is_some() {
+                tx.set_gas_price(gas_price);
+            } else {
+                tx.set_max_fee_per_gas(gas_price);
+                tx.set_max_priority_fee_per_gas(priority_fee);
             }
-            if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
-                env_tx.set_max_fee_per_blob_gas(max_fee_per_blob_gas);
+            tx.set_from(from);
+            tx.set_chain_id(evm_env.chain_id());
+            if let Some(gas_limit) = call_defaults.gas_limit() {
+                tx.set_gas_limit(gas_limit);
             }
-            if let Some(nonce) = tx.nonce() {
-                env_tx.set_nonce(nonce);
-            }
-            env_tx.set_tx_type(tx.output_tx_type().into());
-            if let Some(access_list) = tx.access_list().cloned() {
-                env_tx.set_access_list(access_list);
-            }
-            if let Some(auth) = tx.authorization_list().cloned() {
-                env_tx.set_signed_authorization(auth);
+            if tx.nonce().is_none()
+                && let Some(nonce) = call_defaults.nonce()
+            {
+                tx.set_nonce(nonce);
             }
 
-            let trace = match tx_kind {
-                TxKind::Create => {
-                    let deploy_result = executor.deploy(from, input, value, None);
-                    TraceResult::try_from(deploy_result)?
+            let trace = if config.networks.execution_network().is_monad() {
+                // Monad's reserve balance depends on the senders of recent blocks, so the call
+                // runs as the first transaction of the block after the fork block.
+                let trace_kind = match tx_kind {
+                    TxKind::Create => TraceKind::Deployment,
+                    TxKind::Call(_) => TraceKind::Execution,
+                };
+                let tx = TypesFor::<FEN>::tx_from_request(tx)?;
+                let ext = next_block_ext(&config, &executor, &evm_env, &tx).await?;
+                TraceResult::from_raw(executor.transact_tx(evm_env, &tx, Some(ext))?, trace_kind)
+            } else {
+                match tx_kind {
+                    TxKind::Create => {
+                        let deploy_result = executor.deploy_with_env(evm_env, tx, None);
+                        TraceResult::try_from(deploy_result)?
+                    }
+                    TxKind::Call(_) => TraceResult::from_raw(
+                        executor.transact_with_env(evm_env, tx)?,
+                        TraceKind::Execution,
+                    ),
                 }
-                TxKind::Call(to) => TraceResult::from_raw(
-                    executor.transact_raw(from, to, input, value)?,
-                    TraceKind::Execution,
-                ),
             };
 
             let contracts_bytecode = fetch_contracts_bytecode_from_trace(&executor, &trace)?;
@@ -819,7 +848,13 @@ impl CallArgs {
         } else if let Some(sig) = &self.sig {
             // If sig is already hex data, use it directly
             match hex::decode(sig) {
-                Ok(data) => data,
+                Ok(data) => {
+                    eyre::ensure!(
+                        self.args.is_empty(),
+                        "Arguments cannot be used with raw calldata. Use a function signature to encode arguments, or provide the complete calldata without arguments."
+                    );
+                    data
+                }
                 Err(_) => encode_function_args(&get_func(sig)?, &self.args)?,
             }
         } else {
@@ -834,27 +869,20 @@ impl CallArgs {
             }
         }).transpose()?;
 
-        // Build eth_call params. `--curl` builds the request offline, so the fields the
-        // RPC-backed builder would resolve against the node (fee style, blob sidecars,
-        // authorization lists) are left to the node's defaults; the scalar fields given on the
-        // command line are forwarded as-is so the printed request runs the same call as the
-        // non-curl command.
-        let mut call_object = serde_json::json!({
-            "to": to,
-            "data": format!("0x{}", hex::encode(&data)),
-        });
-        if let Some(from) = self.wallet.from {
-            call_object["from"] = serde_json::json!(from);
-        }
-        if let Some(value) = self.tx.value {
-            call_object["value"] = serde_json::json!(value);
-        }
-        if let Some(gas_limit) = self.tx.gas_limit {
-            call_object["gas"] = serde_json::json!(gas_limit);
-        }
-        if let Some(nonce) = self.tx.nonce {
-            call_object["nonce"] = serde_json::json!(nonce);
-        }
+        // Apply explicit transaction options offline, using the configured chain's fee style
+        // when available. Blob sidecars and authorization lists still require the RPC builder.
+        let legacy = self.tx.legacy
+            || (config.chain.is_some_and(|chain| chain.is_legacy()) && self.tx.auth.is_empty());
+        let mut call_request = TransactionRequest {
+            to: Some(to.map_or(TxKind::Create, TxKind::Call)),
+            from: self.wallet.from,
+            input: TransactionInput::new(data.into()).normalized_data(),
+            ..Default::default()
+        };
+        // Curl currently emits Ethereum-compatible fields only. Keep Tempo options from changing
+        // the nonce without their accompanying network-specific fields.
+        let tx_opts = TransactionOpts { tempo: Default::default(), ..self.tx };
+        tx_opts.apply::<Ethereum>(&mut call_request, legacy);
 
         let block_param = self
             .block
@@ -873,9 +901,9 @@ impl CallArgs {
             if let Some(block_overrides) = self.overrides.get_block_overrides()? {
                 call_options = call_options.with_block_overrides(block_overrides);
             }
-            ("debug_traceCall", serde_json::json!([call_object, block_param, call_options]))
+            ("debug_traceCall", serde_json::json!([call_request, block_param, call_options]))
         } else {
-            ("eth_call", serde_json::json!([call_object, block_param]))
+            ("eth_call", serde_json::json!([call_request, block_param]))
         };
 
         let curl_cmd = generate_curl_command(
@@ -954,6 +982,28 @@ impl figment::Provider for CallArgs {
 
         Ok(Map::from([(Config::selected_profile(), map)]))
     }
+}
+
+/// Returns the network extension state for `tx` executed as the first transaction of the block
+/// after the fork block, which block-position rules such as Monad's reserve balance depend on.
+async fn next_block_ext<FEN: FoundryEvmNetwork>(
+    config: &Config,
+    executor: &Executor<FEN>,
+    evm_env: &EvmEnvFor<FEN>,
+    tx: &Recovered<TxFor<FEN>>,
+) -> Result<ChainFor<FEN>> {
+    let fork = executor.backend().fork().ok_or_else(|| eyre::eyre!("the trace is not forked"))?;
+    let provider = get_provider(config)?;
+    let block = provider
+        .get_block_by_hash(fork.hash())
+        .full()
+        .await?
+        .ok_or_else(|| eyre::eyre!("fork block {} not found", fork.hash()))?;
+    let mut context = BlockContext::<FEN>::fetch(&provider, &block).await?;
+    context.advance_block();
+    let mut ext = EvmFactoryFor::<FEN>::default().evm_ext(evm_env);
+    context.prepare_next(&mut ext, tx);
+    Ok(ext)
 }
 
 #[cfg(test)]

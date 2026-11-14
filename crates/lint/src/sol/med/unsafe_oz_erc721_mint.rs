@@ -330,7 +330,7 @@ impl<'gcx> Cx<'gcx> {
             stmts,
             |_| false,
             |expr| {
-                if let ExprKind::Call(_, args, _) = &expr.kind
+                if let ExprKind::Call(_, args) = &expr.kind
                     && let Some(function_id) = self.resolved_callee(expr)
                 {
                     calls.push((function_id, args, expr.span));
@@ -414,7 +414,7 @@ impl<'gcx> Cx<'gcx> {
             ExprKind::Lit(lit) => {
                 matches!(&lit.kind, LitKind::Number(value) if *value == U256::from(ERC721_RECEIVED))
             }
-            ExprKind::Call(callee, args, _)
+            ExprKind::Call(callee, args)
                 if matches!(callee.peel_parens().kind, ExprKind::Type(..)) =>
             {
                 args.len() == 1
@@ -508,7 +508,7 @@ impl<'gcx> Cx<'gcx> {
                     self.may_return(then) || otherwise.is_some_and(|stmt| self.may_return(stmt))
                 }
                 StmtKind::Return(_)
-                | StmtKind::AssemblyBlock(_)
+                | StmtKind::AssemblyBlock(..)
                 | StmtKind::Try(_)
                 | StmtKind::Switch(_) => true,
                 _ => false,
@@ -617,13 +617,14 @@ impl<'gcx> Cx<'gcx> {
         seen: &mut Vec<FunctionId>,
     ) -> bool {
         let ExprKind::Call(callee, ..) = &expr.kind else { return false };
+        let (callee, _) = callee.split_call_options();
         let resolved = self.resolved_callee(expr);
         if resolved.is_some_and(|id| delegations.contains(&id))
             && !resolved.is_some_and(|id| unstable_code_delegations.contains(&id))
         {
             return false;
         }
-        if matches!(callee.peel_parens().kind, ExprKind::New(_)) {
+        if matches!(callee.kind, ExprKind::New(_)) {
             return true;
         }
         if !self.callee_fn(expr).is_some_and(|f| {
@@ -631,11 +632,9 @@ impl<'gcx> Cx<'gcx> {
         }) {
             return false;
         }
-        match self.resolved_internal_callee(expr).filter(|&id| !self.gcx.hir.function(id).virtual_)
-        {
-            Some(id) => self.callable_may_change_account_code(id, seen),
-            None => true,
-        }
+        self.resolved_internal_callee(expr)
+            .filter(|&id| !self.gcx.hir.function(id).virtual_)
+            .is_none_or(|id| self.callable_may_change_account_code(id, seen))
     }
 
     /// Whether a statically known same-frame callable can create code, directly, through an
@@ -1163,7 +1162,7 @@ impl<'gcx> GuardWalker<'_, 'gcx> {
     /// accepts the minting contract's callback.
     fn guard_expr_coverage(&mut self, expr: &'gcx Expr<'gcx>) -> GuardCoverage {
         let expr = expr.peel_parens();
-        let ExprKind::Call(callee, args, _) = &expr.kind else { return GuardCoverage::None };
+        let ExprKind::Call(callee, args) = &expr.kind else { return GuardCoverage::None };
         if is_require_or_assert(self.cx.gcx, callee) {
             return args
                 .exprs()
@@ -1186,7 +1185,7 @@ impl<'gcx> GuardWalker<'_, 'gcx> {
     /// callback is part of the proof. Solidity does not guarantee that the other arguments run
     /// before the condition's code-length snapshot.
     fn guard_extra_args_may_change_account_code(&self, expr: &'gcx Expr<'gcx>) -> bool {
-        let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+        let ExprKind::Call(callee, args) = &expr.peel_parens().kind else { return false };
         is_require_or_assert(self.cx.gcx, callee)
             && args.exprs().skip(1).any(|arg| self.may_change_account_code(&[], Some(arg)))
     }
@@ -1218,7 +1217,7 @@ impl<'gcx> GuardWalker<'_, 'gcx> {
     /// minted one.
     fn is_hook_call_on(&self, expr: &'gcx Expr<'gcx>) -> bool {
         let expr = expr.peel_parens();
-        let ExprKind::Call(callee, args, _) = &expr.kind else { return false };
+        let Some((callee, args, _)) = expr.as_call() else { return false };
         let ExprKind::Member(receiver, _) = &callee.peel_parens().kind else { return false };
         let Some(function_id) = self.cx.resolved_callee(expr) else { return false };
         self.cx.is_receiver_hook(function_id)
@@ -1319,7 +1318,7 @@ const fn is_internal(function: &hir::Function<'_>) -> bool {
 }
 
 const fn is_assembly(stmt: &Stmt<'_>) -> bool {
-    matches!(stmt.kind, StmtKind::AssemblyBlock(_))
+    matches!(stmt.kind, StmtKind::AssemblyBlock(..))
 }
 
 /// Whether the variable cannot change between the delegation and the callback guard. An
@@ -1341,7 +1340,7 @@ fn assigns_to(gcx: Gcx<'_>, expr: &Expr<'_>, var: VariableId) -> bool {
 
 /// `revert(...)`, `require(false, ...)` and `assert(false)`.
 fn is_revert_call(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
-    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+    let ExprKind::Call(callee, args) = &expr.peel_parens().kind else { return false };
     is_builtin(gcx, callee, kw::Revert)
         || (is_require_or_assert(gcx, callee) && args.exprs().next().is_some_and(is_literal_false))
 }

@@ -31,6 +31,12 @@ use std::{
 pub mod analysis;
 pub mod anchors;
 
+mod edge;
+pub use edge::{
+    CmpOperands, EdgeCovConfig, EdgeCovHit, EdgeCovInspector, EdgeCovKind, EdgeCoverage,
+    EdgeIndexMap, EdgeKey, MAX_EDGE_COUNT,
+};
+
 mod inspector;
 pub use inspector::LineCoverageCollector;
 
@@ -133,16 +139,20 @@ impl CoverageReport {
     pub fn items_by_file(&self) -> impl Iterator<Item = (&Path, Vec<CoverageItem>)> {
         let mut by_file = BTreeMap::<&Path, BTreeMap<CoverageItemKey<'_>, CoverageItem>>::new();
         for (build_id, items) in &self.analyses {
-            for item in items.all_items() {
-                let Some(path) = self.get_source_path(build_id, item.loc.source_id) else {
-                    continue;
-                };
-                by_file
-                    .entry(path)
-                    .or_default()
-                    .entry(CoverageItemKey::new(item))
-                    .and_modify(|merged| merged.hits = merged.hits.saturating_add(item.hits))
-                    .or_insert_with(|| item.clone());
+            for source_items in
+                items.all_items().chunk_by(|a, b| a.loc.source_id == b.loc.source_id)
+            {
+                if let Some(path) = self.get_source_path(build_id, source_items[0].loc.source_id) {
+                    let file_items = by_file.entry(path).or_default();
+                    for item in source_items {
+                        file_items
+                            .entry(CoverageItemKey::new(item))
+                            .and_modify(|merged| {
+                                merged.hits = merged.hits.saturating_add(item.hits)
+                            })
+                            .or_insert_with(|| item.clone());
+                    }
+                }
             }
         }
         by_file.into_iter().map(|(path, items)| (path, items.into_values().collect()))
@@ -160,18 +170,22 @@ impl CoverageReport {
         is_deployed_code: bool,
     ) -> Result<()> {
         // Add bytecode level hits.
-        self.bytecode_hits
-            .entry(contract_id.clone())
-            .and_modify(|m| m.merge(hit_map))
-            .or_insert_with(|| hit_map.clone());
+        match self.bytecode_hits.get_mut(contract_id) {
+            Some(hits) => hits.merge(hit_map),
+            None => {
+                self.bytecode_hits.insert(contract_id.clone(), hit_map.clone());
+            }
+        }
 
         // Add source level hits.
+        let mut items =
+            self.analyses.get_mut(&contract_id.build_id).map(SourceAnalysis::all_items_mut);
         if let Some(anchors) = self.anchors.get(contract_id) {
             let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
             for (anchor, hits) in anchors.hits(hit_map) {
-                self.analyses
-                    .get_mut(&contract_id.build_id)
-                    .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
+                items
+                    .as_deref_mut()
+                    .and_then(|items| items.get_mut(anchor.item_id as usize))
                     .expect("Anchor refers to non-existent coverage item")
                     .hits += hits.get();
             }
@@ -179,9 +193,9 @@ impl CoverageReport {
         if let Some(anchors) = self.execution_anchors.get(contract_id) {
             for anchor in &anchors.anchors {
                 let hits = anchors.hits(hit_map, anchor.kind, is_deployed_code);
-                self.analyses
-                    .get_mut(&contract_id.build_id)
-                    .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
+                items
+                    .as_deref_mut()
+                    .and_then(|items| items.get_mut(anchor.item_id as usize))
                     .expect("Anchor refers to non-existent coverage item")
                     .hits += hits;
             }
@@ -338,6 +352,10 @@ impl CallHits {
 #[derive(Clone, Debug)]
 pub struct HitMap {
     hits: FxHashMap<u32, u32>,
+    /// Hits by program counter, not yet flushed into `hits`.
+    pending: Vec<u32>,
+    /// Program counters hit in `pending`.
+    pcs: Vec<u32>,
     bytecode: Bytes,
     creations: u32,
     empty_calls: CallHits,
@@ -351,7 +369,9 @@ impl HitMap {
     pub fn new(bytecode: Bytes) -> Self {
         Self {
             bytecode,
-            hits: HashMap::with_capacity_and_hasher(1024, Default::default()),
+            hits: Default::default(),
+            pending: Vec::new(),
+            pcs: Vec::new(),
             creations: 0,
             empty_calls: Default::default(),
             short_calls: Default::default(),
@@ -381,6 +401,39 @@ impl HitMap {
     #[inline]
     pub fn hits(&mut self, pc: u32, hits: u32) {
         *self.hits.entry(pc).or_default() += hits;
+    }
+
+    /// Records a hit, visible after [`Self::flush`].
+    ///
+    /// Saturates, so a counter never returns to zero and adds its PC to `pcs` again.
+    #[inline]
+    pub(crate) fn record(&mut self, pc: usize) {
+        if let Some(hits) = self.pending.get_mut(pc) {
+            if *hits == 0 {
+                self.pcs.push(pc as u32);
+            }
+            *hits = hits.saturating_add(1);
+        } else {
+            self.grow_pending(pc);
+        }
+    }
+
+    /// Grows `pending` to include `pc`.
+    #[cold]
+    #[inline(never)]
+    fn grow_pending(&mut self, pc: usize) {
+        self.pending.resize(self.bytecode.len().max(pc + 1), 0);
+        self.record(pc);
+    }
+
+    /// Moves the recorded hits into `hits`.
+    pub(crate) fn flush(&mut self) {
+        let pending = std::mem::take(&mut self.pending);
+        let pcs = std::mem::take(&mut self.pcs);
+        self.reserve(pcs.len());
+        for pc in pcs {
+            self.hits(pc, pending[pc as usize]);
+        }
     }
 
     fn call(&mut self, call: CallData, with_value: bool) {
@@ -812,7 +865,7 @@ impl CoverageSummary {
 
     /// Creates a coverage summary from a collection of coverage items.
     pub fn from_items<'a>(items: impl IntoIterator<Item = &'a CoverageItem>) -> Self {
-        let mut summary = Self::default();
+        let mut summary = Self::new();
         summary.add_items(items);
         summary
     }
@@ -918,5 +971,16 @@ mod tests {
         assert_eq!(anchors.hits(&hit_map).count(), 0);
         hit_map.hits(20, 3);
         assert_eq!(anchors.hits(&hit_map).next().unwrap().1.get(), 3);
+    }
+
+    #[test]
+    fn saturated_pending_hits_flush_once() {
+        let mut hit_map = HitMap::new(Bytes::from_static(&[0]));
+        hit_map.record(0);
+        hit_map.pending[0] = u32::MAX;
+        hit_map.record(0);
+        hit_map.record(0);
+        hit_map.flush();
+        assert_eq!(hit_map.iter().collect::<Vec<_>>(), [(0, u32::MAX)]);
     }
 }

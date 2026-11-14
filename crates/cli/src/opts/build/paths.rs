@@ -1,6 +1,6 @@
 use clap::{Parser, ValueHint};
-use eyre::Result;
-use foundry_compilers::artifacts::remappings::Remapping;
+use eyre::{Result, ensure};
+use foundry_compilers::{artifacts::remappings::Remapping, utils::canonicalized};
 use foundry_config::{
     Config, figment,
     figment::{
@@ -58,8 +58,11 @@ pub struct ProjectPathOpts {
     pub hardhat: bool,
 
     /// Path to the config file.
+    ///
+    /// The project root is the config file's parent directory.
     #[arg(
         long,
+        conflicts_with = "root",
         value_hint = ValueHint::FilePath,
         value_name = "FILE"
     )]
@@ -70,16 +73,19 @@ pub struct ProjectPathOpts {
 impl ProjectPathOpts {
     /// Returns the root directory to use for configuring the project.
     ///
-    /// This will be the `--root` argument if provided, otherwise see [`find_project_root`].
+    /// Uses the parent of `--config-path`, then `--root`, otherwise see [`find_project_root`].
     ///
     /// # Panics
     ///
-    /// Panics if the project root directory cannot be found. See [`find_project_root`].
+    /// Panics if `--config-path` is invalid or the project root cannot be found.
     #[track_caller]
     pub fn project_root(&self) -> PathBuf {
-        self.root
-            .clone()
-            .unwrap_or_else(|| find_project_root(None).expect("could not determine project root"))
+        if self.config_path.is_some() {
+            // Preserve the existing config-path validation diagnostics.
+            self.try_project_root().unwrap_or_else(|err| panic!("error: {err}"))
+        } else {
+            self.try_project_root().expect("could not determine project root")
+        }
     }
 
     /// Returns the remappings to add to the config
@@ -98,6 +104,24 @@ impl ProjectPathOpts {
             }
         }
         remappings
+    }
+
+    /// Resolves the project root without loading configuration, validating `--config-path` first.
+    pub fn try_project_root(&self) -> Result<PathBuf> {
+        if let Some(config_path) = &self.config_path {
+            ensure!(config_path.exists(), "config-path `{}` does not exist", config_path.display());
+            ensure!(
+                config_path.ends_with(Config::FILE_NAME),
+                "the config-path must be a path to a foundry.toml file"
+            );
+            ensure!(config_path.is_file(), "config-path `{}` is not a file", config_path.display());
+            let config_path = canonicalized(config_path);
+            Ok(config_path.parent().unwrap().to_path_buf())
+        } else if let Some(root) = &self.root {
+            Ok(root.clone())
+        } else {
+            Ok(find_project_root(None)?)
+        }
     }
 }
 

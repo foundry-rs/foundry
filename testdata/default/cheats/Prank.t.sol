@@ -108,6 +108,19 @@ contract NestedCreatePranker {
             )
         );
     }
+
+    function prankWithOrigin(address origin, bool create) public returns (address) {
+        address sender = address(0xB0B);
+        vm.prank(sender, origin);
+        if (create) {
+            new ConstructorVictim(sender, "nested constructor sender", origin, "nested constructor origin");
+        } else {
+            (bool success,) = address(0x1234).call("");
+            require(success, "nested call failed");
+        }
+        // Read the restored origin before another message can refresh the inspector state.
+        return tx.origin;
+    }
 }
 
 contract ImplementationTest {
@@ -213,6 +226,24 @@ contract PrankTest is Test {
         (bool successThree,) = address(impl).delegatecall(abi.encodeWithSignature("setNum(uint256)", num));
         require(successThree, "startPrank3: delegate call failed setNum");
         require(proxy.num() == num, "startPrank3: proxy's storage was not set correctly");
+        vm.stopPrank();
+    }
+
+    function testStartPrankOverrideAfterDelegateCall() public {
+        ProxyTest proxy = new ProxyTest();
+        // Created before the prank, so a CREATE does not mark the prank as used.
+        ProxyTest otherProxy = new ProxyTest();
+        ImplementationTest impl = new ImplementationTest();
+
+        vm.startPrank(address(proxy), true);
+        (bool success,) = address(impl).delegatecall(abi.encodeWithSignature("setNum(uint256)", 1));
+        require(success, "delegate call failed");
+
+        // Overriding requires the delegate-only prank to have been marked as used.
+        vm.startPrank(address(otherProxy), true);
+        (success,) =
+            address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", address(otherProxy)));
+        require(success, "overridden delegate prank was not applied");
         vm.stopPrank();
     }
 
@@ -604,6 +635,48 @@ contract PrankTest is Test {
             sender, "msg.sender was not set correctly", origin, "tx.origin was not set correctly"
         );
     }
+
+    function testStartPrankCallbackPreservesSenderAndOrigin() public {
+        address sender = address(0x1234);
+        address origin = address(0x5678);
+        address oldOrigin = tx.origin;
+        Victim victim = new Victim();
+        PrankCallbackCaller callback = new PrankCallbackCaller();
+
+        vm.startPrank(sender);
+        callback.callBack(this, victim, sender, oldOrigin);
+
+        // A successful outer call permits replacing the persistent prank.
+        vm.startPrank(sender, origin);
+        callback.callBack(this, victim, sender, origin);
+        require(tx.origin == oldOrigin, "callback did not restore tx.origin");
+        victim.assertCallerAndOrigin(sender, "callback consumed the prank", origin, "callback lost the pranked origin");
+
+        vm.stopPrank();
+        victim.assertCallerAndOrigin(address(this), "prank was not stopped", oldOrigin, "tx.origin was not restored");
+    }
+
+    function assertPrankCallback(Victim victim, address expectedCaller, address expectedOrigin) external view {
+        require(msg.sender == expectedCaller, "callback caller was pranked");
+        require(tx.origin == expectedOrigin, "callback origin was incorrect");
+        // The original prank caller is calling again, but deeper than the prank's depth.
+        victim.assertCallerAndOrigin(
+            address(this), "nested callback call was pranked", expectedOrigin, "nested callback origin was incorrect"
+        );
+    }
+
+    /// forge-config: default.isolate = false
+    function testPrankNestedOriginRestoration() public {
+        address oldOrigin = tx.origin;
+        address outerOrigin = address(0xdeadbeef);
+        NestedCreatePranker pranker = new NestedCreatePranker();
+
+        for (uint256 i; i < 2; ++i) {
+            vm.prank(address(0xA11CE), outerOrigin);
+            address restoredOrigin = pranker.prankWithOrigin(oldOrigin, i == 1);
+            assertEq(restoredOrigin, outerOrigin);
+        }
+    }
 }
 
 contract Issue9990 is Test {
@@ -660,5 +733,13 @@ contract Issue10528 is Test {
 
         vm.startPrank(address(0x11111));
         counter.increment();
+    }
+}
+
+contract PrankCallbackCaller {
+    function callBack(PrankTest target, Victim victim, address expectedSender, address expectedOrigin) external {
+        require(msg.sender == expectedSender, "outer call was not pranked");
+        require(tx.origin == expectedOrigin, "outer call origin was incorrect");
+        target.assertPrankCallback(victim, address(this), expectedOrigin);
     }
 }

@@ -1,6 +1,7 @@
 use foundry_config::fs_permissions::PathPermission;
 
-forgetest!(test_eip712, |prj, cmd| {
+#[forgetest]
+fn test_eip712(prj: _, cmd: _) {
     let path = prj.add_test(
         "Structs.sol",
         r#"
@@ -183,9 +184,10 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
-forgetest!(test_eip712_free_standing_structs, |prj, cmd| {
+#[forgetest]
+fn test_eip712_free_standing_structs(prj: _, cmd: _) {
     let path = prj.add_source(
         "FreeStandingStructs.sol",
         r#"
@@ -233,9 +235,10 @@ FreeStandingStructs.sol > InsideLibrary > LibraryStruct:
 
 
 "#]]);
-});
+}
 
-forgetest!(test_eip712_cheatcode_simple, |prj, cmd| {
+#[forgetest]
+fn test_eip712_cheatcode_simple(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -305,9 +308,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]
     ]);
-});
+}
 
-forgetest!(test_eip712_cheatcode_nested, |prj, cmd| {
+#[forgetest]
+fn test_eip712_cheatcode_nested(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -468,10 +472,18 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
             "--match-test",
             "testEip712HashType_byCustomPathAndTypeName",
         ])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for src/Eip712Cheat.sol:Eip712Test
+[PASS] testEip712HashType_byCustomPathAndTypeName() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest!(test_eip712_hash_struct_simple, |prj, cmd| {
+#[forgetest]
+fn test_eip712_hash_struct_simple(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -524,10 +536,21 @@ contract Eip712HashStructDomainTest is DSTest {
 "#,
         );
 
-    cmd.forge_fuse().args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"]).assert_success();
-});
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for src/Eip712HashStructDomainTest.sol:Eip712HashStructDomainTest
+[PASS] testHashEIP712Domain() ([GAS])
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest!(test_eip712_hash_struct_complex, |prj, cmd| {
+#[forgetest]
+fn test_eip712_hash_struct_complex(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -769,9 +792,10 @@ Logs:
   0x3ed744fdcea02b6b9ad45a9db6e648bf6f18c221909f9ee425191f2a02f9e4a8
 ...
 "#]]);
-});
+}
 
-forgetest!(test_eip712_hash_typed_data, |prj, cmd| {
+#[forgetest]
+fn test_eip712_hash_typed_data(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -798,11 +822,20 @@ contract Eip712HashTypedDataTest is DSTest {
 "#,
     );
 
-    cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success();
-});
+    cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for src/Eip712HashTypedData.sol:Eip712HashTypedDataTest
+[PASS] testHashEIP712Message() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
+}
 
 // repro: <https://github.com/foundry-rs/foundry/issues/11366>
-forgetest!(test_eip712_hash_typed_data_repro, |prj, cmd| {
+#[forgetest]
+fn test_eip712_hash_typed_data_repro(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -889,4 +922,4 @@ contract CounterStrike_Test is DSTest {
     );
 
     cmd.forge_fuse().args(["test", "-vvv"]).assert_success();
-});
+}

@@ -340,6 +340,9 @@ struct Analyzer<'ctx, 's, 'c, 'gcx> {
     reentrancy_eth_enabled: bool,
     reentrancy_no_eth_enabled: bool,
     reentrancy_balance_enabled: bool,
+    /// Prunes branches that path predicates rule out; tied to the lint config so the ETH lints
+    /// report the same whether or not an entry point reads a balance.
+    prune_paths: bool,
     /// Set while re-running code only to refine the balance analysis.
     balance_only_analysis: bool,
     /// Balance facts about the return values of each analysed internal call site.
@@ -374,7 +377,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         gcx: Gcx<'gcx>,
         entry: &'gcx hir::Function<'gcx>,
     ) -> Self {
-        let reentrancy_balance_enabled = ctx.is_lint_enabled(REENTRANCY_BALANCE.id);
+        let prune_paths = ctx.is_lint_enabled(REENTRANCY_BALANCE.id);
+        let reentrancy_balance_enabled = prune_paths && reaches_balance_read(gcx, entry);
         Self {
             ctx,
             gcx,
@@ -387,6 +391,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
             reentrancy_balance_enabled,
+            prune_paths,
             balance_only_analysis: false,
             call_balance_values: HashMap::new(),
             return_collectors: Vec::new(),
@@ -590,7 +595,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 }
                 falls_through
             }
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) => {
+            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) => {
                 state.invalidated_balance_guards.extend(&self.active_balance_guards);
                 state.internal_function_targets.clear();
                 state.self_address_local_paths.clear();
@@ -607,8 +612,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         then_state: &mut FlowState,
         else_state: &mut FlowState,
     ) -> (bool, bool) {
-        let predicate =
-            self.reentrancy_balance_enabled.then(|| path_predicate(self.gcx, cond)).flatten();
+        let predicate = self.prune_paths.then(|| path_predicate(self.gcx, cond)).flatten();
         let Some((predicate, value)) = predicate else { return (true, true) };
         (
             then_state.constrain_path((predicate, value)),
@@ -664,8 +668,9 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     }
                 }
             }
-            ExprKind::Call(callee, args, opts) => {
-                let mut operands = vec![*callee];
+            ExprKind::Call(callee, args) => {
+                let (callee, opts) = callee.split_call_options();
+                let mut operands = vec![callee];
                 operands.extend(opts.iter().flat_map(|opts| opts.args).map(|opt| &opt.value));
                 operands.extend(args.exprs());
 
@@ -698,12 +703,12 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     self.merge_call_balance_values(expr.span, returns);
                 }
                 if !state.state_reads.is_empty()
-                    && let Some(kind) = self.reentrant_call_kind(callee, *opts)
+                    && let Some(kind) = self.reentrant_call_kind(callee, opts)
                 {
                     state.push_call(expr.span, kind);
                 }
                 if self.reentrancy_balance_enabled
-                    && call_options_allow_reentrancy(self.gcx, *opts)
+                    && call_options_allow_reentrancy(self.gcx, opts)
                     && callee_can_reenter(self.gcx, callee)
                     && !self.balance_guard_blocks_call(state, callee)
                 {
@@ -714,8 +719,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 }
             }
             ExprKind::Binary(lhs, op, rhs)
-                if self.reentrancy_balance_enabled
-                    && matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
+                if self.prune_paths && matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
             {
                 self.analyze_expr(lhs, state);
                 let rhs_outcome = op.kind == BinOpKind::And;
@@ -824,6 +828,23 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             Vec::new()
         };
 
+        // The callee can neither read nor change other functions' balance-independent locals, so
+        // they stay out of its cache key.
+        let inert = take_inert_locals(&self.gcx.hir, func_id, state);
+        let returns = self.inline_internal_call(func_id, func, body, parameter_predicates, state);
+        state.balance_local_forms.extend(inert.0);
+        state.balance_local_dependencies.extend(inert.1);
+        returns
+    }
+
+    fn inline_internal_call(
+        &mut self,
+        func_id: FunctionId,
+        func: &'gcx hir::Function<'gcx>,
+        body: hir::Block<'gcx>,
+        parameter_predicates: Vec<Option<(PathPredicate, bool)>>,
+        state: &mut FlowState,
+    ) -> Vec<BalanceValue> {
         let key = InlineCallKey {
             func_id,
             recursive_cut: self.first_recursive_cut(func_id),
@@ -1209,7 +1230,11 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         let expr = expr.peel_parens();
         match &expr.kind {
             ExprKind::Payable(inner) => self.self_address_path(inner, state),
-            ExprKind::Call(callee, args, None) if is_address_cast(callee) && args.len() == 1 => {
+            ExprKind::Call(callee, args)
+                if callee.split_call_options().1.is_none()
+                    && is_address_cast(callee)
+                    && args.len() == 1 =>
+            {
                 self.self_address_path(args.exprs().next().expect("one argument"), state)
             }
             ExprKind::Call(..) => self
@@ -1385,7 +1410,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     })
                     .collect()
             }
-            ExprKind::Call(callee, args, _) if cast_type(callee).is_some() && args.len() == 1 => {
+            ExprKind::Call(callee, args) if cast_type(callee).is_some() && args.len() == 1 => {
                 let inner = args.exprs().next().expect("one argument");
                 let preserving = match (
                     self.gcx.type_of_expr(inner.peel_parens().id),
@@ -1683,6 +1708,27 @@ fn remap_return_paths(
     }
 }
 
+/// Takes out the balance forms and dependencies that are balance-independent and belong to locals
+/// of functions other than `func_id`, whose paths do not mention `func_id`'s locals.
+fn take_inert_locals(
+    hir: &hir::Hir<'_>,
+    func_id: FunctionId,
+    state: &mut FlowState,
+) -> (BTreeMap<VariableId, BTreeSet<BalanceForm>>, BTreeMap<VariableId, BTreeSet<BalanceForm>>) {
+    let owned = owned_by(hir, func_id);
+    let take = |map: &mut BTreeMap<VariableId, BTreeSet<BalanceForm>>| {
+        let (inert, kept) = std::mem::take(map).into_iter().partition(|(var_id, forms)| {
+            !owned(*var_id)
+                && forms.iter().all(|form| {
+                    form.terms.is_empty() && !form.path.keys().any(|p| p.mentions(&owned))
+                })
+        });
+        *map = kept;
+        inert
+    };
+    (take(&mut state.balance_local_forms), take(&mut state.balance_local_dependencies))
+}
+
 /// Drops every path fact that mentions the (re)assigned local `var_id`.
 fn forget_path_predicates(state: &mut FlowState, var_id: VariableId) {
     let mentions = |predicate: &PathPredicate| predicate.mentions(|v| v == var_id);
@@ -1711,14 +1757,9 @@ fn forget_path_predicates(state: &mut FlowState, var_id: VariableId) {
 
 /// Arguments of a plain type conversion such as `uint256(x)` or `address(x)`.
 fn cast_args<'a>(expr: &'a Expr<'a>) -> Option<&'a CallArgs<'a>> {
-    match &expr.peel_parens().kind {
-        ExprKind::Call(callee, args, None)
-            if matches!(callee.peel_parens().kind, ExprKind::Type(_) | ExprKind::TypeCall(_)) =>
-        {
-            Some(args)
-        }
-        _ => None,
-    }
+    let (callee, args, opts) = expr.peel_parens().as_call()?;
+    (opts.is_none() && matches!(callee.kind, ExprKind::Type(_) | ExprKind::TypeCall(_)))
+        .then_some(args)
 }
 
 fn call_option<'a>(opts: Option<&'a CallOptions<'a>>, name: Symbol) -> Option<&'a Expr<'a>> {
@@ -1734,8 +1775,10 @@ fn is_uncapped_value_call(gcx: Gcx<'_>, callee: &Expr<'_>, opts: Option<&CallOpt
     matches!(&callee.peel_parens().kind, ExprKind::Member(_, member) if member.name == kw::Call)
         && call_sends_eth(gcx, opts)
         && call_option(opts, kw::Gas).is_none_or(|gas| {
-            matches!(&gas.peel_parens().kind, ExprKind::Call(callee, args, None)
-                if args.is_empty() && is_builtin(gcx, callee, sym::gasleft))
+            matches!(&gas.peel_parens().kind, ExprKind::Call(callee, args)
+                if callee.split_call_options().1.is_none()
+                    && args.is_empty()
+                    && is_builtin(gcx, callee, sym::gasleft))
         })
 }
 
@@ -1829,8 +1872,8 @@ fn guard_restoration(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Option<(VariableId, Opera
 /// `f();` naming exactly one function.
 fn simple_internal_call(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Option<FunctionId> {
     let StmtKind::Expr(expr) = stmt.kind else { return None };
-    let ExprKind::Call(callee, args, None) = &expr.peel_parens().kind else { return None };
-    (args.is_empty() && matches!(callee.peel_parens().kind, ExprKind::Ident(_)))
+    let (callee, args, opts) = expr.peel_parens().as_call()?;
+    (opts.is_none() && args.is_empty() && matches!(callee.kind, ExprKind::Ident(_)))
         .then(|| gcx.resolved_function(callee))
         .flatten()
 }
@@ -1858,7 +1901,7 @@ fn stmt_rejects_lock_value(
     };
     match stmt.kind {
         StmtKind::Expr(expr) => {
-            let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+            let ExprKind::Call(callee, args) = &expr.peel_parens().kind else { return false };
             is_require_or_assert(gcx, callee)
                 && args.exprs().next().is_some_and(|cond| eval(cond) == Some(false))
         }
@@ -1918,6 +1961,52 @@ fn const_value(
         }
         _ => None,
     }
+}
+
+/// Whether `entry`, or a modifier or internal function it can reach, reads a `.balance`.
+///
+/// The balance analysis only reports stale reads of the contract's own balance, so it can skip
+/// entry points that never read one.
+fn reaches_balance_read<'gcx>(gcx: Gcx<'gcx>, entry: &'gcx hir::Function<'gcx>) -> bool {
+    struct Finder<'gcx> {
+        gcx: Gcx<'gcx>,
+        pending: Vec<FunctionId>,
+    }
+
+    impl<'gcx> Visit<'gcx> for Finder<'gcx> {
+        type BreakValue = ();
+
+        fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+            &self.gcx.hir
+        }
+
+        fn visit_modifier(&mut self, modifier: &'gcx hir::Modifier<'gcx>) -> ControlFlow<()> {
+            self.pending.extend(modifier.id.as_function());
+            self.visit_call_args(&modifier.args)
+        }
+
+        fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
+            if let ExprKind::Member(_, member) = &expr.kind
+                && member.name == kw::Balance
+            {
+                return ControlFlow::Break(());
+            }
+            self.pending.extend(static_internal_callee(self.gcx, expr));
+            self.walk_expr(expr)
+        }
+    }
+
+    let mut finder = Finder { gcx, pending: Vec::new() };
+    if finder.visit_function(entry).is_break() {
+        return true;
+    }
+    let mut seen = HashSet::new();
+    while let Some(id) = finder.pending.pop() {
+        if seen.insert(id) && finder.visit_function(gcx.hir.function(id)).is_break() {
+            return true;
+        }
+    }
+    false
 }
 
 /// The reentrancy-guard lock, if any, that protects every entry point of every deployable

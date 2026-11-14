@@ -1,9 +1,9 @@
+use crate::CallTraceNode;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::ArtifactId;
 use foundry_config::{Chain, Config};
-use revm_inspectors::tracing::types::CallTraceNode;
 use std::borrow::Cow;
 
 mod local;

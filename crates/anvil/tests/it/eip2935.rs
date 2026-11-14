@@ -4,7 +4,6 @@ use alloy_eips::{
     eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
     eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
 };
-use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, Bytes, U256, address, bytes};
 use alloy_provider::Provider;
@@ -18,42 +17,49 @@ use alloy_rpc_types::{
     },
 };
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, PrecompileFactory, spawn};
-use foundry_evm::hardfork::{EthereumHardfork, TempoHardfork};
-use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileStatus};
+use anvil::{
+    NodeConfig, PrecompileFactory,
+    evm::{
+        DynPrecompile, GasTracker, PrecompileError, PrecompileId, PrecompileInput,
+        PrecompileOutput, PrecompileResult,
+    },
+    spawn,
+};
+use foundry_evm_hardforks::{EthereumHardfork, TempoHardfork};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 #[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
+use foundry_evm_hardforks::OpHardfork;
 #[cfg(feature = "optimism")]
 use foundry_evm_networks::NetworkConfigs;
 
 const REPLAY_PRE_EXECUTION_ERROR: &str = "replay pre-execution sentinel";
 
+fn dyn_precompile(
+    f: impl Fn(PrecompileInput<'_>, &mut GasTracker) -> PrecompileResult + Send + Sync + 'static,
+) -> DynPrecompile {
+    Arc::new(f)
+}
+
 #[derive(Debug)]
 struct FailingHistoryPrecompile(Arc<AtomicBool>);
 
 impl PrecompileFactory for FailingHistoryPrecompile {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+    fn precompiles(&self) -> Vec<(Address, PrecompileId, DynPrecompile)> {
         let fail = Arc::clone(&self.0);
-        let precompile = DynPrecompile::from(move |input: PrecompileInput<'_>| {
-            if fail.load(Ordering::SeqCst) {
-                return Err(PrecompileError::Fatal(REPLAY_PRE_EXECUTION_ERROR.to_string()));
-            }
-            Ok(PrecompileOutput {
-                status: PrecompileStatus::Success,
-                bytes: Bytes::new(),
-                gas_used: 0,
-                gas_refunded: 0,
-                state_gas_used: 0,
-                state_gas_spilled: 0,
-                reservoir: input.reservoir,
-            })
-        });
-        vec![(HISTORY_STORAGE_ADDRESS, precompile)]
+        let precompile =
+            dyn_precompile(move |_input: PrecompileInput<'_>, _gas: &mut GasTracker| {
+                if fail.load(Ordering::SeqCst) {
+                    return Err(PrecompileError::fatal(std::io::Error::other(
+                        REPLAY_PRE_EXECUTION_ERROR,
+                    )));
+                }
+                Ok(PrecompileOutput::new(Bytes::new()))
+            });
+        vec![(HISTORY_STORAGE_ADDRESS, PrecompileId::custom("history"), precompile)]
     }
 }
 
@@ -61,42 +67,31 @@ impl PrecompileFactory for FailingHistoryPrecompile {
 struct OrderedBlockStartPrecompiles(Arc<AtomicUsize>);
 
 impl PrecompileFactory for OrderedBlockStartPrecompiles {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+    fn precompiles(&self) -> Vec<(Address, PrecompileId, DynPrecompile)> {
         let history_order = Arc::clone(&self.0);
-        let history = DynPrecompile::from(move |input: PrecompileInput<'_>| {
+        let history = dyn_precompile(move |_input: PrecompileInput<'_>, _gas: &mut GasTracker| {
             if history_order.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst).is_err() {
-                return Err(PrecompileError::Fatal("EIP-2935 did not execute first".to_string()));
+                return Err(PrecompileError::fatal(std::io::Error::other(
+                    "EIP-2935 did not execute first",
+                )));
             }
-            Ok(PrecompileOutput {
-                status: PrecompileStatus::Success,
-                bytes: Bytes::new(),
-                gas_used: 0,
-                gas_refunded: 0,
-                state_gas_used: 0,
-                state_gas_spilled: 0,
-                reservoir: input.reservoir,
-            })
+            Ok(PrecompileOutput::new(Bytes::new()))
         });
 
         let beacon_order = Arc::clone(&self.0);
-        let beacon = DynPrecompile::from(move |input: PrecompileInput<'_>| {
+        let beacon = dyn_precompile(move |_input: PrecompileInput<'_>, _gas: &mut GasTracker| {
             if beacon_order.compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst).is_err() {
-                return Err(PrecompileError::Fatal(
-                    "EIP-4788 did not execute after EIP-2935".to_string(),
-                ));
+                return Err(PrecompileError::fatal(std::io::Error::other(
+                    "EIP-4788 did not execute after EIP-2935",
+                )));
             }
-            Ok(PrecompileOutput {
-                status: PrecompileStatus::Success,
-                bytes: Bytes::new(),
-                gas_used: 0,
-                gas_refunded: 0,
-                state_gas_used: 0,
-                state_gas_spilled: 0,
-                reservoir: input.reservoir,
-            })
+            Ok(PrecompileOutput::new(Bytes::new()))
         });
 
-        vec![(HISTORY_STORAGE_ADDRESS, history), (BEACON_ROOTS_ADDRESS, beacon)]
+        vec![
+            (HISTORY_STORAGE_ADDRESS, PrecompileId::custom("history"), history),
+            (BEACON_ROOTS_ADDRESS, PrecompileId::custom("beacon"), beacon),
+        ]
     }
 }
 
@@ -161,24 +156,17 @@ async fn optimism_spec_id_does_not_enable_ethereum_block_transitions() {
 struct CountingPostBlockPrecompiles(Arc<AtomicUsize>);
 
 impl PrecompileFactory for CountingPostBlockPrecompiles {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+    fn precompiles(&self) -> Vec<(Address, PrecompileId, DynPrecompile)> {
         [WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS]
             .into_iter()
             .map(|address| {
                 let calls = Arc::clone(&self.0);
-                let precompile = DynPrecompile::from(move |input: PrecompileInput<'_>| {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    Ok(PrecompileOutput {
-                        status: PrecompileStatus::Success,
-                        bytes: Bytes::new(),
-                        gas_used: 0,
-                        gas_refunded: 0,
-                        state_gas_used: 0,
-                        state_gas_spilled: 0,
-                        reservoir: input.reservoir,
-                    })
-                });
-                (address, precompile)
+                let precompile =
+                    dyn_precompile(move |_input: PrecompileInput<'_>, _gas: &mut GasTracker| {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(PrecompileOutput::new(Bytes::new()))
+                    });
+                (address, PrecompileId::custom("request"), precompile)
             })
             .collect()
     }
@@ -220,7 +208,7 @@ async fn transaction_prefix_replay_does_not_drain_post_block_queues() {
     let to = wallets.next().unwrap().address();
     let receipt = provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(from).to(to).value(U256::from(1)),
+            TransactionRequest::default().from(from).to(to).value(U256::ONE),
         ))
         .await
         .unwrap()
@@ -272,7 +260,7 @@ async fn eip2935_stores_parent_block_hash() {
     // Query the history storage contract for block 1's hash.
     // The EIP-2935 contract uses raw calldata (not ABI-encoded): pass the block number
     // as a 32-byte big-endian word directly.
-    let call_data: [u8; 32] = U256::from(1).to_be_bytes();
+    let call_data: [u8; 32] = U256::ONE.to_be_bytes();
     let tx = TransactionRequest::default().with_to(HISTORY_STORAGE_ADDRESS).with_input(call_data);
     let result = provider.call(tx.into()).await.unwrap();
 
@@ -288,7 +276,7 @@ async fn eip2935_no_system_call_on_genesis() {
 
     // At genesis (block 0), the contract should exist but no system call should have
     // written any parent hash into its storage. Check raw storage slot 0 directly.
-    let slot = provider.get_storage_at(HISTORY_STORAGE_ADDRESS, U256::from(0)).await.unwrap();
+    let slot = provider.get_storage_at(HISTORY_STORAGE_ADDRESS, U256::ZERO).await.unwrap();
     assert_eq!(slot, U256::ZERO, "No hash should be stored in the contract at genesis");
 }
 
@@ -300,6 +288,19 @@ async fn eip2935_not_deployed_before_prague() {
 
     let code = provider.get_code_at(HISTORY_STORAGE_ADDRESS).await.unwrap();
     assert!(code.is_empty(), "EIP-2935 contract should NOT be deployed before Prague");
+}
+
+// Failing EIP-2935 and EIP-4788 system calls do not invalidate the block.
+#[tokio::test(flavor = "multi_thread")]
+async fn failing_block_start_system_calls_do_not_stop_mining() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, _handle) = spawn(node_config).await;
+    // The history contract reverts and the beacon roots contract loops until out of gas.
+    api.anvil_set_code(HISTORY_STORAGE_ADDRESS, bytes!("5f5ffd")).await.unwrap();
+    api.anvil_set_code(BEACON_ROOTS_ADDRESS, bytes!("5b5f56")).await.unwrap();
+
+    api.mine_one().await.unwrap();
+    assert_eq!(api.backend.best_number(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -409,7 +410,7 @@ async fn eip2935_local_block_replay_propagates_pre_execution_errors() {
     let to = wallets.next().unwrap().address();
     let receipt = provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(from).to(to).value(U256::from(1)),
+            TransactionRequest::default().from(from).to(to).value(U256::ONE),
         ))
         .await
         .unwrap()
@@ -502,7 +503,7 @@ async fn geth_block_replay_discards_partial_results_on_execution_error() {
             .from(from)
             .to(target)
             .nonce(nonce as u64)
-            .value(U256::from(1))
+            .value(U256::ONE)
             .gas_limit(30_000);
         hashes.push(api.send_transaction(WithOtherFields::new(transaction)).await.unwrap());
     }
@@ -520,9 +521,9 @@ async fn geth_block_replay_discards_partial_results_on_execution_error() {
             Err(error) => TraceResult::Error { error: error.to_string(), tx_hash: Some(hash) },
         });
     }
-    assert!(matches!(expected[0], TraceResult::Success { .. }));
-    assert!(matches!(expected[1], TraceResult::Error { .. }));
-    assert!(matches!(expected[2], TraceResult::Error { .. }));
+    assert!(expected[0].is_success());
+    assert!(expected[1].is_error());
+    assert!(expected[2].is_error());
     assert_eq!(
         api.backend.debug_trace_block_by_number(block_number.into(), options).await.unwrap(),
         expected,

@@ -77,7 +77,7 @@ fn stmt_outcome(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Outcome {
         StmtKind::Revert(_) => Outcome::COVERED,
         StmtKind::Block(block)
         | StmtKind::UncheckedBlock(block)
-        | StmtKind::AssemblyBlock(block) => block_outcome(gcx, *block),
+        | StmtKind::AssemblyBlock(block, _) => block_outcome(gcx, *block),
         StmtKind::If(_, then_stmt, else_stmt) => {
             let then_outcome = stmt_outcome(gcx, then_stmt);
             let else_outcome =
@@ -134,7 +134,7 @@ fn stmt_outcome(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Outcome {
 ///   *without* running the modified function body, which is exactly what this lint flags, so they
 ///   behave like a `return` ([`Outcome::RETURNS`]).
 fn call_outcome(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<Outcome> {
-    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return None };
+    let ExprKind::Call(callee, args) = &expr.peel_parens().kind else { return None };
     match gcx.resolved_builtin(callee)? {
         Builtin::Revert | Builtin::RevertMsg | Builtin::YulRevert | Builtin::YulInvalid => {
             Some(Outcome::COVERED)

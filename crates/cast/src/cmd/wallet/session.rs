@@ -23,14 +23,14 @@ use std::{
     process::{Command, ExitStatus},
 };
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
-use tempo_contracts::precompiles::IAccountKeychain;
+use tempo_contracts::precompiles::{ACCOUNT_KEYCHAIN_ADDRESS, IAccountKeychain};
 use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule};
 use tokio::signal;
 
 use crate::{
     cmd::{
         keychain::{
-            KeychainTxOutcome, resolve_keychain_root_signer, send_keychain_tx_with_root_signer,
+            KeychainTxOutcome, resolve_keychain_root_signer, send_precompile_tx_with_root_signer,
         },
         print_json_or,
         tempo_policy_args::{
@@ -551,7 +551,7 @@ async fn revoke(
         retire_session_entry(session_id)?;
         return print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::AlreadyRevoked);
     }
-    if info.keyId == Address::ZERO {
+    if info.keyId.is_zero() {
         return match unprovisioned_policy {
             UnprovisionedKeyPolicy::RevokeLocally => {
                 retire_session_entry(session_id)?;
@@ -568,17 +568,22 @@ async fn revoke(
     let root_signer =
         resolve_keychain_root_signer(&send_tx, Some(entry.root_account), false).await?;
     let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
-    let outcome =
-        send_keychain_tx_with_root_signer(calldata, tx, &send_tx, root_signer, force, || {
-            retire_session_entry(session_id).map(drop)
-        })
-        .await
-        .and_then(|outcome| {
-            if outcome == KeychainTxOutcome::PrintedSponsorHash {
-                eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
-            }
-            Ok(outcome)
-        });
+    let outcome = send_precompile_tx_with_root_signer(
+        ACCOUNT_KEYCHAIN_ADDRESS,
+        calldata,
+        tx,
+        &send_tx,
+        root_signer,
+        force,
+        || retire_session_entry(session_id).map(drop),
+    )
+    .await
+    .and_then(|outcome| {
+        if outcome == KeychainTxOutcome::PrintedSponsorHash {
+            eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
+        }
+        Ok(outcome)
+    });
     let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(err) => {
@@ -706,7 +711,8 @@ async fn resolve_root_signer(
     root_account: Address,
     chain_id: u64,
 ) -> Result<WalletSigner> {
-    let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
+    let (signer, tempo_access_key) =
+        foundry_common::tempo::maybe_signer(&wallet, Some(chain_id)).await?;
     if tempo_access_key.is_some() {
         eyre::bail!(
             "Tempo access keys cannot authorize Tempo sessions; use a persistent root signer"
@@ -742,8 +748,10 @@ fn parse_spend_limit(s: &str) -> Result<SessionSpendLimit, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd::wallet::raw_wallet;
     use alloy_primitives::address;
     use foundry_common::tempo::SessionStatus;
+    use foundry_wallets::RawWalletOpts;
     use std::{ffi::OsStr, sync::Mutex};
     use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
@@ -794,7 +802,7 @@ mod tests {
 
     #[test]
     fn session_scope_target_shortcut() {
-        let target = address!("0x00000000000000000000000000000000000000aa");
+        let target = Address::with_last_byte(0xaa);
         let err = session_scope(vec![], Some(target), vec![]).unwrap_err();
         assert!(err.to_string().contains("--target requires at least one --selector"), "{err}");
 
@@ -805,7 +813,7 @@ mod tests {
 
     #[test]
     fn inner_command_clears_inherited_signer_env_for_session_child() {
-        let session_id = B256::from([0x7a; 32]);
+        let session_id = B256::repeat_byte(0x7a);
         let command = InnerCommand::parse("forge script Deploy".to_string()).unwrap();
         let child = command.command(session_id);
 
@@ -844,7 +852,7 @@ mod tests {
     fn inner_command_interrupt_terminates_child() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-            let session_id = B256::from([0x7b; 32]);
+            let session_id = B256::repeat_byte(0x7b);
             let command = InnerCommand::parse("sh -c 'sleep 30'".to_string()).unwrap();
             let err = command
                 .run_with_interrupt(session_id, std::future::ready(Ok("test interrupt")))
@@ -862,7 +870,7 @@ mod tests {
     #[test]
     fn local_revoke_is_idempotent_when_missing() {
         with_tempo_home(|| {
-            assert!(!retire_session_entry(B256::from([0x42; 32])).unwrap());
+            assert!(!retire_session_entry(B256::repeat_byte(0x42)).unwrap());
         });
     }
 
@@ -872,20 +880,17 @@ mod tests {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async {
                 let root = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-                let wallet = WalletOpts {
-                    raw: foundry_wallets::RawWalletOpts {
-                        private_key: Some(ROOT_PRIVATE_KEY.to_string()),
-                        ..Default::default()
-                    },
+                let wallet = raw_wallet(RawWalletOpts {
+                    private_key: Some(ROOT_PRIVATE_KEY.to_string()),
                     ..Default::default()
-                };
+                });
 
                 let entry = build_session_entry(
                     root,
                     4217,
                     600,
                     vec![CallScope {
-                        target: address!("0x00000000000000000000000000000000000000aa"),
+                        target: Address::with_last_byte(0xaa),
                         selector_rules: vec![],
                     }],
                     vec![],

@@ -35,6 +35,42 @@ contract TestPayableContractWithArgs {
     }
 }
 
+contract RevertingConstructor {
+    constructor() {
+        revert("constructor reverted");
+    }
+}
+
+contract HaltingConstructor {
+    constructor() {
+        assembly {
+            invalid()
+        }
+    }
+}
+
+contract LargeRuntimeContract {
+    function a(uint256 x) external pure returns (uint256) {
+        return x * 3 + 1;
+    }
+
+    function b(uint256 x, uint256 y) external pure returns (uint256) {
+        return x / (y + 1) + x % (y + 2);
+    }
+
+    function c(bytes calldata data) external pure returns (bytes32) {
+        return keccak256(data);
+    }
+}
+
+contract GasleftConstructor {
+    uint256 public gasAtStart;
+
+    constructor() {
+        gasAtStart = gasleft();
+    }
+}
+
 contract DeployCodeTest is Test {
     address public constant overrideAddress = 0x0000000000000000000000000000000000000064;
 
@@ -122,5 +158,227 @@ contract DeployCodeTest is Test {
         assertEq(withDeployCode.a(), 3);
         assertEq(withDeployCode.b(), 4);
         assertEq(withDeployCode.c(), 101);
+    }
+
+    function testDeployCodeConstructorRevert() public {
+        try vm.deployCode("cheats/DeployCode.t.sol:RevertingConstructor") {
+            revert("expected constructor revert");
+        } catch (bytes memory reason) {
+            assertEq(reason, abi.encodeWithSignature("Error(string)", "constructor reverted"));
+        }
+    }
+
+    function testDeployCodeConstructorHalt() public {
+        try vm.deployCode("cheats/DeployCode.t.sol:HaltingConstructor") {
+            revert("expected constructor halt");
+        } catch (bytes memory reason) {
+            assertEq(reason, "");
+        }
+    }
+
+    function testDeployCodeChargesCreateGas() public {
+        uint256 gasBefore = gasleft();
+        vm.deployCode("cheats/DeployCode.t.sol:TestContract");
+        assertGt(gasBefore - gasleft(), 32000);
+
+        gasBefore = gasleft();
+        try vm.deployCode("cheats/DeployCode.t.sol:RevertingConstructor") {
+            revert("expected constructor revert");
+        } catch {}
+        assertGt(gasBefore - gasleft(), 32000);
+
+        // An exceptional halt consumes the gas forwarded to the constructor.
+        gasBefore = gasleft();
+        try vm.deployCode("cheats/DeployCode.t.sol:HaltingConstructor") {
+            revert("expected constructor halt");
+        } catch {}
+        assertGt(gasBefore - gasleft(), gasBefore / 2);
+    }
+
+    function testDeployCodeOutOfGas() public {
+        try this.deployTestContract{gas: 30000}() {
+            revert("expected out of gas");
+        } catch {}
+    }
+
+    // A constructor whose returned code cannot be deposited reverts with that code.
+    function testDeployCodeDepositOutOfGas() public {
+        try this.deployLargeRuntimeContract{gas: 60000}() {
+            revert("expected out of gas");
+        } catch (bytes memory reason) {
+            assertEq(reason, type(LargeRuntimeContract).runtimeCode);
+        }
+    }
+
+    // An isolated `deployCode` runs its create as the root of a nested transaction, whose failed
+    // code deposit returns no data.
+    function testDirectDeployCodeDepositOutOfGas() public {
+        (bool success, bytes memory reason) = address(vm).call{gas: 60000}(
+            abi.encodeWithSignature("deployCode(string)", "cheats/DeployCode.t.sol:LargeRuntimeContract")
+        );
+        assertTrue(!success);
+        assertEq(reason, vm.isIsolateMode() ? bytes("") : type(LargeRuntimeContract).runtimeCode);
+    }
+
+    function deployTestContract() external {
+        vm.deployCode("cheats/DeployCode.t.sol:TestContract");
+    }
+
+    function deployLargeRuntimeContract() external {
+        vm.deployCode("cheats/DeployCode.t.sol:LargeRuntimeContract");
+    }
+
+    function testDeployCodeForwardsNativeCreateGas() public {
+        uint256 nativeGas = this.constructorGasWithNew{gas: 10_000_000}();
+        uint256 deployCodeGas = this.constructorGasWithDeployCode{gas: 10_000_000}();
+        // The constructor gets the gas a native CREATE forwards, less the cost of the cheatcode
+        // call and the 1/64 of the CREATE cost the cheatcode frame cannot keep back.
+        assertLt(nativeGas - deployCodeGas, 5000);
+    }
+
+    function constructorGasWithNew() external returns (uint256) {
+        return new GasleftConstructor().gasAtStart();
+    }
+
+    function constructorGasWithDeployCode() external returns (uint256) {
+        return GasleftConstructor(vm.deployCode("cheats/DeployCode.t.sol:GasleftConstructor")).gasAtStart();
+    }
+}
+
+/// forge-config: default.isolate = false
+contract DeployCodeNonIsolatedTest is DeployCodeTest {}
+
+/// forge-config: default.always_use_create_2_factory = true
+contract DeployCodeCreate2FactoryTest is Test {
+    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+
+    function testNewWithSaltUsesFactory() public {
+        address deployed = address(new TestContract{salt: bytes32("salt")}());
+
+        assertEq(
+            deployed,
+            vm.computeCreate2Address(bytes32("salt"), keccak256(type(TestContract).creationCode), CREATE2_FACTORY)
+        );
+    }
+
+    function testNewWithSaltConstructorRevert() public {
+        try new RevertingConstructor{salt: bytes32("salt")}() {
+            revert("expected constructor revert");
+        } catch (bytes memory reason) {
+            assertEq(reason, "");
+        }
+    }
+
+    function testNewWithSaltConstructorHalt() public {
+        try new HaltingConstructor{salt: bytes32("salt")}() {
+            revert("expected constructor halt");
+        } catch (bytes memory reason) {
+            assertEq(reason, "");
+        }
+    }
+
+    function testSaltedDeployCodeRevertCleanup() public {
+        assertFailedDeployCodeCleanup("cheats/DeployCode.t.sol:RevertingConstructor");
+    }
+
+    function testSaltedDeployCodeHaltCleanup() public {
+        assertFailedDeployCodeCleanup("cheats/DeployCode.t.sol:HaltingConstructor");
+    }
+
+    function testNestedDeployCodeUsesCaller() public {
+        DeployCodeCaller caller = new DeployCodeCaller();
+        address deployed = caller.deploy(false);
+        assertEq(
+            deployed,
+            vm.computeCreate2Address(bytes32("nested"), keccak256(type(TestContract).creationCode), address(caller))
+        );
+    }
+
+    function testNestedPrankDeployCodeUsesFactory() public {
+        DeployCodeCaller caller = new DeployCodeCaller();
+        (address deployed, address created) = caller.deployThenCreate();
+        assertEq(
+            deployed,
+            vm.computeCreate2Address(bytes32("nested"), keccak256(type(TestContract).creationCode), CREATE2_FACTORY)
+        );
+        assertEq(
+            created,
+            vm.computeCreate2Address(bytes32("after"), keccak256(type(TestContract).creationCode), address(caller))
+        );
+    }
+
+    function testConstructorCreatesAroundNestedDeployCode() public {
+        NestedDeployCodeConstructor deployed = NestedDeployCodeConstructor(
+            vm.deployCode("cheats/DeployCode.t.sol:NestedDeployCodeConstructor", bytes32("parent"))
+        );
+        assertEq(
+            address(deployed),
+            vm.computeCreate2Address(
+                bytes32("parent"), keccak256(type(NestedDeployCodeConstructor).creationCode), CREATE2_FACTORY
+            )
+        );
+        assertEq(deployed.deployer(), CREATE2_FACTORY);
+        bytes32 codeHash = keccak256(type(TestContract).creationCode);
+        assertEq(deployed.beforeChild(), vm.computeCreate2Address(bytes32("before"), codeHash, address(deployed)));
+        assertEq(deployed.nestedChild(), vm.computeCreate2Address(bytes32("nested"), codeHash, address(deployed)));
+        assertEq(deployed.afterChild(), vm.computeCreate2Address(bytes32("after"), codeHash, address(deployed)));
+    }
+
+    function assertFailedDeployCodeCleanup(string memory artifact) internal {
+        address originalOrigin = tx.origin;
+        vm.prank(address(1234), address(5678));
+        try vm.deployCode(artifact, bytes32("failed")) {
+            revert("expected constructor failure");
+        } catch (bytes memory reason) {
+            assertEq(reason, "");
+        }
+        assertEq(tx.origin, originalOrigin);
+        address expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        assertEq(address(new TestContract()), expected);
+        DeployCodeCaller caller = new DeployCodeCaller();
+        assertEq(
+            caller.create(),
+            vm.computeCreate2Address(bytes32("native"), keccak256(type(TestContract).creationCode), address(caller))
+        );
+        address deployed = vm.deployCode("cheats/DeployCode.t.sol:TestContract", bytes32("recovery"));
+        assertEq(
+            deployed,
+            vm.computeCreate2Address(bytes32("recovery"), keccak256(type(TestContract).creationCode), CREATE2_FACTORY)
+        );
+    }
+}
+
+/// forge-config: default.always_use_create_2_factory = true
+/// forge-config: default.isolate = false
+contract DeployCodeCreate2FactoryNonIsolatedTest is DeployCodeCreate2FactoryTest {}
+
+contract DeployCodeCaller is Test {
+    function deploy(bool prank) external returns (address) {
+        if (prank) vm.prank(address(1234));
+        return vm.deployCode("cheats/DeployCode.t.sol:TestContract", bytes32("nested"));
+    }
+
+    function create() external returns (address) {
+        return address(new TestContract{salt: bytes32("native")}());
+    }
+
+    function deployThenCreate() external returns (address deployed, address created) {
+        vm.prank(address(1234));
+        deployed = vm.deployCode("cheats/DeployCode.t.sol:TestContract", bytes32("nested"));
+        created = address(new TestContract{salt: bytes32("after")}());
+    }
+}
+
+contract NestedDeployCodeConstructor is Test {
+    address public deployer;
+    address public beforeChild;
+    address public nestedChild;
+    address public afterChild;
+
+    constructor() {
+        deployer = msg.sender;
+        beforeChild = address(new TestContract{salt: bytes32("before")}());
+        nestedChild = vm.deployCode("cheats/DeployCode.t.sol:TestContract", bytes32("nested"));
+        afterChild = address(new TestContract{salt: bytes32("after")}());
     }
 }

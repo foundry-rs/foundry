@@ -320,7 +320,7 @@ fn for_each_guard<'gcx>(
         let Some(expr) = stmt_expr(&gcx.hir, stmt) else { continue };
         expr.visit(&mut |e| {
             match &e.kind {
-                ExprKind::Call(callee, args, _) if is_require_or_assert(gcx, callee) => {
+                ExprKind::Call(callee, args) if is_require_or_assert(gcx, callee) => {
                     if let Some(cond) = args.exprs().next()
                         && access_check_polarity(gcx, cond, &aliases) == Some(true)
                     {

@@ -1,18 +1,22 @@
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
-use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler};
+use foundry_common::{
+    ContractsByArtifactBuilder, compile::ProjectCompiler, namespaced_storage, shell,
+};
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
-use foundry_debugger::Debugger;
+use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     opts::ForkEndpointIdentity,
     traces::{
         CallTraceDecoderBuilder, DebugTraceIdentifier, TraceContext,
         debug::ContractSources,
+        erc8021::Attribution,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
     },
 };
 use foundry_evm_networks::NetworkVariant;
+use itertools::Itertools;
 
 pub(crate) fn select_remote_trace_hardfork(
     configured: Option<FoundryHardfork>,
@@ -67,23 +71,36 @@ pub(crate) async fn handle_traces(
         // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
         let _ = sh_status!("Compiling project to generate artifacts");
         let mut config = config.clone();
-        if debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        if debug {
+            if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+                config.extra_output.push(ContractOutputSelection::StorageLayout);
+            }
+            // Full build infos keep the sources the compiler saw, which dynamic test linking
+            // rewrites in tests and scripts.
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
         }
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
-        let output = compiler.compile(&project)?;
+        let mut output = compiler.compile(&project)?;
+        let mut sources = ContractSources::from_project_output(&output, project.root(), None)?;
+        if debug {
+            sources.insert_compiled_sources(&project.paths.build_infos);
+        }
+        let storage_layouts =
+            namespaced_storage::project_storage_layouts(&mut output, project.root());
         (
             Some(
                 ContractsByArtifactBuilder::new(
                     output.artifact_ids().map(|(id, artifact)| (id, artifact.into())),
                 )
-                .with_storage_layouts(output.artifact_ids().filter_map(|(id, artifact)| {
-                    artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
-                }))
+                .with_storage_layouts(storage_layouts)
                 .build(),
             ),
-            ContractSources::from_project_output(&output, project.root(), None)?,
+            sources,
         )
     } else {
         (None, ContractSources::default())
@@ -113,20 +130,29 @@ pub(crate) async fn handle_traces(
         }
 
         if debug {
-            let mut builder = Debugger::builder()
+            let mut builder = DebuggerBuilder::new()
                 .traces(result.traces.expect("missing traces"))
                 .decoder(&decoder)
                 .sources(sources);
             if let Some(known_contracts) = &known_contracts {
                 builder = builder.known_contracts(known_contracts);
             }
-            let mut debugger = builder.build();
-            debugger.try_run_tui()?;
-            return Ok(());
+            return builder.run(None);
         }
 
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
+
+    // Collected before printing, which may prune the calls that carry them, e.g. ERC-4337 user
+    // operations.
+    let attributions = result
+        .traces
+        .iter()
+        .flatten()
+        .flat_map(|(_, arena)| arena.nodes())
+        .filter_map(|node| Attribution::decode(&node.trace.data))
+        .unique()
+        .collect::<Vec<_>>();
 
     print_traces(
         &mut result,
@@ -136,6 +162,12 @@ pub(crate) async fn handle_traces(
         tracing.trace_depth,
     )
     .await?;
+
+    if !shell::is_json() {
+        for attribution in attributions {
+            sh_println!("ERC-8021 attribution: {attribution}")?;
+        }
+    }
 
     Ok(())
 }

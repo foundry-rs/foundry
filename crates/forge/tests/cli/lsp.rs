@@ -3,14 +3,16 @@ use async_lsp::{
     LanguageServer,
     lsp_types::{
         ClientCapabilities, DiagnosticSeverity, DidChangeTextDocumentParams,
-        DidChangeWatchedFilesParams, DidOpenTextDocumentParams, DocumentFormattingParams,
-        FileChangeType, FileEvent, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse,
-        InitializeParams, InitializedParams, Location, OneOf, Position, Range,
+        DidChangeWatchedFilesParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+        DocumentFormattingParams, FileChangeType, FileEvent, FormattingOptions,
+        GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializedParams,
+        Location, OneOf, Position, Range, ReferenceContext, ReferenceParams, RenameParams,
         TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-        TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier,
+        TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier, WorkspaceEdit,
         WorkspaceFolder, WorkspaceSymbolParams, WorkspaceSymbolResponse,
     },
 };
+use foundry_common::fs::canonicalize_path;
 use std::{
     fs, thread,
     time::{Duration, Instant},
@@ -30,13 +32,14 @@ use std::{
 const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[cfg(unix)]
-forgetest!(lsp_vscode_opens_current_project_with_bundled_extension, |prj, cmd| {
+#[forgetest]
+fn lsp_vscode_opens_current_project_with_bundled_extension(prj: _, cmd: _) {
     let home = tempfile::tempdir().unwrap();
     let executables = tempfile::tempdir().unwrap();
-    let project = dunce::canonicalize(prj.root()).unwrap();
+    let project = canonicalize_path(prj.root()).unwrap();
     let forge = executables.path().join("standalone forge");
     fs::hard_link(env!("CARGO_BIN_EXE_forge"), &forge).unwrap();
-    let forge = dunce::canonicalize(forge).unwrap();
+    let forge = canonicalize_path(forge).unwrap();
     let code = executables.path().join("code");
     fs::write(
         &code,
@@ -92,7 +95,7 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
         .map(|pair| Path::new(pair[1]))
         .expect("VS Code must use a dedicated profile");
     let session = user_data.parent().unwrap();
-    let durable_session = dunce::canonicalize(session).unwrap();
+    let durable_session = canonicalize_path(session).unwrap();
     let data_home = if cfg!(target_os = "macos") {
         home.path().join("Library/Application Support")
     } else {
@@ -100,7 +103,7 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
     };
     assert_eq!(
         durable_session.parent().unwrap(),
-        dunce::canonicalize(data_home.join("foundry/lsp/vscode")).unwrap()
+        canonicalize_path(data_home.join("foundry/lsp/vscode")).unwrap()
     );
     assert!(fs::symlink_metadata(session).unwrap().file_type().is_symlink());
     let extensions = arguments
@@ -180,10 +183,11 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
     assert_eq!(fs::read_to_string(installed_extension).unwrap(), "user-installed extension\n");
     assert_eq!(dunce::canonicalize(session).unwrap(), durable_session);
     assert!(Path::new(extension).join("out/extension.js").is_file());
-});
+}
 
 #[cfg(unix)]
-forgetest!(lsp_vscode_sessions_follow_resolved_editor, |prj, cmd| {
+#[forgetest]
+fn lsp_vscode_sessions_follow_resolved_editor(prj: _, cmd: _) {
     let home = tempfile::tempdir().unwrap();
     let editors = prj.root().join("editors");
     let captured_session = editors.join("session");
@@ -206,7 +210,7 @@ forgetest!(lsp_vscode_sessions_follow_resolved_editor, |prj, cmd| {
         cmd.env("PATH", search_path);
         cmd.env("FORGE_LSP_TEST_SESSION", &captured_session);
         cmd.args(["lsp", "--code-path"]).arg(code).assert_empty_stdout();
-        dunce::canonicalize(fs::read_to_string(&captured_session).unwrap()).unwrap()
+        canonicalize_path(fs::read_to_string(&captured_session).unwrap()).unwrap()
     };
     let stable_path = stable.parent().unwrap();
     let insiders_path = insiders.parent().unwrap();
@@ -218,10 +222,11 @@ forgetest!(lsp_vscode_sessions_follow_resolved_editor, |prj, cmd| {
     assert_eq!(launch(Path::new("code"), insiders_path), insiders_session);
     assert_eq!(launch(Path::new("editors/stable/code"), insiders_path), stable_session);
     assert!(!prj.root().join(".vscode").exists());
-});
+}
 
 #[cfg(unix)]
-forgetest!(lsp_vscode_preserves_symlink_launchers, |prj, cmd| {
+#[forgetest]
+fn lsp_vscode_preserves_symlink_launchers(prj: _, cmd: _) {
     let home = tempfile::tempdir().unwrap();
     let dispatcher = prj.root().join("dispatcher");
     let captured_launcher = prj.root().join("launcher");
@@ -248,7 +253,7 @@ printf '%s' "$VSCODE_PORTABLE" > "$FORGE_LSP_TEST_SESSION"
         cmd.env("FORGE_LSP_TEST_SESSION", &captured_session);
         cmd.args(["lsp", "--code-path"]).arg(code).assert_empty_stdout();
         assert_eq!(fs::read_to_string(&captured_launcher).unwrap(), code.to_str().unwrap());
-        dunce::canonicalize(fs::read_to_string(&captured_session).unwrap()).unwrap()
+        canonicalize_path(fs::read_to_string(&captured_session).unwrap()).unwrap()
     };
     let stable_session = launch(&stable);
     let insiders_session = launch(&insiders);
@@ -263,9 +268,10 @@ printf '%s' "$VSCODE_PORTABLE" > "$FORGE_LSP_TEST_SESSION"
     assert_ne!(launch(&stable), stable_session);
     assert_eq!(launch(&insiders), insiders_session);
     assert!(stable_session.join("user-data/User/settings.json").is_file());
-});
+}
 
-forgetest!(lsp_stdio_rejects_editor_launch_options, |_prj, cmd| {
+#[forgetest]
+fn lsp_stdio_rejects_editor_launch_options(cmd: _) {
     cmd.args(["lsp", "--stdio", "--vscode"]).assert_code(2).stdout_eq(str![""]).stderr_eq(str![[
         r#"
 error: the argument '--stdio' cannot be used with '--vscode'
@@ -276,10 +282,11 @@ For more information, try '--help'.
 
 "#
     ]]);
-});
+}
 
 #[cfg(unix)]
-forgetest!(lsp_code_path_reports_missing_editor, |prj, cmd| {
+#[forgetest]
+fn lsp_code_path_reports_missing_editor(prj: _, cmd: _) {
     let home = tempfile::tempdir().unwrap();
     cmd.env("HOME", home.path());
     cmd.env("XDG_DATA_HOME", home.path().join("data"));
@@ -292,7 +299,7 @@ Context:
 
 "#]]);
     assert!(!prj.root().join(".vscode").exists());
-});
+}
 
 fn wait_for_workspace_symbols(client: &mut LspClient, expected: &str, unexpected: &str) {
     let deadline = Instant::now() + SYMBOL_TIMEOUT;
@@ -325,6 +332,178 @@ fn wait_for_workspace_symbols(client: &mut LspClient, expected: &str, unexpected
     panic!(
         "expected workspace symbol `{expected}` without `{unexpected}`; observed: {last_names:?}"
     );
+}
+
+#[forgetest]
+fn lsp_indexes_closed_tests_and_scripts(prj: _) {
+    // Test both default directories and directories resolved from the selected profile.
+    for (profile, sources, tests, scripts) in
+        [("default", "src", "test", "script"), ("custom", "contracts", "checks", "deployments")]
+    {
+        prj.create_file(
+            "foundry.toml",
+            "[profile.default]\n[profile.custom]\nsrc = \"contracts\"\ntest = \"checks\"\nscript = \"deployments\"\n",
+        );
+        let files = [
+            (
+                format!("{sources}/Counter.sol"),
+                "// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0;\ncontract CoverageCounter {\n    function increment() public {}\n}\n".to_owned(),
+            ),
+            (
+                format!("{tests}/Counter.t.sol"),
+                format!("// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0;\nimport {{CoverageCounter}} from \"../{sources}/Counter.sol\";\ncontract CoverageTest {{\n    function check(CoverageCounter counter) public {{ counter.increment(); }}\n}}\n"),
+            ),
+            (
+                format!("{scripts}/Counter.s.sol"),
+                format!("// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0;\nimport {{CoverageCounter}} from \"../{sources}/Counter.sol\";\ncontract CoverageScript {{\n    function run(CoverageCounter counter) public {{ counter.increment(); }}\n}}\n"),
+            ),
+        ];
+        for (path, source) in &files {
+            prj.create_file(path, source);
+        }
+        let root = canonicalize_path(prj.root()).unwrap();
+        let locations: Vec<_> = files
+            .iter()
+            .map(|(path, source)| {
+                let (line, column) = source
+                    .lines()
+                    .enumerate()
+                    .find_map(|(line, text)| text.find("increment").map(|column| (line, column)))
+                    .unwrap();
+                Location {
+                    uri: Url::from_file_path(root.join(path)).unwrap(),
+                    range: Range::new(
+                        Position::new(line as u32, column as u32),
+                        Position::new(line as u32, (column + "increment".len()) as u32),
+                    ),
+                }
+            })
+            .collect();
+        let empty_path = tempfile::tempdir().unwrap();
+        let mut client =
+            LspClient::spawn(&root, empty_path.path(), &["lsp", "--stdio", "--profile", profile]);
+        request(
+            &client.runtime,
+            client.server.initialize(InitializeParams {
+                capabilities: ClientCapabilities::default(),
+                workspace_folders: Some(vec![WorkspaceFolder {
+                    uri: Url::from_directory_path(&root).unwrap(),
+                    name: "fixture".into(),
+                }]),
+                ..InitializeParams::default()
+            }),
+        );
+        client.server.initialized(InitializedParams {}).unwrap();
+        client.wait_for_log_message();
+        client
+            .server
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: locations[0].uri.clone(),
+                    language_id: "solidity".into(),
+                    version: 1,
+                    text: files[0].1.clone(),
+                },
+            })
+            .unwrap();
+
+        for state in ["never opened", "opened", "closed again"] {
+            for (location, (_, source)) in locations[1..].iter().zip(&files[1..]) {
+                match state {
+                    "opened" => client
+                        .server
+                        .did_open(DidOpenTextDocumentParams {
+                            text_document: TextDocumentItem {
+                                uri: location.uri.clone(),
+                                language_id: "solidity".into(),
+                                version: 1,
+                                text: source.clone(),
+                            },
+                        })
+                        .unwrap(),
+                    "closed again" => client
+                        .server
+                        .did_close(DidCloseTextDocumentParams {
+                            text_document: TextDocumentIdentifier { uri: location.uri.clone() },
+                        })
+                        .unwrap(),
+                    _ => {}
+                }
+            }
+            let position = TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: locations[0].uri.clone() },
+                position: locations[0].range.start,
+            };
+            // References and rename wait for the latest analysis, including didClose.
+            let mut references = request(
+                &client.runtime,
+                client.server.references(ReferenceParams {
+                    text_document_position: position.clone(),
+                    context: ReferenceContext { include_declaration: true },
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                }),
+            )
+            .unwrap();
+            let mut expected = locations.clone();
+            references.sort_by(|a, b| a.uri.cmp(&b.uri));
+            expected.sort_by(|a, b| a.uri.cmp(&b.uri));
+            assert_eq!(references, expected, "{profile}: {state}");
+
+            let edits = request(
+                &client.runtime,
+                client.server.rename(RenameParams {
+                    text_document_position: position,
+                    new_name: "increase".into(),
+                    work_done_progress_params: Default::default(),
+                }),
+            )
+            .unwrap();
+            assert_eq!(
+                edits,
+                WorkspaceEdit {
+                    changes: Some(
+                        locations
+                            .iter()
+                            .map(|location| (
+                                location.uri.clone(),
+                                vec![TextEdit {
+                                    range: location.range,
+                                    new_text: "increase".into()
+                                }],
+                            ))
+                            .collect()
+                    ),
+                    ..WorkspaceEdit::default()
+                },
+                "{profile}: {state}"
+            );
+
+            let symbols = request(
+                &client.runtime,
+                client.server.symbol(WorkspaceSymbolParams {
+                    query: "Coverage".into(),
+                    ..WorkspaceSymbolParams::default()
+                }),
+            )
+            .unwrap();
+            let mut names: Vec<_> = match symbols {
+                WorkspaceSymbolResponse::Flat(symbols) => {
+                    symbols.into_iter().map(|symbol| symbol.name).collect()
+                }
+                WorkspaceSymbolResponse::Nested(symbols) => {
+                    symbols.into_iter().map(|symbol| symbol.name).collect()
+                }
+            };
+            names.sort();
+            assert_eq!(
+                names,
+                ["CoverageCounter", "CoverageScript", "CoverageTest"],
+                "{profile}: {state}"
+            );
+        }
+        client.shutdown();
+    }
 }
 
 #[test]
@@ -475,11 +654,12 @@ fn lsp_stdio_handshake_uses_only_lsp_stdout() {
     }
 }
 
-forgetest!(lsp_reports_unsaved_diagnostics_and_resolves_definition, |prj, _cmd| {
+#[forgetest]
+fn lsp_reports_unsaved_diagnostics_and_resolves_definition(prj: _) {
     prj.create_file("foundry.toml", "[profile.default]\nsrc = \"src\"\n");
     let saved = "contract Saved {}\n";
     prj.create_file("src/Example.sol", saved);
-    let project_root = dunce::canonicalize(prj.root()).unwrap();
+    let project_root = canonicalize_path(prj.root()).unwrap();
     let path = project_root.join("src/Example.sol");
     let uri = Url::from_file_path(&path).unwrap();
     let empty_path = tempfile::tempdir().unwrap();
@@ -560,9 +740,10 @@ contract Example {
     );
     assert_eq!(fs::read_to_string(path).unwrap(), saved);
     client.shutdown();
-});
+}
 
-forgetest!(lsp_formats_unsaved_document_with_nested_foundry_config, |prj, _cmd| {
+#[forgetest]
+fn lsp_formats_unsaved_document_with_nested_foundry_config(prj: _) {
     prj.create_file("foundry.toml", "[profile.default]\nsrc = \"src\"\n[fmt]\ntab_width = 6\n");
     prj.create_file(
         "nested/foundry.toml",
@@ -570,7 +751,7 @@ forgetest!(lsp_formats_unsaved_document_with_nested_foundry_config, |prj, _cmd| 
     );
     let saved = "contract Saved {}\n";
     prj.create_file("nested/src/Example.sol", saved);
-    let project_root = dunce::canonicalize(prj.root()).unwrap();
+    let project_root = canonicalize_path(prj.root()).unwrap();
     let path = project_root.join("nested/src/Example.sol");
     let uri = Url::from_file_path(&path).unwrap();
     let empty_path = tempfile::tempdir().unwrap();
@@ -639,4 +820,4 @@ forgetest!(lsp_formats_unsaved_document_with_nested_foundry_config, |prj, _cmd| 
     );
     assert_eq!(fs::read_to_string(path).unwrap(), saved);
     client.shutdown();
-});
+}

@@ -1,11 +1,8 @@
 use alloy_primitives::{Bytes, U256};
-
-use foundry_evm_traces::CallTraceArena;
-use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-
+use evm2::interpreter::opcode::OpCode;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
-use revm_inspectors::tracing::types::{
-    CallTraceNode, CallTraceStep, RecordedMemory, TraceMemberOrder,
+use foundry_evm_traces::{
+    CallTraceArena, CallTraceNode, CallTraceStep, RecordedMemory, TraceMemberOrder,
 };
 use spec::Vm::DebugStep;
 
@@ -78,16 +75,7 @@ pub(crate) fn convert_call_trace_ctx_to_debug_step(ctx: &CallTraceCtx) -> DebugS
     let memory =
         get_memory_input_for_opcode(opcode, ctx.step.stack.as_deref(), ctx.step.memory.as_ref());
 
-    let is_out_of_gas = matches!(
-        ctx.step.status,
-        Some(
-            InstructionResult::OutOfGas
-                | InstructionResult::MemoryOOG
-                | InstructionResult::MemoryLimitOOG
-                | InstructionResult::PrecompileOOG
-                | InstructionResult::InvalidOperandOOG
-        )
-    );
+    let is_out_of_gas = ctx.step.status.is_some_and(|status| status.is_out_of_gas());
 
     let depth = ctx.node.trace.depth as u64 + 1;
     let contract_addr = ctx.node.execution_address();
@@ -159,11 +147,11 @@ fn get_slice_from_memory(memory: &Bytes, start_index: usize, size: usize) -> Byt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use revm::bytecode::opcode;
+    use evm2::interpreter::op as opcode;
 
     #[test]
     fn stack_inputs_are_taken_from_the_top() {
-        let stack = [U256::from(1), U256::from(2), U256::from(3)];
+        let stack = [U256::ONE, U256::from(2), U256::from(3)];
         assert_eq!(
             get_stack_inputs_for_opcode(opcode::ADD, Some(&stack)),
             vec![U256::from(3), U256::from(2)]

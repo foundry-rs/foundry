@@ -78,7 +78,7 @@ impl ThisReadFinder<'_, '_> {
     /// Flags `this.<name>(args)` when `<name>` resolves to a `view`/`pure` function of the
     /// current contract.
     fn check_call(&self, expr: &Expr<'_>) {
-        let ExprKind::Call(callee, args, opts) = &expr.kind else { return };
+        let Some((callee, args, opts)) = expr.as_call() else { return };
         let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return };
         if !is_builtin(self.gcx, base, sym::this) {
             return;

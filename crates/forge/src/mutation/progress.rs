@@ -308,8 +308,8 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     // Center the truncation around the middle of the string
     let half = max_len.saturating_sub(3) / 2; // Leave room for "..."
     let mid = s.len() / 2;
-    let start = mid.saturating_sub(half);
-    let end = (start + max_len.saturating_sub(3)).min(s.len());
+    let start = s.floor_char_boundary(mid.saturating_sub(half));
+    let end = s.floor_char_boundary((start + max_len.saturating_sub(3)).min(s.len()));
 
     if start == 0 {
         format!("{}...", &s[..end])
@@ -317,5 +317,22 @@ fn truncate_str(s: &str, max_len: usize) -> String {
         format!("...{}", &s[start..])
     } else {
         format!("...{}...", &s[start..end])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_str_cuts_on_char_boundaries() {
+        assert_eq!(
+            truncate_str("{\n        // 检查余额是否足够支付\n        return a + 1;\n    }", 40),
+            "...查余额是否足够支付\n        r..."
+        );
+        assert_eq!(
+            truncate_str("{\n        return owner;\n        // 返回当前合约的所有者\n    }", 40),
+            "...owner;\n        // 返回当前合约..."
+        );
     }
 }

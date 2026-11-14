@@ -3,6 +3,11 @@ use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 
 #[cfg(feature = "monad")]
+use alloy_primitives::{Address, B256};
+#[cfg(feature = "monad")]
+use alloy_rpc_types::TransactionRequest;
+
+#[cfg(feature = "monad")]
 async fn rpc_request(endpoint: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
     reqwest::Client::new()
         .post(endpoint)
@@ -64,11 +69,6 @@ fn address_and_flags(address: alloy_primitives::Address, flags: u64) -> alloy_pr
 }
 
 #[cfg(feature = "monad")]
-fn storage_value(value: alloy_primitives::U256) -> alloy_primitives::B256 {
-    alloy_primitives::B256::from(value.to_be_bytes::<32>())
-}
-
-#[cfg(feature = "monad")]
 fn override_rpc_transaction_chain_id(value: &mut serde_json::Value, target: &str, chain_id: &str) {
     match value {
         serde_json::Value::Array(values) => {
@@ -92,7 +92,8 @@ fn override_rpc_transaction_chain_id(value: &mut serde_json::Value, target: &str
 // Test evm version switch during tests / scripts.
 // <https://github.com/foundry-rs/foundry/issues/9840>
 // <https://github.com/foundry-rs/foundry/issues/6228>
-forgetest_init!(test_set_evm_version, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version(prj: _, cmd: _) {
     let endpoint = rpc::next_http_archive_rpc_url();
     prj.add_test(
         "TestEvmVersion.t.sol",
@@ -266,10 +267,95 @@ Traces:
 ...
 
 "#]]);
-});
+}
+
+// `vm.setEvmVersion` inside a test applies to the calls, creates and executed transactions started
+// after it, isolated or not, and their end hooks, such as `expectRevert`'s, run once.
+#[forgetest_init]
+fn test_set_evm_version_applies_to_new_frames(prj: _, cmd: _) {
+    prj.update_config(|config| config.evm_version = EvmVersion::Prague);
+    prj.add_test(
+        "EvmVersionFrames.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Store {
+    function set() external {}
+}
+
+contract EvmVersionFramesTest is Test {
+    function test_new_frames_use_new_version() public {
+        Store store = new Store();
+        // This test and `Store` are compiled with PUSH0, which istanbul does not activate, so the
+        // test only continues if its own frame keeps its version.
+        vm.setEvmVersion("istanbul");
+        vm.expectRevert(2);
+        store.set{gas: 100_000}();
+        store.set{gas: 100_000}();
+        vm.expectRevert(2);
+        new Store();
+        new Store();
+    }
+
+    function test_executed_transaction_uses_new_version() public {
+        this.executeTransactionAfterVersionChange();
+    }
+
+    function executeTransactionAfterVersionChange() external {
+        vm.setEvmVersion("istanbul");
+        // Legacy create of `PUSH1 1 PUSH0 RETURN`, signed for chain 31337 by the first anvil key.
+        try vm.executeTransaction(
+            hex"f8528080830186a080808460015ff382f4f5a0163754a7df29423d6f8bd4bf6f01698dd1a105fa44d7e97b4b313bd0cfe7da28a02241492692e0f6986a25cb0d03286526b9f6fe9afa7449b8ce382b6a5e058952"
+        ) {
+            revert("istanbul executed PUSH0");
+        } catch (bytes memory reason) {
+            assertEq(reason, abi.encodeWithSignature(
+                "CheatcodeError(string)", "vm.executeTransaction: transaction halted: NotActivated"
+            ));
+        }
+    }
+
+    function test_broadcast_transaction_uses_new_version() public {
+        address sender = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+        vm.deal(sender, 1 ether);
+        vm.fee(1);
+        this.broadcastTransactionAfterVersionChange();
+        assertEq(address(0xbeef).balance, 17);
+        assertEq(sender.balance, 1 ether - 21_016 - 17);
+        assertEq(vm.getNonce(sender), 1);
+    }
+
+    function broadcastTransactionAfterVersionChange() external {
+        vm.setEvmVersion("istanbul");
+        // Legacy transfer of 17 wei with one nonzero calldata byte, signed by the first anvil
+        // key for chain 31337. Its 21,016 gas covers Istanbul's intrinsic cost, not Prague's floor.
+        vm.broadcastRawTransaction(
+            hex"f861800182521894000000000000000000000000000000000000beef110182f4f5a0139546151de151d3d9c6a6d6c11c9534756a590e72203003c0539ad14008a1d2a013b9f73145239d6d8db8697470a4372b90f1d8974ee6d64c99885cea85984fc6"
+        );
+    }
+}
+   "#,
+    );
+
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        cmd.forge_fuse().args(["test", "--mc", "EvmVersionFramesTest"]).assert_success().stdout_eq(
+            str![[r#"
+...
+Ran 3 tests for test/EvmVersionFrames.t.sol:EvmVersionFramesTest
+[PASS] test_broadcast_transaction_uses_new_version() ([GAS])
+[PASS] test_executed_transaction_uses_new_version() ([GAS])
+[PASS] test_new_frames_use_new_version() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+        );
+    }
+}
 
 #[cfg(feature = "monad")]
-forgetest_init!(test_set_evm_version_monad_hardfork, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version_monad_hardfork(prj: _, cmd: _) {
     prj.add_test(
         "MonadEvmVersion.t.sol",
         r#"
@@ -421,11 +507,79 @@ contract MonadEvmVersionTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"]).assert_success();
-});
+    cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadEvmVersion.t.sol:MonadEvmVersionTest
+[PASS] test_set_monad_evm_version() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(fork_resolves_monad_hardfork_from_timestamp, |prj, cmd| {
+#[forgetest]
+async fn explicit_network_warns_on_fork_of_another_family(prj: _, cmd: _) {
+    prj.add_test(
+        "ForkNetworkMismatch.t.sol",
+        r#"
+contract ForkNetworkMismatchTest {
+    function test_runs() public {}
+}
+   "#,
+    );
+
+    let (_api, ethereum) = anvil::spawn(anvil::NodeConfig::test()).await;
+    cmd.args(["test", "--network", "monad", "--fork-url", &ethereum.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: fork of chain 31337 belongs to `ethereum`, but the selected network is `monad`, so the fork runs with `monad` rules
+
+"#]]);
+
+    // An endpoint without Anvil metadata belongs to the family of its recognized chain ID.
+    let (_api, mainnet) = anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(1u64))).await;
+    let mainnet =
+        rpc::spawn_rpc_proxy_rejecting_method_after(mainnet.http_endpoint(), "anvil_nodeInfo", 0)
+            .await;
+    cmd.forge_fuse()
+        .args(["test", "--network", "monad", "--fork-url", &mainnet])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: fork of chain 1 belongs to `ethereum`, but the selected network is `monad`, so the fork runs with `monad` rules
+
+"#]]);
+
+    // The Ethereum EVM can serve an OP Stack fork, so a different family alone does not warn.
+    let (_api, op) = anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(10u64))).await;
+    let op =
+        rpc::spawn_rpc_proxy_rejecting_method_after(op.http_endpoint(), "anvil_nodeInfo", 0).await;
+    cmd.forge_fuse()
+        .args(["test", "--network", "ethereum", "--fork-url", &op])
+        .assert_success()
+        .stderr_eq(str![""]);
+
+    // Node info reports the family even when `anvil_metadata` is unavailable, so the chain ID
+    // does not override it.
+    let (_api, monad) =
+        anvil::spawn(anvil::NodeConfig::test_monad().with_chain_id(Some(1u64))).await;
+    let monad = rpc::spawn_rpc_proxy_method_not_found_before(
+        monad.http_endpoint(),
+        "anvil_metadata",
+        usize::MAX,
+    )
+    .await;
+    cmd.forge_fuse().args(["test", "--fork-url", &monad]).assert_success().stderr_eq(str![""]);
+    cmd.forge_fuse()
+        .args(["test", "--network", "monad", "--fork-url", &monad])
+        .assert_success()
+        .stderr_eq(str![""]);
+}
+
+#[cfg(feature = "monad")]
+#[forgetest]
+async fn fork_resolves_monad_hardfork_from_timestamp(prj: _, cmd: _) {
     let monad_nine_activation =
         foundry_evm::hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
     let mainnet_activation =
@@ -605,11 +759,19 @@ contract MonadForkHardforkTest {
             "--mt",
             "test_monad_nine",
         ])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadForkHardfork.t.sol:MonadForkHardforkTest
+[PASS] test_monad_nine() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 #[cfg(feature = "monad")]
-forgetest_init!(test_monad_memory_limit, |prj, cmd| {
+#[forgetest_init]
+fn test_monad_memory_limit(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.hardfork = Some("monad:MonadNine".parse().unwrap());
         config.memory_limit = 128 * 1024 * 1024;
@@ -670,10 +832,11 @@ contract MonadMemoryLimitTest is Test {
 [FAIL: EvmError: MemoryLimitOOG] test_memory_ending_above_limit() ([GAS])
 ...
 "#]]);
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
+#[forgetest]
+async fn execute_transaction_uses_monad_fork_context(prj: _, cmd: _) {
     use alloy_consensus::SignableTransaction as _;
     use alloy_network::TxSignerSync as _;
     use alloy_provider::Provider as _;
@@ -880,11 +1043,22 @@ contract ExecuteTransactionMonadContextTest {
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "ExecuteTransactionMonadContextTest"])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/ExecuteTransactionMonadContext.t.sol:ExecuteTransactionMonadContextTest
+[PASS] test_execute_transaction_credit_clears_outer_violation() ([GAS])
+[PASS] test_execute_transaction_does_not_track_nested_only_account() ([GAS])
+[PASS] test_execute_transaction_preserves_unaffected_outer_violation() ([GAS])
+[PASS] test_execute_transaction_uses_ancestor_context() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(transaction_fork_excludes_future_monad_participants, |prj, cmd| {
+#[forgetest]
+async fn transaction_fork_excludes_future_monad_participants(prj: _, cmd: _) {
     use alloy_consensus::SignableTransaction as _;
     use alloy_network::{ReceiptResponse as _, TxSignerSync as _};
     use alloy_provider::Provider as _;
@@ -1130,11 +1304,22 @@ contract TransactionForkMonadContextTest {
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "TransactionForkMonadContextTest"])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/TransactionForkMonadContext.t.sol:TransactionForkMonadContextTest
+[PASS] test_future_transaction_is_not_an_ancestor() ([GAS])
+[PASS] test_non_immediate_transact_rejects_without_mutation() ([GAS])
+[PASS] test_parent_block_transact_advances_to_next_transaction() ([GAS])
+[PASS] test_sequential_transacts_advance_past_block() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(monad_fork_aux_lifecycle_tracks_outer_context, |prj, cmd| {
+#[forgetest]
+async fn monad_fork_aux_lifecycle_tracks_outer_context(prj: _, cmd: _) {
     use alloy_consensus::SignableTransaction as _;
     use alloy_network::{ReceiptResponse as _, TxSignerSync as _};
     use alloy_provider::Provider as _;
@@ -1772,11 +1957,19 @@ contract MonadForkAuxLifecycleTest {
             "test_fork_active_transact_advances_outer_context",
             "--isolate",
         ])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadForkAuxLifecycle.t.sol:MonadForkAuxLifecycleTest
+[PASS] test_fork_active_transact_advances_outer_context() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd| {
+#[forgetest]
+async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     use alloy_network::{ReceiptResponse as _, TransactionBuilder as _};
     use alloy_provider::Provider as _;
 
@@ -1784,12 +1977,9 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
         alloy_primitives::address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
     const STAKING_ADDRESS: alloy_primitives::Address =
         alloy_primitives::address!("0x0000000000000000000000000000000000001000");
-    const BLOCK_AUTHOR: alloy_primitives::Address =
-        alloy_primitives::address!("0x1111111111111111111111111111111111111111");
-    const VALIDATOR_AUTH: alloy_primitives::Address =
-        alloy_primitives::address!("0x2222222222222222222222222222222222222222");
-    const UNKNOWN_BLOCK_AUTHOR: alloy_primitives::Address =
-        alloy_primitives::address!("0x3333333333333333333333333333333333333333");
+    const BLOCK_AUTHOR: alloy_primitives::Address = Address::repeat_byte(0x11);
+    const VALIDATOR_AUTH: alloy_primitives::Address = Address::repeat_byte(0x22);
+    const UNKNOWN_BLOCK_AUTHOR: alloy_primitives::Address = Address::repeat_byte(0x33);
     const VALIDATOR_ID: u64 = 7;
 
     let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
@@ -1805,28 +1995,28 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_id_key(BLOCK_AUTHOR),
-        storage_value(left_aligned_u64(VALIDATOR_ID)),
+        left_aligned_u64(VALIDATOR_ID).into(),
     )
     .await
     .unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x04, VALIDATOR_ID, 0),
-        storage_value(alloy_primitives::U256::from(100) * mon),
+        (alloy_primitives::U256::from(100) * mon).into(),
     )
     .await
     .unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x04, VALIDATOR_ID, 1),
-        alloy_primitives::B256::ZERO,
+        B256::ZERO,
     )
     .await
     .unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x09, VALIDATOR_ID, 6),
-        storage_value(address_and_flags(VALIDATOR_AUTH, 0)),
+        address_and_flags(VALIDATOR_AUTH, 0).into(),
     )
     .await
     .unwrap();
@@ -1834,14 +2024,13 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     api.mine_one().await.unwrap();
     let parent_block = provider.get_block_number().await.unwrap();
 
-    let request =
-        <alloy_network::Ethereum as alloy_network::Network>::TransactionRequest::default()
-            .with_from(SYSTEM_ADDRESS)
-            .with_to(STAKING_ADDRESS)
-            .with_value(reward)
-            .with_input(monad_staking_reward_input(BLOCK_AUTHOR))
-            .with_gas_limit(1_000_000)
-            .with_gas_price(2_000_000_000);
+    let request = TransactionRequest::default()
+        .with_from(SYSTEM_ADDRESS)
+        .with_to(STAKING_ADDRESS)
+        .with_value(reward)
+        .with_input(monad_staking_reward_input(BLOCK_AUTHOR))
+        .with_gas_limit(1_000_000)
+        .with_gas_price(2_000_000_000);
     let receipt =
         provider.send_transaction(request.into()).await.unwrap().get_receipt().await.unwrap();
     assert!(receipt.status());
@@ -1891,14 +2080,13 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     failed_api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
     failed_api.mine_one().await.unwrap();
     let failed_parent_block = failed_provider.get_block_number().await.unwrap();
-    let failed_request =
-        <alloy_network::Ethereum as alloy_network::Network>::TransactionRequest::default()
-            .with_from(SYSTEM_ADDRESS)
-            .with_to(STAKING_ADDRESS)
-            .with_value(reward)
-            .with_input(monad_staking_reward_input(UNKNOWN_BLOCK_AUTHOR))
-            .with_gas_limit(1_000_000)
-            .with_gas_price(2_000_000_000);
+    let failed_request = TransactionRequest::default()
+        .with_from(SYSTEM_ADDRESS)
+        .with_to(STAKING_ADDRESS)
+        .with_value(reward)
+        .with_input(monad_staking_reward_input(UNKNOWN_BLOCK_AUTHOR))
+        .with_gas_limit(1_000_000)
+        .with_gas_price(2_000_000_000);
     let failed_receipt = failed_provider
         .send_transaction(failed_request.into())
         .await
@@ -2069,10 +2257,22 @@ contract MonadProtocolSystemTargetTest {
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "MonadProtocolSystemTargetTest"])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/MonadProtocolSystemTarget.t.sol:MonadProtocolSystemTargetTest
+[PASS] test_failed_reward_target_from_parent_block_fork_rolls_back() ([GAS])
+[PASS] test_failed_reward_target_from_transaction_hash_fork_rolls_back() ([GAS])
+[PASS] test_gas_paying_system_sender_target_fork_is_rejected() ([GAS])
+[PASS] test_reward_target_from_parent_block_fork() ([GAS])
+[PASS] test_reward_target_from_transaction_hash_fork() ([GAS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version_tempo_hardfork(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
     });
@@ -2103,10 +2303,54 @@ contract TempoEvmVersionTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"]).assert_success();
-});
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TempoEvmVersion.t.sol:TempoEvmVersionTest
+[PASS] test_set_tempo_evm_version() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest_init!(test_network_tempo_defaults_to_latest_hardfork, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version_tempo_gas(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+    prj.add_test(
+        "TempoEvmVersionGas.t.sol",
+        include_str!("../../fixtures/TempoEvmVersionGas.t.sol"),
+    );
+    for hardfork in ["tempo:T3", "tempo:T7", "tempo:T14"] {
+        cmd.forge_fuse()
+            .args([
+                "test",
+                "--network",
+                "tempo",
+                "--hardfork",
+                hardfork,
+                "--mc",
+                "TempoEvmVersionGasTest",
+            ])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/TempoEvmVersionGas.t.sol:TempoEvmVersionGasTest
+[PASS] testCodeDepositGas() ([GAS])
+[PASS] testEmptyAccountGas() ([GAS])
+[PASS] testLegacyEthereumAliasGas() ([GAS])
+[PASS] testLegacyNativeRevisionChange() ([GAS])
+[PASS] testNewStorageSlotGas() ([GAS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[forgetest_init]
+fn test_network_tempo_defaults_to_latest_hardfork(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
     });
@@ -2136,30 +2380,153 @@ contract TempoDefaultEvmVersionTest is Test {{
         ),
     );
 
-    cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"]).assert_success();
-});
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TempoDefaultEvmVersion.t.sol:TempoDefaultEvmVersionTest
+[PASS] test_network_tempo_defaults_to_latest_hardfork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 // Validates T5 implicit-approval wiring: the cheatcodes, the AddressRegistry selector,
 // unchanged standard approve/transferFrom behavior, an implicit pull through StablecoinDEX,
 // and a non-implicit spender control case.
-forgetest_init!(test_tempo_implicit_approval_t5, |prj, cmd| {
+#[forgetest_init]
+fn test_tempo_implicit_approval_t5(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
-        // The precompile registry snapshots `cfg.spec` at EVM construction, so pinning T5
-        // here is what activates the T5 precompiles and selectors. `vm.setEvmVersion` only
-        // flips the cheatcode-visible spec.
+        // Pinning T5 activates the T5 precompiles and selectors for the whole test;
+        // `vm.setEvmVersion` only applies to the calls started after it.
         config.hardfork = Some(FoundryHardfork::Tempo(TempoHardfork::T5));
     });
 
     let fixture = include_str!("../../fixtures/TempoImplicitApproval.t.sol");
     prj.add_test("TempoImplicitApproval.t.sol", fixture);
 
-    cmd.args(["test", "--network", "tempo", "--mc", "TempoImplicitApprovalTest"]).assert_success();
-});
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoImplicitApprovalTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/TempoImplicitApproval.t.sol:TempoImplicitApprovalTest
+[PASS] test_assumeImplicitApproval_positive_t5() ([GAS])
+[PASS] test_cheatcode_isImplicitlyApproved_reports_pre_t5() ([GAS])
+[PASS] test_cheatcode_matches_registry_selector_t5() ([GAS])
+[PASS] test_implicit_spender_pulls_without_approve_t5() ([GAS])
+[PASS] test_isImplicitlyApproved_t5() ([GAS])
+[PASS] test_non_implicit_spender_requires_approve_t5() ([GAS])
+[PASS] test_standard_approve_flow_unchanged_t5() ([GAS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// `vm.chainId` inside a test applies to the native precompiles of the calls started after it,
+// including after a call that sets the same chain ID again and after a state snapshot restore.
+#[forgetest_init]
+fn test_tempo_chain_id_applies_to_new_frames(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+    prj.add_test(
+        "TempoChainId.t.sol",
+        r#"
+pragma solidity >=0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+
+interface ITIP20 {
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+}
+
+contract TempoChainIdTest is Test {
+    ITIP20 constant PATH_USD = ITIP20(0x20C0000000000000000000000000000000000000);
+
+    function test_domain_separator_follows_chain_id() public {
+        uint256 original = block.chainid;
+        bytes32 originalDomain = PATH_USD.DOMAIN_SEPARATOR();
+
+        vm.chainId(original + 1);
+        bytes32 newDomain = PATH_USD.DOMAIN_SEPARATOR();
+        assertTrue(newDomain != originalDomain, "TIP-20 domain uses the new chain ID");
+
+        this.setChainId(original + 1);
+        assertEq(PATH_USD.DOMAIN_SEPARATOR(), newDomain);
+    }
+
+    function test_domain_separator_survives_state_restore() public {
+        vm.chainId(block.chainid + 1);
+        uint256 snapshot = vm.snapshotState();
+        bytes32 domain = PATH_USD.DOMAIN_SEPARATOR();
+
+        vm.revertToState(snapshot);
+        assertEq(PATH_USD.DOMAIN_SEPARATOR(), domain);
+    }
+
+    function setChainId(uint256 chainId) external {
+        vm.chainId(chainId);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoChainIdTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/TempoChainId.t.sol:TempoChainIdTest
+[PASS] test_domain_separator_follows_chain_id() ([GAS])
+[PASS] test_domain_separator_survives_state_restore() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A fork switch inside a Tempo transaction keeps the fee token the transaction resolved, so it
+// still settles on the selected fork.
+#[forgetest_init]
+async fn tempo_fork_switch_keeps_resolved_fee_token(prj: _, cmd: _) {
+    let (api, handle) = anvil::spawn(anvil::NodeConfig::test().with_tempo()).await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+    let endpoint = handle.http_endpoint();
+    prj.add_test(
+        "TempoForkSwitch.t.sol",
+        &format!(
+            r#"
+import {{Test}} from "forge-std/Test.sol";
+
+contract TempoForkSwitchTest is Test {{
+    function test_fork_switches() public {{
+        uint256 fork = vm.createFork("{endpoint}", 2);
+        vm.createSelectFork("{endpoint}", 1);
+        assertEq(block.number, 1);
+        vm.selectFork(fork);
+        vm.rollFork(1);
+        assertEq(block.number, 1);
+    }}
+}}
+"#
+        ),
+    );
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoForkSwitchTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TempoForkSwitch.t.sol:TempoForkSwitchTest
+[PASS] test_fork_switches() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 // Regression test for <https://github.com/foundry-rs/foundry/issues/13040>:
 // configured evm_version must be preserved after createSelectFork / rollFork.
-forgetest_init!(test_fork_preserves_evm_version, |prj, cmd| {
+#[forgetest_init]
+fn test_fork_preserves_evm_version(prj: _, cmd: _) {
     let endpoint = rpc::next_http_archive_rpc_url();
 
     prj.update_config(|config| {
@@ -2184,5 +2551,401 @@ contract ForkEvmVersionTest is Test {
         .replace("<rpc>", &endpoint),
     );
 
-    cmd.args(["test", "--mc", "ForkEvmVersionTest", "-vvvv"]).assert_success();
-});
+    cmd.args(["test", "--mc", "ForkEvmVersionTest", "-vvvv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/ForkEvmVersion.t.sol:ForkEvmVersionTest
+[PASS] test_evm_version_preserved_after_fork() ([GAS])
+Traces:
+  [12097] ForkEvmVersionTest::test_evm_version_preserved_after_fork()
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "cancun"
+    ├─ [0] VM::assertEq("cancun", "cancun", "before fork") [staticcall]
+    │   └─ ← [Return]
+    ├─ [0] VM::createSelectFork("<rpc url>", 21000000 [2.1e7])
+    │   └─ ← [Return] 0
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "cancun"
+    ├─ [0] VM::assertEq("cancun", "cancun", "after createSelectFork") [staticcall]
+    │   └─ ← [Return]
+    ├─ [0] VM::rollFork(21000001 [2.1e7])
+    │   └─ ← [Return]
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "cancun"
+    ├─ [0] VM::assertEq("cancun", "cancun", "after rollFork") [staticcall]
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+}
+
+// Access lists do not exist before Berlin, so `vm.accessList` must not break isolated calls there.
+#[forgetest]
+fn test_access_list_before_berlin(prj: _, cmd: _) {
+    prj.add_test(
+        "AccessListBeforeBerlin.t.sol",
+        r#"
+interface Vm {
+    struct AccessListItem {
+        address target;
+        bytes32[] storageKeys;
+    }
+
+    function accessList(AccessListItem[] calldata access) external;
+}
+
+contract Counter {
+    uint256 public number;
+
+    function increment() external {
+        number++;
+    }
+}
+
+contract AccessListBeforeBerlinTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_access_list_call() public {
+        Counter counter = new Counter();
+        Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
+        accessList[0] = Vm.AccessListItem(address(counter), new bytes32[](0));
+        vm.accessList(accessList);
+
+        counter.increment();
+        require(counter.number() == 1, "increment");
+    }
+}
+"#,
+    );
+
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.evm_version = EvmVersion::Istanbul;
+            config.isolate = isolate;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--mc", "AccessListBeforeBerlinTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/AccessListBeforeBerlin.t.sol:AccessListBeforeBerlinTest
+[PASS] test_access_list_call() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+// The reported test gas subtracts the intrinsic gas of the access list
+// `vm.accessList` applied to the test transaction, which its execution never pays, but not of one
+// only a nested transaction's calls applied.
+#[forgetest]
+fn test_access_list_stipend(prj: _, cmd: _) {
+    prj.add_test(
+        "AccessListStipend.t.sol",
+        r#"
+interface Vm {
+    struct AccessListItem {
+        address target;
+        bytes32[] storageKeys;
+    }
+
+    function accessList(AccessListItem[] calldata access) external;
+    function executeTransaction(bytes calldata raw) external returns (bytes memory);
+}
+
+contract Counter {
+    uint256 public number;
+
+    function increment() external {
+        number++;
+    }
+}
+
+contract AccessListStipendTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_access_list_stipend() public {
+        Counter counter = new Counter();
+        Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
+        accessList[0] = Vm.AccessListItem(address(counter), new bytes32[](1));
+        vm.accessList(accessList);
+        counter.increment();
+    }
+
+    function test_nested_transaction_access_list() public {
+        Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
+        accessList[0] = Vm.AccessListItem(address(this), new bytes32[](1));
+        vm.accessList(accessList);
+        // A contract creation whose initcode calls 0x1234.
+        vm.executeTransaction(hex"f8598080830186a080808b5f5f5f5f5f6112345af10082f4f5a0a179c1ebd288da19ddfa85cb1771c4ae040734caf301e41b5100b9041c775cfea0084528766ecf99513cb32ab48cfb49b61939187b049917c079700ba4c39e8743");
+    }
+}
+"#,
+    );
+
+    for (isolate, gas) in [("--no-isolate", 124392), ("--isolate", 206120)] {
+        cmd.forge_fuse()
+            .args(["test", "--mc", "AccessListStipendTest", isolate])
+            .with_no_redact()
+            .assert_success()
+            .stdout_eq(format!(
+                "...
+Ran 2 tests for test/AccessListStipend.t.sol:AccessListStipendTest
+[PASS] test_access_list_stipend() (gas: {gas})
+[PASS] test_nested_transaction_access_list() (gas: 6201)
+...
+"
+            ));
+    }
+}
+
+// A frame that `vm.setEvmVersion` moves the running transaction onto reads the shared fork
+// database with its own empty-account policy, and the caller gets its policy back on return.
+#[forgetest]
+async fn fork_set_evm_version_frame_uses_its_empty_account_policy(prj: _, cmd: _) {
+    prj.add_test(
+        "EmptyAccountPolicy.t.sol",
+        r#"
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+    function setEvmVersion(string calldata evm) external;
+    function executeTransaction(bytes calldata raw) external returns (bytes memory);
+}
+
+contract EmptyAccountPolicyTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function noop() external {}
+
+    // Runs on Prague: a Homestead frame loads the empty account 0x55aa11 as existing.
+    function test_frame_policy() public {
+        // Homestead runtime returning the gas of a zero-value CALL to 0x55aa11.
+        vm.etch(address(0x777777), hex"5a6000600060006000600073000000000000000000000000000000000055aa116103e8f1505a900360005260206000f3");
+        vm.setEvmVersion("homestead");
+        bool success;
+        uint256 used;
+        assembly {
+            success := call(gas(), 0x777777, 0, 0, 0, 0, 32)
+            used := mload(0)
+        }
+        require(success && used > 0 && used < 25_000, "frame: empty account absent");
+    }
+
+    // Runs on Homestead: after a Prague frame or transaction, empty accounts still exist.
+    function test_caller_policy() public {
+        vm.setEvmVersion("prague");
+        for (uint256 i; i < 2; ++i) {
+            if (i == 0) this.noop();
+            else vm.executeTransaction(hex"f8528080830186a080808460015ff382f4f5a0163754a7df29423d6f8bd4bf6f01698dd1a105fa44d7e97b4b313bd0cfe7da28a02241492692e0f6986a25cb0d03286526b9f6fe9afa7449b8ce382b6a5e058952");
+            uint256 used;
+            assembly {
+                used := gas()
+                pop(call(1000, add(0x55aa22, i), 0, 0, 0, 0, 0))
+                used := sub(used, gas())
+            }
+            require(used < 25_000, "caller: empty account absent");
+        }
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    for (evm_version, test) in
+        [(EvmVersion::Prague, "test_frame_policy"), (EvmVersion::Homestead, "test_caller_policy")]
+    {
+        for isolate in [false, true] {
+            prj.update_config(|config| {
+                config.evm_version = evm_version;
+                config.isolate = isolate;
+            });
+            cmd.forge_fuse()
+                .args(["test", "--fork-url", &handle.http_endpoint(), "--mt", test])
+                .assert_success()
+                .stdout_eq(format!(
+                    r#"...
+Ran 1 test for test/EmptyAccountPolicy.t.sol:EmptyAccountPolicyTest
+[PASS] {test}() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+                ));
+        }
+    }
+}
+
+#[cfg(feature = "monad")]
+#[forgetest]
+fn monad_isolated_calls_preserve_execution_gas(prj: _, cmd: _) {
+    prj.add_test(
+        "MonadGas.t.sol",
+        r#"
+contract MonadGasChild {
+    function noop() external pure {}
+    function fail() external pure { revert(); }
+}
+
+contract MonadGasTest {
+    function test_repeated_calls_and_creates() public {
+        uint256 before = gasleft();
+        for (uint256 i; i < 3; ++i) {
+            MonadGasChild child = new MonadGasChild();
+            child.noop();
+            try child.fail() { revert("expected revert"); } catch {}
+        }
+        require(gasleft() > before / 2, "receipt charge consumed parent gas");
+    }
+}
+"#,
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        cmd.forge_fuse()
+            .args(["test", "--network", "monad", "--mc", "MonadGasTest", "--gas-limit", "10000000"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadGas.t.sol:MonadGasTest
+[PASS] test_repeated_calls_and_creates() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[cfg(feature = "monad")]
+#[forgetest_init]
+fn monad_storage_warmth_cheatcodes(prj: _, cmd: _) {
+    prj.add_test(
+        "MonadStorageWarmth.t.sol",
+        include_str!("../../fixtures/MonadStorageWarmth.t.sol"),
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.hardfork = Some("monad:MonadTen".parse().unwrap());
+            config.isolate = isolate;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--network", "monad", "--mc", "MonadStorageWarmthTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 12 tests for test/MonadStorageWarmth.t.sol:MonadStorageWarmthTest
+[PASS] test_arbitrary_storage_retains_page_warmth() ([GAS])
+[PASS] test_cool_clears_loaded_pages() ([GAS])
+[PASS] test_copy_storage_retains_native_page_warmth() ([GAS])
+[PASS] test_explicit_slot_warmth_updates_page() ([GAS])
+[PASS] test_isolation_resets_native_page_warmth() ([GAS])
+[PASS] test_isolation_resets_page_write_charges() ([GAS])
+[PASS] test_load_warms_only_its_page() ([GAS])
+[PASS] test_snapshot_restores_page_warmth() ([GAS])
+[PASS] test_store_preserves_first_write_charge() ([GAS])
+[PASS] test_store_seeds_warm_pages() ([GAS])
+[PASS] test_store_warmth_reverts_with_frame() ([GAS])
+[PASS] test_warmth_preserves_write_and_growth_accounting() ([GAS])
+Suite result: ok. 12 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+
+    for hardfork in ["monad:MonadNine", "prague"] {
+        prj.update_config(|config| config.hardfork = Some(hardfork.parse().unwrap()));
+        let network = if hardfork == "prague" { "ethereum" } else { "monad" };
+        cmd.forge_fuse()
+            .args(["test", "--network", network, "--mc", "StorageSlotWarmthTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadStorageWarmth.t.sol:StorageSlotWarmthTest
+[PASS] test_store_retains_slot_warmth_before_monad_ten() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[forgetest_init]
+fn isolated_calls_retain_calldata_floor(prj: _, cmd: _) {
+    prj.add_test(
+        "IsolatedFloor.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract IsolatedFloorTest is Test {
+    address constant TARGET = address(0xBEEF1);
+
+    function setUp() public {
+        vm.etch(TARGET, hex"00");
+    }
+
+    function test_calldata_floor_with_sufficient_gas() public {
+        checkCalldataFloor(100_000);
+    }
+
+    function test_calldata_floor_with_tight_gas() public {
+        checkCalldataFloor(1_000);
+    }
+
+    function checkCalldataFloor(uint256 gasLimit) internal {
+        bytes memory data = new bytes(1_000);
+        for (uint256 i; i < data.length; ++i) data[i] = 0x01;
+        (bool success,) = TARGET.call{gas: gasLimit}(data);
+        assertTrue(success);
+        assertEq(vm.snapshotGasLastCall("calldataFloor"), 61_000);
+    }
+}
+"#,
+    );
+    for (network, hardfork) in [
+        ("ethereum", "prague"),
+        #[cfg(feature = "monad")]
+        ("monad", "monad:MonadTen"),
+    ] {
+        prj.update_config(|config| {
+            config.evm_version = EvmVersion::Prague;
+            config.hardfork = Some(hardfork.parse().unwrap());
+            config.isolate = true;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--network", network, "--mc", "IsolatedFloorTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/IsolatedFloor.t.sol:IsolatedFloorTest
+[PASS] test_calldata_floor_with_sufficient_gas() ([GAS])
+[PASS] test_calldata_floor_with_tight_gas() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[cfg(feature = "monad")]
+#[forgetest_init]
+async fn monad_storage_warmth_survives_fork_switch(prj: _, cmd: _) {
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_monad()).await;
+    prj.add_test(
+        "MonadStorageWarmth.t.sol",
+        include_str!("../../fixtures/MonadStorageWarmth.t.sol"),
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.hardfork = Some("monad:MonadTen".parse().unwrap());
+            config.isolate = isolate;
+        });
+        cmd.forge_fuse().env("MONAD_WARMTH_RPC", handle.http_endpoint());
+        cmd.args(["test", "--network", "monad", "--mc", "MonadForkStorageWarmthTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadStorageWarmth.t.sol:MonadForkStorageWarmthTest
+[PASS] test_fork_switch_retains_persistent_page_warmth() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}

@@ -981,11 +981,11 @@ fn push_scalar_value_candidates(
             push_candidate(candidates, limit, DynSolValue::Bool(false));
         }
         DynSolValue::Uint(value, bits) => {
-            if *value != U256::ZERO {
+            if !value.is_zero() {
                 push_candidate(candidates, limit, DynSolValue::Uint(U256::ZERO, *bits));
             }
-            if *value > U256::from(1) {
-                push_candidate(candidates, limit, DynSolValue::Uint(U256::from(1), *bits));
+            if *value > U256::ONE {
+                push_candidate(candidates, limit, DynSolValue::Uint(U256::ONE, *bits));
             }
         }
         DynSolValue::Int(value, bits) => {
@@ -993,17 +993,17 @@ fn push_scalar_value_candidates(
                 push_candidate(candidates, limit, DynSolValue::Int(I256::ZERO, *bits));
             }
             if *value != I256::ZERO
-                && *value != I256::from_raw(U256::from(1))
+                && *value != I256::from_raw(U256::ONE)
                 && *value != I256::MINUS_ONE
             {
                 push_candidate(
                     candidates,
                     limit,
-                    DynSolValue::Int(I256::from_raw(U256::from(1)), *bits),
+                    DynSolValue::Int(I256::from_raw(U256::ONE), *bits),
                 );
             }
             if *value != I256::ZERO
-                && *value != I256::from_raw(U256::from(1))
+                && *value != I256::from_raw(U256::ONE)
                 && *value != I256::MINUS_ONE
             {
                 push_candidate(candidates, limit, DynSolValue::Int(I256::MINUS_ONE, *bits));
@@ -1501,7 +1501,7 @@ mod tests {
                 DynSolValue::Uint(U256::from(42), 256),
                 DynSolValue::Int(I256::from_raw(U256::from(42)), 256),
                 DynSolValue::Bool(true),
-                DynSolValue::Address(Address::from([0x11; 20])),
+                DynSolValue::Address(Address::repeat_byte(0x11)),
             ])
             .unwrap();
 
@@ -1509,12 +1509,12 @@ mod tests {
             candidate_args(&function, abi_calldata_candidates(&calldata, &decoder, usize::MAX));
 
         assert!(candidates.iter().any(|args| args[0] == DynSolValue::Uint(U256::ZERO, 256)));
-        assert!(candidates.iter().any(|args| args[0] == DynSolValue::Uint(U256::from(1), 256)));
+        assert!(candidates.iter().any(|args| args[0] == DynSolValue::Uint(U256::ONE, 256)));
         assert!(candidates.iter().any(|args| args[1] == DynSolValue::Int(I256::ZERO, 256)));
         assert!(
             candidates
                 .iter()
-                .any(|args| { args[1] == DynSolValue::Int(I256::from_raw(U256::from(1)), 256) })
+                .any(|args| { args[1] == DynSolValue::Int(I256::from_raw(U256::ONE), 256) })
         );
         assert!(candidates.iter().any(|args| args[1] == DynSolValue::Int(I256::MINUS_ONE, 256)));
         assert!(candidates.iter().any(|args| args[2] == DynSolValue::Bool(false)));
@@ -1525,7 +1525,7 @@ mod tests {
     fn abi_calldata_candidates_do_not_oscillate_signed_one_values() {
         let function = Function::parse("target(int256)").unwrap();
         let decoder = decoder_with_functions(vec![function.clone()]);
-        let one = DynSolValue::Int(I256::from_raw(U256::from(1)), 256);
+        let one = DynSolValue::Int(I256::from_raw(U256::ONE), 256);
         let minus_one = DynSolValue::Int(I256::MINUS_ONE, 256);
 
         let one_calldata = function.abi_encode_input(&[one]).unwrap();
@@ -1583,7 +1583,7 @@ mod tests {
             .abi_encode_input(&[DynSolValue::Tuple(vec![
                 DynSolValue::Uint(U256::from(42), 256),
                 DynSolValue::Bool(true),
-                DynSolValue::Address(Address::from([0x11; 20])),
+                DynSolValue::Address(Address::repeat_byte(0x11)),
             ])])
             .unwrap();
 
@@ -1595,7 +1595,7 @@ mod tests {
                 == DynSolValue::Tuple(vec![
                     DynSolValue::Uint(U256::ZERO, 256),
                     DynSolValue::Bool(true),
-                    DynSolValue::Address(Address::from([0x11; 20])),
+                    DynSolValue::Address(Address::repeat_byte(0x11)),
                 ])
         }));
         assert!(candidates.iter().any(|args| {
@@ -1603,7 +1603,7 @@ mod tests {
                 == DynSolValue::Tuple(vec![
                     DynSolValue::Uint(U256::from(42), 256),
                     DynSolValue::Bool(false),
-                    DynSolValue::Address(Address::from([0x11; 20])),
+                    DynSolValue::Address(Address::repeat_byte(0x11)),
                 ])
         }));
         assert!(candidates.iter().any(|args| {

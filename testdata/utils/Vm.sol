@@ -10,9 +10,12 @@ interface Vm {
     enum AccountAccessKind { Call, DelegateCall, CallCode, StaticCall, Create, SelfDestruct, Resume, Balance, Extcodesize, Extcodehash, Extcodecopy }
     enum ForgeContext { TestGroup, Test, Coverage, Snapshot, ScriptGroup, ScriptDryRun, ScriptBroadcast, ScriptResume, Unknown }
     enum BroadcastTxType { Call, Create, Create2 }
+    enum OwnerKeyType { Secp256k1, P256, WebAuthn }
     struct Log { bytes32[] topics; bytes data; address emitter; }
     struct Rpc { string key; string url; }
     struct EthGetLogs { address emitter; bytes32[] topics; bytes data; bytes32 blockHash; uint64 blockNumber; bytes32 transactionHash; uint64 transactionIndex; uint256 logIndex; bool removed; }
+    struct EthStorageProof { bytes32 key; uint256 value; bytes[] proof; }
+    struct EthGetProof { address account; uint256 balance; bytes32 codeHash; uint64 nonce; bytes32 storageHash; bytes[] accountProof; EthStorageProof[] storageProof; }
     struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }
     struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
     struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
@@ -27,6 +30,9 @@ interface Vm {
     struct SignedDelegation { uint8 v; bytes32 r; bytes32 s; uint64 nonce; address implementation; }
     struct PotentialRevert { address reverter; bool partialMatch; bytes revertData; }
     struct AccessListItem { address target; bytes32[] storageKeys; }
+    struct ConfigurableAccountOwner { address owner; uint8 weight; }
+    struct ConfigurableAccountConfig { bytes32 salt; uint64 version; uint8 threshold; ConfigurableAccountOwner[] owners; }
+    struct OwnerKey { OwnerKeyType keyType; uint256 privateKey; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
@@ -177,6 +183,7 @@ interface Vm {
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
     function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
+    function configurableAccountDigest(address account, uint64 configVersion, bytes32 digest) external pure returns (bytes32 ownerDigest);
     function contains(string calldata subject, string calldata search) external pure returns (bool result);
     function cool(address target) external;
     function coolSlot(address target, bytes32 slot) external;
@@ -207,6 +214,7 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);
     function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);
+    function deriveConfigurableAccount(ConfigurableAccountConfig calldata config) external pure returns (address account);
     function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index) external pure returns (uint256 privateKey);
     function deriveKey(string calldata mnemonic, uint32 index, string calldata language) external pure returns (uint256 privateKey);
@@ -224,6 +232,7 @@ interface Vm {
     function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
     function eip712HashType(string calldata bindingsPath, string calldata typeName) external pure returns (bytes32 typeHash);
     function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);
+    function encodeConfigurableAccountSignature(address account, ConfigurableAccountConfig calldata config, bytes[] calldata ownerSignatures) external pure returns (bytes memory signature);
     function ensNamehash(string calldata name) external pure returns (bytes32);
     function envAddress(string calldata name) external view returns (address value);
     function envAddress(string calldata name, string calldata delim) external view returns (address[] memory value);
@@ -256,6 +265,7 @@ interface Vm {
     function envUint(string calldata name, string calldata delim) external view returns (uint256[] memory value);
     function etch(address target, bytes calldata newRuntimeBytecode) external;
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external view returns (EthGetLogs[] memory logs);
+    function eth_getProof(address target, bytes32[] calldata slots, uint256 blockNumber) external view returns (EthGetProof memory proof);
     function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
     function exists(string calldata path) external view returns (bool result);
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data) external;
@@ -361,6 +371,7 @@ interface Vm {
     function lastFrameGas() external view returns (Gas memory gas);
     function load(address target, bytes32 slot) external view returns (bytes32 data);
     function loadAllocs(string calldata pathToAllocsJson) external;
+    function loadTransient(address target, bytes32 slot) external view returns (bytes32 data);
     function makePersistent(address account) external;
     function makePersistent(address account0, address account1) external;
     function makePersistent(address account0, address account1, address account2) external;
@@ -559,12 +570,15 @@ interface Vm {
     function signCompact(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
     function signCompact(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
     function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+    function signConfigurableAccount(uint256[] calldata privateKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);
+    function signConfigurableAccount(OwnerKey[] calldata ownerKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);
     function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
     function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
     function signDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);
     function signEd25519(bytes calldata namespace, bytes calldata message, bytes32 privateKey) external pure returns (bytes memory signature);
     function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
     function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+    function signKeychainConfigurableAccount(OwnerKey[] calldata ownerKeys, address configurableAccount, ConfigurableAccountConfig calldata config, address account, bytes32 digest) external pure returns (bytes memory signature);
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
     function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(Wallet calldata wallet, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
@@ -607,6 +621,7 @@ interface Vm {
     function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
     function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
     function store(address target, bytes32 slot, bytes32 value) external;
+    function storeTransient(address target, bytes32 slot, bytes32 value) external;
     function toBase64URL(bytes calldata data) external pure returns (string memory);
     function toBase64URL(string calldata data) external pure returns (string memory);
     function toBase64(bytes calldata data) external pure returns (string memory);

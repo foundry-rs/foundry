@@ -18,9 +18,9 @@ async fn storage_values_batches_multiple_accounts() {
 
     let first = Address::repeat_byte(0x01);
     let second = Address::repeat_byte(0x02);
-    api.anvil_set_storage_at(first, U256::from(0), B256::with_last_byte(0xaa)).await.unwrap();
-    api.anvil_set_storage_at(first, U256::from(1), B256::with_last_byte(0xbb)).await.unwrap();
-    api.anvil_set_storage_at(second, U256::from(0), B256::with_last_byte(0xcc)).await.unwrap();
+    api.anvil_set_storage_at(first, U256::ZERO, B256::with_last_byte(0xaa)).await.unwrap();
+    api.anvil_set_storage_at(first, U256::ONE, B256::with_last_byte(0xbb)).await.unwrap();
+    api.anvil_set_storage_at(second, U256::ZERO, B256::with_last_byte(0xcc)).await.unwrap();
 
     let requests = HashMap::<Address, Vec<B256>>::from_iter([
         (first, vec![slot(0), slot(1), slot(2)]),
@@ -98,11 +98,11 @@ async fn storage_values_agrees_with_get_storage_at() {
     let provider = handle.http_provider();
     let address = Address::repeat_byte(0x05);
 
-    api.anvil_set_storage_at(address, U256::from(0), B256::with_last_byte(0x11)).await.unwrap();
+    api.anvil_set_storage_at(address, U256::ZERO, B256::with_last_byte(0x11)).await.unwrap();
     api.mine_one().await.unwrap();
     let first = provider.get_block_number().await.unwrap();
 
-    api.anvil_set_storage_at(address, U256::from(1), B256::with_last_byte(0x22)).await.unwrap();
+    api.anvil_set_storage_at(address, U256::ONE, B256::with_last_byte(0x22)).await.unwrap();
     api.mine_one().await.unwrap();
     let second = provider.get_block_number().await.unwrap();
 
@@ -117,12 +117,8 @@ async fn storage_values_agrees_with_get_storage_at() {
             .unwrap();
 
         let mut expected = Vec::new();
-        for index in [U256::from(0), U256::from(1)] {
-            let value = provider
-                .get_storage_at(address, index)
-                .block_id(BlockId::number(block))
-                .await
-                .unwrap();
+        for index in [U256::ZERO, U256::ONE] {
+            let value = provider.get_storage_at(address, index).number(block).await.unwrap();
             expected.push(B256::from(value));
         }
         assert_eq!(batched[&address], expected, "divergence at block {block}");
@@ -143,7 +139,7 @@ async fn test_fork_storage_values_skips_upstream_for_local_state() {
     let provider = handle.http_provider();
     let address = Address::repeat_byte(0x06);
 
-    api.anvil_set_storage_at(address, U256::from(0), B256::with_last_byte(0x33)).await.unwrap();
+    api.anvil_set_storage_at(address, U256::ZERO, B256::with_last_byte(0x33)).await.unwrap();
     api.mine_one().await.unwrap();
 
     // State at or after the fork point is served locally, without querying the forked node.

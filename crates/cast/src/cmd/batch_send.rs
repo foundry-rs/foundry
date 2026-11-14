@@ -1,14 +1,16 @@
 //! `cast batch-send` command implementation.
 //!
 //! Sends a batch of calls as a single Tempo transaction using native call batching.
-//! Unlike upstream Foundry's sequential transactions, this uses a single type 0x76
-//! transaction with multiple calls executed atomically.
+//! Uses a single type 0x76 transaction with multiple calls executed atomically.
 
 use crate::{
     call_spec::CallSpec,
     cmd::{
         auth::{confirm_and_build, confirm_and_build_with_tempo_wallet},
-        send::{SendOptions, cast_send, cast_send_with_tempo_wallet},
+        send::{
+            SendOptions, cast_send, cast_send_with_configurable_account,
+            cast_send_with_tempo_wallet,
+        },
     },
     tempo,
     tx::{self, CastTxBuilder, InitState, InputState, SendTxOpts, apply_poll_interval},
@@ -31,10 +33,12 @@ pub struct BatchSendArgs {
     /// Call specifications in format: `to[:<value>][:<sig>[:<args>]]` or `to[:<value>][:<0xdata>]`
     ///
     /// Examples:
-    ///   --call "0x123:0.1ether" (ETH transfer)
-    ///   --call "0x456::transfer(address,uint256):0x789,1000" (ERC20 transfer)
-    ///   --call "0xabc::0x123def" (raw calldata)
-    ///   --call "0x123:1ether:deposit()" (value + function call)
+    ///   --call "0x1234567890123456789012345678901234567890:0.1ether" (ETH transfer)
+    ///   --call "0x1234567890123456789012345678901234567890::transfer(address,uint256):
+    /// 0x0987654321098765432109876543210987654321,1000" (ERC20 transfer)
+    ///   --call "0x1234567890123456789012345678901234567890::0x123def" (raw calldata)
+    ///   --call "0x1234567890123456789012345678901234567890:1ether:deposit()" (value + function
+    /// call)
     #[arg(long = "call", value_name = "SPEC", required = true)]
     pub calls: Vec<String>,
 
@@ -72,9 +76,20 @@ impl BatchSendArgs {
         apply_poll_interval(&provider, send_tx.poll_interval);
 
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let (signer, tempo_access_key) =
+        let (mut signer, tempo_access_key) =
             tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
                 .await?;
+        let configurable_account = if unlocked || tempo_access_key.is_some() {
+            None
+        } else {
+            tempo::resolve_configurable_account::<TempoNetwork>(
+                &tx.tempo,
+                &config,
+                &send_tx.eth.wallet,
+                &mut signer,
+            )
+            .await?
+        };
 
         // Preserve key_id for modes that do not call build_with_tempo_wallet, such as unlocked.
         if let Some(access_key) = &tempo_access_key {
@@ -82,11 +97,13 @@ impl BatchSendArgs {
         }
 
         let builder = CastTxBuilder::<TempoNetwork, _, _>::new(&provider, tx, &config).await?;
-        let builder = with_batch_calls(&calls, builder, &provider).await?;
+        let mut builder = with_batch_calls(&calls, builder, &provider).await?;
+        if let Some(account) = &configurable_account {
+            account.prepare_request::<TempoNetwork>(builder.tx_mut());
+        }
         tempo::print_expires(expires_at)?;
 
-        let send_opts =
-            SendOptions::new(&send_tx, &config).resolving_fee_token(Some(chain), &config);
+        let send_opts = SendOptions::new(&send_tx, &config).resolving_fee_token(true, &config);
 
         if unlocked {
             let Some(tx) = confirm_and_build(builder, config.sender, force, lane, false).await?
@@ -101,6 +118,13 @@ impl BatchSendArgs {
                 return Ok(());
             };
             cast_send_with_tempo_wallet(&provider, tx_request, &prepared, &send_opts).await?;
+        } else if let Some(account) = &configurable_account {
+            let Some(tx_request) =
+                confirm_and_build(builder, account.account(), force, lane, false).await?
+            else {
+                return Ok(());
+            };
+            cast_send_with_configurable_account(&provider, tx_request, account, &send_opts).await?;
         } else {
             let (signer, _) = tx::resolve_send_signer(signer, &send_tx.eth).await?;
             let Some(tx_request) = confirm_and_build(builder, &signer, force, lane, false).await?

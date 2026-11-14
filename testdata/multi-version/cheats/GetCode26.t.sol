@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+pragma solidity =0.8.26;
+
+import "utils/Test.sol";
+import "../Counter.sol";
+
+// Same as GetCode.t.sol but for 0.8.26 version
+contract GetCodeTest26 is Test {
+    function testGetCodeMultiVersion() public {
+        assertEq(vm.getCode("Counter.sol"), type(Counter).creationCode);
+        require(
+            keccak256(vm.getCode("Counter.sol")) != keccak256(vm.getCode("Counter.sol:Counter:0.8.35")),
+            "Invalid artifact"
+        );
+        assertEq(vm.getCode("Counter.sol"), vm.getCode("Counter.sol:Counter:0.8.26"));
+    }
+
+    function testGetCodeByNameMultiVersion() public {
+        // Use full path to avoid ambiguity with other Counter contracts in testdata
+        assertEq(vm.getCode("multi-version/Counter.sol:Counter"), type(Counter).creationCode);
+        require(
+            keccak256(vm.getCode("multi-version/Counter.sol:Counter"))
+                != keccak256(vm.getCode("multi-version/Counter.sol:Counter:0.8.35")),
+            "Invalid artifact"
+        );
+        assertEq(vm.getCode("multi-version/Counter.sol"), vm.getCode("multi-version/Counter.sol:Counter:0.8.26"));
+    }
+}

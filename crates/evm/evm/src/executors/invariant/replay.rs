@@ -1,6 +1,7 @@
 use super::{call_after_invariant_function, call_invariant_function, execute_tx};
 use crate::executors::{
     EarlyExit, Executor,
+    corpus::persist_campaign_optimization,
     invariant::shrink::{
         CheckSequenceOutcome, ShrinkProgress, shrink_sequence, shrink_sequence_value,
     },
@@ -8,7 +9,7 @@ use crate::executors::{
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Bytes, I256, Log,
+    Address, Bytes, I256, Log,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Result;
@@ -20,12 +21,14 @@ use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantC
 use foundry_evm_traces::{TraceKind, TraceRequirements, Traces, load_contracts};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 pub struct ReplayErrorResult {
     pub counterexample_sequence: Vec<BaseCounterExample>,
     pub check_result: Option<CheckSequenceOutcome>,
     pub fork_block_number: Option<u64>,
+    /// Optimization value of the shrunk sequence, which can exceed the campaign best.
+    pub optimization_value: Option<I256>,
 }
 
 /// Replays a call sequence for collecting logs and traces.
@@ -88,7 +91,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     )?;
     let fork_block_number = invariant_result.fork_block_number;
     debug_bytecodes.extend(invariant_result.debug_bytecodes);
-    traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
+    traces.push((TraceKind::Execution, invariant_result.traces.unwrap()));
     logs.extend(invariant_result.logs);
     deprecated_cheatcodes.extend(
         invariant_result
@@ -102,17 +105,23 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
         let (after_invariant_result, _) =
             call_after_invariant_function(&executor, invariant_contract.address)?;
         debug_bytecodes.extend(after_invariant_result.debug_bytecodes);
-        traces.push((TraceKind::Execution, after_invariant_result.traces.clone().unwrap()));
+        traces.push((TraceKind::Execution, after_invariant_result.traces.unwrap()));
         logs.extend(after_invariant_result.logs);
     }
 
-    Ok(ReplayErrorResult { counterexample_sequence, check_result: None, fork_block_number })
+    Ok(ReplayErrorResult {
+        counterexample_sequence,
+        check_result: None,
+        fork_block_number,
+        optimization_value: None,
+    })
 }
 
 /// Replays and shrinks a call sequence, collecting logs and traces.
 ///
 /// For check mode (target_value=None): shrinks to find shortest failing sequence.
 /// For optimization mode (target_value=Some): shrinks to find shortest sequence producing target.
+/// `targets` are the campaign's fuzz targets, used to score optimization candidates.
 #[expect(clippy::too_many_arguments)]
 pub fn replay_error<FEN: FoundryEvmNetwork>(
     config: InvariantConfig,
@@ -122,6 +131,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     expect_assertion_failure: bool,
     rd: Option<&RevertDecoder>,
     target_value: Option<I256>,
+    targets: &[Address],
     invariant_contract: &InvariantContract<'_>,
     target_invariant: &Function,
     known_contracts: &ContractsByArtifact,
@@ -133,6 +143,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
+    shrink_deadline: Option<Instant>,
     position: Option<(usize, usize)>,
 ) -> Result<ReplayErrorResult> {
     // Multi-invariant runs include `[i/N]` in the shrink progress message so users see how many
@@ -146,20 +157,23 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         config.show_solidity,
     );
 
-    let (calls, check_result) = if let Some(target) = target_value {
-        (
-            shrink_sequence_value(
-                &config,
-                invariant_contract,
-                target_invariant,
-                calls,
-                &executor,
-                target,
-                &shrink_progress,
-                early_exit,
-            )?,
-            None,
-        )
+    // Every shrink attempt would append its steps to the shared step table, so only the replay of
+    // the shrunk sequence records them.
+    let recorder = executor.inspector_mut().debug_recorder.take();
+    let (calls, check_result, optimization_value) = if let Some(target) = target_value {
+        let (calls, value) = shrink_sequence_value(
+            &config,
+            invariant_contract,
+            target_invariant,
+            calls,
+            &executor,
+            target,
+            targets,
+            &shrink_progress,
+            early_exit,
+            shrink_deadline,
+        )?;
+        (calls, None, Some(value))
     } else {
         let shrunk = shrink_sequence(
             &config,
@@ -171,9 +185,11 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             rd,
             &shrink_progress,
             early_exit,
+            shrink_deadline,
         )?;
-        (shrunk.calls, shrunk.result)
+        (shrunk.calls, shrunk.result, None)
     };
+    executor.inspector_mut().debug_recorder = recorder;
 
     if let Some(sequence) = inner_sequence {
         set_up_inner_replay(&mut executor, &sequence);
@@ -194,7 +210,9 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         config.show_solidity,
     )?;
 
+    persist_campaign_optimization(&config.corpus, optimization_value, &calls);
     replay.check_result = check_result;
+    replay.optimization_value = optimization_value;
     Ok(replay)
 }
 

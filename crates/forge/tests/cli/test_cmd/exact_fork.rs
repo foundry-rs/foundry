@@ -19,7 +19,8 @@ async fn rpc(endpoint: &str, method: &str, params: Value) -> Value {
         .clone()
 }
 
-forgetest_async!(fork_execution_uses_exact_ancestry_after_reorg, |prj, cmd| {
+#[forgetest]
+async fn fork_execution_uses_exact_ancestry_after_reorg(prj: _, cmd: _) {
     let (_api, anvil) = spawn(NodeConfig::test()).await;
     let upstream = anvil.http_endpoint();
     let initial = rpc(&upstream, "eth_getBlockByNumber", json!(["latest", false])).await;
@@ -185,4 +186,4 @@ contract ExactForkTest {{
             .assert_success();
     }
     assert!(exact_state_read.load(Ordering::Relaxed));
-});
+}

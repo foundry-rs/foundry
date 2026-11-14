@@ -15,6 +15,7 @@ use std::time::Instant;
 
 // https://etherscan.io/address/0x4e59b44847b379578588920ca78fbf26c0b4956c#code
 const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
+const ADDRESS_HEX_LEN: usize = Address::len_bytes() * 2;
 
 #[derive(Clone, Debug, Subcommand)]
 enum Create2Subcommand {
@@ -197,7 +198,7 @@ impl Create2Args {
 
             let matches = matches.trim_start_matches("0x");
 
-            if matches.len() != 40 {
+            if matches.len() != ADDRESS_HEX_LEN {
                 eyre::bail!("Please provide a 40 characters long sequence for matching");
             }
 
@@ -221,11 +222,19 @@ impl Create2Args {
         }
 
         debug_assert!(
-            regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= 40,
+            regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= ADDRESS_HEX_LEN,
             "vanity patterns length exceeded. cannot be more than 40 characters",
         );
 
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
+
+        // Validation and diagnostic patterns stay shared with checksum-sensitive mining.
+        // Compile each pattern into only the address bytes that constrain a nibble.
+        let byte_patterns = regex
+            .patterns()
+            .iter()
+            .map(|pattern| BytePattern::new(pattern))
+            .collect::<Option<Vec<_>>>();
 
         let mut n_threads = match threads {
             Some(n) if n != 0 => n,
@@ -237,8 +246,8 @@ impl Create2Args {
 
         let mut salt = B256::ZERO;
         let remaining = if let Some(caller_address) = caller {
-            salt[..20].copy_from_slice(&caller_address.into_array());
-            &mut salt[20..]
+            salt[..Address::len_bytes()].copy_from_slice(caller_address.as_slice());
+            &mut salt[Address::len_bytes()..]
         } else {
             &mut salt[..]
         };
@@ -258,29 +267,24 @@ impl Create2Args {
             "Starting to generate deterministic contract address with {n_threads} threads..."
         )?;
         let timer = Instant::now();
-        let regex_len = regex.patterns().len();
-        let mut checksum_buf = [0u8; 42];
-        let mut hex_buf = [0u8; 40];
+        let mut checksum_buf = case_sensitive.then(|| Address::ZERO.to_checksum_buffer(None));
         let (address, salt) = super::miner::mine_salt(salt, n_threads, move |salt| {
             #[expect(clippy::needless_borrows_for_generic_args)]
             let addr = deployer.create2(&salt, &init_code_hash);
-            // Use checksum format only when case_sensitive is enabled — it requires an extra
-            // keccak256 call, so we fall back to plain hex when case sensitivity is off.
-            let s = if case_sensitive {
-                let _ = addr.to_checksum_raw(&mut checksum_buf, None);
-                // SAFETY: stripping 2 ASCII bytes ("0x") off of an already valid UTF-8 string.
-                unsafe { std::str::from_utf8_unchecked(checksum_buf.get_unchecked(2..)) }
+            let matches = if let Some(buffer) = &mut checksum_buf {
+                let s = buffer.format(&addr, None);
+                regex.matches(&s["0x".len()..]).matched_all()
             } else {
-                // SAFETY: hex::encode_to_slice always produces valid UTF-8 (hex digits).
-                let _ = hex::encode_to_slice(addr.as_slice(), &mut hex_buf);
-                unsafe { std::str::from_utf8_unchecked(&hex_buf) }
+                byte_patterns
+                    .as_ref()
+                    .is_some_and(|patterns| patterns.iter().all(|pattern| pattern.matches(&addr)))
             };
-            (regex.matches(s).into_iter().count() == regex_len).then_some((addr, salt))
+            matches.then_some((addr, salt))
         })
         .ok_or_else(|| eyre::eyre!("create2 salt mining failed: all threads panicked"))?;
         sh_status!("Successfully found contract address in {:?}", timer.elapsed())?;
         sh_status!("Address: {address}")?;
-        sh_status!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
+        sh_status!("Salt: {salt} ({})", Into::<U256>::into(salt))?;
         // The machine-readable stdout record duplicates the prose above when stdout is an
         // interactive terminal.
         if !shell::is_out_tty() {
@@ -296,6 +300,46 @@ fn get_regex_hex_string(s: String) -> Result<String> {
     let pad_width = s.len() + s.len() % 2;
     hex::decode(format!("{s:0<pad_width$}"))?;
     Ok(s.to_string())
+}
+
+/// Byte constraints for a validated prefix, suffix, or full-address wildcard pattern.
+#[derive(Clone)]
+struct BytePattern(Vec<(usize, u8, u8)>);
+
+impl BytePattern {
+    fn new(pattern: &str) -> Option<Self> {
+        let suffix = pattern.ends_with('$');
+        let pattern = pattern.trim_start_matches('^').trim_end_matches('$');
+        // An overlong pattern cannot match a 40-nibble address.
+        if pattern.len() > ADDRESS_HEX_LEN {
+            return None;
+        }
+        let offset = if suffix { ADDRESS_HEX_LEN - pattern.len() } else { 0 };
+        let mut bytes = [(0u8, 0u8); Address::len_bytes()];
+        for (i, nibble) in pattern.chars().enumerate() {
+            if nibble != '.' {
+                // The hex decoder also accepts an uppercase 0X prefix, but the
+                // regex retains its X, which cannot match an address hex digit.
+                let value = nibble.to_digit(16)? as u8;
+                let i = offset + i;
+                let shift = if i.is_multiple_of(2) { 4 } else { 0 };
+                let (mask, expected) = &mut bytes[i / 2];
+                *mask |= 0xf << shift;
+                *expected |= value << shift;
+            }
+        }
+        Some(Self(
+            bytes
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, (mask, value))| (mask != 0).then_some((i, mask, value)))
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    fn matches(&self, address: &Address) -> bool {
+        self.0.iter().all(|&(i, mask, value)| address[i] & mask == value)
+    }
 }
 
 #[cfg(test)]
@@ -418,5 +462,96 @@ mod tests {
             salt,
             b256!("0x000000000000000000000000000000000000000000000000df00000000000000")
         );
+    }
+
+    fn matcher_addresses() -> Vec<Address> {
+        let address = address!("0123456789abcdef0123456789abcdef01234567");
+        let mut addresses = vec![address, Address::ZERO, Address::repeat_byte(0xff)];
+        // Change every nibble to every possible value, including both matching and failing inputs.
+        for i in 0..ADDRESS_HEX_LEN {
+            for value in 0..16 {
+                let mut changed = address;
+                let shift = if i.is_multiple_of(2) { 4 } else { 0 };
+                changed[i / 2] = (changed[i / 2] & !(0xf << shift)) | (value << shift);
+                addresses.push(changed);
+            }
+        }
+        addresses
+    }
+
+    fn assert_byte_patterns_match_regex(patterns: &[String], addresses: &[Address]) {
+        let regex = RegexSetBuilder::new(patterns).case_insensitive(true).build().unwrap();
+        let byte_patterns = regex
+            .patterns()
+            .iter()
+            .map(|pattern| BytePattern::new(pattern))
+            .collect::<Option<Vec<_>>>();
+        for address in addresses {
+            let hex = hex::encode(address);
+            let expected = regex.matches(&hex).into_iter().count() == regex.patterns().len();
+            let actual = byte_patterns
+                .as_ref()
+                .is_some_and(|patterns| patterns.iter().all(|pattern| pattern.matches(address)));
+            assert_eq!(actual, expected, "patterns: {patterns:?}, address: {hex}");
+        }
+    }
+
+    #[test]
+    fn byte_patterns_match_regex_prefixes_and_suffixes() {
+        let addresses = matcher_addresses();
+        let hex = hex::encode(addresses[0]).to_ascii_uppercase();
+        for len in 0..=ADDRESS_HEX_LEN {
+            assert_byte_patterns_match_regex(&[format!("^{}", &hex[..len])], &addresses);
+            assert_byte_patterns_match_regex(
+                &[format!("{}$", &hex[ADDRESS_HEX_LEN - len..])],
+                &addresses,
+            );
+            assert_byte_patterns_match_regex(
+                &[format!("^{}", &hex[..len]), format!("{}$", &hex[len..])],
+                &addresses,
+            );
+        }
+        assert_byte_patterns_match_regex(
+            &[format!("^{}", &hex[..3]), format!("{}$", &hex[ADDRESS_HEX_LEN - 3..])],
+            &addresses,
+        );
+    }
+
+    #[test]
+    fn byte_patterns_match_regex_wildcards() {
+        let addresses = matcher_addresses();
+        let hex = hex::encode(addresses[0]).to_ascii_uppercase();
+        assert_byte_patterns_match_regex(&[".".repeat(ADDRESS_HEX_LEN)], &addresses);
+        for i in 0..ADDRESS_HEX_LEN {
+            // A single constrained nibble checks alignment at every address position.
+            let mut sparse = ".".repeat(ADDRESS_HEX_LEN);
+            sparse.replace_range(i..i + 1, &hex[i..i + 1]);
+            assert_byte_patterns_match_regex(&[sparse], &addresses);
+
+            // A single wildcard checks that unconstrained nibbles are ignored.
+            let mut dense = hex.clone();
+            dense.replace_range(i..i + 1, ".");
+            assert_byte_patterns_match_regex(&[dense], &addresses);
+        }
+        let alternating = hex
+            .chars()
+            .enumerate()
+            .map(|(i, nibble)| if i.is_multiple_of(3) { nibble } else { '.' })
+            .collect::<String>();
+        assert_byte_patterns_match_regex(&[alternating], &addresses);
+    }
+
+    #[test]
+    fn byte_patterns_match_regex_impossible_patterns() {
+        let addresses = matcher_addresses();
+        for pattern in [
+            format!("^{}", "a".repeat(ADDRESS_HEX_LEN + 1)),
+            format!("{}$", "b".repeat(ADDRESS_HEX_LEN + 1)),
+            "^0Xab".into(),
+        ] {
+            assert_byte_patterns_match_regex(&[pattern], &addresses);
+        }
+        // A possible prefix must not override an impossible suffix.
+        assert_byte_patterns_match_regex(&["^0".into(), "0Xab$".into()], &addresses);
     }
 }

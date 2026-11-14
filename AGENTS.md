@@ -45,13 +45,32 @@ Rust formatting uses nightly.
 - `crates/script`: script execution support
 - `crates/verify`: contract verification support
 
-Foundry's EVM execution tooling is built around `revm`. Cheatcodes are calls to
-the fixed cheatcode address and are dispatched through the cheatcode inspector.
+Foundry's EVM execution tooling is built around `evm2`; see
+[`docs/dev/evm2.md`](docs/dev/evm2.md). Cheatcodes are calls to the fixed
+cheatcode address and are dispatched through the cheatcode inspector.
 For custom network work, follow the ownership, state-lifecycle, tool-dispatch,
 and CI checklist in [`docs/dev/networks.md`](docs/dev/networks.md).
 
 For symbolic execution work under `crates/evm/symbolic`, read
 `crates/evm/symbolic/AGENTS.md` before editing.
+
+## Reuse and ownership
+
+Before you build, convert, compare, or format an evm2, alloy, or Foundry value by
+hand, check the owning type and crate for a canonical constructor, alias,
+conversion, or predicate. For example, use `BlockId::latest()`, `InMemoryDB`,
+`From` between `U256` and `B256`, and `AccountInfo::is_empty_code_hash()`.
+Reuse the shared helpers in `foundry_common` and `foundry_config`, such as path,
+JSON, and provider construction helpers, instead of local copies. Apply this to
+the code that you add or change, not as a repository-wide sweep.
+
+Put new behavior in the component that owns the authoritative state, and use
+its canonical entry point. Callers must not mirror or select behavior that an
+executor, backend, network implementation, or module already owns, so do not
+add parameters, marker types, or parallel context objects for it. Keep custom
+network behavior behind the ownership boundary in
+[`docs/dev/networks.md`](docs/dev/networks.md): select the execution family once
+at the outermost boundary, and do not add family checks below that dispatch.
 
 ## Testing
 
@@ -67,8 +86,8 @@ For CLI and integration tests:
 
 - Put Forge CLI coverage under `crates/forge/tests/cli/` and Cast CLI coverage
   under `crates/cast/tests/cli/`.
-- Use the existing `forgetest!`, `forgetest_init!`, and `casttest!` macros to
-  create isolated test projects and command handles.
+- Use the existing `#[forgetest]`, `#[forgetest_init]`, and `#[casttest]`
+  macros to create isolated test projects and command handles.
 - Assert command output with snapbox helpers such as `assert_success()`,
   `assert_failure()`, `stdout_eq(str![...])`, `stderr_eq(str![...])`, and
   `assert_empty_stdout()`.
@@ -167,6 +186,15 @@ not include validation/testing boilerplate such as "Validated with", "Tested
 with", or command lists unless explicitly requested. Do not use templates,
 bullet lists, or long essays. When writing PR bodies from scripts, use a file or
 heredoc with real newlines; never pass escaped `\n` sequences.
+
+Always label PRs when you open them, for example with `gh pr create --label`.
+Add one `T-` type label that matches the commit type (`T-bug` for `fix`,
+`T-feature` for `feat`, `T-perf` for `perf`, `T-chore` or `T-debt` for
+`chore`/`refactor`, `A-testing` for `test`, `A-docs` for `docs`). Also add
+every area (`A-`) and command (`C-`, `Cmd-`) label that matches the changed
+code, such as `C-cast`, `C-anvil`, `Cmd-forge-script`, `A-cheatcodes`, or
+`A-symbolic-execution`. Use only labels that exist; check them with
+`gh label list`. Add `T-likely-breaking` when the change can break users.
 
 ### Performance PRs
 

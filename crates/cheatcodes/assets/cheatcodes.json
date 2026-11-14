@@ -143,6 +143,24 @@
           "description": "Represents a CREATE2 broadcast tx."
         }
       ]
+    },
+    {
+      "name": "OwnerKeyType",
+      "description": "The key type of a configurable account owner.",
+      "variants": [
+        {
+          "name": "Secp256k1",
+          "description": "A secp256k1 key, signing with a 65-byte ECDSA signature."
+        },
+        {
+          "name": "P256",
+          "description": "A P-256 key, signing the digest directly (`0x01` signature)."
+        },
+        {
+          "name": "WebAuthn",
+          "description": "A P-256 passkey, signing a WebAuthn assertion (`0x02` signature) with the RP ID\n `localhost` and the origin `http://localhost`."
+        }
+      ]
     }
   ],
   "structs": [
@@ -231,6 +249,68 @@
           "name": "removed",
           "ty": "bool",
           "description": "Whether the log was removed."
+        }
+      ]
+    },
+    {
+      "name": "EthStorageProof",
+      "description": "A Merkle proof for a single storage slot. Part of `EthGetProof`.",
+      "fields": [
+        {
+          "name": "key",
+          "ty": "bytes32",
+          "description": "The storage slot."
+        },
+        {
+          "name": "value",
+          "ty": "uint256",
+          "description": "The value stored at the slot."
+        },
+        {
+          "name": "proof",
+          "ty": "bytes[]",
+          "description": "The RLP-encoded trie nodes from the storage root to the slot, root first."
+        }
+      ]
+    },
+    {
+      "name": "EthGetProof",
+      "description": "An EIP-1186 account and storage proof. Returned by `eth_getProof`.",
+      "fields": [
+        {
+          "name": "account",
+          "ty": "address",
+          "description": "The address of the account."
+        },
+        {
+          "name": "balance",
+          "ty": "uint256",
+          "description": "The balance of the account."
+        },
+        {
+          "name": "codeHash",
+          "ty": "bytes32",
+          "description": "The hash of the account's code."
+        },
+        {
+          "name": "nonce",
+          "ty": "uint64",
+          "description": "The nonce of the account."
+        },
+        {
+          "name": "storageHash",
+          "ty": "bytes32",
+          "description": "The root of the account's storage trie."
+        },
+        {
+          "name": "accountProof",
+          "ty": "bytes[]",
+          "description": "The RLP-encoded trie nodes from the state root to the account, root first."
+        },
+        {
+          "name": "storageProof",
+          "ty": "EthStorageProof[]",
+          "description": "The proofs for the requested storage slots, in the order they were requested."
         }
       ]
     },
@@ -680,6 +760,64 @@
           "name": "storageKeys",
           "ty": "bytes32[]",
           "description": "The storage keys to be added in access list."
+        }
+      ]
+    },
+    {
+      "name": "ConfigurableAccountOwner",
+      "description": "An owner of a Tempo configurable account (TIP-1107).",
+      "fields": [
+        {
+          "name": "owner",
+          "ty": "address",
+          "description": "The owner address: a secp256k1 address, or `keccak256(x || y)[12:]` of a P-256 key."
+        },
+        {
+          "name": "weight",
+          "ty": "uint8",
+          "description": "The nonzero weight of the owner's approval."
+        }
+      ]
+    },
+    {
+      "name": "ConfigurableAccountConfig",
+      "description": "The configuration of a Tempo configurable account (TIP-1107).",
+      "fields": [
+        {
+          "name": "salt",
+          "ty": "bytes32",
+          "description": "The salt that, with the initial owners and threshold, determines the account address."
+        },
+        {
+          "name": "version",
+          "ty": "uint64",
+          "description": "The configuration version: zero for the initial configuration, incremented by each update."
+        },
+        {
+          "name": "threshold",
+          "ty": "uint8",
+          "description": "The total owner weight that approvals must reach."
+        },
+        {
+          "name": "owners",
+          "ty": "ConfigurableAccountOwner[]",
+          "description": "The owners, sorted by ascending address."
+        }
+      ]
+    },
+    {
+      "name": "OwnerKey",
+      "description": "A private key of a configurable account owner.",
+      "fields": [
+        {
+          "name": "keyType",
+          "ty": "OwnerKeyType",
+          "description": "The key type."
+        },
+        {
+          "name": "privateKey",
+          "ty": "uint256",
+          "description": "The private key, on secp256k1 or P-256 depending on `keyType`."
         }
       ]
     }
@@ -3687,6 +3825,26 @@
     },
     {
       "func": {
+        "id": "configurableAccountDigest",
+        "description": "Returns the digest that the owners of the configurable account `account` approve for\n`digest`, such as a transaction signature hash, under configuration version `configVersion`:\n`keccak256(\"tempo:configurable-account:signature\" || digest || account || uint64(configVersion))`.",
+        "declaration": "function configurableAccountDigest(address account, uint64 configVersion, bytes32 digest) external pure returns (bytes32 ownerDigest);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "configurableAccountDigest(address,uint64,bytes32)",
+        "selector": "0xbe0e0237",
+        "selectorBytes": [
+          190,
+          14,
+          2,
+          55
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "contains",
         "description": "Returns true if `search` is found in `subject`, false otherwise.",
         "declaration": "function contains(string calldata subject, string calldata search) external pure returns (bool result);",
@@ -4291,6 +4449,26 @@
     },
     {
       "func": {
+        "id": "deriveConfigurableAccount",
+        "description": "Derives the address of the Tempo configurable account with the initial configuration `config`\n(TIP-1107), as `IConfigurableAccount.deriveAccount` does, without the chain's reserved\naddress checks. `config.version` is ignored.",
+        "declaration": "function deriveConfigurableAccount(ConfigurableAccountConfig calldata config) external pure returns (address account);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "deriveConfigurableAccount((bytes32,uint64,uint8,(address,uint8)[]))",
+        "selector": "0x88e79a90",
+        "selectorBytes": [
+          136,
+          231,
+          154,
+          144
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "deriveKey_0",
         "description": "Derive a private key from a provided mnemonic string (or mnemonic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);",
@@ -4626,6 +4804,26 @@
         ]
       },
       "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "encodeConfigurableAccountSignature",
+        "description": "Encodes a `0x05` configurable account signature for `account` from its current configuration\n`config` and encoded owner approvals of its owner digest (65-byte secp256k1, `0x01` P-256 or\n`0x02` WebAuthn signatures).\nApprovals are encoded in the given order. Only the shape is checked, so this can build\nsignatures that the node rejects, such as unsorted or excess approvals.",
+        "declaration": "function encodeConfigurableAccountSignature(address account, ConfigurableAccountConfig calldata config, bytes[] calldata ownerSignatures) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "encodeConfigurableAccountSignature(address,(bytes32,uint64,uint8,(address,uint8)[]),bytes[])",
+        "selector": "0x4cd2c78e",
+        "selectorBytes": [
+          76,
+          210,
+          199,
+          142
+        ]
+      },
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -5271,6 +5469,26 @@
     },
     {
       "func": {
+        "id": "eth_getProof",
+        "description": "Gets the EIP-1186 account and storage proof of `target` at `blockNumber` from the active fork.\nThe proof is fetched from the fork's RPC endpoint and does not reflect local state changes.",
+        "declaration": "function eth_getProof(address target, bytes32[] calldata slots, uint256 blockNumber) external view returns (EthGetProof memory proof);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "eth_getProof(address,bytes32[],uint256)",
+        "selector": "0xcd502c82",
+        "selectorBytes": [
+          205,
+          80,
+          44,
+          130
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "executeTransaction",
         "description": "Executes an RLP-encoded signed transaction with full EVM semantics (like `--isolate` mode).\nThe transaction is decoded from EIP-2718 format (type byte prefix + RLP payload) or legacy RLP.\nReturns the execution output bytes.\nThis cheatcode is not allowed in `forge script` contexts.",
         "declaration": "function executeTransaction(bytes calldata rawTx) external returns (bytes memory);",
@@ -5786,7 +6004,9 @@
         ]
       },
       "group": "testing",
-      "status": "stable",
+      "status": {
+        "deprecated": "TIP-1137 stops admin keys at Tempo T14"
+      },
       "safety": "unsafe"
     },
     {
@@ -6412,7 +6632,7 @@
     {
       "func": {
         "id": "getBlobhashes",
-        "description": "Gets the blockhashes from the current transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
+        "description": "Gets the blobhashes from the current transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
         "declaration": "function getBlobhashes() external view returns (bytes32[] memory hashes);",
         "visibility": "external",
         "mutability": "view",
@@ -7212,7 +7432,7 @@
     {
       "func": {
         "id": "keyExists",
-        "description": "Checks if `key` exists in a JSON object\n`keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.",
+        "description": "Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.\n`keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.",
         "declaration": "function keyExists(string calldata json, string calldata key) external view returns (bool);",
         "visibility": "external",
         "mutability": "view",
@@ -7234,7 +7454,7 @@
     {
       "func": {
         "id": "keyExistsJson",
-        "description": "Checks if `key` exists in a JSON object.",
+        "description": "Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.",
         "declaration": "function keyExistsJson(string calldata json, string calldata key) external view returns (bool);",
         "visibility": "external",
         "mutability": "view",
@@ -7372,6 +7592,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "loadTransient",
+        "description": "Loads a transient storage slot from an address.",
+        "declaration": "function loadTransient(address target, bytes32 slot) external view returns (bytes32 data);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "loadTransient(address,bytes32)",
+        "selector": "0x69fd765a",
+        "selectorBytes": [
+          105,
+          253,
+          118,
+          90
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
@@ -7676,7 +7916,7 @@
     {
       "func": {
         "id": "mockFunction",
-        "description": "Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls\n`target` with the same calldata. This functionality is similar to a delegate call made to\n`target` contract from `callee`.\nCan be used to substitute a call to a function with another implementation that captures\nthe primary logic of the original function but is easier to reason about.\nIf calldata is not a strict match then partial match by selector is attempted.",
+        "description": "Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls\n`target` with the same calldata. This functionality is similar to a delegate call made to\n`target` contract from `callee`.\nCan be used to substitute a call to a function with another implementation that captures\nthe primary logic of the original function but is easier to reason about.\nIf no exact calldata match exists, a mock registered with only the 4-byte selector is\nattempted.",
         "declaration": "function mockFunction(address callee, address target, bytes calldata data) external;",
         "visibility": "external",
         "mutability": "",
@@ -7816,7 +8056,7 @@
     {
       "func": {
         "id": "parseJsonAddressArray_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `address[]`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`.",
         "declaration": "function parseJsonAddressArray(string calldata json, string calldata key) external pure returns (address[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -7836,7 +8076,7 @@
     {
       "func": {
         "id": "parseJsonAddressArray_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonAddressArray(string calldata json, string calldata key, address[] calldata defaultValue) external pure returns (address[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -7856,7 +8096,7 @@
     {
       "func": {
         "id": "parseJsonAddress_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `address`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`.",
         "declaration": "function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);",
         "visibility": "external",
         "mutability": "pure",
@@ -7876,7 +8116,7 @@
     {
       "func": {
         "id": "parseJsonAddress_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonAddress(string calldata json, string calldata key, address defaultValue) external pure returns (address);",
         "visibility": "external",
         "mutability": "pure",
@@ -7896,7 +8136,7 @@
     {
       "func": {
         "id": "parseJsonArrayLength",
-        "description": "Returns the length of the JSON array at `key`.",
+        "description": "Returns the length of the JSON array at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).",
         "declaration": "function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);",
         "visibility": "external",
         "mutability": "pure",
@@ -7916,7 +8156,7 @@
     {
       "func": {
         "id": "parseJsonBoolArray_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bool[]`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`.",
         "declaration": "function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -7936,7 +8176,7 @@
     {
       "func": {
         "id": "parseJsonBoolArray_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonBoolArray(string calldata json, string calldata key, bool[] calldata defaultValue) external pure returns (bool[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -7956,7 +8196,7 @@
     {
       "func": {
         "id": "parseJsonBool_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bool`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`.",
         "declaration": "function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);",
         "visibility": "external",
         "mutability": "pure",
@@ -7976,7 +8216,7 @@
     {
       "func": {
         "id": "parseJsonBool_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonBool(string calldata json, string calldata key, bool defaultValue) external pure returns (bool);",
         "visibility": "external",
         "mutability": "pure",
@@ -7996,7 +8236,7 @@
     {
       "func": {
         "id": "parseJsonBytes32Array_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32[]`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`.",
         "declaration": "function parseJsonBytes32Array(string calldata json, string calldata key) external pure returns (bytes32[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8016,7 +8256,7 @@
     {
       "func": {
         "id": "parseJsonBytes32Array_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonBytes32Array(string calldata json, string calldata key, bytes32[] calldata defaultValue) external pure returns (bytes32[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8036,7 +8276,7 @@
     {
       "func": {
         "id": "parseJsonBytes32_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`.",
         "declaration": "function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);",
         "visibility": "external",
         "mutability": "pure",
@@ -8056,7 +8296,7 @@
     {
       "func": {
         "id": "parseJsonBytes32_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonBytes32(string calldata json, string calldata key, bytes32 defaultValue) external pure returns (bytes32);",
         "visibility": "external",
         "mutability": "pure",
@@ -8076,7 +8316,7 @@
     {
       "func": {
         "id": "parseJsonBytesArray_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes[]`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`.",
         "declaration": "function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8096,7 +8336,7 @@
     {
       "func": {
         "id": "parseJsonBytesArray_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonBytesArray(string calldata json, string calldata key, bytes[] calldata defaultValue) external pure returns (bytes[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8116,7 +8356,7 @@
     {
       "func": {
         "id": "parseJsonBytes_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`.",
         "declaration": "function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8136,7 +8376,7 @@
     {
       "func": {
         "id": "parseJsonBytes_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonBytes(string calldata json, string calldata key, bytes calldata defaultValue) external pure returns (bytes memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8156,7 +8396,7 @@
     {
       "func": {
         "id": "parseJsonIntArray_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `int256[]`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`.",
         "declaration": "function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8176,7 +8416,7 @@
     {
       "func": {
         "id": "parseJsonIntArray_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonIntArray(string calldata json, string calldata key, int256[] calldata defaultValue) external pure returns (int256[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8196,7 +8436,7 @@
     {
       "func": {
         "id": "parseJsonInt_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `int256`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`.",
         "declaration": "function parseJsonInt(string calldata json, string calldata key) external pure returns (int256);",
         "visibility": "external",
         "mutability": "pure",
@@ -8216,7 +8456,7 @@
     {
       "func": {
         "id": "parseJsonInt_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonInt(string calldata json, string calldata key, int256 defaultValue) external pure returns (int256);",
         "visibility": "external",
         "mutability": "pure",
@@ -8256,7 +8496,7 @@
     {
       "func": {
         "id": "parseJsonStringArray_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `string[]`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`.",
         "declaration": "function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8276,7 +8516,7 @@
     {
       "func": {
         "id": "parseJsonStringArray_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonStringArray(string calldata json, string calldata key, string[] calldata defaultValue) external pure returns (string[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8296,7 +8536,7 @@
     {
       "func": {
         "id": "parseJsonString_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `string`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`.",
         "declaration": "function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8316,7 +8556,7 @@
     {
       "func": {
         "id": "parseJsonString_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonString(string calldata json, string calldata key, string calldata defaultValue) external pure returns (string memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8336,7 +8576,7 @@
     {
       "func": {
         "id": "parseJsonTypeArray",
-        "description": "Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type array corresponding to `typeDescription`.",
         "declaration": "function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8376,7 +8616,7 @@
     {
       "func": {
         "id": "parseJsonType_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type corresponding to `typeDescription`.",
         "declaration": "function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8396,7 +8636,7 @@
     {
       "func": {
         "id": "parseJsonUintArray_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `uint256[]`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`.",
         "declaration": "function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8416,7 +8656,7 @@
     {
       "func": {
         "id": "parseJsonUintArray_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonUintArray(string calldata json, string calldata key, uint256[] calldata defaultValue) external pure returns (uint256[] memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -8436,7 +8676,7 @@
     {
       "func": {
         "id": "parseJsonUint_0",
-        "description": "Parses a string of JSON data at `key` and coerces it to `uint256`.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`.",
         "declaration": "function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);",
         "visibility": "external",
         "mutability": "pure",
@@ -8456,7 +8696,7 @@
     {
       "func": {
         "id": "parseJsonUint_1",
-        "description": "Parses a string of JSON data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.",
+        "description": "Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.",
         "declaration": "function parseJsonUint(string calldata json, string calldata key, uint256 defaultValue) external pure returns (uint256);",
         "visibility": "external",
         "mutability": "pure",
@@ -8496,7 +8736,7 @@
     {
       "func": {
         "id": "parseJson_1",
-        "description": "ABI-encodes a JSON object at `key`.",
+        "description": "ABI-encodes a JSON object at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).",
         "declaration": "function parseJson(string calldata json, string calldata key) external pure returns (bytes memory abiEncodedData);",
         "visibility": "external",
         "mutability": "pure",
@@ -9916,7 +10156,7 @@
     {
       "func": {
         "id": "recordLogs",
-        "description": "Record all the transaction logs.",
+        "description": "Record all the transaction logs. Logs emitted by calls or contract creations that revert or\nhalt are discarded, including reverts expected with `expectRevert`.",
         "declaration": "function recordLogs() external;",
         "visibility": "external",
         "mutability": "",
@@ -11060,7 +11300,7 @@
     {
       "func": {
         "id": "setEvmVersion",
-        "description": "Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.\n**Note:** The execution evm version is not the same as the compilation one.",
+        "description": "Selects the test or script execution hardfork, e.g. `berlin`, `cancun`, or `tempo:T7`.\nUses the active network's version mappings and gas schedule. Does not change the network\nor Solidity compiler target. On Tempo, runtime changes do not rebuild instructions or\nprecompiles; configure `hardfork` before execution to select a different revision.\n**Note:** The execution evm version is not the same as the compilation one.",
         "declaration": "function setEvmVersion(string calldata evm) external;",
         "visibility": "external",
         "mutability": "",
@@ -11339,6 +11579,46 @@
     },
     {
       "func": {
+        "id": "signConfigurableAccount_0",
+        "description": "Signs `digest` as the configurable account `account` with its current configuration `config`,\nusing secp256k1 owner keys.\nSigns with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted\nby owner address, the last of which reaches the threshold. Reverts if `config` is invalid,\nhas version 0 but does not derive `account`, a key is not an owner, or no such quorum exists\namong the keys. Returns the `0x05` signature accepted by\n`SignatureVerifier.verifyConfigurableAccount`.",
+        "declaration": "function signConfigurableAccount(uint256[] calldata privateKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signConfigurableAccount(uint256[],address,(bytes32,uint64,uint8,(address,uint8)[]),bytes32)",
+        "selector": "0x9f493d1c",
+        "selectorBytes": [
+          159,
+          73,
+          61,
+          28
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signConfigurableAccount_1",
+        "description": "Signs `digest` as the configurable account `account` with its current configuration `config`,\nusing secp256k1, P-256 or WebAuthn owner keys.\nSigns with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted\nby owner address, the last of which reaches the threshold. Reverts if `config` is invalid,\nhas version 0 but does not derive `account`, a key is not an owner, or no such quorum exists\namong the keys. Returns the `0x05` signature accepted by\n`SignatureVerifier.verifyConfigurableAccount`.",
+        "declaration": "function signConfigurableAccount(OwnerKey[] calldata ownerKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signConfigurableAccount((uint8,uint256)[],address,(bytes32,uint64,uint8,(address,uint8)[]),bytes32)",
+        "selector": "0x4d2e91cf",
+        "selectorBytes": [
+          77,
+          46,
+          145,
+          207
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "signDelegation_0",
         "description": "Sign an EIP-7702 authorization for delegation",
         "declaration": "function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
@@ -11440,7 +11720,7 @@
     {
       "func": {
         "id": "signKeychainAdmin",
-        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address.",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address. Returns the same bytes as `signKeychain`.",
         "declaration": "function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);",
         "visibility": "external",
         "mutability": "pure",
@@ -11451,6 +11731,28 @@
           95,
           178,
           247
+        ]
+      },
+      "group": "crypto",
+      "status": {
+        "deprecated": "replaced by `signKeychain`; TIP-1137 stops admin keys at Tempo T14"
+      },
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signKeychainConfigurableAccount",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` whose access key is the\nconfigurable account `configurableAccount` with its current configuration `config` (TIP-1111).\nThe owners approve the keychain V2 hash `keccak256(0x04 || digest || account)`, with\napprovals chosen as in `signConfigurableAccount`. Returns the signature accepted by\n`SignatureVerifier.verifyKeychain`.",
+        "declaration": "function signKeychainConfigurableAccount(OwnerKey[] calldata ownerKeys, address configurableAccount, ConfigurableAccountConfig calldata config, address account, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signKeychainConfigurableAccount((uint8,uint256)[],address,(bytes32,uint64,uint8,(address,uint8)[]),address,bytes32)",
+        "selector": "0xb6468902",
+        "selectorBytes": [
+          182,
+          70,
+          137,
+          2
         ]
       },
       "group": "crypto",
@@ -12297,6 +12599,26 @@
           202,
           16,
           187
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "storeTransient",
+        "description": "Stores a value to an address' transient storage slot.\nThe value lasts until the end of the current transaction, like a value written with `TSTORE`.\nThis writes the journal directly rather than executing `TSTORE`.\nWith isolation enabled (the default), each top-level `CALL` from a test runs as its own\ntransaction with empty transient storage, so a value the test stored is not visible to that\ncall, even though a later `loadTransient` in the test still returns it. For the target to see\nthe value, store it and call the target inside the same call, for example through a helper.\n`STATICCALL` and `DELEGATECALL` stay in the surrounding transaction and can see its values;\n`DELEGATECALL` uses the caller's transient storage, not the target's.\nExample usage, where `f` is non-view and `helper.storeAndCall` stores then calls `target.f()`:\nvm.storeTransient(address(target), slot, value);\ntarget.f(); // With isolation, `f` reads 0 from `slot`.\nhelper.storeAndCall(address(target), slot, value); // `f` reads `value`.",
+        "declaration": "function storeTransient(address target, bytes32 slot, bytes32 value) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "storeTransient(address,bytes32,bytes32)",
+        "selector": "0x89b5a4cd",
+        "selectorBytes": [
+          137,
+          181,
+          164,
+          205
         ]
       },
       "group": "evm",

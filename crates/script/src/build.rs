@@ -1,23 +1,35 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{BundledState, remaining_unsigned_transactions},
+    broadcast::{
+        BundledState, refused_after_revert, remaining_operation_indices,
+        remaining_unsigned_transactions_for_recovery,
+    },
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
-    sequence::ScriptSequenceKind,
-    session::{
-        RemainingScriptTransaction, SignerScope, script_session_expected_sender_if_configured,
-    },
+    progress::ScriptProgress,
+    receipts::is_mined_receipt_for,
+    recovery::recovery_exists,
+    sequence::{DelegatedResolution, ScriptSequenceKind, blocked_pending},
+    session::{SignerScope, script_session_expected_sender_if_configured},
 };
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
-use eyre::{OptionExt, Result};
+use alloy_rpc_types::BlockId;
+use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
-    ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
+    ContractData, ContractsByArtifact, ContractsByArtifactBuilder,
+    compile::ProjectCompiler,
+    external_compiler::is_builtin_compiler_source,
+    fs::canonicalize_path,
+    namespaced_storage,
     provider::ProviderBuilder,
+    tempo::configurable_account::{
+        detect_configurable_account, parse_config, reaches_threshold, stored_owner_keys,
+    },
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -26,10 +38,19 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::source_files_iter,
 };
-use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
+use foundry_evm::{
+    core::evm::FoundryEvmNetwork,
+    traces::{CallTraceDecoder, debug::ContractSources},
+};
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use itertools::Itertools;
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
+use tempo_alloy::TempoNetwork;
 
 /// Container for the compiled contracts.
 #[derive(Clone, Debug)]
@@ -55,8 +76,8 @@ impl BuildData {
     ) -> Result<LinkedBuildData> {
         let create2_deployer = script_config.evm_opts.create2_deployer;
         let can_use_create2 = script_config
-            .evm_opts
-            .can_use_create2_deployer_resolved(script_config.resolved_fork()?)
+            .backend
+            .can_use_create2_deployer(script_config.evm_opts.create2_deployer)
             .await?;
 
         let known_libraries = script_config.config.libraries_with_remappings()?;
@@ -155,7 +176,7 @@ impl LinkedBuildData {
     pub fn new(
         libraries: Libraries,
         predeploy_libraries: ScriptPredeployLibraries,
-        build_data: BuildData,
+        mut build_data: BuildData,
     ) -> Result<Self> {
         let sources = ContractSources::from_project_output(
             &build_data.output,
@@ -163,13 +184,15 @@ impl LinkedBuildData {
             Some(&libraries),
         )?;
 
+        let storage_layouts = namespaced_storage::project_storage_layouts(
+            &mut build_data.output,
+            &build_data.project_root,
+        );
         let linked_contracts = build_data.get_linker().get_linked_artifacts(&libraries)?;
         let known_contracts = ContractsByArtifactBuilder::new(
             linked_contracts.iter().map(|(id, artifact)| (id.clone(), artifact.into())),
         )
-        .with_storage_layouts(build_data.output.artifact_ids().filter_map(|(id, artifact)| {
-            artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
-        }))
+        .with_storage_layouts(storage_layouts)
         .build();
 
         Ok(Self { build_data, known_contracts, libraries, predeploy_libraries, sources })
@@ -203,13 +226,13 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         // If we've received correct path, use it as target_path
         // Otherwise, parse input as <path>:<name> and use the path from the contract info, if
         // present.
-        let target_path = if let Ok(path) = dunce::canonicalize(&args.path) {
+        let target_path = if let Ok(path) = canonicalize_path(&args.path) {
             path
         } else {
             let contract = ContractInfo::from_str(&args.path)?;
             target_name = Some(contract.name.clone());
             if let Some(path) = contract.path {
-                dunce::canonicalize(path)?
+                canonicalize_path(path)?
             } else {
                 project.find_contract_path(contract.name.as_str())?
             }
@@ -218,13 +241,19 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
-        )
-        .chain([target_path.clone()]);
+        );
 
-        let output = ProjectCompiler::new()
+        let compiler = ProjectCompiler::new()
+            .allow_linked_libraries(script_config.config.allow_linked_libraries)
+            .external_compilers(&script_config.config)
             .files(sources_to_compile)
-            .dynamic_test_linking(script_config.config.dynamic_test_linking)
-            .compile(&project)?;
+            .dynamic_test_linking(script_config.config.dynamic_test_linking);
+        let compiler = if is_builtin_compiler_source(&target_path) {
+            compiler.files([target_path.clone()])
+        } else {
+            compiler.target_files([target_path.clone()])
+        };
+        let output = compiler.compile(&project)?;
 
         let mut target_id: Option<ArtifactId> = None;
 
@@ -292,36 +321,180 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
     }
 
     /// Tries loading the resumed state from the cache files, skipping simulation stage.
-    pub async fn resume(self) -> Result<BundledState<FEN>> {
-        let chain = if self.args.multi {
+    pub async fn resume(mut self) -> Result<BundledState<FEN>> {
+        let endpoint = if self.args.multi {
+            if self.args.evm.rpc.rpc_url.is_some() {
+                sh_warn!(
+                    "Multichain resume submits and checks transactions through the RPC endpoints saved by the original run; `--rpc-url` is not used for that."
+                )?;
+            }
             None
         } else {
             let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --fork-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
             let provider = Arc::new(ProviderBuilder::<AnyNetwork>::new(&fork_url).build()?);
-            Some(provider.get_chain_id().await?)
+            let chain = provider.get_chain_id().await?;
+            Some((fork_url, chain))
+        };
+        let chain = endpoint.as_ref().map(|(_, chain)| *chain);
+
+        let mut sequence = if self.sequence_exists(chain, false)? {
+            self.try_load_sequence(chain, false)?
+        } else {
+            // If the script was simulated, but there was no attempt to broadcast yet,
+            // read the script sequence from the `dry-run/` folder.
+            let mut sequence = self.try_load_sequence(chain, true)?;
+
+            // Promote the complete dry-run sequence before broadcasting it.
+            sequence.promote_to_broadcasted(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.target,
+            )?;
+            sequence
         };
 
-        let sequence = match self.try_load_sequence(chain, false) {
-            Ok(sequence) => sequence,
-            Err(_) => {
-                // If the script was simulated, but there was no attempt to broadcast yet,
-                // try to read the script sequence from the `dry-run/` folder
-                let mut sequence = self.try_load_sequence(chain, true)?;
-
-                // If sequence was in /dry-run, Update its paths so it is not saved into /dry-run
-                // this time as we are about to broadcast it.
-                sequence.update_paths_to_broadcasted(
-                    &self.script_config.config,
-                    &self.args.sig,
-                    &self.build_data.target,
-                )?;
-
-                sequence.save(true, true)?;
-                sequence
+        // A single-chain resume reaches the chain through an explicit `--rpc-url` instead of the
+        // saved endpoint. A configured RPC only selects the chain.
+        if let Some((fork_url, chain)) = endpoint
+            && self.args.evm.rpc.rpc_url.is_some()
+        {
+            let saved = sequence.sequences()[0].chain;
+            if saved != chain {
+                eyre::bail!(
+                    "saved sequence is for chain {saved}, but `--rpc-url` is on chain {chain}"
+                );
             }
-        };
+            sequence.set_rpc_override(fork_url);
+        }
 
-        let (args, build_data, script_wallets, browser_wallet, script_config) =
+        let resolution = sequence.restore_delegated_pending(DelegatedResolution::new(
+            self.args.resume_attempt,
+            self.args.resume_tx_hash,
+            self.args.resume_retry,
+        )?)?;
+        if !self.args.batch {
+            if let Some((sequence_index, _, attempt_id, hash)) = resolution {
+                let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
+                    &self.script_config.config,
+                    sequence.rpc_url(sequence_index),
+                )?
+                .build()?;
+                let transaction = provider
+                    .get_transaction_by_hash(hash)
+                    .await?
+                    .context("resolved transaction is not available from the recovery endpoint")?;
+                sequence.resolve_delegated_hash(attempt_id, hash, &transaction)?;
+            }
+            let progress = ScriptProgress::default();
+            // Every sequence is reconciled even after one fails, so a failing chain does not leave
+            // the receipts of later chains unrecorded.
+            let mut errors = Vec::new();
+            for index in 0..sequence.sequences().len() {
+                // Returns the result of waiting for receipts, if anything is pending.
+                let waited = async {
+                    let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
+                        &self.script_config.config,
+                        sequence.rpc_url(index),
+                    )?
+                    .build()?;
+                    // A saved signed attempt whose response was lost before its hash was recorded
+                    // is reconciled before requesting signers when its receipt shows it was mined.
+                    for operation in 0..sequence.sequences()[index].transactions.len() {
+                        let deployment = &sequence.sequences()[index];
+                        if let Some(hash) =
+                            sequence.signed_payload(index, operation).map(|s| s.hash)
+                            && !deployment.pending.contains(&hash)
+                            && !deployment.reverted.contains(&hash)
+                            && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
+                            && let Some(receipt) = provider.get_transaction_receipt(hash).await?
+                            && is_mined_receipt_for(&receipt, hash)
+                        {
+                            sequence.sequences_mut()[index].add_pending(operation, hash);
+                        }
+                    }
+                    if sequence.sequences()[index].pending.is_empty() {
+                        return Ok(None);
+                    }
+                    let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
+                    let blocked = blocked_pending(sequence.sequences(), index);
+                    Ok::<_, eyre::Report>(Some(
+                        progress
+                            .wait_for_pending(
+                                index,
+                                &mut sequence.sequences_mut()[index],
+                                &provider,
+                                self.script_config.config.transaction_timeout,
+                                self.args.confirmations,
+                                (&durable_hashes, &replayable_hashes),
+                                &blocked,
+                            )
+                            .await,
+                    ))
+                }
+                .await;
+                let result = match waited {
+                    Ok(Some(result)) => {
+                        sequence.save(true, false)?;
+                        result.and_then(|()| sequence.ensure_delegated_outcomes_known(index))
+                    }
+                    Ok(None) => Ok(()),
+                    Err(err) => Err(err),
+                };
+                if let Err(err) = result {
+                    errors.push(sequence.label_error(index, err));
+                }
+            }
+            match errors.len() {
+                0 => {}
+                1 => return Err(errors.remove(0)),
+                _ => eyre::bail!("{}", errors.iter().format("\n")),
+            }
+        }
+        // Resume refuses new operations after a recorded revert. Saved attempts after it are still
+        // recovered, so it refuses here only once nothing is left to recover, and otherwise after
+        // the broadcast.
+        if let Some(err) = refused_after_revert(&sequence)
+            && (0..sequence.sequences().len())
+                .all(|index| remaining_operation_indices(&sequence, index).is_empty())
+        {
+            return Err(err);
+        }
+        for deployment in sequence.sequences() {
+            for hash in &deployment.reverted {
+                sh_warn!(
+                    "Transaction {hash} on chain {} reverted; resume will not resubmit it.",
+                    deployment.chain
+                )?;
+            }
+        }
+
+        // The local owners of transactions saved for owners on other machines approve them again
+        // when their approvals are void.
+        if !self.args.unlocked
+            && (!remaining_unsigned_transactions_for_recovery(&sequence).is_empty()
+                || sequence
+                    .sequences()
+                    .iter()
+                    .any(|deployment| !deployment.awaiting_owners.is_empty()))
+        {
+            self.script_wallets =
+                Wallets::new(self.args.wallets.get_multi_wallet().await?, self.args.evm.sender);
+            self.browser_wallet = self.args.wallets.browser_signer::<FEN::Network>().await?;
+
+            if self.args.evm.sender.is_none() {
+                let addresses = self.script_wallets.addresses();
+                let sender = self
+                    .args
+                    .maybe_load_private_key()?
+                    .or_else(|| (addresses.len() == 1).then(|| addresses[0]))
+                    .or_else(|| self.browser_wallet.as_ref().map(|wallet| wallet.address()));
+                if let Some(sender) = sender {
+                    self.script_config.update_sender(sender).await?;
+                }
+            }
+        }
+
+        let (args, build_data, script_wallets, browser_wallet, script_config, resume_script_error) =
             if self.args.unlocked {
                 (
                     self.args,
@@ -329,23 +502,37 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     self.script_wallets,
                     self.browser_wallet,
                     self.script_config,
+                    None,
                 )
             } else {
                 let remaining_transactions =
-                    remaining_unsigned_transactions(sequence.sequences()).collect::<Vec<_>>();
+                    remaining_unsigned_transactions_for_recovery(&sequence);
                 let remaining_froms =
-                    remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
+                    remaining_transactions.iter().map(|tx| tx.sender).collect::<AddressHashSet>();
                 let expected_session_sender = script_session_expected_sender_if_configured(
                     &self.script_config.tempo,
                     &remaining_froms,
                 )?;
-                let has_available_signers = has_available_script_signers(
+                let session_scope = script_session_scope(
                     &self.script_config.tempo,
                     &self.args.wallets,
-                    &self.script_wallets,
                     expected_session_sender,
                     &remaining_transactions,
                 )?;
+                let has_available_signers = has_available_script_signers(
+                    &self.script_wallets,
+                    session_scope,
+                    &remaining_transactions,
+                )?;
+                let has_available_signers = configurable_account_signers_available(
+                    &self.script_config,
+                    &sequence,
+                    &self.script_wallets,
+                    &remaining_transactions,
+                    session_scope,
+                    has_available_signers,
+                )
+                .await?;
 
                 if has_available_signers {
                     (
@@ -354,6 +541,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         self.script_wallets,
                         self.browser_wallet,
                         self.script_config,
+                        None,
                     )
                 } else {
                     // IF we are missing required signers, execute script as we might need to
@@ -364,21 +552,35 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         .update_tempo_session_sender(&state.args.wallets, state.args.evm.sender)
                         .await?;
                     let executed = state.link().await?.prepare_execution().await?.execute().await?;
+                    // A failed run may still have collected every signer, so broadcast decides
+                    // whether this error is fatal.
+                    let resume_script_error = (!executed.execution_result.success).then(|| {
+                        CallTraceDecoder::new()
+                            .revert_decoder
+                            .clone()
+                            .with_abis(executed.build_data.known_contracts.values().map(|c| &c.abi))
+                            .decode(
+                                &executed.execution_result.returned,
+                                executed.execution_result.exit_reason,
+                            )
+                    });
                     (
                         executed.args,
                         executed.build_data.build_data,
                         executed.script_wallets,
                         executed.browser_wallet,
                         executed.script_config,
+                        resume_script_error,
                     )
                 }
             };
 
         // Collect libraries from sequence and link contracts with them.
-        let libraries = match sequence {
-            ScriptSequenceKind::Single(ref seq) => Libraries::parse(&seq.libraries)?,
-            // Library linking is not supported for multi-chain sequences
-            ScriptSequenceKind::Multi(_) => Libraries::default(),
+        let libraries = if sequence.is_multi() {
+            // Library linking is not supported for multi-chain sequences.
+            Libraries::default()
+        } else {
+            Libraries::parse(&sequence.sequences()[0].libraries)?
         };
 
         let linked_build_data = build_data.link_with_libraries(libraries)?;
@@ -390,6 +592,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             browser_wallet,
             build_data: linked_build_data,
             sequence,
+            resume_script_error,
         })
     }
 
@@ -399,37 +602,80 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
         dry_run: bool,
     ) -> Result<ScriptSequenceKind<FEN::Network>> {
         if let Some(chain) = chain {
-            let sequence = ScriptSequence::load(
+            ScriptSequenceKind::load_single(
                 &self.script_config.config,
                 &self.args.sig,
                 &self.build_data.target,
                 chain,
                 dry_run,
-            )?;
-            Ok(ScriptSequenceKind::Single(sequence))
+                self.args.batch,
+            )
         } else {
-            let sequence = MultiChainSequence::load(
+            ScriptSequenceKind::load_multi(
                 &self.script_config.config,
                 &self.args.sig,
                 &self.build_data.target,
                 dry_run,
-            )?;
-            Ok(ScriptSequenceKind::Multi(sequence))
+                self.args.batch,
+            )
         }
+    }
+
+    fn sequence_exists(&self, chain: Option<u64>, dry_run: bool) -> Result<bool> {
+        let paths = if let Some(chain) = chain {
+            ScriptSequence::<FEN::Network>::get_paths(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.target,
+                chain,
+                dry_run,
+            )?
+        } else {
+            MultiChainSequence::<FEN::Network>::get_paths(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.target,
+                dry_run,
+            )?
+        };
+        Ok(compatibility_progress_exists(&paths) || recovery_exists(&paths)?)
     }
 }
 
-/// Returns whether every scoped signer needed for resume is already available.
+fn compatibility_progress_exists(paths: &(PathBuf, PathBuf)) -> bool {
+    [&paths.0, &paths.1].into_iter().any(|path| progress_exists(path))
+}
+
+fn progress_exists(path: &Path) -> bool {
+    path.exists() || path.with_extension("previous").exists()
+}
+
+/// Returns the sender and chain that the selected Tempo session signs for, if any. The session is
+/// not resolved when no transaction remains.
 ///
 /// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
-/// session signer lives in the Accounts store instead, so resume needs to treat the session
-/// root account as available only on the chain covered by the session.
-fn has_available_script_signers(
+/// session signer lives in the Accounts store instead, so resume treats the session root account
+/// as available only on the chain covered by the session.
+fn script_session_scope(
     tempo: &TempoOpts,
     wallets: &MultiWalletOpts,
-    script_wallets: &Wallets,
     expected_sender: Option<Address>,
-    remaining: &[RemainingScriptTransaction],
+    remaining: &[SignerScope],
+) -> Result<Option<SignerScope>> {
+    if remaining.is_empty() {
+        return Ok(None);
+    }
+    Ok(tempo
+        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
+        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account())))
+}
+
+/// Returns whether every scoped signer needed for resume is already available: a wallet of the
+/// sender, or the session in `session_scope`.
+fn has_available_script_signers(
+    script_wallets: &Wallets,
+    session_scope: Option<SignerScope>,
+    remaining: &[SignerScope],
 ) -> Result<bool> {
     let signers = script_wallets
         .signers()
@@ -438,11 +684,85 @@ fn has_available_script_signers(
         return Ok(true);
     }
 
-    let session_scope = tempo
-        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account()));
+    Ok(remaining.iter().all(|tx| signers.contains(&tx.sender) || session_scope == Some(*tx)))
+}
 
-    Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || session_scope == Some(tx.scope())))
+/// Returns whether broadcast can sign every remaining transaction without running the script,
+/// given whether the wallets, sessions and access keys cover every sender (`available`).
+///
+/// The session in `session_scope` signs for its sender before any owner keys do, as broadcast
+/// selects it first, even for an upgraded account. On Tempo, any other sender that the chain
+/// reports as a configurable account signs with its owners, even when its own key is among the
+/// wallets, as the retired root key of an upgraded EOA is. It is ready only when its owner keys
+/// among the wallets, `--tempo.owner` and the Tempo Accounts store reach its threshold. Resume
+/// only publishes the saved transactions, so it runs the script again only to collect signers,
+/// such as keys from `vm.rememberKey`. When detection fails, resume runs the script as before.
+async fn configurable_account_signers_available<FEN: FoundryEvmNetwork>(
+    script_config: &ScriptConfig<FEN>,
+    sequence: &ScriptSequenceKind<FEN::Network>,
+    script_wallets: &Wallets,
+    remaining: &[SignerScope],
+    session_scope: Option<SignerScope>,
+    available: bool,
+) -> Result<bool> {
+    let tempo = &script_config.tempo;
+    if !script_config.evm_opts.networks.is_tempo() || tempo.eoa || remaining.is_empty() {
+        return Ok(available);
+    }
+    let signers = script_wallets
+        .signers()
+        .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
+    let config = tempo.configurable_account_config.as_deref().map(parse_config).transpose()?;
+    // Broadcast also signs with the `--tempo.owner` keys.
+    let Ok(owners) = tempo.owner_addresses().await else { return Ok(false) };
+    let keys = signers.iter().chain(&owners).copied().collect::<Vec<_>>();
+    let mut scopes = remaining.to_vec();
+    scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
+    scopes.dedup();
+    scopes.retain(|scope| session_scope != Some(*scope));
+    for scope in scopes {
+        let own_key = signers.contains(&scope.sender);
+        // As in broadcast, the configurable account options describe the account they name.
+        let explicit = !own_key || tempo.configurable_account == Some(scope.sender);
+        if !own_key && tempo.configurable_account.is_some_and(|account| account != scope.sender) {
+            return Ok(false);
+        }
+        // The endpoint broadcast uses, which honours `--rpc-url` on a single-chain resume.
+        let Some(rpc_url) = (0..sequence.sequences().len())
+            .find(|&i| sequence.sequences()[i].chain == scope.chain)
+            .map(|i| sequence.rpc_url(i))
+        else {
+            return Ok(false);
+        };
+        let provider =
+            ProviderBuilder::<TempoNetwork>::from_config_with_url(&script_config.config, rpc_url)?
+                .build()?;
+        let detected = detect_configurable_account(
+            &provider,
+            scope.sender,
+            &keys,
+            if explicit { config.clone() } else { None },
+            false,
+            BlockId::latest(),
+        )
+        .await;
+        match detected {
+            Ok(Some(config)) => {
+                let keys = keys
+                    .iter()
+                    .copied()
+                    .chain(stored_owner_keys(scope.chain, &config).iter().map(|key| key.address()))
+                    .collect::<Vec<_>>();
+                if !reaches_threshold(&config, &keys) {
+                    return Ok(false);
+                }
+            }
+            // Not a configurable account: its own key, a session or an access key signs.
+            Ok(None) if own_key || available => {}
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -450,16 +770,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn has_available_script_signers_skips_session_resolution_when_remaining_empty() {
-        let has_available = has_available_script_signers(
+    fn backup_counts_as_recoverable_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-latest.json");
+        std::fs::write(path.with_extension("previous"), b"{}").unwrap();
+
+        assert!(progress_exists(&path));
+    }
+
+    #[test]
+    fn sensitive_export_counts_as_recoverable_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = (dir.path().join("run-latest.json"), dir.path().join("run-latest-cache.json"));
+        std::fs::write(&paths.1, b"{}").unwrap();
+
+        assert!(compatibility_progress_exists(&paths));
+    }
+
+    #[test]
+    fn script_session_scope_skips_session_resolution_when_remaining_empty() {
+        let scope = script_session_scope(
             &TempoOpts { session: Some(B256::repeat_byte(0x99)), ..Default::default() },
             &MultiWalletOpts::default(),
-            &Wallets::new(Default::default(), None),
             None,
             &[],
         )
         .unwrap();
 
-        assert!(has_available);
+        assert_eq!(scope, None);
+        assert!(
+            has_available_script_signers(&Wallets::new(Default::default(), None), scope, &[])
+                .unwrap()
+        );
     }
 }

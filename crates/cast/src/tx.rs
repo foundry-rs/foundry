@@ -8,12 +8,13 @@ use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U64, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
 use alloy_signer::Signer;
+use alloy_sol_types::SolCall;
 use alloy_transport::TransportError;
 use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{CliAuthorizationList, EthereumOpts, TempoOpts, TransactionOpts},
-    utils::{self, apply_gas_estimate_multiplier, parse_function_args},
+    utils::{self, apply_gas_estimate_multiplier, parse_ether_value, parse_function_args},
 };
 use foundry_common::{
     FoundryTransactionBuilder, TransactionReceiptWithRevertReason,
@@ -21,11 +22,18 @@ use foundry_common::{
     get_pretty_receipt_w_reason_attr,
     provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     shell,
+    tempo::{
+        ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
+        mark_sponsored_gas_estimation,
+    },
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
-use foundry_wallets::{BrowserWalletOpts, TempoAccountsWallet, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
+use tempo_alloy::{accounts::TempoAccountsWallet, chainspec::hardfork::TempoHardfork};
+use tempo_contracts::precompiles::{INonce, NONCE_PRECOMPILE_ADDRESS};
+use tempo_primitives::transaction::TEMPO_EXPIRING_NONCE_KEY;
 
 #[derive(Debug, Clone, Args)]
 pub struct SendTxOpts {
@@ -75,12 +83,25 @@ pub struct TxParams {
     #[arg(long, env = "ETH_GAS_LIMIT")]
     pub gas_limit: Option<U256>,
 
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
-    #[arg(long, env = "ETH_GAS_PRICE")]
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
+    /// specified in wei, or as a string with a unit type.
+    ///
+    /// Examples: 1ether, 10gwei, 0.01ether
+    #[arg(
+        long,
+        env = "ETH_GAS_PRICE",
+        value_parser = parse_ether_value,
+        value_name = "PRICE"
+    )]
     pub gas_price: Option<U256>,
 
     /// Max priority fee per gas for EIP1559 transactions.
-    #[arg(long, env = "ETH_PRIORITY_GAS_PRICE")]
+    #[arg(
+        long,
+        env = "ETH_PRIORITY_GAS_PRICE",
+        value_parser = parse_ether_value,
+        value_name = "PRICE"
+    )]
     pub priority_gas_price: Option<U256>,
 
     /// Nonce for the transaction.
@@ -141,11 +162,21 @@ impl SenderKind<'_> {
 
     /// Resolves the sender from the wallet options.
     ///
-    /// Prefers a configured signer (or Tempo wallet account) over `from`, and falls back to the
-    /// zero address when neither is available.
-    pub async fn from_wallet_opts(mut opts: WalletOpts) -> Result<Self> {
+    /// Returns `from` when set, unless a Tempo access key is set or an address-based authorization
+    /// needs a signer. Otherwise returns the configured signer (or Tempo wallet account), falling
+    /// back to the zero address.
+    pub async fn from_wallet_opts(
+        mut opts: WalletOpts,
+        authorizations: &[CliAuthorizationList],
+    ) -> Result<Self> {
         let from = opts.from.take();
-        let (signer, tempo_wallet) = opts.maybe_signer().await?;
+        if let Some(from) = from
+            && opts.tempo_access_key.is_none()
+            && !authorizations.iter().any(|auth| matches!(auth, CliAuthorizationList::Address(_)))
+        {
+            return Ok(from.into());
+        }
+        let (signer, tempo_wallet) = foundry_common::tempo::maybe_signer(&opts, None).await?;
         Ok(if let Some(signer) = signer {
             signer.into()
         } else if let Some(tempo_wallet) = tempo_wallet {
@@ -188,17 +219,17 @@ impl From<WalletSigner> for SenderKind<'_> {
 pub(crate) async fn read_only_sender<N: Network>(
     browser: &BrowserWalletOpts,
     wallet: WalletOpts,
-    tempo: &TempoOpts,
+    tx: &TransactionOpts,
     chain_id: u64,
 ) -> Result<(SenderKind<'static>, bool)> {
-    crate::tempo::ensure_session_not_browser(tempo, browser.browser)?;
-    if let Some(session) = tempo.session_signer_for_wallet(&wallet, chain_id)? {
+    crate::tempo::ensure_session_not_browser(&tx.tempo, browser.browser)?;
+    if let Some(session) = tx.tempo.session_signer_for_wallet(&wallet, chain_id)? {
         return Ok((session.access_key.account().into(), false));
     }
 
     Ok(match browser.run::<N>().await? {
         Some(browser) => (browser.address().into(), true),
-        None => (SenderKind::from_wallet_opts(wallet).await?, false),
+        None => (SenderKind::from_wallet_opts(wallet, &tx.auth).await?, false),
     })
 }
 
@@ -325,11 +356,22 @@ where
         if cast_async {
             sh_println!("{tx_hash:#x}")?;
         } else {
-            let receipt =
-                self.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
+            let receipt = self.sent_tx_receipt(tx_hash, confs, timeout).await?;
             sh_println!("{receipt}")?;
         }
         Ok(())
+    }
+
+    /// Waits for the receipt of a transaction that was already sent, and formats it.
+    ///
+    /// On failure the error names the hash, so that the transaction can be looked up instead of
+    /// sent again.
+    pub async fn sent_tx_receipt(&self, tx_hash: B256, confs: u64, timeout: u64) -> Result<String> {
+        self.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false)
+            .await
+            .wrap_err_with(|| {
+                format!("transaction {tx_hash:#x} was sent, but waiting for its receipt failed")
+            })
     }
 
     /// Fetches the receipt of `tx_hash`, polling for it unless `cast_async` is set, and formats
@@ -344,17 +386,59 @@ where
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
         let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
-            Some(receipt) => receipt,
+            Some(receipt) if cast_async || confs <= 1 => receipt,
+            Some(_) => self.confirm_mined(tx_hash, confs, timeout).await?,
             None if cast_async => eyre::bail!("tx not found: {tx_hash:?}"),
-            None => {
-                PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
-                    .with_required_confirmations(confs)
-                    .with_timeout(timeout.map(Duration::from_secs))
-                    .get_receipt()
-                    .await?
-            }
+            None => self.pending_receipt(tx_hash, confs, timeout).await?,
         };
         Ok(self.finish(receipt, field).await?.1)
+    }
+
+    /// Waits for a pending transaction to be mined and confirmed `confs` times.
+    async fn pending_receipt(
+        &self,
+        tx_hash: TxHash,
+        confs: u64,
+        timeout: Option<u64>,
+    ) -> Result<N::ReceiptResponse> {
+        Ok(PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
+            .with_required_confirmations(confs)
+            .with_timeout(timeout.map(Duration::from_secs))
+            .get_receipt()
+            .await?)
+    }
+
+    /// Waits until an already-mined transaction has `confs` confirmations.
+    ///
+    /// The pending transaction watcher only sees blocks mined after it starts, so it cannot
+    /// confirm a transaction that is already mined: this polls the chain head and receipt
+    /// instead. A reorg may move the transaction to an earlier or later block, or remove it.
+    /// Its current inclusion must have enough confirmations, within the same timeout.
+    async fn confirm_mined(
+        &self,
+        tx_hash: TxHash,
+        confs: u64,
+        timeout: Option<u64>,
+    ) -> Result<N::ReceiptResponse> {
+        let confirm = async {
+            let mut poll = tokio::time::interval(self.provider.client().poll_interval());
+            loop {
+                poll.tick().await;
+                let head = self.provider.get_block_number().await?;
+                if let Some(receipt) = self.provider.get_transaction_receipt(tx_hash).await?
+                    && let Some(mined) = receipt.block_number()
+                    && head >= mined.saturating_add(confs - 1)
+                {
+                    break Ok(receipt);
+                }
+            }
+        };
+        match timeout {
+            Some(timeout) => tokio::time::timeout(Duration::from_secs(timeout), confirm)
+                .await
+                .map_err(|_| eyre::eyre!("transaction was not confirmed within the timeout"))?,
+            None => confirm.await,
+        }
     }
 
     /// Attaches the revert reason (best effort) and formats the receipt.
@@ -408,6 +492,8 @@ struct TxBuilderInner<N: Network, P> {
     eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     /// Optional percentage applied to provider gas estimates.
     gas_estimate_multiplier: Option<u64>,
+    /// Whether a Tempo fee payer will sponsor the transaction.
+    sponsored: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -485,6 +571,11 @@ where
         let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
         tx_opts.apply::<N>(&mut tx, legacy);
+        // The curl transport answers every request with a placeholder, so there is nothing to
+        // check against.
+        if !config.eth_rpc_curl {
+            ensure_expiring_nonce_discriminator_active(&provider, &tx).await?;
+        }
 
         Ok(Self {
             inner: TxBuilderInner {
@@ -497,6 +588,7 @@ where
                 browser: false,
                 eip1559_fee_estimate: config.eip1559_fee_estimate,
                 gas_estimate_multiplier: None,
+                sponsored: tx_opts.tempo.is_sponsored(),
                 chain,
                 etherscan_api_key,
                 etherscan_api_url,
@@ -663,25 +755,29 @@ where
             let gas_request =
                 (fees_are_complete && self.access_list.is_none() && self.tx.gas_limit().is_none())
                     .then(|| self.tx.clone());
-            let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier) = (
+            let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier, sponsored) = (
                 self.blob,
                 self.legacy,
                 self.browser,
                 self.eip1559_fee_estimate,
                 self.gas_estimate_multiplier,
+                self.sponsored,
             );
             let Self { provider, tx, .. } = &mut self;
             let provider = &*provider;
             let (tx_nonce, (), gas_limit) = tokio::try_join!(
-                Self::resolve_nonce(provider, from, tx.nonce()),
+                Self::resolve_nonce(provider, from, tx.nonce(), tx.nonce_key()),
                 Self::fill_fees(provider, tx, blob, legacy, browser, eip1559_fee_estimate),
                 async {
                     match gas_request {
-                        Some(request) => {
-                            Self::estimate_gas(provider, request, gas_estimate_multiplier)
-                                .await
-                                .map(Some)
-                        }
+                        Some(request) => Self::estimate_gas(
+                            provider,
+                            request,
+                            gas_estimate_multiplier,
+                            sponsored,
+                        )
+                        .await
+                        .map(Some),
                         None => Ok(None),
                     }
                 },
@@ -691,7 +787,10 @@ where
             }
             Some(tx_nonce)
         } else if fill || !self.auth.is_empty() {
-            Some(Self::resolve_nonce(&self.provider, from, self.tx.nonce()).await?)
+            Some(
+                Self::resolve_nonce(&self.provider, from, self.tx.nonce(), self.tx.nonce_key())
+                    .await?,
+            )
         } else {
             None
         };
@@ -725,13 +824,18 @@ where
             self.tx.set_access_list(access_list);
         }
         if fill && self.tx.gas_limit().is_none() {
-            let request = if self.browser && self.chain.is_tempo() {
+            let request = if self.browser {
                 self.tx.browser_wallet_gas_estimation_request()
             } else {
                 self.tx.clone()
             };
-            let estimated =
-                Self::estimate_gas(&self.provider, request, self.gas_estimate_multiplier).await?;
+            let estimated = Self::estimate_gas(
+                &self.provider,
+                request,
+                self.gas_estimate_multiplier,
+                self.sponsored,
+            )
+            .await?;
             self.tx.set_gas_limit(estimated);
         }
 
@@ -739,10 +843,37 @@ where
     }
 
     /// Resolves the transaction nonce. Returns the existing nonce or fetches one from the provider.
-    async fn resolve_nonce(provider: &P, from: Address, nonce: Option<u64>) -> Result<u64> {
-        match nonce {
-            Some(nonce) => Ok(nonce),
-            None => Ok(provider.get_transaction_count(from).await?),
+    ///
+    /// A Tempo nonce key other than the protocol key `0` selects a 2D nonce lane with its own
+    /// counter in the Nonce Manager precompile. From T1 on, the expiring nonce key has no counter:
+    /// its nonce is a discriminator that defaults to `0`. Before T1 it is an ordinary lane.
+    async fn resolve_nonce(
+        provider: &P,
+        from: Address,
+        nonce: Option<u64>,
+        nonce_key: Option<U256>,
+    ) -> Result<u64> {
+        if let Some(nonce) = nonce {
+            return Ok(nonce);
+        }
+        match nonce_key {
+            Some(TEMPO_EXPIRING_NONCE_KEY)
+                if !matches!(
+                    is_tempo_hardfork_active(provider, TempoHardfork::T1).await,
+                    Ok(false)
+                ) =>
+            {
+                Ok(0)
+            }
+            Some(nonce_key) if !nonce_key.is_zero() => {
+                let call = INonce::getNonceCall { account: from, nonceKey: nonce_key };
+                let request = N::TransactionRequest::default()
+                    .with_to(NONCE_PRECOMPILE_ADDRESS)
+                    .with_input(call.abi_encode());
+                let output = provider.call(request).await?;
+                Ok(INonce::getNonceCall::abi_decode_returns(&output)?)
+            }
+            _ => Ok(provider.get_transaction_count(from).await?),
         }
     }
 
@@ -760,13 +891,21 @@ where
         for auth in std::mem::take(&mut self.auth) {
             signed_auths.push(match auth {
                 CliAuthorizationList::Address(address) => {
-                    let auth = Authorization {
-                        chain_id: U256::from(self.chain.id()),
-                        nonce: tx_nonce + 1,
-                        address,
-                    };
                     let signer =
                         sender.as_signer().expect("address-based authorization requires a signer");
+                    let authority = signer.address();
+                    // Authorizations apply after the transaction's nonce. Only a protocol-nonce
+                    // transaction bumps the sender's account nonce first; a Tempo nonce lane or
+                    // expiring nonce leaves it unchanged.
+                    let nonce = if authority == sender.address()
+                        && self.tx.nonce_key().is_none_or(|key| key.is_zero())
+                    {
+                        tx_nonce + 1
+                    } else {
+                        self.provider.get_transaction_count(authority).await?
+                    };
+                    let auth =
+                        Authorization { chain_id: U256::from(self.chain.id()), nonce, address };
                     let signature = signer.sign_hash(&auth.signature_hash()).await?;
                     auth.into_signed(signature)
                 }
@@ -797,9 +936,13 @@ where
     /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
     async fn estimate_gas(
         provider: &P,
-        request: N::TransactionRequest,
+        mut request: N::TransactionRequest,
         multiplier: Option<u64>,
+        sponsored: bool,
     ) -> Result<u64> {
+        if sponsored {
+            mark_sponsored_gas_estimation(provider, &mut request).await;
+        }
         let err = match provider.estimate_gas(request).await {
             Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier),
             Err(err) => err,
@@ -891,7 +1034,7 @@ pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
 mod tests {
     use super::*;
     use alloy_json_rpc::{RequestPacket, ResponsePacket};
-    use alloy_network::{Ethereum, NetworkTransactionBuilder};
+    use alloy_network::{AnyNetwork, Ethereum, NetworkTransactionBuilder};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
     use alloy_sol_types::SolValue;
@@ -945,6 +1088,107 @@ mod tests {
                 barrier.wait().await;
                 inner.call(req).await
             })
+        }
+    }
+
+    /// A successful receipt of a transfer mined in block 5.
+    fn mined_receipt(tx_hash: TxHash) -> serde_json::Value {
+        serde_json::json!({
+            "type": "0x2",
+            "status": "0x1",
+            "cumulativeGasUsed": "0x5208",
+            "logs": [],
+            "logsBloom": format!("0x{}", "00".repeat(256)),
+            "transactionHash": tx_hash,
+            "transactionIndex": "0x0",
+            "blockHash": B256::repeat_byte(0x05),
+            "blockNumber": "0x5",
+            "gasUsed": "0x5208",
+            "effectiveGasPrice": "0x1",
+            "from": Address::repeat_byte(0x22),
+            "to": TO,
+            "contractAddress": null
+        })
+    }
+
+    #[tokio::test]
+    async fn receipt_of_mined_tx_waits_for_confirmations() {
+        for (inclusion, heads) in [(5u64, vec![5, 6, 7]), (4, vec![6]), (7, vec![7, 8, 9])] {
+            let tx_hash = B256::repeat_byte(0xaa);
+            let asserter = Asserter::new();
+            asserter.push_success(&mined_receipt(tx_hash));
+            // Confirm the current inclusion, even if a reorg moved it earlier or later.
+            let mut receipt = mined_receipt(tx_hash);
+            receipt["blockNumber"] = serde_json::json!(U64::from(inclusion));
+            receipt["blockHash"] = serde_json::json!(B256::repeat_byte(inclusion as u8));
+            for head in heads {
+                asserter.push_success(&U64::from(head));
+                asserter.push_success(&receipt);
+            }
+            let provider = ProviderBuilder::<_, _, AnyNetwork>::default().connect_client(
+                RpcClient::mocked(asserter.clone()).with_poll_interval(Duration::from_millis(1)),
+            );
+            let sender = CastTxSender::new(&provider);
+
+            let block = sender
+                .receipt(format!("{tx_hash:#x}"), Some("blockNumber".into()), 3, Some(5), false)
+                .await
+                .unwrap();
+
+            assert_eq!(block, inclusion.to_string());
+            assert!(asserter.read_q().is_empty(), "returned before the third confirmation");
+        }
+    }
+
+    #[tokio::test]
+    async fn receipt_of_mined_tx_times_out_without_confirmations() {
+        let tx_hash = B256::repeat_byte(0xaa);
+        let asserter = Asserter::new();
+        asserter.push_success(&mined_receipt(tx_hash));
+        for _ in 0..10_000 {
+            asserter.push_success(&U64::from(5));
+            asserter.push_success(&mined_receipt(tx_hash));
+        }
+        let provider = ProviderBuilder::<_, _, AnyNetwork>::default().connect_client(
+            RpcClient::mocked(asserter).with_poll_interval(Duration::from_millis(1)),
+        );
+        let sender = CastTxSender::new(&provider);
+
+        let err =
+            sender.receipt(format!("{tx_hash:#x}"), None, 3, Some(1), false).await.unwrap_err();
+
+        assert_eq!(err.to_string(), "transaction was not confirmed within the timeout");
+    }
+
+    #[tokio::test]
+    async fn receipt_of_remined_tx_times_out_without_confirmations() {
+        for disappears in [false, true] {
+            let tx_hash = B256::repeat_byte(0xaa);
+            let asserter = Asserter::new();
+            asserter.push_success(&mined_receipt(tx_hash));
+            asserter.push_success(&U64::from(7));
+            if disappears {
+                asserter.push_success(&serde_json::Value::Null);
+                asserter.push_success(&U64::from(7));
+            }
+            // The old inclusion has three confirmations, but the new one has only one.
+            let mut remined = mined_receipt(tx_hash);
+            remined["blockNumber"] = serde_json::json!("0x7");
+            remined["blockHash"] = serde_json::json!(B256::repeat_byte(0x07));
+            asserter.push_success(&remined);
+            for _ in 0..10_000 {
+                asserter.push_success(&U64::from(7));
+                asserter.push_success(&remined);
+            }
+            let provider = ProviderBuilder::<_, _, AnyNetwork>::default().connect_client(
+                RpcClient::mocked(asserter).with_poll_interval(Duration::from_millis(1)),
+            );
+            let sender = CastTxSender::new(&provider);
+
+            let err =
+                sender.receipt(format!("{tx_hash:#x}"), None, 3, Some(1), false).await.unwrap_err();
+
+            assert_eq!(err.to_string(), "transaction was not confirmed within the timeout");
         }
     }
 
@@ -1036,7 +1280,7 @@ mod tests {
         assert_eq!(tx.fee_token, None);
 
         // Fee resolution happens after building and can change the submission type to Tempo AA.
-        resolve_and_set_fee_token(Some(&provider), Some(chain), &mut tx, None).await.unwrap();
+        resolve_and_set_fee_token(Some(&provider), &mut tx, None).await.unwrap();
         tx.prep_for_submission();
         assert_eq!(tx.inner.transaction_type, Some(0x76));
         assert_eq!(tx.fee_token, Some(token));
@@ -1074,5 +1318,25 @@ mod tests {
 
         let estimated_gas = builder(&provider, &["--auth", &auth]).await;
         assert!(estimated_gas.will_disclose_auth_during_build());
+    }
+
+    #[test]
+    fn tx_params_parses_gas_price_units() {
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            tx: TxParams,
+        }
+
+        let cli =
+            Cli::try_parse_from(["test", "--gas-price", "10gwei", "--priority-gas-price", "2gwei"])
+                .unwrap();
+        assert_eq!(cli.tx.gas_price, Some(U256::from(10_000_000_000u64)));
+        assert_eq!(cli.tx.priority_gas_price, Some(U256::from(2_000_000_000u64)));
+
+        let cli = Cli::try_parse_from(["test", "--gas-price", "100", "--priority-gas-price", "2"])
+            .unwrap();
+        assert_eq!(cli.tx.gas_price, Some(U256::from(100)));
+        assert_eq!(cli.tx.priority_gas_price, Some(U256::from(2)));
     }
 }

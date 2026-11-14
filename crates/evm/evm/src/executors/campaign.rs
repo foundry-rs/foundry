@@ -1,15 +1,16 @@
 //! Worker-local call execution policy shared by stateless and invariant fuzz campaigns.
 
 use super::{Executor, RawCallResult};
-use alloy_primitives::U256;
+use alloy_network::TransactionBuilder;
+use alloy_primitives::{TxKind, U256};
+use evm2::registry::HandlerError;
 use eyre::{Result, eyre};
 use foundry_evm_core::{
-    FoundryBlock,
+    backend::TransactionValidationError,
     constants::MAGIC_ASSUME,
     evm::{BlockEnvFor, FoundryEvmNetwork},
 };
 use foundry_evm_fuzz::BasicTxDetails;
-use revm::context::Block;
 
 /// The small set of execution policies which differ between fuzzing modes.
 #[derive(Clone, Copy, Debug)]
@@ -163,13 +164,13 @@ impl<FEN: FoundryEvmNetwork> BlockSnapshot<FEN> {
 
     fn new(executor: &Executor<FEN>) -> Self {
         Self {
-            env: executor.evm_env().block_env.clone(),
-            cheatcode: executor.inspector().cheatcodes.as_ref().and_then(|c| c.block.clone()),
+            env: executor.evm_env().block,
+            cheatcode: executor.inspector().cheatcodes.as_ref().and_then(|c| c.block),
         }
     }
 
     fn restore(self, executor: &mut Executor<FEN>) {
-        executor.evm_env_mut().block_env = self.env;
+        executor.evm_env_mut().block = self.env;
         if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
             cheatcodes.block = self.cheatcode;
         }
@@ -213,29 +214,7 @@ pub(super) fn execute_invariant_tx<FEN: FoundryEvmNetwork>(
     executor: &mut Executor<FEN>,
     tx: &mut BasicTxDetails,
 ) -> Result<RawCallResult<FEN>> {
-    let warp = tx.warp.unwrap_or_default();
-    let roll = tx.roll.unwrap_or_default();
-    if warp > 0 || roll > 0 {
-        let needs_cheatcode_block = executor
-            .inspector()
-            .cheatcodes
-            .as_ref()
-            .is_some_and(|cheatcodes| cheatcodes.block.is_none());
-        let block_env = {
-            let block_env = &mut executor.evm_env_mut().block_env;
-            block_env.set_timestamp(block_env.timestamp() + warp);
-            block_env.set_number(block_env.number() + roll);
-            needs_cheatcode_block.then(|| block_env.clone())
-        };
-        if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
-            if let Some(block) = cheatcodes.block.as_mut() {
-                block.set_timestamp(block.timestamp() + warp);
-                block.set_number(block.number() + roll);
-            } else {
-                cheatcodes.block = Some(block_env.unwrap());
-            }
-        }
-    }
+    apply_block_delay(executor, tx.warp.unwrap_or_default(), tx.roll.unwrap_or_default());
     let value = match tx.call_details.value {
         Some(requested) if !requested.is_zero() => requested.min(executor.get_balance(tx.sender)?),
         _ => U256::ZERO,
@@ -243,7 +222,65 @@ pub(super) fn execute_invariant_tx<FEN: FoundryEvmNetwork>(
     // Persist exactly what was sent so replay, shrinking, and corpus entries do not claim an
     // unavailable value was executed.
     tx.call_details.value = (!value.is_zero()).then_some(value);
-    executor
-        .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), value)
-        .map_err(|error| eyre!("Could not make raw evm call: {error}"))
+    let (mut evm_env, mut tx_request) = executor.prepare_call_env(
+        tx.sender,
+        TxKind::Call(tx.call_details.target),
+        tx.call_details.calldata.clone(),
+        value,
+    );
+    // The network rejects a transaction whose gas limit is below its intrinsic gas or, from
+    // Prague, the EIP-7623 calldata floor. Large fuzzed arrays or network-specific charges reach
+    // them under a low `call_gas_limit` or project `gas_limit`, and the error would abort the
+    // campaign, so the call runs again with the gas the network requires. Intrinsic gas is checked
+    // before the floor, so at most two retries are needed.
+    let mut result = executor.call_with_env(evm_env, tx_request.clone());
+    for _ in 0..2 {
+        let Err(error) = &result else { break };
+        let Some(
+            &(HandlerError::IntrinsicGasTooLow { required, .. }
+            | HandlerError::GasLimitBelowFloor { required, .. }),
+        ) = error.chain().find_map(|cause| {
+            cause.downcast_ref::<HandlerError>().or_else(|| {
+                cause.downcast_ref::<TransactionValidationError>().map(|error| &error.error)
+            })
+        })
+        else {
+            break;
+        };
+        tx_request.set_gas_limit(required);
+        evm_env.block.gas_limit = evm_env.block.gas_limit.max(U256::from(required));
+        result = executor.call_with_env(evm_env, tx_request.clone());
+    }
+    result.map_err(|error| eyre!("Could not make raw evm call: {error}"))
+}
+
+/// Advances the execution block environment and the cheatcode block override by an invariant
+/// call's warp and roll delays.
+pub(super) fn apply_block_delay<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    warp: U256,
+    roll: U256,
+) {
+    if warp.is_zero() && roll.is_zero() {
+        return;
+    }
+    let needs_cheatcode_block = executor
+        .inspector()
+        .cheatcodes
+        .as_ref()
+        .is_some_and(|cheatcodes| cheatcodes.block.is_none());
+    let block_env = {
+        let block_env = &mut executor.evm_env_mut().block;
+        block_env.timestamp += warp;
+        block_env.number += roll;
+        needs_cheatcode_block.then_some(*block_env)
+    };
+    if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
+        if let Some(block) = cheatcodes.block.as_mut() {
+            block.timestamp += warp;
+            block.number += roll;
+        } else {
+            cheatcodes.block = Some(block_env.unwrap());
+        }
+    }
 }

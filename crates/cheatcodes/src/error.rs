@@ -8,7 +8,6 @@ use foundry_config::UnresolvedEnvVarError;
 use foundry_evm_core::backend::{BackendError, DatabaseError};
 use foundry_wallets::error::WalletSignerError;
 use k256::ecdsa::signature::Error as SignatureError;
-use revm::context_interface::result::EVMError;
 use std::{borrow::Cow, fmt};
 
 /// Cheatcode result type.
@@ -162,6 +161,19 @@ impl Error {
         self.is_str
     }
 
+    /// Prefixes a string error with the name of the cheatcode that produced it.
+    pub(crate) fn with_cheatcode_name(self, cheat: &spec::Cheatcode<'static>) -> Self {
+        let name = cheat.func.signature.split('(').next().unwrap();
+        // Skip showing the cheatcode name for:
+        // - assertions: too verbose, and can already be inferred from the error message
+        // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
+        if self.is_str && !name.contains("assert") && name != "rpcUrl" {
+            fmt_err!("vm.{name}: {self}")
+        } else {
+            self
+        }
+    }
+
     fn new_str(data: &'static str) -> Self {
         Self::_new(true, false, data.as_bytes())
     }
@@ -279,9 +291,15 @@ impl_from!(
     WalletSignerError,
 );
 
-impl<T: Into<BackendError>> From<EVMError<T>> for Error {
-    fn from(err: EVMError<T>) -> Self {
+impl From<evm2::DatabaseError> for Error {
+    fn from(err: evm2::DatabaseError) -> Self {
         Self::display(BackendError::from(err))
+    }
+}
+
+impl From<evm2::ExecutionError> for Error {
+    fn from(err: evm2::ExecutionError) -> Self {
+        Self::new_string(format!("{err:?}"))
     }
 }
 

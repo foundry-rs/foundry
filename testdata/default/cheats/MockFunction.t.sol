@@ -243,4 +243,55 @@ contract MockFunctionTest is Test {
         my_proxy.mocked_args_function(500);
         assertEq(my_proxy.a(), 321 + 500, "after reset, original args function should be called");
     }
+
+    function test_mock_function_expect_call_observes_target() public {
+        bytes memory data = abi.encodeWithSelector(MockFunctionContract.mocked_function.selector);
+        vm.mockFunction(address(my_contract), address(model_contract), data);
+        vm.expectCall(address(model_contract), data);
+        my_contract.mocked_function();
+    }
 }
+
+contract MockFunctionTarget {
+    uint256 public value;
+
+    function set() external {
+        value = 1;
+    }
+}
+
+contract MockFunctionReplacement {
+    uint256 public value;
+
+    function set() external {
+        value = 2;
+    }
+}
+
+abstract contract MockFunctionTransactionTests is Test {
+    address constant TARGET = address(0xAA);
+    address constant SIGNER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    function setUp() public {
+        vm.etch(TARGET, address(new MockFunctionTarget()).code);
+    }
+
+    function test_mock_function_applies_to_executed_transaction() public {
+        vm.chainId(1);
+        vm.deal(SIGNER, 1 ether);
+        vm.mockFunction(TARGET, address(new MockFunctionReplacement()), abi.encodeCall(MockFunctionTarget.set, ()));
+
+        // Legacy signed transaction from `SIGNER` calling `set()` on `TARGET`:
+        // { nonce: 0, gas: 100000, gasPrice: 1, chainId: 1 }
+        vm.executeTransaction(
+            hex"f8648001830186a09400000000000000000000000000000000000000aa8084b8e010de25a0ef46df71876b9b91f78d5b6ed285dd38e95e8afb3350579225955dc6edb0c8cfa03eb5437a83b1300224803d69f2cd38d72679cd22b858f4cc3b95a322c32bc50b"
+        );
+
+        assertEq(MockFunctionTarget(TARGET).value(), 2);
+    }
+}
+
+contract MockFunctionTransactionTest is MockFunctionTransactionTests {}
+
+/// forge-config: default.isolate = false
+contract MockFunctionTransactionNonIsolatedTest is MockFunctionTransactionTests {}

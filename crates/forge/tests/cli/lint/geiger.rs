@@ -1,4 +1,5 @@
-forgetest_init!(call, |prj, cmd| {
+#[forgetest_init]
+fn call(prj: _, cmd: _) {
     prj.add_test(
         "call.t.sol",
         r#"
@@ -26,9 +27,10 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
 Error: aborting due to 1 linter note(s)
 ...
 "#]]);
-});
+}
 
-forgetest_init!(assignment, |prj, cmd| {
+#[forgetest_init]
+fn assignment(prj: _, cmd: _) {
     prj.add_test(
         "assignment.t.sol",
         r#"
@@ -57,9 +59,10 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
 Error: aborting due to 1 linter note(s)
 ...
 "#]]);
-});
+}
 
-forgetest_init!(exit_code, |prj, cmd| {
+#[forgetest_init]
+fn exit_code(prj: _, cmd: _) {
     prj.add_test(
         "multiple.t.sol",
         r#"
@@ -105,4 +108,4 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
 Error: aborting due to 3 linter note(s)
 ...
 "#]]);
-});
+}

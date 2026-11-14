@@ -4,7 +4,7 @@ use crate::{
         VerificationProviderType,
     },
     utils::ensure_solc_build_metadata,
-    verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
+    verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs, parse_http_verifier_url},
 };
 use alloy_primitives::Address;
 use async_trait::async_trait;
@@ -60,7 +60,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
     }
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
-        let url = Self::get_job_status_url(args.verifier.verifier_url.as_deref(), args.id.clone());
+        let url = Self::get_job_status_url(args.verifier.verifier_url.as_deref(), args.id.clone())?;
 
         args.retry
             .into_retry()
@@ -93,32 +93,29 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 .wrap_err("Failed to parse job response")
                 .map_err(RetryError::Retry)?;
 
-                if !job_response.is_job_completed {
-                    return Err(RetryError::Retry(eyre!("Verification is still pending...")));
-                }
-
-                if let Some(error) = job_response.error {
-                    if error.custom_code == "already_verified" {
-                        let _ = sh_status!("Contract source code already verified");
-                        return Ok(());
+                match job_response.into_status() {
+                    SourcifyJobStatus::Pending => {
+                        Err(RetryError::Retry(eyre!("Verification is still pending...")))
                     }
-
-                    return Err(RetryError::Break(eyre!(
+                    SourcifyJobStatus::AlreadyVerified => {
+                        let _ = sh_status!("Contract source code already verified");
+                        Ok(())
+                    }
+                    SourcifyJobStatus::Failed(error) => Err(RetryError::Break(eyre!(
                         "Verification job failed:\nError Code: `{}`\nMessage: `{}`",
                         sanitize_remote_message(&error.custom_code),
                         sanitize_remote_message(&error.message)
-                    )));
+                    ))),
+                    SourcifyJobStatus::Verified { match_status } => {
+                        if let Some(contract_status) = match_status {
+                            let _ = sh_status!(
+                                "Contract successfully verified:\nStatus: `{}`",
+                                sanitize_remote_message(&contract_status),
+                            );
+                        }
+                        Ok(())
+                    }
                 }
-
-                if let Some(contract_status) =
-                    job_response.contract.and_then(|contract| contract.match_status)
-                {
-                    let _ = sh_status!(
-                        "Contract successfully verified:\nStatus: `{}`",
-                        sanitize_remote_message(&contract_status),
-                    );
-                }
-                Ok(())
             })
             .await
             .wrap_err("Checking verification result failed")
@@ -187,7 +184,7 @@ impl SourcifyVerificationProvider {
 
         let chain_id = args.etherscan.chain.unwrap_or_default().id();
         let url =
-            Self::get_verify_url(args.verifier.verifier_url.as_deref(), chain_id, args.address);
+            Self::get_verify_url(args.verifier.verifier_url.as_deref(), chain_id, args.address)?;
         let client = verification_client()?;
 
         let resp = args
@@ -239,7 +236,7 @@ impl SourcifyVerificationProvider {
             let job_url = Self::get_job_ui_url(
                 args.verifier.verifier_url.as_deref(),
                 resp.verification_id.clone(),
-            );
+            )?;
             sh_status!(
                 "Submitted contract for verification:\n\tVerification Job ID: `{}`\n\tURL: {}",
                 display_id,
@@ -259,43 +256,46 @@ impl SourcifyVerificationProvider {
         }
     }
 
-    fn get_base_url(verifier_url: Option<&str>) -> Url {
-        // note(onbjerg): a little ugly but makes this infallible as we guarantee `SOURCIFY_URL` to
-        // be well formatted
-        Url::parse(verifier_url.unwrap_or(SOURCIFY_URL))
-            .unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap())
+    /// Returns the Sourcify base URL, failing on an invalid explicit URL instead of falling back
+    /// to the public endpoint.
+    fn get_base_url(verifier_url: Option<&str>) -> Result<Url> {
+        let mut url = parse_http_verifier_url(verifier_url.unwrap_or(SOURCIFY_URL), "Sourcify")?;
+        if !url.path().ends_with('/') {
+            url.set_path(&format!("{}/", url.path()));
+        }
+        Ok(url)
     }
 
     fn get_verify_url(
         verifier_url: Option<&str>,
         chain_id: u64,
         contract_address: Address,
-    ) -> String {
-        let base_url = Self::get_base_url(verifier_url);
-        format!("{base_url}v2/verify/{chain_id}/{contract_address}")
+    ) -> Result<String> {
+        let base_url = Self::get_base_url(verifier_url)?;
+        Ok(format!("{base_url}v2/verify/{chain_id}/{contract_address}"))
     }
 
-    fn get_job_status_url(verifier_url: Option<&str>, job_id: String) -> String {
+    fn get_job_status_url(verifier_url: Option<&str>, job_id: String) -> Result<String> {
         Self::get_job_url(verifier_url, &["v2", "verify"], &job_id)
     }
 
-    fn get_job_ui_url(verifier_url: Option<&str>, job_id: String) -> String {
+    fn get_job_ui_url(verifier_url: Option<&str>, job_id: String) -> Result<String> {
         Self::get_job_url(verifier_url, &["verify-ui", "jobs"], &job_id)
     }
 
-    fn get_job_url(verifier_url: Option<&str>, path: &[&str], job_id: &str) -> String {
-        let base_url = Self::get_base_url(verifier_url);
+    fn get_job_url(verifier_url: Option<&str>, path: &[&str], job_id: &str) -> Result<String> {
+        let base_url = Self::get_base_url(verifier_url)?;
         let job_id = encode_path_segment(job_id);
-        format!("{base_url}{}/{job_id}", path.join("/"))
+        Ok(format!("{base_url}{}/{job_id}", path.join("/")))
     }
 
     fn get_lookup_url(
         verifier_url: Option<&str>,
         chain_id: u64,
         contract_address: Address,
-    ) -> String {
-        let base_url = Self::get_base_url(verifier_url);
-        format!("{base_url}v2/contract/{chain_id}/{contract_address}")
+    ) -> Result<String> {
+        let base_url = Self::get_base_url(verifier_url)?;
+        Ok(format!("{base_url}v2/contract/{chain_id}/{contract_address}"))
     }
 
     /// Configures the API request to the sourcify API using the given [`VerifyArgs`].
@@ -304,6 +304,8 @@ impl SourcifyVerificationProvider {
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<SourcifyVerifyRequest> {
+        // Reject an invalid explicit URL before preparing any source.
+        Self::get_base_url(args.verifier.verifier_url.as_deref())?;
         let lang = args.detect_language(context);
         let contract_identifier = format!(
             "{}:{}",
@@ -352,7 +354,7 @@ impl SourcifyVerificationProvider {
     async fn is_contract_verified(&self, args: &VerifyArgs) -> Result<bool> {
         let chain_id = args.etherscan.chain.unwrap_or_default().id();
         let url =
-            Self::get_lookup_url(args.verifier.verifier_url.as_deref(), chain_id, args.address);
+            Self::get_lookup_url(args.verifier.verifier_url.as_deref(), chain_id, args.address)?;
 
         match verification_client()?.get(&url).send().await {
             Ok(response) => {
@@ -364,14 +366,12 @@ impl SourcifyVerificationProvider {
                     let creation_exact = contract_response
                         .creation_match
                         .as_ref()
-                        .map(|s| s == "exact_match")
-                        .unwrap_or(false);
+                        .is_some_and(|s| s == "exact_match");
 
                     let runtime_exact = contract_response
                         .runtime_match
                         .as_ref()
-                        .map(|s| s == "exact_match")
-                        .unwrap_or(false);
+                        .is_some_and(|s| s == "exact_match");
 
                     Ok(creation_exact && runtime_exact)
                 } else {
@@ -424,6 +424,37 @@ pub struct SourcifyJobResponse {
     error: Option<SourcifyErrorResponse>,
 }
 
+impl SourcifyJobResponse {
+    /// Resolves the job's state from its completion flag, error and contract fields.
+    fn into_status(self) -> SourcifyJobStatus {
+        if !self.is_job_completed {
+            return SourcifyJobStatus::Pending;
+        }
+        match self.error {
+            Some(error) if error.custom_code == "already_verified" => {
+                SourcifyJobStatus::AlreadyVerified
+            }
+            Some(error) => SourcifyJobStatus::Failed(error),
+            None => SourcifyJobStatus::Verified {
+                match_status: self.contract.and_then(|contract| contract.match_status),
+            },
+        }
+    }
+}
+
+/// The state of a Sourcify verification job.
+#[derive(Debug)]
+enum SourcifyJobStatus {
+    /// The job has not completed yet; check again.
+    Pending,
+    /// The job completed because the contract was already verified.
+    AlreadyVerified,
+    /// The job completed with an error.
+    Failed(SourcifyErrorResponse),
+    /// The job completed without an error, with the match Sourcify reported, if any.
+    Verified { match_status: Option<String> },
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourcifyContractResponse {
@@ -444,8 +475,10 @@ pub struct SourcifyErrorResponse {
 mod tests {
     use super::*;
     use clap::Parser;
+    use foundry_cli::utils::LoadConfig;
+    use foundry_common::compile::ProjectCompiler;
     use foundry_config::Config;
-    use foundry_test_utils::forgetest_async;
+    use foundry_test_utils::{forgetest, util::SOLC_VERSION};
     use serde_json::json;
     use std::{
         io::{Read, Write},
@@ -476,10 +509,44 @@ mod tests {
     }
 
     #[test]
+    fn job_response_status() {
+        let status = |body: serde_json::Value| {
+            serde_json::from_value::<SourcifyJobResponse>(body).unwrap().into_status()
+        };
+        assert!(matches!(
+            status(json!({ "isJobCompleted": false, "contract": null, "error": null })),
+            SourcifyJobStatus::Pending
+        ));
+        assert!(matches!(
+            status(json!({
+                "isJobCompleted": true,
+                "error": { "customCode": "already_verified", "message": "" }
+            })),
+            SourcifyJobStatus::AlreadyVerified
+        ));
+        assert!(matches!(
+            status(json!({
+                "isJobCompleted": true,
+                "contract": { "match": "match" },
+                "error": { "customCode": "internal_error", "message": "boom" }
+            })),
+            SourcifyJobStatus::Failed(error) if error.custom_code == "internal_error"
+        ));
+        assert!(matches!(
+            status(json!({ "isJobCompleted": true, "contract": { "match": "exact_match" } })),
+            SourcifyJobStatus::Verified { match_status: Some(m) } if m == "exact_match"
+        ));
+        assert!(matches!(
+            status(json!({ "isJobCompleted": true, "contract": null })),
+            SourcifyJobStatus::Verified { match_status: None }
+        ));
+    }
+
+    #[test]
     fn job_urls_encode_opaque_ids_as_one_path_segment() {
         let id = "job a+b/part?query#fragment\n".to_string();
-        let status = SourcifyVerificationProvider::get_job_status_url(None, id.clone());
-        let ui = SourcifyVerificationProvider::get_job_ui_url(None, id);
+        let status = SourcifyVerificationProvider::get_job_status_url(None, id.clone()).unwrap();
+        let ui = SourcifyVerificationProvider::get_job_ui_url(None, id).unwrap();
         let encoded = "job%20a%2Bb%2Fpart%3Fquery%23fragment%0A";
         assert!(status.ends_with(&format!("v2/verify/{encoded}")), "{status}");
         assert!(ui.ends_with(&format!("verify-ui/jobs/{encoded}")), "{ui}");
@@ -499,7 +566,7 @@ mod tests {
         })
         .to_string();
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
-        let server_url = format!("http://{}/", server.local_addr().unwrap());
+        let server_url = format!("http://{}/server", server.local_addr().unwrap());
         let server_thread = thread::spawn(move || {
             let (mut socket, _) = server.accept().unwrap();
             let mut request = [0; 4096];
@@ -507,7 +574,7 @@ mod tests {
             assert!(
                 std::str::from_utf8(&request[..bytes_read])
                     .unwrap()
-                    .starts_with("GET /v2/verify/job-id ")
+                    .starts_with("GET /server/v2/verify/job-id ")
             );
             socket
                 .write_all(
@@ -536,6 +603,35 @@ mod tests {
         let error = format!("{error:?}");
         assert!(error.contains("Error Code: `internal_error`"), "{error}");
         assert!(error.contains("Message: `too many connections from this IP`"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn check_rejects_invalid_explicit_url_instead_of_public_fallback() {
+        for (verifier_url, expected) in [
+            ("127.0.0.1:5555", "invalid Sourcify URL: relative URL without a base"),
+            ("", "invalid Sourcify URL: relative URL without a base"),
+            (
+                "https://user:password-secret@example.invalid:bad/server?api_key=query-secret",
+                "invalid Sourcify URL: invalid port number",
+            ),
+            (
+                "ftp://user:password-secret@example.invalid/server?api_key=query-secret",
+                "invalid Sourcify URL: URL scheme must be http or https",
+            ),
+        ] {
+            let args = VerifyCheckArgs::parse_from([
+                "foundry-cli",
+                "job-id",
+                "--verifier-url",
+                verifier_url,
+                "--retries",
+                "1",
+                "--delay",
+                "0",
+            ]);
+            let error = SourcifyVerificationProvider::default().check(args).await.unwrap_err();
+            assert_eq!(format!("{error:#}"), expected);
+        }
     }
 
     #[tokio::test]
@@ -585,7 +681,8 @@ mod tests {
         assert_eq!(response, "redirected");
     }
 
-    forgetest_async!(creates_correct_verify_request_body, |prj, _cmd| {
+    #[forgetest]
+    async fn creates_correct_verify_request_body(prj: _) {
         prj.add_source("Counter", "contract Counter {}");
 
         let args = VerifyArgs::parse_from([
@@ -593,7 +690,7 @@ mod tests {
             "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
             "src/Counter.sol:Counter",
             "--compiler-version",
-            "0.8.19",
+            SOLC_VERSION,
             "--root",
             &prj.root().to_string_lossy(),
         ]);
@@ -602,7 +699,7 @@ mod tests {
         let provider = SourcifyVerificationProvider::default();
         let request = provider.prepare_verify_request(&args, &context).await.unwrap();
 
-        assert_eq!(request.compiler_version, "0.8.19+commit.7dd6d404");
+        assert_eq!(request.compiler_version, "0.8.38+commit.1835d247");
         assert_eq!(request.contract_identifier, "src/Counter.sol:Counter");
         assert!(request.creation_transaction_hash.is_none());
 
@@ -616,5 +713,32 @@ mod tests {
         let counter_source = sources.get("src/Counter.sol").unwrap().as_object().unwrap();
         let content = counter_source.get("content").unwrap().as_str().unwrap();
         assert!(content.contains("contract Counter {}"));
-    });
+    }
+
+    #[forgetest]
+    async fn keeps_solar_compiler_version(prj: _) {
+        prj.add_source("Counter", "contract Counter {}");
+
+        let solar_version = format!("{SOLC_VERSION}+commit.d9f23fb.solar.0.2.0");
+        let args = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
+            "src/Counter.sol:Counter",
+            "--compiler-version",
+            &solar_version,
+            "--root",
+            &prj.root().to_string_lossy(),
+        ]);
+
+        // Cache the artifacts under the plain version, as for a Solar build.
+        let mut config = args.load_config().unwrap();
+        config.solc = Some(SOLC_VERSION.into());
+        ProjectCompiler::new().quiet(true).compile(&config.project().unwrap()).unwrap();
+
+        let context = args.resolve_context().await.unwrap();
+        let provider = SourcifyVerificationProvider::default();
+        let request = provider.prepare_verify_request(&args, &context).await.unwrap();
+
+        assert_eq!(request.compiler_version, solar_version);
+    }
 }

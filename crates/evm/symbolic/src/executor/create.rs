@@ -1,9 +1,9 @@
 use super::*;
 
 impl SymbolicExecutor {
-    pub(super) fn create<FEN: FoundryEvmNetwork>(
+    pub(super) fn create(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -11,7 +11,7 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         if state.is_static {
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(StepOutcome::Revert);
+            return Ok(StepOutcome::ExceptionalHalt);
         }
 
         let offset = state.stack.peek(1)?.clone();
@@ -31,18 +31,12 @@ impl SymbolicExecutor {
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
-                let max_size = state
-                    .upper_bound_usize(&mut self.cx, &size)
-                    .filter(|size| *size <= max_limit)
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        self.solver_upper_bound_usize(
-                            state,
-                            &size,
-                            max_limit,
-                            "symbolic CREATE initcode size",
-                        )
-                    })?;
+                let max_size = self.solver_upper_bound_usize(
+                    state,
+                    &size,
+                    max_limit,
+                    "symbolic CREATE initcode size",
+                )?;
                 BoundedCopySize::Symbolic { size, max_size }
             }
         };
@@ -50,6 +44,34 @@ impl SymbolicExecutor {
             if matches!(kind, CreateKind::Create2) { Some(state.stack.pop()?) } else { None };
 
         size.expand_memory(&mut self.cx, &mut state.memory, offset.clone());
+
+        // Like Forge, a prank sets the creator: the constructor's `msg.sender`, the account whose
+        // nonce derives the address and increments, and the account that pays the value. The
+        // CREATE consumes the pending prank, so a later prank can replace it.
+        let inherited_prank = state.callers();
+        let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
+        // The nonce and balance of a symbolic pranked creator would ignore the accounts it can
+        // alias.
+        if creator != state.address
+            && state.constrained_word(&mut self.cx, &creator_word).map(word_to_address)
+                != Some(creator)
+        {
+            return Err(SymbolicError::Unsupported("symbolic CREATE prank"));
+        }
+
+        // A create beyond the call depth limit fails before it increments the creator's
+        // nonce or transfers value. Concrete Forge settles a pending revert cheatcode against
+        // such a create differently from a joined create outcome, depending on its config.
+        if state.at_call_depth_limit() {
+            if state.expected_revert.is_some() || state.assume_no_revert_next_call.is_some() {
+                return Err(SymbolicError::Unsupported(
+                    "revert cheatcode on a CREATE beyond the call depth limit",
+                ));
+            }
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            state.stack.push(SymExpr::zero(&mut self.cx))?;
+            return Ok(StepOutcome::Continue);
+        }
 
         let initcode = match &size {
             BoundedCopySize::Concrete(size) => {
@@ -68,54 +90,65 @@ impl SymbolicExecutor {
                 *max_size,
             ),
         };
+        let nonce = state.world.nonce(executor, creator)?;
         let (created_word, created) = match kind {
             CreateKind::Create => {
-                let nonce = state.world.nonce(executor, state.address)?;
-                let address = state.address.create(nonce);
+                let address = creator.create(nonce);
                 (SymExpr::constant(&mut self.cx, address_word(address)), address)
             }
             CreateKind::Create2 => create2_address_word(
                 &mut self.cx,
                 state,
-                state.address,
+                creator,
                 salt.expect("CREATE2 salt exists"),
                 &initcode,
             )?,
         };
 
-        if !self.prepare_create_value_transfer(executor, state, worklist, value.clone())? {
+        if !self.prepare_create_value_transfer(executor, state, worklist, creator, value.clone())? {
+            return Ok(StepOutcome::Continue);
+        }
+
+        // EIP-2681: a creator nonce at `u64::MAX` fails the create after the balance check.
+        if nonce == u64::MAX {
+            self.fail_create_before_frame(executor, state)?;
             return Ok(StepOutcome::Continue);
         }
 
         let mut failure_world = state.world.clone();
-        failure_world.increment_nonce(executor, state.address)?;
+        failure_world.increment_nonce(executor, creator)?;
 
         if failure_world.has_code_or_nonce(&mut self.cx, executor, created)? {
             state.world = failure_world;
-            state.return_data = SymReturnData::empty(&mut self.cx);
-            state.stack.push(SymExpr::zero(&mut self.cx))?;
+            self.fail_create_before_frame(executor, state)?;
             return Ok(StepOutcome::Continue);
         }
 
         let calldata = SymBytes::empty(&mut self.cx);
         let calldata = SymCalldata::from_bytes(&mut self.cx, calldata);
-        let mut frame = CallFrame::new(
-            &mut self.cx,
-            created,
-            created,
-            state.address,
-            value.clone(),
-            false,
-            calldata,
-        );
+        let mut frame =
+            CallFrame::new(&mut self.cx, created, created, creator, value.clone(), false, calldata);
         frame.address_word = created_word.clone();
-        frame.caller_word = state.address_word.clone();
+        frame.caller_word = creator_word;
+        frame.is_constructor = true;
+        // Isolation runs a CREATE, but not a CREATE2, as its own transaction.
+        let isolated =
+            matches!(kind, CreateKind::Create) && state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
-        let pending_expected_creates = std::mem::take(&mut child.expected_creates);
+        child.prank.inherited = inherited_prank;
         child.world = failure_world.clone();
+        if isolated {
+            child.world.clear_transient_storage();
+            child.call_depth_base = child.call_depth;
+        }
+        if let Some((origin, origin_word)) = pranked_origin {
+            child.origin = origin;
+            child.origin_word = origin_word;
+        }
         child.world.mark_current_transaction_created(created);
+        child.persistent_writes.push(PersistentWrite::Created(created));
         child.world.set_nonce(created, 1);
-        child.world.transfer(&mut self.cx, executor, state.address, created, value);
+        child.world.transfer(&mut self.cx, executor, creator, created, value, false)?;
 
         let outcomes = self.execute_external_call(executor, child, &initcode, completed_paths)?;
         if outcomes.is_empty() {
@@ -124,11 +157,14 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for mut outcome in outcomes {
+            // Forge records a CREATE as the reverter only when it reverts, not when it halts, such
+            // as on the runtime code checks below.
+            let failed_callee = matches!(outcome.status, CallStatus::Revert).then_some(created);
             let runtime = &outcome.state.frame.return_data;
-            let spec_id: SpecId = executor.spec_id().into();
+            let spec_id = executor.spec_id;
             let mut rejected_runtime = false;
             if matches!(outcome.status, CallStatus::Success) {
-                if runtime_exceeds_code_size_limit(&executor.evm_env().cfg_env, spec_id, runtime) {
+                if runtime_exceeds_code_size_limit(executor.max_code_size, spec_id, runtime) {
                     outcome.status = CallStatus::Revert;
                     outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
                 } else if runtime_has_rejected_prefix(&mut self.cx, spec_id, runtime)? {
@@ -136,8 +172,22 @@ impl SymbolicExecutor {
                     rejected_runtime = true;
                 }
             }
-            match self.join_call_outcome(state, outcome, created)? {
-                JoinedCallOutcome::Rejected => {}
+            if !matches!(outcome.status, CallStatus::Success)
+                && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
+            {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectRevert reverter count on CREATE",
+                ));
+            }
+            // Like Forge's `create_end`, a CREATE leaves `vm.assumeNoRevert` for the next call.
+            match self.join_call_outcome(
+                executor,
+                state,
+                &failure_world,
+                outcome,
+                failed_callee,
+                None,
+            )? {
                 JoinedCallOutcome::Failure(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     *state = parent;
@@ -145,34 +195,40 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::ExceptionalHalt(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.world = failure_world.clone();
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::ExpectedRevert { mut parent, .. } => {
+                JoinedCallOutcome::ExpectedRevert(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.expected_creates = pending_expected_creates.clone();
-                    parent.world = failure_world.clone();
-                    parent.stack.push(created_word.clone())?;
+                    let address = address_word(DUMMY_CREATE_ADDRESS);
+                    parent.stack.push(SymExpr::constant(&mut self.cx, address))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child } => {
+                JoinedCallOutcome::Success { mut parent, child, unmet_expected_revert } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     let runtime = &child.frame.return_data;
                     parent.world = child.world;
-                    parent.expected_emit = child.expected_emit;
-                    parent.expected_creates = pending_expected_creates.clone();
-                    self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
+                    if isolated {
+                        parent.world.restore_transient_storage(&failure_world);
+                    }
+                    // Under an unmet `vm.expectRevert`, the caller sees a failed CREATE, but the
+                    // code stays deployed and `expectCreate` does not count it.
+                    if unmet_expected_revert.is_none() {
+                        self.observe_expected_create(&mut parent, creator, kind, runtime)?;
+                    }
                     if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
-                        parent.world.set_nonce(created, 1);
                     }
-                    parent.stack.push(created_word.clone())?;
+                    if let Some(reason) = unmet_expected_revert {
+                        parent.return_data = error_string_return_data(&mut self.cx, reason);
+                        parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                    } else {
+                        parent.stack.push(created_word.clone())?;
+                    }
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.world = failure_world.clone();
                     if !rejected_runtime {
                         parent.return_data = child.frame.return_data;
                     }
@@ -185,34 +241,64 @@ impl SymbolicExecutor {
         Ok(self.resume_parent_paths(state, worklist, parents))
     }
 
-    pub(super) fn execute_external_call<FEN: FoundryEvmNetwork>(
+    pub(super) fn execute_external_call(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         initial: PathState,
         code: &SymCode,
         completed_paths: &mut usize,
     ) -> Result<Vec<CallOutcome>, SymbolicError> {
-        let mut worklist = VecDeque::from([initial]);
-        let mut deferred_worklist = VecDeque::new();
-        self.execute_call_path_batch(
-            executor,
-            code,
-            &mut worklist,
-            &mut deferred_worklist,
-            completed_paths,
-            CallPathKind::External,
-        )
+        // Each nested frame recurses on the native stack, so grow it on demand.
+        stacker::maybe_grow(CALL_FRAME_STACK_RED_ZONE, CALL_FRAME_STACK_GROWTH, || {
+            let mut worklist = VecDeque::from([initial]);
+            let mut deferred_worklist = VecDeque::new();
+            self.execute_call_path_batch(
+                executor,
+                code,
+                &mut worklist,
+                &mut deferred_worklist,
+                completed_paths,
+                CallPathKind::External,
+            )
+        })
+    }
+
+    /// Fails a CREATE before its frame runs, such as on an insufficient balance or an address
+    /// collision. Like Forge's `create_end`, a pending `vm.expectRevert` is consumed with a depth
+    /// error, because nothing ran below the cheatcode. Reports `Unsupported` where Forge would
+    /// instead match the failure like a revert.
+    pub(super) fn fail_create_before_frame(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+    ) -> Result<(), SymbolicError> {
+        state.return_data = match state.expected_revert.take() {
+            None => SymReturnData::empty(&mut self.cx),
+            // Here Forge's depth check is skipped or already passed, so it matches the failure
+            // like a revert.
+            Some(expected) if executor.internal_expect_revert || expected.matched_any() => {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectRevert on CREATE that fails before running",
+                ));
+            }
+            Some(_) => error_string_return_data(
+                &mut self.cx,
+                "call didn't revert at a lower depth than cheatcode call depth",
+            ),
+        };
+        state.stack.push(SymExpr::zero(&mut self.cx))?;
+        Ok(())
     }
 }
 
 fn runtime_exceeds_code_size_limit(
-    cfg: &impl Cfg,
+    max_code_size: usize,
     spec_id: SpecId,
     runtime: &SymReturnData,
 ) -> bool {
     spec_id >= SpecId::SPURIOUS_DRAGON
-        && !runtime.has_symbolic_len()
-        && runtime.len() > cfg.max_code_size()
+        && runtime.len_word.as_const().is_some()
+        && runtime.len() > max_code_size
 }
 
 fn runtime_has_rejected_prefix(
@@ -228,20 +314,4 @@ fn runtime_has_rejected_prefix(
         return Err(SymbolicError::Unsupported("CREATE with symbolic runtime prefix not modeled"));
     };
     Ok(first_byte == U256::from(0xef))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use foundry_evm::revm::context::CfgEnv;
-
-    #[test]
-    fn runtime_code_limit_uses_fork_default_without_override() {
-        let mut cx = SymCx::default();
-        let runtime = SymReturnData::from_concrete_bytes(&mut cx, vec![0; 24_577]);
-        let cfg = CfgEnv::<SpecId>::default();
-
-        assert!(runtime_exceeds_code_size_limit(&cfg, SpecId::SHANGHAI, &runtime));
-        assert!(!runtime_exceeds_code_size_limit(&cfg, SpecId::HOMESTEAD, &runtime));
-    }
 }

@@ -2,7 +2,7 @@ use super::install::DependencyInstallOpts;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::Git;
-use foundry_common::fs;
+use foundry_common::{fs, fs::canonicalize_path};
 use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkVariant;
@@ -90,7 +90,7 @@ impl InitArgs {
         if !root.exists() {
             fs::create_dir_all(&root)?;
         }
-        let root = dunce::canonicalize(root)?;
+        let root = canonicalize_path(root)?;
         let git = Git::new(&root).shallow(shallow);
 
         // if a template is provided, then this command initializes a git repo,

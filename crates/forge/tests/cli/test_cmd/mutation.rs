@@ -1,14 +1,133 @@
 // CLI integration tests for mutation testing
 
+use alloy_primitives::{U256, address};
+use anvil::{NodeConfig, spawn};
 use foundry_compilers::artifacts::Remapping;
-use foundry_test_utils::{str, util::OutputExt};
+use foundry_test_utils::{rpc::spawn_rpc_proxy_recording_method, str, util::OutputExt};
 use std::{fs, str::FromStr};
+
+#[cfg(unix)]
+use std::path::Path;
 
 fn mutation_summary(stdout: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
 }
 
-forgetest_init!(can_run_mutation_testing, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_body_survivors_do_not_skip_other_mutants(prj: _, cmd: _) {
+    prj.add_source(
+        "Body.sol",
+        r#"pragma solidity ^0.8.13;
+contract Body {
+    uint public number;
+    function check(bool value) public returns (bool) { number = 7; return value; }
+}"#,
+    );
+    prj.add_test(
+        "Body.t.sol",
+        r#"pragma solidity ^0.8.13;
+import "../src/Body.sol";
+contract BodyTest {
+    function testCheck() public { assert(new Body().check(true)); }
+}"#,
+    );
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[mutation]
+exclude_operators = ["assembly", "binary-op", "delete-expression", "elim-delegate", "require", "unary-op"]
+"#,
+    )
+    .unwrap();
+    // A fixed seed keeps the execution cache key, and so the persisted spans, stable across runs.
+    let args = [
+        "test",
+        "--mutate",
+        "src/Body.sol",
+        "--mutate-contract",
+        "^Body$",
+        "--mutation-jobs",
+        "1",
+        "--fuzz-seed",
+        "1",
+        "--json",
+    ];
+    let expected = str![[r#"
+{"summary":{"total":3,"killed":1,"survived":2,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":33.33333333333333,"duration_secs":"{...}"},"survived_mutants":{"src/Body.sol":[{"line":5,"column":54,"original":"{ number = 7; return value; }","mutant":"{ return true; }"},{"line":5,"column":56,"original":"number = 7","mutant":"0"}]}}
+"#]];
+    cmd.args(args).assert_json_stdout(expected.clone());
+
+    // Resume from the persisted survived spans without a complete results cache.
+    for entry in fs::read_dir(prj.root().join("cache/mutation")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "results") {
+            fs::remove_file(path).unwrap();
+        }
+    }
+    cmd.forge_fuse().args(args).assert_json_stdout(expected);
+}
+
+#[forgetest_init]
+async fn mutation_fork_backend_is_shared_by_baseline_and_workers(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    api.anvil_set_balance(address!("0000000000000000000000000000000000001234"), U256::from(42))
+        .await
+        .unwrap();
+    api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+    let (endpoint, blocks) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getBlockByNumber").await;
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.13;
+contract Counter {
+    uint256 public number;
+    function increment() public { number++; }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+import "../src/Counter.sol";
+contract CounterTest {
+    function testIncrement() public {
+        require(address(0x1234).balance == 42, "wrong remote state");
+        Counter counter = new Counter();
+        counter.increment();
+        assert(counter.number() == 1);
+    }
+}
+"#,
+    );
+    cmd.args([
+        "test",
+        "--fork-url",
+        &endpoint,
+        "--mutate",
+        "src/Counter.sol",
+        "--mutation-jobs",
+        "4",
+        "--threads",
+        "1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Running mutation tests with 4 parallel workers...
+...
+4 mutants killed
+...
+"#]]);
+    assert_eq!(
+        blocks.lock().unwrap().len(),
+        1,
+        "baseline and mutants must use one prepared backend"
+    );
+}
+
+#[forgetest_init]
+fn can_run_mutation_testing(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -70,9 +189,9 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 1         ┆ 20.0%      │
+│ Survived ┆ 1         ┆ 14.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 4         ┆ 80.0%      │
+│ Killed   ┆ 6         ┆ 85.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -86,7 +205,7 @@ Legend:
   Skipped - redundant mutation on the same expression
   Timed out - compile/test exceeded the configured timeout
 
-Mutation Score: 80.0% (4/5 mutants killed); [ELAPSED]
+Mutation Score: 85.7% (6/7 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 Survived mutants
@@ -99,7 +218,7 @@ Survived mutants
        + ++number
 ...
 ────────────────────────────────────────────────────────────
-4 mutants killed
+6 mutants killed
 
 ════════════════════════════════════════════════════════════
 
@@ -107,12 +226,13 @@ Survived mutants
 
     // Run mutation testing with --json - verify the output contains valid mutation JSON
     cmd.forge_fuse().args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"]).assert_success().stdout_eq(str![[r#"
-{"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
+{"summary":{"total":7,"killed":6,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":85.71428571428571,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
 
 "#]]);
-});
+}
 
-forgetest_init!(mutation_testing_retains_gas_distinct_bounds, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_retains_gas_distinct_bounds(prj: _, cmd: _) {
     prj.add_source(
         "Boundary.sol",
         r#"
@@ -156,6 +276,7 @@ exclude_operators = [
     "assignment",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -169,9 +290,10 @@ exclude_operators = [
 {"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Boundary.sol":[{"line":7,"column":16,"original":"value == 0","mutant":"value <= 0"}]}}
 
 "#]]);
-});
+}
 
-forgetest_init!(mutation_testing_retains_storage_push_lvalue_mutants, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_retains_storage_push_lvalue_mutants(prj: _, cmd: _) {
     prj.add_source(
         "StoragePush.sol",
         r#"
@@ -218,6 +340,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
 ]
 "#,
@@ -233,9 +356,10 @@ exclude_operators = [
     assert_eq!(summary["killed"], 5);
     assert_eq!(summary["invalid"], 0);
     assert_eq!(summary["skipped"], 0);
-});
+}
 
-forgetest_init!(mutation_testing_filters_invalid_compound_assignments, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_filters_invalid_compound_assignments(prj: _, cmd: _) {
     prj.add_source(
         "CompoundAssignments.sol",
         r#"
@@ -305,6 +429,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -322,9 +447,10 @@ exclude_operators = [
     assert_eq!(summary["survived"], 0);
     assert_eq!(summary["invalid"], 0);
     assert_eq!(summary["skipped"], 0);
-});
+}
 
-forgetest_init!(mutation_testing_filters_invalid_fixed_bytes_unary_mutants, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_filters_invalid_fixed_bytes_unary_mutants(prj: _, cmd: _) {
     prj.add_source(
         "TypedUnary.sol",
         r#"
@@ -373,6 +499,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
 ]
 "#,
@@ -389,9 +516,10 @@ exclude_operators = [
     assert_eq!(summary["survived"], 0);
     assert_eq!(summary["invalid"], 0);
     assert_eq!(summary["skipped"], 0);
-});
+}
 
-forgetest_init!(mutation_testing_comparison_type_matrix, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_comparison_type_matrix(prj: _, cmd: _) {
     prj.add_source(
         "Comparisons.sol",
         r#"
@@ -455,6 +583,7 @@ exclude_operators = [
     "assignment",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -472,9 +601,10 @@ exclude_operators = [
     assert_eq!(summary["survived"], 0);
     assert_eq!(summary["invalid"], 0);
     assert_eq!(summary["mutation_score"], 100.0);
-});
+}
 
-forgetest!(mutation_testing_rejects_list_mode_before_compile, |prj, cmd| {
+#[forgetest]
+fn mutation_testing_rejects_list_mode_before_compile(prj: _, cmd: _) {
     prj.add_source(
         "Broken.sol",
         r#"
@@ -496,9 +626,10 @@ contract Broken {
 Error: `--mutate` cannot be combined with: --list. Re-run without those flags to use mutation testing.
 
 "#]]);
-});
+}
 
-forgetest_init!(mutation_testing_rejects_all_skipped_baseline, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_rejects_all_skipped_baseline(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -547,9 +678,10 @@ contract CounterTest is Test {
         stderr.contains("Mutation testing requires at least one passing baseline test"),
         "unexpected stderr:\n{stderr}"
     );
-});
+}
 
-forgetest_init!(mutation_testing_validates_mutation_compiler_profile, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_validates_mutation_compiler_profile(prj: _, cmd: _) {
     fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = true\n").unwrap();
 
     prj.add_source(
@@ -618,10 +750,23 @@ contract StackTooDeepTest {
         ),
         "unexpected stderr:\n{stderr}"
     );
-});
+}
 
-forgetest_init!(mutation_testing_uses_mutation_profile_for_initial_compile, |prj, cmd| {
-    fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = false\n").unwrap();
+#[forgetest_init]
+fn mutation_testing_uses_mutation_profile_for_initial_compile(prj: _, cmd: _) {
+    // Only the assertion needs mutating to exercise the compiler profile. Mutating every
+    // arithmetic expression or the whole body of the stack-depth fixture needlessly repeats the
+    // expensive IR build.
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[profile.default]
+via_ir = false
+
+[mutation]
+exclude_operators = ["binary-op", "function-body"]
+"#,
+    )
+    .unwrap();
 
     prj.add_source(
         "StackTooDeep.sol",
@@ -631,6 +776,7 @@ pragma solidity ^0.8.20;
 
 contract StackTooDeep {
     function manyLocals(uint256 x) public pure returns (uint256) {
+        assert(x != 0);
         uint256 a00 = x + 0;
         uint256 a01 = x + 1;
         uint256 a02 = x + 2;
@@ -675,7 +821,11 @@ contract StackTooDeepTest {
 "#,
     );
 
+    // The ordinary profile must still fail, or the mutation profile override is not being tested.
+    cmd.arg("build").assert_failure();
+
     let output = cmd
+        .forge_fuse()
         .args([
             "test",
             "--mutate",
@@ -689,10 +839,13 @@ contract StackTooDeepTest {
         .assert_success();
     let summary = mutation_summary(&output.get_output().stdout_lossy());
 
-    assert!(summary["total"].as_u64().unwrap() > 0, "unexpected summary:\n{summary}");
-});
+    assert_eq!(summary["total"], 3, "unexpected summary:\n{summary}");
+    assert_eq!(summary["killed"], 2, "unexpected summary:\n{summary}");
+    assert_eq!(summary["survived"], 1, "unexpected summary:\n{summary}");
+}
 
-forgetest_init!(mutation_testing_rerun_preserves_exact_failure_filter, |prj, _cmd| {
+#[forgetest_init]
+fn mutation_testing_rerun_preserves_exact_failure_filter(prj: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -776,9 +929,10 @@ contract StrongTest {
             "expected --rerun to match the exact WeakTest baseline for `{key}`: weak={weak_summary}, rerun={rerun_summary}",
         );
     }
-});
+}
 
-forgetest_init!(mutation_testing_rejects_empty_mutate_path_selection, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_rejects_empty_mutate_path_selection(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -821,9 +975,10 @@ contract CounterTest {
         stderr.contains("no source matched --mutate-path pattern"),
         "unexpected stderr:\n{stderr}"
     );
-});
+}
 
-forgetest_init!(mutation_testing_rejects_empty_mutate_contract_selection, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_rejects_empty_mutate_contract_selection(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -865,9 +1020,10 @@ contract CounterTest {
         stderr.contains("no source matched --mutate-contract pattern"),
         "unexpected stderr:\n{stderr}"
     );
-});
+}
 
-forgetest_init!(mutation_testing_with_parallel_workers, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_with_parallel_workers(prj: _, cmd: _) {
     prj.add_source(
         "Simple.sol",
         r#"
@@ -917,21 +1073,22 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 20.0%      │
+│ Survived ┆ 2         ┆ 16.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 80.0%      │
+│ Killed   ┆ 10        ┆ 83.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
+Mutation Score: 83.3% (10/12 mutants killed); [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest_init!(mutation_testing_with_show_progress, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_with_show_progress(prj: _, cmd: _) {
     prj.add_source(
         "Simple.sol",
         r#"
@@ -979,9 +1136,9 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 20.0%      │
+│ Survived ┆ 2         ┆ 16.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 80.0%      │
+│ Killed   ┆ 10        ┆ 83.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -995,7 +1152,7 @@ Legend:
   Skipped - redundant mutation on the same expression
   Timed out - compile/test exceeded the configured timeout
 
-Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
+Mutation Score: 83.3% (10/12 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 Survived mutants
@@ -1011,14 +1168,15 @@ Survived mutants
        - a + b
 ...
 ────────────────────────────────────────────────────────────
-8 mutants killed
+10 mutants killed
 
 ════════════════════════════════════════════════════════════
 
 "#]]);
-});
+}
 
-forgetest_init!(mutation_result_cache_invalidates_when_tests_change, |prj, _cmd| {
+#[forgetest_init]
+fn mutation_result_cache_invalidates_when_tests_change(prj: _) {
     prj.add_source(
         "Calculator.sol",
         r#"
@@ -1098,9 +1256,10 @@ contract CalculatorTest {
         strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
         "expected changed tests to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
     );
-});
+}
 
-forgetest_init!(mutation_result_cache_invalidates_when_match_test_changes, |prj, _cmd| {
+#[forgetest_init]
+fn mutation_result_cache_invalidates_when_match_test_changes(prj: _) {
     prj.add_source(
         "Calculator.sol",
         r#"
@@ -1180,9 +1339,10 @@ contract CalculatorTest {
         strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
         "expected --match-test to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
     );
-});
+}
 
-forgetest_init!(mutation_result_cache_invalidates_when_match_path_changes, |prj, _cmd| {
+#[forgetest_init]
+fn mutation_result_cache_invalidates_when_match_path_changes(prj: _) {
     prj.add_source(
         "Calculator.sol",
         r#"
@@ -1280,9 +1440,10 @@ contract StrongTest {
         strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
         "expected --match-path to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
     );
-});
+}
 
-forgetest_init!(mutation_honors_match_path_at_compile_time, |prj, cmd| {
+#[forgetest_init]
+fn mutation_honors_match_path_at_compile_time(prj: _, cmd: _) {
     prj.add_source(
         "Foo.sol",
         r#"
@@ -1365,10 +1526,11 @@ contract FooBrokenTest {
         killed + survived >= 1,
         "expected at least one Killed/Survived mutant from arithmetic ops; summary={summary}"
     );
-});
+}
 
 #[cfg(unix)]
-forgetest_init!(mutation_uses_canonical_temp_root_for_filtered_sources, |prj, cmd| {
+#[forgetest_init]
+fn mutation_uses_canonical_temp_root_for_filtered_sources(prj: _, cmd: _) {
     let temp_parent = tempfile::tempdir().unwrap();
     let real_temp = temp_parent.path().join("real");
     let aliased_temp = temp_parent.path().join("alias");
@@ -1485,9 +1647,10 @@ contract SelectedTest {
             .starts_with("forge_mutation_")),
         "mutation workspaces should be removed after the run"
     );
-});
+}
 
-forgetest_init!(mutation_compiles_dynamic_linking_artifacts_for_selected_tests, |prj, cmd| {
+#[forgetest_init]
+fn mutation_compiles_dynamic_linking_artifacts_for_selected_tests(prj: _, cmd: _) {
     prj.add_source(
         "Target.sol",
         r#"
@@ -1583,9 +1746,10 @@ contract SelectedLinkedTest is BaseLinkedTest {
         killed + survived >= 1,
         "expected at least one Killed/Survived mutant from arithmetic ops; summary={summary}"
     );
-});
+}
 
-forgetest_init!(mutation_workspace_copies_include_paths, |prj, cmd| {
+#[forgetest_init]
+fn mutation_workspace_copies_include_paths(prj: _, cmd: _) {
     let include_dir = prj.root().join("include");
     fs::create_dir_all(&include_dir).unwrap();
     fs::write(
@@ -1654,9 +1818,10 @@ contract UsesSharedTest {
         invalid < total,
         "include_paths imports should compile inside mutant workspaces: summary={summary}"
     );
-});
+}
 
-forgetest_init!(mutation_workspace_preserves_external_read_only_remappings, |prj, cmd| {
+#[forgetest_init]
+fn mutation_workspace_preserves_external_read_only_remappings(prj: _, cmd: _) {
     let shared_dir = prj.root().parent().unwrap().join("shared-solidity");
     fs::create_dir_all(&shared_dir).unwrap();
     fs::write(
@@ -1727,10 +1892,16 @@ contract UsesSharedTest {
         invalid < total,
         "external read-only remapping should compile inside mutant workspaces: summary={summary}"
     );
-});
+}
 
 // Test require/assert mutation for security-critical patterns
-forgetest_init!(mutation_testing_require_mutator, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_require_mutator(prj: _, cmd: _) {
+    fs::write(
+        prj.root().join("foundry.toml"),
+        "[mutation]\nexclude_operators = [\"function-body\"]\n",
+    )
+    .unwrap();
     // A contract with security-critical require checks (access control, input validation)
     prj.add_source(
         "Vault.sol",
@@ -1883,9 +2054,8 @@ contract VaultTest is Test {
     );
 
     // The gas-distinct msg.value > 0 -> msg.value != 0 mutant remains.
-    let mut cmd2 = prj.forge_command();
-    cmd2.args(["test", "--mutate", "src/Vault.sol", "--mutation-jobs", "2"]);
-    cmd2.assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mutate", "src/Vault.sol", "--mutation-jobs", "2"]);
+    cmd.assert_success().stdout_eq(str![[r#"
 ...
 Running mutation tests with 2 parallel workers...
 ...
@@ -1898,19 +2068,20 @@ MUTATION TESTING RESULTS
 ╞══════════╪═══════════╪════════════╡
 │ Survived ┆ 3         ┆ 5.7%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 48        ┆ 90.6%      │
+│ Killed   ┆ 50        ┆ 94.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Skipped  ┆ 2         ┆ 3.8%       │
+│ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 94.1% (48/51 mutants killed); [ELAPSED]
+Mutation Score: 94.3% (50/53 mutants killed); [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest_init!(mutation_testing_assembly_code, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_assembly_code(prj: _, cmd: _) {
     prj.add_source(
         "AsmMath.sol",
         r#"
@@ -1966,4 +2137,393 @@ MUTATION TESTING RESULTS
 ════════════════════════════════════════════════════════════
 ...
 "#]]);
-});
+}
+
+// Mutants on nested and shared spans must give the same results for every worker count and
+// schedule.
+#[forgetest_init]
+fn mutation_testing_results_do_not_depend_on_worker_count(prj: _, cmd: _) {
+    prj.add_source(
+        "Nested.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Nested {
+    function mix(uint256 a, uint256 b) public pure returns (uint256) {
+        return (a + b) * (a > b ? a - b : b - a) + (a * 3) / (b + 1);
+    }
+
+    function clamp(uint256 x, uint256 lo, uint256 hi) public pure returns (uint256) {
+        if (x < lo) return lo + (hi - lo) * 0;
+        if (x > hi) return hi - (hi - lo) * 0;
+        return x;
+    }
+
+    function score(uint256 x) public pure returns (uint256) {
+        return (x % 7 == 0 ? x / 7 : x * 2) + (x > 100 ? 1 : 0);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Nested.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Nested.sol";
+
+contract NestedTest {
+    Nested private nested = new Nested();
+
+    function testWeak() public view {
+        assert(nested.clamp(5, 1, 10) == 5);
+        assert(nested.mix(2, 2) > 0);
+    }
+}
+"#,
+    );
+
+    let mut run = |jobs: &str| {
+        let _ = fs::remove_dir_all(prj.root().join("cache"));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--mutate", "src/Nested.sol", "--mutation-jobs", jobs, "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let mut result = serde_json::from_str::<serde_json::Value>(output.trim()).unwrap();
+        result["summary"].as_object_mut().unwrap().remove("duration_secs");
+        result
+    };
+    let serial = run("1");
+    assert!(serial["summary"]["survived"].as_u64().unwrap() > 0, "{serial}");
+    assert_eq!(run("4"), serial);
+    assert_eq!(run("8"), serial);
+}
+
+// Mutant paths must be relative to the project root, also if a parent directory of the project
+// has a well-known name such as `src`.
+#[forgetest]
+fn mutation_paths_are_relative_to_project_root(prj: _, cmd: _) {
+    let root = prj.root().join("src/project");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("test")).unwrap();
+    fs::write(root.join("foundry.toml"), "[profile.default]\n").unwrap();
+    fs::write(
+        root.join("src/Counter.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("test/Counter.t.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract CounterTest {
+    function test_Increment() public {
+        Counter counter = new Counter();
+        counter.increment();
+        assert(counter.number() == 1);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.current_dir(&root)
+        .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":9,"column":9,"original":"number++","mutant":"++number"}]}}
+
+"#]]);
+}
+
+// `copy_project` links `lib` into each mutant workspace. A mutant of a dependency source must be
+// written into the workspace, not through the link into the real dependency.
+#[forgetest_init]
+fn mutation_keeps_linked_dependency_sources_unchanged(prj: _, cmd: _) {
+    let source = r#"pragma solidity ^0.8.13;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+}
+"#;
+    let dependency = prj.root().join("lib/bucket/Arithmetic.sol");
+    fs::create_dir_all(dependency.parent().unwrap()).unwrap();
+    fs::write(&dependency, source).unwrap();
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("bucket/=lib/bucket/").unwrap().into()];
+    });
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import {Arithmetic} from "bucket/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        assert(arithmetic.bucket(1) == 1);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--mutation-jobs", "4", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let summary = mutation_summary(&output);
+    assert_eq!(summary["invalid"], 0, "{summary}");
+    assert!(summary["survived"].as_u64().unwrap() > 0, "{summary}");
+    assert_eq!(fs::read_to_string(&dependency).unwrap(), source);
+}
+
+// Direct imports and aliases at any depth must see the same mutant. Unused dangling links must
+// not make mutants invalid.
+#[cfg(unix)]
+#[forgetest_init]
+fn mutation_keeps_links_in_dependency_sources(prj: _, cmd: _) {
+    let dependency = prj.root().join("lib/bucket");
+    fs::create_dir_all(&dependency).unwrap();
+    fs::write(
+        dependency.join("Arithmetic.sol"),
+        r#"pragma solidity ^0.8.13;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (bool) {
+        return value < 10;
+    }
+}
+"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("Arithmetic.sol", dependency.join("Alias.sol")).unwrap();
+    fs::create_dir(dependency.join("nested")).unwrap();
+    std::os::unix::fs::symlink("../Arithmetic.sol", dependency.join("nested/Alias.sol")).unwrap();
+    std::os::unix::fs::symlink("nonexistent", dependency.join("unused")).unwrap();
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("bucket/=lib/bucket/").unwrap().into()];
+    });
+    for import in ["Arithmetic.sol", "Alias.sol", "nested/Alias.sol"] {
+        prj.add_test(
+            "Arithmetic.t.sol",
+            &r#"
+pragma solidity ^0.8.13;
+
+import {Arithmetic} from "bucket/IMPORT";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testBoundary() public view {
+        assert(arithmetic.bucket(9));
+        assert(!arithmetic.bucket(10));
+        assert(!arithmetic.bucket(11));
+    }
+}
+"#
+            .replace("IMPORT", import),
+        );
+
+        cmd.forge_fuse()
+            .args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--json"])
+            .assert_json_stdout(str![[r#"
+{
+  "summary": {
+    "total": 7,
+    "killed": 7,
+    "survived": 0,
+    "invalid": 0,
+    "skipped": 0,
+    "timed_out": 0,
+    "mutation_score": 100.0,
+    "duration_secs": "{...}"
+  },
+  "survived_mutants": {}
+}
+"#]]);
+    }
+}
+
+// Relative links outside the project must still resolve after isolating a dependency.
+#[cfg(unix)]
+#[forgetest_init]
+fn mutation_keeps_external_relative_dependency_links(prj: _, cmd: _) {
+    let shared = tempfile::tempdir_in(prj.root().parent().unwrap()).unwrap();
+    let mutation_tmp = shared.path().join("mutants");
+    fs::create_dir(&mutation_tmp).unwrap();
+    cmd.env("TMPDIR", &mutation_tmp);
+    fs::write(
+        shared.path().join("Helper.sol"),
+        "pragma solidity ^0.8.13; uint256 constant LIMIT = 10;",
+    )
+    .unwrap();
+    let dependency = prj.root().join("lib/bucket");
+    fs::create_dir_all(&dependency).unwrap();
+    let source = r#"pragma solidity ^0.8.13;
+import {LIMIT} from "./Helper.sol";
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (bool) {
+        return value < LIMIT;
+    }
+}
+"#;
+    fs::write(dependency.join("Arithmetic.sol"), source).unwrap();
+    let helper = Path::new("../../../").join(shared.path().file_name().unwrap()).join("Helper.sol");
+    std::os::unix::fs::symlink(&helper, dependency.join("Helper.sol")).unwrap();
+    prj.update_config(|config| {
+        config.allow_paths = vec![shared.path().to_path_buf()];
+    });
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+import {Arithmetic} from "../lib/bucket/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testBoundary() public view {
+        assert(arithmetic.bucket(9));
+        assert(!arithmetic.bucket(10));
+        assert(!arithmetic.bucket(11));
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--json"]).assert_json_stdout(str![
+        [r#"
+{
+  "summary": {
+    "total": 7,
+    "killed": 7,
+    "survived": 0,
+    "invalid": 0,
+    "skipped": 0,
+    "timed_out": 0,
+    "mutation_score": 100.0,
+    "duration_secs": "{...}"
+  },
+  "survived_mutants": {}
+}
+"#]
+    ]);
+    assert_eq!(fs::read_link(dependency.join("Helper.sol")).unwrap(), helper);
+    assert_eq!(fs::read_to_string(dependency.join("Arithmetic.sol")).unwrap(), source);
+}
+
+// A per-mutant timeout must not turn a run-limited invariant campaign into a time-based one.
+#[forgetest]
+fn mutation_timeout_keeps_invariant_run_limit(prj: _, cmd: _) {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number = number + 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract Handler {
+    Counter public counter;
+    uint256 public calls;
+
+    constructor(Counter counter_) {
+        counter = counter_;
+    }
+
+    function increment() public {
+        counter.increment();
+        calls++;
+    }
+}
+
+contract CounterInvariantTest {
+    Counter counter;
+    Handler handler;
+
+    function setUp() public {
+        counter = new Counter();
+        handler = new Handler(counter);
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(handler);
+    }
+
+    /// forge-config: default.invariant.runs = 4
+    /// forge-config: default.invariant.depth = 4
+    /// forge-config: default.invariant.shrink_run_limit = 0
+    function invariant_countsCalls() public view {
+        require(counter.number() == handler.calls(), "count mismatch");
+    }
+}
+"#,
+    );
+
+    let mut run = |args: &[&str]| {
+        let _ = fs::remove_dir_all(prj.root().join("cache"));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "4", "--json"])
+            .args(args)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let mut summary = mutation_summary(&output);
+        summary.as_object_mut().unwrap().remove("duration_secs");
+        summary
+    };
+    let unbounded = run(&[]);
+    assert_eq!(
+        unbounded,
+        serde_json::json!({
+            "total": 11,
+            "killed": 10,
+            "survived": 1,
+            "invalid": 0,
+            "skipped": 0,
+            "timed_out": 0,
+            "mutation_score": 90.9090909090909,
+        })
+    );
+    assert_eq!(run(&["--mutation-timeout", "5"]), unbounded);
+}

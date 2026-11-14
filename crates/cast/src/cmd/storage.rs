@@ -18,7 +18,7 @@ use foundry_cli::{
 use foundry_common::{
     abi::find_source,
     compile::{ProjectCompiler, add_storage_layout_output, etherscan_project},
-    shell,
+    has_metadata_hash, shell,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput,
@@ -32,7 +32,7 @@ use foundry_config::{
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{collections::BTreeSet, str::FromStr};
 
 /// The minimum Solc version for outputting storage layouts.
 ///
@@ -104,7 +104,7 @@ impl StorageArgs {
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = base_slot {
-            let slot = U256::from_be_bytes(slot.0).saturating_add(offset);
+            let slot = Into::<U256>::into(slot).saturating_add(offset);
             sh_println!(
                 "{}",
                 B256::from(
@@ -124,11 +124,25 @@ impl StorageArgs {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }
 
-        // Check if we're in a forge project and if we can find the address' code
+        // The layout comes from `--proxy` when provided, the values always from `address`.
+        let source_address = match self.proxy {
+            Some(proxy) => proxy.resolve(&provider).await?,
+            None => address,
+        };
+        let source_code = if source_address == address {
+            address_code
+        } else {
+            provider.get_code_at(source_address).block_id(block.unwrap_or_default()).await?
+        };
+        if source_code.is_empty() {
+            eyre::bail!("Provided proxy address has no deployed code and thus no storage layout");
+        }
+
+        // Check if we're in a forge project and if we can find the source's code.
         let project = build.project()?;
         if project.paths.has_input_files()
             && let Some(artifact) =
-                compile_local_storage_layout(&project, &address_code, shell::is_json())?
+                compile_local_storage_layout(&project, &source_code, shell::is_json())?
         {
             return fetch_and_print_storage(provider, address, block, &artifact).await;
         }
@@ -144,10 +158,6 @@ impl StorageArgs {
                 })?;
                 foundry_block_explorers::Client::new(chain, api_key)?
             }
-        };
-        let source_address = match self.proxy {
-            Some(proxy) => proxy.resolve(&provider).await?,
-            None => address,
         };
         let source = find_source(client, source_address).await?;
         let metadata = source.items.first().unwrap();
@@ -233,9 +243,7 @@ fn compile_local_storage_layout(
         || !project.paths.artifacts.is_dir();
     if !full_compile {
         let output = ProjectCompiler::new().quiet(false).compile(project)?;
-        let Some((target, artifact)) =
-            output.into_artifacts().find(|(_, artifact)| has_deployed_code(artifact, address_code))
-        else {
+        let Some((target, artifact)) = find_unique_artifact(project, output, address_code)? else {
             return Ok(None);
         };
         if artifact.storage_layout.is_some() {
@@ -249,13 +257,36 @@ fn compile_local_storage_layout(
     }
 
     let output = compile_full_storage_layout(project, json)?;
-    Ok(output
-        .into_artifacts()
-        .find_map(|(_, artifact)| has_deployed_code(&artifact, address_code).then_some(artifact)))
+    Ok(find_unique_artifact(project, output, address_code)?.map(|(_, artifact)| artifact))
 }
 
+/// Returns whether `code` is the artifact's deployed bytecode.
+///
+/// Immutables are zero in the artifact and only filled in at deployment, so their values are
+/// ignored, but only when the artifact ends in a metadata hash. The hash commits to the sources,
+/// so the rest of the code still has to come from the same contract.
 fn has_deployed_code(artifact: &ConfigurableContractArtifact, code: &Bytes) -> bool {
-    artifact.get_deployed_bytecode_bytes().as_deref() == Some(code)
+    let Some(deployed_code) = artifact.get_deployed_bytecode_bytes() else { return false };
+    if deployed_code[..] == code[..] {
+        return true;
+    }
+    if deployed_code.len() != code.len() || !has_metadata_hash(&deployed_code) {
+        return false;
+    }
+
+    let mut code = code.to_vec();
+    let immutables =
+        artifact.deployed_bytecode.iter().flat_map(|b| b.immutable_references.values());
+    for offsets in immutables.flatten() {
+        let range = offsets.start as usize..offsets.start as usize + offsets.length as usize;
+        let (Some(value), Some(placeholder)) =
+            (code.get_mut(range.clone()), deployed_code.get(range))
+        else {
+            return false;
+        };
+        value.copy_from_slice(placeholder);
+    }
+    deployed_code[..] == code[..]
 }
 
 fn find_target_artifact(
@@ -269,6 +300,30 @@ fn find_target_artifact(
             && has_deployed_code(&artifact, address_code))
         .then_some(artifact)
     })
+}
+
+/// Returns the artifact whose deployed bytecode is `code`.
+///
+/// Fails if the code matches more than one contract, since each can have a different storage
+/// layout.
+fn find_unique_artifact(
+    project: &Project,
+    output: ProjectCompileOutput,
+    code: &Bytes,
+) -> Result<Option<(ArtifactId, ConfigurableContractArtifact)>> {
+    let mut found = None;
+    let mut contracts = BTreeSet::new();
+    for (id, artifact) in output.into_artifacts() {
+        if has_deployed_code(&artifact, code) {
+            contracts.insert(id.clone().with_stripped_file_prefixes(project.root()).identifier());
+            found.get_or_insert((id, artifact));
+        }
+    }
+    if contracts.len() > 1 {
+        let contracts = contracts.into_iter().collect::<Vec<_>>().join(", ");
+        eyre::bail!("Deployed code matches multiple local contracts: {contracts}");
+    }
+    Ok(found)
 }
 
 fn compile_target_storage_layout(
@@ -372,7 +427,7 @@ async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
             &slot.slot,
             &slot.offset.to_string(),
             storage_type.map_or("?", |t| &t.number_of_bytes),
-            &U256::from_be_bytes(value.0).to_string(),
+            &Into::<U256>::into(value).to_string(),
             &value.to_string(),
             &slot.contract,
         ]);
@@ -384,19 +439,13 @@ async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::PathStyle;
+    use foundry_compilers::{PathStyle, artifacts::BytecodeHash};
     use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
     use foundry_test_utils::{
         TestProject,
         util::{OTHER_SOLC_VERSION, SOLC_VERSION},
     };
     use std::path::Path;
-
-    fn test_project(name: &str) -> TestProject {
-        let project = TestProject::new(name, PathStyle::Dapptools);
-        foundry_test_utils::util::initialize(project.root());
-        project
-    }
 
     fn load_project(project: &TestProject) -> Project {
         load_project_with_config(project, Config::with_root(project.root()))
@@ -418,7 +467,7 @@ mod tests {
 
     #[test]
     fn local_storage_layout_targets_exact_artifact_and_imports() {
-        let prj = test_project("cast-storage-target");
+        let prj = TestProject::new("cast-storage-target", PathStyle::Dapptools);
         let base_path = prj.add_source("Base", "contract Base { uint256 baseValue; }");
         let unrelated_path = prj.add_source("Target", "contract Target { uint256 unrelated; }");
         let target_path = prj.add_source(
@@ -463,7 +512,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_rechecks_bytecode_after_source_change() {
-        let prj = test_project("cast-storage-source-change");
+        let prj = TestProject::new("cast-storage-source-change", PathStyle::Dapptools);
         let target_path = prj.add_source("Target", "contract Target { uint256 originalValue; }");
         let project = load_project(&prj);
         let (target, address_code) = compile_target(&project, &target_path, "Target");
@@ -483,7 +532,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_preserves_compiler_profile() {
-        let prj = test_project("cast-storage-profile");
+        let prj = TestProject::new("cast-storage-profile", PathStyle::Dapptools);
         let target_path = prj.add_source("Profiled", "contract Profiled { uint256 value; }");
         let mut config = Config::with_root(prj.root());
         config.additional_compiler_profiles = vec![SettingsOverrides {
@@ -524,7 +573,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_preserves_compiler_version_in_multi_version_project() {
-        let prj = test_project("cast-storage-multi-version");
+        let prj = TestProject::new("cast-storage-multi-version", PathStyle::Dapptools);
         let old_path = prj.add_raw_source(
             "Old",
             &format!(
@@ -553,7 +602,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_preserves_full_json_ast_ids() {
-        let prj = test_project("cast-storage-json-ast-ids");
+        let prj = TestProject::new("cast-storage-json-ast-ids", PathStyle::Dapptools);
         prj.add_source("First", "contract First { uint256 first; }");
         let target_path = prj.add_source("Target", "contract Target { uint256 value; }");
         let project = load_project(&prj);
@@ -573,7 +622,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_uses_full_compile_with_build_info() {
-        let prj = test_project("cast-storage-build-info");
+        let prj = TestProject::new("cast-storage-build-info", PathStyle::Dapptools);
         let target_path = prj.add_source("Target", "contract Target { uint256 value; }");
         let mut config = Config::with_root(prj.root());
         config.build_info = true;
@@ -587,7 +636,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_uses_full_compile_without_cache() {
-        let prj = test_project("cast-storage-no-cache");
+        let prj = TestProject::new("cast-storage-no-cache", PathStyle::Dapptools);
         let target_path = prj.add_source("Target", "contract Target { uint256 value; }");
         let project = load_project(&prj);
         let mut code_project = project.clone();
@@ -598,6 +647,118 @@ contract Target is Base {
         let artifact =
             compile_local_storage_layout(&project, &address_code, true).unwrap().unwrap();
         assert!(artifact.storage_layout.is_some());
+    }
+
+    #[test]
+    fn local_storage_layout_ignores_immutable_values() {
+        let prj = TestProject::new("cast-storage-immutable", PathStyle::Dapptools);
+        let target_path = prj.add_source(
+            "Pinned",
+            r#"
+contract Pinned {
+    address public immutable token;
+    uint256 count;
+
+    constructor(address token_) {
+        token = token_;
+    }
+}
+"#,
+        );
+        let project = load_project(&prj);
+        let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
+        let (_, artifact) = output.artifact_ids().find(|(id, _)| id.source == target_path).unwrap();
+
+        // Deploy-time code with `token` set to `address(1)`.
+        let mut code = artifact.get_deployed_bytecode_bytes().unwrap().to_vec();
+        let immutables = &artifact.deployed_bytecode.as_ref().unwrap().immutable_references;
+        assert!(!immutables.is_empty());
+        for offsets in immutables.values().flatten() {
+            code[(offsets.start + offsets.length - 1) as usize] = 1;
+        }
+        let address_code = Bytes::from(code.clone());
+        assert!(has_deployed_code(artifact, &address_code));
+
+        for json in [false, true] {
+            let artifact =
+                compile_local_storage_layout(&project, &address_code, json).unwrap().unwrap();
+            let labels = artifact
+                .storage_layout
+                .as_ref()
+                .unwrap()
+                .storage
+                .iter()
+                .map(|slot| slot.label.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(labels, ["count"]);
+        }
+
+        code[0] ^= 1;
+        assert!(!has_deployed_code(artifact, &Bytes::from(code)));
+    }
+
+    #[test]
+    fn local_storage_layout_requires_metadata_hash_for_immutables() {
+        let prj = TestProject::new("cast-storage-immutable-no-hash", PathStyle::Dapptools);
+        let target_path = prj.add_source(
+            "Pinned",
+            r#"
+contract Pinned {
+    address public immutable token;
+    uint256 count;
+
+    constructor(address token_) {
+        token = token_;
+    }
+}
+"#,
+        );
+
+        for cbor_metadata in [true, false] {
+            let mut config = Config::with_root(prj.root());
+            config.bytecode_hash = BytecodeHash::None;
+            config.cbor_metadata = cbor_metadata;
+            let project = load_project_with_config(&prj, config);
+            let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
+            let (_, artifact) =
+                output.artifact_ids().find(|(id, _)| id.source == target_path).unwrap();
+            let mut code = artifact.get_deployed_bytecode_bytes().unwrap().to_vec();
+            assert!(has_deployed_code(artifact, &Bytes::from(code.clone())));
+
+            // Without a metadata hash, a different contract could share every other byte.
+            let immutables = &artifact.deployed_bytecode.as_ref().unwrap().immutable_references;
+            for offsets in immutables.values().flatten() {
+                code[(offsets.start + offsets.length - 1) as usize] = 1;
+            }
+            let address_code = Bytes::from(code);
+            assert!(!has_deployed_code(artifact, &address_code));
+            for json in [false, true] {
+                assert!(
+                    compile_local_storage_layout(&project, &address_code, json).unwrap().is_none()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn local_storage_layout_rejects_ambiguous_artifacts() {
+        let prj = TestProject::new("cast-storage-ambiguous", PathStyle::Dapptools);
+        let first_path = prj.add_source("First", "contract First { uint256 first; }");
+        let second_path = prj.add_source("Second", "contract Second { uint256 second; }");
+        let mut config = Config::with_root(prj.root());
+        config.bytecode_hash = BytecodeHash::None;
+        config.cbor_metadata = false;
+        let project = load_project_with_config(&prj, config);
+        let (_, address_code) = compile_target(&project, &first_path, "First");
+        assert_eq!(compile_target(&project, &second_path, "Second").1, address_code);
+
+        for json in [false, true] {
+            let err = compile_local_storage_layout(&project, &address_code, json).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Deployed code matches multiple local contracts: src/First.sol:First, src/Second.sol:Second"
+            );
+        }
     }
 
     #[test]

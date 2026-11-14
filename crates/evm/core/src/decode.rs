@@ -8,9 +8,9 @@ use alloy_sol_types::{
     ContractError::Revert, RevertReason, RevertReason::ContractError, SolEventInterface,
     SolInterface, SolValue,
 };
+use evm2::interpreter::InstrStop;
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
-use revm::interpreter::InstructionResult;
 use std::{fmt, sync::OnceLock};
 
 /// Stable user-facing fallback for empty revert payloads.
@@ -123,7 +123,7 @@ impl RevertDecoder {
     ///
     /// Note that this is just a best-effort guess, and should not be relied upon for anything other
     /// than user output.
-    pub fn decode(&self, err: &[u8], status: Option<InstructionResult>) -> String {
+    pub fn decode(&self, err: &[u8], status: Option<InstrStop>) -> String {
         self.maybe_decode(err, status).unwrap_or_else(|| {
             if err.is_empty() { EMPTY_REVERT_DATA.to_string() } else { trimmed_hex(err) }
         })
@@ -132,7 +132,7 @@ impl RevertDecoder {
     /// Tries to decode an error message from the given revert bytes.
     ///
     /// See [`decode`](Self::decode) for more information.
-    pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
+    pub fn maybe_decode(&self, err: &[u8], status: Option<InstrStop>) -> Option<String> {
         self.maybe_decode_known(err)
             .or_else(|| decode_as_non_empty_string(err))
             .or_else(|| Self::maybe_decode_fallback(err, status))
@@ -175,16 +175,18 @@ impl RevertDecoder {
     }
 
     /// Formats revert bytes that could not be decoded as a known error.
-    fn maybe_decode_fallback(err: &[u8], status: Option<InstructionResult>) -> Option<String> {
+    fn maybe_decode_fallback(err: &[u8], status: Option<InstrStop>) -> Option<String> {
         // Generic custom error.
         if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>() {
             return Some({
                 let mut s = format!("custom error {}", hex::encode_prefixed(selector));
                 if !data.is_empty() {
                     s.push_str(": ");
+                    // ABI-encoded arguments are mostly zero bytes: valid UTF-8, but control
+                    // characters. Print hex unless the data is printable text.
                     match std::str::from_utf8(data) {
-                        Ok(data) => s.push_str(data),
-                        Err(_) => s.push_str(&hex::encode(data)),
+                        Ok(data) if is_printable(data) => s.push_str(data),
+                        _ => s.push_str(&hex::encode(data)),
                     }
                 }
                 s
@@ -192,7 +194,7 @@ impl RevertDecoder {
         }
 
         if let Some(status) = status
-            && !status.is_ok()
+            && !status.is_success()
         {
             return Some(format!("EvmError: {status:?}"));
         }
@@ -215,13 +217,25 @@ fn decode_as_non_empty_string(err: &[u8]) -> Option<String> {
 
     // ASCII string.
     if err.is_ascii() {
-        let msg = std::str::from_utf8(err).unwrap().to_string();
-        if !msg.is_empty() {
-            return Some(msg);
+        let mut msg = std::str::from_utf8(err).unwrap();
+        // Raw strings stored in whole words are padded with trailing zeros. A selector followed
+        // by ABI-encoded arguments is never a multiple of 32 bytes long, so its zero arguments
+        // are not trimmed.
+        if err.len().is_multiple_of(32) {
+            msg = msg.trim_end_matches('\0');
+        }
+        if !msg.is_empty() && is_printable(msg) {
+            return Some(msg.to_owned());
         }
     }
 
     None
+}
+
+/// Returns `true` if `s` has no control characters other than newlines and tabs, so it can be
+/// shown as text.
+fn is_printable(s: &str) -> bool {
+    !s.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
 }
 
 fn trimmed_hex(s: &[u8]) -> String {
@@ -258,7 +272,7 @@ mod tests {
         error ValidationFailed(bytes);
         error InvalidNonce();
         */
-        let mut decoder = RevertDecoder::default();
+        let mut decoder = RevertDecoder::new();
         decoder.push_error("ValidationFailed(bytes)".parse().unwrap());
 
         /*
@@ -295,11 +309,64 @@ mod tests {
     }
 
     #[test]
+    fn unknown_custom_error_with_abi_arguments_is_hex() {
+        // `TooSmall(uint256,uint256)` with arguments 5 and 10, not known to the decoder.
+        let data = &hex!(
+            "0xe94fe3af"
+            "0000000000000000000000000000000000000000000000000000000000000005"
+            "000000000000000000000000000000000000000000000000000000000000000a"
+        );
+        assert_eq!(
+            RevertDecoder::new().decode(data, None),
+            "custom error 0xe94fe3af: \
+             0000000000000000000000000000000000000000000000000000000000000005\
+             000000000000000000000000000000000000000000000000000000000000000a"
+        );
+
+        // Same with a selector made of ASCII bytes, which used to be shown as raw text.
+        let data = &hex!(
+            "0x12345678"
+            "0000000000000000000000000000000000000000000000000000000000000005"
+        );
+        assert_eq!(
+            RevertDecoder::new().decode(data, None),
+            "custom error 0x12345678: \
+             0000000000000000000000000000000000000000000000000000000000000005"
+        );
+
+        // Printable text after a selector is still shown as text.
+        let data = b"\xde\xad\xbe\xefnot enough balance";
+        assert_eq!(
+            RevertDecoder::new().decode(data, None),
+            "custom error 0xdeadbeef: not enough balance"
+        );
+    }
+
+    #[test]
     fn plain_string_is_not_a_known_error() {
         let decoder = RevertDecoder::new();
         let data = b".,Bo";
 
         assert_eq!(decoder.maybe_decode_known(data), None);
         assert_eq!(decoder.maybe_decode(data, None).as_deref(), Some(".,Bo"));
+
+        // A string stored in a whole word is shown without its zero padding.
+        let mut data = b"insufficient balance".to_vec();
+        data.resize(32, 0);
+        assert_eq!(decoder.maybe_decode_known(&data), None);
+        assert_eq!(decoder.maybe_decode(&data, None).as_deref(), Some("insufficient balance"));
+
+        // Zero-valued ABI arguments after a printable selector are not padding.
+        let data = &hex!(
+            "0x2e2c426f"
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(
+            decoder.maybe_decode(data, None).as_deref(),
+            Some(
+                "custom error 0x2e2c426f: \
+                 0000000000000000000000000000000000000000000000000000000000000000"
+            )
+        );
     }
 }

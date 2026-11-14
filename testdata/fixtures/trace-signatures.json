@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "0x3158952e": "Claim()",
+    "0x3fb5c1cb": "setNumber(uint256)",
+    "0x8381f58a": "number()",
+    "0xc0406226": "run()",
+    "0xe75235b8": "getThreshold()"
+  },
+  "errors": {},
+  "events": {
+    "0x874202c9472a018d1d4624c52f6f04b6805828c59cd38552cd1d32066797e5f7": "NvStuck(address,uint256,uint256)"
+  }
+}

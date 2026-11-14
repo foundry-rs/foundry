@@ -17,7 +17,7 @@ use alloy_provider::{
     fillers::{FillProvider, JoinFill, RecommendedFillers, WalletFiller},
     network::{AnyNetwork, EthereumWallet},
 };
-use alloy_rpc_client::ClientBuilder;
+use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_transport::{
     TransportError, TransportFut, layers::RetryBackoffLayer, utils::guess_local_url,
 };
@@ -129,6 +129,8 @@ pub struct ProviderBuilder<N: Network = AnyNetwork> {
     no_proxy: bool,
     /// Whether to output curl commands instead of making requests.
     curl_mode: bool,
+    /// Whether to disable MPP: no `MPP_API_KEY` `x-api-key` header and no 402 payments.
+    no_mpp: bool,
     /// Phantom data for the network type.
     _network: PhantomData<N>,
 }
@@ -165,6 +167,9 @@ impl<N: Network> ProviderBuilder<N> {
                 _ => Err(err),
             })
             .wrap_err_with(|| format!("invalid provider URL: {:?}", redact_url(url_str)));
+        // An empty URL resolves to the current directory as an IPC path.
+        let url =
+            if url_str.trim().is_empty() { Err(eyre::eyre!("the RPC URL is empty")) } else { url };
 
         // Use the final URL string to guess if it's a local URL.
         let is_local = url.as_ref().is_ok_and(|url| guess_local_url(url.as_str()));
@@ -183,6 +188,7 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs: false,
             no_proxy: false,
             curl_mode: false,
+            no_mpp: false,
             _network: PhantomData,
         }
     }
@@ -228,7 +234,7 @@ impl<N: Network> ProviderBuilder<N> {
     /// The timeout is applied from when the request starts connecting until the
     /// response body has finished.
     ///
-    /// Default is no timeout.
+    /// Defaults to 45 seconds ([`REQUEST_TIMEOUT`]).
     pub const fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
@@ -344,8 +350,24 @@ impl<N: Network> ProviderBuilder<N> {
         self
     }
 
+    /// Sets whether to disable MPP: no `MPP_API_KEY` `x-api-key` header and no 402 payments.
+    pub const fn no_mpp(mut self, no_mpp: bool) -> Self {
+        self.no_mpp = no_mpp;
+        self
+    }
+
+    /// Returns the normalized endpoint URL, or `None` if the URL is invalid.
+    pub fn url(&self) -> Option<&Url> {
+        self.url.as_ref().ok()
+    }
+
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider<N>> {
+        Ok(RootProvider::new(self.build_client()?))
+    }
+
+    /// Constructs a shared RPC client with the configured transport, authentication, and retries.
+    pub fn build_client(self) -> Result<RpcClient> {
         let Self {
             url,
             chain,
@@ -359,6 +381,7 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs,
             no_proxy,
             curl_mode,
+            no_mpp,
             ..
         } = self;
         let url = url?;
@@ -372,10 +395,7 @@ impl<N: Network> ProviderBuilder<N> {
             let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
             let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
-            let provider = AlloyProviderBuilder::<_, _, N>::default()
-                .connect_provider(RootProvider::new(client));
-
-            return Ok(provider);
+            return Ok(client);
         }
 
         let transport = RuntimeTransportBuilder::new(url)
@@ -384,6 +404,7 @@ impl<N: Network> ProviderBuilder<N> {
             .with_jwt(jwt)
             .accept_invalid_certs(accept_invalid_certs)
             .no_proxy(no_proxy)
+            .no_mpp(no_mpp)
             .build();
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
@@ -399,10 +420,7 @@ impl<N: Network> ProviderBuilder<N> {
             );
         }
 
-        let provider =
-            AlloyProviderBuilder::<_, _, N>::default().connect_provider(RootProvider::new(client));
-
-        Ok(provider)
+        Ok(client)
     }
 }
 
@@ -425,6 +443,7 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs,
             no_proxy,
             curl_mode,
+            no_mpp,
             ..
         } = self;
 
@@ -447,6 +466,7 @@ impl<N: Network> ProviderBuilder<N> {
                     .with_jwt(jwt.clone())
                     .accept_invalid_certs(accept_invalid_certs)
                     .no_proxy(transport_no_proxy)
+                    .no_mpp(no_mpp)
                     .build())
             })
             .collect::<Result<Vec<_>>>()?;
@@ -483,68 +503,11 @@ impl<N: Network> ProviderBuilder<N> {
     where
         N: RecommendedFillers,
     {
-        let Self {
-            url,
-            chain,
-            max_retry,
-            initial_backoff,
-            timeout,
-            compute_units_per_second,
-            jwt,
-            headers,
-            is_local,
-            accept_invalid_certs,
-            no_proxy,
-            curl_mode,
-            ..
-        } = self;
-        let url = url?;
-        let no_proxy = no_proxy || is_local;
-
-        let retry_layer =
-            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
-
-        // If curl_mode is enabled, use CurlTransport instead of RuntimeTransport
-        if curl_mode {
-            let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
-            let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
-
-            let provider = AlloyProviderBuilder::<_, _, N>::default()
-                .with_recommended_fillers()
-                .wallet(wallet)
-                .connect_provider(RootProvider::new(client));
-
-            return Ok(provider);
-        }
-
-        let transport = RuntimeTransportBuilder::new(url)
-            .with_timeout(timeout)
-            .with_headers(headers)
-            .with_jwt(jwt)
-            .accept_invalid_certs(accept_invalid_certs)
-            .no_proxy(no_proxy)
-            .build();
-
-        let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
-
-        if !is_local {
-            client.set_poll_interval(
-                chain
-                    .average_blocktime_hint()
-                    // we cap the poll interval because if not provided, chain would default to
-                    // mainnet
-                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
-                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
-                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
-            );
-        }
-
-        let provider = AlloyProviderBuilder::<_, _, N>::default()
+        let provider = self.build()?;
+        Ok(AlloyProviderBuilder::<_, _, N>::default()
             .with_recommended_fillers()
             .wallet(wallet)
-            .connect_provider(RootProvider::new(client));
-
-        Ok(provider)
+            .connect_provider(provider))
     }
 }
 
@@ -587,10 +550,7 @@ fn rpc_error_code_from_body(body: &str) -> Option<i64> {
     error.get("code")?.as_i64()
 }
 
-/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
-/// an anvil or other dev node) and with the default, or 7 second otherwise.
-///
-/// See [`try_get_http_provider`] for more details.
+/// Constructs a provider using [`try_get_http_provider`].
 ///
 /// # Panics
 ///
@@ -609,8 +569,11 @@ pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
     try_get_http_provider(builder).unwrap()
 }
 
-/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
-/// an anvil or other dev node) and with the default, or 7 second otherwise.
+/// Constructs a provider, retaining Alloy's default polling interval for local URLs.
+///
+/// For non-local URLs, the polling interval is 60% of the chain's average block time hint, capped
+/// at 3 seconds before scaling (at most 1.8 seconds). If no hint is available, 3 seconds is used
+/// before scaling.
 #[inline]
 pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
     ProviderBuilder::new(builder.as_ref()).build()
@@ -663,6 +626,14 @@ mod tests {
         assert!(error.contains("<redacted>"));
         assert!(!error.contains("private-api-key"));
         assert!(!error.contains("secret"));
+    }
+
+    #[test]
+    fn empty_provider_url_is_rejected() {
+        for url in ["", " "] {
+            let builder = ProviderBuilder::<AnyNetwork>::new(url);
+            assert_eq!(builder.url.unwrap_err().to_string(), "the RPC URL is empty");
+        }
     }
 
     #[test]

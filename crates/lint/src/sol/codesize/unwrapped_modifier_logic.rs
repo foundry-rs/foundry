@@ -3,7 +3,9 @@ use crate::{
     linter::{LateLintPass, LintContext, Suggestion},
     sol::{
         Severity, SolLint,
-        analysis::{block_outcome, count_placeholders, for_each_lhs_var, referenced_item},
+        analysis::{
+            block_outcome, count_placeholders, for_each_lhs_var, referenced_item, write_target,
+        },
     },
 };
 use solar::{
@@ -75,7 +77,7 @@ fn requires_wrapping(gcx: Gcx<'_>, stmts: &[Stmt<'_>]) -> bool {
         match &stmt.kind {
             StmtKind::Placeholder => {}
             StmtKind::Expr(expr) if is_plain_call(gcx, expr) => calls += 1,
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => return false,
+            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) | StmtKind::Err(_) => return false,
             _ => other = true,
         }
     }
@@ -110,12 +112,7 @@ fn snippet<'gcx>(
     }
     if wrap_before {
         any_expr(hir, before, |expr| {
-            let lvalue = match &expr.kind {
-                ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => Some(lhs),
-                ExprKind::Unary(op, inner) if op.kind.has_side_effects() => Some(inner),
-                _ => None,
-            };
-            if let Some(lvalue) = lvalue {
+            if let Some(lvalue) = write_target(expr) {
                 for_each_lhs_var(gcx, lvalue, &mut |v| {
                     if func.parameters.contains(&v) && !shared.contains(&v) {
                         shared.push(v);

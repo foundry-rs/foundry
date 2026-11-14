@@ -4,7 +4,8 @@ use foundry_test_utils::{forgetest_init, str};
 
 // SWC-104 unchecked low-level call: failure is reachable when the callee
 // returns false, but the caller still marks the operation as complete.
-forgetest_init!(swc_unchecked_low_level_call, |prj, cmd| {
+#[forgetest_init]
+fn swc_unchecked_low_level_call(prj: _, cmd: _) {
     skip_unless_z3!("swc_unchecked_low_level_call");
 
     prj.add_test(
@@ -39,4 +40,4 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}

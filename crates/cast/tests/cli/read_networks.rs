@@ -293,12 +293,13 @@ fn hex_field(value: &serde_json::Value, field: &str) -> Option<u64> {
 macro_rules! network_read_tests {
     ($($test:ident => ($name:literal, $rpc_url:literal, $chain_id:literal),)*) => {
         $(
-            casttest!($test, |_prj, cmd| {
+            #[casttest]
+            fn $test(cmd: _) {
                 assert_read_commands_work(
                     &mut cmd,
                     &Network { name: $name, rpc_url: $rpc_url, chain_id: $chain_id },
                 );
-            });
+            }
         )*
     };
 }

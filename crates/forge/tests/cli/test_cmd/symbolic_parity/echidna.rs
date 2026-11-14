@@ -10,7 +10,8 @@ use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 // We port it as a stateful symbolic invariant with bounded depth under the
 // default per-call invariant check, so the engine already reports the shortest
 // failing prefix and minimization has nothing left to shrink.
-forgetest_init!(echidna_flags_parity, |prj, cmd| {
+#[forgetest_init]
+fn echidna_flags_parity(prj: _, cmd: _) {
     skip_unless_z3!("echidna_flags_parity");
 
     prj.add_test(
@@ -98,7 +99,7 @@ contract EchidnaFlagsParity is Test {
 [FAIL:
 "#]],
     );
-});
+}
 
 // ---------------------------------------------------------------------------
 // Echidna basic/revert.sol — stateful revert counterexample shrinking.
@@ -107,7 +108,8 @@ contract EchidnaFlagsParity is Test {
 // Echidna's suite asserts this shrinks to one `f(int,address,address)` call.
 // The invariant is only checked at the terminal depth so there is a longer
 // sequence to shrink.
-forgetest_init!(echidna_revert_magic_args_parity, |prj, cmd| {
+#[forgetest_init]
+fn echidna_revert_magic_args_parity(prj: _, cmd: _) {
     skip_unless_z3!("echidna_revert_magic_args_parity");
 
     prj.add_test(
@@ -202,14 +204,15 @@ contract EchidnaRevertParity is Test {
 invariant_no_revert()
 "#]],
     );
-});
+}
 
 // ---------------------------------------------------------------------------
 // Echidna values/darray.sol — dynamic address[] calldata shrinking.
 // ---------------------------------------------------------------------------
 // Source: https://github.com/crytic/echidna/blob/master/tests/solidity/values/darray.sol
 // Echidna shrinks to one address element: `[0x123456]`.
-forgetest_init!(echidna_dynamic_address_array_parity, |prj, cmd| {
+#[forgetest_init]
+fn echidna_dynamic_address_array_parity(prj: _, cmd: _) {
     skip_unless_z3!("echidna_dynamic_address_array_parity");
 
     prj.add_test(
@@ -261,7 +264,7 @@ contract EchidnaDarrayParity {
 args=[[0x0000000000000000000000000000000000123456]]
 "#]],
     );
-});
+}
 
 // ---------------------------------------------------------------------------
 // Echidna basic/darray-mutation.sol — dynamic bytes calldata shrinking.
@@ -269,7 +272,8 @@ args=[[0x0000000000000000000000000000000000123456]]
 // Source: https://github.com/crytic/echidna/blob/master/tests/solidity/basic/darray-mutation.sol
 // Echidna shrinks to the required `abc` prefix with a length still greater than
 // 16; Foundry also zeroes irrelevant suffix bytes.
-forgetest_init!(echidna_bytes_mutation_parity, |prj, cmd| {
+#[forgetest_init]
+fn echidna_bytes_mutation_parity(prj: _, cmd: _) {
     skip_unless_z3!("echidna_bytes_mutation_parity");
 
     prj.add_test(
@@ -317,14 +321,15 @@ contract EchidnaBytesMutationParity {
 args=[0x6162630000000000000000000000000000]
 "#]],
     );
-});
+}
 
 // ---------------------------------------------------------------------------
 // Echidna values/payable.sol — transaction value minimization.
 // ---------------------------------------------------------------------------
 // Source: https://github.com/crytic/echidna/blob/master/tests/solidity/values/payable.sol
 // Echidna shrinks the value-bearing call to value 129.
-forgetest_init!(echidna_payable_value_parity, |prj, cmd| {
+#[forgetest_init]
+fn echidna_payable_value_parity(prj: _, cmd: _) {
     skip_unless_z3!("echidna_payable_value_parity");
 
     prj.add_test(
@@ -411,13 +416,14 @@ contract EchidnaPayableParity is Test {
 invariant_payable_zero()
 "#]],
     );
-});
+}
 
 // ---------------------------------------------------------------------------
 // Echidna overflow mode — Solidity 0.8 over/underflow detection.
 // ---------------------------------------------------------------------------
 // Mirrors Echidna's `--test-mode overflow` on a buggy add.
-forgetest_init!(echidna_overflow_unchecked_add, |prj, cmd| {
+#[forgetest_init]
+fn echidna_overflow_unchecked_add(prj: _, cmd: _) {
     skip_unless_z3!("echidna_overflow_unchecked_add");
 
     prj.add_test(
@@ -453,4 +459,4 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}

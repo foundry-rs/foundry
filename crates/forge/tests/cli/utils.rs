@@ -1,9 +1,15 @@
 //! Various helper functions
 
 use alloy_chains::NamedChain;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256, hex};
 use alloy_signer_local::PrivateKeySigner;
-use std::path::Path;
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+    process::{Child, Command, Output, Stdio},
+    thread::{self, JoinHandle},
+};
+use tempo_alloy::primitives::transaction::{ConfigurableAccountConfig, ConfigurableAccountOwner};
 
 /// Returns the current millis since unix epoch.
 ///
@@ -15,14 +21,8 @@ pub fn millis_since_epoch() -> u128 {
         .as_millis()
 }
 
-pub fn etherscan_key(chain: NamedChain) -> Option<String> {
-    match chain {
-        NamedChain::Fantom | NamedChain::FantomTestnet => {
-            std::env::var("FTMSCAN_API_KEY").or_else(|_| std::env::var("FANTOMSCAN_API_KEY")).ok()
-        }
-        NamedChain::OptimismKovan => std::env::var("OP_KOVAN_API_KEY").ok(),
-        _ => std::env::var("ETHERSCAN_API_KEY").ok(),
-    }
+pub fn etherscan_key() -> Option<String> {
+    std::env::var("ETHERSCAN_API_KEY").ok()
 }
 
 pub fn network_rpc_key(chain: &str) -> Option<String> {
@@ -57,11 +57,6 @@ pub struct EnvExternalities {
 }
 
 impl EnvExternalities {
-    pub fn address(&self) -> Option<Address> {
-        let pk: PrivateKeySigner = self.pk.parse().ok()?;
-        Some(pk.address())
-    }
-
     /// Externalities for a deploy + verify run of `chain` against `verifier`.
     ///
     /// `network` is the name used to look up `<NETWORK>_RPC_URL` and `<NETWORK>_PRIVATE_KEY`, and
@@ -81,130 +76,9 @@ impl EnvExternalities {
             rpc: network_rpc_key(network)?,
             pk: network_private_key(network)?,
             // Only Etherscan authenticates; Sourcify and Blockscout take no key.
-            etherscan: if verifier == "etherscan" { etherscan_key(chain)? } else { String::new() },
+            etherscan: if verifier == "etherscan" { etherscan_key()? } else { String::new() },
             verifier: verifier.to_string(),
             verifier_url: verifier_url.map(str::to_string),
-        })
-    }
-
-    pub fn goerli() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::Goerli,
-            rpc: network_rpc_key("goerli")?,
-            pk: network_private_key("goerli")?,
-            etherscan: etherscan_key(NamedChain::Goerli)?,
-            verifier: "etherscan".to_string(),
-            verifier_url: None,
-        })
-    }
-
-    pub fn ftm_testnet() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::FantomTestnet,
-            rpc: network_rpc_key("ftm_testnet")?,
-            pk: network_private_key("ftm_testnet")?,
-            etherscan: etherscan_key(NamedChain::FantomTestnet)?,
-            verifier: "etherscan".to_string(),
-            verifier_url: None,
-        })
-    }
-
-    pub fn optimism_kovan() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::OptimismKovan,
-            rpc: network_rpc_key("op_kovan")?,
-            pk: network_private_key("op_kovan")?,
-            etherscan: etherscan_key(NamedChain::OptimismKovan)?,
-            verifier: "etherscan".to_string(),
-            verifier_url: None,
-        })
-    }
-
-    pub fn arbitrum_goerli() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::ArbitrumGoerli,
-            rpc: network_rpc_key("arbitrum-goerli")?,
-            pk: network_private_key("arbitrum-goerli")?,
-            etherscan: etherscan_key(NamedChain::ArbitrumGoerli)?,
-            verifier: "blockscout".to_string(),
-            verifier_url: None,
-        })
-    }
-
-    pub fn amoy() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::PolygonAmoy,
-            rpc: network_rpc_key("amoy")?,
-            pk: network_private_key("amoy")?,
-            etherscan: etherscan_key(NamedChain::PolygonAmoy)?,
-            verifier: "etherscan".to_string(),
-            verifier_url: None,
-        })
-    }
-
-    pub fn sepolia_etherscan() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::Sepolia,
-            rpc: network_rpc_key("sepolia")?,
-            pk: network_private_key("sepolia")?,
-            etherscan: etherscan_key(NamedChain::Sepolia)?,
-            verifier: "etherscan".to_string(),
-            verifier_url: None,
-        })
-    }
-
-    pub fn sepolia_sourcify() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::Sepolia,
-            rpc: network_rpc_key("sepolia")?,
-            pk: network_private_key("sepolia")?,
-            etherscan: String::new(),
-            verifier: "sourcify".to_string(),
-            verifier_url: None,
-        })
-    }
-
-    pub fn sepolia_sourcify_with_etherscan_api_key_set() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::Sepolia,
-            rpc: network_rpc_key("sepolia")?,
-            pk: network_private_key("sepolia")?,
-            etherscan: etherscan_key(NamedChain::Sepolia)?,
-            verifier: "sourcify".to_string(),
-            verifier_url: None,
-        })
-    }
-
-    pub fn sepolia_blockscout() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::Sepolia,
-            rpc: network_rpc_key("sepolia")?,
-            pk: network_private_key("sepolia")?,
-            etherscan: String::new(),
-            verifier: "blockscout".to_string(),
-            verifier_url: None,
-        })
-    }
-
-    pub fn sepolia_blockscout_with_etherscan_api_key_set() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::Sepolia,
-            rpc: network_rpc_key("sepolia")?,
-            pk: network_private_key("sepolia")?,
-            etherscan: etherscan_key(NamedChain::Sepolia)?,
-            verifier: "blockscout".to_string(),
-            verifier_url: None,
-        })
-    }
-
-    pub fn sepolia_empty_verifier() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::Sepolia,
-            rpc: network_rpc_key("sepolia")?,
-            pk: network_private_key("sepolia")?,
-            etherscan: String::new(),
-            verifier: String::new(),
-            verifier_url: None,
         })
     }
 
@@ -233,31 +107,14 @@ pub fn parse_deployed_address(out: &str) -> Option<String> {
 
 pub fn assert_debug_dump_identifies_contract(dump_path: &Path, address: &str, contract_name: &str) {
     let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
-    let identified = dump["contracts"]["identified_contracts"].as_object().unwrap();
-    let target_identified = identified.iter().any(|(identified_address, name)| {
-        identified_address.eq_ignore_ascii_case(address)
-            && name.as_str().is_some_and(|name| name == contract_name)
+        serde_json::from_str(&std::fs::read_to_string(dump_path.join("contracts.json")).unwrap())
+            .unwrap();
+    let identified = dump["contracts"].as_array().unwrap();
+    let target_identified = identified.iter().any(|contract| {
+        contract["address"].as_str().is_some_and(|value| value.eq_ignore_ascii_case(address))
+            && contract["name"] == contract_name
     });
     assert!(target_identified, "forked target was not identified in debugger dump: {identified:?}");
-}
-
-pub fn parse_verification_guid(out: &str) -> Option<String> {
-    let mut lines = out.lines().map(str::trim).filter(|line| !line.is_empty());
-    let line = lines.next()?;
-    if lines.next().is_some() {
-        return None;
-    }
-    let mut parts = line.split('\t').map(str::trim);
-    let id = parts.next()?;
-    let url = parts.next()?;
-    if parts.next().is_some() || id.is_empty() || url.is_empty() {
-        return None;
-    }
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return None;
-    }
-    Some(id.to_string())
 }
 
 /// Generates a string containing the code of a Solidity contract.
@@ -295,4 +152,101 @@ contract LargeRuntime {{
 }}
 "
     )
+}
+
+/// A spawned child process that is killed when dropped.
+pub struct KillOnDrop {
+    child: Option<Child>,
+    stderr: Option<JoinHandle<Vec<u8>>>,
+}
+
+impl KillOnDrop {
+    pub fn spawn(command: &mut Command) -> Self {
+        let mut child = command.stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+        let mut child_stderr = child.stderr.take().unwrap();
+        let stderr = thread::spawn(move || {
+            let mut stderr = Vec::new();
+            child_stderr.read_to_end(&mut stderr).unwrap();
+            stderr
+        });
+        Self { child: Some(child), stderr: Some(stderr) }
+    }
+
+    pub fn is_running(&mut self) -> bool {
+        self.child.as_mut().unwrap().try_wait().unwrap().is_none()
+    }
+
+    pub fn kill_and_wait(mut self) -> Output {
+        let mut child = self.child.take().unwrap();
+        child.kill().unwrap();
+        let status = child.wait().unwrap();
+        Output { status, stdout: Vec::new(), stderr: self.stderr.take().unwrap().join().unwrap() }
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(stderr) = self.stderr.take() {
+            let _ = stderr.join();
+        }
+    }
+}
+
+/// A 2-of-3 Tempo configurable account over the keys `0x61..61`, `0x62..62` and `0x63..63`:
+/// the account it derives, its configuration as `--tempo.config` takes it, and the hex private
+/// keys of its owners sorted by address.
+pub fn tempo_two_of_three_account() -> (Address, String, Vec<String>) {
+    let mut keys = [0x61, 0x62, 0x63]
+        .map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
+    keys.sort_by_key(|key| key.address());
+    let config = ConfigurableAccountConfig {
+        salt: B256::repeat_byte(0x07),
+        version: 0,
+        threshold: 2,
+        owners: keys
+            .iter()
+            .map(|key| ConfigurableAccountOwner { owner: key.address(), weight: 1 })
+            .collect(),
+    };
+    let json = serde_json::json!({
+        "salt": config.salt,
+        "version": config.version,
+        "threshold": config.threshold,
+        "owners": config.owners.iter().map(|owner| serde_json::json!({
+            "owner": owner.owner,
+            "weight": owner.weight,
+        })).collect::<Vec<_>>(),
+    });
+    let keys = keys.iter().map(|key| hex::encode_prefixed(key.to_bytes())).collect();
+    (config.derive_account().unwrap(), json.to_string(), keys)
+}
+
+/// Writes the keystore of `0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2` (password
+/// `keystorepassword`) to `dir`, linked to its 1-of-1, salt-0 Tempo configurable account as
+/// `cast wallet new` links it. Returns the keystore path, the account and the owner key.
+pub fn tempo_linked_keystore(dir: &Path) -> (PathBuf, Address, Address) {
+    let keystore = dir.join("linked");
+    std::fs::write(
+        &keystore,
+        include_str!(
+            "../../../cast/tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2"
+        ),
+    )
+    .unwrap();
+    let owner = alloy_primitives::address!("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2");
+    let account = ConfigurableAccountConfig {
+        salt: B256::ZERO,
+        version: 0,
+        threshold: 1,
+        owners: vec![ConfigurableAccountOwner { owner, weight: 1 }],
+    }
+    .derive_account()
+    .unwrap();
+    let link = serde_json::json!({ "version": 1, "account": account, "owner": owner });
+    std::fs::write(dir.join("linked.tempo-account"), link.to_string()).unwrap();
+    (keystore, account, owner)
 }

@@ -50,7 +50,7 @@ op-alloy-rpc-types = { workspace = true, optional = true }
 base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
 
-revm.workspace = true
+evm2.workspace = true
 
 solar.workspace = true
 
@@ -90,11 +90,12 @@ mpp.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic-all-languages"] }
 base64.workspace = true
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 sha2 = "0.11"
 
 [build-dependencies]
 chrono.workspace = true
-vergen = { workspace = true, features = ["build", "emit_and_set"] }
+smolgen = { workspace = true, features = ["emit_and_set"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

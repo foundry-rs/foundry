@@ -1,7 +1,13 @@
 //! RPC testing utilities.
 
-use alloy_primitives::B256;
-use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::post};
+use alloy_primitives::{Address, B256};
+use axum::{
+    Json, Router,
+    body::Bytes,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::post,
+};
 use foundry_config::{
     NamedChain::{
         self, Arbitrum, Base, BinanceSmartChainTestnet, Celo, Gnosis, Hyperliquid, Mainnet,
@@ -18,6 +24,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
+use tokio::sync::Notify;
 
 macro_rules! shuffled_list {
     ($name:ident, $e:expr $(,)?) => {
@@ -420,6 +427,25 @@ pub async fn spawn_rpc_proxy_internal_error_after(
     .await
 }
 
+/// Spawns an RPC proxy that answers every `method` request with the JSON-RPC error `code` and
+/// `message`.
+pub async fn spawn_rpc_proxy_method_error(
+    endpoint: String,
+    method: &'static str,
+    code: i64,
+    message: &'static str,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::After(0),
+        StatusCode::OK,
+        code,
+        message,
+    )
+    .await
+}
+
 /// Spawns an RPC proxy that answers `method` with `result` instead of forwarding it upstream.
 ///
 /// All other methods are forwarded. The returned counter tracks how many `method` calls reached the
@@ -599,6 +625,167 @@ pub async fn spawn_rpc_proxy_recording_method(
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (format!("http://{address}"), requests)
+}
+
+/// Spawns an RPC proxy that forwards requests containing the required header and rejects all
+/// others.
+pub async fn spawn_rpc_proxy_requiring_header(
+    endpoint: String,
+    header_name: &'static str,
+    header_value: &'static str,
+) -> String {
+    let client = reqwest::Client::new();
+    let router = Router::new().route(
+        "/",
+        post(move |headers: HeaderMap, Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                if headers.get(header_name).and_then(|value| value.to_str().ok())
+                    != Some(header_value)
+                {
+                    let id = request.get("id").cloned().unwrap_or(Value::Null);
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {
+                                "code": -32000,
+                                "message": "unauthorized",
+                            },
+                        })),
+                    )
+                        .into_response();
+                }
+
+                let response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                Json(response).into_response()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+/// Spawns an RPC proxy that records the params of every request to `method` and holds the first
+/// one until `release` is notified, then answers it with `503 Service Unavailable`.
+///
+/// `reached` is notified once the first request is held. When `forward` is true, that request is
+/// forwarded before it is held and the upstream response is withheld.
+pub async fn spawn_rpc_proxy_blocking_first_submission(
+    endpoint: String,
+    method: &'static str,
+    forward: bool,
+) -> (String, Arc<Mutex<Vec<Value>>>, Arc<Notify>, Arc<Notify>) {
+    let client = reqwest::Client::new();
+    let submissions = Arc::new(Mutex::new(Vec::new()));
+    let reached = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let router = Router::new().fallback({
+        let submissions = submissions.clone();
+        let reached = reached.clone();
+        let release = release.clone();
+        move |body: Bytes| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let submissions = submissions.clone();
+            let reached = reached.clone();
+            let release = release.clone();
+            async move {
+                let request: Value = serde_json::from_slice(&body).unwrap();
+                let first = request.get("method").and_then(Value::as_str) == Some(method) && {
+                    let mut submissions = submissions.lock().unwrap();
+                    submissions.push(request.get("params").cloned().unwrap_or(Value::Null));
+                    submissions.len() == 1
+                };
+                let response = if first && !forward {
+                    Bytes::new()
+                } else {
+                    client
+                        .post(endpoint)
+                        .header("content-type", "application/json")
+                        .body(body)
+                        .send()
+                        .await
+                        .unwrap()
+                        .bytes()
+                        .await
+                        .unwrap()
+                };
+                if first {
+                    reached.notify_one();
+                    release.notified().await;
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+                response.into_response()
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), submissions, reached, release)
+}
+
+/// Spawns an RPC proxy that answers every account read of `account` with a JSON-RPC error and
+/// forwards all other requests.
+pub async fn spawn_rpc_proxy_failing_account(endpoint: String, account: Address) -> String {
+    let client = reqwest::Client::new();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                let reads_account = matches!(
+                    request.get("method").and_then(Value::as_str),
+                    Some(
+                        "eth_getAccountInfo"
+                            | "eth_getBalance"
+                            | "eth_getTransactionCount"
+                            | "eth_getCode"
+                    )
+                ) && request
+                    .pointer("/params/0")
+                    .and_then(Value::as_str)
+                    .and_then(|address| address.parse::<Address>().ok())
+                    == Some(account);
+                if reads_account {
+                    let id = request.get("id").cloned().unwrap_or(Value::Null);
+                    return Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32000, "message": "account unavailable" },
+                    }));
+                }
+                let response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
 }
 
 #[derive(Clone)]

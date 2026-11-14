@@ -2,7 +2,8 @@
 
 use super::*;
 
-casttest!(access_list, |_prj, cmd| {
+#[casttest]
+fn access_list(cmd: _) {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "access-list",
@@ -29,9 +30,10 @@ access list:
 ...
 
 "#]]);
-});
+}
 
-casttest!(access_list_eip7702_auth_disclosure_declined, |prj, cmd| {
+#[casttest]
+fn access_list_eip7702_auth_disclosure_declined(prj: _, cmd: _) {
     prj.update_config(|config| config.chain = Some(31337.into()));
 
     cmd.args([
@@ -53,9 +55,10 @@ Warning: This command will send a signed EIP-7702 authorization to the RPC endpo
 Continue anyway? [y/N] Aborted.
 
 "#]]);
-});
+}
 
-casttest!(access_list_eip7702_auth_disclosure_requires_signer, |prj, cmd| {
+#[casttest]
+fn access_list_eip7702_auth_disclosure_requires_signer(prj: _, cmd: _) {
     prj.update_config(|config| config.chain = Some(31337.into()));
 
     cmd.args([
@@ -76,9 +79,10 @@ casttest!(access_list_eip7702_auth_disclosure_requires_signer, |prj, cmd| {
 Error: No signer available to sign authorization. Provide a pre-signed authorization (hex-encoded) instead.
 
 "#]]);
-});
+}
 
-casttest!(access_list_eip7702_auth_disclosure_accepted_and_forced, async |_prj, cmd| {
+#[casttest]
+async fn access_list_eip7702_auth_disclosure_accepted_and_forced(cmd: _) {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
     let endpoint = handle.http_endpoint();
@@ -116,10 +120,11 @@ access list:
 
 "#]])
         .stderr_eq(str![""]);
-});
+}
 
 // Test cast access-list with negative numbers
-casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
+#[casttest]
+fn cast_access_list_negative_numbers(cmd: _) {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     cmd.args([
         "access-list",
@@ -132,4 +137,4 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
         rpc.as_str(),
     ])
     .assert_success();
-});
+}

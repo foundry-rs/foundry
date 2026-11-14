@@ -7,12 +7,11 @@ use crate::{
 use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, B256, bytes, map::B256HashSet};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, Filter, Log, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, Log, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
 use anvil_core::types::ReorgOptions;
 use futures::StreamExt;
-use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_past_events() {
@@ -165,7 +164,7 @@ async fn get_block_receipts_assigns_log_indices() {
     }
     api.mine_one().await.unwrap();
 
-    let receipts = api.block_receipts(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let receipts = api.block_receipts(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(receipts.len(), 3);
     let log_indices = receipts
         .iter()
@@ -302,9 +301,7 @@ async fn get_logs_unknown_block_hash_returns_error() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    let unknown_hash =
-        B256::from_str("0x0000000000000000000000000000000000000000000000000000000000000001")
-            .unwrap();
+    let unknown_hash = B256::with_last_byte(1);
     let filter = Filter::new().at_block_hash(unknown_hash);
 
     let err = provider.get_logs(&filter).await.unwrap_err();

@@ -1,32 +1,33 @@
-use alloy_primitives::{Address, U256, address, uint};
+use alloy_primitives::{Address, address};
 use std::time::Duration;
 
 // HD wallet key derivation
 pub(crate) const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 pub(crate) const MAX_REMEMBER_KEYS: u32 = 64;
-pub(crate) const SYMBOLIC_VM_COMPAT_ADDRESS: Address =
+/// Address of the Halmos-style symbolic VM helpers (`svm.*`).
+pub const SYMBOLIC_VM_COMPAT_ADDRESS: Address =
     address!("0xF3993A62377BCd56AE39D773740A5390411E8BC9");
-
-// EVM execution limits
-pub(crate) const EVM_STACK_LIMIT: usize = 1024;
-pub(crate) const CALL_VALUE_STIPEND: u64 = 2300;
 
 // Symbolic exponentiation limits
 pub(crate) const SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT: u64 = 32;
 pub(crate) const CONCRETE_BASE_SYMBOLIC_EXPONENT_LIMIT: u64 = 256;
 
-// Revert selectors and assertion constants
-pub(crate) const PANIC_SELECTOR: [u8; 4] = [0x4e, 0x48, 0x7b, 0x71];
-pub(crate) const ERROR_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
-pub(crate) const ASSERT_PANIC_CODE: U256 = uint!(1_U256);
-pub(crate) const ASSERTION_FAILED_PREFIX: &str = "assertion failed";
-
 // ABI encoding lengths
-pub(crate) const ABI_SELECTOR_PLUS_WORD_LEN: usize = 36; // selector (4) + one ABI word (32)
 pub(crate) const ERROR_DATA_MIN_LEN: usize = 68; // selector (4) + offset (32) + length (32)
+
+// `svm.createCalldata` fallback calldata: a selector and the 1024 arbitrary bytes Halmos uses.
+pub(crate) const CREATE_CALLDATA_FALLBACK_LEN: usize = 4 + 1024;
 
 // Precompile address layout
 pub(crate) const PRECOMPILE_ADDRESS_LEADING_ZEROS: usize = 19;
+
+// EIP-7823 modexp input length limit in bytes, enforced from Osaka.
+pub(crate) const MODEXP_INPUT_SIZE_LIMIT: usize = 1024;
+
+// Native stack reserved for nested call frames, which the EVM allows up to its call depth
+// limit.
+pub(crate) const CALL_FRAME_STACK_RED_ZONE: usize = 1024 * 1024;
+pub(crate) const CALL_FRAME_STACK_GROWTH: usize = 8 * 1024 * 1024;
 
 // Solver subprocess supervision.
 pub(crate) const SOLVER_CANCEL_CHECK_INTERVAL: Duration = Duration::from_millis(50);
@@ -52,7 +53,3 @@ pub(crate) const FALLBACK_MODEL_MAX_VARS: usize = 5;
 pub(crate) const FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR: usize = 24;
 pub(crate) const FALLBACK_MODEL_MAX_ASSIGNMENTS: usize =
     FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR * FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR;
-
-/// Symbolic solver names with built-in command-line mappings.
-pub const BUILTIN_SYMBOLIC_SOLVERS: &[&str] =
-    &["z3", "yices", "cvc5", "cvc5-int", "bitwuzla", "bitwuzla-abs"];

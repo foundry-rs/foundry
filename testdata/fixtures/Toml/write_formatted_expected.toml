@@ -1,0 +1,16 @@
+# Deployment config.
+
+owner = "0x000000000000000000000000000000000000dEaD" # multisig
+deployed_at = 2024-04-27T11:57:21Z
+max_supply = 0xffff_ffff
+salt = 'literal-string'
+
+# Mainnet settings.
+[mainnet]
+token = "0x000000000000000000000000000000000000bEEF" # filled by script
+limits = { daily = 2000, weekly = 5_000 }
+
+# Base settings.
+[base]
+chain_id = 8453
+gas_limit = 30000000

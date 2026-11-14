@@ -11,7 +11,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolError, SolValue, sol};
 use anvil::{NodeConfig, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 use std::collections::VecDeque;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -49,7 +49,7 @@ async fn ots_get_internal_operations_contract_deploy() {
             r#type: OperationType::OpCreate,
             from: sender,
             to: contract_receipt.contract_address.unwrap(),
-            value: U256::from(0)
+            value: U256::ZERO
         }],
     );
 }
@@ -108,7 +108,7 @@ async fn ots_get_internal_operations_contract_create2() {
             r#type: OperationType::OpCreate2,
             from: address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"),
             to: address!("0x347bcdad821abc09b8c275881b368de36476b62c"),
-            value: U256::from(0),
+            value: U256::ZERO,
         }],
     );
 }
@@ -421,6 +421,25 @@ async fn ots_search_transactions_before() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ots_search_transactions_block_number_above_head() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let result = api.ots_search_transactions_before(sender, u64::MAX, 10).await.unwrap();
+    assert!(result.first_page);
+    assert_eq!(result.txs.len(), 1);
+    assert_eq!(result.txs[0].tx_hash(), receipt.transaction_hash);
+
+    let result = api.ots_search_transactions_after(sender, u64::MAX, 10).await.unwrap();
+    assert!(result.txs.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ots_search_transactions_after() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -456,6 +475,29 @@ async fn ots_search_transactions_after() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ots_search_transactions_after_same_block_order() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let mut hashes = vec![];
+    for i in 0..3 {
+        let tx =
+            TransactionRequest::default().to(Address::random()).value(U256::from(100)).nonce(i);
+        let tx = WithOtherFields::new(tx);
+        hashes.push(*provider.send_transaction(tx).await.unwrap().tx_hash());
+    }
+    api.evm_mine(None).await.unwrap();
+    hashes.reverse();
+
+    let before = api.ots_search_transactions_before(sender, 0, 10).await.unwrap();
+    let after = api.ots_search_transactions_after(sender, 0, 10).await.unwrap();
+    assert_eq!(before.txs.iter().map(|tx| tx.tx_hash()).collect::<Vec<_>>(), hashes);
+    assert_eq!(after.txs.iter().map(|tx| tx.tx_hash()).collect::<Vec<_>>(), hashes);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ots_get_transaction_by_sender_and_nonce() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -480,9 +522,9 @@ async fn ots_get_transaction_by_sender_and_nonce() {
     let receipt2 = provider.send_transaction(tx2).await.unwrap().get_receipt().await.unwrap();
 
     let result1 =
-        api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(0)).await.unwrap().unwrap();
+        api.ots_get_transaction_by_sender_and_nonce(sender, U256::ZERO).await.unwrap().unwrap();
     let result2 =
-        api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(1)).await.unwrap().unwrap();
+        api.ots_get_transaction_by_sender_and_nonce(sender, U256::ONE).await.unwrap().unwrap();
 
     assert_eq!(result1, receipt1.transaction_hash);
     assert_eq!(result2, receipt2.transaction_hash);

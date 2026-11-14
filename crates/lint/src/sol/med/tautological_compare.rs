@@ -65,7 +65,7 @@ fn exprs_equal<'gcx>(a: &Expr<'gcx>, b: &Expr<'gcx>) -> bool {
         }
         // Only casts to the *same* elementary type are pure conversions: `uint256(x) == uint8(x)`
         // is not tautological because the narrower cast can truncate.
-        (ExprKind::Call(ca, args_a, _), ExprKind::Call(cb, args_b, _)) => {
+        (ExprKind::Call(ca, args_a), ExprKind::Call(cb, args_b)) => {
             matches!((cast_type(ca), cast_type(cb)), (Some(ea), Some(eb)) if ea == eb)
                 && args_a.len() == 1
                 && args_b.len() == 1
@@ -86,7 +86,8 @@ fn literals_equal(a: &Lit<'_>, b: &Lit<'_>) -> bool {
     match (&a.kind, &b.kind) {
         (LitKind::Str(ak, av, _), LitKind::Str(bk, bv, _)) => ak == bk && av == bv,
         (LitKind::Number(a), LitKind::Number(b)) => a == b,
-        (LitKind::Rational(a), LitKind::Rational(b)) => a == b,
+        (LitKind::BigNumber(a), LitKind::BigNumber(b)) => a == b,
+        (LitKind::Rational(an, ad), LitKind::Rational(bn, bd)) => an == bn && ad == bd,
         (LitKind::Address(a), LitKind::Address(b)) => a == b,
         (LitKind::Bool(a), LitKind::Bool(b)) => a == b,
         _ => false,

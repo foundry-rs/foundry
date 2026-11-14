@@ -1,9 +1,15 @@
 //! CLI tests for run commands.
 
 use super::*;
+use alloy_primitives::bytes;
+use alloy_signer::SignerSync;
+use anvil::eth::pool::transactions::TransactionOrder;
+use foundry_common::HYPERLIQUID_SYSTEM_ADDRESS;
+use foundry_test_utils::rpc::{spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method};
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
-casttest!(run_succeeds, |_prj, cmd| {
+#[casttest]
+fn run_succeeds(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
         "run",
@@ -20,11 +26,12 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+}
 
 // Regression test: pre-Berlin tx (block 12243999) must use Istanbul gas costs.
 // Without correct hardfork resolution, this tx OOGs under Prague/Berlin cold SLOAD costs.
-casttest!(run_pre_berlin_tx_uses_correct_spec, |_prj, cmd| {
+#[casttest]
+fn run_pre_berlin_tx_uses_correct_spec(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
         "run",
@@ -41,13 +48,15 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+}
 
 // Tests that `cast --disable-block-gas-limit` commands are working correctly for BSC
 // <https://github.com/foundry-rs/foundry/pull/9996>
 // Equivalent transaction on Binance Smart Chain Testnet:
 // <https://testnet.bscscan.com/tx/0x0db4f279fc4d47dca1e6ace180f45f50c5bf12e2b968f210c217f57031e02744>
-casttest!(run_replays_transaction_over_block_gas_limit, |_prj, cmd| {
+#[casttest]
+#[expect(clippy::disallowed_macros, reason = "skips have to be visible in the test log")]
+fn run_replays_transaction_over_block_gas_limit(cmd: _) {
     let bsc_testnet_rpc_url = next_rpc_endpoint(NamedChain::BinanceSmartChainTestnet);
 
     let latest_block_json: serde_json::Value = serde_json::from_str(
@@ -106,10 +115,11 @@ Transaction successfully executed.
             );
         }
     }
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10699>
-forgetest_async!(cast_run_uses_chain_rpc_endpoint, |prj, cmd| {
+#[forgetest]
+async fn cast_run_uses_chain_rpc_endpoint(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
     let endpoint = handle.http_endpoint();
     let provider = handle.http_provider();
@@ -119,7 +129,7 @@ forgetest_async!(cast_run_uses_chain_rpc_endpoint, |prj, cmd| {
             TransactionRequest::default()
                 .from(sender)
                 .to(address!("000000000000000000000000000000000000dEaD"))
-                .value(U256::from(1))
+                .value(U256::ONE)
                 .into(),
         )
         .await
@@ -142,11 +152,12 @@ mainnet = "${CAST_RUN_MAINNET_RPC_URL}"
     cmd.unset_env("ETH_RPC_URL");
     cmd.args(["run", &receipt.transaction_hash.to_string(), "--chain", "mainnet", "--quick"])
         .assert_success();
-});
+}
 
 // Without BAL support, `cast run` replays the block even on a node that supports the debug API.
 // The prestate tracer must be explicitly opted into via `--prestate-tracer`.
-forgetest_async!(cast_run_default_uses_block_replay, |prj, cmd| {
+#[forgetest]
+async fn cast_run_default_uses_block_replay(prj: _, cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
@@ -170,13 +181,13 @@ Executing previous transactions from the block.
 ...
 
 "#]]);
-});
+}
 
 // tests cast can decode external libraries traces with project cached selectors
-forgetest_async!(flaky_decode_external_libraries_with_cached_selectors, |prj, cmd| {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+#[forgetest_init]
+async fn flaky_decode_external_libraries_with_cached_selectors(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
         "ExternalLib",
         r#"
@@ -229,19 +240,26 @@ contract CounterInExternalLibScript is Script {
     ])
     .assert_success();
 
-    let tx_hash = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(1))
-        .await
+    // Automining may put the library and contract deployments in separate blocks.
+    let broadcast: serde_json::Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/CounterInExternalLibScript.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    let tx_hash = broadcast["transactions"]
+        .as_array()
         .unwrap()
-        .unwrap()
-        .tx_hash();
+        .iter()
+        .find(|tx| tx["contractName"] == "CounterInExternalLib")
+        .expect("contract deployment transaction")["hash"]
+        .as_str()
+        .expect("contract deployment transaction hash");
 
     // Build and cache project selectors.
     cmd.forge_fuse().args(["build"]).assert_success();
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
     // Assert cast with local artifacts can decode external lib signature.
     cmd.cast_fuse()
-        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .args(["run", tx_hash, "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -256,10 +274,11 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/9541
-forgetest_async!(flaky_cast_run_impersonated_tx, |_prj, cmd| {
+#[forgetest]
+async fn flaky_cast_run_impersonated_tx(cmd: _) {
     let (_api, handle) = anvil::spawn(
         NodeConfig::test()
             .with_auto_impersonate(true)
@@ -275,12 +294,9 @@ forgetest_async!(flaky_cast_run_impersonated_tx, |_prj, cmd| {
     let tx = TransactionRequest::default()
         .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
         .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
-        .with_input(
-            Bytes::from_str(
-                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
-            )
-            .unwrap(),
-        );
+        .with_input(bytes!(
+            "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c"
+        ));
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
@@ -290,25 +306,23 @@ forgetest_async!(flaky_cast_run_impersonated_tx, |_prj, cmd| {
     cmd.cast_fuse()
         .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
         .assert_success();
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
-casttest!(
-    #[ignore = "public Base RPC endpoint used in CI does not reliably serve this transaction"]
-    flaky_osaka_can_run_p256_precompile,
-    |_prj, cmd| {
-        cmd.args([
-        "run",
-        "0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de",
-        "--rpc-url",
-        next_rpc_endpoint(NamedChain::Base).as_str(),
-        "--quick",
-        "--evm-version",
-        "osaka",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+#[casttest]
+fn flaky_osaka_can_run_p256_precompile(cmd: _) {
+    cmd.args([
+    "run",
+    "0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de",
+    "--rpc-url",
+    next_rpc_endpoint(NamedChain::Base).as_str(),
+    "--quick",
+    "--evm-version",
+    "osaka",
+])
+.assert_success()
+.stdout_eq(str![[r#"
 Traces:
   [..] 0xc2FF493F28e894742b968A7DB5D3F21F0aD80C6c::execute(0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000a12384c5e52fd646e7bc7f6b3b33a605651f566e000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000170000000000000000000000000000000000000000000000000000000000000000000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda02913000000000000000000000000000000000000000000000000000000000000060f000000000000000000000000000000000000000000000000000000000000060f0000000000000000000000000000000000000000000000000000000000036cd000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000000320000000000000000000000000000000000000000000000000000000000000060f000000000000000000000000000000000000000000000000000000000000060f000000000000000000000000327a25ad5cfe5c4d4339c1a4267d4a83e8c93312000000000000000000000000000000000000000000000000000000000000034000000000000000000000000000000000000000000000000000000000000005a00000000000000000000000000b55b053230e4effb6609de652fca73fd1c2980400000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000221000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000006cdd519280ec730727f07aa36550bde31a1d5f3097818f3425c2f083ed33a91f080fa2afac0071f6e1af9a0e9c09b851bf01e68bc8a1c1f89f686c48205762f92500000000000000000000000000000000000000000000000000000000000000244242424242424242424242424242424242424242424242424242424242424242010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000827b226368616c6c656e6765223a224b51704d51446e7841757a726f68522d483878472d5a536b625249702d76515f5f5f4a714259357a655038222c2263726f73734f726967696e223a66616c73652c226f726967696e223a2268747470732f2f6974686163612e78797a222c2274797065223a22776562617574686e2e676574227d0000000000000000000000000000000000000000000000000000000000001bde17b8de18819c9eb86cefc3920ddb5d3d4254de276e3d6e18dd2b399f732b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)
     ├─ [2241] 0xA12384c5E52fD646E7BC7F6B3b33A605651F566E::fallback(00) [staticcall]
@@ -373,47 +387,44 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-    }
-);
+}
 
 // Test cast run Celo transfer with precompiles.
-casttest!(
-    #[ignore = "requires debug_traceTransaction, which most free Celo RPC endpoints no longer support"]
-    flaky_run_celo_with_precompiles,
-    |_prj, cmd| {
-        let rpc = next_rpc_endpoint(NamedChain::Celo);
-        cmd.args([
-            "run",
-            "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
-            "--quick",
-            "--rpc-url",
-            rpc.as_str(),
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
+#[casttest]
+fn flaky_run_celo_with_precompiles(cmd: _) {
+    let rpc = next_rpc_endpoint(NamedChain::Celo);
+    cmd.args([
+        "run",
+        "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
+        "--quick",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 Traces:
   [17776] 0x471EcE3750Da237f93B8E339c536989b8978a438::transfer(0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, 138000000000000000 [1.38e17])
     ├─ [12370] 0xFeA1B35f1D5f2A58532a70e7A32e6F2D3Bc4F7B1::transfer(0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, 138000000000000000 [1.38e17]) [delegatecall]
     │   ├─ [9000] CELO_TRANSFER_PRECOMPILE::00000000(00000000000000008106680ba7095cfd8f4351a8b7041da3060afb83000000000000000000000000d2eb2d37d238caeff39cfa36a013299c6dbac56a00000000000000000000000000000000000000000000000001ea4644d3010000)
     │   │   └─ ← [Return]
-    │   ├─ emit Transfer(param0: 0x8106680Ba7095CfD8F4351a8B7041da3060Afb83, param1: 0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, param2: 138000000000000000 [1.38e17])
-    │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
-    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
+    │   ├─ emit Transfer(from: 0x8106680Ba7095CfD8F4351a8B7041da3060Afb83, to: 0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, amount: 138000000000000000 [1.38e17])
+    │   └─ ← [Return] true
+    └─ ← [Return] true
 
 
 Transaction successfully executed.
 [GAS]
 
 "#]]);
-    }
-);
+}
 
 // Test that `cast run --evm-version` correctly updates gas parameters for historical blocks.
 // Mainnet tx 0xb856d9...d05d9647 is a Homestead-era tx (block 1,625,693).
 // EXP gas pricing differs between Homestead (10 gas/byte) and Spurious Dragon+ (50 gas/byte).
 // Without the fix, `set_spec()` only updated the spec discriminant but not the gas_params table,
 // so the executor would use stale (latest) gas pricing even when `--evm-version homestead` is set.
-casttest!(run_evm_version_updates_gas_params, |_prj, cmd| {
+#[casttest]
+fn run_evm_version_updates_gas_params(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     let tx = "0xb856d9c8dffeaa317d89ed6abba861d007a708c54971da91233abcd2d05d9647";
 
@@ -439,4 +450,530 @@ casttest!(run_evm_version_updates_gas_params, |_prj, cmd| {
         sd_output.contains("Gas used: 177241"),
         "expected Spurious Dragon gas (177241), got: {sd_output}"
     );
-});
+}
+
+// Anvil can use an Elastic chain ID while still executing EVM bytecode.
+#[casttest]
+async fn cast_run_replays_elastic_chain_id_on_anvil(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(324u64))).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .tx_hash()
+        .to_string();
+
+    cmd.args(["run", &tx_hash, "--rpc-url", &handle.http_endpoint()]).assert_success().stdout_eq(
+        str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+
+"#]],
+    );
+}
+
+// Without Anvil metadata, retain the chain-ID-based rejection for Elastic chains.
+#[casttest]
+async fn cast_run_rejects_elastic_chains(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(324u64))).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .tx_hash()
+        .to_string();
+    let endpoint = spawn_rpc_proxy_method_not_found_before(
+        handle.http_endpoint(),
+        "anvil_nodeInfo",
+        usize::MAX,
+    )
+    .await;
+
+    cmd.args(["run", &tx_hash, "--rpc-url", &endpoint])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: zksync executes EraVM bytecode, which cannot be replayed locally; `--debug-trace-transaction` renders the node's own trace instead
+
+"#]]);
+}
+
+// Without Anvil metadata the endpoint identity is discovered once and reused for the environment,
+// the fork, and the executor.
+#[casttest]
+async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .tx_hash()
+        .to_string();
+    let endpoint = spawn_rpc_proxy_method_not_found_before(
+        handle.http_endpoint(),
+        "anvil_nodeInfo",
+        usize::MAX,
+    )
+    .await;
+    let (endpoint, chain_ids) = spawn_rpc_proxy_recording_method(endpoint, "eth_chainId").await;
+    let (endpoint, node_infos) = spawn_rpc_proxy_recording_method(endpoint, "anvil_nodeInfo").await;
+
+    for args in [&[][..], &["--debug-trace-transaction"]] {
+        chain_ids.lock().unwrap().clear();
+        node_infos.lock().unwrap().clear();
+
+        cmd.cast_fuse().args(["run", &tx_hash, "--rpc-url", &endpoint]).args(args).assert_success();
+
+        assert_eq!(chain_ids.lock().unwrap().len(), 1, "{args:?}");
+        assert_eq!(node_infos.lock().unwrap().len(), 1, "{args:?}");
+    }
+}
+
+// Tracing replays exact chain history, so it ignores the number-based state opt-in.
+#[casttest]
+async fn cast_run_keeps_hash_addressed_state(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+    let mut endpoint = handle.http_endpoint();
+    for method in ["anvil_nodeInfo", "anvil_metadata"] {
+        endpoint = spawn_rpc_proxy_method_not_found_before(endpoint, method, usize::MAX).await;
+    }
+    let mut recorded = Vec::new();
+    for method in ["eth_getBalance", "eth_getTransactionCount", "eth_getCode", "eth_getStorageAt"] {
+        let (next_endpoint, requests) = spawn_rpc_proxy_recording_method(endpoint, method).await;
+        endpoint = next_endpoint;
+        recorded.push(requests);
+    }
+
+    cmd.env("FOUNDRY_FORK_STATE_BY_NUMBER", "true");
+    cmd.args(["run", &tx_hash, "--rpc-url", &endpoint]).assert_success();
+
+    let mut reads = 0;
+    for requests in recorded {
+        let requests = requests.lock().unwrap();
+        reads += requests.len();
+        assert!(
+            requests.iter().all(|params| params.as_array().unwrap().last().unwrap().is_object()),
+            "{requests:?}"
+        );
+    }
+    assert!(reads > 0);
+}
+
+// A replay that does not reproduce the transaction's receipt must say so. The `--evm-version`
+// overrides stand in for rules the replay does not model: Shanghai predates the `MCOPY` the first
+// transaction executes, and Cancun predates the EIP-7623 calldata floor that prices the second.
+#[casttest]
+async fn cast_run_warns_on_receipt_mismatch(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    // MCOPY(0, 0, 0) STOP
+    api.anvil_set_code(Address::with_last_byte(0xaa), bytes!("0x6000600060005e00")).await.unwrap();
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let mut tx_hashes = Vec::new();
+    for (to, input) in [
+        (Address::with_last_byte(0xaa), Bytes::new()),
+        (Address::with_last_byte(0xcc), vec![1u8; 1000].into()),
+    ] {
+        let receipt = provider
+            .send_transaction(
+                TransactionRequest::default().with_from(from).with_to(to).with_input(input).into(),
+            )
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        tx_hashes.push(receipt.transaction_hash().to_string());
+    }
+    let [mcopy_tx, floor_tx] = &tx_hashes[..] else { unreachable!() };
+
+    for tx_hash in [mcopy_tx, floor_tx] {
+        cmd.cast_fuse()
+            .args(["run", tx_hash, "--rpc-url", &endpoint, "--evm-version", "prague"])
+            .assert_success()
+            .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
+"#]]);
+    }
+
+    cmd.cast_fuse()
+        .args(["run", mcopy_tx, "--rpc-url", &endpoint, "--evm-version", "shanghai"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Error: Transaction failed.
+Warning: the replay does not match the transaction's receipt: it succeeded on-chain but reverted in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["run", floor_tx, "--rpc-url", &endpoint, "--evm-version", "cancun"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Warning: the replay does not match the transaction's receipt: it used 61000 gas on-chain but 37000 in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.
+
+"#]]);
+}
+
+// A skipped system credit changes the target's prestate even when it opens the block, so the
+// replay must warn about it regardless of its index.
+#[casttest]
+async fn cast_run_warns_on_skipped_system_transactions(cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test().with_transaction_order(TransactionOrder::Fifo)).await;
+    let endpoint = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let system = HYPERLIQUID_SYSTEM_ADDRESS;
+    api.anvil_impersonate_account(system).await.unwrap();
+    api.anvil_set_balance(system, U256::from(10u128.pow(18))).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    for senders in [&[system, from][..], &[from, system, from]] {
+        let mut tx_hashes = Vec::new();
+        for &sender in senders {
+            let mut tx = TransactionRequest::default().with_from(sender).with_to(Address::ZERO);
+            if sender == system {
+                tx = tx.with_value(U256::from(1));
+            }
+            tx_hashes.push(*provider.send_transaction(tx.into()).await.unwrap().tx_hash());
+        }
+        api.mine_one().await.unwrap();
+        let [.., system_tx, target] = tx_hashes[..] else { unreachable!() };
+        let warning = format!(
+            "Warning: the replay skips system transactions before the target, so their state changes are missing: [{system_tx}]; `--replay-system-txes` attempts local replay where supported; `--debug-trace-transaction` renders the node's own trace instead\n"
+        );
+
+        cmd.cast_fuse()
+            .args(["run", &target.to_string(), "--rpc-url", &endpoint, "--no-bal"])
+            .assert_success()
+            .stderr_eq(format!("Executing previous transactions from the block.\n{warning}"));
+        cmd.cast_fuse()
+            .args([
+                "run",
+                &target.to_string(),
+                "--rpc-url",
+                &endpoint,
+                "--no-bal",
+                "--replay-system-txes",
+            ])
+            .assert_success()
+            .stderr_eq("Executing previous transactions from the block.\n");
+
+        // ArbOS internal transactions are skipped without a warning on any chain, since Orbit
+        // chains are unknown to `alloy-chains`, and even with `--replay-system-txes`, since they
+        // cannot be converted for replay.
+        let endpoint = spawn_rpc_proxy_mapping_method(
+            endpoint.clone(),
+            "eth_getBlockByNumber",
+            move |_, mut block| {
+                if let Some(txs) = block["transactions"].as_array_mut() {
+                    for tx in txs.iter_mut().filter(|tx| tx["hash"] == json!(system_tx)) {
+                        tx["type"] = json!("0x6a");
+                    }
+                }
+                block
+            },
+        )
+        .await;
+        for flags in [&[][..], &["--replay-system-txes"][..]] {
+            cmd.cast_fuse()
+                .args(["run", &target.to_string(), "--rpc-url", &endpoint, "--no-bal"])
+                .args(flags)
+                .assert_success()
+                .stderr_eq("Executing previous transactions from the block.\n");
+        }
+    }
+}
+
+// Forked state reports an account that does not exist as empty, but replay must not refund the
+// EIP-7702 authorization of an authority that did not exist before the transaction.
+#[casttest]
+async fn cast_run_charges_fresh_eip7702_authority(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let authority = PrivateKeySigner::random();
+    let authorization = Authorization {
+        chain_id: U256::from(31337u64),
+        address: address!("0x000000000000000000000000000000000000dEaD"),
+        nonce: 0,
+    };
+    let signature = authority.sign_hash_sync(&authorization.signature_hash()).unwrap();
+    let tx = TransactionRequest {
+        authorization_list: Some(vec![authorization.into_signed(signature)]),
+        ..Default::default()
+    }
+    .with_from(from)
+    .with_to(address!("0x0000000000000000000000000000000000001234"))
+    .with_input(hex!("12345678"));
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    assert_eq!(receipt.gas_used(), 46_064);
+
+    let output = cmd
+        .args([
+            "run",
+            &receipt.tx_hash().to_string(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--evm-version",
+            "prague",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("Gas used: 46064"), "{output}");
+}
+
+// Prints the ERC-8021 attribution codes appended to the transaction calldata.
+#[casttest]
+async fn cast_run_prints_erc8021_attribution(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    // ERC-8021 schema 2 test vector with app, wallet and service codes.
+    let tx = TransactionRequest::default().with_from(from).with_to(from).with_input(hex!(
+        "a361616762617365617070617765707269767961738269666c617368626f747365746974616e00260280218021802180218021802180218021"
+    ));
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+
+    cmd.args([
+        "run",
+        &receipt.transaction_hash().to_string(),
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+ERC-8021 attribution: baseapp (app), privy (wallet), flashbots (service), titan (service)
+
+"#]]);
+}
+
+// The transaction returned by the RPC must be the one that was requested.
+#[casttest]
+async fn cast_run_rejects_mismatched_transaction(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let mut tx_hashes = Vec::new();
+    for to in [Address::with_last_byte(0xaa), Address::with_last_byte(0xbb)] {
+        let receipt = provider
+            .send_transaction(TransactionRequest::default().with_from(from).with_to(to).into())
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        tx_hashes.push(receipt.transaction_hash());
+    }
+    let [requested, returned] = tx_hashes[..] else { unreachable!() };
+    let returned_tx = provider.get_transaction_by_hash(returned).await.unwrap().unwrap();
+    let (endpoint, _) = spawn_rpc_proxy_canned_method(
+        handle.http_endpoint(),
+        "eth_getTransactionByHash",
+        serde_json::to_value(returned_tx).unwrap(),
+    )
+    .await;
+
+    for args in [&[][..], &["--debug-trace-transaction"]] {
+        cmd.cast_fuse()
+            .args(["run", &requested.to_string(), "--rpc-url", &endpoint])
+            .args(args)
+            .assert_failure()
+            .stderr_eq(format!(
+                "Error: RPC returned transaction {returned} for requested {requested}\n"
+            ));
+    }
+}
+
+// Opens a replayed transaction in soldb and checks a source stop with its variables.
+#[forgetest]
+async fn cast_run_debug_soldb(prj: _, cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "run",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &endpoint,
+            "--debug",
+            "--with-local-artifacts",
+        ])
+        .stdin("break src/Counter.sol:8\ncontinue\nvars\nbacktrace\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Loaded trace with 118 steps.
+Sources loaded for: Counter (0x5fbdb2315678afecb367f032d93f642f64180aa3)
+src/Counter.sol:4  (step 0/117, pc 0, PUSH1, gas 22492)
+    4 | contract Counter {
+Breakpoint #1 set at src/Counter.sol:8
+Breakpoint #1 hit at step 108, src/Counter.sol:8
+src/Counter.sol:8 in setNumber  (step 108/117, pc 136, DUP1, gas 22124)
+    8 |         number = newNumber;
+warning: local variables are inferred from the legacy source map and the stack layout of solc's legacy code generator, not from compiler-reported variable locations
+uint256 newNumber = 111 [stack+2]
+State:
+uint256 number = <unknown: slot 0x0 has not been read or written yet> [slot 0x0]
+#0  setNumber at src/Counter.sol:8  step 108, PC 136
+#1  Counter at src/Counter.sol:4  step 23, PC 40
+Exiting debugger.
+
+"#]]);
+}
+
+// A forked Anvil replays upstream transactions with the hardfork of the upstream chain: Cancun
+// charges 21000 where EIP-2780 charges 15000.
+#[casttest]
+async fn cast_run_upstream_tx_through_amsterdam_fork(cmd: _) {
+    for (hardfork, gas) in
+        [(EthereumHardfork::Cancun, 21_000), (EthereumHardfork::Amsterdam, 15_000)]
+    {
+        let (upstream_api, upstream) =
+            anvil::spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
+        let mut accounts = upstream.dev_accounts();
+        let tx = TransactionRequest::default()
+            .with_from(accounts.next().unwrap())
+            .with_to(accounts.next().unwrap());
+        let receipt = upstream
+            .http_provider()
+            .send_transaction(tx.into())
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert_eq!(receipt.gas_used, gas);
+        // Fork after the transaction's block, so that the fork serves it as upstream history.
+        upstream_api.evm_mine(None).await.unwrap();
+
+        let (_, fork) = anvil::spawn(
+            NodeConfig::test()
+                .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
+                .with_eth_rpc_url(Some(upstream.http_endpoint())),
+        )
+        .await;
+        cmd.cast_fuse()
+            .args([
+                "run",
+                &receipt.transaction_hash.to_string(),
+                "--rpc-url",
+                &fork.http_endpoint(),
+            ])
+            .with_no_redact()
+            .assert_success()
+            .stdout_eq(format!("...\nTransaction successfully executed.\nGas used: {gas}\n"));
+    }
+}
+
+// Prefix transactions from system senders replay only with `--replay-system-txes`, which the
+// target observes: here a HyperEVM-style system transfer funds the account it reads and stores.
+#[casttest]
+async fn cast_run_replays_system_txes(cmd: _) {
+    let config = NodeConfig::test()
+        .with_base_fee(Some(0))
+        .with_gas_price(Some(0))
+        .with_transaction_order(TransactionOrder::Fifo);
+    let (api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let funded = address!("0x00000000000000000000000000000000000beef1");
+    // SSTORE(0, BALANCE(CALLDATALOAD(4))) and return the balance.
+    let probe = Address::with_last_byte(0xaa);
+    api.anvil_set_code(probe, bytes!("0x600435318060005560005260206000f3")).await.unwrap();
+    api.anvil_set_balance(HYPERLIQUID_SYSTEM_ADDRESS, U256::from(10u128.pow(20))).await.unwrap();
+    api.anvil_impersonate_account(HYPERLIQUID_SYSTEM_ADDRESS).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let system = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(HYPERLIQUID_SYSTEM_ADDRESS)
+                .with_to(funded)
+                .with_value(U256::from(10u128.pow(18)))
+                .with_gas_price(0)
+                .with_gas_limit(21_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let target = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(from)
+                .with_to(probe)
+                .with_input([[0u8; 4].as_slice(), funded.into_word().as_slice()].concat())
+                .with_gas_price(0)
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    let system_tx = *system.tx_hash();
+    assert!(system.get_receipt().await.unwrap().status());
+    let receipt = target.get_receipt().await.unwrap();
+    assert_eq!(receipt.transaction_index, Some(1));
+    assert_eq!(receipt.gas_used, 45_907);
+    let tx_hash = receipt.transaction_hash.to_string();
+    let endpoint = handle.http_endpoint();
+
+    // Without the system transfer the balance is zero, so the store costs less.
+    cmd.args(["run", &tx_hash, "--rpc-url", &endpoint])
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq("...\nTransaction successfully executed.\nGas used: 26007\n")
+        .stderr_eq(format!(
+            "Executing previous transactions from the block.\n\
+             Warning: the replay skips system transactions before the target, so their state changes are missing: [{system_tx}]; `--replay-system-txes` attempts local replay where supported; `--debug-trace-transaction` renders the node's own trace instead\n\
+             Warning: the replay does not match the transaction's receipt: it used 45907 gas on-chain but 26007 in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.\n"
+        ));
+    cmd.cast_fuse()
+        .args(["run", &tx_hash, "--rpc-url", &endpoint, "--replay-system-txes"])
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq("...\nTransaction successfully executed.\nGas used: 45907\n")
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
+"#]]);
+}

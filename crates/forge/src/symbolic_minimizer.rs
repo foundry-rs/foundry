@@ -3,9 +3,10 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Function as SolFunction, I256, U256};
 use foundry_evm::executors::invariant::{
-    SequenceShrink, ShrinkCandidateKeys, ShrinkRun, shrink_sequence_by_removing,
+    SequenceShrink, ShrinkCandidateKeys, ShrinkRun, deadline_passed, shrink_sequence_by_removing,
 };
 use itertools::Itertools;
+use std::time::Instant;
 
 const MAX_SUBSET_CANDIDATES_PER_PASS: usize = 256;
 
@@ -85,6 +86,7 @@ pub(crate) fn minimize_sequence_counterexample(
     calls: &[SymbolicCounterexampleCall],
     sender_candidates: &[Address],
     max_attempts: usize,
+    deadline: Option<Instant>,
     mut still_fails: impl FnMut(&[SymbolicCounterexampleCall]) -> bool,
 ) -> Option<MinimizedSequence> {
     if calls.is_empty() {
@@ -93,7 +95,7 @@ pub(crate) fn minimize_sequence_counterexample(
 
     let original_calls = calls.to_vec();
     let mut minimizer =
-        SequenceMinimizer::new(original_calls.clone(), max_attempts, &mut still_fails);
+        SequenceMinimizer::new(original_calls.clone(), max_attempts, deadline, &mut still_fails);
 
     minimizer.minimize_len();
     minimizer.minimize_calldata();
@@ -115,13 +117,15 @@ impl<'a> SequenceMinimizer<'a> {
     fn new(
         current_calls: Vec<SymbolicCounterexampleCall>,
         max_attempts: usize,
+        deadline: Option<Instant>,
         still_fails: &'a mut dyn FnMut(&[SymbolicCounterexampleCall]) -> bool,
     ) -> Self {
         let tried_candidates = ShrinkCandidateKeys::new(replay_sequence_key(&current_calls));
-        Self { current_calls, tried_candidates, run: ShrinkRun::new(max_attempts), still_fails }
+        let run = ShrinkRun::new(max_attempts).with_deadline(deadline);
+        Self { current_calls, tried_candidates, run, still_fails }
     }
 
-    const fn can_try(&self) -> bool {
+    fn can_try(&self) -> bool {
         self.run.can_try()
     }
 
@@ -143,7 +147,10 @@ impl<'a> SequenceMinimizer<'a> {
             return false;
         }
 
-        if self.run.try_candidate(|| (self.still_fails)(&candidate_calls)) {
+        // A replay after the deadline may have been cancelled, so it never confirms a candidate.
+        let deadline = self.run.deadline();
+        let still_fails = &mut self.still_fails;
+        if self.run.try_candidate(|| still_fails(&candidate_calls) && !deadline_passed(deadline)) {
             self.current_calls = candidate_calls;
             true
         } else {
@@ -160,13 +167,15 @@ impl<'a> SequenceMinimizer<'a> {
         let current_calls = &mut self.current_calls;
         let tried_candidates = &mut self.tried_candidates;
         let still_fails = &mut self.still_fails;
+        let deadline = self.run.deadline();
 
         shrink_sequence_by_removing(
             base_calls.len(),
             &mut self.run,
+            true,
             || false,
             || {},
-            |shrinker| {
+            |shrinker, _| {
                 let candidate_calls = sequence_from_shrink(&base_calls, shrinker);
                 if candidate_calls == *current_calls {
                     return None;
@@ -176,7 +185,9 @@ impl<'a> SequenceMinimizer<'a> {
                     return None;
                 }
 
-                if (*still_fails)(&candidate_calls) {
+                // A replay after the deadline may have been cancelled, so it never confirms a
+                // candidate.
+                if (*still_fails)(&candidate_calls) && !deadline_passed(deadline) {
                     *current_calls = candidate_calls;
                     Some(true)
                 } else {
@@ -258,7 +269,7 @@ impl<'a> SequenceMinimizer<'a> {
         }
 
         let mut rejected_value = U256::ZERO;
-        while accepted_value > rejected_value + U256::from(1) && self.can_try() {
+        while accepted_value > rejected_value + U256::ONE && self.can_try() {
             let candidate_value = rejected_value + ((accepted_value - rejected_value) >> 1usize);
             let mut candidate_calls = self.current_calls.clone();
             candidate_calls[idx].value = Some(candidate_value);
@@ -483,15 +494,13 @@ fn minimize_u256_pair_candidates(
     let mut rejected_left = U256::ZERO;
     let mut rejected_right = U256::ZERO;
     let mut changed = false;
-    while accepted_left > rejected_left + U256::from(1)
-        || accepted_right > rejected_right + U256::from(1)
-    {
-        let candidate_left = if accepted_left > rejected_left + U256::from(1) {
+    while accepted_left > rejected_left + U256::ONE || accepted_right > rejected_right + U256::ONE {
+        let candidate_left = if accepted_left > rejected_left + U256::ONE {
             rejected_left + ((accepted_left - rejected_left) >> 1usize)
         } else {
             accepted_left
         };
-        let candidate_right = if accepted_right > rejected_right + U256::from(1) {
+        let candidate_right = if accepted_right > rejected_right + U256::ONE {
             rejected_right + ((accepted_right - rejected_right) >> 1usize)
         } else {
             accepted_right
@@ -647,11 +656,10 @@ fn minimize_compound_value(
                 return true;
             }
             minimize_elements(&mut elements, |items| DynSolValue::Array(items.to_vec()), try_value)
-                .map(|candidate| {
+                .is_some_and(|candidate| {
                     *value = candidate;
                     true
                 })
-                .unwrap_or(false)
         }
         DynSolValue::FixedArray(mut elements) => {
             if let Some(candidate) = minimize_elements_batch(
@@ -683,11 +691,10 @@ fn minimize_compound_value(
                 |items| DynSolValue::FixedArray(items.to_vec()),
                 try_value,
             )
-            .map(|candidate| {
+            .is_some_and(|candidate| {
                 *value = candidate;
                 true
             })
-            .unwrap_or(false)
         }
         DynSolValue::Tuple(mut elements) => {
             if let Some(candidate) = minimize_elements_batch(
@@ -715,11 +722,10 @@ fn minimize_compound_value(
                 return true;
             }
             minimize_elements(&mut elements, |items| DynSolValue::Tuple(items.to_vec()), try_value)
-                .map(|candidate| {
+                .is_some_and(|candidate| {
                     *value = candidate;
                     true
                 })
-                .unwrap_or(false)
         }
         DynSolValue::CustomStruct { name, prop_names, mut tuple } => {
             if let Some(candidate) = minimize_elements_batch(
@@ -767,11 +773,10 @@ fn minimize_compound_value(
                 },
                 try_value,
             )
-            .map(|candidate| {
+            .is_some_and(|candidate| {
                 *value = candidate;
                 true
             })
-            .unwrap_or(false)
         }
         _ => false,
     }
@@ -788,15 +793,15 @@ fn minimize_uint(
         return true;
     }
 
-    let one = U256::from(1);
+    let one = U256::ONE;
     if current > one && accept_candidate(value, DynSolValue::Uint(one, bits), try_value) {
         return true;
     }
 
     let bit_limit = bits.min(256);
     for bit in (0..bit_limit).rev() {
-        let mask = U256::from(1) << bit;
-        if current & mask == U256::ZERO {
+        let mask = U256::ONE << bit;
+        if (current & mask).is_zero() {
             continue;
         }
         let candidate = current & !mask;
@@ -814,14 +819,14 @@ fn minimize_uint_by_search(
     bits: usize,
     try_value: &mut dyn FnMut(&DynSolValue) -> bool,
 ) -> bool {
-    if current <= U256::from(1) {
+    if current <= U256::ONE {
         return false;
     }
 
     let mut accepted = current;
     let mut rejected = U256::ZERO;
     let mut changed = false;
-    while accepted > rejected + U256::from(1) {
+    while accepted > rejected + U256::ONE {
         let candidate: U256 = rejected + ((accepted - rejected) >> 1usize);
         if accept_candidate(value, DynSolValue::Uint(candidate, bits), try_value) {
             accepted = candidate;
@@ -862,19 +867,15 @@ fn minimize_int_by_search(
     try_value: &mut dyn FnMut(&DynSolValue) -> bool,
 ) -> bool {
     let mut accepted_abs = current.unsigned_abs();
-    if accepted_abs <= U256::from(1) {
+    if accepted_abs <= U256::ONE {
         return false;
     }
 
     let mut rejected_abs = U256::ZERO;
     let mut changed = false;
-    while accepted_abs > rejected_abs + U256::from(1) {
+    while accepted_abs > rejected_abs + U256::ONE {
         let candidate_abs: U256 = rejected_abs + ((accepted_abs - rejected_abs) >> 1usize);
-        let candidate = if current.is_negative() {
-            I256::from_raw(candidate_abs.wrapping_neg())
-        } else {
-            I256::from_raw(candidate_abs)
-        };
+        let candidate = signed_candidate_with_abs(current, candidate_abs);
         if accept_candidate(value, DynSolValue::Int(candidate, bits), try_value) {
             accepted_abs = candidate_abs;
             changed = true;
@@ -900,7 +901,7 @@ fn minimize_address(
 }
 
 fn address_candidates(current: Address) -> Vec<Address> {
-    if current == Address::ZERO {
+    if current.is_zero() {
         return Vec::new();
     }
 
@@ -931,7 +932,7 @@ fn minimize_fixed_bytes(
     size: usize,
     try_value: &mut dyn FnMut(&DynSolValue) -> bool,
 ) -> bool {
-    if current != B256::ZERO
+    if !current.is_zero()
         && accept_candidate(value, DynSolValue::FixedBytes(B256::ZERO, size), try_value)
     {
         return true;
@@ -1260,7 +1261,7 @@ fn minimize_u256_pair_delta_candidates(
     current_right: U256,
     try_candidate: &mut impl FnMut(U256, U256) -> bool,
 ) -> bool {
-    let one = U256::from(1);
+    let one = U256::ONE;
     if (current_left, current_right) != (one, one)
         && !current_left.is_zero()
         && !current_right.is_zero()
@@ -1418,6 +1419,7 @@ mod tests {
             signature: Some(function.signature()),
             args: Some(foundry_common::fmt::format_tokens(&args).format(", ").to_string()),
             raw_args: Some(foundry_common::fmt::format_tokens_raw(&args).format(", ").to_string()),
+            svm_returns: Vec::new(),
         }
     }
 
@@ -1439,11 +1441,11 @@ mod tests {
             function,
             vec![
                 DynSolValue::Uint(U256::from(0xff), 256),
-                DynSolValue::Address(Address::from([0xaa; 20])),
+                DynSolValue::Address(Address::repeat_byte(0xaa)),
                 DynSolValue::Bytes(vec![0x99, 0x42, 0x88]),
                 DynSolValue::String("abc".to_string()),
                 DynSolValue::Array(vec![
-                    DynSolValue::Uint(U256::from(0), 256),
+                    DynSolValue::Uint(U256::ZERO, 256),
                     DynSolValue::Uint(U256::from(7), 256),
                     DynSolValue::Uint(U256::from(9), 256),
                 ]),
@@ -1463,12 +1465,7 @@ mod tests {
 
         let args = decoded(function, &minimized.minimized_call);
         assert_eq!(args[0], DynSolValue::Uint(U256::from(0x2a), 256));
-        assert_eq!(
-            args[1],
-            DynSolValue::Address(Address::from([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xaa,
-            ]))
-        );
+        assert_eq!(args[1], DynSolValue::Address(Address::with_last_byte(0xaa)));
         assert_eq!(args[2], DynSolValue::Bytes(vec![0, 0x42]));
         assert_eq!(args[3], DynSolValue::String("a".to_string()));
         assert_eq!(args[4], DynSolValue::Array(vec![DynSolValue::Uint(U256::from(7), 256)]));
@@ -1491,7 +1488,7 @@ mod tests {
                 DynSolValue::Bytes(vec![1, 2, 3, 0x42, 4]),
                 DynSolValue::String("abcZ".to_string()),
                 DynSolValue::Array(vec![
-                    DynSolValue::Uint(U256::from(1), 256),
+                    DynSolValue::Uint(U256::ONE, 256),
                     DynSolValue::Uint(U256::from(2), 256),
                     DynSolValue::Uint(U256::from(7), 256),
                     DynSolValue::Uint(U256::from(3), 256),
@@ -1575,11 +1572,11 @@ mod tests {
             U256::from(50),
             &mut |left, right| {
                 candidates.push((left, right));
-                (left, right) == (U256::from(1), U256::from(1))
+                (left, right) == (U256::ONE, U256::ONE)
             },
         ));
 
-        assert_eq!(candidates, vec![(U256::from(1), U256::from(1))]);
+        assert_eq!(candidates, vec![(U256::ONE, U256::ONE)]);
     }
 
     #[test]
@@ -1588,7 +1585,7 @@ mod tests {
         let function = abi.functions().next().unwrap();
         let start = call(
             function,
-            vec![DynSolValue::Uint(U256::from(1), 256), DynSolValue::Uint(U256::from(1), 256)],
+            vec![DynSolValue::Uint(U256::ONE, 256), DynSolValue::Uint(U256::ONE, 256)],
         );
         let mut replayed = HashSet::new();
 
@@ -1686,7 +1683,7 @@ mod tests {
         let address_abi = JsonAbi::parse(["function check(address) external"]).unwrap();
         let address_function = address_abi.functions().next().unwrap();
         let address_start =
-            call(address_function, vec![DynSolValue::Address(Address::from([0xaa; 20]))]);
+            call(address_function, vec![DynSolValue::Address(Address::repeat_byte(0xaa))]);
         let address_minimized = minimize_single_call_counterexample(
             address_function,
             &address_start,
@@ -1794,7 +1791,7 @@ mod tests {
             vec![DynSolValue::Tuple(vec![
                 DynSolValue::Uint(U256::from(137), 256),
                 DynSolValue::String("xyoloy".to_string()),
-                DynSolValue::Address(Address::from([0xaa; 20])),
+                DynSolValue::Address(Address::repeat_byte(0xaa)),
             ])],
         );
 
@@ -1871,8 +1868,8 @@ mod tests {
         let start = call(
             function,
             vec![
-                DynSolValue::Uint(U256::from(1), 256),
-                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::ONE, 256),
+                DynSolValue::Uint(U256::ONE, 256),
                 DynSolValue::Bytes(vec![0x99, 0x42, 0x88]),
             ],
         );
@@ -1910,8 +1907,8 @@ mod tests {
         let start = call(
             function,
             vec![DynSolValue::Tuple(vec![
-                DynSolValue::Uint(U256::from(1), 256),
-                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::ONE, 256),
+                DynSolValue::Uint(U256::ONE, 256),
                 DynSolValue::Bytes(vec![0x99, 0x42, 0x88]),
             ])],
         );
@@ -1967,7 +1964,7 @@ mod tests {
                     DynSolValue::Uint(left, _),
                     DynSolValue::Uint(_, _),
                     DynSolValue::Uint(right, _),
-                ] if *left == *right + U256::from(1)))
+                ] if *left == *right + U256::ONE))
             },
         )
         .unwrap();
@@ -1975,7 +1972,7 @@ mod tests {
         assert_eq!(
             decoded(function, &minimized.minimized_call),
             vec![DynSolValue::FixedArray(vec![
-                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::ONE, 256),
                 DynSolValue::Uint(U256::ZERO, 256),
                 DynSolValue::Uint(U256::ZERO, 256),
             ])]
@@ -2031,6 +2028,7 @@ mod tests {
             &[start],
             &[sender, sender],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
+            None,
             |calls| {
                 replays += 1;
                 assert_eq!(calls.len(), 1);
@@ -2075,6 +2073,7 @@ mod tests {
             &sequence,
             &[smaller_sender],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
+            None,
             |candidate| {
                 let mut primed = false;
                 for call in candidate {
