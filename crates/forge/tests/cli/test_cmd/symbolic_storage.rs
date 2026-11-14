@@ -1,5 +1,10 @@
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, str, util::OutputExt};
+use foundry_compilers::artifacts::BytecodeHash;
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
+use foundry_test_utils::{
+    forgetest_init, str,
+    util::{OTHER_SOLC_VERSION, OutputExt},
+};
 
 use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
 use crate::skip_unless_z3;
@@ -869,4 +874,163 @@ Ran 1 test for test/SymbolicStaleLayout.t.sol:SymbolicStaleLayout
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
 ...
 "#]]);
+}
+
+// A filtered symbolic run must only recompile the artifacts of the compiler profiles it uses, or
+// the cache keeps pointing at deleted artifacts of other profiles and every run recompiles.
+#[forgetest_init]
+fn symbolic_keeps_cached_artifacts_of_other_profiles(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_keeps_cached_artifacts_of_other_profiles");
+
+    prj.update_config(|config| {
+        config.ast = true;
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "no-metadata".to_string(),
+            via_ir: None,
+            evm_version: None,
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: Some(BytecodeHash::None),
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "test/NoMetadata.t.sol".parse().unwrap(),
+            version: None,
+            via_ir: None,
+            bytecode_hash: Some(BytecodeHash::None),
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+    let source = "contract Shared { uint256 public value; }\n";
+    prj.add_source("Shared.sol", source);
+    prj.add_test(
+        "Default.t.sol",
+        r#"
+import {Shared} from "../src/Shared.sol";
+
+contract SymbolicDefaultProfile {
+    function checkShared() public {
+        assert(new Shared().value() == 0);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "NoMetadata.t.sol",
+        r#"
+import {Shared} from "../src/Shared.sol";
+
+contract NoMetadataProfile {
+    Shared shared = new Shared();
+}
+"#,
+    );
+    cmd.args(["test", "--symbolic"]).assert_success();
+
+    prj.add_source("Shared.sol", &format!("{source}// Edited.\n"));
+    cmd.forge_fuse().arg("build").assert_success();
+
+    let args = ["test", "--symbolic", "--match-path", "test/Default.t.sol"];
+    cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Recompiling cached artifacts without storage layouts...
+
+"#]]);
+    cmd.forge_fuse().args(args).assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+"#]]);
+}
+
+// When filtered roots hit solc error 2449, the retry compiles every root and can select another
+// solc version, so the stale artifacts of that compilation must be recompiled.
+#[forgetest_init]
+fn symbolic_recompiles_cached_artifacts_after_source_order_fallback(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_recompiles_cached_artifacts_after_source_order_fallback");
+
+    prj.update_config(|config| {
+        config.solc = None;
+        config.optimizer = Some(true);
+        config.ast = true;
+    });
+    let source = r#"
+pragma solidity ^0.8.24;
+
+function five() pure returns (uint256) {
+    return 5;
+}
+
+contract FoldedStore {
+    mapping(uint256 => uint256) public values;
+
+    function set(uint256 key, uint256 value) external {
+        values[key] = value;
+    }
+
+    function readFive() external view returns (uint256) {
+        return values[five()];
+    }
+}
+"#;
+    prj.add_source("FoldedStore.sol", source);
+    prj.add_test(
+        "SymbolicFallback.t.sol",
+        r#"
+pragma solidity ^0.8.24;
+import {FoldedStore} from "../src/FoldedStore.sol";
+
+contract SymbolicFallback {
+    FoldedStore store = new FoldedStore();
+
+    function checkFoldedSlotAliases(uint256 key) public {
+        store.set(key, 1);
+        assert(store.readFive() == 0);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "helpers/Base.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./Derived.sol";
+contract Base {}
+"#,
+    );
+    prj.add_test(
+        "helpers/Derived.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./Base.sol";
+contract Derived is Base {}
+"#,
+    );
+    // Without this root, solc visits the import cycle in the order that produces error 2449. It
+    // also pins the shared sources to another solc version in the retry.
+    prj.add_test(
+        "Anchor.t.sol",
+        &format!(
+            r#"
+pragma solidity ={OTHER_SOLC_VERSION};
+import "./helpers/Derived.sol";
+import {{SymbolicFallback}} from "./SymbolicFallback.t.sol";
+contract Anchor {{}}
+"#
+        ),
+    );
+    let expected = str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]];
+    assert_symbolic_witness(cmd.args(["test", "--symbolic"])).failure().stdout_eq(expected.clone());
+
+    prj.add_source("FoldedStore.sol", &format!("{source}// Edited.\n"));
+    cmd.forge_fuse().arg("build").assert_success();
+
+    let args = ["test", "--symbolic", "--match-path", "test/SymbolicFallback.t.sol"];
+    assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(expected);
 }
