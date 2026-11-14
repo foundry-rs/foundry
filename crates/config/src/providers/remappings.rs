@@ -63,8 +63,11 @@ impl Remappings {
             if let Ok(path) = figment.find_value(path)
                 && let Some(path) = path.into_string()
             {
-                let remapping =
-                    Remapping { context: None, name: format!("{path}/"), path: format!("{path}/") };
+                let remapping = Remapping {
+                    context: None,
+                    name: project_path_remapping_name(Path::new(&path)),
+                    path: format!("{path}/"),
+                };
                 self.project_paths.push(remapping);
             }
         };
@@ -146,13 +149,6 @@ impl Remappings {
     pub fn warnings_from_figment(&self, figment: &Figment) -> Vec<Warning> {
         let mut warnings = figment.extract_inner::<Vec<Warning>>("__warnings").unwrap_or_default();
         suppress_overridden_remapping_warnings(&mut warnings, &self.remappings);
-        warnings.retain(|warning| {
-            let Warning::ScopedDependencyRemapping { remapping } = warning else { return true };
-            let mut global = remapping.clone().to_relative_remapping();
-            global.context = None;
-            // A rejected global declaration could not have supplied root imports before scoping.
-            self.clone().push(global)
-        });
         warnings
     }
 
@@ -415,15 +411,11 @@ impl RemappingsProvider<'_> {
                 if *kind == NestedRemappingKind::Declaration
                     && (self.project_paths.iter().any(|path| {
                         let path = path.strip_prefix(self.root).unwrap_or(path);
-                        #[cfg(windows)]
-                        let name = path.to_slash_lossy();
-                        #[cfg(not(windows))]
-                        let name = path.to_string_lossy();
                         remappings_conflict(
                             r,
                             &Remapping {
                                 context: None,
-                                name: format!("{name}/"),
+                                name: project_path_remapping_name(path),
                                 path: self.root.join(path).display().to_string(),
                             },
                             self.root,
@@ -537,6 +529,7 @@ impl RemappingsProvider<'_> {
                 &mut warnings,
                 &previous_globals,
                 &all_remappings.remappings,
+                &self.project_paths,
                 self.root,
             );
             suppress_overridden_remapping_warnings(&mut warnings, &authoritative_remappings);
@@ -956,6 +949,7 @@ fn retain_changed_remapping_warnings(
     warnings: &mut Vec<Warning>,
     previous_globals: &BTreeSet<RelativeRemapping>,
     current: &[Remapping],
+    project_paths: &[PathBuf],
     root: &Path,
 ) {
     let mut warned = BTreeSet::new();
@@ -965,6 +959,10 @@ fn retain_changed_remapping_warnings(
         global.context = None;
         let original = global.clone().to_relative_remapping();
         previous_globals.contains(&global)
+            // Project-path aliases could not have supplied root imports before scoping.
+            && !project_paths.iter().any(|path| {
+                original.name.eq_ignore_ascii_case(&project_path_remapping_name(path))
+            })
             && !current.iter().any(|mapping| {
                 mapping.context.is_none()
                     && remapping_name_is_prefix(&mapping.name, &global.name)
@@ -972,6 +970,14 @@ fn retain_changed_remapping_warnings(
             })
             && warned.insert(global)
     });
+}
+
+fn project_path_remapping_name(path: &Path) -> String {
+    #[cfg(windows)]
+    let path = path.to_slash_lossy();
+    #[cfg(not(windows))]
+    let path = path.to_string_lossy();
+    format!("{path}/")
 }
 
 impl Provider for RemappingsProvider<'_> {
@@ -2012,7 +2018,7 @@ mod tests {
                 )
                 .unwrap();
                 let config = Config::load_with_root(root).unwrap();
-                assert_eq!(config.warnings.len(), 1, "{key}");
+                assert_eq!(config.warnings, [], "{key}");
                 let mapping = config
                     .get_all_remappings()
                     .find(|mapping| mapping.name == "custom/root/")
@@ -2125,26 +2131,5 @@ mod tests {
             );
             Ok(())
         });
-    }
-
-    #[test]
-    fn explicit_file_alias_suppresses_scoped_migration_warning() {
-        let figment = Figment::new().merge((
-            "__warnings",
-            vec![Warning::ScopedDependencyRemapping {
-                remapping: Remapping {
-                    context: Some("lib/a/".to_string()),
-                    name: "Custom.sol".to_string(),
-                    path: "lib/a/src/Custom.sol".to_string(),
-                }
-                .into_relative(Path::new(".")),
-            }],
-        ));
-        let remappings = Remappings::new_with_remappings(vec![Remapping {
-            context: None,
-            name: "Custom.sol".to_string(),
-            path: "src/Selected.sol".to_string(),
-        }]);
-        assert_eq!(remappings.warnings_from_figment(&figment), []);
     }
 }

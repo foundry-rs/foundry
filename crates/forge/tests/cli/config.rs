@@ -3793,14 +3793,18 @@ contract {name} {{
 
     // Root TOML and CLI aliases remain authoritative inside dependencies.
     let trusted_remapping = "victim/=lib/victim/src/";
-    for source in ["auto", "toml", "cli"] {
+    for source in ["auto", "toml", "cli", "cli_file"] {
         prj.update_config(|config| {
             config.remappings.clear();
             if source == "toml" {
                 config.remappings.push(Remapping::from_str(trusted_remapping).unwrap().into());
             }
         });
-        let owner_value = if source == "auto" { 6 } else { 4 };
+        let owner_value = match source {
+            "auto" => 6,
+            "cli_file" => 5,
+            _ => 4,
+        };
         prj.add_test(
             "RemappingScope.t.sol",
             &format!(
@@ -3822,8 +3826,13 @@ contract RemappingScopeTest {{
         command.args(["test", "--match-contract", "RemappingScopeTest"]);
         if source == "cli" {
             command.args(["--remappings", trusted_remapping]);
+        } else if source == "cli_file" {
+            command.args(["--remappings", "victim/File.sol=lib/victim/src/File.sol"]);
         }
-        command.assert_success();
+        let assertion = command.assert_success();
+        if source != "auto" {
+            assertion.stderr_eq("");
+        }
     }
 }
 
@@ -3849,6 +3858,16 @@ fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) 
         "shared/Shared.sol",
         "import {RootBase} from \"src/Base.sol\"; contract Shared is RootBase {}\n",
     );
+    cmd.forge_fuse()
+        .arg("remappings")
+        .assert_success()
+        .stdout_eq(str![[r#"
+lib/good/:src/=lib/good/src/internal/
+good/=lib/good/src/
+private-alias/=lib/good/src/internal/
+
+"#]])
+        .stderr_eq("");
     cmd.forge_fuse().args(["build", "--no-lint"]).assert_success().stderr_eq("");
 
     for owner in ["a-helper", "a-helper/lib/nested"] {
@@ -4130,6 +4149,10 @@ contract AliasMigrationTest {
         }
         command.assert_success().stderr_eq("");
     }
+    cmd.forge_fuse()
+        .args(["build", "--force", "--no-lint", "--remappings", root_alias])
+        .assert_success()
+        .stderr_eq("");
 }
 
 #[forgetest]
