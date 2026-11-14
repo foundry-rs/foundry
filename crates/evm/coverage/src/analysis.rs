@@ -49,12 +49,14 @@ struct SourceVisitorCheckpoint {
 }
 
 /// The kind of a branch whose anchors depend on more than its source span.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) enum BranchKind {
     /// A `require` call. Path 0 is the failing side and path 1 the passing side.
     Require,
     /// A ternary expression. Its jumps must match the exact expression span.
     Ternary,
+    /// A Yul `if` with the given body. Path 0 enters the body and path 1 skips it.
+    YulIf(SourceLocation),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -460,8 +462,10 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 // Don't walk assignments.
                 return ControlFlow::Continue(());
             }
-            StmtKind::If(..) => {
+            StmtKind::If(_, body) => {
                 let branch_id = self.next_branch_id();
+                let body = self.source_location_for(body.span);
+                self.branch_kinds.push((branch_id, BranchKind::YulIf(body)));
                 // Track both outcomes, including the implicit path that skips the body.
                 for path_id in 0..2 {
                     self.push_item_kind(
@@ -713,8 +717,8 @@ impl SourceAnalysis {
         })
     }
 
-    pub(crate) fn branch_kind(&self, source_id: u32, branch_id: u32) -> Option<BranchKind> {
-        self.branch_kinds.get(&(source_id, branch_id)).copied()
+    pub(crate) fn branch_kind(&self, source_id: u32, branch_id: u32) -> Option<&BranchKind> {
+        self.branch_kinds.get(&(source_id, branch_id))
     }
 
     /// Returns all the coverage items.
@@ -777,7 +781,10 @@ impl SourceAnalysis {
         Self {
             map: vec![(0, items.len() as u32)],
             all_items: items,
-            branch_kinds: branch_kinds.iter().map(|&(branch, kind)| ((0, branch), kind)).collect(),
+            branch_kinds: branch_kinds
+                .iter()
+                .map(|(branch, kind)| ((0, *branch), kind.clone()))
+                .collect(),
             ..Default::default()
         }
     }
