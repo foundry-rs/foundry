@@ -318,6 +318,8 @@ impl FmtArgs {
                     let _ = stdout.write_all(diff.as_bytes());
                 }
                 if self.check {
+                    // Report files that failed to parse too; they are not in `diffs`.
+                    convert_solar_errors(compiler.dcx())?;
                     std::process::exit(1);
                 }
             }
