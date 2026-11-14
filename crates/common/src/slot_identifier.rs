@@ -103,11 +103,7 @@ impl SlotInfo {
 
                     // Create the appropriate value based on type
                     if matches!(actual_type, DynSolType::String) {
-                        let str_val = if data.is_empty() {
-                            String::new()
-                        } else {
-                            String::from_utf8(data).unwrap_or_default()
-                        };
+                        let str_val = String::from_utf8(data).ok()?;
                         Some(DynSolValue::String(str_val))
                     } else {
                         Some(DynSolValue::Bytes(data))
@@ -144,12 +140,10 @@ impl SlotInfo {
         }
 
         // Try to handle as long bytes/string
-        self.aggregate_bytes_or_strings(base_slot, storage_values).map(|data| {
+        self.aggregate_bytes_or_strings(base_slot, storage_values).and_then(|data| {
             match self.slot_type.dyn_sol_type {
-                DynSolType::String => {
-                    DynSolValue::String(String::from_utf8(data).unwrap_or_default())
-                }
-                DynSolType::Bytes => DynSolValue::Bytes(data),
+                DynSolType::String => String::from_utf8(data).ok().map(DynSolValue::String),
+                DynSolType::Bytes => Some(DynSolValue::Bytes(data)),
                 _ => unreachable!(),
             }
         })
@@ -1132,6 +1126,39 @@ pub fn is_struct(s: &str) -> bool {
 mod tests {
     use super::*;
     use alloy_primitives::Address;
+
+    fn string_slot() -> SlotInfo {
+        SlotInfo {
+            label: "value".into(),
+            slot_type: StorageTypeInfo { label: "string".into(), dyn_sol_type: DynSolType::String },
+            offset: 0,
+            slot: "0".into(),
+            members: None,
+            decoded: None,
+            keys: None,
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_utf8_storage_strings() {
+        let mut short = B256::ZERO;
+        short.0[0] = 0xff;
+        short.0[31] = 2;
+        assert_eq!(string_slot().decode(short), None);
+        assert_eq!(string_slot().decode(B256::ZERO), Some(DynSolValue::String(String::new())));
+
+        let base = B256::ZERO;
+        let data = keccak256(base.0);
+        let mut values = B256Map::default();
+        values.insert(base, B256::from(U256::from(65)));
+        values.insert(data, B256::repeat_byte(0xff));
+        assert_eq!(string_slot().decode_bytes_or_string(&base, &values), None);
+        values.insert(data, B256::repeat_byte(b'a'));
+        assert_eq!(
+            string_slot().decode_bytes_or_string(&base, &values),
+            Some(DynSolValue::String("a".repeat(32)))
+        );
+    }
 
     #[test]
     fn preserves_contract_and_enum_array_dimensions() {
