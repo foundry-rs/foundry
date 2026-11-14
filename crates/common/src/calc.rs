@@ -17,7 +17,7 @@ pub const fn median_sorted(values: &[u64]) -> u64 {
 
     let len = values.len();
     let mid = len / 2;
-    if len.is_multiple_of(2) { (values[mid - 1] + values[mid]) / 2 } else { values[mid] }
+    if len.is_multiple_of(2) { values[mid - 1].midpoint(values[mid]) } else { values[mid] }
 }
 
 #[cfg(test)]
@@ -62,5 +62,23 @@ mod tests {
         values.sort();
         let m = median_sorted(&values);
         assert_eq!(m, 45);
+    }
+
+    #[test]
+    fn calc_median_overflow() {
+        assert_eq!(median_sorted(&[u64::MAX, u64::MAX]), u64::MAX);
+        assert_eq!(median_sorted(&[u64::MAX - 2, u64::MAX]), u64::MAX - 1);
+    }
+
+    #[test]
+    fn calc_median_overflow_round_down() {
+        assert_eq!(median_sorted(&[u64::MAX - 1, u64::MAX]), u64::MAX - 1);
+        assert_eq!(median_sorted(&[0, u64::MAX - 1, u64::MAX, u64::MAX]), u64::MAX - 1);
+    }
+
+    #[test]
+    fn calc_median_full_range() {
+        const MEDIAN: u64 = median_sorted(&[0, u64::MAX]);
+        assert_eq!(MEDIAN, u64::MAX / 2);
     }
 }
