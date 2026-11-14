@@ -235,7 +235,7 @@ impl TimeManager {
         let (mut next_timestamp, update_offset) = if let Some(next) = exact_timestamp {
             (next.timestamp, true)
         } else if let Some(interval) = state.interval {
-            (last_timestamp.saturating_add(interval), false)
+            (last_timestamp.saturating_add(interval).saturating_add(state.time_increase), false)
         } else {
             // A burst of blocks within one wall-clock second leaves `last_timestamp` ahead of
             // `wall + offset`; keep a pending explicit increase on top of the logical clock so the
@@ -511,6 +511,18 @@ mod tests {
         let state = TimeState { last_timestamp: 1_000, interval: Some(12), ..Default::default() };
 
         assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, true).0, 1_012);
+    }
+
+    #[test]
+    fn interval_adds_pending_time_increase() {
+        let state = TimeState {
+            last_timestamp: 1_000,
+            interval: Some(10),
+            time_increase: 3_600,
+            ..Default::default()
+        };
+
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, false).0, 4_610);
     }
 
     #[test]

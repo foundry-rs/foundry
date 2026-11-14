@@ -549,6 +549,27 @@ async fn test_timestamp_interval() {
     assert!(another_block.header.timestamp - new_block.header.timestamp < interval);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_timestamp_interval_with_time_increase() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.evm_set_block_timestamp_interval(10).unwrap();
+    api.evm_mine(None).await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    api.evm_increase_time(U256::from(1_000)).await.unwrap();
+    api.evm_mine(None).await.unwrap();
+    let increased = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(increased.header.timestamp, block.header.timestamp + 1_010);
+
+    api.anvil_mine(Some(U256::from(2)), Some(U256::from(100))).await.unwrap();
+    let mined = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(mined.header.timestamp, increased.header.timestamp + 220);
+
+    api.evm_mine(None).await.unwrap();
+    let next = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(next.header.timestamp, mined.header.timestamp + 10);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/2341>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_set_storage_bsc_fork() {
