@@ -4096,7 +4096,6 @@ with remappings:
 "#]];
     let warnings = str![[r#"
 Warning: Dependency remapping `@custom/=lib/dependency/src/` now applies only within `lib/dependency/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/dependency/src/` to your root remappings.
-Warning: Dependency remapping `@custom/=lib/other/src/` now applies only within `lib/other/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/other/src/` to your root remappings.
 
 "#]];
     let migration_error = str![[r#"
@@ -4255,7 +4254,6 @@ fn dependency_alias_migration_only_suggests_existing_targets(prj: _, cmd: _) {
 
     cmd.args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
 Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/a/src/` to your root remappings.
-Warning: Dependency remapping `@custom/=lib/z/src/` now applies only within `lib/z/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/z/src/` to your root remappings.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4274,7 +4272,6 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
     cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
         r#"
 Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/a/src/` to your root remappings.
-Warning: Dependency remapping `@custom/=lib/z/src/` now applies only within `lib/z/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/z/src/` to your root remappings.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4293,7 +4290,6 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
     cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
         r#"
 Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/a/src/` to your root remappings.
-Warning: Dependency remapping `@custom/=lib/z/src/` now applies only within `lib/z/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/z/src/` to your root remappings.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4351,15 +4347,15 @@ fn scoped_source_alias_preserves_root_sources(prj: _, cmd: _) {
         "import {RootBase} from \"src/Base.sol\"; import {Dep} from \"dependency/Dep.sol\"; contract Root is RootBase, Dep {}\n",
     );
 
-    cmd.args(["build", "--no-lint"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["build", "--no-lint"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-"#]]).stderr_eq(str![[r#"
-Warning: Dependency remapping `src/=lib/dependency/src/internal/` now applies only within `lib/dependency/`. Root imports may resolve differently. To retain the previous target, add `src/=lib/dependency/src/internal/` to your root remappings.
-
-"#]]);
+"#]])
+        .stderr_eq("");
 }
 
 #[forgetest]
@@ -4428,4 +4424,34 @@ b/=../shared/b/src/
                 .stderr_eq("");
         }
     }
+}
+
+#[forgetest]
+fn openzeppelin_forge_std_alias_does_not_warn_about_migration(prj: _, cmd: _) {
+    prj.create_file(
+        "lib/openzeppelin-contracts/foundry.toml",
+        "[profile.default]\nremappings = [\"forge-std=lib/forge-std/src\"]\n",
+    );
+    prj.add_lib("forge-std/src/Test.sol", "contract RootStd {}\n");
+    prj.add_lib("openzeppelin-contracts/lib/forge-std/src/Test.sol", "contract NestedStd {}\n");
+    prj.add_lib(
+        "openzeppelin-contracts/src/Own.sol",
+        "import {NestedStd} from \"forge-std/Test.sol\"; contract Own is NestedStd {}\n",
+    );
+    prj.add_source(
+        "Root.sol",
+        "import {RootStd} from \"forge-std/Test.sol\"; import {Own} from \"openzeppelin-contracts/Own.sol\"; contract Root is RootStd, Own {}\n",
+    );
+
+    cmd.arg("remappings")
+        .assert_success()
+        .stdout_eq(str![[r#"
+lib/openzeppelin-contracts/:forge-std/=lib/openzeppelin-contracts/lib/forge-std/src/
+forge-std/=lib/forge-std/src/
+openzeppelin-contracts/=lib/openzeppelin-contracts/src/
+
+"#]])
+        .stderr_eq("");
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq("");
+    cmd.forge_fuse().arg("build").assert_success().stderr_eq("");
 }

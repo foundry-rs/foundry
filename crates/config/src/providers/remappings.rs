@@ -144,8 +144,15 @@ impl Remappings {
 
     /// Returns configuration warnings not resolved by these authoritative remappings.
     pub fn warnings_from_figment(&self, figment: &Figment) -> Vec<Warning> {
-        let mut warnings = figment.extract_inner("__warnings").unwrap_or_default();
+        let mut warnings = figment.extract_inner::<Vec<Warning>>("__warnings").unwrap_or_default();
         suppress_overridden_remapping_warnings(&mut warnings, &self.remappings);
+        warnings.retain(|warning| {
+            let Warning::ScopedDependencyRemapping { remapping } = warning else { return true };
+            let mut global = remapping.clone().to_relative_remapping();
+            global.context = None;
+            // A rejected global declaration could not have supplied root imports before scoping.
+            self.clone().push(global)
+        });
         warnings
     }
 
@@ -363,6 +370,41 @@ impl RemappingsProvider<'_> {
             }
             let mut authoritative_remappings = authoritative_user_remappings;
             authoritative_remappings.extend(explicit_contextual_remappings.iter().cloned());
+            // Reuse global selection and prefix precedence to identify declarations that actually
+            // supplied root imports before scoping. Losing declarations need no migration advice.
+            let mut previous_globals = BTreeMap::new();
+            for remapping in nested_foundry_remappings
+                .iter()
+                .map(|(_, remapping, _)| remapping)
+                .chain(&global)
+                .filter(|remapping| remapping.context.is_none())
+            {
+                insert_closest(
+                    &mut previous_globals,
+                    None,
+                    remapping.name.clone(),
+                    remapping.path.clone().into(),
+                );
+            }
+            let mut previous_remappings = all_remappings.clone();
+            previous_remappings.extend(
+                previous_globals
+                    .into_values()
+                    .flat_map(|remappings| {
+                        remappings.into_iter().map(|(name, path)| Remapping {
+                            context: None,
+                            name,
+                            path: path.to_string_lossy().into(),
+                        })
+                    })
+                    .collect(),
+            );
+            let previous_globals = previous_remappings
+                .into_inner()
+                .into_iter()
+                .filter(|remapping| remapping.context.is_none())
+                .map(|remapping| remapping.into_relative(self.root))
+                .collect::<BTreeSet<_>>();
             let mut contextual_remappings = Vec::new();
             for (lib, r, kind) in &nested_foundry_remappings {
                 if r.context.is_some() {
@@ -491,6 +533,12 @@ impl RemappingsProvider<'_> {
                     .collect(),
             );
 
+            retain_changed_remapping_warnings(
+                &mut warnings,
+                &previous_globals,
+                &all_remappings.remappings,
+                self.root,
+            );
             suppress_overridden_remapping_warnings(&mut warnings, &authoritative_remappings);
             return Ok(RemappingsOutput {
                 remappings: all_remappings.into_inner(),
@@ -900,6 +948,29 @@ fn suppress_overridden_remapping_warnings(
             mapping.context.is_none() && remapping_name_is_prefix(&mapping.name, &remapping.name)
         }),
         _ => true,
+    });
+}
+
+/// Retains migration advice only for former global targets that are no longer available.
+fn retain_changed_remapping_warnings(
+    warnings: &mut Vec<Warning>,
+    previous_globals: &BTreeSet<RelativeRemapping>,
+    current: &[Remapping],
+    root: &Path,
+) {
+    let mut warned = BTreeSet::new();
+    warnings.retain(|warning| {
+        let Warning::ScopedDependencyRemapping { remapping } = warning else { return true };
+        let mut global = remapping.clone();
+        global.context = None;
+        let original = global.clone().to_relative_remapping();
+        previous_globals.contains(&global)
+            && !current.iter().any(|mapping| {
+                mapping.context.is_none()
+                    && remapping_name_is_prefix(&mapping.name, &global.name)
+                    && !remappings_conflict(mapping, &original, root)
+            })
+            && warned.insert(global)
     });
 }
 
@@ -1956,7 +2027,13 @@ mod tests {
                     .get_all_remappings()
                     .filter(|mapping| mapping.name == "pkg/" || mapping.name == alias)
                     .collect::<Vec<_>>();
-                assert_eq!(config.warnings.len(), if scoped { 2 } else { 0 }, "{alias}={target}");
+                assert_eq!(config.warnings.len(), usize::from(scoped), "{alias}={target}");
+                if scoped {
+                    assert_eq!(
+                        config.warnings[0].to_string(),
+                        "Dependency remapping `pkg/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `pkg/=lib/a/src/` to your root remappings."
+                    );
+                }
                 assert!(
                     aliases.iter().all(|mapping| mapping.context.is_some() == scoped),
                     "{alias}={target}"
@@ -2084,5 +2161,53 @@ mod tests {
             );
             Ok(())
         });
+    }
+
+    #[test]
+    fn scoped_dependency_aliases_do_not_warn_when_global_target_survives() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = temp.path();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            for name in ["a", "b"] {
+                let owner = root.join("lib").join(name);
+                fs::create_dir_all(owner.join("src")).unwrap();
+                fs::write(owner.join("src/Version.sol"), "contract Version {}\n").unwrap();
+                fs::write(
+                    owner.join(Config::FILE_NAME),
+                    "[profile.default]\nremappings = [\"a/=src/\"]\n",
+                )
+                .unwrap();
+            }
+
+            let config = Config::load_with_root(root).unwrap();
+            assert_eq!(config.warnings, []);
+            assert_eq!(
+                config.get_all_remappings().map(|mapping| mapping.to_string()).collect::<Vec<_>>(),
+                ["lib/a/:a/=lib/a/src/", "lib/b/:a/=lib/b/src/", "a/=lib/a/src/", "b/=lib/b/src/",]
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn explicit_file_alias_suppresses_scoped_migration_warning() {
+        let figment = Figment::new().merge((
+            "__warnings",
+            vec![Warning::ScopedDependencyRemapping {
+                remapping: Remapping {
+                    context: Some("lib/a/".to_string()),
+                    name: "Custom.sol".to_string(),
+                    path: "lib/a/src/Custom.sol".to_string(),
+                }
+                .into_relative(Path::new(".")),
+            }],
+        ));
+        let remappings = Remappings::new_with_remappings(vec![Remapping {
+            context: None,
+            name: "Custom.sol".to_string(),
+            path: "src/Selected.sol".to_string(),
+        }]);
+        assert_eq!(remappings.warnings_from_figment(&figment), []);
     }
 }
