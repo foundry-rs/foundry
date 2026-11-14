@@ -260,6 +260,10 @@ pub struct SuiteResult {
     pub test_results: BTreeMap<String, TestResult>,
     /// Generated warnings.
     pub warnings: Vec<String>,
+    /// Signatures of the selected tests that did not run because the suite failed first, for
+    /// example in `setUp()`.
+    #[serde(skip)]
+    pub blocked_tests: Vec<String>,
 }
 
 impl SuiteResult {
@@ -286,7 +290,7 @@ impl SuiteResult {
             warnings.push(warning);
         }
 
-        Self { duration, test_results, warnings }
+        Self { duration, test_results, warnings, blocked_tests: Vec::new() }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
