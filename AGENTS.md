@@ -126,8 +126,11 @@ workspace Clippy configuration forbids direct `std::print*` and `std::eprint*`.
 When adding or changing a `foundry.toml` setting:
 
 1. Define the field and its documentation in `crates/config`, including an
-   explicit default and any required serde behavior. Keep related settings in a
-   dedicated nested config type when they form a coherent section.
+   explicit default and any required serde behavior. The field's doc comment is
+   the user-facing reference: start with a one-sentence summary, then describe
+   behavior, valid values, interactions, and warnings. Do not repeat the type,
+   default, or environment variable; they are generated. Keep related settings
+   in a dedicated nested config type when they form a coherent section.
 2. Wire the setting through every command that consumes it. If a CLI flag can
    override the setting, resolve precedence in one shared place and test config,
    CLI, and combined behavior.
@@ -137,15 +140,16 @@ When adding or changing a `foundry.toml` setting:
    a targeted deprecation warning that points to the canonical key. Test aliases,
    profiles, inheritance, environment variables, collisions, and malformed values
    where those providers are affected.
-5. Document the setting in `foundry-rs/book` under
-   `src/pages/config/reference/`, including its section, type, default, environment
-   variable when supported, behavior, and a valid TOML example. Update the config
-   reference navigation and `default-config.mdx` in the same documentation PR.
+5. Run `cargo config-reference` and commit the updated
+   `crates/config/assets/config-reference.json`. The test fails for settings
+   without doc comments. The Book's weekly `import:config` workflow generates the
+   config reference pages and `default-config.mdx` from this file, so no Book PR
+   is needed for a setting's reference entry. Open one only for guides or
+   examples beyond the reference.
 6. Keep CLI option text in the Rust clap definition; the book's CLI reference is
    generated from command help and should not be edited by hand.
 
-Use the implementation, defaults, and tests as the source of truth. Do not merge
-new user-facing configuration without the corresponding book update.
+Use the implementation, defaults, and tests as the source of truth.
 
 ## Cheatcodes
 

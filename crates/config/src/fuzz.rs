@@ -5,36 +5,74 @@ use foundry_compilers::utils::canonicalized;
 use serde::{Deserialize, Deserializer, Serialize, de::Error};
 use std::path::PathBuf;
 
-/// Contains for fuzz testing
+/// Fuzz testing configuration: the `[fuzz]` section.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzConfig {
-    /// The number of test cases that must execute for each property test
+    /// Number of fuzz runs (generated inputs) to execute for each fuzz test.
+    ///
+    /// Higher values give more confidence in the results at the cost of testing speed. Must be
+    /// greater than 0. With `timeout` set, the campaign stops at whichever comes first.
     #[serde(deserialize_with = "deserialize_fuzz_runs")]
     pub runs: u32,
-    /// Optional 1-based fuzz run to execute.
+    /// Execute only the fuzz case at this 1-based run index instead of the whole campaign.
+    ///
+    /// The case is regenerated from the worker's random stream, so it reproduces a case from an
+    /// earlier campaign only with the same `seed` and `worker`, such as the ones a branch frontier
+    /// record lists. When set, the test runs that single case on a single worker.
     pub run: Option<u32>,
-    /// Optional fuzz worker ID to pair with `run`.
+    /// Worker whose fuzz case `run` executes.
+    ///
+    /// A campaign splits its runs across workers, and each worker derives its own random stream
+    /// from `seed` (worker `0` uses `seed` unchanged). Only takes effect together with `run`; when
+    /// unset, worker `0` is used.
     pub worker: Option<u32>,
-    /// Fails the fuzzed test if a revert occurs.
+    /// Whether a fuzz case fails when the test call reverts.
+    ///
+    /// When `true`, any revert fails the test. When `false`, a case whose revert originated in a
+    /// contract other than the test contract is treated as passing; reverts raised by the test
+    /// contract itself or by cheatcodes, such as failed assertions, still fail it.
     pub fail_on_revert: bool,
-    /// The maximum number of test case rejections allowed,
-    /// encountered during usage of `vm.assume` cheatcode.
+    /// Maximum number of inputs rejected with `vm.assume` before the whole fuzz test fails.
+    ///
+    /// Rejections are counted across all runs of the test: a rejected input is discarded and a new
+    /// one is generated. If a test hits this limit, narrow its inputs with `bound` instead of
+    /// rejecting them, or raise the limit.
     pub max_test_rejects: u32,
-    /// Optional seed for the fuzzing RNG algorithm
+    /// Seed for the fuzzer's random number generator, which makes fuzz and invariant campaigns
+    /// reproducible.
+    ///
+    /// Accepts an integer, or a decimal or hexadecimal string such as `"0x1234"`. Each worker
+    /// derives its own random stream from the seed; worker `0` uses it unchanged. In fuzz tests
+    /// the seed also drives cheatcode randomness, such as `vm.randomUint`. Invariant tests read
+    /// this value too: there is no `invariant.seed`. When unset, every campaign uses a fresh
+    /// random seed.
     pub seed: Option<U256>,
-    /// The fuzz dictionary configuration
+    /// Fuzz dictionary settings, flattened into this section.
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
-    /// Number of runs to execute and include in the gas report.
+    /// Number of fuzz runs whose traces are kept for the gas report.
+    ///
+    /// At least one run is always kept, so its trace can be displayed.
     pub gas_report_samples: u32,
-    /// The fuzz corpus configuration.
+    /// Fuzz corpus settings, flattened into this section.
     #[serde(flatten)]
     pub corpus: FuzzCorpusConfig,
-    /// Path where fuzz failures are recorded and replayed.
+    /// Directory where fuzz failures are recorded and replayed.
+    ///
+    /// When a fuzz test fails, its counterexample is saved under `failures/<contract>/<test>` in
+    /// this directory and replayed first the next time the test runs, so the test keeps failing
+    /// until the bug is fixed. `forge clean` removes the directory.
     pub failure_persist_dir: Option<PathBuf>,
-    /// show `console.log` in fuzz test, defaults to `false`
+    /// Whether to show the `console.log` output of every fuzz run instead of only the last one.
+    ///
+    /// Logs are displayed only at verbosity 2 or higher: run `forge test -vv` or set `verbosity`
+    /// to at least 2. Without this setting, only the logs of the last run, or of the failing case,
+    /// are shown.
     pub show_logs: bool,
-    /// Optional timeout (in seconds) for each property test
+    /// Time limit, in seconds, for each fuzz test campaign.
+    ///
+    /// The campaign stops at the timeout or after `runs` runs, whichever comes first; stopping at
+    /// the timeout does not fail the test. When unset, there is no time limit.
     pub timeout: Option<u32>,
 }
 
@@ -64,41 +102,61 @@ impl FuzzConfig {
     }
 }
 
-/// Contains for fuzz testing
+/// Fuzz dictionary configuration, shared by the `[fuzz]` and `[invariant]` sections.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzDictionaryConfig {
-    /// The weight of the dictionary
+    /// Percentage (0 to 100) of fuzzed values drawn from the fuzz dictionary instead of generated
+    /// at random.
+    ///
+    /// The dictionary holds values collected from the project and its execution, such as literals
+    /// in the source code, values in storage, constants pushed by contract bytecode and addresses
+    /// of deployed contracts. A higher weight biases inputs towards these "interesting" values; a
+    /// lower weight favors random ones. Invariant campaigns also use it to pick senders and block
+    /// delays.
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
     pub dictionary_weight: u32,
-    /// The flag indicating whether to include values from storage
+    /// Whether to add the storage values of contracts touched during execution to the fuzz
+    /// dictionary.
     pub include_storage: bool,
-    /// The flag indicating whether to include push bytes values
+    /// Whether to add the constants pushed by contract bytecode (`PUSH` operands) and the
+    /// contracts' addresses to the fuzz dictionary.
     pub include_push_bytes: bool,
-    /// The flag indicating whether invariant runs call targeted contracts' view functions (with
-    /// no inputs or only address inputs, bound to the sender) after each successful call that
-    /// accessed them, and add the results, whole structs included, to the dictionary. At most 32
-    /// views are called per call; when more are eligible, the selection rotates across calls.
-    pub include_view_values: bool,
-    /// How many addresses to record at most.
-    /// Once the fuzzer exceeds this limit, it will start evicting random entries
+    /// Whether invariant campaigns add the results of targeted contracts' view functions to the
+    /// fuzz dictionary.
     ///
-    /// This limit is put in place to prevent memory blowup.
+    /// After each successful call, view functions with no inputs or only address inputs are called
+    /// on the targeted contracts that the call accessed, with address inputs set to the call's
+    /// sender, and their results, whole structs included, are added to the dictionary. This lets
+    /// later calls pass back values that only exist in storage, such as a struct read from a
+    /// getter. At most 32 views are called after each call; when more are eligible, the selection
+    /// rotates across calls so every view is reached.
+    ///
+    /// Only affects invariant tests; like the other shared keys, a value set under `[fuzz]` also
+    /// applies to `[invariant]` unless `[invariant]` sets its own.
+    pub include_view_values: bool,
+    /// Maximum number of addresses kept in the fuzz dictionary.
+    ///
+    /// Once the limit is exceeded, the fuzzer starts evicting random entries. The limit prevents
+    /// memory blowup. Set it to `"max"` for no limit.
     #[serde(
         deserialize_with = "crate::deserialize_usize_or_max",
         serialize_with = "crate::serialize_usize_or_max"
     )]
     pub max_fuzz_dictionary_addresses: usize,
-    /// How many values to record at most.
-    /// Once the fuzzer exceeds this limit, it will start evicting random entries
-    /// The dictionary always retains a zero seed, so the effective minimum is one.
+    /// Maximum number of values kept in the fuzz dictionary.
+    ///
+    /// Once the limit is exceeded, the fuzzer starts evicting random entries. The dictionary
+    /// always keeps a zero value, so the effective minimum is one. Set it to `"max"` for no limit.
     #[serde(
         deserialize_with = "crate::deserialize_usize_or_max",
         serialize_with = "crate::serialize_usize_or_max"
     )]
     pub max_fuzz_dictionary_values: usize,
-    /// How many literal values to seed from the AST, at most.
+    /// Maximum number of literal values from the source code (AST) seeded into the fuzz
+    /// dictionary.
     ///
-    /// This value is independent from the max amount of addresses and values.
+    /// This limit is independent of `max_fuzz_dictionary_addresses` and
+    /// `max_fuzz_dictionary_values`. Set it to `"max"` for no limit.
     #[serde(
         deserialize_with = "crate::deserialize_usize_or_max",
         serialize_with = "crate::serialize_usize_or_max"
@@ -124,55 +182,101 @@ impl Default for FuzzDictionaryConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzCorpusConfig {
-    // Path to corpus directory, enabled coverage guided fuzzing mode.
-    // If not set then sequences producing new coverage are not persisted and mutated.
+    /// Directory for the corpus; setting it enables coverage-guided fuzzing.
+    ///
+    /// In coverage-guided mode, inputs (call sequences, for invariant tests) that reach new edge
+    /// coverage are kept in a corpus, persisted in this directory per contract and test, and
+    /// mutated to generate new inputs, and edge coverage metrics are displayed. When unset, inputs
+    /// that produce new coverage are neither persisted nor mutated. `forge clean` removes the
+    /// directory.
     pub corpus_dir: Option<PathBuf>,
-    // Path to fuzz branch frontier artifacts for symbolic follow-up.
+    /// Directory for branch frontier artifacts, which symbolic execution can follow up on.
+    ///
+    /// When set, and `frontier_limit` is above 0, each test records the comparisons its inputs
+    /// reached without flipping, each with the concrete call sequence that reached it and how
+    /// close its operands came, in this directory per contract and test. The `[symbolic]` settings
+    /// `use_fuzz_frontiers` and `check_invariant_frontiers` read these records to try to take the
+    /// missed branches. Frontier capture is not supported together with `invariant.call_override`.
     pub frontier_dir: Option<PathBuf>,
-    // Maximum number of branch frontier records to write for one fuzz test.
+    /// Maximum number of branch frontier records written for one test.
+    ///
+    /// Records are deduplicated per comparison site across workers, keeping the closest one. `0`
+    /// disables frontier capture even when `frontier_dir` is set.
     pub frontier_limit: usize,
-    // Whether corpus to use gzip file compression and decompression.
+    /// Whether corpus entries are written with gzip compression.
+    ///
+    /// Only entries above a small size threshold are compressed. When `false`, every entry is
+    /// written as a plain JSON file. Only relevant when `corpus_dir` is set.
     pub corpus_gzip: bool,
-    // Number of mutations until entry marked as eligible to be flushed from in-memory corpus.
-    // Mutations will be performed at least `corpus_min_mutations` times.
+    /// Number of times a corpus entry must be mutated before it may be evicted from memory.
+    ///
+    /// Only entries mutated more than this many times that are not favored can be evicted from the
+    /// in-memory corpus. Only relevant when `corpus_dir` is set.
     pub corpus_min_mutations: usize,
-    // Number of corpus that won't be evicted from memory.
+    /// Number of corpus entries kept in memory without eviction.
+    ///
+    /// Entries are evicted only while the in-memory corpus holds more than this many entries, and
+    /// always at least one is kept. Only relevant when `corpus_dir` is set.
     pub corpus_min_size: usize,
     /// Whether to collect and display edge coverage metrics.
+    ///
+    /// Edge coverage is always collected when `corpus_dir` is set; enable this to see it without
+    /// coverage-guided fuzzing.
     pub show_edge_coverage: bool,
-    /// Whether EVM edge coverage should use collision-free dense IDs.
+    /// Whether EVM edge coverage gives every edge its own ID instead of hashing edges into a fixed
+    /// map.
+    ///
+    /// When `true`, distinct edges never share a coverage entry. When `false`, edges are hashed
+    /// into a fixed 64 KiB map, where unrelated edges can collide and hide new coverage.
     pub evm_edge_coverage_collision_free: bool,
-    /// Whether EVM edge coverage IDs should include call-frame depth.
+    /// Whether EVM edge coverage IDs include the call-frame depth.
+    ///
+    /// When `true`, the same edge reached at different call depths counts as different coverage,
+    /// which rewards inputs that reach code through new call paths but enlarges the coverage map.
     pub evm_edge_coverage_include_call_depth: bool,
-    /// Whether to collect edge coverage from native Rust crates compiled with
-    /// SanitizerCoverage instrumentation (e.g. precompile implementations).
-    /// Requires building forge with a `RUSTC_WRAPPER` that injects sancov flags.
+    /// Whether to collect edge coverage from native Rust crates compiled with SanitizerCoverage
+    /// instrumentation, such as precompile implementations.
+    ///
+    /// Requires building forge with a `RUSTC_WRAPPER` that injects sancov flags. When enabled,
+    /// sancov edges replace EVM edges as the coverage signal, and EVM comparison operands are no
+    /// longer captured for mutation.
     pub sancov_edges: bool,
-    /// Whether to capture comparison operands from sancov-instrumented crates
-    /// and inject them into the fuzz dictionary. Independent of `sancov_edges`.
+    /// Whether to capture comparison operands from sancov-instrumented native crates and add them
+    /// to the fuzz dictionary.
+    ///
+    /// Independent of `sancov_edges`: when only this is enabled, EVM edge coverage stays on, since
+    /// comparison operands only add dictionary entries. Requires the same sancov-instrumented
+    /// forge build.
     pub sancov_trace_cmp: bool,
-    /// Whether EVM edge coverage comes from compiler instrumentation instead of the
-    /// `JUMP`/`JUMPI` edge inspector.
+    /// Whether EVM edge coverage comes from compiler instrumentation instead of the `JUMP`/`JUMPI`
+    /// edge inspector.
     ///
     /// Coverage builds of a compiler emit `PUSHn <id>; EDGECOV` (opcode `0xC0`) on every
     /// control-flow edge, with dense IDs starting at 1. When enabled, the EVM executes that
-    /// opcode, which records a hit for the edge and costs no gas (it also refunds its `PUSH`),
-    /// and these hits replace the inspector's EVM edges as the corpus guidance signal.
-    /// Comparison operands then come from the compiler's `CMPLOG` (`0xC1`) probes instead of the
-    /// cmp-log inspector. Instrumented artifacts only run with this on: on any other EVM `0xC0`
-    /// and `0xC1` are undefined opcodes.
+    /// opcode, which records a hit for the edge and costs no gas (it also refunds its `PUSH`), and
+    /// these hits replace the inspector's EVM edges as the corpus guidance signal. Comparison
+    /// operands then come from the compiler's `CMPLOG` (`0xC1`) probes instead of the cmp-log
+    /// inspector. Instrumented artifacts only run with this on: on any other EVM `0xC0` and `0xC1`
+    /// are undefined opcodes.
     ///
-    /// Hits are keyed by ID alone, so IDs must be unique across all instrumented code: build it
-    /// in one compiler invocation.
+    /// Hits are keyed by ID alone, so IDs must be unique across all instrumented code: build it in
+    /// one compiler invocation.
     pub instrumented_edges: bool,
-    /// Percent chance of generating fresh transaction input instead of continuing from corpus
-    /// input during coverage-guided campaigns.
+    /// Percent chance (0 to 100) of generating a fresh input instead of mutating a corpus entry in
+    /// coverage-guided campaigns.
+    ///
+    /// In invariant campaigns with more than two workers, the last worker uses 50 instead, to
+    /// explore more broadly, unless `[invariant]` sets this key or it differs from its default.
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
     pub corpus_random_sequence_weight: u32,
-    /// Percent chance that generated payable calls carry non-zero `msg.value`.
+    /// Percent chance (0 to 100) that a generated call to a payable function carries a non-zero
+    /// `msg.value`.
+    ///
+    /// `0` never sends value. Values are biased towards edge cases and dictionary values, and
+    /// amounts above the sender's balance are clamped to it.
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
     pub payable_value_weight: u32,
-    /// Weights for coverage-guided corpus mutation strategies.
+    /// Weights for coverage-guided corpus mutation strategies, flattened into this section.
     #[serde(flatten)]
     pub mutation_weights: FuzzCorpusMutationWeights,
 }
@@ -291,19 +395,46 @@ impl Default for FuzzCorpusConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzCorpusMutationWeights {
-    /// Weight for splicing two corpus sequences.
+    /// Relative weight of the coverage-guided mutation that splices two corpus sequences together.
+    ///
+    /// Mutation strategies are picked in proportion to their weights, and `0` disables a strategy.
+    /// If every `mutation_weight_*` key is 0, all of them fall back to their defaults.
     pub mutation_weight_splice: u32,
-    /// Weight for repeating part of a corpus sequence.
+    /// Relative weight of the coverage-guided mutation that repeats part of a corpus sequence.
+    ///
+    /// Mutation strategies are picked in proportion to their weights, and `0` disables a strategy.
+    /// If every `mutation_weight_*` key is 0, all of them fall back to their defaults.
     pub mutation_weight_repeat: u32,
-    /// Weight for interleaving two corpus sequences.
+    /// Relative weight of the coverage-guided mutation that interleaves the calls of two corpus
+    /// sequences.
+    ///
+    /// Mutation strategies are picked in proportion to their weights, and `0` disables a strategy.
+    /// If every `mutation_weight_*` key is 0, all of them fall back to their defaults.
     pub mutation_weight_interleave: u32,
-    /// Weight for replacing a corpus sequence prefix with generated calls.
+    /// Relative weight of the coverage-guided mutation that replaces the start of a corpus
+    /// sequence with generated calls.
+    ///
+    /// Mutation strategies are picked in proportion to their weights, and `0` disables a strategy.
+    /// If every `mutation_weight_*` key is 0, all of them fall back to their defaults.
     pub mutation_weight_prefix: u32,
-    /// Weight for replacing a corpus sequence suffix with generated calls.
+    /// Relative weight of the coverage-guided mutation that replaces the end of a corpus sequence
+    /// with generated calls.
+    ///
+    /// Mutation strategies are picked in proportion to their weights, and `0` disables a strategy.
+    /// If every `mutation_weight_*` key is 0, all of them fall back to their defaults.
     pub mutation_weight_suffix: u32,
-    /// Weight for ABI-aware argument mutation.
+    /// Relative weight of the coverage-guided mutation that mutates call arguments based on their
+    /// ABI types.
+    ///
+    /// Mutation strategies are picked in proportion to their weights, and `0` disables a strategy.
+    /// If every `mutation_weight_*` key is 0, all of them fall back to their defaults.
     pub mutation_weight_abi: u32,
-    /// Weight for comparison-operand guided argument mutation.
+    /// Relative weight of the coverage-guided mutation that replaces call arguments with operands
+    /// of comparisons seen during execution.
+    ///
+    /// Mutation strategies are picked in proportion to their weights, and `0` disables a strategy.
+    /// If every `mutation_weight_*` key is 0, all of them fall back to their defaults. At 0, EVM
+    /// comparison operands are not captured unless branch frontiers are.
     pub mutation_weight_cmp: u32,
 }
 

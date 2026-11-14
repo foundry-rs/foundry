@@ -30,43 +30,70 @@ pub enum CoverageReportKind {
 /// take precedence over configuration values when both are provided.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoverageConfig {
-    /// The report kinds to generate. Defaults to `["summary"]`.
+    /// Report kinds that `forge coverage` generates.
+    ///
+    /// The `--report` flag, which can be repeated, replaces this list. Valid values:
+    ///
+    /// - `summary`: prints a coverage summary table.
+    /// - `lcov`: writes an LCOV tracefile to `lcov.info`; see `lcov_version`.
+    /// - `debug`: prints a verbose report of every coverage item, for debugging coverage itself.
+    /// - `bytecode`: writes annotated per-contract bytecode coverage to `bytecode-coverage/`.
+    /// - `attribution`: writes `coverage-attribution.json`, mapping each test to the source items
+    ///   it covers.
+    /// - `gaps`: writes `coverage-gaps.json`, listing uncovered source items with their location
+    ///   and context.
     #[serde(default = "default_report_kinds")]
     pub report: Vec<CoverageReportKind>,
 
-    /// The version of the LCOV "tracefile" format to use.
+    /// Version of the LCOV tracefile format used by the `lcov` report.
     ///
-    /// Defaults to `1` (parsed as `1.0.0`). See `forge coverage --help` for the
-    /// supported variants and their differences.
+    /// The value is a string in the format `MAJOR[.MINOR]`, such as `"1"` or `"2.2"`; pre-release
+    /// versions are rejected. The `--lcov-version` flag overrides it. Main differences:
+    ///
+    /// - `1.x`: the original v1 format.
+    /// - `2.0`: adds "line end" numbers for functions.
+    /// - `2.2`: changes the format of functions.
     #[serde(default = "default_lcov_version", deserialize_with = "deserialize_lcov_version")]
     pub lcov_version: Version,
 
-    /// Whether to enable `viaIR` with minimum optimization. Useful as a
-    /// workaround for "stack too deep" errors at the cost of source map
-    /// accuracy.
+    /// Whether to compile with `viaIR` and minimum optimization, as a workaround for "stack too
+    /// deep" errors.
+    ///
+    /// By default `forge coverage` disables the optimizer and `viaIR` for accurate source maps.
+    /// This setting enables `viaIR` with minimum optimization instead, which fixes most "stack too
+    /// deep" errors at the cost of less accurate source mappings, so use it only when you need
+    /// it. The `--ir-minimum` flag also enables it; it cannot turn off a `true` value.
     #[serde(default)]
     pub ir_minimum: bool,
 
-    /// Path to write the coverage report to (relative to the project root). If
-    /// unset, the report is written to the project root.
+    /// Path to write the file report to, relative to the project root.
+    ///
+    /// It applies only when exactly one file report (`lcov`, `attribution` or `gaps`) is
+    /// requested; with several, it is ignored with a warning and each report uses its default
+    /// file name. When unset, the report is written to the project root under its default name.
+    /// The `--report-file` flag overrides it.
     #[serde(default)]
     pub report_file: Option<PathBuf>,
 
-    /// Whether to include library dependencies in the coverage report.
+    /// Whether to include dependency sources in the coverage report.
+    ///
+    /// Sources under library directories (`libs`) are excluded by default. The `--include-libs`
+    /// flag also enables this; it cannot turn off a `true` value.
     #[serde(default)]
     pub include_libs: bool,
 
-    /// Whether to exclude tests from the coverage report.
+    /// Whether to exclude test sources from the coverage report.
+    ///
+    /// The `--exclude-tests` flag also enables this; it cannot turn off a `true` value.
     #[serde(default)]
     pub exclude_tests: bool,
 
     /// Glob patterns of source files to exclude from the coverage report.
     ///
-    /// Patterns are matched against project-root-relative paths using the
-    /// `globset` crate's `Glob` semantics (`**`, `*`, `?`, character classes).
-    /// A file is skipped if any pattern matches.
+    /// Patterns are matched against paths relative to the project root, with `**`, `*`, `?` and
+    /// character classes, and a file is skipped if any pattern matches. There is no flag for this
+    /// setting; it applies in addition to `no_match_coverage` and `--no-match-coverage`.
     ///
-    /// Example:
     /// ```toml
     /// [profile.default.coverage]
     /// skip_files = ["test/**", "script/**", "src/mocks/**"]

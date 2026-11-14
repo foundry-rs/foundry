@@ -5,14 +5,20 @@ use std::path::PathBuf;
 /// Contains the config for `forge bind-json`
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BindJsonConfig {
-    /// Path for the generated bindings file.
-    pub out: PathBuf,
-    /// Globs to include.
+    /// Solidity file that `forge bind-json` writes the generated bindings to.
     ///
-    /// If provided, only the files matching the globs will be included. Otherwise, defaults to
-    /// including all project files.
+    /// A relative path is resolved from the project root; a path passed to `forge bind-json`
+    /// overrides it. The EIP-712 cheatcodes (`vm.eip712HashType`, `vm.eip712HashStruct`) look up
+    /// type names in this file when no bindings path is given.
+    pub out: PathBuf,
+    /// Glob patterns of the source files whose structs get bindings.
+    ///
+    /// When set, only matching files are included. When empty, all project source files are
+    /// included except those in library directories.
     pub include: Vec<GlobMatcher>,
-    /// Globs to ignore
+    /// Glob patterns of source files whose structs get no bindings.
+    ///
+    /// Applied after `include`.
     pub exclude: Vec<GlobMatcher>,
 }
 
