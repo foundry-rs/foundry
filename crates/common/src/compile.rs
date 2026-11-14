@@ -1397,48 +1397,7 @@ mod tests {
     }
 
     #[test]
-    fn root_remapping_candidates_report_existing_dependency_targets() {
-        let temp = tempdir().unwrap();
-        let root = dunce::canonicalize(temp.path()).unwrap();
-        fs::create_dir(root.join("src")).unwrap();
-        fs::write(root.join("src/Root.sol"), "contract Root {}\n").unwrap();
-        for package in ["a", "b"] {
-            let source = root.join("lib").join(package).join("src");
-            fs::create_dir_all(&source).unwrap();
-            fs::write(source.join("Target.sol"), "contract Target {}\n").unwrap();
-        }
-        let paths = ProjectPathsConfig::builder()
-            .root(&root)
-            .sources(root.join("src"))
-            .lib(root.join("lib"))
-            .remapping(Remapping::from_str("lib/b/:@alias/=lib/b/src/").unwrap())
-            .remapping(Remapping::from_str("lib/a/:@alias/=lib/a/src/").unwrap())
-            .remapping(Remapping::from_str("lib/a/:File.sol=lib/a/src/Target.sol").unwrap())
-            .build::<MultiCompilerLanguage>()
-            .unwrap();
-        let file = root.join("src/Root.sol");
-
-        assert_eq!(
-            root_remapping_candidates(&paths, Path::new("File.sol"), &file),
-            BTreeMap::from([(
-                "File.sol".to_string(),
-                BTreeSet::from(["File.sol=lib/a/src/Target.sol".to_string()])
-            )])
-        );
-        assert_eq!(
-            root_remapping_candidates(&paths, Path::new("@alias/Target.sol"), &file),
-            BTreeMap::from([(
-                "@alias/".to_string(),
-                BTreeSet::from([
-                    "@alias/=lib/a/src/".to_string(),
-                    "@alias/=lib/b/src/".to_string()
-                ])
-            )])
-        );
-    }
-
-    #[test]
-    fn root_remapping_candidates_respect_existing_choices_and_importers() {
+    fn root_remapping_candidates_respect_targets_choices_and_importers() {
         let temp = tempdir().unwrap();
         let root = temp.path().join("project");
         fs::create_dir_all(root.join("src")).unwrap();
@@ -1452,10 +1411,19 @@ mod tests {
             .sources(root.join("src"))
             .lib(root.join("lib"))
             .remapping(Remapping::from_str("lib/a/:@alias/=lib/a/src/").unwrap())
+            .remapping(Remapping::from_str("lib/a/:File.sol=lib/a/src/Target.sol").unwrap())
             .build::<MultiCompilerLanguage>()
             .unwrap();
         let file = root.join("src/Root.sol");
         let import = Path::new("@alias/Target.sol");
+
+        assert_eq!(
+            root_remapping_candidates(&paths, Path::new("File.sol"), &file),
+            BTreeMap::from([(
+                "File.sol".to_string(),
+                BTreeSet::from(["File.sol=lib/a/src/Target.sol".to_string()])
+            )])
+        );
 
         for (import, file) in [
             (Path::new("@alias/Missing.sol"), file.clone()),

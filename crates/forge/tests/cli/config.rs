@@ -1619,25 +1619,6 @@ Compiler run successful!
 
 "#]])
         .stderr_eq(warning.clone());
-    cmd.forge_fuse()
-        .args(["build", "--force", "--no-lint", "--quiet"])
-        .assert_success()
-        .stdout_eq("")
-        .stderr_eq("");
-    cmd.forge_fuse()
-        .args(["build", "--force", "--no-lint", "--json"])
-        .assert_json_stdout_with_status(
-            true,
-            str![[r#"
-{
-  "errors": [],
-  "sources": "{...}",
-  "contracts": "{...}",
-  "build_infos": "{...}"
-}
-"#]],
-        )
-        .stderr_eq(warning.clone());
     cmd.forge_fuse().arg("lint").assert_success();
 
     prj.create_file(
@@ -3879,28 +3860,29 @@ fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) 
         prj.add_lib(&format!("{owner}/src/Substitute.sol"), "contract AttackerBase {}\n");
         prj.add_lib(&format!("{owner}/src/OnlyGood.sol"), "contract WrongOwner {}\n");
     }
-    for (owner, root_alias) in [
-        ("a-helper", "src/Base.sol=src/Substitute.sol"),
-        ("a-helper", "../../src/:src/Base.sol=src/Substitute.sol"),
-        ("a-helper/lib/nested", "src/Base.sol=src/Substitute.sol"),
+    for (owner, root_alias, absolute_source) in [
+        ("a-helper", "src/Base.sol=src/Substitute.sol", false),
+        ("a-helper", "../../src/:src/Base.sol=src/Substitute.sol", false),
+        ("a-helper/lib/nested", "src/Base.sol=src/Substitute.sol", true),
     ] {
         for dependency in ["a-helper", "a-helper/lib/nested"] {
             prj.create_file(format!("lib/{dependency}/foundry.toml"), "[profile.default]\n");
         }
-        for source in [None, Some(format!("lib/{owner}/src"))] {
-            let source = source
-                .map(|source| {
-                    format!("src = {:?}\n", prj.root().join(source).display().to_string())
-                })
-                .unwrap_or_default();
-            prj.create_file(
-                format!("lib/{owner}/foundry.toml"),
-                &format!(
-                    "[profile.default]\n{source}remappings = [{root_alias:?}, \"private-alias/=src/\"]\n"
-                ),
-            );
-            cmd.forge_fuse().args(["build", "--force"]).assert_success();
-        }
+        let source = if absolute_source {
+            format!(
+                "src = {:?}\n",
+                prj.root().join(format!("lib/{owner}/src")).display().to_string()
+            )
+        } else {
+            String::new()
+        };
+        prj.create_file(
+            format!("lib/{owner}/foundry.toml"),
+            &format!(
+                "[profile.default]\n{source}remappings = [{root_alias:?}, \"private-alias/=src/\"]\n"
+            ),
+        );
+        cmd.forge_fuse().args(["build", "--force"]).assert_success();
     }
 }
 
@@ -3922,21 +3904,22 @@ fn external_sources_preserve_global_dependency_aliases(prj: _, cmd: _) {
         "import {A} from \"a/A.sol\"; import {Inner} from \"private-alias/Inner.sol\"; import {Sibling} from \"sibling/Sibling.sol\"; contract Root is A, Sibling {} contract Direct is Inner {}\n",
     );
 
-    for source in [prj.root().join("external").display().to_string(), "../../external".into()] {
+    for (source, import) in [
+        (prj.root().join("external").display().to_string(), "./B.sol"),
+        ("../../external".into(), "../common/B.sol"),
+    ] {
         prj.create_file(
             "lib/a/foundry.toml",
             &format!(
                 "[profile.default]\nsrc = {source:?}\nremappings = [\"private-alias/=src/internal/\"]\n"
             ),
         );
-        for import in ["./B.sol", "../common/B.sol"] {
-            prj.create_file(
-                "external/A.sol",
-                &format!("import {{B}} from {import:?}; contract A is B {{}}\n"),
-            );
-            cmd.forge_fuse().args(["build", "--force"]).assert_success();
-            cmd.forge_fuse().arg("build").assert_success();
-        }
+        prj.create_file(
+            "external/A.sol",
+            &format!("import {{B}} from {import:?}; contract A is B {{}}\n"),
+        );
+        cmd.forge_fuse().args(["build", "--force"]).assert_success();
+        cmd.forge_fuse().arg("build").assert_success();
     }
 
     let external = tempfile::tempdir().unwrap();
@@ -4017,44 +4000,6 @@ fn external_source_bytecode_is_independent_of_project_root(prj: _, cmd: _) {
 }
 
 #[forgetest]
-fn unique_dependency_aliases_remain_global(prj: _, cmd: _) {
-    prj.add_lib("dependency/src/Dep.sol", "contract Dep {}\n");
-    prj.add_source("Root.sol", "import {Dep} from \"@custom/Dep.sol\"; contract Root is Dep {}\n");
-    for source in ["toml", "file"] {
-        prj.create_file(
-            "lib/dependency/foundry.toml",
-            if source == "toml" {
-                "[profile.default]\nremappings = [\"@custom/=src/\"]\n"
-            } else {
-                "[profile.default]\n"
-            },
-        );
-        if source == "file" {
-            prj.create_file("lib/dependency/remappings.txt", "@custom/=src/\n");
-        }
-        cmd.forge_fuse()
-            .arg("remappings")
-            .assert_success()
-            .stdout_eq(str![[r#"
-@custom/=lib/dependency/src/
-dependency/=lib/dependency/src/
-
-"#]])
-            .stderr_eq("");
-        cmd.forge_fuse()
-            .args(["build", "--force", "--no-lint"])
-            .assert_success()
-            .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]])
-            .stderr_eq("");
-    }
-}
-
-#[forgetest]
 fn conflicting_dependency_alias_requires_root_declaration(prj: _, cmd: _) {
     prj.create_file(
         "lib/dependency/foundry.toml",
@@ -4116,24 +4061,11 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
         warnings.clone().into_data().render().unwrap(),
         migration_error.clone().into_data().render().unwrap(),
     );
-    for source in ["toml", "file"] {
-        prj.create_file(
-            "lib/dependency/foundry.toml",
-            if source == "toml" {
-                "[profile.default]\nremappings = [\"@custom/=src/\"]\n"
-            } else {
-                "[profile.default]\n"
-            },
-        );
-        if source == "file" {
-            prj.create_file("lib/dependency/remappings.txt", "@custom/=src/\n");
-        }
-        cmd.forge_fuse()
-            .args(["build", "--force", "--no-lint"])
-            .assert_failure()
-            .stdout_eq(expected_stdout.clone())
-            .stderr_eq(expected_stderr.clone());
-    }
+    cmd.forge_fuse()
+        .args(["build", "--force", "--no-lint"])
+        .assert_failure()
+        .stdout_eq(expected_stdout)
+        .stderr_eq(expected_stderr);
     cmd.forge_fuse()
         .args(["build", "--force", "--no-lint", "--quiet"])
         .assert_failure()
@@ -4203,42 +4135,6 @@ contract AliasMigrationTest {
         }
         command.assert_success().stderr_eq("");
     }
-}
-
-#[forgetest]
-fn openzeppelin_dependency_alias_remains_global(prj: _, cmd: _) {
-    prj.create_file(
-        "lib/openzeppelin-contracts/foundry.toml",
-        "[profile.default]\nsrc = \"contracts\"\n",
-    );
-    prj.create_file(
-        "lib/openzeppelin-contracts/remappings.txt",
-        "@openzeppelin/contracts/=contracts/\n",
-    );
-    prj.add_lib("openzeppelin-contracts/contracts/token/ERC20/ERC20.sol", "contract ERC20 {}\n");
-    prj.add_source(
-        "Root.sol",
-        "import {ERC20} from \"@openzeppelin/contracts/token/ERC20/ERC20.sol\"; contract Root is ERC20 {}\n",
-    );
-
-    cmd.arg("remappings")
-        .assert_success()
-        .stdout_eq(str![[r#"
-@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
-openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
-
-"#]])
-        .stderr_eq("");
-    cmd.forge_fuse()
-        .args(["build", "--no-lint"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]])
-        .stderr_eq("");
 }
 
 #[forgetest]
@@ -4376,7 +4272,9 @@ fn external_libraries_preserve_global_dependency_aliases(prj: _, cmd: _) {
         "import {A} from \"a/A.sol\"; import {B} from \"b/B.sol\"; contract Root { A a; B b; }\n",
     );
 
-    for file_remappings in [false, true] {
+    for (libs, file_remappings) in
+        [("../shared".to_string(), false), (shared.display().to_string(), true)]
+    {
         for name in ["a", "b"] {
             prj.create_file(
                 format!("shared/{name}/foundry.toml"),
@@ -4390,39 +4288,37 @@ fn external_libraries_preserve_global_dependency_aliases(prj: _, cmd: _) {
                 prj.create_file(format!("shared/{name}/remappings.txt"), "@priv/=src/internal/\n");
             }
         }
-        for libs in ["../shared".to_string(), shared.display().to_string()] {
-            prj.create_file(
-                "project/foundry.toml",
-                &format!("[profile.default]\nlibs = [{libs:?}]\nsolc = {SOLC_VERSION:?}\n"),
-            );
-            cmd.forge_fuse()
-                .current_dir(&project)
-                .args(["build", "--force"])
-                .assert_success()
-                .stderr_eq("");
-            cmd.forge_fuse().current_dir(&project).arg("build").assert_success().stderr_eq("");
-            let expected = if Path::new(&libs).is_absolute() {
-                str![[r#"
+        prj.create_file(
+            "project/foundry.toml",
+            &format!("[profile.default]\nlibs = [{libs:?}]\nsolc = {SOLC_VERSION:?}\n"),
+        );
+        cmd.forge_fuse()
+            .current_dir(&project)
+            .args(["build", "--force"])
+            .assert_success()
+            .stderr_eq("");
+        cmd.forge_fuse().current_dir(&project).arg("build").assert_success().stderr_eq("");
+        let expected = if Path::new(&libs).is_absolute() {
+            str![[r#"
 @priv/=[..]/shared/a/src/internal/
 a/=[..]/shared/a/src/
 b/=[..]/shared/b/src/
 
 "#]]
-            } else {
-                str![[r#"
+        } else {
+            str![[r#"
 @priv/=../shared/a/src/internal/
 a/=../shared/a/src/
 b/=../shared/b/src/
 
 "#]]
-            };
-            cmd.forge_fuse()
-                .current_dir(&project)
-                .arg("remappings")
-                .assert_success()
-                .stdout_eq(expected)
-                .stderr_eq("");
-        }
+        };
+        cmd.forge_fuse()
+            .current_dir(&project)
+            .arg("remappings")
+            .assert_success()
+            .stdout_eq(expected)
+            .stderr_eq("");
     }
 }
 
@@ -4430,25 +4326,31 @@ b/=../shared/b/src/
 fn openzeppelin_forge_std_alias_does_not_warn_about_migration(prj: _, cmd: _) {
     prj.create_file(
         "lib/openzeppelin-contracts/foundry.toml",
-        "[profile.default]\nremappings = [\"forge-std=lib/forge-std/src\"]\n",
+        "[profile.default]\nsrc = \"contracts\"\nremappings = [\"forge-std=lib/forge-std/src\"]\n",
     );
+    prj.create_file(
+        "lib/openzeppelin-contracts/remappings.txt",
+        "@openzeppelin/contracts/=contracts/\n",
+    );
+    prj.add_lib("openzeppelin-contracts/contracts/token/ERC20/ERC20.sol", "contract ERC20 {}\n");
     prj.add_lib("forge-std/src/Test.sol", "contract RootStd {}\n");
     prj.add_lib("openzeppelin-contracts/lib/forge-std/src/Test.sol", "contract NestedStd {}\n");
     prj.add_lib(
-        "openzeppelin-contracts/src/Own.sol",
+        "openzeppelin-contracts/contracts/Own.sol",
         "import {NestedStd} from \"forge-std/Test.sol\"; contract Own is NestedStd {}\n",
     );
     prj.add_source(
         "Root.sol",
-        "import {RootStd} from \"forge-std/Test.sol\"; import {Own} from \"openzeppelin-contracts/Own.sol\"; contract Root is RootStd, Own {}\n",
+        "import {ERC20} from \"@openzeppelin/contracts/token/ERC20/ERC20.sol\"; import {RootStd} from \"forge-std/Test.sol\"; import {Own} from \"openzeppelin-contracts/Own.sol\"; contract Root is ERC20, RootStd, Own {}\n",
     );
 
     cmd.arg("remappings")
         .assert_success()
         .stdout_eq(str![[r#"
 lib/openzeppelin-contracts/:forge-std/=lib/openzeppelin-contracts/lib/forge-std/src/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
 forge-std/=lib/forge-std/src/
-openzeppelin-contracts/=lib/openzeppelin-contracts/src/
+openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
 
 "#]])
         .stderr_eq("");

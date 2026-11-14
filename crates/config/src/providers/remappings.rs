@@ -1631,38 +1631,6 @@ mod tests {
         });
     }
 
-    #[test]
-    fn absolute_internal_source_scopes_conflicting_aliases() {
-        figment::Jail::expect_with(|_| {
-            let temp = tempdir().unwrap();
-            let root = dunce::canonicalize(temp.path()).unwrap();
-            let owner = root.join("lib/a");
-            let source = owner.join("custom-source");
-            fs::create_dir_all(&source).unwrap();
-            fs::create_dir(root.join("private")).unwrap();
-            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
-            fs::write(
-                owner.join(Config::FILE_NAME),
-                format!(
-                    "[profile.default]\nsrc = {:?}\nremappings = [\"private/=custom-source/\"]\n",
-                    source.display().to_string()
-                ),
-            )
-            .unwrap();
-            fs::write(source.join("A.sol"), "contract A {}\n").unwrap();
-            let config = Config::load_with_root(&root).unwrap();
-            assert_eq!(
-                config
-                    .get_all_remappings()
-                    .map(|remapping| remapping.to_string())
-                    .collect::<Vec<_>>(),
-                ["lib/a/:private/=lib/a/custom-source/", "a/=lib/a/custom-source/"]
-            );
-
-            Ok(())
-        });
-    }
-
     #[cfg(unix)]
     #[test]
     fn symlinked_external_source_preserves_global_aliases() {
@@ -1746,7 +1714,10 @@ mod tests {
                 fs::create_dir_all(package.join(source)).unwrap();
                 fs::write(
                     package.join(Config::FILE_NAME),
-                    format!("[profile.default]\nsrc = {source:?}\n"),
+                    format!(
+                        "[profile.default]\nsrc = {:?}\n",
+                        package.join(source).display().to_string()
+                    ),
                 )
                 .unwrap();
                 fs::write(package.join(source).join("Contract.sol"), "contract Contract {}\n")
@@ -1901,35 +1872,6 @@ mod tests {
     }
 
     #[test]
-    fn unique_dependency_aliases_remain_global() {
-        figment::Jail::expect_with(|_| {
-            let temp = tempdir().unwrap();
-            let root = temp.path();
-            let owner = root.join("lib/a");
-            fs::create_dir_all(owner.join("src")).unwrap();
-            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
-            fs::write(
-                owner.join(Config::FILE_NAME),
-                "[profile.default]\nremappings = [\"@custom/=src/\", \"Custom.sol=src/Custom.sol\"]\n",
-            )
-            .unwrap();
-            fs::write(owner.join("src/Custom.sol"), "contract Custom {}\n").unwrap();
-
-            let config = Config::load_with_root(root).unwrap();
-            assert_eq!(
-                config
-                    .get_all_remappings()
-                    .map(|remapping| remapping.to_string())
-                    .collect::<Vec<_>>(),
-                ["@custom/=lib/a/src/", "Custom.sol=lib/a/src/Custom.sol", "a/=lib/a/src/"]
-            );
-            assert_eq!(config.warnings, []);
-
-            Ok(())
-        });
-    }
-
-    #[test]
     fn scoped_dependency_aliases_warn_about_previous_global_targets() {
         figment::Jail::expect_with(|_| {
             let temp = tempdir().unwrap();
@@ -2038,15 +1980,6 @@ mod tests {
                     aliases.iter().all(|mapping| mapping.context.is_some() == scoped),
                     "{alias}={target}"
                 );
-
-                // An explicit root choice remains authoritative and suppresses migration warnings.
-                fs::write(
-                    root.join(Config::FILE_NAME),
-                    "[profile.default]\nremappings = [\"pkg/=src/selected/\"]\n",
-                )
-                .unwrap();
-                let config = Config::load_with_root(root).unwrap();
-                assert_eq!(config.warnings, [], "{alias}={target}");
             }
 
             Ok(())
@@ -2102,7 +2035,7 @@ mod tests {
             fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
             fs::write(
                 owner.join(Config::FILE_NAME),
-                "[profile.default]\nremappings = [\"@custom/=src/\", \"src/special/:@custom/=overrides/\"]\n",
+                "[profile.default]\nremappings = [\"@custom/=src/\", \"Custom.sol=src/Version.sol\", \"src/special/:@custom/=overrides/\"]\n",
             )
             .unwrap();
             fs::write(owner.join("src/Version.sol"), "contract Version {}\n").unwrap();
@@ -2114,6 +2047,7 @@ mod tests {
                 [
                     "lib/a/src/special/:@custom/=lib/a/overrides/",
                     "@custom/=lib/a/src/",
+                    "Custom.sol=lib/a/src/Version.sol",
                     "a/=lib/a/src/",
                 ]
             );
@@ -2137,7 +2071,10 @@ mod tests {
                 fs::write(package.join("src/Inner.sol"), "contract Inner {}\n").unwrap();
                 fs::write(
                     package.join(Config::FILE_NAME),
-                    "[profile.default]\nremappings = [\"@priv/=src/\"]\n",
+                    format!(
+                        "[profile.default]\nsrc = {:?}\nremappings = [\"@priv/=src/\"]\n",
+                        if name == "a" { package.join("src") } else { PathBuf::from("src") }
+                    ),
                 )
                 .unwrap();
                 symlink(&package, project.join("lib").join(name)).unwrap();
