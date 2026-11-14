@@ -1,4 +1,6 @@
 use foundry_common::sh_eprintln;
+use foundry_compilers::artifacts::BytecodeHash;
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
 use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
@@ -867,6 +869,75 @@ No files changed, compilation skipped
 
 Ran 1 test for test/SymbolicStaleLayout.t.sol:SymbolicStaleLayout
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]]);
+}
+
+// A filtered symbolic run must only recompile the artifacts of the compiler profiles it uses, or
+// the cache keeps pointing at deleted artifacts of other profiles and every run recompiles.
+#[forgetest_init]
+fn symbolic_keeps_cached_artifacts_of_other_profiles(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_keeps_cached_artifacts_of_other_profiles");
+
+    prj.update_config(|config| {
+        config.ast = true;
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "no-metadata".to_string(),
+            via_ir: None,
+            evm_version: None,
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: Some(BytecodeHash::None),
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "test/NoMetadata.t.sol".parse().unwrap(),
+            version: None,
+            via_ir: None,
+            bytecode_hash: Some(BytecodeHash::None),
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+    let source = "contract Shared { uint256 public value; }\n";
+    prj.add_source("Shared.sol", source);
+    prj.add_test(
+        "Default.t.sol",
+        r#"
+import {Shared} from "../src/Shared.sol";
+
+contract SymbolicDefaultProfile {
+    function checkShared() public {
+        assert(new Shared().value() == 0);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "NoMetadata.t.sol",
+        r#"
+import {Shared} from "../src/Shared.sol";
+
+contract NoMetadataProfile {
+    Shared shared = new Shared();
+}
+"#,
+    );
+    cmd.args(["test", "--symbolic"]).assert_success();
+
+    prj.add_source("Shared.sol", &format!("{source}// Edited.\n"));
+    cmd.forge_fuse().arg("build").assert_success();
+
+    let args = ["test", "--symbolic", "--match-path", "test/Default.t.sol"];
+    cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Recompiling cached artifacts without storage layouts...
+
+"#]]);
+    cmd.forge_fuse().args(args).assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
 ...
 "#]]);
 }

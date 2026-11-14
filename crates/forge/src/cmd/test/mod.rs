@@ -48,14 +48,14 @@ use foundry_common::{
     sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
-    Artifact, ArtifactId, ProjectCompileOutput,
+    Artifact, ArtifactId, Graph, ProjectCompileOutput,
     artifacts::{
-        BytecodeObject, ConfigurableContractArtifact, Libraries, ast::NodeType,
+        BytecodeObject, ConfigurableContractArtifact, Libraries, Source, ast::NodeType,
         output_selection::ContractOutputSelection,
     },
     compilers::{
         Language,
-        multi::{MultiCompiler, MultiCompilerLanguage},
+        multi::{MultiCompiler, MultiCompilerLanguage, MultiCompilerParser},
     },
     utils::source_files_iter,
 };
@@ -82,12 +82,13 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_tui::tui_mode;
+use path_slash::PathExt;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use rand::Rng;
 use regex::Regex;
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc::channel},
@@ -1770,10 +1771,13 @@ impl TestArgs {
             if config.extra_output.contains(&ContractOutputSelection::StorageLayout)
                 && let Ok(compiled) = &output
             {
-                let stale = compiled
+                let mut stale = compiled
                     .cached_artifacts()
-                    .artifact_files()
-                    .filter(|file| {
+                    .iter()
+                    .flat_map(|(source, artifacts)| {
+                        artifacts.values().flatten().map(move |file| (source, file))
+                    })
+                    .filter(|(_, file)| {
                         file.artifact.storage_layout.is_none()
                             && file.artifact.ast.as_ref().is_none_or(|ast| {
                                 ast.nodes
@@ -1781,14 +1785,50 @@ impl TestArgs {
                                     .any(|node| node.node_type == NodeType::ContractDefinition)
                             })
                     })
-                    .map(|file| file.file.clone())
                     .collect::<Vec<_>>();
+                // Cached artifacts of other profiles are reused for every source in scope, but
+                // only the profiles this run compiles are rewritten. Deleting any other artifact
+                // would leave the cache pointing at a missing file, and every later build would
+                // recompile. Resolve the compiled profiles like `ProjectCompiler::with_sources`.
+                if !stale.is_empty() {
+                    let mut sources = if files.is_empty() {
+                        project.paths.read_input_files()?
+                    } else {
+                        Source::read_all(&files)?
+                    };
+                    if let Some(filter) = &project.sparse_output {
+                        sources.retain(|path, _| filter.is_match(path));
+                    }
+                    let scope =
+                        Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?
+                            .into_sources_by_version(&project)?
+                            .sources
+                            .into_values()
+                            .flatten()
+                            .flat_map(|(version, sources, (profile, _))| {
+                                sources.into_iter().map(move |(path, _)| {
+                                    (
+                                        PathBuf::from(path.to_slash_lossy().as_ref()),
+                                        version.clone(),
+                                        profile,
+                                    )
+                                })
+                            })
+                            .collect::<HashSet<_>>();
+                    stale.retain(|(source, file)| {
+                        scope.contains(&(
+                            (*source).clone(),
+                            file.version.clone(),
+                            file.profile.as_str(),
+                        ))
+                    });
+                }
                 if !stale.is_empty() {
                     if !(shell::is_json() || self.junit) {
                         sh_status!("Recompiling cached artifacts without storage layouts...")?;
                     }
-                    for file in stale {
-                        fs::remove_file(file)?;
+                    for (_, file) in stale {
+                        fs::remove_file(&file.file)?;
                     }
                     output = compile();
                 }
