@@ -4184,6 +4184,8 @@ contract NestedReverter {
     }
 }
 
+contract NestedCreated {}
+
 contract NestedHookedStore {
     uint256 value;
 
@@ -4222,6 +4224,10 @@ contract NestedExpectRevert is Test {
         this.expectThenReturn();
     }
 
+    function catchExpectRevert() external {
+        try vm.expectRevert(bytes("x")) {} catch {}
+    }
+
     function onStore(address, bytes32, bytes32, bytes32) external {
         vm.expectRevert(bytes("x"));
     }
@@ -4247,6 +4253,20 @@ contract NestedExpectRevert is Test {
         this.expectPartialThenReturn();
     }
 
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkNestedExpectRevertCaughtInternal() public {
+        vm.expectRevert(bytes("x"));
+        this.catchExpectRevert();
+        reverter.fail();
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkNestedExpectRevertCreateInternal() public {
+        vm.expectRevert(bytes("x"));
+        new NestedCreated();
+        reverter.fail();
+    }
+
     function checkNestedExpectRevertInStorageHook() public {
         StorageHookVm(address(vm)).registerSstoreHook(address(hooked), this.onStore.selector);
         vm.expectRevert(bytes("zzz"));
@@ -4260,12 +4280,14 @@ contract NestedExpectRevert is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/NestedExpectRevert.t.sol:NestedExpectRevert
+Ran 6 tests for test/NestedExpectRevert.t.sol:NestedExpectRevert
 [PASS] checkNestedExpectPartialRevert() ([METRICS])
+[PASS] checkNestedExpectRevertCaughtInternal() ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedExpectRevertCreateInternal() ([METRICS])
 [PASS] checkNestedExpectRevertInStorageHook() ([METRICS])
 [FAIL: Error != expected error: vm.expectRevert: you must call another function prior to expecting a second revert != zzz; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedExpectRevertMismatch() ([METRICS])
 [PASS] checkNestedExpectRevertTwoLevels() ([METRICS])
-Suite result: FAILED. 3 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
