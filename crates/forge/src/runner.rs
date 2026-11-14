@@ -1715,6 +1715,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Reproducing some failure is insufficient: it must be the campaign's failure, which the
         // provenance in the raw failure tells apart from other failures with the same outcome.
         if expected.failure_site != Some(campaign_site) {
+            // The campaign stops checking an invariant once it breaks, but replays check it, so
+            // a later `afterInvariant` failure can replay as that earlier failure. Call removal
+            // finds the hook failure, as without minimization.
+            if matches!(campaign_site, CheckSequenceFailureSite::AfterInvariant { .. }) {
+                return SequenceMinimization::RemoveCalls;
+            }
             return SequenceMinimization::KeepOriginal;
         }
         // The failure is unidentified after a snapshot restore as well.
