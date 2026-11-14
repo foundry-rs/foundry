@@ -521,7 +521,6 @@ import {RootFromFile} from "file-alias/FromFile.sol";
 import {Sibling} from "sibling/Sibling.sol";
 
 contract Root is Dep, Sibling {}
-contract Direct is RootThing, RootFromFile {}
 "#,
     );
 

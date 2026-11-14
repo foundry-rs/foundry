@@ -4222,21 +4222,12 @@ fn external_libraries_preserve_global_dependency_aliases(prj: _, cmd: _) {
         "import {A} from \"a/A.sol\"; import {B} from \"b/B.sol\"; contract Root { A a; B b; }\n",
     );
 
-    for (libs, file_remappings) in
-        [("../shared".to_string(), false), (shared.display().to_string(), true)]
-    {
+    for libs in ["../shared".to_string(), shared.display().to_string()] {
         for name in ["a", "b"] {
             prj.create_file(
                 format!("shared/{name}/foundry.toml"),
-                if file_remappings {
-                    "[profile.default]\n"
-                } else {
-                    "[profile.default]\nremappings = [\"@priv/=src/internal/\"]\n"
-                },
+                "[profile.default]\nremappings = [\"@priv/=src/internal/\"]\n",
             );
-            if file_remappings {
-                prj.create_file(format!("shared/{name}/remappings.txt"), "@priv/=src/internal/\n");
-            }
         }
         prj.create_file(
             "project/foundry.toml",
