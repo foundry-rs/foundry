@@ -5,7 +5,7 @@
 
 use crate::mapping_slots::MappingSlots;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{B256, U256, hex, keccak256, map::B256Map};
+use alloy_primitives::{B256, I256, U256, hex, keccak256, map::B256Map};
 use foundry_common_fmt::format_token_raw;
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use serde::{
@@ -120,8 +120,22 @@ impl SlotInfo {
                 }
             }
             _ => {
-                // Decode based on the actual type
-                actual_type.abi_decode(&value.0).ok()
+                let bits = match *actual_type {
+                    DynSolType::Uint(bits) | DynSolType::Int(bits) => bits,
+                    DynSolType::FixedBytes(size) => size * 8,
+                    DynSolType::Bool => 8,
+                    _ => return actual_type.abi_decode(value.as_slice()).ok(),
+                };
+                // Storage does not sign-extend intN or left-align bytesN as ABI encoding does.
+                // Discard higher-order bytes before moving the value to its ABI position.
+                let shift = 256 - bits;
+                let value = Into::<U256>::into(value) << shift;
+                let value = match actual_type {
+                    DynSolType::Int(_) => I256::from_raw(value).asr(shift).into_raw(),
+                    DynSolType::FixedBytes(_) => value,
+                    _ => value >> shift,
+                };
+                actual_type.abi_decode(B256::from(value).as_slice()).ok()
             }
         }
     }
@@ -1110,12 +1124,16 @@ fn resolve_sol_type(id: &str, storage_type: &StorageType) -> Option<DynSolType> 
 /// direct ABI equivalent (mappings, structs).
 ///
 /// Handles `contract X` types (which are addresses under the hood) and `enum X` types
-/// (which are uint8) that `DynSolType::parse` doesn't recognize.
+/// (which are uint8) that `DynSolType::parse` doesn't recognize. User-defined value types scoped
+/// to a contract, library, or interface (e.g. `C.Price`) would parse as `uint8`, so they decode as
+/// a full-word `uint256`.
 fn parse_sol_type(label: &str) -> Option<DynSolType> {
     let scalar = if label.starts_with("contract ") {
         "address"
     } else if label.starts_with("enum ") {
         "uint8"
+    } else if label.contains('.') && !label.contains(' ') {
+        "uint256"
     } else {
         return DynSolType::parse(label).ok();
     };
@@ -1682,5 +1700,71 @@ mod tests {
         for slot in [2, 3] {
             assert!(identifier.identify(&B256::from(U256::from(slot)), None).is_none());
         }
+    }
+
+    #[test]
+    fn decodes_scoped_udvt_as_a_full_word() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "value", "offset": 0, "slot": "0", "type": "t_value" }
+            ],
+            "types": {
+                "t_value": { "encoding": "inplace", "label": "C.Price", "numberOfBytes": "16" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+        info.decode_values(B256::ZERO, B256::from(U256::from(1000)));
+        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), "1000");
+    }
+
+    #[test]
+    fn decodes_packed_signed_and_fixed_bytes_values() {
+        let info = |ty: &str, offset| SlotInfo {
+            label: String::new(),
+            slot_type: StorageTypeInfo {
+                label: ty.to_string(),
+                dyn_sol_type: DynSolType::parse(ty).unwrap(),
+            },
+            offset,
+            slot: "0".to_string(),
+            members: None,
+            decoded: None,
+            keys: None,
+        };
+        let decode = |mut info: SlotInfo, new_value| {
+            info.decode_values(B256::ZERO, new_value);
+            info
+        };
+
+        // `int8 small = -1` packed with `bytes4 tag = 0xdeadbeef`
+        let small = decode(
+            info("int8", 0),
+            b256!("0x000000000000000000000000000000000000000000000000000000deadbeefff"),
+        );
+        let tag = decode(
+            info("bytes4", 0),
+            b256!("0x00000000000000000000000000000000000000000000000000000000deadbeef"),
+        );
+        // `uint128 a = 5` packed with `uint128 b = 1`
+        let a = decode(
+            info("uint128", 0),
+            b256!("0x0000000000000000000000000000000100000000000000000000000000000005"),
+        );
+        // `struct { int16 a; bytes4 b; }` set to `(-2, 0x12345678)`
+        let mut packed = info("(int16,bytes4)", 0);
+        packed.members = Some(vec![info("int16", 0), info("bytes4", 2)]);
+        let packed = decode(
+            packed,
+            b256!("0x000000000000000000000000000000000000000000000000000012345678fffe"),
+        );
+
+        let values = [&small, &tag, &a]
+            .into_iter()
+            .chain(packed.members.as_ref().unwrap())
+            .map(|info| format_token_raw(&info.decoded.as_ref().unwrap().new_value))
+            .collect::<Vec<_>>();
+        assert_eq!(values, ["-1", "0xdeadbeef", "5", "-2", "0x12345678"]);
     }
 }
