@@ -24,8 +24,9 @@ use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Error as SolcError, Severity, Source,
-        output_selection::OutputSelection, remappings::Remapping,
+        BytecodeObject, Contract, Error as SolcError, SecondarySourceLocation, Severity, Source,
+        output_selection::OutputSelection,
+        remappings::{RelativeRemapping, Remapping},
     },
     compilers::{
         CompilationError, Compiler,
@@ -360,6 +361,7 @@ impl ProjectCompiler {
             {
                 external.merge(&mut output)?;
             }
+            add_root_remapping_diagnostics(&mut output, &project.paths);
             Ok(output)
         })
     }
@@ -1181,9 +1183,119 @@ fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'s
     reason
 }
 
+/// Finds root aliases that would resolve an import currently restricted to dependency contexts.
+fn root_remapping_candidates<L: Clone>(
+    paths: &ProjectPathsConfig<L>,
+    import: &Path,
+    file: &Path,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let file = paths.root.join(file);
+    let mut candidates = BTreeMap::<_, BTreeSet<_>>::new();
+    let Some(cwd) = file.parent() else { return candidates };
+    if !file.starts_with(&paths.root)
+        || paths.libraries.iter().any(|lib| file.starts_with(paths.root.join(lib)))
+        // An applicable root or CLI mapping remains authoritative, even if its target is missing.
+        || paths.resolve_library_import(cwd, import).is_some()
+    {
+        return candidates;
+    }
+
+    let mut candidate_paths = paths.clone();
+    candidate_paths.libraries.clear();
+    for remapping in &paths.remappings {
+        if let Some(context) = &remapping.context
+            && paths
+                .libraries
+                .iter()
+                .any(|lib| paths.root.join(context).starts_with(paths.root.join(lib)))
+        {
+            let mut global = remapping.clone();
+            global.context = None;
+            candidate_paths.remappings = vec![global.clone()];
+            if candidate_paths
+                .resolve_library_import(cwd, import)
+                .is_some_and(|target| target.is_file())
+            {
+                candidates.entry(global.name.clone()).or_default().insert(
+                    RelativeRemapping::new(global, &paths.root).to_relative_remapping().to_string(),
+                );
+            }
+        }
+    }
+    candidates
+}
+
+/// Adds actionable alias migration help to existing import errors, including JSON diagnostics.
+fn add_root_remapping_diagnostics<C: Compiler<CompilerContract = Contract>>(
+    output: &mut ProjectCompileOutput<C>,
+    paths: &ProjectPathsConfig<C::Language>,
+) {
+    if !output.output().errors.iter().any(|error| error.error_code() == Some(6275)) {
+        return;
+    }
+
+    let mut suggestions = BTreeMap::<_, BTreeMap<_, BTreeSet<_>>>::new();
+    for (import, file) in output.graph().unresolved_imports() {
+        for (alias, mappings) in root_remapping_candidates(paths, import, file) {
+            suggestions
+                .entry(paths.root.join(file))
+                .or_default()
+                .entry(alias)
+                .or_default()
+                .extend(mappings);
+        }
+    }
+
+    for error in &mut output.output_mut().errors {
+        // CompilationError has no mutable diagnostic accessors; reuse concrete solc errors.
+        let error = error as &mut dyn Any;
+        let error = if error.is::<SolcError>() {
+            error.downcast_mut::<SolcError>().unwrap()
+        } else if let Some(MultiCompilerError::Solc(error)) =
+            error.downcast_mut::<MultiCompilerError>()
+        {
+            error
+        } else {
+            continue;
+        };
+        if error.error_code == Some(6275)
+            && let Some(location) = &error.source_location
+            && let Some(aliases) = suggestions.remove(&paths.root.join(&location.file))
+        {
+            for (alias, mappings) in aliases {
+                let action = if mappings.len() == 1 {
+                    "add a remapping to foundry.toml or remappings.txt"
+                } else {
+                    "choose a root remapping in foundry.toml or remappings.txt"
+                };
+                let help = format!(
+                    "help: this file imports the alias {alias:?}, which is scoped to a dependency. \
+                     To use it from the root project, {action}:\n      {}",
+                    mappings.into_iter().collect::<Vec<_>>().join("\n      ")
+                );
+                error.secondary_source_locations.push(SecondarySourceLocation {
+                    file: None,
+                    start: None,
+                    end: None,
+                    message: Some(help.clone()),
+                });
+                // Keep the original message intact so text rendering does not print help twice.
+                let message = error.formatted_message.as_mut().unwrap_or(&mut error.message);
+                message.truncate(message.trim_end().len());
+                message.push_str("\n\n");
+                message.push_str(&help);
+                message.push('\n');
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_compilers::multi::MultiCompilerLanguage;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn parse_contract_identifiers() {
@@ -1282,5 +1394,45 @@ mod tests {
             sanitize_relative_path(Path::new("lib/openzeppelin")),
             Path::new("lib/openzeppelin")
         );
+    }
+
+    #[test]
+    fn root_remapping_candidates_respect_targets_choices_and_importers() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(root.join("lib/a/src")).unwrap();
+        fs::write(root.join("lib/a/src/Target.sol"), "contract Target {}\n").unwrap();
+        let root = dunce::canonicalize(root).unwrap();
+        let paths = ProjectPathsConfig::builder()
+            .root(&root)
+            .lib(root.join("lib"))
+            .remapping(Remapping::from_str("lib/a/:@alias/=lib/a/src/").unwrap())
+            .remapping(Remapping::from_str("lib/a/:File.sol=lib/a/src/Target.sol").unwrap())
+            .build::<MultiCompilerLanguage>()
+            .unwrap();
+        let file = root.join("src/Root.sol");
+        let import = Path::new("@alias/Target.sol");
+
+        assert_eq!(
+            root_remapping_candidates(&paths, Path::new("File.sol"), &file),
+            BTreeMap::from([(
+                "File.sol".to_string(),
+                BTreeSet::from(["File.sol=lib/a/src/Target.sol".to_string()])
+            )])
+        );
+
+        for (import, file) in [
+            (Path::new("@alias/Missing.sol"), file.clone()),
+            (import, root.join("lib/a/src/Target.sol")),
+            (import, temp.path().join("Outside.sol")),
+        ] {
+            assert_eq!(root_remapping_candidates(&paths, import, &file), BTreeMap::new());
+        }
+
+        for explicit in ["@alias/=missing/", "src/:@alias/=missing/"] {
+            let mut paths = paths.clone();
+            paths.remappings.push(Remapping::from_str(explicit).unwrap());
+            assert_eq!(root_remapping_candidates(&paths, import, &file), BTreeMap::new());
+        }
     }
 }
