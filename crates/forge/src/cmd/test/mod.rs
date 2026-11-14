@@ -1749,7 +1749,7 @@ impl TestArgs {
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
-            let compile = || {
+            let compile = |files: &BTreeSet<PathBuf>| {
                 let compiler = if filter.is_empty() {
                     compiler()
                 } else {
@@ -1761,14 +1761,14 @@ impl TestArgs {
                             )),
                     )
                 };
-                compiler.files(files.clone()).compile(&project)
+                compiler.files(files.iter().cloned()).compile(&project)
             };
-            let mut output = compile();
+            let mut output = compile(&files);
             // A build without storage layouts keeps a cached profile that requested them, so its
             // artifacts are reused here without layouts. Delete them so they are recompiled.
             // Artifacts of sources without contracts never have layouts, and their AST has no
             // contract definition.
-            if config.extra_output.contains(&ContractOutputSelection::StorageLayout)
+            while config.extra_output.contains(&ContractOutputSelection::StorageLayout)
                 && let Ok(compiled) = &output
             {
                 let mut stale = compiled
@@ -1786,52 +1786,50 @@ impl TestArgs {
                             })
                     })
                     .collect::<Vec<_>>();
+                if stale.is_empty() {
+                    break;
+                }
                 // Cached artifacts of other profiles are reused for every source in scope, but
-                // only the profiles this run compiles are rewritten. Deleting any other artifact
-                // would leave the cache pointing at a missing file, and every later build would
-                // recompile. Resolve the compiled profiles like `ProjectCompiler::with_sources`.
-                if !stale.is_empty() {
-                    let mut sources = if files.is_empty() {
-                        project.paths.read_input_files()?
-                    } else {
-                        Source::read_all(&files)?
-                    };
-                    if let Some(filter) = &project.sparse_output {
-                        sources.retain(|path, _| filter.is_match(path));
-                    }
-                    let scope =
-                        Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?
-                            .into_sources_by_version(&project)?
-                            .sources
-                            .into_values()
-                            .flatten()
-                            .flat_map(|(version, sources, (profile, _))| {
-                                sources.into_iter().map(move |(path, _)| {
-                                    (
-                                        PathBuf::from(path.to_slash_lossy().as_ref()),
-                                        version.clone(),
-                                        profile,
-                                    )
-                                })
-                            })
-                            .collect::<HashSet<_>>();
-                    stale.retain(|(source, file)| {
-                        scope.contains(&(
-                            (*source).clone(),
-                            file.version.clone(),
-                            file.profile.as_str(),
-                        ))
-                    });
+                // only the profiles compiled from these roots are rewritten. Deleting any other
+                // artifact would leave the cache pointing at a missing file, and every later build
+                // would recompile. The roots are those of the compilation that produced the output,
+                // which differ from `files` after a source order fallback.
+                let graph = compiled.graph();
+                let roots = graph
+                    .source_files()
+                    .map(|id| graph.node_path(id).to_path_buf())
+                    .collect::<BTreeSet<_>>();
+                let scope = Graph::<MultiCompilerParser>::resolve_sources(
+                    &project.paths,
+                    Source::read_all(&roots)?,
+                )?
+                .into_sources_by_version(&project)?
+                .sources
+                .into_values()
+                .flatten()
+                .flat_map(|(version, sources, (profile, _))| {
+                    sources.into_iter().map(move |(path, _)| {
+                        (PathBuf::from(path.to_slash_lossy().as_ref()), version.clone(), profile)
+                    })
+                })
+                .collect::<HashSet<_>>();
+                stale.retain(|(source, file)| {
+                    scope.contains(&(
+                        (*source).clone(),
+                        file.version.clone(),
+                        file.profile.as_str(),
+                    ))
+                });
+                if stale.is_empty() {
+                    break;
                 }
-                if !stale.is_empty() {
-                    if !(shell::is_json() || self.junit) {
-                        sh_status!("Recompiling cached artifacts without storage layouts...")?;
-                    }
-                    for (_, file) in stale {
-                        fs::remove_file(&file.file)?;
-                    }
-                    output = compile();
+                if !(shell::is_json() || self.junit) {
+                    sh_status!("Recompiling cached artifacts without storage layouts...")?;
                 }
+                for (_, file) in stale {
+                    fs::remove_file(&file.file)?;
+                }
+                output = compile(&roots);
             }
             let output = if should_mutate {
                 output.wrap_err(
