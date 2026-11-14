@@ -1637,6 +1637,33 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
+// test that fuzz gas snapshots don't depend on which files were recompiled
+#[forgetest]
+fn can_check_snapshot_after_partial_recompile(prj: _, cmd: _) {
+    // fuzz literals come from every source, including ones the test doesn't import
+    prj.add_source(
+        "Magic.sol",
+        r#"
+contract Magic {
+    string public constant MAGIC = "a string literal long enough to shift the average gas";
+}
+   "#,
+    );
+    let test = r#"
+contract MagicTest {
+    function testFuzz_String(string memory v) public pure {
+        require(bytes(v).length != 1000);
+    }
+}
+   "#;
+    prj.add_test("MagicFuzz.t.sol", test);
+    cmd.arg("snapshot").assert_success();
+
+    // only the test file is recompiled
+    prj.add_test("MagicFuzz.t.sol", &format!("{test}// edited\n"));
+    cmd.forge_fuse().args(["snapshot", "--check"]).assert_success();
+}
+
 #[forgetest]
 fn snapshot_expands_invariant_campaign_predicates(prj: _, cmd: _) {
     prj.add_test(
