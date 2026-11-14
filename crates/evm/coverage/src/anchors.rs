@@ -2,10 +2,10 @@ use super::{
     CoverageItemKind, ExecutionAnchor, ExecutionAnchorKind, ItemAnchor, ItemAnchors, SourceLocation,
 };
 use crate::analysis::{EmptySpecialFunctionKind, SourceAnalysis};
-use alloy_primitives::map::rustc_hash::FxHashSet;
+use alloy_primitives::{U256, map::rustc_hash::FxHashSet};
 use evm2::interpreter::op as opcode;
 use eyre::ensure;
-use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
+use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement, SourceMap};
 use foundry_evm_core::{bytecode::InstIter, ic::IcPcMap};
 use std::ops::Range;
 
@@ -83,6 +83,25 @@ pub fn find_anchors(
                 }
                 _ => index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)),
             }
+            .or_else(|error| {
+                let Some(hints) = analysis.anchor_hints(item_id) else { return Err(error) };
+                if let Some(guard) = &hints.revert_guard
+                    && let Some(anchor) = index.revert_guard(item_id, guard)
+                {
+                    return Ok(anchor);
+                }
+                if let Some(function) = &hints.alias_function
+                    && let Some(anchor) = index.alias_return(item_id, function)
+                {
+                    return Ok((anchor, None));
+                }
+                if let Some(callee) = &hints.unique_callee
+                    && let Some(anchor) = index.unique_callee_entry(item_id, callee)
+                {
+                    return Ok((anchor, None));
+                }
+                Err(error)
+            })
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
             .ok()
         })
@@ -119,6 +138,7 @@ pub fn find_execution_anchors(
 
 /// Source map and branch lookups precomputed once per bytecode.
 struct AnchorIndex<'a> {
+    bytecode: &'a [u8],
     source_map: &'a SourceMap,
     ic_pc_map: &'a IcPcMap,
     /// `(source id, offset, instruction)`, sorted for source range lookups.
@@ -169,7 +189,7 @@ impl<'a> AnchorIndex<'a> {
                 }
             }
         }
-        Self { source_map, ic_pc_map, entries, branches, reverting_runs }
+        Self { bytecode, source_map, ic_pc_map, entries, branches, reverting_runs }
     }
 
     /// Finds the first opcode in the source range, preferring code outside a failure stub.
@@ -229,6 +249,234 @@ impl<'a> AnchorIndex<'a> {
         }
         anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
     }
+
+    /// Recover an erased call only at an exact declaration label with a proven incoming edge
+    /// from outside the callee. Return labels with only internal predecessors are completions,
+    /// not entries. A real fallthrough edge also qualifies: a tail call can emit no jump.
+    fn unique_callee_entry(&self, item_id: u32, callee: &SourceLocation) -> Option<ItemAnchor> {
+        let mut incoming = FxHashSet::default();
+        let mut previous_push = None;
+        for (ic, (pc, instruction)) in InstIter::new(self.bytecode).with_pc().enumerate() {
+            let outside = self.source_map.get(ic).is_some_and(|location| {
+                location.jump() != Jump::Out
+                    && location.length() != 0
+                    && location.offset().checked_add(location.length()).is_some_and(|end| {
+                        location.index().is_some_and(|source| {
+                            source != callee.source_id as u32
+                                || end <= callee.bytes.start
+                                || location.offset() >= callee.bytes.end
+                        })
+                    })
+            });
+            let opcode = instruction.opcode.get();
+            if outside {
+                if matches!(opcode, opcode::JUMP | opcode::JUMPI)
+                    && let Some(immediate) = previous_push
+                    && let Ok((_, target)) = ItemAnchor::from_branch(item_id, pc, immediate)
+                {
+                    incoming.insert(target.instruction as usize);
+                }
+                if !matches!(
+                    opcode,
+                    opcode::JUMP
+                        | opcode::STOP
+                        | opcode::RETURN
+                        | opcode::REVERT
+                        | opcode::INVALID
+                        | opcode::SELFDESTRUCT
+                ) {
+                    incoming.insert(pc + 1 + instruction.immediate.len());
+                }
+            }
+            previous_push =
+                (opcode::PUSH1..=opcode::PUSH32).contains(&opcode).then_some(instruction.immediate);
+        }
+        let mut labels = InstIter::new(self.bytecode).with_pc().enumerate().filter_map(
+            |(ic, (pc, instruction))| {
+                (instruction.opcode.get() == opcode::JUMPDEST
+                    && incoming.contains(&pc)
+                    && self.source_map.get(ic).is_some_and(|location| {
+                        location.index() == Some(callee.source_id as u32)
+                            && location.offset() == callee.bytes.start
+                            && location.length() == callee.len()
+                    }))
+                .then_some(pc)
+            },
+        );
+        let entry = labels.next()?;
+        if labels.next().is_some() {
+            return None;
+        }
+        Some(ItemAnchor { item_id, instruction: entry.try_into().ok()? })
+    }
+
+    /// An alias-only function has no instructions for some of its statements. Its unique normal
+    /// return proves those statements completed. Require an exact declaration location, an explicit
+    /// function-exit marker, and a pure return stub; never infer hits for inlined or aborting code.
+    fn alias_return(&self, item_id: u32, function: &SourceLocation) -> Option<ItemAnchor> {
+        let exact = |element: &SourceElement| {
+            element.index() == Some(function.source_id as u32)
+                && element.offset() == function.bytes.start
+                && element.length() == function.len()
+        };
+        let mut returns = Vec::new();
+        for (ic, (pc, instruction)) in InstIter::new(self.bytecode).with_pc().enumerate() {
+            if instruction.opcode.get() != opcode::JUMPDEST
+                || !self.source_map.get(ic).is_some_and(exact)
+            {
+                continue;
+            }
+            for (relative, (offset, instruction)) in
+                InstIter::new(&self.bytecode[pc..]).with_pc().enumerate().take(32)
+            {
+                match instruction.opcode.get() {
+                    opcode::JUMPDEST if relative == 0 => {}
+                    opcode::PUSH0
+                    | opcode::PUSH1..=opcode::PUSH32
+                    | opcode::DUP1..=opcode::DUP16
+                    | opcode::SWAP1..=opcode::SWAP16
+                    | opcode::POP => {}
+                    opcode::JUMP => {
+                        if self
+                            .source_map
+                            .get(ic + relative)
+                            .is_some_and(|element| exact(element) && element.jump() == Jump::Out)
+                        {
+                            returns.push(pc + offset);
+                        }
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+        }
+        let [pc] = returns.as_slice() else { return None };
+        Some(ItemAnchor { item_id, instruction: (*pc).try_into().ok()? })
+    }
+
+    /// A shared revert has no unique body location. Recover its controlling edge only when a
+    /// single decision matches the condition and exactly one successor emits the resolved error.
+    /// Payload matching determines polarity; source order and compiler identity do not.
+    fn revert_guard(
+        &self,
+        item_id: u32,
+        guard: &super::RevertGuard,
+    ) -> Option<(ItemAnchor, Option<u32>)> {
+        let loc = &guard.condition;
+        let mut decisions = self.branches.iter().filter(|&&(ic, _, _)| {
+            self.source_map.get(ic + 1).is_some_and(|jump| {
+                jump.index() == Some(loc.source_id as u32)
+                    && jump.offset() == loc.bytes.start
+                    && jump.length() == loc.len()
+            })
+        });
+        let &(_, jump_pc, immediate) = decisions.next()?;
+        if decisions.next().is_some() || self.bytecode.get(jump_pc + 1) == Some(&opcode::JUMPDEST) {
+            return None;
+        }
+        let (fallthrough, taken) = ItemAnchor::from_branch(item_id, jump_pc, immediate).ok()?;
+        let rejects = |pc| constant_revert_selector(self.bytecode, pc) == Some(guard.selector);
+        match (rejects(fallthrough.instruction as usize), rejects(taken.instruction as usize)) {
+            (true, false) if self.continues_after(taken.instruction as usize, guard) => {
+                Some((fallthrough, None))
+            }
+            (false, true) if self.continues_after(fallthrough.instruction as usize, guard) => {
+                Some((taken, Some(jump_pc.try_into().ok()?)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The other successor must positively reach the source continuation in this same function.
+    /// An unsupported error stub is unknown, not evidence for the opposite branch's polarity.
+    fn continues_after(&self, start: usize, guard: &super::RevertGuard) -> bool {
+        for (ic, (_, instruction)) in InstIter::new(self.bytecode)
+            .with_pc()
+            .enumerate()
+            .skip_while(|(_, (pc, _))| *pc < start)
+            .take(32)
+        {
+            match instruction.opcode.get() {
+                opcode::JUMP
+                | opcode::JUMPI
+                | opcode::REVERT
+                | opcode::INVALID
+                | opcode::STOP
+                | opcode::RETURN
+                | opcode::SELFDESTRUCT
+                | opcode::CALL
+                | opcode::STATICCALL
+                | opcode::DELEGATECALL
+                | opcode::CALLCODE => return false,
+                _ => {}
+            }
+            if self.source_map.get(ic).is_some_and(|element| {
+                element.index() == Some(guard.function.source_id as u32)
+                    && element.offset() >= guard.statement.bytes.end
+                    && element.offset() >= guard.function.bytes.start
+                    && element
+                        .offset()
+                        .checked_add(element.length())
+                        .is_some_and(|end| end <= guard.function.bytes.end)
+            }) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Recognizes a constant four-byte error payload in a small straight-line stub. Memory and the
+/// incoming stack are unknown: only bytes explicitly stored by this stub can establish a selector.
+/// Calls, branches, dynamic data, and unsupported operations deliberately leave it unrecognized.
+fn constant_revert_selector(bytecode: &[u8], pc: usize) -> Option<[u8; 4]> {
+    let mut stack = Vec::<U256>::new();
+    let mut memory = [None; 64];
+    for (_, inst) in InstIter::new(bytecode.get(pc..)?).with_pc().take(32) {
+        match inst.opcode.get() {
+            opcode::JUMPDEST => {}
+            opcode::PUSH0 => stack.push(U256::ZERO),
+            opcode::PUSH1..=opcode::PUSH32 => stack.push(U256::from_be_slice(inst.immediate)),
+            opcode::DUP1..=opcode::DUP16 => {
+                let depth = usize::from(inst.opcode.get() - opcode::DUP1) + 1;
+                stack.push(*stack.get(stack.len().checked_sub(depth)?)?);
+            }
+            opcode::SWAP1..=opcode::SWAP16 => {
+                let depth = usize::from(inst.opcode.get() - opcode::SWAP1) + 1;
+                let top = stack.len().checked_sub(1)?;
+                let other = top.checked_sub(depth)?;
+                stack.swap(top, other);
+            }
+            opcode::SHL => {
+                let shift = stack.pop()?;
+                let value = stack.pop()?;
+                stack.push(if shift < U256::from(256) {
+                    value << shift.to::<usize>()
+                } else {
+                    U256::ZERO
+                });
+            }
+            opcode::MSTORE => {
+                let offset = usize::try_from(stack.pop()?).ok()?;
+                let value = stack.pop()?.to_be_bytes::<32>();
+                for (dest, byte) in
+                    memory.get_mut(offset..offset.checked_add(32)?)?.iter_mut().zip(value)
+                {
+                    *dest = Some(byte);
+                }
+            }
+            opcode::REVERT => {
+                let offset = usize::try_from(stack.pop()?).ok()?;
+                if stack.pop()? != U256::from(4) {
+                    return None;
+                }
+                let bytes = memory.get(offset..offset.checked_add(4)?)?;
+                return Some([bytes[0]?, bytes[1]?, bytes[2]?, bytes[3]?]);
+            }
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// Calculates whether `element` is within the range of the target `location`.
@@ -266,6 +514,255 @@ mod tests {
         let ic_pc_map = IcPcMap::new(&bytecode);
         let index = AnchorIndex::new(&bytecode, &inner_only, &ic_pc_map);
         assert!(index.branch(0, &loc, true).is_err());
+    }
+
+    fn source_location(start: u32, len: u32) -> SourceLocation {
+        SourceLocation {
+            source_id: 0,
+            contract_name: "T".into(),
+            bytes: start..start + len,
+            lines: 1..2,
+        }
+    }
+
+    fn constant_error_stub() -> Vec<u8> {
+        vec![
+            opcode::PUSH4,
+            0xe3,
+            0x37,
+            0x2e,
+            0x2d,
+            opcode::PUSH0,
+            opcode::MSTORE,
+            opcode::PUSH1,
+            4,
+            opcode::PUSH1,
+            28,
+            opcode::REVERT,
+        ]
+    }
+
+    #[test]
+    fn shared_revert_guards_use_their_own_incoming_edge() {
+        let mut bytecode = vec![
+            opcode::PUSH0,
+            opcode::ISZERO,
+            opcode::PUSH1,
+            12,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::ISZERO,
+            opcode::PUSH1,
+            12,
+            opcode::JUMPI,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+        ];
+        bytecode.extend(constant_error_stub());
+        let text = InstIter::new(&bytecode)
+            .enumerate()
+            .map(|(ic, _)| match ic {
+                0..=3 => "10:10:0",
+                4..=7 => "30:10:0",
+                8 => "50:10:0",
+                _ => "-1:-1:-1",
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        let source_map = sourcemap::parse(&text).unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        let mut anchors = ItemAnchors::default();
+        for (item_id, start) in [(0, 10), (1, 30)] {
+            let guard = super::super::RevertGuard {
+                condition: source_location(start, 10),
+                statement: source_location(start, 10),
+                function: source_location(0, 100),
+                selector: [0xe3, 0x37, 0x2e, 0x2d],
+            };
+            let (anchor, jump) = index.revert_guard(item_id, &guard).unwrap();
+            anchors.jumps.insert(anchors.anchors.len(), jump.unwrap());
+            anchors.anchors.push(anchor);
+        }
+        let ambiguous_text = InstIter::new(&bytecode)
+            .enumerate()
+            .map(|(ic, _)| if ic < 8 { "10:10:0" } else { "-1:-1:-1" })
+            .collect::<Vec<_>>()
+            .join(";");
+        let ambiguous_map = sourcemap::parse(&ambiguous_text).unwrap();
+        let ambiguous = AnchorIndex::new(&bytecode, &ambiguous_map, &ic_pc_map);
+        let guard = super::super::RevertGuard {
+            condition: source_location(10, 10),
+            statement: source_location(10, 10),
+            function: source_location(0, 100),
+            selector: [0xe3, 0x37, 0x2e, 0x2d],
+        };
+        assert!(ambiguous.revert_guard(0, &guard).is_none());
+        let mut hit_map = super::super::HitMap::new(alloy_primitives::Bytes::new());
+        hit_map.hits(4, 1);
+        hit_map.hits(9, 1);
+        hit_map.hits(10, 1);
+        hit_map.hits(12, 1);
+        let hits = anchors
+            .hits(&hit_map)
+            .map(|(anchor, hits)| (anchor.item_id, hits.get()))
+            .collect::<Vec<_>>();
+        assert_eq!(hits, vec![(0, 1)], "the shared destination must not cover the other guard");
+    }
+
+    #[test]
+    fn revert_guard_rejects_ambiguous_payloads_and_decisions() {
+        let mut bytecode = vec![opcode::PUSH0, opcode::PUSH1, 16, opcode::JUMPI];
+        bytecode.extend(constant_error_stub());
+        bytecode.push(opcode::JUMPDEST);
+        bytecode.extend(constant_error_stub());
+        let text = InstIter::new(&bytecode)
+            .enumerate()
+            .map(|(ic, _)| if ic < 3 { "10:10:0" } else { "-1:-1:-1" })
+            .collect::<Vec<_>>()
+            .join(";");
+        let source_map = sourcemap::parse(&text).unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        let guard = super::super::RevertGuard {
+            condition: source_location(10, 10),
+            statement: source_location(10, 10),
+            function: source_location(0, 100),
+            selector: [0xe3, 0x37, 0x2e, 0x2d],
+        };
+        assert!(index.revert_guard(0, &guard).is_none());
+        assert!(
+            constant_revert_selector(&[opcode::PUSH1, 4, opcode::PUSH0, opcode::REVERT], 0)
+                .is_none(),
+            "uninitialized memory is unknown"
+        );
+    }
+
+    #[test]
+    fn revert_guard_does_not_treat_unknown_as_the_opposite_path() {
+        let mut bytecode = vec![
+            opcode::PUSH0,
+            opcode::PUSH1,
+            19,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::MLOAD,
+            opcode::POP,
+        ];
+        bytecode.extend(constant_error_stub());
+        bytecode.push(opcode::JUMPDEST);
+        bytecode.extend(constant_error_stub());
+        let text = InstIter::new(&bytecode)
+            .enumerate()
+            .map(|(ic, _)| if ic < 3 { "10:10:0" } else { "-1:-1:-1" })
+            .collect::<Vec<_>>()
+            .join(";");
+        let source_map = sourcemap::parse(&text).unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        let guard = super::super::RevertGuard {
+            condition: source_location(10, 10),
+            statement: source_location(10, 40),
+            function: source_location(0, 100),
+            selector: [0xe3, 0x37, 0x2e, 0x2d],
+        };
+        assert!(index.revert_guard(0, &guard).is_none());
+    }
+
+    #[test]
+    fn erased_call_distinguishes_entries_from_completions() {
+        let bytecode = [
+            opcode::PUSH1,
+            4,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            8,
+            opcode::JUMP,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let maps = [
+            // Both labels have the function span, but only pc 4 is entered from the caller.
+            ("100:10:0;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", Some(4)),
+            // An exit label alone cannot stand in for an entry, even if it has the exact span.
+            ("100:10:0;;-1:-1:-1;12:1:0;;;10:20:0;12:1:0", None),
+            // A return from a helper outside this function is still a completion edge.
+            ("100:10:0;100:10:0:o;-1:-1:-1:-;10:20:0;12:1:0;;10:20:0;12:1:0", None),
+            // Unknown or overlapping source ranges do not prove an external predecessor.
+            ("-1:-1:-1;;;10:20:0;12:1:0;;10:20:0;12:1:0", None),
+            ("0:200:0;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", None),
+            ("0:0:1;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", None),
+            // Native helpers can be called from another source file in the same frame.
+            ("100:10:1;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", Some(4)),
+        ];
+        for (map, expected) in maps {
+            let source_map = sourcemap::parse(map).unwrap();
+            let ic_pc_map = IcPcMap::new(&bytecode);
+            let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+            assert_eq!(
+                index.unique_callee_entry(0, &source_location(10, 20)).map(|a| a.instruction),
+                expected,
+                "{map}"
+            );
+        }
+    }
+
+    #[test]
+    fn erased_tail_call_can_fall_through_into_a_reverting_callee() {
+        let bytecode =
+            [opcode::PUSH1, 0, opcode::JUMPDEST, opcode::PUSH0, opcode::PUSH0, opcode::REVERT];
+        let source_map = sourcemap::parse("100:10:0;10:20:0;12:1:0;;;").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        let anchor = index.unique_callee_entry(0, &source_location(10, 20)).unwrap();
+        assert_eq!(anchor.instruction, 2);
+    }
+
+    #[test]
+    fn erased_call_rejects_two_externally_entered_labels() {
+        let bytecode = [
+            opcode::PUSH1,
+            4,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::STOP,
+            opcode::PUSH1,
+            10,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let source_map =
+            sourcemap::parse("100:10:0;;-1:-1:-1;10:20:0;;100:10:0;;-1:-1:-1;10:20:0;").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        assert!(index.unique_callee_entry(0, &source_location(10, 20)).is_none());
+    }
+
+    #[test]
+    fn alias_statements_require_a_unique_normal_return() {
+        let bytecode = [opcode::JUMPDEST, opcode::PUSH1, 42, opcode::SWAP1, opcode::JUMP];
+        let source_map = sourcemap::parse("10:20:0;;;10:20:0:o").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        let anchor = index.alias_return(0, &source_location(10, 20)).unwrap();
+        assert_eq!(anchor.instruction, 4);
+        let anchors = ItemAnchors { anchors: vec![anchor], jumps: Default::default() };
+        let uncalled = super::super::HitMap::new(alloy_primitives::Bytes::new());
+        assert_eq!(anchors.hits(&uncalled).count(), 0);
+        for unsupported in
+            [opcode::MLOAD, opcode::JUMPI, opcode::CALL, opcode::INVALID, opcode::REVERT]
+        {
+            let bytecode = [opcode::JUMPDEST, unsupported, opcode::SWAP1, opcode::JUMP];
+            let ic_pc_map = IcPcMap::new(&bytecode);
+            let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+            assert!(index.alias_return(0, &source_location(10, 20)).is_none());
+        }
     }
 
     #[test]

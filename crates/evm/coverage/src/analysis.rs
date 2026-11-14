@@ -1,4 +1,4 @@
-use super::{CoverageItem, CoverageItemKind, SourceLocation};
+use super::{CoverageItem, CoverageItemKind, RevertGuard, SourceLocation};
 use alloy_primitives::map::{HashMap, HashSet};
 use foundry_common::TestFunctionExt;
 use foundry_compilers::ProjectCompileOutput;
@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, yul},
     data_structures::{Never, map::FxHashMap},
-    interface::{RelativeBytePos, Span},
+    interface::{RelativeBytePos, Span, Symbol, sym},
     sema::{Gcx, hir},
 };
 use std::{
@@ -17,7 +17,7 @@ use std::{
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
 #[derive(Clone)]
-struct SourceVisitor<'gcx> {
+struct SourceVisitor<'gcx, 'calls> {
     /// The source ID of the contract.
     source_id: u32,
     /// The solar session for span resolution.
@@ -31,6 +31,9 @@ struct SourceVisitor<'gcx> {
 
     /// Coverage items
     items: Vec<CoverageItem>,
+    unique_calls: Option<&'calls FxHashMap<Span, SourceLocation>>,
+    /// Sparse anchor hints keyed by the current visitor item index.
+    anchor_hints: HashMap<usize, AnchorHints>,
 
     all_lines: Vec<u32>,
     /// Branch IDs whose jumps must match the exact ternary expression span.
@@ -39,6 +42,26 @@ struct SourceVisitor<'gcx> {
     /// was collected, so scope travels with the span to the delayed HIR resolution pass.
     function_calls: Vec<(Span, Arc<str>)>,
     function_call_scopes: FxHashMap<Span, Arc<str>>,
+    /// Direct revert guards, resolved against HIR after collecting their source items.
+    revert_guards: Vec<PendingRevertGuard>,
+    current_function: Option<SourceLocation>,
+}
+
+/// Optional recovery evidence, kept outside ordinary report items.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AnchorHints {
+    pub revert_guard: Option<RevertGuard>,
+    pub alias_function: Option<SourceLocation>,
+    pub unique_callee: Option<SourceLocation>,
+}
+
+#[derive(Clone)]
+struct PendingRevertGuard {
+    call: Span,
+    condition: SourceLocation,
+    body: SourceLocation,
+    statement: SourceLocation,
+    function: SourceLocation,
 }
 
 struct SourceVisitorCheckpoint {
@@ -46,6 +69,7 @@ struct SourceVisitorCheckpoint {
     all_lines: usize,
     function_calls: usize,
     ternary_branches: usize,
+    revert_guards: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,16 +90,8 @@ struct ResolvedEmptySpecialFunction {
 
 fn resolve_empty_special_functions(
     gcx: Gcx<'_>,
-    data: &SourceFiles,
+    hir_source_ids: &FxHashMap<hir::SourceId, u32>,
 ) -> Vec<ResolvedEmptySpecialFunction> {
-    let hir_source_ids = data
-        .sources
-        .iter()
-        .map(|(&source_id, path)| {
-            let (hir_source_id, _) = gcx.get_hir_source(path).unwrap();
-            (hir_source_id, source_id)
-        })
-        .collect::<HashMap<_, _>>();
     let mut resolved = Vec::new();
     for contract_id in gcx.hir.contract_ids() {
         let contract = gcx.hir.contract(contract_id);
@@ -114,7 +130,7 @@ fn resolve_empty_special_functions(
     resolved
 }
 
-impl<'gcx> SourceVisitor<'gcx> {
+impl<'gcx, 'calls> SourceVisitor<'gcx, 'calls> {
     fn new(source_id: u32, gcx: Gcx<'gcx>) -> Self {
         Self {
             source_id,
@@ -125,7 +141,11 @@ impl<'gcx> SourceVisitor<'gcx> {
             all_lines: Default::default(),
             function_calls: Default::default(),
             function_call_scopes: Default::default(),
+            revert_guards: Default::default(),
+            current_function: None,
             items: Default::default(),
+            unique_calls: None,
+            anchor_hints: Default::default(),
         }
     }
 
@@ -135,16 +155,24 @@ impl<'gcx> SourceVisitor<'gcx> {
             all_lines: self.all_lines.len(),
             function_calls: self.function_calls.len(),
             ternary_branches: self.ternary_branches.len(),
+            revert_guards: self.revert_guards.len(),
         }
     }
 
     fn restore_checkpoint(&mut self, checkpoint: SourceVisitorCheckpoint) {
-        let SourceVisitorCheckpoint { items, all_lines, function_calls, ternary_branches } =
-            checkpoint;
+        let SourceVisitorCheckpoint {
+            items,
+            all_lines,
+            function_calls,
+            ternary_branches,
+            revert_guards,
+        } = checkpoint;
         self.items.truncate(items);
+        self.anchor_hints.retain(|&id, _| id < items);
         self.all_lines.truncate(all_lines);
         self.function_calls.truncate(function_calls);
         self.ternary_branches.truncate(ternary_branches);
+        self.revert_guards.truncate(revert_guards);
     }
 
     fn visit_contract<'ast>(&mut self, contract: &'ast ast::ItemContract<'ast>) {
@@ -191,7 +219,24 @@ impl<'gcx> SourceVisitor<'gcx> {
     }
 
     fn sort(&mut self) {
-        self.items.sort();
+        if self.anchor_hints.is_empty() {
+            self.items.sort();
+            return;
+        }
+        // Item IDs follow the final report order, not AST traversal order.
+        let mut items = std::mem::take(&mut self.items).into_iter().enumerate().collect::<Vec<_>>();
+        items.sort_by(|(_, lhs), (_, rhs)| lhs.cmp(rhs));
+        let mut hints = std::mem::take(&mut self.anchor_hints);
+        self.items = items
+            .into_iter()
+            .enumerate()
+            .map(|(id, (old_id, item))| {
+                if let Some(hint) = hints.remove(&old_id) {
+                    self.anchor_hints.insert(id, hint);
+                }
+                item
+            })
+            .collect();
     }
 
     fn push_lines(&mut self) {
@@ -199,18 +244,25 @@ impl<'gcx> SourceVisitor<'gcx> {
         self.all_lines.dedup();
         let mut lines = Vec::with_capacity(self.all_lines.len());
         // Items are already ordered by line, so advance through them only once.
-        let mut items = self.items.iter().peekable();
+        let mut items = self.items.iter().enumerate().peekable();
         for &line in &self.all_lines {
-            while items.peek().is_some_and(|item| item.loc.lines.start < line) {
+            while items.peek().is_some_and(|(_, item)| item.loc.lines.start < line) {
                 items.next();
             }
-            if let Some(mut reference_item) = items.next_if(|item| item.loc.lines.start == line) {
+            if let Some((mut reference_id, mut reference_item)) =
+                items.next_if(|(_, item)| item.loc.lines.start == line)
+            {
                 // Anchor the line to its earliest source item, not the shortest span or a
                 // statement in a conditional body that may never execute.
-                while let Some(item) = items.next_if(|item| item.loc.lines.start == line) {
+                while let Some((id, item)) = items.next_if(|(_, item)| item.loc.lines.start == line)
+                {
                     if item.loc.bytes.start < reference_item.loc.bytes.start {
+                        reference_id = id;
                         reference_item = item;
                     }
+                }
+                if let Some(hints) = self.anchor_hints.get(&reference_id).cloned() {
+                    self.anchor_hints.insert(self.items.len() + lines.len(), hints);
                 }
                 lines.push(CoverageItem {
                     kind: CoverageItemKind::Line,
@@ -270,7 +322,7 @@ impl<'gcx> SourceVisitor<'gcx> {
     }
 }
 
-impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
+impl<'ast> ast::Visit<'ast> for SourceVisitor<'_, '_> {
     type BreakValue = Never;
 
     fn visit_item_contract(
@@ -311,7 +363,18 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
 
                 // Discover decisions without changing the ordinary statement/call traversal.
                 TernaryVisitor(self).walk_item(item)?;
+                let first = self.items.len();
+                let location = self.source_location_for(item.span);
+                let previous_function = self.current_function.replace(location);
                 self.walk_item(item)?;
+                self.current_function = previous_function;
+                if storage_alias_body(func) {
+                    let location = self.source_location_for(item.span);
+                    for id in first..self.items.len() {
+                        self.anchor_hints.entry(id).or_default().alias_function =
+                            Some(location.clone());
+                    }
+                }
             }
             _ => {}
         }
@@ -330,7 +393,23 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 self.push_stmt(stmt.span);
             }
 
-            StmtKind::If(_cond, then_stmt, else_stmt) => {
+            StmtKind::If(cond, then_stmt, else_stmt) => {
+                let body = match &then_stmt.kind {
+                    StmtKind::Block(block) if block.stmts.len() == 1 => &block.stmts[0],
+                    _ => then_stmt,
+                };
+                if matches!(body.kind, StmtKind::Revert(..))
+                    && else_stmt.is_none()
+                    && let Some(function) = self.current_function.clone()
+                {
+                    self.revert_guards.push(PendingRevertGuard {
+                        call: body.span,
+                        condition: self.source_location_for(cond.span),
+                        body: self.source_location_for(body.span),
+                        statement: self.source_location_for(stmt.span),
+                        function,
+                    });
+                }
                 let branch_id = self.next_branch_id();
 
                 // Add branch coverage items only if one of true/branch bodies contains statements.
@@ -497,9 +576,9 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
 
 /// Walks all expression shapes, adding only ternary decisions. Statement coverage remains owned
 /// by the enclosing statement or the ordinary expression visitor.
-struct TernaryVisitor<'a, 'gcx>(&'a mut SourceVisitor<'gcx>);
+struct TernaryVisitor<'a, 'gcx, 'calls>(&'a mut SourceVisitor<'gcx, 'calls>);
 
-impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_> {
+impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_, '_> {
     type BreakValue = Never;
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
@@ -518,7 +597,7 @@ impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_> {
     }
 }
 
-impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
+impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx, '_> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'gcx hir::Hir<'gcx> {
@@ -526,6 +605,34 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        if let Some((callee, args, _)) = expr.as_call()
+            && args.is_empty()
+            && let Some(hir::Res::Item(hir::ItemId::Error(error))) = self.gcx.resolved_expr(callee)
+        {
+            let selector = self.gcx.function_selector(error).0;
+            for guard in &self.revert_guards {
+                if guard.call != expr.span {
+                    continue;
+                }
+                for (id, item) in self.items.iter().enumerate() {
+                    if item.loc.contract_name == guard.body.contract_name
+                        && (item.loc.bytes == guard.body.bytes
+                            || (item.loc.bytes == guard.statement.bytes
+                                && matches!(
+                                    item.kind,
+                                    CoverageItemKind::Branch { path_id: 0, .. }
+                                )))
+                    {
+                        self.anchor_hints.entry(id).or_default().revert_guard = Some(RevertGuard {
+                            condition: guard.condition.clone(),
+                            statement: guard.statement.clone(),
+                            function: guard.function.clone(),
+                            selector,
+                        });
+                    }
+                }
+            }
+        }
         if let hir::ExprKind::Call(lhs, ..) = &expr.kind
             && is_regular_call(lhs)
             && let Some(scope) = self.function_call_scopes.get(&expr.span).cloned()
@@ -533,7 +640,11 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
             // Attribute the call with the scope captured where it was collected, not the
             // visitor's final scope (which leaks across free functions and contracts).
             let prev = std::mem::replace(&mut self.contract_name, scope);
+            let id = self.items.len();
             self.push_stmt(expr.span);
+            if let Some(callee) = self.unique_calls.and_then(|calls| calls.get(&expr.span)) {
+                self.anchor_hints.entry(id).or_default().unique_callee = Some(callee.clone());
+            }
             self.contract_name = prev;
         }
         self.walk_expr(expr)
@@ -552,6 +663,45 @@ fn is_regular_call(lhs: &hir::Expr<'_>) -> bool {
     }
 }
 
+/// Only source-level aliases, without calls, control flow, or modifiers, are mandatory on every
+/// normal return. Bytecode must independently prove a side-effect-free, straight-line return.
+fn storage_alias_body(function: &ast::ItemFunction<'_>) -> bool {
+    if !matches!(
+        function.header.visibility(),
+        Some(ast::Visibility::Internal | ast::Visibility::Private)
+    ) || !function.header.modifiers.is_empty()
+        || function.header.returns().is_empty()
+        || !function.header.returns().iter().all(|parameter| {
+            parameter.name.is_some() && parameter.data_location == Some(ast::DataLocation::Storage)
+        })
+    {
+        return false;
+    }
+    let Some(body) = &function.body else { return false };
+    !body.is_empty()
+        && body.iter().all(|statement| match &statement.kind {
+            StmtKind::DeclSingle(variable) => {
+                variable.initializer.as_ref().is_some_and(|initializer| {
+                    matches!(initializer.peel_parens().kind, ExprKind::Ident(_) | ExprKind::Lit(..))
+                })
+            }
+            StmtKind::Assembly(assembly) => assembly.block.iter().all(|statement| {
+                let yul::StmtKind::AssignSingle(path, value) = &statement.kind else {
+                    return false;
+                };
+                let [name, suffix] = path.segments() else { return false };
+                suffix.name == sym::slot
+                    && function
+                        .header
+                        .returns()
+                        .iter()
+                        .any(|parameter| parameter.name.is_some_and(|id| id.name == name.name))
+                    && matches!(value.kind, yul::ExprKind::Path(_) | yul::ExprKind::Lit(_))
+            }),
+            _ => false,
+        })
+}
+
 fn has_statements(block: Option<&ast::Block<'_>>) -> bool {
     block.is_some_and(|block| !block.is_empty())
 }
@@ -564,11 +714,272 @@ fn stmt_has_statements(stmt: &ast::Stmt<'_>) -> bool {
     }
 }
 
+/// Count all function references and the declarations that can share a native call frame.
+/// Pointer types taint only contracts (including bases), reachable libraries and free helpers
+/// that can carry them. References through unknown members are conservatively overapproximated
+/// by name; external function calls do not bring another contract's native code into the frame.
+struct UniqueInternalCalls<'gcx> {
+    gcx: Gcx<'gcx>,
+    references: FxHashMap<hir::FunctionId, usize>,
+    calls: FxHashMap<hir::FunctionId, Vec<Span>>,
+    unresolved_members: FxHashMap<Symbol, HashSet<hir::ItemId>>,
+    scope: Option<hir::ItemId>,
+    dependencies: FxHashMap<hir::ItemId, HashSet<hir::ItemId>>,
+    pointer_scopes: HashSet<hir::ItemId>,
+}
+
+impl UniqueInternalCalls<'_> {
+    fn dependency(&mut self, item: hir::ItemId) {
+        if let Some(scope) = self.scope {
+            self.dependencies.entry(scope).or_default().insert(item);
+        }
+    }
+
+    fn native_dependency(&mut self, item: hir::ItemId) {
+        let item = match item {
+            hir::ItemId::Function(id) => {
+                let function = self.gcx.hir.function(id);
+                if !matches!(
+                    function.visibility,
+                    ast::Visibility::Internal | ast::Visibility::Private
+                ) {
+                    return;
+                }
+                if let Some(contract) = function.contract
+                    && self.gcx.hir.contract(contract).kind == ast::ContractKind::Library
+                {
+                    contract.into()
+                } else {
+                    item
+                }
+            }
+            // A contract-typed value refers to a separate EVM frame, not its native helpers.
+            hir::ItemId::Contract(_) => return,
+            _ => item,
+        };
+        self.dependency(item);
+    }
+
+    fn unsafe_scopes(&self) -> HashSet<hir::ItemId> {
+        let mut callers = FxHashMap::<_, Vec<_>>::default();
+        for (&scope, dependencies) in &self.dependencies {
+            for &dependency in dependencies {
+                callers.entry(dependency).or_default().push(scope);
+            }
+        }
+        // First find execution roots that can reach any internal function-pointer type.
+        let mut reaches_pointer = self.pointer_scopes.clone();
+        let mut pending = self.pointer_scopes.iter().copied().collect::<Vec<_>>();
+        while let Some(scope) = pending.pop() {
+            if let Some(parents) = callers.get(&scope) {
+                for &parent in parents {
+                    if reaches_pointer.insert(parent) {
+                        pending.push(parent);
+                    }
+                }
+            }
+        }
+        let roots = self.gcx.hir.contract_ids().map(hir::ItemId::Contract).chain(
+            self.gcx
+                .hir
+                .function_ids()
+                .filter(|&id| self.gcx.hir.function(id).contract.is_none())
+                .map(hir::ItemId::Function),
+        );
+        pending.extend(roots.filter(|root| reaches_pointer.contains(root)));
+        // Every native declaration in such a frame is ambiguous, including inherited callees.
+        // Traverse their union once, so shared libraries do not multiply project-wide walks.
+        let mut unsafe_scopes = HashSet::default();
+        while let Some(scope) = pending.pop() {
+            if unsafe_scopes.insert(scope)
+                && let Some(dependencies) = self.dependencies.get(&scope)
+            {
+                pending.extend(dependencies);
+            }
+        }
+        unsafe_scopes
+    }
+}
+
+impl<'gcx> hir::Visit<'gcx> for UniqueInternalCalls<'gcx> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.gcx.hir
+    }
+
+    fn visit_nested_item(&mut self, id: hir::ItemId) -> ControlFlow<Self::BreakValue> {
+        self.dependency(id);
+        let previous = self.scope.replace(id);
+        let result = self.walk_nested_item(id);
+        self.scope = previous;
+        result
+    }
+
+    fn visit_contract(
+        &mut self,
+        contract: &'gcx hir::Contract<'gcx>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for &base in contract.linearized_bases {
+            self.dependency(base.into());
+        }
+        self.walk_contract(contract)
+    }
+
+    fn visit_modifier(
+        &mut self,
+        modifier: &'gcx hir::Modifier<'gcx>,
+    ) -> ControlFlow<Self::BreakValue> {
+        self.dependency(modifier.id);
+        self.walk_modifier(modifier)
+    }
+
+    fn visit_ty(&mut self, ty: &'gcx hir::Type<'gcx>) -> ControlFlow<Self::BreakValue> {
+        match ty.kind {
+            hir::TypeKind::Function(function)
+                if function.visibility != ast::Visibility::External =>
+            {
+                if let Some(scope) = self.scope {
+                    self.pointer_scopes.insert(scope);
+                }
+            }
+            hir::TypeKind::Custom(item) => self.native_dependency(item),
+            _ => {}
+        }
+        self.walk_ty(ty)
+    }
+
+    fn visit_expr(&mut self, expression: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        // Coverage name-resolves without expression type caches: count every overload candidate.
+        match expression.kind {
+            hir::ExprKind::Ident(candidates) => {
+                for candidate in candidates {
+                    if let hir::Res::Item(item) = *candidate {
+                        if let hir::ItemId::Function(function) = item {
+                            *self.references.entry(function).or_default() += 1;
+                        }
+                        self.native_dependency(item);
+                    }
+                }
+            }
+            hir::ExprKind::Member(_, name) => {
+                if let Some(hir::Res::Item(item)) = self.gcx.resolve_path_expr(expression) {
+                    if let hir::ItemId::Function(function) = item {
+                        *self.references.entry(function).or_default() += 1;
+                    }
+                    self.native_dependency(item);
+                } else if let Some(scope) = self.scope {
+                    self.unresolved_members.entry(name.name).or_default().insert(scope);
+                }
+            }
+            _ => {}
+        }
+        if let Some((callee, _, _)) = expression.as_call()
+            && let Some(hir::Res::Item(hir::ItemId::Function(function))) =
+                self.gcx.resolve_path_expr(callee.peel_parens())
+        {
+            self.calls.entry(function).or_default().push(expression.span);
+        }
+        self.walk_expr(expression)
+    }
+}
+
+fn unique_internal_calls(
+    gcx: Gcx<'_>,
+    source_ids: &FxHashMap<hir::SourceId, u32>,
+) -> FxHashMap<Span, SourceLocation> {
+    let mut visitor = UniqueInternalCalls {
+        gcx,
+        references: Default::default(),
+        calls: Default::default(),
+        unresolved_members: Default::default(),
+        scope: None,
+        dependencies: Default::default(),
+        pointer_scopes: Default::default(),
+    };
+    for source in gcx.hir.source_ids() {
+        let _ = hir::Visit::visit_nested_source(&mut visitor, source);
+    }
+    // Using directives are references even when no direct call resolves to their function.
+    for using in gcx
+        .hir
+        .source_ids()
+        .flat_map(|id| gcx.hir.source(id).usings.iter())
+        .chain(gcx.hir.contract_ids().flat_map(|id| gcx.hir.contract(id).usings.iter()))
+    {
+        let dependencies = using
+            .entries
+            .iter()
+            .flat_map(|entry| match entry.kind {
+                hir::UsingEntryKind::Functions(functions) => functions.to_vec(),
+                hir::UsingEntryKind::Library(contract) => {
+                    gcx.hir.contract(contract).functions().collect()
+                }
+                hir::UsingEntryKind::Err(_) => Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        for &function in &dependencies {
+            *visitor.references.entry(function).or_default() += 1;
+        }
+        let scopes = match using.contract {
+            Some(contract) => vec![contract.into()],
+            None => gcx.hir.source(using.source).items.to_vec(),
+        };
+        for scope in scopes {
+            visitor.scope = Some(scope);
+            for &function in &dependencies {
+                visitor.native_dependency(function.into());
+            }
+        }
+    }
+    // An unresolved extension or overloaded operator can still reach a native library helper.
+    for id in gcx.hir.function_ids() {
+        let function = gcx.hir.function(id);
+        if let Some(name) = function.name
+            && let Some(scopes) = visitor.unresolved_members.get(&name.name).cloned()
+        {
+            for scope in scopes {
+                visitor.scope = Some(scope);
+                visitor.native_dependency(id.into());
+            }
+        }
+    }
+    let unsafe_scopes = visitor.unsafe_scopes();
+    visitor
+        .calls
+        .into_iter()
+        .filter_map(|(id, calls)| {
+            let [call] = calls.as_slice() else { return None };
+            if visitor.references.get(&id).copied() != Some(1) || unsafe_scopes.contains(&id.into())
+            {
+                return None;
+            }
+            let function = gcx.hir.function(id);
+            if !matches!(function.visibility, ast::Visibility::Internal | ast::Visibility::Private)
+                || function.virtual_
+                || function
+                    .name
+                    .is_none_or(|name| visitor.unresolved_members.contains_key(&name.name))
+            {
+                return None;
+            }
+            let mut source = SourceVisitor::new(*source_ids.get(&function.source)?, gcx);
+            source.contract_name = function
+                .contract
+                .map(|id| gcx.hir.contract(id).name.as_str().into())
+                .unwrap_or_default();
+            Some((*call, source.source_location_for(function.span)))
+        })
+        .collect()
+}
+
 /// Coverage source analysis.
 #[derive(Clone, Debug, Default)]
 pub struct SourceAnalysis {
     /// All the coverage items.
     all_items: Vec<CoverageItem>,
+    /// Recovery evidence only for items that need it, keyed by final report item ID.
+    anchor_hints: HashMap<u32, AnchorHints>,
     /// Source and branch IDs requiring exact decision-node source-map matching.
     ternary_branches: HashSet<(u32, u32)>,
     /// Source ID to `(offset, len)` into `all_items`.
@@ -597,8 +1008,14 @@ impl SourceAnalysis {
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
         let mut resolved_empty_special_functions = Vec::new();
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
+            let source_ids = data
+                .sources
+                .iter()
+                .map(|(&id, path)| (compiler.gcx().get_hir_source(path).unwrap().0, id))
+                .collect::<FxHashMap<_, _>>();
             resolved_empty_special_functions =
-                resolve_empty_special_functions(compiler.gcx(), data);
+                resolve_empty_special_functions(compiler.gcx(), &source_ids);
+            let unique_calls = unique_internal_calls(compiler.gcx(), &source_ids);
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -609,6 +1026,7 @@ impl SourceAnalysis {
                     let (hir_source_id, _) = compiler.gcx().get_hir_source(path).unwrap();
 
                     let mut visitor = SourceVisitor::new(source_id, compiler.gcx());
+                    visitor.unique_calls = Some(&unique_calls);
                     for item in ast.items.iter() {
                         match &item.kind {
                             // Contracts: walk their functions, dropping test contracts.
@@ -638,7 +1056,7 @@ impl SourceAnalysis {
                         }
                     }
 
-                    if !visitor.function_calls.is_empty() {
+                    if !visitor.function_calls.is_empty() || !visitor.revert_guards.is_empty() {
                         visitor.resolve_function_calls(hir_source_id);
                     }
 
@@ -648,19 +1066,23 @@ impl SourceAnalysis {
                         visitor.push_lines();
                         visitor.sort();
                     }
-                    (source_id, visitor.items, visitor.ternary_branches)
+                    (source_id, visitor.items, visitor.anchor_hints, visitor.ternary_branches)
                 })
                 .collect::<Vec<_>>()
         });
 
         // Create mapping and merge items.
-        sourced_items.sort_by_key(|(id, items, _)| (*id, items.first().map(|i| i.loc.bytes.start)));
-        let Some(&(max_idx, _, _)) = sourced_items.last() else { return Ok(Self::default()) };
+        sourced_items
+            .sort_by_key(|(id, items, _, _)| (*id, items.first().map(|i| i.loc.bytes.start)));
+        let Some(&(max_idx, _, _, _)) = sourced_items.last() else { return Ok(Self::default()) };
         let len = max_idx + 1;
         let mut all_items = Vec::new();
+        let mut anchor_hints = HashMap::default();
         let mut map = vec![(u32::MAX, 0); len as usize];
         let mut ternary_branches = HashSet::default();
-        for (idx, items, branches) in sourced_items {
+        for (idx, items, hints, branches) in sourced_items {
+            let base = all_items.len() as u32;
+            anchor_hints.extend(hints.into_iter().map(|(id, hint)| (base + id as u32, hint)));
             ternary_branches.extend(branches.into_iter().map(|branch| (idx, branch)));
             // Assumes that all `idx` items are consecutive, guaranteed by the sort above.
             let idx = idx as usize;
@@ -697,11 +1119,16 @@ impl SourceAnalysis {
 
         Ok(Self {
             all_items,
+            anchor_hints,
             map,
             ternary_branches,
             empty_special_functions,
             contract_empty_special_functions,
         })
+    }
+
+    pub(crate) fn anchor_hints(&self, item_id: u32) -> Option<&AnchorHints> {
+        self.anchor_hints.get(&item_id)
     }
 
     pub(crate) fn is_ternary_branch(&self, source_id: u32, branch_id: u32) -> bool {
@@ -768,4 +1195,303 @@ impl SourceAnalysis {
 pub struct SourceFiles {
     /// The sources keyed by their IDs within the compiler build.
     pub sources: HashMap<u32, PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(start: u32, line: u32) -> CoverageItem {
+        CoverageItem {
+            kind: CoverageItemKind::Statement,
+            loc: SourceLocation {
+                source_id: 0,
+                contract_name: "T".into(),
+                bytes: start..start + 1,
+                lines: line..line + 1,
+            },
+            anchor_loc: None,
+            hits: 0,
+        }
+    }
+
+    #[test]
+    fn hints_follow_sorting_lines_and_checkpoint_reuse() {
+        let session = solar::interface::Session::builder()
+            .with_buffer_emitter(solar::interface::ColorChoice::Never)
+            .build();
+        let compiler = solar::sema::Compiler::new(session);
+        compiler.enter(|compiler| {
+            let mut visitor = SourceVisitor::new(0, compiler.gcx());
+            visitor.items = vec![item(30, 3), item(10, 1), item(20, 2)];
+            visitor.all_lines = vec![3, 1, 2];
+            visitor.anchor_hints.insert(
+                0,
+                AnchorHints { alias_function: Some(item(30, 3).loc), ..Default::default() },
+            );
+            visitor.anchor_hints.insert(
+                2,
+                AnchorHints {
+                    revert_guard: Some(RevertGuard {
+                        condition: item(20, 2).loc,
+                        statement: item(20, 2).loc,
+                        function: item(20, 2).loc,
+                        selector: [1, 2, 3, 4],
+                    }),
+                    ..Default::default()
+                },
+            );
+            visitor.sort();
+            visitor.push_lines();
+            visitor.sort();
+            assert_eq!(visitor.items.len(), 6);
+            assert_eq!(visitor.anchor_hints.len(), 4);
+            for (id, covered) in visitor.items.iter().enumerate() {
+                match covered.loc.bytes.start {
+                    10 => assert!(!visitor.anchor_hints.contains_key(&id)),
+                    20 => assert_eq!(
+                        visitor.anchor_hints[&id].revert_guard.as_ref().unwrap().condition.bytes,
+                        covered.loc.bytes
+                    ),
+                    30 => assert_eq!(
+                        visitor.anchor_hints[&id].alias_function.as_ref().unwrap().bytes,
+                        covered.loc.bytes
+                    ),
+                    _ => unreachable!(),
+                }
+            }
+            // Discarded test contracts must not leave hints on a later item reusing that ID.
+            let checkpoint = visitor.checkpoint();
+            let reused = visitor.items.len();
+            visitor.items.push(item(40, 4));
+            visitor.anchor_hints.insert(
+                reused,
+                AnchorHints { alias_function: Some(item(40, 4).loc), ..Default::default() },
+            );
+            visitor.restore_checkpoint(checkpoint);
+            visitor.items.push(item(50, 5));
+            assert!(!visitor.anchor_hints.contains_key(&reused));
+            visitor.sort();
+            assert_eq!(visitor.anchor_hints.len(), 4);
+        });
+    }
+
+    fn recover(main: &str, support: &str) -> Vec<(String, SourceLocation)> {
+        let session = solar::interface::Session::builder()
+            .with_buffer_emitter(solar::interface::ColorChoice::Never)
+            .build();
+        let mut compiler = solar::sema::Compiler::new(session);
+        let mut result = Vec::new();
+        compiler.enter_mut(|compiler| {
+            let mut parsing = compiler.parse();
+            for (name, text) in [("Main.sol", main), ("Support.sol", support)] {
+                parsing.add_file(
+                    compiler
+                        .sess()
+                        .source_map()
+                        .new_source_file(PathBuf::from(name), text.to_owned())
+                        .unwrap(),
+                );
+            }
+            parsing.parse();
+            assert_eq!(compiler.lower_asts().unwrap(), ControlFlow::Continue(()));
+            let gcx = compiler.gcx();
+            let main_id = gcx.get_hir_source(PathBuf::from("Main.sol")).unwrap().0;
+            let support_id = gcx.get_hir_source(PathBuf::from("Support.sol")).unwrap().0;
+            let source_ids = [(main_id, 17), (support_id, 29)].into_iter().collect();
+            let calls = unique_internal_calls(gcx, &source_ids);
+            // Hints belong directly to the call statements created by the ordinary HIR walk.
+            let mut visitor = SourceVisitor::new(17, gcx);
+            visitor.unique_calls = Some(&calls);
+            let (_, source) = gcx.get_ast_source(PathBuf::from("Main.sol")).unwrap();
+            for item in source.ast.as_ref().unwrap().items.iter() {
+                match &item.kind {
+                    ItemKind::Contract(contract) => visitor.visit_contract(contract),
+                    ItemKind::Function(_) => {
+                        visitor.contract_name = Arc::default();
+                        let _ = ast::Visit::visit_item(&mut visitor, item);
+                    }
+                    _ => {}
+                }
+            }
+            visitor.resolve_function_calls(main_id);
+            let expected = calls
+                .keys()
+                .filter(|&&call| {
+                    gcx.sess.source_map().span_to_source(call).unwrap().file.name
+                        == source.file.name
+                })
+                .count();
+            assert_eq!(
+                visitor.anchor_hints.values().filter(|hints| hints.unique_callee.is_some()).count(),
+                expected
+            );
+            for (&id, hints) in &visitor.anchor_hints {
+                if let Some(callee) = &hints.unique_callee {
+                    let item = &visitor.items[id];
+                    assert!(matches!(item.kind, CoverageItemKind::Statement));
+                    let text = &main[item.loc.bytes()];
+                    assert!(calls.iter().any(|(&call, location)| {
+                        location.bytes == callee.bytes
+                            && location.source_id == callee.source_id
+                            && gcx.sess.source_map().span_to_snippet(call).unwrap() == text
+                    }));
+                }
+            }
+            result = calls
+                .iter()
+                .map(|(&call, location)| {
+                    (gcx.sess.source_map().span_to_snippet(call).unwrap(), location.clone())
+                })
+                .collect();
+        });
+        result
+    }
+
+    #[test]
+    fn unique_calls_preserve_exact_call_and_callee_spans() {
+        let target = "function target() internal {}";
+        for (extra, eligible) in [
+            ("", true),
+            ("function twice() public { target(); }", false),
+            // No function-typed slot: the extra references alone make this ambiguous.
+            ("function reference() public { (true ? target : target)(); }", false),
+            ("function take() public { function() internal p = target; }", false),
+            ("function raw() public { function() internal p; assembly { p := 42 } p(); }", false),
+            ("function arrayPointer() public { function() internal[] memory pointers; }", false),
+        ] {
+            let main = format!(
+                "import './Support.sol'; contract Target {{ {target} function run() external {{ target(); }} {extra} }}"
+            );
+            let calls = recover(&main, "");
+            if eligible {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].0, "target()");
+                let location = &calls[0].1;
+                assert_eq!(location.source_id, 17);
+                assert_eq!(&*location.contract_name, "Target");
+                let start = main.find(target).unwrap() as u32;
+                assert_eq!(location.bytes, start..start + target.len() as u32);
+            } else {
+                assert!(calls.is_empty(), "{extra}");
+            }
+        }
+    }
+
+    #[test]
+    fn imported_test_helpers_do_not_disable_unrelated_contracts() {
+        let main = "import './Support.sol'; contract Target { function target() internal {} function run() external { target(); } } contract TargetTest is TestBase { function testRun() public { Target t = new Target(); t.run(); } }";
+        // Like forge-std's console helper: a function-typed parameter and assembly conversion.
+        let support = "abstract contract TestBase { function _castToPure(function(bytes memory) internal view f) internal pure returns (function(bytes memory) internal pure g) { assembly { g := f } } }";
+        let calls = recover(main, support);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "target()");
+        assert_eq!(&*calls[0].1.contract_name, "Target");
+        assert_eq!(calls[0].1.source_id, 17);
+    }
+
+    #[test]
+    fn pointer_bails_follow_native_execution_contexts() {
+        let pointer =
+            "function raw() internal { function() internal p; assembly { p := 42 } p(); }";
+        for (prelude, parent, field, run, suffix, support, eligible) in [
+            (
+                "",
+                "",
+                "",
+                "target();",
+                format!("contract Other {{ {pointer} }}"),
+                String::new(),
+                true,
+            ),
+            (
+                "",
+                "is Parent",
+                "",
+                "target();",
+                String::new(),
+                format!("contract Parent {{ {pointer} }}"),
+                false,
+            ),
+            (
+                "",
+                "",
+                "",
+                "target();",
+                format!("contract Derived is Target {{ {pointer} }}"),
+                String::new(),
+                false,
+            ),
+            ("", "", "", "target();", String::new(), format!("library Lib {{ {pointer} }}"), true),
+            (
+                "",
+                "",
+                "",
+                "Lib.raw(); target();",
+                String::new(),
+                format!("library Lib {{ {pointer} }}"),
+                false,
+            ),
+            (
+                "",
+                "",
+                "",
+                "raw(); target();",
+                String::new(),
+                pointer.replace("function raw() internal", "function raw()"),
+                false,
+            ),
+            (
+                "",
+                "",
+                "",
+                "target();",
+                String::new(),
+                pointer.replace("function raw() internal", "function raw()"),
+                true,
+            ),
+            (
+                "",
+                "",
+                "Callback cb;",
+                "target();",
+                String::new(),
+                "struct Callback { function() internal p; }".to_string(),
+                false,
+            ),
+            (
+                "",
+                "",
+                "",
+                "target();",
+                String::new(),
+                "struct Callback { function() internal p; }".to_string(),
+                true,
+            ),
+            (
+                "using {raw} for uint;",
+                "",
+                "",
+                "target();",
+                String::new(),
+                "function raw(uint self) { function() internal p; assembly { p := 42 } p(); }"
+                    .to_string(),
+                false,
+            ),
+        ] {
+            let main = format!(
+                "import './Support.sol'; {prelude} contract Target {parent} {{ {field} function target() internal {{}} function run() external {{ {run} }} }} {suffix}"
+            );
+            let calls = recover(&main, &support);
+            let start = main.find("function target() internal {}").unwrap() as u32;
+            let target = calls
+                .iter()
+                .find(|(_, location)| location.source_id == 17 && location.bytes.start == start);
+            assert_eq!(target.is_some(), eligible, "{main}\n{support}");
+            if let Some((call, location)) = target {
+                assert_eq!(call, "target()");
+                assert_eq!(&*location.contract_name, "Target");
+            }
+        }
+    }
 }
