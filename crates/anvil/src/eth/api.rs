@@ -462,7 +462,11 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_setNonce`
     pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
         node_info!("anvil_setNonce");
+        // Admission reads the nonce under this lock, so no transaction admitted against the old
+        // nonce can reach the pool after the update below.
+        let _mining = self.backend.lock_mining().await;
         self.backend.set_nonce(address, nonce).await?;
+        self.pool.prune_account_nonces(&[(address, nonce.saturating_to())].into_iter().collect());
         #[cfg(feature = "base")]
         self.invalidate_base_eip8130_pool();
         Ok(())

@@ -171,6 +171,32 @@ async fn mines_successor_after_nonce_fast_forward() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn set_nonce_promotes_queued_successor() {
+    let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = accounts[0].address();
+    let recipient = accounts[1].address();
+    let mut hashes = Vec::new();
+    for nonce in 1..=2 {
+        let tx =
+            TransactionRequest::default().with_from(sender).with_to(recipient).with_nonce(nonce);
+        hashes.push(*provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().tx_hash());
+    }
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!((status.pending, status.queued), (0, 2));
+
+    // Nonce 1 becomes stale and nonce 2 becomes ready.
+    api.anvil_set_nonce(sender, U256::from(2)).await.unwrap();
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!((status.pending, status.queued), (1, 0));
+
+    api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_by_hash(hashes[0]).await.unwrap().is_none());
+    assert!(provider.get_transaction_receipt(hashes[1]).await.unwrap().unwrap().status());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_debug_clear_txpool() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
