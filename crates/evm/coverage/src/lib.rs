@@ -678,6 +678,15 @@ pub struct CoverageItem {
     pub hits: u32,
 }
 
+/// The source condition and payload of a direct, argument-free custom-error revert.
+#[derive(Clone, Debug)]
+pub(crate) struct RevertGuard {
+    pub condition: SourceLocation,
+    pub statement: SourceLocation,
+    pub function: SourceLocation,
+    pub selector: [u8; 4],
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum CoverageItemKindKey<'a> {
     Line,
