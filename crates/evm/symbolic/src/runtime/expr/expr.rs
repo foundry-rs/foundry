@@ -777,6 +777,19 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
+            SymBinOp::MulHigh => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    // `mul_high(const, const) => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
+                }
+                // `mul_high(a, 0 | 1) => 0`.
+                (SymExprKind::Const(value), _) | (_, SymExprKind::Const(value))
+                    if *value <= U256::ONE =>
+                {
+                    Self::zero(cx)
+                }
+                _ => Self::commutative_binop(cx, binop, left, right),
+            },
         }
     }
 
@@ -787,9 +800,16 @@ impl SymExpr {
         right: Self,
         modulus: Self,
     ) -> Self {
+        if ternop == SymTernOp::MulDiv {
+            return Self::mul_div(cx, left, right, modulus);
+        }
         match (left.kind(), right.kind(), modulus.kind()) {
             (_, _, SymExprKind::Const(modulus)) if modulus.is_zero() || *modulus == U256::ONE => {
                 // `addmod/mulmod(a, b, 0) => 0`.
+                Self::zero(cx)
+            }
+            // `mulmod(a, m, m) => 0`, also for `m == 0`.
+            _ if ternop == SymTernOp::MulMod && (left == modulus || right == modulus) => {
                 Self::zero(cx)
             }
             (SymExprKind::Const(left), SymExprKind::Const(right), SymExprKind::Const(modulus)) => {
@@ -803,6 +823,7 @@ impl SymExpr {
                 let binop = match ternop {
                     SymTernOp::AddMod => SymBinOp::Add,
                     SymTernOp::MulMod => SymBinOp::Mul,
+                    SymTernOp::MulDiv => unreachable!("mul_div is built before modular rewrites"),
                 };
                 let value = Self::binop(cx, binop, left, right);
                 Self::and_const(cx, value, mask_bits(U256::MAX, bits))
@@ -811,6 +832,41 @@ impl SymExpr {
                 // `addmod/mulmod(a, b, m) => addmod/mulmod(ordered(a, b), m)`.
                 let (left, right) = Self::ordered_commutative_operands(left, right);
                 Self::from_kind(cx, SymExprKind::TernOp(ternop, left, right, modulus))
+            }
+        }
+    }
+
+    fn mul_div(cx: &mut SymCx, left: Self, right: Self, denominator: Self) -> Self {
+        match (left.kind(), right.kind(), denominator.kind()) {
+            (
+                SymExprKind::Const(left),
+                SymExprKind::Const(right),
+                SymExprKind::Const(denominator),
+            ) => {
+                // `mul_div(const, const, const) => const`.
+                Self::constant(cx, SymTernOp::MulDiv.eval(*left, *right, *denominator))
+            }
+            // `mul_div(0, b, d) => 0`, `mul_div(a, 0, d) => 0`, `mul_div(a, b, 0) => 0`.
+            (SymExprKind::Const(value), _, _)
+            | (_, SymExprKind::Const(value), _)
+            | (_, _, SymExprKind::Const(value))
+                if value.is_zero() =>
+            {
+                Self::zero(cx)
+            }
+            // `mul_div(a, d, d) => ite(d == 0, 0, a)`.
+            _ if left == denominator || right == denominator => {
+                let other = if left == denominator { right } else { left };
+                let zero = Self::zero(cx);
+                let condition = SymBoolExpr::eq(cx, denominator, zero.clone());
+                Self::ite(cx, condition, zero, other)
+            }
+            _ => {
+                let (left, right) = Self::ordered_commutative_operands(left, right);
+                Self::from_kind(
+                    cx,
+                    SymExprKind::TernOp(SymTernOp::MulDiv, left, right, denominator),
+                )
             }
         }
     }
@@ -1636,7 +1692,8 @@ impl SymExpr {
                 | SymBinOp::URem
                 | SymBinOp::SDiv
                 | SymBinOp::SRem
-                | SymBinOp::Sar => None,
+                | SymBinOp::Sar
+                | SymBinOp::MulHigh => None,
             },
             SymExprKind::TernOp(_, _, _, _) => None,
         }
@@ -1698,7 +1755,7 @@ impl SymExpr {
                     SymExprKind::BinOp(SymBinOp::UDiv | SymBinOp::URem, left, _) => {
                         pending.push((left.clone(), false));
                     }
-                    SymExprKind::TernOp(_, _, _, modulus) => {
+                    SymExprKind::TernOp(SymTernOp::AddMod | SymTernOp::MulMod, _, _, modulus) => {
                         pending.push((modulus.clone(), false));
                     }
                     _ => {}
@@ -1739,7 +1796,9 @@ impl SymExpr {
                     Some(divisor) if !divisor.is_zero() => bit_widths[left].min(divisor.bit_len()),
                     _ => bit_widths[left],
                 },
-                SymExprKind::TernOp(_, _, _, modulus) => bit_widths[modulus],
+                SymExprKind::TernOp(SymTernOp::AddMod | SymTernOp::MulMod, _, _, modulus) => {
+                    bit_widths[modulus]
+                }
                 SymExprKind::Ite(_, left, right) => bit_widths[left].max(bit_widths[right]),
                 _ => 256,
             };
@@ -1866,7 +1925,8 @@ impl SymExpr {
                 | SymBinOp::URem
                 | SymBinOp::SDiv
                 | SymBinOp::SRem
-                | SymBinOp::Sar => None,
+                | SymBinOp::Sar
+                | SymBinOp::MulHigh => None,
             },
             SymExprKind::TernOp(_, _, _, _) => None,
         }
@@ -2250,13 +2310,17 @@ impl UnfoldedNodeCounter {
 pub(crate) enum SymTernOp {
     AddMod,
     MulMod,
+    /// `floor(a * b / d)` over the 512-bit product, truncated to 256 bits; zero when `d` is zero.
+    MulDiv,
 }
 
 impl SymTernOp {
-    pub(crate) const fn smt(self) -> &'static str {
+    /// Returns the 512-bit SMT functions that combine the operands and then apply the modulus.
+    pub(crate) const fn smt(self) -> (&'static str, &'static str) {
         match self {
-            Self::AddMod => "bvadd",
-            Self::MulMod => "bvmul",
+            Self::AddMod => ("bvadd", "bvurem"),
+            Self::MulMod => ("bvmul", "bvurem"),
+            Self::MulDiv => ("bvmul", "bvudiv"),
         }
     }
 
@@ -2267,6 +2331,10 @@ impl SymTernOp {
         match self {
             Self::AddMod => left.add_mod(right, modulus),
             Self::MulMod => left.mul_mod(right, modulus),
+            Self::MulDiv => {
+                let quotient = left.widening_mul::<256, 4, 512, 8>(right) / U512::from(modulus);
+                U256::from_limbs_slice(&quotient.as_limbs()[..4])
+            }
         }
     }
 }
@@ -2286,11 +2354,15 @@ pub(crate) enum SymBinOp {
     Shl,
     Shr,
     Sar,
+    /// High word of the 512-bit product.
+    MulHigh,
 }
 
 impl SymBinOp {
+    /// Returns the SMT function of a 256-bit operator. The SMT writer emits `MulHigh` itself.
     pub(crate) const fn smt(self) -> &'static str {
         match self {
+            Self::MulHigh => unreachable!(),
             Self::Add => "bvadd",
             Self::Sub => "bvsub",
             Self::Mul => "bvmul",
@@ -2363,6 +2435,10 @@ impl SymBinOp {
                 } else {
                     left.arithmetic_shr(usize::try_from(right).expect("checked word shift"))
                 }
+            }
+            Self::MulHigh => {
+                let product = left.widening_mul::<256, 4, 512, 8>(right);
+                U256::from_limbs_slice(&product.as_limbs()[4..])
             }
         }
     }
