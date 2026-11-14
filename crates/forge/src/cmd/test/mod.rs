@@ -2873,13 +2873,17 @@ impl TestArgs {
         if self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
             let mut differences_found = false;
             for (group, snapshots) in gas_snapshots {
-                let path = config.snapshots.join(format!("{group}.json"));
+                let path = config
+                    .gas_snapshot_path(group)
+                    .ok_or_else(|| eyre::eyre!("invalid snapshot group name `{group}`"))?;
                 // If the snapshot file doesn't exist, we can't compare so we skip.
                 if !path.exists() {
                     continue;
                 }
-                let previous_snapshots: BTreeMap<String, String> =
-                    fs::read_json_file(&path).expect("Failed to read snapshots from disk");
+                let previous_snapshots: BTreeMap<String, String> = fs::read_json_file(&path)
+                    .wrap_err_with(|| {
+                        format!("failed to read snapshots from `{}`", path.display())
+                    })?;
                 let diff = snapshots
                     .iter()
                     .filter_map(|(k, v)| {
@@ -2913,11 +2917,12 @@ impl TestArgs {
         if self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
             fs::create_dir_all(&config.snapshots)?;
             for (group, snapshots) in gas_snapshots {
-                fs::write_pretty_json_file(
-                    &config.snapshots.join(format!("{group}.json")),
-                    &snapshots,
-                )
-                .expect("Failed to write gas snapshots to disk");
+                let path = config
+                    .gas_snapshot_path(group)
+                    .ok_or_else(|| eyre::eyre!("invalid snapshot group name `{group}`"))?;
+                fs::write_pretty_json_file(&path, &snapshots).wrap_err_with(|| {
+                    format!("failed to write snapshots to `{}`", path.display())
+                })?;
             }
         }
         Ok(())
