@@ -4787,9 +4787,16 @@ impl EthApi<FoundryNetwork> {
                             .await?,
                         );
 
-                        // Build typed transaction request
+                        // Build typed transaction request. Estimate missing gas on the common
+                        // block: the head this reorg discards can price storage more cheaply than
+                        // the state these transactions execute on.
                         let typed_tx = self
-                            .build_tx_request_with_fee_defaults(request, *curr_nonce, fee_defaults)
+                            .build_tx_request_with_fee_defaults(
+                                request,
+                                *curr_nonce,
+                                fee_defaults,
+                                Some(common_block.header.number().into()),
+                            )
                             .await?;
 
                         // Increment nonce
@@ -5312,7 +5319,7 @@ impl EthApi<FoundryNetwork> {
         request: FoundryTransactionRequest,
         nonce: u64,
     ) -> Result<FoundryTypedTx> {
-        self.build_tx_request_with_fee_defaults(request, nonce, None).await
+        self.build_tx_request_with_fee_defaults(request, nonce, None, None).await
     }
 
     async fn build_tx_request_with_fee_defaults(
@@ -5320,6 +5327,7 @@ impl EthApi<FoundryNetwork> {
         mut request: FoundryTransactionRequest,
         nonce: u64,
         fee_defaults: Option<TransactionFeeDefaults>,
+        gas_estimation_block: Option<BlockId>,
     ) -> Result<FoundryTypedTx> {
         let from = request.from().or(self.accounts()?.first().copied());
         if let Some(from) = from {
@@ -5340,7 +5348,7 @@ impl EthApi<FoundryNetwork> {
                 self.backend.fallback_tx_gas_limit(&evm_env)
             };
             let estimated_gas = self
-                .do_estimate_gas_typed(request.clone(), None)
+                .do_estimate_gas_typed(request.clone(), gas_estimation_block)
                 .await
                 .map(|v| v as u64)
                 .unwrap_or_else(|_| {
