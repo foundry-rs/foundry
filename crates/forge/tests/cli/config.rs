@@ -4361,3 +4361,71 @@ Warning: Dependency remapping `src/=lib/dependency/src/internal/` now applies on
 
 "#]]);
 }
+
+#[forgetest]
+fn external_libraries_preserve_global_dependency_aliases(prj: _, cmd: _) {
+    let project = prj.root().join("project");
+    let shared = prj.root().join("shared");
+    for (name, contract) in [("a", "A"), ("b", "B")] {
+        prj.create_file(
+            format!("shared/{name}/src/{contract}.sol"),
+            &format!(
+                "import {{Inner}} from \"@priv/Inner.sol\"; contract {contract} is Inner {{}}\n"
+            ),
+        );
+        prj.create_file(format!("shared/{name}/src/internal/Inner.sol"), "contract Inner {}\n");
+    }
+    prj.create_file(
+        "project/src/Root.sol",
+        "import {A} from \"a/A.sol\"; import {B} from \"b/B.sol\"; contract Root { A a; B b; }\n",
+    );
+
+    for file_remappings in [false, true] {
+        for name in ["a", "b"] {
+            prj.create_file(
+                format!("shared/{name}/foundry.toml"),
+                if file_remappings {
+                    "[profile.default]\n"
+                } else {
+                    "[profile.default]\nremappings = [\"@priv/=src/internal/\"]\n"
+                },
+            );
+            if file_remappings {
+                prj.create_file(format!("shared/{name}/remappings.txt"), "@priv/=src/internal/\n");
+            }
+        }
+        for libs in ["../shared".to_string(), shared.display().to_string()] {
+            prj.create_file(
+                "project/foundry.toml",
+                &format!("[profile.default]\nlibs = [{libs:?}]\nsolc = {SOLC_VERSION:?}\n"),
+            );
+            cmd.forge_fuse()
+                .current_dir(&project)
+                .args(["build", "--force"])
+                .assert_success()
+                .stderr_eq("");
+            cmd.forge_fuse().current_dir(&project).arg("build").assert_success().stderr_eq("");
+            let expected = if Path::new(&libs).is_absolute() {
+                str![[r#"
+@priv/=[..]/shared/a/src/internal/
+a/=[..]/shared/a/src/
+b/=[..]/shared/b/src/
+
+"#]]
+            } else {
+                str![[r#"
+@priv/=../shared/a/src/internal/
+a/=../shared/a/src/
+b/=../shared/b/src/
+
+"#]]
+            };
+            cmd.forge_fuse()
+                .current_dir(&project)
+                .arg("remappings")
+                .assert_success()
+                .stdout_eq(expected)
+                .stderr_eq("");
+        }
+    }
+}

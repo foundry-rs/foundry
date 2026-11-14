@@ -511,6 +511,7 @@ impl RemappingsProvider<'_> {
         &self,
     ) -> Result<Vec<(PathBuf, Remapping, NestedRemappingKind)>, Error> {
         let root = dunce::canonicalize(self.root).unwrap_or_else(|_| self.root.to_path_buf());
+        let lexical_root = normalize_remapping_context(self.root);
         let mut pending = self
             .lib_paths
             .iter()
@@ -540,11 +541,15 @@ impl RemappingsProvider<'_> {
                 continue;
             };
 
-            // Relative imports normalize away an external source's lexical owner. Preserve the
-            // old declaration scope rather than encoding the absolute checkout in source names.
+            // Sources outside the project use relative source names, and relative imports can
+            // normalize away an external source's lexical owner. Preserve their old declaration
+            // scope rather than encoding the absolute checkout in source names.
             let source = foundry_compilers::utils::canonicalized(entry.canonical.join(&config.src));
             let source = normalize_remapping_context(&source);
-            let declaration_kind = if source.starts_with(&entry.canonical) {
+            let declaration_kind = if normalize_remapping_context(&entry.path)
+                .starts_with(&lexical_root)
+                && source.starts_with(&entry.canonical)
+            {
                 NestedRemappingKind::Declaration
             } else {
                 NestedRemappingKind::UnscopedDeclaration
@@ -2036,6 +2041,47 @@ mod tests {
                 ]
             );
             assert_eq!(config.warnings, []);
+            Ok(())
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_libraries_preserve_lexical_project_scopes() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let project = temp.path().join("project");
+            let linked_root = temp.path().join("linked-project");
+            fs::create_dir_all(project.join("lib")).unwrap();
+            symlink(&project, &linked_root).unwrap();
+            for name in ["a", "b"] {
+                let package = temp.path().join("shared").join(name);
+                fs::create_dir_all(package.join("src")).unwrap();
+                fs::write(package.join("src/Inner.sol"), "contract Inner {}\n").unwrap();
+                fs::write(
+                    package.join(Config::FILE_NAME),
+                    "[profile.default]\nremappings = [\"@priv/=src/\"]\n",
+                )
+                .unwrap();
+                symlink(&package, project.join("lib").join(name)).unwrap();
+            }
+            let provider = RemappingsProvider {
+                auto_detect_remappings: true,
+                lib_paths: Cow::Owned(vec!["lib".into()]),
+                root: &linked_root,
+                remappings: Ok(Vec::new()),
+                project_paths: Vec::new(),
+                warnings: Ok(Vec::new()),
+            };
+            assert_eq!(
+                Figment::from(provider).extract_inner::<Vec<String>>("remappings").unwrap(),
+                [
+                    "lib/a/:@priv/=lib/a/src/",
+                    "lib/b/:@priv/=lib/b/src/",
+                    "a/=lib/a/src/",
+                    "b/=lib/b/src/",
+                ]
+            );
             Ok(())
         });
     }
