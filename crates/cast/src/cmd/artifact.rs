@@ -34,6 +34,13 @@ pub struct ArtifactArgs {
     )]
     output: Option<PathBuf>,
 
+    /// Find the creation code using only the RPC, without Etherscan.
+    ///
+    /// Requires `--abi-path` and an archive node. Contracts deployed by other contracts also
+    /// require `trace_block` support.
+    #[arg(long, requires = "abi_path")]
+    rpc_only: bool,
+
     #[command(flatten)]
     etherscan: EtherscanOpts,
 
@@ -44,9 +51,9 @@ pub struct ArtifactArgs {
 impl ArtifactArgs {
     pub async fn run(self) -> Result<()> {
         let mut config = self.load_config()?;
-        let Self { contract, output, abi_path, .. } = self;
+        let Self { contract, output, abi_path, rpc_only, .. } = self;
 
-        let bytecode = fetch_creation_code(&mut config, contract).await?;
+        let bytecode = fetch_creation_code(&mut config, contract, rpc_only).await?;
         let abi_path = abi_path.as_deref();
         let abi = load_abi(contract, &config, abi_path).await?;
         let bytecode =
