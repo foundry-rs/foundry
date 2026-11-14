@@ -1170,6 +1170,10 @@ where
         "blobGasUsed" | "blob_gas_used" => Some(block.header().blob_gas_used().pretty()),
         "excessBlobGas" | "excess_blob_gas" => Some(block.header().excess_blob_gas().pretty()),
         "requestsHash" | "requests_hash" => Some(block.header().requests_hash().pretty()),
+        "withdrawalsRoot" | "withdrawals_root" => Some(block.header().withdrawals_root().pretty()),
+        "parentBeaconBlockRoot" | "parent_beacon_block_root" | "parentBeaconRoot" => {
+            Some(block.header().parent_beacon_block_root().pretty())
+        }
         other => {
             if let Some(value) = block.other_fields().and_then(|fields| fields.get(other)) {
                 let val = EthValue::from(value.clone());
@@ -1854,6 +1858,8 @@ yParity              0"
             "timestamp": "0x54e34e8e",
             "transactions": [],
             "uncles": [],
+            "withdrawalsRoot": "0x146ce0f7f71e21d3574e46729630ede6c6580b2ab48fbc5c013bc4d2dfced8bd",
+            "parentBeaconBlockRoot": "0xc17713fd9f897a6ba829088662f4829a3bc2023c1ebdb021a7dce0402bf6dcc4",
           }
         );
 
@@ -1923,6 +1929,15 @@ yParity              0"
         assert_eq!(
             Some("163591".to_string()),
             get_pretty_block_attr::<Ethereum>(&block, "totalDifficulty")
+        );
+
+        assert_eq!(
+            Some("0x146ce0f7f71e21d3574e46729630ede6c6580b2ab48fbc5c013bc4d2dfced8bd".to_string()),
+            get_pretty_block_attr::<Ethereum>(&block, "withdrawalsRoot")
+        );
+        assert_eq!(
+            Some("0xc17713fd9f897a6ba829088662f4829a3bc2023c1ebdb021a7dce0402bf6dcc4".to_string()),
+            get_pretty_block_attr::<Ethereum>(&block, "parentBeaconBlockRoot")
         );
 
         let pretty = pretty_generic_header_response(block.header());
