@@ -2036,6 +2036,260 @@ contract OldContract {
     ]]);
 }
 
+// With sources on both sides of Solar's minimum version, `forge build` lints the supported files
+// and names each skipped file by its project path.
+#[forgetest]
+fn build_lint_names_skipped_old_solidity_files(prj: _, cmd: _) {
+    prj.add_source(
+        "Old.sol",
+        r#"
+pragma solidity ^0.7.0;
+
+contract Old {}
+"#,
+    );
+    prj.add_source(
+        "New.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+contract New {
+    uint256 constant limit = 10;
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.lint = LinterConfig { lint_on_build: true, severity: vec![], ..Default::default() };
+    });
+
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+Warning: unable to lint src/Old.sol: AST source not found
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
+  [FILE]:6:22
+  │
+6 │     uint256 constant limit = 10;
+  │                      ━━━━━ help: consider using: `LIMIT`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
+
+
+"#]]);
+}
+
+#[forgetest]
+fn build_lint_names_skipped_supported_types_file(prj: _, cmd: _) {
+    prj.add_source("New.sol", "pragma solidity ^0.8.0; contract New {}");
+    prj.add_source("Types.sol", "pragma solidity ^0.8.0; struct Position { uint256 amount; }");
+    prj.update_config(|config| {
+        config.lint.lint_on_build = true;
+    });
+
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+Warning: unable to lint src/Types.sol: AST source not found
+
+"#]]);
+}
+
+// A source that is a symlink is linted. Sources are keyed by their canonical path, so the linter
+// looks a symlink up by its target.
+#[cfg(unix)]
+#[forgetest]
+fn build_lints_symlinked_sources(prj: _, cmd: _) {
+    std::fs::create_dir_all(prj.root().join("shared")).unwrap();
+    std::fs::create_dir_all(prj.root().join("src")).unwrap();
+    std::fs::write(
+        prj.root().join("shared/Linked.sol"),
+        r#"
+pragma solidity ^0.8.0;
+
+contract Linked {
+    uint256 constant limit = 10;
+}
+"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("../shared/Linked.sol", prj.root().join("src/Linked.sol")).unwrap();
+    prj.update_config(|config| {
+        config.lint = LinterConfig { lint_on_build: true, severity: vec![], ..Default::default() };
+    });
+
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
+  [FILE]:5:22
+  │
+5 │     uint256 constant limit = 10;
+  │                      ━━━━━ help: consider using: `LIMIT`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
+
+
+"#]]);
+}
+
+// `[lint] ignore` matches symlinked sources by project path. An entry naming the symlink, a
+// symlinked directory, or a directory containing symlinks ignores it, while an entry naming another
+// alias or the target does not. Inputs under a symlinked `src` are canonical, so entries also match
+// by their resolved path.
+#[cfg(unix)]
+#[forgetest]
+fn lint_ignore_symlinked_sources(prj: _, cmd: _) {
+    std::fs::create_dir_all(prj.root().join("shared")).unwrap();
+    std::fs::write(
+        prj.root().join("shared/Linked.sol"),
+        r#"
+pragma solidity ^0.8.0;
+
+contract Linked {
+    uint256 constant limit = 10;
+}
+"#,
+    )
+    .unwrap();
+    let note = str![[r#"
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
+  [FILE]:5:22
+  │
+5 │     uint256 constant limit = 10;
+  │                      ━━━━━ help: consider using: `LIMIT`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
+
+
+"#]];
+
+    let file = ("src/Linked.sol", "../shared/Linked.sol");
+    let dir = ("src/vendor", "../shared");
+    let test = ("test/Linked.sol", "../shared/Linked.sol");
+    let src = ("src", "shared");
+    for (links, ignore, ignored) in [
+        (&[file][..], "src/Linked.sol", true),
+        (&[dir], "src/vendor/**", true),
+        (&[file, dir], "src/**", true),
+        (&[file, test], "test/Linked.sol", false),
+        (&[file], "shared/**", false),
+        (&[src], "src/**", true),
+    ] {
+        for name in ["src", "test"] {
+            let _ = std::fs::remove_dir_all(prj.root().join(name));
+        }
+        for (link, target) in links {
+            let link = prj.root().join(link);
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(target, link).unwrap();
+        }
+        prj.update_config(|config| {
+            config.lint = LinterConfig {
+                lint_on_build: true,
+                severity: vec![],
+                ignore: vec![ignore.to_string()],
+                ..Default::default()
+            };
+        });
+
+        if ignored {
+            cmd.forge_fuse().arg("build").assert_success().stderr_eq("");
+            cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
+nothing to lint
+
+"#]]);
+        } else {
+            cmd.forge_fuse().arg("build").assert_success().stderr_eq(note.clone());
+            cmd.forge_fuse().arg("lint").assert_success().stderr_eq(note.clone());
+        }
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn lint_symlinked_tests_and_scripts(prj: _, cmd: _) {
+    std::fs::create_dir_all(prj.root().join("shared")).unwrap();
+    std::fs::write(
+        prj.root().join("shared/Linked.sol"),
+        r#"
+pragma solidity ^0.8.0;
+interface Vm {
+    function readFile(string calldata path) external returns (string memory);
+}
+contract Linked {
+    uint256 constant limit = 10;
+    function read(Vm vm) external {
+        vm.readFile("input.txt");
+    }
+}
+"#,
+    )
+    .unwrap();
+    prj.update_config(|config| {
+        config.lint = LinterConfig { lint_on_build: true, severity: vec![], ..Default::default() };
+    });
+    let expected = str![[r#"
+note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
+  [FILE]:9:12
+  │
+9 │         vm.readFile("input.txt");
+  │            ━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/unsafe-cheatcode
+
+
+"#]];
+
+    for dir in ["test", "script"] {
+        std::fs::create_dir_all(prj.root().join(dir)).unwrap();
+        let path = prj.root().join(dir).join("Linked.sol");
+        std::os::unix::fs::symlink("../shared/Linked.sol", &path).unwrap();
+
+        cmd.forge_fuse().arg("build").assert_success().stderr_eq(expected.clone());
+        cmd.forge_fuse()
+            .args(["lint", "--only-lint", "screaming-snake-case-const", "-D", "notes"])
+            .assert_success()
+            .stderr_eq("");
+        cmd.forge_fuse()
+            .args(["lint", "--only-lint", "unsafe-cheatcode"])
+            .assert_success()
+            .stderr_eq(expected.clone());
+
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn lint_symlinked_aliases_merge_policy(prj: _, cmd: _) {
+    prj.add_source(
+        "Linked.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+contract Linked {
+    uint256 constant limit = 10;
+}
+"#,
+    );
+    std::fs::create_dir_all(prj.root().join("test")).unwrap();
+    std::os::unix::fs::symlink("../src/Linked.sol", prj.root().join("test/Linked.sol")).unwrap();
+
+    for paths in [["test/Linked.sol", "src/Linked.sol"], ["src/Linked.sol", "test/Linked.sol"]] {
+        cmd.forge_fuse()
+            .arg("lint")
+            .args(paths)
+            .args(["--only-lint", "screaming-snake-case-const", "-D", "notes"])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
+  [FILE]:6:22
+  │
+6 │     uint256 constant limit = 10;
+  │                      ━━━━━ help: consider using: `LIMIT`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
+
+Error: aborting due to 1 linter note(s)
+
+"#]]);
+    }
+}
+
 const PRAGMA_INCONSISTENT_ALPHA: &str = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
