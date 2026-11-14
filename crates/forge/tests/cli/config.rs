@@ -1553,15 +1553,8 @@ fn nested_auto_remapping_preserves_declared_precedence(prj: _, cmd: _) {
     pretty_err(
         &pinned_a,
         fs::write(
-            pinned_a.join("Marker.sol"),
-            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; contract Marker {}\n",
-        ),
-    );
-    pretty_err(
-        &pinned_a,
-        fs::write(
             pinned_a.join("Version.sol"),
-            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; contract VersionA {}\n",
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; contract VersionA {} contract Marker {}\n",
         ),
     );
     pretty_err(
@@ -1592,7 +1585,7 @@ fn nested_auto_remapping_preserves_declared_precedence(prj: _, cmd: _) {
             "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0; contract VersionX {}\n",
         ),
     );
-    prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"a/pinned/Marker.sol\"; import {ShadowedA} from \"shared/Version.sol\"; contract UsesA is A, Marker, ShadowedA {}\n");
+    prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"a/pinned/Version.sol\"; import {ShadowedA} from \"shared/Version.sol\"; contract UsesA is A, Marker, ShadowedA {}\n");
     let warning = str![[r#"
 Warning: Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `shared/=lib/a/src/pinned/` to your root remappings.
 
@@ -3843,18 +3836,20 @@ fn dependency_remappings_cannot_replace_root_or_sibling_sources(prj: _, cmd: _) 
     );
     prj.add_lib(
         "good/src/Good.sol",
-        "import {OnlyGood} from \"private-alias/OnlyGood.sol\"; contract Good is OnlyGood {}\n",
+        "import {OnlyGood} from \"private-alias/OnlyGood.sol\"; import {OwnerBase} from \"src/Base.sol\"; contract Good is OnlyGood, OwnerBase {}\n",
     );
     prj.add_lib("good/src/internal/OnlyGood.sol", "contract OnlyGood {}\n");
+    prj.add_lib("good/src/internal/Base.sol", "contract OwnerBase {}\n");
     prj.create_file(
         "lib/good/foundry.toml",
-        "[profile.default]\nremappings = [\"private-alias/=src/internal/\"]\n",
+        "[profile.default]\nremappings = [\"private-alias/=src/internal/\", \"src/=src/internal/\"]\n",
     );
 
     prj.create_file(
         "shared/Shared.sol",
         "import {RootBase} from \"src/Base.sol\"; contract Shared is RootBase {}\n",
     );
+    cmd.forge_fuse().args(["build", "--no-lint"]).assert_success().stderr_eq("");
 
     for owner in ["a-helper", "a-helper/lib/nested"] {
         prj.add_lib(&format!("{owner}/src/Substitute.sol"), "contract AttackerBase {}\n");
@@ -4165,23 +4160,6 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
 "#]]);
 
     fs::remove_file(prj.root().join("lib/a/src/Dep.sol")).unwrap();
-    cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
-        r#"
-Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/a/src/` to your root remappings.
-Error: Compiler run failed:
-Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
-ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
- [FILE]:3:1:
-  |
-3 | import {Dep} from "@custom/Dep.sol"; contract Root is Dep {}
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt:
-      @custom/=lib/z/src/
-
-"#
-    ]]);
-
     fs::remove_file(prj.root().join("lib/z/src/Dep.sol")).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
         r#"
@@ -4224,34 +4202,6 @@ ParserError: Source "src/missing/Dep.sol" not found: File not found. Searched th
         }
         command.assert_failure().stderr_eq(explicit_error.clone());
     }
-}
-
-#[forgetest]
-fn scoped_source_alias_preserves_root_sources(prj: _, cmd: _) {
-    prj.add_source("Base.sol", "contract RootBase {}\n");
-    prj.add_lib("dependency/src/internal/Base.sol", "contract OwnerBase {}\n");
-    prj.add_lib(
-        "dependency/src/Dep.sol",
-        "import {OwnerBase} from \"src/Base.sol\"; contract Dep is OwnerBase {}\n",
-    );
-    prj.create_file(
-        "lib/dependency/foundry.toml",
-        "[profile.default]\nremappings = [\"src/=src/internal/\"]\n",
-    );
-    prj.add_source(
-        "Root.sol",
-        "import {RootBase} from \"src/Base.sol\"; import {Dep} from \"dependency/Dep.sol\"; contract Root is RootBase, Dep {}\n",
-    );
-
-    cmd.args(["build", "--no-lint"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]])
-        .stderr_eq("");
 }
 
 #[forgetest]

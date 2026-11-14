@@ -1400,15 +1400,11 @@ mod tests {
     fn root_remapping_candidates_respect_targets_choices_and_importers() {
         let temp = tempdir().unwrap();
         let root = temp.path().join("project");
-        fs::create_dir_all(root.join("src")).unwrap();
         fs::create_dir_all(root.join("lib/a/src")).unwrap();
-        fs::write(root.join("src/Root.sol"), "contract Root {}\n").unwrap();
         fs::write(root.join("lib/a/src/Target.sol"), "contract Target {}\n").unwrap();
-        fs::write(temp.path().join("Outside.sol"), "contract Outside {}\n").unwrap();
         let root = dunce::canonicalize(root).unwrap();
         let paths = ProjectPathsConfig::builder()
             .root(&root)
-            .sources(root.join("src"))
             .lib(root.join("lib"))
             .remapping(Remapping::from_str("lib/a/:@alias/=lib/a/src/").unwrap())
             .remapping(Remapping::from_str("lib/a/:File.sol=lib/a/src/Target.sol").unwrap())
