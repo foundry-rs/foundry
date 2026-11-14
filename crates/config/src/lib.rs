@@ -1865,6 +1865,14 @@ impl Config {
         builder.build_with_root(&self.root)
     }
 
+    /// Returns the file path for the snapshot group `group`, or `None` if the group is not a
+    /// valid snapshot group name.
+    ///
+    /// See [utils::is_valid_snapshot_group].
+    pub fn gas_snapshot_path(&self, group: &str) -> Option<PathBuf> {
+        utils::is_valid_snapshot_group(group).then(|| self.snapshots.join(format!("{group}.json")))
+    }
+
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn solc_compiler(&self) -> Result<SolcCompiler, SolcError> {
         if let Some(mut solc) = self.ensure_solc()? {

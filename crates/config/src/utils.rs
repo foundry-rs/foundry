@@ -11,7 +11,7 @@ use serde::{
 use std::{
     fmt, fs,
     io::{self, BufReader},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
 };
 
@@ -120,6 +120,16 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
         _ => return Err(format!("Invalid value `{val}`, expected an array").into()),
     };
     Ok(value)
+}
+
+/// Returns whether `group` can be used as the file name of a snapshot group.
+///
+/// A valid group is a single, normal path component: it cannot be empty, absolute, or contain
+/// any parent-directory or separator components. This keeps the group from escaping the
+/// configured snapshots directory when it is joined onto it.
+pub fn is_valid_snapshot_group(group: &str) -> bool {
+    let mut components = Path::new(group).components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
 }
 
 /// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file
@@ -380,7 +390,9 @@ impl<'de> Deserialize<'de> for Present {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{FoundryTomlDir, foundry_toml_dir_entries, foundry_toml_dirs};
+    use super::{
+        FoundryTomlDir, foundry_toml_dir_entries, foundry_toml_dirs, is_valid_snapshot_group,
+    };
     use std::{fs, os::unix::fs::symlink};
     use tempfile::tempdir;
 
@@ -443,6 +455,22 @@ mod tests {
                 dunce::canonicalize(dependency_z).unwrap(),
             ]
         );
+    }
+
+    #[test]
+    fn validates_snapshot_groups() {
+        for group in ["Group", "a.b", "group with spaces", "..hidden"] {
+            assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
+        }
+
+        for group in ["", ".", "..", "../settings", "../../settings", "a/b", "./a", "/tmp/settings"]
+        {
+            assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
+
+        // A backslash is only a path separator on Windows.
+        #[cfg(windows)]
+        assert!(!is_valid_snapshot_group("a\\b"));
     }
 
     #[test]
