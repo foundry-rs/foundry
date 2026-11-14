@@ -408,7 +408,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 exec_result::<N>(result)
             }
             Err(err) => {
-                self.inspector.discard_transaction(inspector_config);
+                self.inspector.discard_transaction();
                 return Err(err.into());
             }
         };

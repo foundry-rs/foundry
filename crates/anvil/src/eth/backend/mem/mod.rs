@@ -6993,7 +6993,13 @@ where
             self.cheats.next_block_overrides().parent_beacon_block_root.value.unwrap_or_default(),
         );
 
-        let inspector_tx_config = self.inspector_tx_config();
+        // The pending block is rebuilt for every request that reads it, and its transactions are
+        // printed when they are mined, so don't print their logs and traces here.
+        let inspector_tx_config = InspectorTxConfig {
+            print_traces: false,
+            print_logs: false,
+            ..self.inspector_tx_config()
+        };
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
         let ExecutedBlock { pool: pool_result, result: block_result, state, .. } = self
