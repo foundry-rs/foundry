@@ -53,6 +53,43 @@ Formatted [..]/src/FmtTest.sol
     );
 }
 
+#[forgetest]
+fn fmt_parse_error_does_not_modify_input(prj: _, cmd: _) {
+    let source = r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+library L {
+    /// @notice Adds one.
+    function a(uint256 x) internal pure returns (uint256) {
+        if (x > 0) {
+            x = x + 1;
+        }
+        }
+        return x;
+    }
+
+    /// @notice Adds two.
+    function b(uint256 x) internal pure returns (uint256) {
+        uint256 y = x + 1;
+        return y + 1;
+    }
+
+    /// @notice Adds three.
+    function c(uint256 x) internal pure returns (uint256) {
+        return x + 3;
+    }
+}
+"#;
+    let path = prj.add_raw_source("ParseError.sol", source);
+
+    cmd.args(["fmt", "src/ParseError.sol"]).assert_failure();
+    assert_data_eq!(std::fs::read_to_string(path).unwrap(), source);
+
+    cmd.forge_fuse().args(["fmt", "-", "--raw"]);
+    cmd.stdin(source.as_bytes());
+    cmd.assert_failure().stdout_eq("");
+}
+
 // Test that fmt can format from stdin
 #[forgetest]
 fn fmt_stdin(cmd: _) {
