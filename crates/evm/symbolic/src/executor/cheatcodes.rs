@@ -1422,7 +1422,9 @@ impl SymbolicExecutor {
                 self.add_call_mock(executor, state, callee, value, data, returns, false)
             }
             mockFunctionCall::SELECTOR => {
-                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                // Like Forge's ABI decoding, keep only the address bits of the callee.
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?
+                    .address_operand(&mut self.cx);
                 let target = read_abi_address_arg(
                     &mut self.cx,
                     &state.memory,

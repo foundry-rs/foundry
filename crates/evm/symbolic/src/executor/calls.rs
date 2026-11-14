@@ -168,7 +168,8 @@ impl SymbolicExecutor {
         }
 
         if let Some(to) = target_address {
-            if !state.function_mocks.is_empty() {
+            let code_address = if self.function_mock_may_match(executor, state, to, &call_input)? {
+                let callee = self.call_code_account(executor, state, to)?;
                 let pre_call_state =
                     pre_call_state.as_ref().expect("function mocks require pre-call state");
                 if self.branch_symbolic_function_mock_if_needed(
@@ -176,16 +177,14 @@ impl SymbolicExecutor {
                     worklist,
                     pre_call_state,
                     call_pc,
-                    to,
+                    callee,
                     &call_input,
                 )? {
                     return Ok(StepOutcome::Forked);
                 }
-            }
-            let code_address = if state.function_mocks.is_empty() {
-                to
+                self.function_mock_target(state, callee, &call_input)?.unwrap_or(to)
             } else {
-                self.function_mock_target(state, to, &call_input)?.unwrap_or(to)
+                to
             };
             if !state.expected_calls.is_empty() || !state.call_mocks.is_empty() {
                 let pre_call_state =
@@ -535,6 +534,63 @@ impl SymbolicExecutor {
             }
         }
         Ok(None)
+    }
+
+    /// Whether a function mock can match a call to `to` with `calldata` on this path, so its key,
+    /// the call's code address, is needed.
+    fn function_mock_may_match(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        to: Address,
+        calldata: &SymBytes,
+    ) -> Result<bool, SymbolicError> {
+        if state.function_mocks.is_empty() {
+            return Ok(false);
+        }
+        let code_address = self.call_code_address(executor, state, to)?;
+        for idx in 0..state.function_mocks.len() {
+            if let Some(condition) = state.function_mocks[idx].code_match_condition(
+                &mut self.cx,
+                &code_address,
+                calldata,
+            ) && self.constraints_with_condition(state, condition)?.1
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Returns the code address of a call to `to`, which `vm.mockFunction` is keyed by: the
+    /// delegate of an EIP-7702 delegated `to`, as in evm2, which may be symbolic, or `to` itself.
+    fn call_code_address(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        to: Address,
+    ) -> Result<SymExpr, SymbolicError> {
+        if executor.eip7702_delegations
+            && let Some(delegate) =
+                state.world.extcode(&mut self.cx, executor, to)?.eip7702_delegate(&mut self.cx)?
+        {
+            return Ok(delegate.right_aligned_word(&mut self.cx, 0, 20));
+        }
+        Ok(SymExpr::constant(&mut self.cx, address_word(to)))
+    }
+
+    /// Returns the code address of a call to `to`, whose code runs unless a mock redirects it.
+    pub(super) fn call_code_account(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        to: Address,
+    ) -> Result<Address, SymbolicError> {
+        let address = self.call_code_address(executor, state, to)?;
+        let Some(address) = address.as_const() else {
+            return Err(SymbolicError::Unsupported("symbolic EIP-7702 delegation"));
+        };
+        Ok(word_to_address(address))
     }
 
     pub(super) fn expected_call_match_constraints(
@@ -1202,7 +1258,13 @@ impl SymbolicExecutor {
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
         // `vm.mockFunction` swaps the code that runs, and the concrete inspector matches
         // `vm.expectCall` against that address, so resolve the redirect before observing.
-        let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
+        let function_mock = if self.function_mock_may_match(executor, state, to, &call_input)? {
+            let callee = self.call_code_account(executor, state, to)?;
+            self.function_mock_target(state, callee, &call_input)?
+        } else {
+            None
+        };
+        let code_address = function_mock.unwrap_or(to);
         if !state.expected_calls.is_empty() {
             let concrete_value = self.transfer_value(state, kind, &value);
             if !self.observe_expected_call(
@@ -1391,6 +1453,11 @@ impl SymbolicExecutor {
             );
         }
 
+        // Like the concrete inspector, a mock target's own delegation is not resolved.
+        let code_address = match function_mock {
+            Some(mock) => mock,
+            None => self.call_code_account(executor, state, to)?,
+        };
         if self.equivalence.is_some()
             && state.world.is_unknown_account(&mut self.cx, executor, code_address)?
         {
@@ -2118,9 +2185,15 @@ impl SymbolicExecutor {
             }
 
             // Decide mock matches before executing either the mocked or real call.
-            for mut branch in
-                self.split_symbolic_target_candidate(branch, kind, to, &value, &gas, &call_input)?
-            {
+            for mut branch in self.split_symbolic_target_candidate(
+                executor,
+                branch,
+                kind,
+                to,
+                &value,
+                &gas,
+                &call_input,
+            )? {
                 let mut branch_worklist = VecDeque::new();
                 match self.call_concrete_target(
                     executor,
@@ -2159,26 +2232,36 @@ impl SymbolicExecutor {
     }
 
     /// Decides mock and expectation matches before executing a symbolic-target candidate.
+    #[expect(clippy::too_many_arguments)]
     fn split_symbolic_target_candidate(
         &mut self,
-        branch: PathState,
+        executor: &ExecutorView<'_>,
+        mut branch: PathState,
         kind: CallKind,
         to: Address,
         value: &SymExpr,
         gas: &SymExpr,
         call_input: &SymBytes,
     ) -> Result<Vec<PathState>, SymbolicError> {
+        let callee = if self.function_mock_may_match(executor, &mut branch, to, call_input)? {
+            Some(self.call_code_account(executor, &mut branch, to)?)
+        } else {
+            None
+        };
         let mut branches = vec![branch];
-        for condition in self.function_mock_conditions(&branches[0], to, call_input) {
-            branches = self.split_branches_on(branches, condition)?;
+        if let Some(callee) = callee {
+            for condition in self.function_mock_conditions(&branches[0], callee, call_input) {
+                branches = self.split_branches_on(branches, condition)?;
+            }
         }
 
         let mut out = Vec::new();
         for mut branch in branches {
-            let code_address = if branch.function_mocks.is_empty() {
-                to
-            } else {
-                self.function_mock_target(&mut branch, to, call_input)?.unwrap_or(to)
+            let code_address = match callee {
+                Some(callee) => {
+                    self.function_mock_target(&mut branch, callee, call_input)?.unwrap_or(to)
+                }
+                None => to,
             };
 
             let mut value_branches = vec![branch];
