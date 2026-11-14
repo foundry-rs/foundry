@@ -1707,15 +1707,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let txes = calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect();
             candidates.check(txes).ok().filter(|outcome| !outcome.success)
         };
-        let Some(expected) = replay_sequence(&mut candidates, &original_calls) else {
-            return SequenceMinimization::KeepOriginal;
-        };
+        let expected = replay_sequence(&mut candidates, &original_calls);
         // A replay that skipped effects outside the EVM, such as `vm.setEnv` or `vm.unixTime`, can
-        // read state the campaign left behind or fail elsewhere, so only call removal applies, as
-        // without minimization.
+        // read state the campaign left behind, fail elsewhere, or pass, so only call removal
+        // applies, as without minimization.
         if candidates.skipped_host_effects {
             return SequenceMinimization::RemoveCalls;
         }
+        let Some(expected) = expected else {
+            return SequenceMinimization::KeepOriginal;
+        };
         // Reproducing some failure is insufficient: it must be the campaign's failure, which the
         // provenance in the raw failure tells apart from other failures with the same outcome.
         if expected.failure_site != Some(campaign_site) {

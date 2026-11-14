@@ -4444,7 +4444,8 @@ contract HostAfterInvariantTest is GateTest {
 }
 
 // A failure that cannot be identified, here because of a snapshot restore or a replay that skips
-// `vm.unixTime`, even where that makes it fail elsewhere, is still shrunk by removing calls.
+// `vm.unixTime`, even where that makes it fail elsewhere or pass, is still shrunk by removing
+// calls.
 #[forgetest_init]
 fn invariant_unidentified_failure_still_shrinks(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -4518,9 +4519,15 @@ contract ClockHandlerTest is Test {
         require(!(handler.a() && handler.b()), "both set");
     }
 }
+
+// Replays ignore the handler's revert, so the invariant passes.
+/// forge-config: default.invariant.fail-on-revert = false
+contract ClockHandlerRevertsIgnoredTest is ClockHandlerTest {}
 "#,
     );
-    for contract in ["UnidentifiedTest", "ClockTest", "ClockHandlerTest"] {
+    for contract in
+        ["UnidentifiedTest", "ClockTest", "ClockHandlerTest", "ClockHandlerRevertsIgnoredTest"]
+    {
         cmd.forge_fuse()
             .args(["test", "--fuzz-seed", "1", "--mc", contract])
             .assert_failure()
