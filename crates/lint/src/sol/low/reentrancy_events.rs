@@ -13,6 +13,7 @@ use solar::{
     interface::Span,
     sema::{
         Gcx,
+        builtins::Builtin,
         hir::{
             self, BinOpKind, Block, ContractId, Expr, ExprKind, Function, FunctionId, LoopSource,
             Stmt, StmtKind,
@@ -307,10 +308,11 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 }
                 None => Exits::fallthrough(entry),
             },
-            // Inline assembly can call out and log; conservatively taint.
-            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) | StmtKind::Err(_) => {
-                Exits::fallthrough(true)
-            }
+            // Inline assembly taints only if it can reach a mutating Yul call or a creation.
+            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) => Exits::fallthrough(
+                entry || self.stmt_may_reach_external_call(stmt, &mut HashSet::new()),
+            ),
+            StmtKind::Err(_) => Exits::fallthrough(true),
         }
     }
 
@@ -470,11 +472,22 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             StmtKind::Return(expr) => {
                 expr.is_some_and(|expr| self.expr_may_reach_external_call(expr, seen))
             }
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            StmtKind::Block(block)
+            | StmtKind::UncheckedBlock(block)
+            | StmtKind::AssemblyBlock(block, _) => {
                 block.stmts.iter().any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
             }
             StmtKind::Loop(block, source) => {
                 loop_stmts(block, source).any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
+            }
+            StmtKind::Switch(switch) => {
+                self.expr_may_reach_external_call(switch.selector, seen)
+                    || switch.cases.iter().any(|case| {
+                        case.body
+                            .stmts
+                            .iter()
+                            .any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
+                    })
             }
             StmtKind::If(cond, then_stmt, else_stmt) => {
                 self.expr_may_reach_external_call(cond, seen)
@@ -491,7 +504,6 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                             .any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
                     })
             }
-            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) => true,
             StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {
                 false
             }
@@ -511,7 +523,19 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             return true;
         }
         let ExprKind::Call(callee, ..) = &expr.kind else { return false };
-        is_state_mutating_external_call(self.gcx, callee)
+        // Yul `staticcall` is excluded like other static calls.
+        let yul_interaction = matches!(
+            self.gcx.resolved_builtin(callee),
+            Some(
+                Builtin::YulCall
+                    | Builtin::YulCallcode
+                    | Builtin::YulDelegatecall
+                    | Builtin::YulCreate
+                    | Builtin::YulCreate2
+            )
+        );
+        yul_interaction
+            || is_state_mutating_external_call(self.gcx, callee)
             || self
                 .callees(callee)
                 .into_iter()
