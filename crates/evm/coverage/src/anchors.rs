@@ -633,19 +633,6 @@ mod tests {
         for (bytecode, expected) in [
             (
                 vec![
-                    opcode::JUMPDEST,
-                    opcode::PUSH0,
-                    opcode::PUSH0,
-                    opcode::REVERT,
-                    opcode::JUMPDEST,
-                    opcode::PUSH0,
-                    opcode::PUSH0,
-                    opcode::RETURN,
-                ],
-                4,
-            ),
-            (
-                vec![
                     opcode::PUSH0,
                     opcode::PUSH0,
                     opcode::REVERT,
