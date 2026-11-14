@@ -8,7 +8,7 @@ use crate::{
 use alloy_eips::BlockId;
 use alloy_network::{AnyNetwork, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
-    Address, B256, Bytes, U256, address,
+    Address, B256, Bytes, U256, address, bytes,
     hex::{self, FromHex},
 };
 use alloy_provider::{
@@ -3672,4 +3672,94 @@ async fn test_debug_trace_block_invalid_js_tracer_error() {
         error,
         "failed to evaluate JS code: SyntaxError: expected one of ')' or ',', got 'a' in CoverParenthesizedExpressionAndArrowParameterList at line 1, col 6 (native)"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_reports_consumed_gas() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let contract = Address::repeat_byte(0x55);
+    for limit in [100_000, 1_000_000] {
+        for (code, expected) in
+            [(bytes!("5f5000"), 21_004), (bytes!("5f5ffd"), 21_004), (bytes!("fe"), limit)]
+        {
+            api.anvil_set_code(contract, code).await.unwrap();
+            let request = TransactionRequest::default().from(sender).to(contract).gas_limit(limit);
+            let trace = provider
+                .debug_trace_call(
+                    request.clone().into(),
+                    BlockId::latest(),
+                    GethDebugTracingCallOptions::default(),
+                )
+                .await
+                .unwrap();
+            let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
+            assert_eq!(frame.gas, expected);
+            let trace = provider
+                .debug_trace_call(
+                    request.into(),
+                    BlockId::latest(),
+                    GethDebugTracingCallOptions::default().with_tracing_options(
+                        GethDebugTracingOptions::default()
+                            .with_tracer(GethDebugBuiltInTracerType::CallTracer.into()),
+                    ),
+                )
+                .await
+                .unwrap();
+            let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+            assert_eq!(frame.gas, U256::from(limit));
+            assert_eq!(frame.gas_used, U256::from(expected));
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_tracer_mined_gas_limits() {
+    for (config, charged_gas) in [
+        (NodeConfig::test(), [21_000, 21_000]),
+        #[cfg(feature = "monad")]
+        (NodeConfig::test_monad(), [100_000, 200_000]),
+    ] {
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+        let limits = [100_000, 200_000];
+        api.anvil_set_auto_mine(false).await.unwrap();
+        let mut hashes = Vec::new();
+        for (nonce, limit) in limits.into_iter().enumerate() {
+            let tx = TransactionRequest::default()
+                .from(sender)
+                .to(Address::repeat_byte(0x55))
+                .nonce(nonce as u64)
+                .gas_limit(limit);
+            hashes.push(api.send_transaction(WithOtherFields::new(tx)).await.unwrap());
+        }
+        api.mine_one().await.unwrap();
+        let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        assert_eq!(block.header.gas_used, charged_gas.iter().sum::<u64>());
+        let options = GethDebugTracingOptions::default()
+            .with_tracer(GethDebugBuiltInTracerType::CallTracer.into());
+        let mut expected = Vec::new();
+        for ((hash, limit), gas_used) in hashes.into_iter().zip(limits).zip(charged_gas) {
+            let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+            assert_eq!(receipt.gas_used(), gas_used);
+            let trace = provider.debug_trace_transaction(hash, options.clone()).await.unwrap();
+            let GethTrace::CallTracer(frame) = &trace else { panic!("expected call trace") };
+            assert_eq!(frame.gas, U256::from(limit));
+            assert_eq!(frame.gas_used, U256::from(gas_used));
+            expected.push(TraceResult::Success { result: trace, tx_hash: Some(hash) });
+        }
+        assert_eq!(
+            provider
+                .debug_trace_block_by_number(BlockNumberOrTag::Latest, options.clone())
+                .await
+                .unwrap(),
+            expected,
+        );
+        assert_eq!(
+            provider.debug_trace_block_by_hash(block.header.hash, options).await.unwrap(),
+            expected,
+        );
+    }
 }
