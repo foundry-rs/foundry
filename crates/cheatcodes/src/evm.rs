@@ -28,6 +28,7 @@ use foundry_common::{
     },
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
+use foundry_compilers::artifacts::{Storage, StorageType};
 use foundry_evm_core::{
     backend::{GLOBAL_FAIL_SLOT, RevertStateSnapshotAction, transaction_error},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
@@ -1264,23 +1265,7 @@ impl Cheatcode for getStorageSlotsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, variableName } = self;
 
-        let storage_layout = get_contract_data(ccx, *target, true)
-            .and_then(|(_, data)| data.storage_layout.as_ref().map(|layout| layout.clone()))
-            .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
-
-        trace!(storage = ?storage_layout.storage, "fetched storage");
-
-        let variable_name_lower = variableName.to_lowercase();
-        let storage = storage_layout
-            .storage
-            .iter()
-            .find(|s| s.label.to_lowercase() == variable_name_lower)
-            .ok_or_else(|| fmt_err!("variable '{variableName}' not found in storage layout"))?;
-
-        let storage_type = storage_layout
-            .types
-            .get(&storage.storage_type)
-            .ok_or_else(|| fmt_err!("storage type not found for variable {variableName}"))?;
+        let (storage, storage_type) = find_storage_variable(ccx, *target, variableName)?;
 
         if storage_type.encoding == ENCODING_MAPPING || storage_type.encoding == ENCODING_DYN_ARRAY
         {
@@ -1343,6 +1328,57 @@ impl Cheatcode for getStorageSlotsCall {
 
         Ok(slots.abi_encode())
     }
+}
+
+impl Cheatcode for getStorageSlotCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, variableName } = self;
+
+        let (storage, storage_type) = find_storage_variable(ccx, *target, variableName)?;
+
+        let slot = U256::from_str(&storage.slot).map_err(|_| {
+            fmt_err!("invalid slot {} format for variable {variableName}", storage.slot)
+        })?;
+        let offset = u64::try_from(storage.offset).map(U256::from).map_err(|_| {
+            fmt_err!("invalid offset {} for variable {variableName}", storage.offset)
+        })?;
+        let number_of_bytes = U256::from_str(&storage_type.number_of_bytes).map_err(|_| {
+            fmt_err!(
+                "invalid number_of_bytes {} for variable {variableName}",
+                storage_type.number_of_bytes
+            )
+        })?;
+
+        Ok((slot, offset, number_of_bytes).abi_encode_params())
+    }
+}
+
+/// Finds a variable by its (case-insensitive) label in the storage layout of the contract at
+/// `target`, returning its storage entry and type.
+fn find_storage_variable<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    target: Address,
+    variable_name: &str,
+) -> Result<(Storage, StorageType)> {
+    let storage_layout = get_contract_data(ccx, target, true)
+        .and_then(|(_, data)| data.storage_layout.clone())
+        .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
+
+    trace!(storage = ?storage_layout.storage, "fetched storage");
+
+    let variable_name_lower = variable_name.to_lowercase();
+    let storage = storage_layout
+        .storage
+        .iter()
+        .find(|s| s.label.to_lowercase() == variable_name_lower)
+        .ok_or_else(|| fmt_err!("variable '{variable_name}' not found in storage layout"))?;
+
+    let storage_type = storage_layout
+        .types
+        .get(&storage.storage_type)
+        .ok_or_else(|| fmt_err!("storage type not found for variable {variable_name}"))?;
+
+    Ok((storage.clone(), storage_type.clone()))
 }
 
 impl Cheatcode for getStorageAccessesCall {
