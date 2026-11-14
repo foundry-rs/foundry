@@ -366,7 +366,7 @@ evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "0b5a72e1cd9
     "serde",
 ] }
 evm2-macros = { git = "https://github.com/alloy-rs/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8" }
-# Tempo at `23ea582`, using upstream reth and evm2.
+# Tempo, using upstream reth and evm2.
 tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "35d8b937fba89ae0bfdea1edf735fb6f8aa41c23", default-features = false }
 tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "35d8b937fba89ae0bfdea1edf735fb6f8aa41c23", default-features = false, features = [
     "serde",
@@ -374,7 +374,7 @@ tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "35d8b937fba
 ] }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "35d8b937fba89ae0bfdea1edf735fb6f8aa41c23", default-features = false }
 # Must match tempoxyz/tempo's reth-evm rev.
-reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "b05f9a86df7f45568f8c2fcc42512f702f548357", features = [
+reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "31d05e14329ec25e0d559f901502c959aa04ddd8", features = [
     "account-ext",
 ] }
 # Op and Base evm2 type families, on foundry-rs/evm2-networks at `b6116c7`.
