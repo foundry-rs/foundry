@@ -81,7 +81,7 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// Whether to print all opcode traces into the console. Useful for debugging the EVM.
     pub print: Option<bool>,
     /// The chisel state inspector.
-    pub chisel_state: Option<usize>,
+    pub chisel_state: Option<ChiselState>,
     /// Whether to enable call isolation.
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
@@ -172,8 +172,8 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub const fn chisel_state(mut self, final_pc: usize) -> Self {
-        self.chisel_state = Some(final_pc);
+    pub fn chisel_state(mut self, final_pc: Option<usize>) -> Self {
+        self.chisel_state = Some(ChiselState::new(final_pc));
         self
     }
 
@@ -809,9 +809,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub fn set_chisel(&mut self, final_pc: usize) {
-        self.chisel_state = Some(ChiselState::new(final_pc).into());
-        self.refresh_static_step_end_dispatch();
+    pub fn set_chisel(&mut self, chisel: ChiselState) {
+        self.chisel_state = Some(chisel.into());
+        self.refresh_static_opcode_dispatch();
     }
 
     /// Set whether to enable the line coverage collector.
@@ -1867,8 +1867,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
             call_inspectors!(
                 [
-                    // These are sorted in definition order.
-                    &mut inner.chisel_state,
+                    // These are sorted in definition order. Chisel dumps the running
+                    // transaction, not a nested one such as `vm.executeTransaction`'s.
+                    inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
                     &mut inner.printer,
                     &mut inner.revert_diag,
                     &mut inner.script_execution_inspector,
@@ -1908,7 +1909,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             call_inspectors!(
                 [
                     // These are sorted in definition order.
-                    &mut inner.chisel_state,
+                    inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
                     &mut inner.printer,
                     &mut inner.revert_diag,
                     &mut inner.tracer,
@@ -2095,9 +2096,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         let inner = &mut *self.inner;
-        call_inspectors!([&mut inner.line_coverage, &mut inner.tracer], |inspector| {
-            Inspector::<TypesFor<FEN>>::initialize_interp(&mut **inspector, interp)
-        },);
+        call_inspectors!(
+            [
+                inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
+                &mut inner.line_coverage,
+                &mut inner.tracer,
+            ],
+            |inspector| Inspector::<TypesFor<FEN>>::initialize_interp(&mut **inspector, interp),
+        );
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
             cheats.initialize_interp_hook(interp);
         }
@@ -2911,8 +2917,8 @@ mod tests {
         assert!(!stack.inner.has_static_step_inspectors);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
-        stack.set_chisel(0);
-        assert!(!stack.inner.has_static_step_inspectors);
+        stack.set_chisel(ChiselState::new(None));
+        assert!(stack.inner.has_static_step_inspectors);
         assert!(stack.inner.has_static_step_end_inspectors);
     }
 
