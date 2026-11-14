@@ -54,6 +54,9 @@ pub(crate) struct PathState {
     pub(crate) first_reverted_callee: Option<Address>,
     /// Assertion cheatcodes set this even when their revert is caught by the handler.
     pub(crate) assertion_failed: bool,
+    /// Set when a top-level revert fails the path through its data or a failed `vm.assert*`, or
+    /// when the path ends with the global fail slot set.
+    pub(crate) failed_at_end: bool,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -139,6 +142,7 @@ impl PathState {
             first_failed_callee: None,
             first_reverted_callee: None,
             assertion_failed: false,
+            failed_at_end: false,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),

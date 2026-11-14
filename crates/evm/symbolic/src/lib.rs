@@ -20,7 +20,7 @@ use evm2::{
     EvmFeatures, SpecId,
     bytecode::{Bytecode, JumpTable},
     constants::{CALL_DEPTH_LIMIT, EIP7702_BYTECODE_LEN},
-    interpreter::{GasTracker, op as opcode},
+    interpreter::{GasTracker, InstrStop, op as opcode},
     precompiles::{
         Precompiles, blake2, bls12_381, bn254, hash, identity, kzg_point_evaluation, modexp,
         secp256k1, secp256r1,
@@ -32,7 +32,7 @@ use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLa
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     core::{abi::console, evm::FoundryEvmNetwork},
-    executors::Executor,
+    executors::{Executor, RawCallResult},
     inspectors::cheatcodes::{decode_cheatcode_call, parse_value},
 };
 use serde::{Deserialize, Serialize};
@@ -214,6 +214,11 @@ pub enum SymbolicRunResult {
         calldata: Bytes,
         /// Return data of each `svm.*` helper call on the failing path, in call order.
         svm_returns: Vec<Bytes>,
+        /// Whether symbolic execution prunes every other way this path could revert at the top
+        /// level, which [`replay_left_failing_path`] relies on. False when the path failed a
+        /// `vm.expectEmit` or another cheatcode expectation, after which the test can revert
+        /// with its own data.
+        prunes_other_reverts: bool,
         /// Execution counters collected before the counterexample was returned.
         stats: SymbolicStats,
     },
@@ -609,4 +614,22 @@ enum DeferredIncomplete {
     Unsupported(&'static str),
     SolverUnknown,
     HardArithmetic,
+}
+
+/// Returns whether the concrete replay of a `check*` or `prove*` counterexample left the path
+/// the solver model was found for.
+///
+/// On a path that prunes other reverts, a top-level revert fails the test only after a failed
+/// `vm.assert*` or with an `assert` panic, an assertion-failure message or a `CheatcodeError`,
+/// such as an unmet `vm.expectRevert`. A replay that reverts any other way failed for a reason
+/// the solver model was not found for.
+pub fn replay_left_failing_path<FEN: FoundryEvmNetwork>(
+    prunes_other_reverts: bool,
+    replay: &RawCallResult<FEN>,
+) -> bool {
+    prunes_other_reverts
+        && replay.exit_reason == Some(InstrStop::Revert)
+        && replay.failed_assertion.is_none()
+        && !replay.result.starts_with(&<Vm::CheatcodeError as alloy_sol_types::SolError>::SELECTOR)
+        && !runtime::is_assertion_revert(&replay.result)
 }
