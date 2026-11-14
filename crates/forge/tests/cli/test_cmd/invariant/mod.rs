@@ -1604,6 +1604,152 @@ contract SubEqualityCorpusTest is Test {
 "#]]);
 }
 
+// Cmp mutations solve a handler's `balance + amount == value`, where the balance is a large value
+// read from another contract.
+#[forgetest_init]
+fn invariant_cmp_solves_balance_offset(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.dictionary.include_storage = false;
+        config.invariant.dictionary.include_push_bytes = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+    });
+    prj.add_test(
+        "BalanceCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract BalanceToken {
+    mapping(address => uint256) public balanceOf;
+
+    constructor(address bob) {
+        balanceOf[bob] = 1e24;
+    }
+}
+
+contract BalanceHandler {
+    address constant BOB = address(0xB0B);
+    BalanceToken token = new BalanceToken(BOB);
+    bool public reached;
+
+    // Writes storage only on a hit, so runs do not leave snapshots that later runs resume from
+    // without corpus mutations.
+    function deposit(uint256 amount) external {
+        uint256 projected;
+        unchecked {
+            projected = token.balanceOf(BOB) + amount;
+        }
+        uint256 value = uint256(keccak256(abi.encode(address(this))));
+        if (projected == value) reached = true;
+    }
+}
+
+contract BalanceCorpusTest is Test {
+    BalanceHandler handler;
+
+    function setUp() public {
+        handler = new BalanceHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_balance_is_not_reached() public view {
+        assertFalse(handler.reached());
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "BalanceCorpusTest", "--fuzz-seed", "0x574"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
+}
+
+// Cmp mutations solve a handler comparison from a reloaded corpus shared by several workers,
+// whose replay already covers it.
+#[forgetest_init]
+fn invariant_cmp_solves_from_replayed_corpus(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.dictionary.include_storage = false;
+        config.invariant.dictionary.include_push_bytes = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+    });
+    prj.add_test(
+        "ReplayCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ReplayHandler {
+    bool public reached;
+
+    function check(uint256 x) external {
+        uint256 value = uint256(keccak256(abi.encode(address(this))));
+        unchecked {
+            if (value - x == 7) reached = true;
+        }
+    }
+}
+
+contract ReplayCorpusTest is Test {
+    ReplayHandler handler;
+
+    function setUp() public {
+        handler = new ReplayHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_target_is_not_reached() public view {
+        assertFalse(handler.reached());
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ReplayCorpusTest", "--fuzz-seed", "1"]).assert_success();
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
+    });
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn parallel_invariant_corpus_uses_worker_dirs(prj: _, cmd: _) {
     prj.update_config(|config| {
