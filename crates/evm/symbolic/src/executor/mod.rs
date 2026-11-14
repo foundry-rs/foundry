@@ -293,7 +293,15 @@ impl SymbolicExecutor {
                 });
             }
             match outcome.status {
-                CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
+                // Like Forge's internal expect-revert mode, a call that succeeds leaves the
+                // expectation pending for a later revert.
+                CallStatus::Success => {
+                    return Ok(JoinedCallOutcome::Success {
+                        parent,
+                        child: outcome.state,
+                        unmet_expected_revert: None,
+                    });
+                }
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
                     let reverter = expected.reverted_by(failed_callee, parent.first_failed_callee);
                     if !self.expected_revert_matches(

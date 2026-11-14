@@ -4163,6 +4163,135 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// Like Forge, a pending `vm.expectRevert` stays pending during the next call, so frames below it
+// cannot set another, while storage hook callbacks run with it set aside.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_nested_registration_is_rejected(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_nested_registration_is_rejected");
+
+    prj.add_test(
+        "NestedExpectRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract NestedReverter {
+    function fail() external pure {
+        revert("x");
+    }
+}
+
+contract NestedCreated {}
+
+contract NestedHookedStore {
+    uint256 value;
+
+    function store() external {
+        value = 1;
+        revert("zzz");
+    }
+}
+
+contract NestedExpectRevert is Test {
+    NestedReverter reverter;
+    NestedHookedStore hooked;
+
+    function setUp() public {
+        reverter = new NestedReverter();
+        hooked = new NestedHookedStore();
+    }
+
+    function expectThenRevert() external {
+        vm.expectRevert(bytes("x"));
+        reverter.fail();
+        revert("zzz");
+    }
+
+    function expectThenReturn() external {
+        vm.expectRevert(bytes("x"));
+        reverter.fail();
+    }
+
+    function expectPartialThenReturn() external {
+        vm.expectPartialRevert(bytes4(0x08c379a0));
+        reverter.fail();
+    }
+
+    function callExpectThenReturn() external {
+        this.expectThenReturn();
+    }
+
+    function catchExpectRevert() external {
+        try vm.expectRevert(bytes("x")) {} catch {}
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32) external {
+        vm.expectRevert(bytes("x"));
+    }
+
+    function checkNestedExpectRevertMismatch() public {
+        vm.expectRevert(bytes("zzz"));
+        this.expectThenRevert();
+    }
+
+    function checkNestedExpectRevertTwoLevels() public {
+        vm.expectRevert(
+            bytes("vm.expectRevert: you must call another function prior to expecting a second revert")
+        );
+        this.callExpectThenReturn();
+    }
+
+    function checkNestedExpectPartialRevert() public {
+        vm.expectRevert(
+            bytes(
+                "vm.expectPartialRevert: you must call another function prior to expecting a second revert"
+            )
+        );
+        this.expectPartialThenReturn();
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkNestedExpectRevertCaughtInternal() public {
+        vm.expectRevert(bytes("x"));
+        this.catchExpectRevert();
+        reverter.fail();
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkNestedExpectRevertCreateInternal() public {
+        vm.expectRevert(bytes("x"));
+        new NestedCreated();
+        reverter.fail();
+    }
+
+    function checkNestedExpectRevertInStorageHook() public {
+        StorageHookVm(address(vm)).registerSstoreHook(address(hooked), this.onStore.selector);
+        vm.expectRevert(bytes("zzz"));
+        hooked.store();
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkNested"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/NestedExpectRevert.t.sol:NestedExpectRevert
+[PASS] checkNestedExpectPartialRevert() ([METRICS])
+[PASS] checkNestedExpectRevertCaughtInternal() ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedExpectRevertCreateInternal() ([METRICS])
+[PASS] checkNestedExpectRevertInStorageHook() ([METRICS])
+[FAIL: Error != expected error: vm.expectRevert: you must call another function prior to expecting a second revert != zzz; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedExpectRevertMismatch() ([METRICS])
+[PASS] checkNestedExpectRevertTwoLevels() ([METRICS])
+Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn symbolic_vm_expect_revert_missing_is_counterexample(prj: _, cmd: _) {
     if !z3_available() {
