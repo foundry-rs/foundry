@@ -861,6 +861,285 @@ Exiting debugger.
 "#]]);
 }
 
+const SAME_NAME_TOKEN_B: &str = r#"
+library LibB {
+    function thrice(uint256 value) public pure returns (uint256) {
+        return value * 3;
+    }
+}
+
+contract Token {
+    uint256 public beta;
+
+    constructor() {
+        beta = LibB.thrice(1);
+    }
+}
+"#;
+
+// Adds two contracts named `Token`: a plain one in `src/a` and one that uses a public library in
+// `src/b`.
+fn add_same_name_tokens(prj: &foundry_test_utils::TestProject) {
+    prj.add_source(
+        "a/Token.sol",
+        r#"
+contract Token {
+    uint256 public alpha;
+
+    constructor() {
+        alpha = 1;
+    }
+}
+"#,
+    );
+    prj.add_source("b/Token.sol", SAME_NAME_TOKEN_B);
+}
+
+// Deploys `LibB` and the `src/b` token linked to it. Returns the token's JSON output.
+fn create_linked_token(
+    cmd: &mut foundry_test_utils::TestCommand,
+    endpoint: &str,
+) -> serde_json::Value {
+    let library = forge_create(cmd, endpoint, &["src/b/Token.sol:LibB"]);
+    let library = format!("src/b/Token.sol:LibB:{}", library["deployedTo"].as_str().unwrap());
+    forge_create(cmd, endpoint, &["src/b/Token.sol:Token", "--libraries", &library])
+}
+
+// Runs `forge create` with `args` and returns its JSON output.
+fn forge_create(
+    cmd: &mut foundry_test_utils::TestCommand,
+    endpoint: &str,
+    args: &[&str],
+) -> serde_json::Value {
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            endpoint,
+            "--broadcast",
+            "--json",
+        ])
+        .args(args)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    serde_json::from_str(&output).unwrap()
+}
+
+// Local artifacts aren't linked, so the init code of a contract that uses a public library matches
+// only when library addresses are skipped. Its source must still be found when another artifact
+// has its name.
+#[forgetest]
+async fn cast_run_debug_soldb_same_name_linked_creation(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    add_same_name_tokens(&prj);
+    let token = create_linked_token(&mut cmd, &endpoint);
+
+    cast_run_debug(&mut cmd, &prj, &endpoint, &token, "break src/b/Token.sol:14\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/b/Token.sol:14
+Breakpoint #1 hit at step [..], src/b/Token.sol:14
+src/b/Token.sol:14 in constructor  (step [..])
+   14 |         beta = LibB.thrice(1);
+Exiting debugger.
+
+"#]]);
+}
+
+// A comment changes the metadata hash, so the deployed init code of a linked contract no longer
+// matches the local artifact. Its source must still be found when another artifact has its name.
+#[forgetest]
+async fn cast_run_debug_soldb_same_name_edited_metadata(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    add_same_name_tokens(&prj);
+    let token = create_linked_token(&mut cmd, &endpoint);
+    prj.add_source("b/Token.sol", &format!("{SAME_NAME_TOKEN_B}// A comment.\n"));
+
+    cast_run_debug(&mut cmd, &prj, &endpoint, &token, "break src/b/Token.sol:14\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/b/Token.sol:14
+Breakpoint #1 hit at step [..], src/b/Token.sol:14
+src/b/Token.sol:14 in constructor  (step [..])
+   14 |         beta = LibB.thrice(1);
+Exiting debugger.
+
+"#]]);
+}
+
+// Runs `cast send` from the first Anvil account. Returns the JSON receipt.
+fn cast_send(
+    cmd: &mut foundry_test_utils::TestCommand,
+    endpoint: &str,
+    args: &[&str],
+) -> serde_json::Value {
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            endpoint,
+            "--json",
+        ])
+        .args(args)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    serde_json::from_str(&output).unwrap()
+}
+
+// Builds `cast run --debug --with-local-artifacts` for the transaction in `receipt`.
+// `stdin` holds the debugger commands.
+fn cast_run_debug<'a>(
+    cmd: &'a mut foundry_test_utils::TestCommand,
+    prj: &foundry_test_utils::TestProject,
+    endpoint: &str,
+    receipt: &serde_json::Value,
+    stdin: &str,
+) -> &'a mut foundry_test_utils::TestCommand {
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "run",
+            receipt["transactionHash"].as_str().unwrap(),
+            "--rpc-url",
+            endpoint,
+            "--debug",
+            "--with-local-artifacts",
+        ])
+        .stdin(stdin)
+}
+
+// A linked constructor returns another contract's runtime, so the constructor and the runtime
+// must each show their own source.
+#[forgetest]
+async fn cast_run_debug_soldb_linked_creation_returns_other_runtime(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    prj.add_source(
+        "Factory.sol",
+        r#"
+library LibA {
+    function twice(uint256 value) public pure returns (uint256) {
+        return value * 2;
+    }
+}
+
+contract B {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract A {
+    constructor() {
+        uint256 doubled = LibA.twice(1);
+        bytes memory runtime = type(B).runtimeCode;
+        assembly {
+            sstore(0, doubled)
+            return(add(runtime, 32), mload(runtime))
+        }
+    }
+}
+"#,
+    );
+
+    let library = forge_create(&mut cmd, &endpoint, &["src/Factory.sol:LibA"]);
+    let library = format!("src/Factory.sol:LibA:{}", library["deployedTo"].as_str().unwrap());
+    let a = forge_create(&mut cmd, &endpoint, &["src/Factory.sol:A", "--libraries", &library]);
+    let set =
+        cast_send(&mut cmd, &endpoint, &[a["deployedTo"].as_str().unwrap(), "set(uint256)", "7"]);
+
+    cast_run_debug(&mut cmd, &prj, &endpoint, &a, "break src/Factory.sol:20\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/Factory.sol:20
+Breakpoint #1 hit at step [..], src/Factory.sol:20
+src/Factory.sol:20 in constructor  (step [..])
+   20 |         uint256 doubled = LibA.twice(1);
+Exiting debugger.
+
+"#]]);
+
+    cast_run_debug(&mut cmd, &prj, &endpoint, &set, "break src/Factory.sol:14\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/Factory.sol:14
+Breakpoint #1 hit at step [..], src/Factory.sol:14
+src/Factory.sol:14 in set  (step [..])
+   14 |         value = newValue;
+Exiting debugger.
+
+"#]]);
+}
+
+// Two `Token` contracts whose runtimes differ only in metadata, so after an edit the runtime
+// matches both and only the init code shows which one was deployed.
+#[forgetest]
+async fn cast_run_debug_soldb_same_name_metadata_only_runtime(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let token = |value: u32| {
+        format!(
+            r#"
+contract Token {{
+    uint256 public value;
+
+    constructor() {{
+        value = {value};
+    }}
+
+    function set(uint256 newValue) external {{
+        value = newValue;
+    }}
+}}
+"#
+        )
+    };
+    prj.add_source("a/Token.sol", &token(1));
+    prj.add_source("b/Token.sol", &token(2));
+
+    let b = forge_create(&mut cmd, &endpoint, &["src/b/Token.sol:Token"]);
+    let set =
+        cast_send(&mut cmd, &endpoint, &[b["deployedTo"].as_str().unwrap(), "set(uint256)", "7"]);
+    prj.add_source("b/Token.sol", &format!("{}// A comment.\n", token(2)));
+
+    cast_run_debug(&mut cmd, &prj, &endpoint, &b, "break src/b/Token.sol:8\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/b/Token.sol:8
+Breakpoint #1 hit at step [..], src/b/Token.sol:8
+src/b/Token.sol:8 in constructor  (step [..])
+    8 |         value = 2;
+Exiting debugger.
+
+"#]]);
+
+    // The runtime matches both contracts, so the call shows neither source.
+    cast_run_debug(&mut cmd, &prj, &endpoint, &set, "break src/a/Token.sol:12\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+No sources matched the executed contracts; stepping is by instruction.
+...
+"#]]);
+}
+
 // A forked Anvil replays upstream transactions with the hardfork of the upstream chain: Cancun
 // charges 21000 where EIP-2780 charges 15000.
 #[casttest]

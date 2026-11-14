@@ -3,7 +3,7 @@
 use alloy_primitives::{B256, Bytes, U256, hex, keccak256};
 use foundry_compilers::{
     Project,
-    artifacts::{BytecodeObject, SolcLanguage},
+    artifacts::{BytecodeObject, Offsets, SolcLanguage},
     error::SolcError,
     flatten::{Flattener, FlattenerError},
 };
@@ -84,6 +84,29 @@ pub fn has_metadata_hash(bytecode: &[u8]) -> bool {
         return false;
     };
     entries.iter().any(|(key, _)| matches!(key.as_text(), Some("ipfs" | "bzzr0" | "bzzr1")))
+}
+
+/// Returns the byte ranges of all solc or solar metadata hashes in `bytecode`.
+/// Creation code can hold several: its runtime's and those of contracts it deploys.
+pub fn metadata_hash_offsets(bytecode: &[u8]) -> Vec<Offsets> {
+    // Each key starts with its CBOR length byte. See
+    // <https://docs.soliditylang.org/en/latest/metadata.html#encoding-of-the-metadata-hash-in-the-bytecode>
+    const KEYS: [&[u8]; 3] = [b"\x64ipfs", b"\x65bzzr0", b"\x65bzzr1"];
+    let mut offsets = Vec::new();
+    for key in KEYS {
+        let mut start = 0;
+        while let Some(found) = bytecode[start..].windows(key.len()).position(|w| w == key) {
+            let header = start + found + key.len();
+            // `0x58` marks bytes with a one-byte length. Then come the length and the hash.
+            if let [0x58, len, ..] = bytecode[header..]
+                && header + 2 + len as usize <= bytecode.len()
+            {
+                offsets.push(Offsets { start: (header + 2) as u32, length: len as u32 });
+            }
+            start = header;
+        }
+    }
+    offsets
 }
 
 /// Strips all __$xxx$__ placeholders from the bytecode if it's an unlinked bytecode.
