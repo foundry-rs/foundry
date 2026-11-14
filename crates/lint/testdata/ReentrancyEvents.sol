@@ -644,3 +644,64 @@ contract SuperChild is SuperPureOverride {
         emit Counter(0);
     }
 }
+
+// Inline assembly taints only if it can reach `call`, `callcode`, `delegatecall`, `create` or
+// `create2`, also through a Yul function or `switch`. Yul `staticcall` is excluded.
+contract AssemblyEvents {
+    event Tick();
+
+    function _tstore() private {
+        assembly ("memory-safe") {
+            tstore(0, 1)
+        }
+    }
+
+    function emitAfterAssemblyWithoutCall() external {
+        uint256 x;
+        assembly ("memory-safe") {
+            x := keccak256(mload(0x40), 0x20)
+        }
+        _tstore();
+        emit Tick();
+    }
+
+    function emitAfterAssemblyStaticcall(address target) external {
+        assembly {
+            pop(staticcall(gas(), target, 0, 0, 0, 0))
+        }
+        emit Tick();
+    }
+
+    function emitAfterAssemblyCall(address target) external {
+        assembly {
+            pop(call(gas(), target, 0, 0, 0, 0, 0))
+        }
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterAssemblyCreate() external {
+        assembly {
+            pop(create(0, 0, 0))
+        }
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterYulFunctionCall(address target) external {
+        assembly {
+            function forward(t) {
+                pop(delegatecall(gas(), t, 0, 0, 0, 0))
+            }
+            forward(target)
+        }
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterYulSwitchCall(address target, uint256 mode) external {
+        assembly {
+            switch mode
+            case 0 { pop(callcode(gas(), target, 0, 0, 0, 0, 0)) }
+            default { pop(create2(0, 0, 0, 0)) }
+        }
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+}
