@@ -1409,19 +1409,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .collect()
     }
 
-    /// Replays a single-call minimization candidate and checks it fails for `expected_reason`.
+    /// Replays a single call with its failure identity recorded and checks that it fails, the
+    /// same way as `expected_identity` when given, see [`RawCallResult::failure_identity`].
     fn replay_confirmed_symbolic_single_call(
         &self,
         call: &SymbolicCounterexampleCall,
-        expected_reason: Option<&str>,
+        expected_identity: Option<B256>,
     ) -> Result<(RawCallResult<FEN>, Option<String>), String> {
-        let Some(expected_reason) = expected_reason else {
-            return Err("candidate replay has no stable failure reason to compare".to_string());
-        };
-
         let mut executor = self
             .clone_executor_with_svm_returns(&call.svm_returns)
             .map_err(|err| err.to_string())?;
+        executor.inspector_mut().collect_failure_identity(true);
         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())
             .map_err(|err| err.to_string())?;
         if svm_returns_exhausted(&call.svm_returns, &raw) {
@@ -1434,14 +1432,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return Err(format!("vm.skip during concrete replay: {reason}"));
         }
 
+        if expected_identity.is_some_and(|expected| raw.failure_identity != Some(expected)) {
+            return Err("candidate replay failed a different way".to_string());
+        }
         let reason = (raw.reverted || raw.exit_reason.is_some_and(|reason| !reason.is_success()))
             .then(|| self.revert_decoder().decode(&raw.result, raw.exit_reason));
-        if reason.as_deref() != Some(expected_reason) {
-            return Err(format!(
-                "candidate replay failed with different reason: expected `{expected_reason}`, got `{}`",
-                reason.as_deref().unwrap_or("")
-            ));
-        }
         Ok((raw, reason))
     }
 
@@ -2630,21 +2625,27 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut final_raw = raw;
         let mut final_reason = reason;
         let mut minimization = None;
+        // Recording the identity skips cheatcodes with host effects, so it uses its own replay,
+        // which must reproduce the reported failure.
         if final_reason.is_some()
+            && let Some(identity) = self
+                .replay_confirmed_symbolic_single_call(&original_call, None)
+                .ok()
+                .filter(|(_, reason)| *reason == final_reason)
+                .and_then(|(raw, _)| raw.failure_identity)
             && let Some(candidate) = minimize_single_call_counterexample(
                 func,
                 &original_call,
                 self.tcfg.config.invariant.shrink_run_limit as usize,
                 |candidate| {
-                    self.replay_confirmed_symbolic_single_call(candidate, final_reason.as_deref())
-                        .is_ok()
+                    self.replay_confirmed_symbolic_single_call(candidate, Some(identity)).is_ok()
                 },
             )
         {
             if candidate.changed() {
                 match self.replay_confirmed_symbolic_single_call(
                     &candidate.minimized_call,
-                    final_reason.as_deref(),
+                    Some(identity),
                 ) {
                     Ok((raw, reason)) => {
                         final_call = candidate.minimized_call.clone();
@@ -4959,7 +4960,27 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         progress.as_ref(),
                         Some((position, total_broken)),
                     ) {
-                        Ok(replayed) if !replayed.call_sequence.is_empty() => {
+                        // An `afterInvariant` failure can need no calls, so its empty sequence is
+                        // still persisted when replaying it fails in that hook.
+                        Ok(replayed)
+                            if !replayed.call_sequence.is_empty()
+                                || (case_data.after_invariant
+                                    && self
+                                        .replay_persisted_call_sequence(
+                                            &invariant_contract,
+                                            &mut [],
+                                            false,
+                                            storage,
+                                        )
+                                        .is_ok_and(|(_, outcome)| {
+                                            matches!(
+                                                outcome.failure_site,
+                                                Some(
+                                                    CheckSequenceFailureSite::AfterInvariant { .. }
+                                                )
+                                            )
+                                        })) =>
+                        {
                             if single_failure {
                                 fork_block_number =
                                     replayed.fork_block_number.or(fork_block_number);

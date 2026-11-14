@@ -1,4 +1,10 @@
 //! Monad on evm2, using `monad-evm2`.
+//!
+//! Ordinary transactions charge the full gas limit, including on revert. The runtime
+//! keeps that charge in `MonadTxResultExt::charged_gas`; evm2's gas consumption and
+//! calldata floor retain their ordinary meanings for simulations and isolated frames.
+//! Native reserve-balance enforcement remains opt-in, while tracking stays active.
+//! MIP-8 page warmth derives from native slot warmth, including cheatcode accesses.
 
 use super::{
     EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks,
@@ -8,7 +14,7 @@ use super::{
 use alloy_consensus::{TxLegacy, transaction::Recovered};
 use alloy_network::{AnyRpcTransaction, Ethereum};
 use alloy_primitives::{
-    Address, KECCAK256_EMPTY, U256,
+    Address,
     map::{AddressMap, HashSet},
 };
 use alloy_rpc_types::TransactionRequest;
@@ -22,7 +28,7 @@ use monad_evm2::{
     MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
     MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_tx_registry, monad_version,
     protocol_system_call,
-    reserve_balance::{reserve_account, sync_reserve_balance},
+    reserve_balance::{rebase_reserve_balance_with_originals, sync_reserve_balance},
     staking::constants::SYSTEM_ADDRESS,
 };
 
@@ -219,28 +225,9 @@ impl FoundryExecutionHooks for MonadEvmTypes {
         evm: &mut Evm<'_, Self>,
         original: &AddressMap<Option<AccountInfo>>,
     ) {
-        // Foundry's writes, such as `deal` rebasing earlier journal entries, are not reserve
-        // balance events.
-        let journal_len = evm.state().journal().len();
-        evm.ext_mut().reserve_balance_sync.begin(journal_len);
-        // Thresholds derive from the transaction-start balance, which a fork switch accepted into
-        // the persistent accounts' new original.
-        let tracked = evm.ext().reserve_balance.tracked_addresses().copied().collect::<Vec<_>>();
-        let mut views = Vec::with_capacity(tracked.len());
-        for address in tracked {
-            // A database error surfaces again when execution next reads the account.
-            let Ok(mut view) = reserve_account(evm, address) else { continue };
-            if let Some(info) = original.get(&address) {
-                view.original_balance = info.as_ref().map_or(U256::ZERO, |info| info.balance);
-                view.original_code_hash =
-                    info.as_ref().map_or(KECCAK256_EMPTY, |info| info.code_hash);
-            }
-            views.push((address, view));
-        }
-        let ext = evm.ext_mut();
-        let chain = ext.chain.clone();
-        ext.reserve_balance.rebase(&chain, |address| {
-            views.iter().find(|(tracked, _)| *tracked == address).map(|(_, view)| *view)
-        });
+        // Preserve persistent accounts' transaction-start fields for every later reserve read,
+        // including accounts first debited after the switch. Accepted writes are not new debits.
+        // A database error surfaces again when execution next reads the account.
+        let _ = rebase_reserve_balance_with_originals(evm, original);
     }
 }

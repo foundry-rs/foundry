@@ -55,8 +55,8 @@ use tempo_primitives::{
     SignatureType, TempoTxEnvelope,
     transaction::{
         ConfigurableAccountConfig, ConfigurableAccountOwner, ConfigurableAccountSignature,
-        MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature, TempoSignature,
-        configurable_account_digest, tt_signature::WebAuthnSignature,
+        MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature, TEMPO_TX_TYPE_ID, TempoSignature,
+        TempoTransaction, configurable_account_digest, tt_signature::WebAuthnSignature,
     },
 };
 
@@ -167,6 +167,19 @@ pub async fn detect_configurable_account<P: Provider<TempoNetwork>>(
          sent its first transaction yet"
     );
     Ok(config)
+}
+
+/// Tells whether `config` is still the configuration of `account` at the latest block. Fails when
+/// the commitment cannot be read, so that a failing RPC is not taken for a changed configuration.
+pub async fn has_config<P: Provider<TempoNetwork>>(
+    provider: &P,
+    account: Address,
+    config: &ConfigurableAccountConfig,
+) -> Result<bool> {
+    let commitment = config_commitment(provider, account, BlockId::latest())
+        .await?
+        .ok_or_else(|| eyre::eyre!(T14_REQUIRED))?;
+    Ok(check_config(account, config, commitment).is_ok())
 }
 
 /// Checks that `config` is the current configuration of `account`, whose stored commitment is
@@ -355,6 +368,31 @@ pub fn simulation_spec(
     };
     approvals.sort_by_key(|approval| approval.owner);
     ConfigurableAccountSimulationSpec { signer: Some(account), config: config.clone(), approvals }
+}
+
+/// Makes `tx` a Tempo transaction from `account`, whose gas estimate models the owner quorum of
+/// `spec`. A `0x05` signature only signs Tempo (`0x76`) transactions.
+pub fn prepare_request<N: Network>(
+    tx: &mut N::TransactionRequest,
+    account: Address,
+    spec: ConfigurableAccountSimulationSpec,
+) where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    tx.set_from(account);
+    if tx.nonce_key().is_none() {
+        tx.set_nonce_key(U256::ZERO);
+    }
+    tx.set_configurable_account_simulation(spec);
+}
+
+/// Tells whether a call to `to` with `input` updates the configuration of the account that sends
+/// it.
+pub fn updates_config(to: Option<Address>, input: Option<&Bytes>) -> bool {
+    to == Some(CONFIGURABLE_ACCOUNT_ADDRESS)
+        && input.is_some_and(|input| {
+            input.starts_with(&IConfigurableAccount::updateConfigCall::SELECTOR)
+        })
 }
 
 /// Returns the largest owner quorum among `owners`, or the smallest one unless `largest` is set,
@@ -567,19 +605,52 @@ fn decode_binary(value: &str) -> Result<Vec<u8>> {
     Ok(BASE64URL.decode(value)?)
 }
 
-/// A configuration as `cast wallet owners --json` prints it.
-#[derive(Deserialize)]
-struct ConfigJson {
+/// A configuration as `cast wallet owners --json` prints it, and as `forge script` saves it for
+/// owners on other machines.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigJson {
     salt: B256,
     version: u64,
     threshold: u8,
     owners: Vec<OwnerJson>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct OwnerJson {
     owner: Address,
     weight: u8,
+}
+
+impl From<&ConfigurableAccountConfig> for ConfigJson {
+    fn from(config: &ConfigurableAccountConfig) -> Self {
+        Self {
+            salt: config.salt,
+            version: config.version,
+            threshold: config.threshold,
+            owners: config
+                .owners
+                .iter()
+                .map(|owner| OwnerJson { owner: owner.owner, weight: owner.weight })
+                .collect(),
+        }
+    }
+}
+
+impl TryFrom<ConfigJson> for ConfigurableAccountConfig {
+    type Error = eyre::Report;
+
+    /// Sorts the owners by address and validates the configuration.
+    fn try_from(json: ConfigJson) -> Result<Self> {
+        let ConfigJson { salt, version, threshold, owners } = json;
+        let mut owners = owners
+            .into_iter()
+            .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
+            .collect::<Vec<_>>();
+        owners.sort_by_key(|owner| owner.owner);
+        let config = Self { salt, version, threshold, owners };
+        config.validate().map_err(|err| eyre::eyre!("invalid configuration: {err}"))?;
+        Ok(config)
+    }
 }
 
 /// Parses a configuration given as JSON, or as the path of a JSON file: `salt`, `version`,
@@ -597,16 +668,23 @@ pub fn parse_config(value: &str) -> Result<ConfigurableAccountConfig> {
     if let Some(data) = json.get_mut("data") {
         json = data.take();
     }
-    let ConfigJson { salt, version, threshold, owners } =
-        serde_json::from_value(json).wrap_err("invalid configurable account configuration")?;
-    let mut owners = owners
-        .into_iter()
-        .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
-        .collect::<Vec<_>>();
-    owners.sort_by_key(|owner| owner.owner);
-    let config = ConfigurableAccountConfig { salt, version, threshold, owners };
-    config.validate().map_err(|err| eyre::eyre!("invalid configuration: {err}"))?;
-    Ok(config)
+    serde_json::from_value::<ConfigJson>(json)
+        .wrap_err("invalid configurable account configuration")?
+        .try_into()
+}
+
+/// Decodes an unsigned Tempo transaction as `cast mktx --raw-unsigned` encodes it.
+pub fn decode_unsigned_tx(bytes: &[u8]) -> Result<TempoTransaction> {
+    let Some((&TEMPO_TX_TYPE_ID, mut fields)) = bytes.split_first() else {
+        eyre::bail!(
+            "expected an unsigned Tempo (0x76) transaction from `cast mktx --raw-unsigned`"
+        );
+    };
+    let tx = <TempoTransaction as alloy_rlp::Decodable>::decode(&mut fields).map_err(|_| {
+        eyre::eyre!("invalid unsigned Tempo transaction; sponsored transactions are not supported")
+    })?;
+    eyre::ensure!(fields.is_empty(), "trailing bytes after the unsigned Tempo transaction");
+    Ok(tx)
 }
 
 /// A local key that approves the transactions of the configurable accounts it owns.
@@ -639,7 +717,8 @@ impl ConfigurableAccountOwnerKey {
         }
     }
 
-    async fn sign(&self, digest: &B256) -> Result<PrimitiveSignature> {
+    /// Approves `digest`.
+    pub async fn sign(&self, digest: &B256) -> Result<PrimitiveSignature> {
         Ok(match self {
             Self::Wallet(signer) => PrimitiveSignature::Secp256k1(signer.sign_hash(digest).await?),
             Self::Accounts(key) => key.sign_hash(digest).await?,
@@ -766,16 +845,12 @@ impl ConfigurableAccountSigner {
     }
 
     /// Makes `tx` a Tempo transaction from the account, whose gas estimate models the owners'
-    /// approvals. A `0x05` signature only signs Tempo (`0x76`) transactions.
+    /// approvals.
     pub fn prepare_request<N: Network>(&self, tx: &mut N::TransactionRequest)
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        tx.set_from(self.account);
-        if tx.nonce_key().is_none() {
-            tx.set_nonce_key(U256::ZERO);
-        }
-        tx.set_configurable_account_simulation(self.simulation_spec());
+        prepare_request::<N>(tx, self.account, self.simulation_spec());
     }
 
     /// Signs a filled request with the owners' approvals.

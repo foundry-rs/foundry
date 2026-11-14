@@ -84,6 +84,20 @@ sol! {
         ) public returns (address proxy);
     }
 
+    /// The EIP-712 transaction type used by Safe.
+    struct SafeTx {
+        address to;
+        uint256 value;
+        bytes data;
+        uint8 operation;
+        uint256 safeTxGas;
+        uint256 baseGas;
+        uint256 gasPrice;
+        address gasToken;
+        address refundReceiver;
+        uint256 nonce;
+    }
+
     /// The result events emitted by Safe v1.1.1 through v1.3.0, before `txHash` became indexed.
     interface ISafeLegacy {
         event ExecutionSuccess(bytes32 txHash, uint256 payment);

@@ -66,6 +66,8 @@ pub struct ExecutorView<'a> {
     /// Initcode size limit of CREATE, CREATE2, and `vm.deployCode`, or `usize::MAX` before
     /// EIP-3860.
     pub(crate) max_initcode_size: usize,
+    /// Whether calls to EIP-7702 delegated accounts run the delegate's code.
+    pub(crate) eip7702_delegations: bool,
     pub(crate) active_fork_id: Option<U256>,
     /// Addresses cached by the active context, including committed-session reads.
     pub(crate) account_addresses: Vec<Address>,
@@ -147,6 +149,7 @@ impl<'a> ExecutorView<'a> {
             } else {
                 usize::MAX
             },
+            eip7702_delegations: evm_env.version.feature(EvmFeatures::EIP7702),
             active_fork_id: backend.active_fork_id(),
             account_addresses,
             block: ExecutorBlock {

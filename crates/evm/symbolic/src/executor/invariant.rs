@@ -85,7 +85,6 @@ impl SymbolicExecutor {
             state,
             invariant_address,
             CALLER,
-            invariant,
             call_data,
             constraints,
         )
@@ -134,7 +133,6 @@ impl SymbolicExecutor {
                 initial_state.clone(),
                 input.target.address,
                 input.handler_sender,
-                &input.target.function,
                 call_data,
                 constraints,
             ) {
@@ -280,14 +278,12 @@ impl SymbolicExecutor {
         Ok(())
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(super) fn prepare_sequence_call(
         &mut self,
         executor: &ExecutorView<'_>,
         mut state: PathState,
         target: Address,
         sender: Address,
-        _function: &Function,
         calldata: SymCalldata,
         constraints: Vec<SymBoolExpr>,
     ) -> Result<SequenceCall, SymbolicError> {

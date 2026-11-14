@@ -91,13 +91,16 @@ macro_rules! with_evm_network {
 }
 pub(crate) use with_evm_network;
 
-/// Network-neutral outcome flags of an executed transaction.
+/// Network-neutral outcome data of an executed transaction.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResultExt {
     /// Whether an OP-stack deposit failed and kept only its mint and nonce bump.
     pub failed_deposit: bool,
     /// Per-phase statuses of an included signed Base EIP-8130 transaction.
     pub eip8130_phase_statuses: Option<Vec<u8>>,
+    /// Gas charged for fees, receipts and mined block totals; see
+    /// [`AnvilEvmNetwork::charged_gas`].
+    pub charged_gas: u64,
 }
 
 /// Network-neutral transaction result.
@@ -200,6 +203,11 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
         cheats: Option<&CheatsManager>,
     ) -> Result<Recovered<TxFor<Self>>, BlockchainError> {
         evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)
+    }
+
+    /// Returns the gas `result` charges for fees, receipts and mined block totals.
+    fn charged_gas(result: &TxResult<TypesFor<Self>>) -> u64 {
+        result.tx_gas_used()
     }
 }
 
@@ -309,6 +317,11 @@ impl AnvilEvmNetwork for MonadEvmNetwork {
         let protocol = context.monad_protocol_replay
             && <monad_evm2::MonadEvmExt as FoundryEvmExt<_>>::is_protocol_transaction(tx);
         evm.ext_mut().set_protocol_replay(protocol);
+    }
+
+    /// Monad charges the full gas limit of ordinary transactions.
+    fn charged_gas(result: &TxResult<TypesFor<Self>>) -> u64 {
+        result.ext.charged_gas
     }
 }
 
@@ -682,6 +695,7 @@ pub fn exec_result<N: AnvilEvmNetwork>(result: TxResult<TypesFor<N>>) -> ExecRes
     let ext = ResultExt {
         failed_deposit: result.ext.is_failed_deposit(),
         eip8130_phase_statuses: result.ext.eip8130_phase_statuses().map(<[u8]>::to_vec),
+        charged_gas: N::charged_gas(&result),
     };
     result.with_ext(ext)
 }

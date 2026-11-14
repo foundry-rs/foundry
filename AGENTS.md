@@ -187,6 +187,15 @@ with", or command lists unless explicitly requested. Do not use templates,
 bullet lists, or long essays. When writing PR bodies from scripts, use a file or
 heredoc with real newlines; never pass escaped `\n` sequences.
 
+Always label PRs when you open them, for example with `gh pr create --label`.
+Add one `T-` type label that matches the commit type (`T-bug` for `fix`,
+`T-feature` for `feat`, `T-perf` for `perf`, `T-chore` or `T-debt` for
+`chore`/`refactor`, `A-testing` for `test`, `A-docs` for `docs`). Also add
+every area (`A-`) and command (`C-`, `Cmd-`) label that matches the changed
+code, such as `C-cast`, `C-anvil`, `Cmd-forge-script`, `A-cheatcodes`, or
+`A-symbolic-execution`. Use only labels that exist; check them with
+`gh label list`. Add `T-likely-breaking` when the change can break users.
+
 ### Performance PRs
 
 When drafting or updating a PR body for a performance-related change, benchmark

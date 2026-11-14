@@ -22,12 +22,16 @@ use alloy_rpc_types::{
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverride},
     trace::{
-        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
+        geth::{
+            GethDebugBuiltInTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions,
+            GethTrace,
+        },
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{Action, TraceResults, TraceType},
     },
 };
 use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_sol_types::{SolCall, SolEvent};
@@ -149,7 +153,8 @@ async fn monad_ten_deduplicates_access_list_storage_pages() {
         api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_access_list_probe_code(2, 1))
             .await
             .unwrap();
-        let same_page = provider.create_access_list(&storage_gas_probe_call()).await.unwrap();
+        let request = storage_gas_probe_call().with_gas_limit(100_000);
+        let same_page = provider.create_access_list(&request).await.unwrap();
         assert_eq!(
             same_page.access_list,
             AccessList::from(vec![AccessListItem {
@@ -157,11 +162,15 @@ async fn monad_ten_deduplicates_access_list_storage_pages() {
                 storage_keys: expected_same_page_keys,
             }])
         );
+        let same_page_estimate = provider
+            .estimate_gas(request.clone().with_access_list(same_page.access_list))
+            .await
+            .unwrap();
 
         api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_access_list_probe_code(129, 1))
             .await
             .unwrap();
-        let different_page = provider.create_access_list(&storage_gas_probe_call()).await.unwrap();
+        let different_page = provider.create_access_list(&request).await.unwrap();
         assert_eq!(
             different_page.access_list,
             AccessList::from(vec![AccessListItem {
@@ -169,7 +178,14 @@ async fn monad_ten_deduplicates_access_list_storage_pages() {
                 storage_keys: vec![one, page_one],
             }])
         );
+        let different_page_estimate = provider
+            .estimate_gas(request.with_access_list(different_page.access_list))
+            .await
+            .unwrap();
+        assert_eq!(different_page_estimate - same_page_estimate, gas_delta);
         assert_eq!(different_page.gas_used - same_page.gas_used, U256::from(gas_delta));
+        assert_eq!(same_page.gas_used, U256::from(same_page_estimate));
+        assert_eq!(different_page.gas_used, U256::from(different_page_estimate));
     }
 }
 
@@ -2622,4 +2638,214 @@ fn large_contract_init_code(runtime_len: usize) -> Bytes {
     code.extend_from_slice(&[0x60, 0x00, 0xf3]);
     code.resize(HEADER_LEN + runtime_len as usize, 0);
     Bytes::from(code)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_estimates_consumption_and_receipts_charge_the_limit() {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // PUSH0; POP; STOP consumes four gas beyond the transaction's intrinsic cost.
+    api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, bytes!("5f5000")).await.unwrap();
+    for limit in [100_000, 1_000_000] {
+        let request = storage_gas_probe_call().with_from(sender).with_gas_limit(limit);
+        assert_eq!(provider.estimate_gas(request.clone()).await.unwrap(), 21_004);
+        let access_list = provider.create_access_list(&request).await.unwrap();
+        assert_eq!(access_list.error, None);
+        assert!(access_list.access_list.is_empty());
+        assert_eq!(access_list.gas_used, U256::from(21_004));
+        let receipt =
+            provider.send_transaction(request).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.gas_used(), limit);
+        let block =
+            provider.get_block_by_hash(receipt.block_hash().unwrap()).await.unwrap().unwrap();
+        assert_eq!(block.header.gas_used, limit);
+    }
+
+    // A reverting simulation reports consumption too, without committing a transaction.
+    api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, bytes!("5f5ffd")).await.unwrap();
+    for limit in [100_000, 1_000_000] {
+        let request = storage_gas_probe_call().with_from(sender).with_gas_limit(limit);
+        let access_list = provider.create_access_list(&request).await.unwrap();
+        assert_eq!(access_list.error.as_deref(), Some("execution reverted"));
+        assert_eq!(access_list.gas_used, U256::from(21_004));
+    }
+
+    for code in [bytes!("5f5ffd"), bytes!("fe")] {
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, code).await.unwrap();
+        let receipt = provider
+            .send_transaction(storage_gas_probe_call().with_from(sender).with_gas_limit(100_000))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(!receipt.status());
+        assert_eq!(receipt.gas_used(), 100_000);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_simulate_without_gas_limits_reports_consumption() {
+    let (_api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    for (data, expected) in [(Bytes::new(), 21_000), (Bytes::from(vec![1; 1000]), 61_000)] {
+        let request = TransactionRequest::default()
+            .from(sender)
+            .to(Address::repeat_byte(0x55))
+            .value(U256::ONE)
+            .input(data.into());
+        let blocks = provider
+            .simulate(&SimulatePayload {
+                block_state_calls: vec![SimBlock {
+                    calls: vec![request.clone(), request],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].calls.len(), 2);
+        assert_eq!(blocks[0].inner.header.gas_used, expected * 2);
+        for call in &blocks[0].calls {
+            assert!(call.status);
+            assert_eq!(call.gas_used, expected);
+            assert_eq!(call.max_used_gas, Some(expected));
+        }
+    }
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_traces_report_call_consumption_and_mined_charge() {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    for limit in [100_000, 1_000_000] {
+        for (code, expected) in
+            [(bytes!("5f5000"), 21_004), (bytes!("5f5ffd"), 21_004), (bytes!("fe"), limit)]
+        {
+            api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, code).await.unwrap();
+            let request = storage_gas_probe_call().with_from(sender).with_gas_limit(limit);
+            let trace = provider
+                .debug_trace_call(
+                    request.clone(),
+                    BlockId::latest(),
+                    GethDebugTracingCallOptions::default(),
+                )
+                .await
+                .unwrap();
+            let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
+            assert_eq!(frame.gas, expected);
+            let trace = provider
+                .debug_trace_call(
+                    request,
+                    BlockId::latest(),
+                    GethDebugTracingCallOptions::default().with_tracing_options(
+                        GethDebugTracingOptions::default()
+                            .with_tracer(GethDebugBuiltInTracerType::CallTracer.into()),
+                    ),
+                )
+                .await
+                .unwrap();
+            let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+            assert_eq!(frame.gas_used, U256::from(expected));
+        }
+    }
+    api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, bytes!("5f5000")).await.unwrap();
+    let trace: TraceResults = provider
+        .client()
+        .request(
+            "trace_call",
+            (
+                storage_gas_probe_call().with_from(sender).with_gas_limit(1_000_000),
+                vec![TraceType::Trace],
+                BlockId::latest(),
+            ),
+        )
+        .await
+        .unwrap();
+    // Parity call frames exclude intrinsic transaction gas.
+    assert_eq!(root_trace_gas(&trace), 4);
+
+    // Mined traces report the receipt charge, like geth's top-level frame.
+    let receipt = provider
+        .send_transaction(storage_gas_probe_call().with_from(sender).with_gas_limit(100_000))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(receipt.gas_used(), 100_000);
+    let hash = receipt.transaction_hash;
+    let trace =
+        provider.debug_trace_transaction(hash, GethDebugTracingOptions::default()).await.unwrap();
+    let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
+    assert_eq!(frame.gas, 100_000);
+    let options = GethDebugTracingOptions::default()
+        .with_tracer(GethDebugBuiltInTracerType::CallTracer.into());
+    let trace = provider.debug_trace_transaction(hash, options).await.unwrap();
+    let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+    assert_eq!(frame.gas_used, U256::from(100_000));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_bundle_separates_consumption_from_charged_fees() {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = wallets[1].address();
+    let coinbase = wallets[2].address();
+    let balance = provider.get_balance(coinbase).await.unwrap();
+    let base_fee = api.base_fee().unwrap().unwrap().to::<u64>();
+    let tip = 7;
+    let mut txs = Vec::new();
+    for nonce in 0..2 {
+        let mut tx = TxEip1559 {
+            chain_id: provider.get_chain_id().await.unwrap(),
+            nonce,
+            gas_limit: 100_000,
+            max_fee_per_gas: u128::from(base_fee) + tip,
+            max_priority_fee_per_gas: tip,
+            to: coinbase.into(),
+            value: U256::from(nonce + 1),
+            ..Default::default()
+        };
+        let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+        txs.push(tx.into_signed(signature).encoded_2718().into());
+    }
+    let response: EthCallBundleResponse = provider
+        .client()
+        .request(
+            "eth_callBundle",
+            (EthCallBundle {
+                txs,
+                block_number: 1,
+                state_block_number: BlockNumberOrTag::Latest,
+                coinbase: Some(coinbase),
+                ..Default::default()
+            },),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.total_gas_used, 42_000);
+    assert_eq!(response.gas_fees, U256::from(200_000 * tip));
+    assert_eq!(response.eth_sent_to_coinbase, U256::from(3));
+    assert_eq!(response.coinbase_diff, response.gas_fees + U256::from(3));
+    // Charged gas, not consumption, prices the bundle.
+    assert_eq!(response.bundle_gas_price, U256::from(tip));
+    assert_eq!(response.results.len(), 2);
+    for (index, result) in response.results.iter().enumerate() {
+        assert_eq!(result.from_address, sender);
+        assert_eq!(result.gas_used, 21_000);
+        assert_eq!(result.gas_fees, U256::from(100_000 * tip));
+        assert_eq!(result.eth_sent_to_coinbase, U256::from(index + 1));
+        assert_eq!(result.revert, None);
+    }
+    assert_eq!(provider.get_balance(coinbase).await.unwrap(), balance);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
 }

@@ -468,8 +468,14 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             }
         }
 
+        // The local owners of transactions saved for owners on other machines approve them again
+        // when their approvals are void.
         if !self.args.unlocked
-            && !remaining_unsigned_transactions_for_recovery(&sequence).is_empty()
+            && (!remaining_unsigned_transactions_for_recovery(&sequence).is_empty()
+                || sequence
+                    .sequences()
+                    .iter()
+                    .any(|deployment| !deployment.awaiting_owners.is_empty()))
         {
             self.script_wallets =
                 Wallets::new(self.args.wallets.get_multi_wallet().await?, self.args.evm.sender);
