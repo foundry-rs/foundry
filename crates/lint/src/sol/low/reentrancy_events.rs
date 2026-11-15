@@ -444,7 +444,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         }) || func.body.is_some_and(|body| {
             body.stmts.iter().any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
         });
-        seen.remove(&func_id);
+        // `func_id` stays in `seen` for the rest of the query: a revisit cannot find a new call,
+        // and removing it lets recursive helpers enumerate every simple path.
         // A negative answer that relied on a cut recursive edge is not conclusive.
         if may_reach || !self.reachability_cut {
             self.external_call_reachability.insert(func_id, may_reach);

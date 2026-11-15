@@ -704,4 +704,22 @@ contract AssemblyEvents {
         }
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
+
+    // Clean: dense mutually recursive Yul helpers without a call. The walk visits each helper
+    // once per query, not once per path.
+    function emitAfterRecursiveYulWithoutCall(uint256 n) external {
+        assembly {
+            function f0(x) { if x { f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f1(x) { if x { f0(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f2(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f3(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f4(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f5(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f6(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f7(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f8(sub(x, 1)) } }
+            function f8(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) } }
+            f0(n)
+        }
+        emit Tick();
+    }
 }
