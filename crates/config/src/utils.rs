@@ -107,6 +107,11 @@ pub fn remappings_from_env_var(env_var: &str) -> Option<Result<Vec<Remapping>, R
 ///
 /// The values should be separated by commas, surrounding brackets are also supported `[a,b,c]`
 pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
+    if val.strip_prefix('[').and_then(|s| s.strip_suffix(']')).is_some_and(|s| s.trim().is_empty())
+    {
+        return Ok(Vec::<Value>::new().into());
+    }
+
     let value: Value = match Value::from(val) {
         Value::String(_, val) => val
             .trim_start_matches('[')
@@ -375,6 +380,34 @@ pub(crate) struct Present;
 impl<'de> Deserialize<'de> for Present {
     fn deserialize<D: Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
         Ok(Self)
+    }
+}
+
+#[cfg(test)]
+mod array_tests {
+    use super::*;
+
+    #[test]
+    fn parses_empty_bracketed_array() {
+        for input in ["[]", "[ ]", "[\t\n]"] {
+            let value = to_array_value(input).unwrap();
+            assert!(matches!(value, Value::Array(_, items) if items.is_empty()), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn preserves_comma_separated_array_values() {
+        for (input, expected) in [
+            ("[A,B]", vec!["A", "B"]),
+            ("[A, B]", vec!["A", "B"]),
+            ("A, B", vec!["A", "B"]),
+            ("A", vec!["A"]),
+            ("A,,B,", vec!["A", "", "B", ""]),
+            ("", vec![""]),
+            (" ", vec![""]),
+        ] {
+            assert_eq!(to_array_value(input).unwrap(), Value::from(expected), "{input:?}");
+        }
     }
 }
 

@@ -5774,6 +5774,31 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_empty_libraries() {
+        for env_var in ["DAPP_LIBRARIES", "FOUNDRY_LIBRARIES"] {
+            for value in ["[]", "[ ]", "[\t\n]"] {
+                figment::Jail::expect_with(|jail| {
+                    jail.create_file(
+                        "foundry.toml",
+                        r#"
+                        [profile.default]
+                        libraries = ["src/A.sol:A:0x1111111111111111111111111111111111111111"]
+                        "#,
+                    )?;
+                    assert_eq!(Config::load().unwrap().libraries.len(), 1);
+
+                    jail.set_env(env_var, value);
+                    let config = Config::load().unwrap();
+                    assert!(config.libraries.is_empty(), "{env_var}={value:?}");
+                    assert!(config.parsed_libraries().unwrap().libs.is_empty());
+
+                    Ok(())
+                });
+            }
+        }
+    }
+
+    #[test]
     fn test_parse_many_libraries() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
