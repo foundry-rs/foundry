@@ -522,10 +522,12 @@ pub struct InspectorStackInner {
     early_exit_test_gate: Option<EarlyExitTestGate>,
     has_static_step_inspectors: bool,
     has_static_step_end_inspectors: bool,
-    /// The opcodes the cheatcodes step, see [`Cheatcodes::steps`]. Refreshed where evm2 reads the
-    /// inspector config again, when a frame starts and when a message returns into it, since only
-    /// cheatcode calls change it.
+    /// The opcodes the cheatcode step hooks run at, see [`Cheatcodes::hook_steps`]. Refreshed
+    /// where evm2 reads the inspector config again, when a frame starts and when a message
+    /// returns into it, since only cheatcode calls change it.
     cheat_steps: OpcodeSet,
+    /// Whether the cheatcodes step `JUMPI` only to record it, see [`Cheatcodes::record_branch`].
+    cheat_records_branches: bool,
     /// Whether the cheatcodes stepped the running instruction.
     cheat_stepped: bool,
     /// The opcodes the other step inspectors step, see [`Self::static_steps`]. Refreshed with
@@ -1890,9 +1892,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // Other inspectors may step instructions the cheatcodes do not.
         let cheat_stepped = self.inner.cheat_steps.contains(interp.opcode());
         self.inner.cheat_stepped = cheat_stepped;
-        if cheat_stepped && let Some((cheats, backend, _)) = self.cheats_and_backend() {
-            crate::utils::cold_path();
-            cheats.step_hook(interp, backend);
+        if cheat_stepped {
+            if let Some((cheats, backend, _)) = self.cheats_and_backend() {
+                crate::utils::cold_path();
+                cheats.step_hook(interp, backend);
+            }
+        } else if self.inner.cheat_records_branches
+            && interp.opcode() == op::JUMPI
+            && let Some(cheats) = self.cheatcodes.as_deref_mut()
+        {
+            cheats.record_branch(interp);
         }
 
         // evm2 skips `step_end` if an inspector halted the frame in `step`. Only a stack with step
@@ -1932,8 +1941,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     /// Reads the opcodes the cheatcodes and the other step inspectors step again.
     fn refresh_cheat_steps(&mut self) {
-        self.inner.cheat_steps =
-            self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps);
+        let cheats = self.cheatcodes.as_deref();
+        let hook_steps = cheats.map_or(OpcodeSet::EMPTY, Cheatcodes::hook_steps);
+        self.inner.cheat_steps = hook_steps;
+        self.inner.cheat_records_branches = !hook_steps.contains(op::JUMPI)
+            && cheats.is_some_and(|cheats| cheats.failure_provenance.is_some());
         self.inner.static_steps = self.inner.static_steps::<FEN>();
     }
 
