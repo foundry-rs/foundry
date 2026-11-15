@@ -578,8 +578,8 @@ pub enum AbiSubcommand {
         #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
 
-        // Path to file containing arguments to encode.
-        #[arg(long, value_name = "PATH")]
+        /// Read arguments to encode from a file instead of the command line.
+        #[arg(long, value_name = "PATH", conflicts_with = "args")]
         file: Option<PathBuf>,
     },
 
