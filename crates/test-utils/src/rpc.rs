@@ -446,6 +446,49 @@ pub async fn spawn_rpc_proxy_method_error(
     .await
 }
 
+/// Spawns an RPC proxy that rejects any request with a `requireCanonical` block parameter.
+///
+/// Rootstock's RSKj answers such requests with `-32603 Internal server error`, even when the flag
+/// is `false`. All other requests are forwarded.
+pub async fn spawn_rpc_proxy_rejecting_require_canonical(endpoint: String) -> String {
+    let client = reqwest::Client::new();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                let has_canonical_flag =
+                    request.get("params").and_then(Value::as_array).is_some_and(|params| {
+                        params.iter().any(|param| param.get("requireCanonical").is_some())
+                    });
+                if has_canonical_flag {
+                    let id = request.get("id").cloned().unwrap_or(Value::Null);
+                    return Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32603, "message": "Internal server error" },
+                    }));
+                }
+                let response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
 /// Spawns an RPC proxy that answers `method` with `result` instead of forwarding it upstream.
 ///
 /// All other methods are forwarded. The returned counter tracks how many `method` calls reached the

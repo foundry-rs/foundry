@@ -12,7 +12,7 @@ use alloy_eips::BlockNumHash;
 use alloy_network::{
     AnyNetwork, BlockResponse, Network, TransactionBuilder, primitives::HeaderResponse,
 };
-use alloy_primitives::{Address, B256, BlockNumber, ChainId, U256};
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, ChainId, U64, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::{
@@ -568,11 +568,10 @@ impl EvmOpts {
         let fork = fork.ok_or_else(|| eyre::eyre!("fork must be resolved"))?;
         let provider = self.provider_for_fork::<AnyNetwork>(fork)?;
         self.check_fork_endpoint(&provider, fork).await?;
-        let available = !provider
-            .get_code_at(self.create2_deployer)
-            .block_id(fork.state_block_id())
-            .await?
-            .is_empty();
+        let code: Bytes = provider
+            .raw_request("eth_getCode".into(), (self.create2_deployer, fork.state_block_id()))
+            .await?;
+        let available = !code.is_empty();
         self.check_fork_endpoint(&provider, fork).await?;
         Ok(available)
     }
@@ -621,9 +620,11 @@ impl EvmOpts {
     ) -> eyre::Result<u64> {
         let provider = self.provider_for_fork::<AnyNetwork>(fork)?;
         self.check_fork_endpoint(&provider, fork).await?;
-        let nonce = provider.get_transaction_count(account).block_id(fork.state_block_id()).await?;
+        let nonce: U64 = provider
+            .raw_request("eth_getTransactionCount".into(), (account, fork.state_block_id()))
+            .await?;
         self.check_fork_endpoint(&provider, fork).await?;
-        Ok(nonce)
+        Ok(nonce.to())
     }
 
     /// Returns a `RootProvider` for the given fork URL configured with options in `self` and
@@ -1476,6 +1477,7 @@ mod tests {
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
         spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_after,
+        spawn_rpc_proxy_rejecting_require_canonical,
     };
 
     #[cfg(feature = "base")]
@@ -2480,6 +2482,31 @@ mod tests {
             "get_fork should preserve explicitly set fork_block_number"
         );
         assert!(!fork.evm_opts.fork_block_number_is_inferred);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_preflight_reads_send_hash_objects_without_canonical_flag() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let endpoint = spawn_rpc_proxy_rejecting_require_canonical(handle.http_endpoint()).await;
+        let (endpoint, code_requests) =
+            spawn_rpc_proxy_recording_method(endpoint, "eth_getCode").await;
+        let (endpoint, nonce_requests) =
+            spawn_rpc_proxy_recording_method(endpoint, "eth_getTransactionCount").await;
+        let evm_opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
+        let fork = evm_opts.prepare_fork().await.unwrap().unwrap();
+        let sender = handle.dev_accounts().next().unwrap();
+
+        evm_opts.can_use_create2_deployer_at(Some(&fork)).await.unwrap();
+        assert_eq!(evm_opts.transaction_count_at_fork(sender, &fork).await.unwrap(), 0);
+
+        // A bare hash string would also pass this proxy but breaks Moonbeam, so pin the object
+        // form.
+        let expected = serde_json::json!({ "blockHash": fork.hash() });
+        for requests in [code_requests, nonce_requests] {
+            let requests = requests.lock().unwrap();
+            assert!(!requests.is_empty());
+            assert!(requests.iter().all(|params| params[1] == expected), "{requests:?}");
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -6,6 +6,7 @@ use alloy_primitives::{B256, BlockNumber, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use eyre::OptionExt;
+use serde::ser::SerializeStruct;
 use std::{
     fmt,
     hash::{Hash, Hasher},
@@ -22,6 +23,30 @@ mod bal;
 pub use bal::{cache_bal, validate_bal};
 
 pub(crate) mod prefetch;
+
+/// Encodes a fork state selector as an RPC block parameter.
+///
+/// A hash selector without a canonicality requirement is sent as `{"blockHash": "0x…"}`. Alloy
+/// serializes it as a bare hash string, which Moonbeam parses as a block number, and Rootstock
+/// rejects an explicit boolean `requireCanonical` with `-32603`. The object form works on both and
+/// matches the fork backend's state reads in `foundry-fork-db`. Other selectors serialize
+/// unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StateBlockId(pub(crate) BlockId);
+
+impl serde::Serialize for StateBlockId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if let BlockId::Hash(hash) = self.0
+            && hash.require_canonical.is_none()
+        {
+            let mut object = serializer.serialize_struct("StateBlockId", 1)?;
+            object.serialize_field("blockHash", &hash.block_hash)?;
+            object.end()
+        } else {
+            self.0.serialize(serializer)
+        }
+    }
+}
 
 /// Represents a _fork_ of a remote chain whose data is available only via the `url` endpoint.
 #[derive(Clone, Debug)]
@@ -112,9 +137,16 @@ impl Fork {
         BlockId::from((self.hash(), Some(false)))
     }
 
-    /// Returns the state selector, honoring the RPC compatibility opt-in.
-    pub(crate) fn state_block_id(&self) -> BlockId {
-        if self.state_by_number { BlockId::number(self.number()) } else { self.exact_block_id() }
+    /// Returns the state selector for preflight RPC reads, honoring the RPC compatibility opt-in.
+    ///
+    /// The hash selector leaves `requireCanonical` unset, which EIP-1898 defines as `false`, so it
+    /// pins the same block as [`Self::exact_block_id`] and serializes as `{"blockHash": "0x…"}`.
+    pub(crate) fn state_block_id(&self) -> StateBlockId {
+        StateBlockId(if self.state_by_number {
+            BlockId::number(self.number())
+        } else {
+            BlockId::hash(self.hash())
+        })
     }
 
     pub(crate) fn block(&self) -> BlockNumHash {
@@ -296,13 +328,51 @@ mod tests {
     }
 
     #[test]
+    fn state_block_id_serializes_as_hash_object_without_canonical_flag() {
+        let hash = B256::with_last_byte(1);
+        let fork = Fork::test(
+            "http://localhost:8545",
+            None,
+            None,
+            None,
+            BlockNumHash::new(1, hash),
+            context(1),
+        );
+
+        assert_eq!(
+            serde_json::to_value(fork.state_block_id()).unwrap(),
+            json!({ "blockHash": hash })
+        );
+    }
+
+    #[test]
+    fn state_block_id_preserves_numbers_tags_and_explicit_canonical_flags() {
+        let hash = B256::with_last_byte(1);
+        for block in [
+            BlockId::number(123),
+            BlockId::latest(),
+            BlockId::pending(),
+            BlockId::safe(),
+            BlockId::finalized(),
+            BlockId::earliest(),
+            BlockId::from((hash, Some(false))),
+            BlockId::from((hash, Some(true))),
+        ] {
+            assert_eq!(
+                serde_json::to_value(StateBlockId(block)).unwrap(),
+                serde_json::to_value(block).unwrap()
+            );
+        }
+    }
+
+    #[test]
     fn fork_state_by_number_preserves_anchor_and_separates_identity() {
         let block = BlockNumHash::new(42, B256::with_last_byte(1));
         let exact = Fork::test("http://localhost:8545", None, None, None, block, context(42));
         let mut numbered = exact.clone();
         numbered.state_by_number = true;
         assert_eq!(serde_json::to_value(numbered.state_block_id()).unwrap(), json!("0x2a"));
-        assert_eq!(exact.state_block_id(), exact.exact_block_id());
+        assert_eq!(exact.state_block_id(), StateBlockId(BlockId::hash(block.hash)));
         assert_eq!(numbered.exact_block_id(), exact.exact_block_id());
         assert_ne!(numbered, exact);
         assert_eq!(numbered.source_id(), exact.source_id());
