@@ -409,7 +409,7 @@ pub(crate) fn complete_cheatcode_call(
 }
 
 /// Completes a cheatcode call that reverts with `return_data`, which can be the reverter of a
-/// pending `vm.expectRevert`.
+/// pending `vm.expectRevert` or `vm.assumeNoRevert`, including one this frame set.
 pub(crate) fn revert_cheatcode_call(
     cx: &mut SymCx,
     state: &mut PathState,
@@ -419,6 +419,9 @@ pub(crate) fn revert_cheatcode_call(
 ) -> Result<(), SymbolicError> {
     state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
     state.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
+    if let Some(assumption) = &mut state.assume_no_revert_next_call {
+        assumption.reverted_by.get_or_insert(CHEATCODE_ADDRESS);
+    }
     state.return_data = return_data;
     state.copy_call_output_offset(cx, out_offset, out_size)?;
     state.stack.push(SymExpr::zero(cx))?;

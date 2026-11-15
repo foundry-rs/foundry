@@ -80,6 +80,7 @@ fn symbolic_create_respects_configured_runtime_code_limit(prj: _, cmd: _) {
         "SymbolicCreateCodeLimit.t.sol",
         r#"
 import "forge-std/Test.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 
 contract SymbolicCreateCodeLimit is Test {
     function checkRuntimeCodeLimit() public {
@@ -153,6 +154,13 @@ contract SymbolicCreateCodeLimit is Test {
 
         address created = vm.deployCode(small, new bytes(49152 - type(Small).creationCode.length));
         assert(created.code.length != 0);
+
+        // The failed cheatcode call is the reverter for an assumption the deploying frame set.
+        try deployer.assumeNoRevertDeployCode(small, new bytes(49153 - type(Small).creationCode.length)) {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256("FOUNDRY::ASSUME"));
+        }
     }
 
     function checkCreateInitcodeLimit() public {
@@ -219,6 +227,12 @@ contract Deployer {
 
     function whoami() external view returns (address) {
         return msg.sender;
+    }
+
+    function assumeNoRevertDeployCode(string memory what, bytes memory args) external {
+        vm.assumeNoRevert(VmSafe.PotentialRevert(address(vm), false, abi.encodeWithSignature(
+            "CheatcodeError(string)", "vm.deployCode: initcode size limit exceeded")));
+        vm.deployCode(what, args);
     }
 }
 "#,
@@ -425,6 +439,13 @@ contract SymbolicCreateEip3541 is Test {
         caller.expectRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
     }
 
+    function checkSymbolicMismatchInCaller(uint256 x) public {
+        (bool ok,) = address(caller).call(abi.encodeCall(
+            DeployCodeCaller.expectOtherRevertThenRevert,
+            ("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)), x)));
+        assert(!ok);
+    }
+
     function checkMismatchedExpectRevertOnDeployCode() public {
         vm.expectRevert(bytes("other"));
         vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
@@ -458,7 +479,8 @@ contract SymbolicCreateEip3541 is Test {
             DeployCodeCaller.expectOtherRevertDeployCode,
             ("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)))));
         assert(!ok);
-        assert(bytes4(err) == bytes4(keccak256("CheatcodeError(string)")));
+        assert(keccak256(err) == keccak256(abi.encodeWithSignature(
+            "CheatcodeError(string)", "Error != expected error: EvmError: Revert != other")));
     }
 
     function checkRejectedPrefixExpectedCallsAndRevert() public {
@@ -610,6 +632,15 @@ contract DeployCodeCaller {
         vm.deployCode(what, args);
     }
 
+    function expectOtherRevertThenRevert(string memory what, bytes memory args, uint256 x) external {
+        vm.expectRevert(bytes("other"));
+        try vm.deployCode(what, args) returns (address) {} catch {}
+        assembly ("memory-safe") {
+            mstore(0, x)
+            revert(0, 32)
+        }
+    }
+
     function assumeNoRevertDeployCode(string memory what, bytes memory args) external {
         vm.assumeNoRevert(VmSafe.PotentialRevert(address(vm), false, hex"ef"));
         vm.deployCode(what, args);
@@ -641,13 +672,14 @@ contract DeployCodeCaller {
         "test",
         "--symbolic",
         "--match-test",
-        "checkMismatchedExpectRevertOnDeployCode|checkOverlappingExpectRevertOnDeployCode",
+        "checkMismatchedExpectRevertOnDeployCode|checkOverlappingExpectRevertOnDeployCode|checkSymbolicMismatchInCaller",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
 [FAIL: call reverted as expected, but without data; counterexample: 		[SENDER] [SENDER] calldata=0xe668c5ba args=[]] checkMismatchedExpectRevertOnDeployCode() ([METRICS])
 [FAIL: Error != expected error: vm.expectRevert: you must call another function prior to expecting a second revert != other; counterexample: 		[SENDER] [SENDER] calldata=0x67563089 args=[]] checkOverlappingExpectRevertOnDeployCode() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert mismatch data] checkSymbolicMismatchInCaller(uint256) ([METRICS])
 ...
 "#]]);
 

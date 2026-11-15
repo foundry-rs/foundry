@@ -279,6 +279,49 @@ pub(crate) fn handle_expect_revert(
     }
 }
 
+/// Returns the error that a call reverting with `retdata`, first failing in `reverted_by`, ends
+/// with when it does not meet a `vm.expectRevert` of `reason` from `reverter`, or `None` when it
+/// meets it. With `partial_match`, only the first 4 bytes of `reason` are compared.
+pub fn expect_revert_mismatch(
+    reason: Option<&[u8]>,
+    partial_match: bool,
+    reverter: Option<Address>,
+    reverted_by: Option<Address>,
+    retdata: &Bytes,
+    known_contracts: &Option<ContractsByArtifact>,
+) -> Option<Error> {
+    struct Expected<'a> {
+        reason: Option<&'a [u8]>,
+        partial_match: bool,
+        reverter: Option<Address>,
+    }
+
+    impl RevertParameters for Expected<'_> {
+        fn reverter(&self) -> Option<Address> {
+            self.reverter
+        }
+
+        fn reason(&self) -> Option<&[u8]> {
+            self.reason
+        }
+
+        fn partial_match(&self) -> bool {
+            self.partial_match
+        }
+    }
+
+    let expected = Expected { reason, partial_match, reverter };
+    handle_revert(
+        false,
+        &expected,
+        InstrStop::Revert,
+        retdata,
+        known_contracts,
+        reverted_by.as_ref(),
+    )
+    .err()
+}
+
 fn stringify(data: &[u8]) -> String {
     if let Ok(s) = String::abi_decode(data) {
         return s;

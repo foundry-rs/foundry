@@ -207,12 +207,19 @@ impl SymbolicExecutor {
                     });
                 }
                 // A frame ran deeper, so Forge's depth check passes and a matching revert is
-                // handled like a failed call below. A mismatch reverts with a `CheatcodeError`
-                // the caller can catch, with a shorter message than Forge's. Like Forge,
-                // `vm.assumeNoRevert` handles the revert first.
+                // handled like a failed call below. A mismatch reverts with Forge's
+                // `CheatcodeError`, which the caller can catch. Like Forge, `vm.assumeNoRevert`
+                // handles the revert first.
                 CallStatus::Revert
                     if expected.deeper_frame_ran() && parent.expected_revert.is_none() =>
                 {
+                    // Forge halts a constructor whose runtime is rejected, a status this arm does
+                    // not model.
+                    if outcome.state.frame.is_constructor {
+                        return Err(SymbolicError::Unsupported(
+                            "symbolic vm.expectRevert pending in a constructor",
+                        ));
+                    }
                     let reverter = expected.reverted_by(
                         failed_callee,
                         outcome.state.first_failed_callee.or(failed_callee),
@@ -233,8 +240,21 @@ impl SymbolicExecutor {
                             "ambiguous symbolic vm.expectRevert match",
                         ));
                     } else {
+                        const REASON: &str = "symbolic vm.expectRevert mismatch data";
+                        let return_data = &outcome.state.frame.return_data;
+                        if return_data.len_word.as_const().is_none() {
+                            return Err(SymbolicError::Unsupported(REASON));
+                        }
+                        let retdata = return_data.read_concrete(&mut self.cx, REASON)?.into();
+                        let no_contracts = None;
+                        let known_contracts = executor
+                            .cheatcodes
+                            .map_or(&no_contracts, |cheats| &cheats.config.available_artifacts);
+                        let error = expected
+                            .mismatch_error(reverter, &retdata, known_contracts)
+                            .ok_or(SymbolicError::Unsupported(REASON))?;
                         outcome.state.frame.return_data =
-                            error_string_return_data(&mut self.cx, "Error != expected error");
+                            SymReturnData::from_concrete_bytes(&mut self.cx, error.abi_encode());
                     }
                 }
                 CallStatus::Revert
