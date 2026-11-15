@@ -602,9 +602,9 @@ impl InvariantTest {
         self.targeted_contracts.clear_created_contracts(run.created_contracts);
 
         if self.test_data.gas_report_traces.len() < gas_samples {
-            self.test_data
-                .gas_report_traces
-                .push(run.run_traces.into_iter().map(|arena| arena.arena).collect());
+            self.test_data.gas_report_traces.push(
+                run.run_traces.into_iter().map(SparsedTraceArena::into_gas_report_arena).collect(),
+            );
         }
         self.test_data.runs += 1;
         self.test_data.calls += run.fuzz_runs.len();
