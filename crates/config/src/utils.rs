@@ -129,7 +129,8 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
 /// configured snapshots directory when it is joined onto it.
 pub fn is_valid_snapshot_group(group: &str) -> bool {
     let mut components = Path::new(group).components();
-    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
+    matches!(components.next(), Some(Component::Normal(name)) if name == group)
+        && components.next().is_none()
 }
 
 /// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file
@@ -390,10 +391,8 @@ impl<'de> Deserialize<'de> for Present {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{
-        FoundryTomlDir, foundry_toml_dir_entries, foundry_toml_dirs, is_valid_snapshot_group,
-    };
-    use std::{fs, os::unix::fs::symlink};
+    use super::*;
+    use std::os::unix::fs::symlink;
     use tempfile::tempdir;
 
     #[test]
@@ -458,22 +457,6 @@ mod tests {
     }
 
     #[test]
-    fn validates_snapshot_groups() {
-        for group in ["Group", "a.b", "group with spaces", "..hidden"] {
-            assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
-        }
-
-        for group in ["", ".", "..", "../settings", "../../settings", "a/b", "./a", "/tmp/settings"]
-        {
-            assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
-        }
-
-        // A backslash is only a path separator on Windows.
-        #[cfg(windows)]
-        assert!(!is_valid_snapshot_group("a\\b"));
-    }
-
-    #[test]
     fn ignores_broken_and_cyclic_symlinks() {
         let temp = tempdir().unwrap();
         let root = temp.path().join("lib");
@@ -483,5 +466,45 @@ mod tests {
         symlink("cycle-a", root.join("cycle-b")).unwrap();
 
         assert!(foundry_toml_dir_entries(&root).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod snapshot_group_tests {
+    use super::*;
+
+    #[test]
+    fn validates_snapshot_groups() {
+        for group in ["Group", "a.b", "group with spaces", "..hidden"] {
+            assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
+        }
+
+        for group in [
+            "",
+            ".",
+            "..",
+            "../settings",
+            "../../settings",
+            "a/b",
+            "./a",
+            "/tmp/settings",
+            "a/",
+            "a//",
+            "a/.",
+            "a/./",
+        ] {
+            assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
+
+        // A backslash is only a path separator on Windows.
+        #[cfg(windows)]
+        for group in [r"a\b", r"a\", r"a\.", r"a\.\", r"C:\settings"] {
+            assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
+
+        #[cfg(unix)]
+        for group in [r"a\b", r"a\", r"a\.", r"a\.\"] {
+            assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
+        }
     }
 }

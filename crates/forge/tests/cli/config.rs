@@ -3098,7 +3098,7 @@ contract {name} is DSTest {{
     prj.add_source("RelativeEscapeTest.sol", &test_contract("RelativeEscapeTest", "../../outside"));
     prj.add_source(
         "AbsoluteEscapeTest.sol",
-        &test_contract("AbsoluteEscapeTest", &absolute_group.display().to_string()),
+        &test_contract("AbsoluteEscapeTest", &absolute_group.to_slash_lossy()),
     );
     cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
