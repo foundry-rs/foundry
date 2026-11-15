@@ -1932,18 +1932,24 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
                 );
             }
-            call_inspectors!(
-                [
-                    // These are sorted in definition order.
-                    &mut inner.chisel_state,
-                    &mut inner.printer,
-                    &mut inner.revert_diag,
-                    &mut inner.script_execution_inspector,
-                    &mut inner.tracer,
-                    &mut inner.debug_recorder,
-                ],
-                |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
-            );
+            // An inspector with a `step_end` hook steps only the opcodes its `step_end` runs at,
+            // so that each `step` is paired.
+            if static_end_stepped {
+                call_inspectors!(
+                    [
+                        // These are sorted in definition order.
+                        &mut inner.chisel_state,
+                        &mut inner.printer,
+                        &mut inner.revert_diag,
+                        &mut inner.script_execution_inspector,
+                        &mut inner.tracer,
+                        &mut inner.debug_recorder,
+                    ],
+                    |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
+                );
+            } else if let Some(script) = inner.script_execution_inspector.as_deref_mut() {
+                Inspector::<TypesFor<FEN>>::step(script, interp);
+            }
         }
 
         // Other inspectors may step instructions the cheatcodes do not.
@@ -1961,7 +1967,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         // evm2 skips `step_end` if an inspector halted the frame in `step`. Only a stack with step
         // inspectors can hold a recorder, so other stacks skip the check.
-        if static_stepped
+        if static_end_stepped
             && let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
             && interp.result().is_err()
         {

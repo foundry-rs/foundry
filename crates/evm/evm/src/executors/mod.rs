@@ -2903,7 +2903,7 @@ mod tests {
     }
 
     #[test]
-    fn filtered_tracer_pairs_steps_across_nested_calls_stepped_by_the_cheatcodes() {
+    fn filtered_tracer_pairs_steps_across_nested_calls_stepped_by_other_hooks() {
         let env = default_env::<EthEvmNetwork>();
         let mut executor = ExecutorBuilder::<EthEvmNetwork>::default()
             .inspectors(|stack| stack.cheatcodes(cheats_config()))
@@ -2920,9 +2920,9 @@ mod tests {
         let mut outer_code = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x73];
         outer_code.extend_from_slice(middle.as_slice());
         outer_code.extend_from_slice(&[0x5a, 0xf1, 0x00]);
-        // The middle contract makes a successful static call, then reverts:
-        // PUSH0 x4; PUSH20 inner; GAS; STATICCALL; PUSH0; PUSH0; REVERT.
-        let mut middle_code = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x73];
+        // The middle contract skips a jump, makes a successful static call, then reverts:
+        // PUSH0; PUSH0; JUMPI; PUSH0 x4; PUSH20 inner; GAS; STATICCALL; PUSH0; PUSH0; REVERT.
+        let mut middle_code = vec![0x5f, 0x5f, 0x57, 0x5f, 0x5f, 0x5f, 0x5f, 0x73];
         middle_code.extend_from_slice(inner.as_slice());
         middle_code.extend_from_slice(&[0x5a, 0xfa, 0x5f, 0x5f, 0xfd]);
         executor.set_code(outer, Bytecode::new_raw(outer_code.into())).unwrap();
@@ -2930,13 +2930,15 @@ mod tests {
         executor.set_code(inner, Bytecode::new_raw(Bytes::from_static(&[0x00]))).unwrap();
 
         // The tracer steps only CALL, while the failure identity makes the cheatcodes step
-        // everything, so the STATICCALL is stepped by the cheatcodes alone.
+        // everything and the edge coverage steps JUMPI. So the STATICCALL is stepped by the
+        // cheatcodes alone, and the JUMPI by the cheatcodes and the edge coverage.
         let mut config =
             TracingInspectorConfig::none().steps().set_stack_snapshots(StackSnapshotType::Pushes);
         config.record_opcodes_filter =
             Some([OpCode::CALL.get()].into_iter().collect::<OpcodeSet>());
         executor.inspector_mut().set_tracer(Some(Box::new(TracingInspector::new(config))));
         executor.inspector_mut().collect_failure_identity(true);
+        executor.inspector_mut().collect_edge_coverage(true);
 
         let result = executor.call_raw(CALLER, outer, Bytes::new(), U256::ZERO).unwrap();
         let arena = result.traces.unwrap().arena;
