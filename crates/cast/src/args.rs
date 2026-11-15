@@ -499,10 +499,25 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 } else {
                     let _ = sh_println!("{}", event.signature());
                 }
-                let data = data.get(64..).unwrap_or_default();
-                get_event(&event.signature())?
-                    .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
-                    .body
+                let expected = event.selector();
+                eyre::ensure!(
+                    expected == selector,
+                    alloy_dyn_abi::Error::EventSignatureMismatch { expected, actual: selector }
+                );
+                let data = hex::decode(data.get(64..).unwrap_or_default())?;
+                // Indexed parameters are not in DATA, but logs sharing a topic0 can index different
+                // parameters, like ERC-20 and ERC-721 `Transfer`. Keep the cached indexed flags
+                // only if the non-indexed parameters account for all of DATA, otherwise decode
+                // every parameter from DATA.
+                match abi_decode_event_data(&event, &data) {
+                    Ok(values)
+                        if DynSolValue::Tuple(values.clone()).abi_encode_params().len()
+                            == data.len() =>
+                    {
+                        values
+                    }
+                    _ => abi_decode_event_data(&get_event(&event.signature())?, &data)?,
+                }
             };
             print_tokens(&decoded_values)?;
         }

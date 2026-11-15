@@ -36,12 +36,16 @@ contract StateSnapshotTest is Test {
 
         assertEq(store.slot0, 300);
         assertEq(store.slot1, 400);
+        uint256 laterSnapshotId = vm.snapshotState();
 
         vm.revertToStateAndDelete(snapshotId);
         assertEq(store.slot0, 10, "snapshot revert for slot 0 unsuccessful");
         assertEq(store.slot1, 20, "snapshot revert for slot 1 unsuccessful");
         // nothing to revert to anymore
         assert(!vm.revertToState(snapshotId));
+        // later snapshots are kept
+        assert(vm.revertToState(laterSnapshotId));
+        assertEq(store.slot0, 300);
     }
 
     function testStateSnapshotDelete() public {
@@ -264,6 +268,180 @@ contract NestedRestoreHelper {
         store.set(3);
         revert("outer reverted");
     }
+
+    /// Restores twice, then writes `target`'s balance and nonce over the deal made between the
+    /// restores.
+    function restoreWrite(uint256 snapshotId, address target) public {
+        require(vm.revertToState(snapshotId), "restore failed");
+        vm.deal(target, 50);
+        require(vm.revertToState(snapshotId), "second restore failed");
+        vm.deal(target, 100);
+        vm.setNonce(target, 7);
+    }
+
+    function restoreWriteRevert(uint256 snapshotId, address target) external {
+        restoreWrite(snapshotId, target);
+        revert("restore reverted");
+    }
+
+    function nestedRestoreWriteRevert(uint256 snapshotId, address target) external {
+        this.restoreWrite(snapshotId, target);
+        revert("outer reverted");
+    }
+
+    function restoreTransactRevert(uint256 snapshotId, bytes calldata rawTx, bool execute) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        if (execute) {
+            vm.executeTransaction(rawTx);
+        } else {
+            vm.broadcastRawTransaction(rawTx);
+        }
+        revert("restore reverted");
+    }
+
+    /// Restores `newer` and deals `target` 20, then catches a call that restores `older`, which
+    /// drops that deal until the call reverts, and deals `target` 30.
+    function restoreAroundCaughtRestore(uint256 older, uint256 newer, address target) external {
+        require(vm.revertToState(newer), "restore failed");
+        vm.deal(target, 20);
+        try this.restoreRevert(older) {
+            revert("unexpected success");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("restore reverted"), reason);
+        }
+        require(target.balance == 20, "inner restore kept");
+        vm.deal(target, 30);
+        revert("outer reverted");
+    }
+
+    function restoreRevert(uint256 snapshotId) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        revert("restore reverted");
+    }
+
+    /// Restores `newer`, deals `first`, then restores `older`, which drops that deal until the call
+    /// reverts, and deals `second`.
+    function restoreNewerThenOlderRevert(uint256 older, uint256 newer, address first, address second) external {
+        require(vm.revertToState(newer), "restore failed");
+        vm.deal(first, 100);
+        require(vm.revertToState(older), "second restore failed");
+        vm.deal(second, 200);
+        revert("restore reverted");
+    }
+
+    /// Restores `older`, deals each of `targets` but the last, restores `newer`, a snapshot taken
+    /// before `older` was restored, then deals the last target.
+    function restoreOlderThenNewerRevert(uint256 older, uint256 newer, address[4] calldata targets) external {
+        require(vm.revertToState(older), "restore failed");
+        vm.deal(targets[0], 1);
+        vm.deal(targets[1], 2);
+        vm.deal(targets[2], 3);
+        require(vm.revertToState(newer), "second restore failed");
+        vm.deal(targets[3], 4);
+        revert("restore reverted");
+    }
+
+    /// If `restore`, sets the nonce of `target` and restores a snapshot without it. Then runs
+    /// `rawTx`, which creates `target`.
+    function createRevert(uint256 snapshotId, bool restore, bytes calldata rawTx, address target, bool execute)
+        external
+    {
+        if (restore) {
+            vm.setNonceUnsafe(target, 99);
+            require(vm.revertToState(snapshotId), "restore failed");
+        }
+        if (execute) {
+            vm.executeTransaction(rawTx);
+        } else {
+            vm.broadcastRawTransaction(rawTx);
+        }
+        require(vm.getNonce(target) == 1, "created nonce");
+        revert("restore reverted");
+    }
+
+    /// Sends `target` 10 wei, then catches a call that restores a snapshot from before and deals
+    /// `target` 20 wei.
+    function transferAroundRestoreDealRevert(uint256 snapshotId, address payable target) external {
+        target.transfer(10);
+        try this.restoreDealRevert(snapshotId, target) {
+            revert("unexpected success");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("restore reverted"), reason);
+        }
+        require(target.balance == 20, "inner deal lost");
+        revert("outer reverted");
+    }
+
+    function restoreDealRevert(uint256 snapshotId, address target) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        vm.deal(target, 20);
+        revert("restore reverted");
+    }
+
+    /// Restores a snapshot, then catches a call that deals `target` 10 wei and reverts.
+    function restoreAroundDealRevert(uint256 snapshotId, address target) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        try this.dealRevert(target) {
+            revert("unexpected success");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("deal reverted"), reason);
+        }
+        revert("restore reverted");
+    }
+
+    function dealRevert(address target) external {
+        vm.deal(target, 10);
+        revert("deal reverted");
+    }
+
+    /// Creates a contract, which bumps this contract's nonce, then catches a call that restores a
+    /// snapshot from before and sets the nonce to 20.
+    function createAroundRestoreSetNonceRevert(uint256 snapshotId) external {
+        new NestedRestoreStore();
+        try this.restoreSetNonceRevert(snapshotId) {
+            revert("unexpected success");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("restore reverted"), reason);
+        }
+        require(vm.getNonce(address(this)) == 20, "inner nonce lost");
+        revert("outer reverted");
+    }
+
+    function restoreSetNonceRevert(uint256 snapshotId) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        vm.setNonceUnsafe(address(this), 20);
+        revert("restore reverted");
+    }
+
+    /// Restores a snapshot if `restore`, sends `target` 3 wei, then runs `rawTx`, which creates
+    /// `target`.
+    function transferCreateRevert(
+        uint256 snapshotId,
+        bool restore,
+        bytes calldata rawTx,
+        address payable target,
+        bool execute
+    ) external {
+        if (restore) require(vm.revertToState(snapshotId), "restore failed");
+        target.transfer(3);
+        if (execute) {
+            vm.executeTransaction(rawTx);
+        } else {
+            vm.broadcastRawTransaction(rawTx);
+        }
+        require(target.balance >= 3, "transfer lost");
+        revert("outer reverted");
+    }
+
+    /// Deals `target`, restores a snapshot if `restore`, then runs `rawTx`, which creates and
+    /// destroys `target`.
+    function dealCreateDestroyRevert(uint256 snapshotId, bool restore, bytes calldata rawTx, address target) external {
+        vm.deal(target, 100);
+        if (restore) require(vm.revertToState(snapshotId), "restore failed");
+        vm.broadcastRawTransaction(rawTx);
+        require(target.balance == 0, "not destroyed");
+        revert("restore reverted");
+    }
 }
 
 contract NestedRestoreConstructor {
@@ -365,10 +543,28 @@ abstract contract NestedRestoreFrameRevertBase is Test {
     }
 
     function testRestoreInSucceedingCallIsKept() public {
+        address cooled = address(0xC001);
+        balanceGas(cooled);
+        vm.cool(cooled);
         uint256 snapshotId = prepare(20);
         helper.restoreSet(snapshotId, store, 5);
+        // The transaction's origin and recipient stay warm (EIP-2929), and the account it cooled
+        // stays cold.
+        assertEq(balanceGas(tx.origin), 105);
+        assertEq(balanceGas(address(this)), 105);
+        assertEq(balanceGas(cooled), 2605);
         assertEq(store.marker(), 0);
         assertEq(store.value(), 5);
+    }
+
+    function balanceGas(address target) internal view returns (uint256 gasUsed) {
+        assembly {
+            let start := gas()
+            let targetBalance := balance(target)
+            gasUsed := sub(start, gas())
+            // Keeps the `BALANCE` from being optimized out.
+            if eq(targetBalance, 0xdeadbeef) { revert(0, 0) }
+        }
     }
 
     function testRevertedOuterCallUndoesSiblingRestores() public {
@@ -453,6 +649,200 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         assertEq(store.slots(1), 0);
     }
 
+    function testRevertedRestoreKeepsLaterWrites() public {
+        address target = address(0xDEA1);
+        uint256 snapshotId = prepare(20);
+        expectHelperRevert(abi.encodeCall(helper.restoreWriteRevert, (snapshotId, target)), "restore reverted");
+        assertUndone(20, 1);
+        assertEq(target.balance, 100);
+        assertEq(vm.getNonce(target), 7);
+    }
+
+    function testRevertedCallKeepsWritesAfterNestedRestore() public {
+        address target = address(0xDEA1);
+        uint256 snapshotId = prepare(20);
+        expectHelperRevert(abi.encodeCall(helper.nestedRestoreWriteRevert, (snapshotId, target)), "outer reverted");
+        assertUndone(20, 1);
+        assertEq(target.balance, 100);
+        assertEq(vm.getNonce(target), 7);
+    }
+
+    function testRevertedRestoreKeepsWritesAfterCaughtEarlierRestore() public {
+        address target = address(0xDEA1);
+        uint256 older = vm.snapshotState();
+        vm.deal(address(0xDEA2), 10);
+        uint256 newer = vm.snapshotState();
+        expectHelperRevert(abi.encodeCall(helper.restoreAroundCaughtRestore, (older, newer, target)), "outer reverted");
+        assertEq(target.balance, 30);
+    }
+
+    function testRevertedRestoreKeepsLaterExecutedTransaction() public {
+        revertedRestoreTransaction(true);
+    }
+
+    function testRevertedRestoreKeepsLaterRawTransaction() public {
+        revertedRestoreTransaction(false);
+    }
+
+    function revertedRestoreTransaction(bool execute) internal {
+        bytes memory rawTx = signedTransaction(abi.encodeCall(this.markStore, ()));
+        uint256 snapshotId = prepare(20);
+        expectHelperRevert(
+            abi.encodeCall(helper.restoreTransactRevert, (snapshotId, rawTx, execute)), "restore reverted"
+        );
+        // The transaction's writes and nonce survive, while the restore is undone.
+        assertEq(store.marker(), 99);
+        assertEq(address(0xBEEF5).balance, 5);
+        assertEq(store.value(), 21);
+        assertEq(vm.getNonce(vm.addr(1)), 1);
+    }
+
+    function markStore() external {
+        store.mark(99);
+        payable(address(0xBEEF5)).transfer(5);
+    }
+
+    // A later restore to an earlier point drops the writes made since the first one, but the revert
+    // undoes both restores.
+    function testRevertedRestoresKeepWritesDroppedByLaterRestore() public {
+        address first = address(0xDEA1);
+        address second = address(0xDEA3);
+        uint256 older = vm.snapshotState();
+        vm.deal(address(0xDEA2), 10);
+        uint256 newer = vm.snapshotState();
+        expectHelperRevert(
+            abi.encodeCall(helper.restoreNewerThenOlderRevert, (older, newer, first, second)), "restore reverted"
+        );
+        assertEq(address(0xDEA2).balance, 10);
+        assertEq(first.balance, 100);
+        assertEq(second.balance, 200);
+    }
+
+    // `newer` holds writes that the restore to `older` dropped, so restoring it does not keep the
+    // writes made in between.
+    function testRevertedRestoresKeepWritesAfterRestoreToDroppedSnapshot() public {
+        address[4] memory targets = [address(0xDEA1), address(0xDEA3), address(0xDEA4), address(0xDEA5)];
+        vm.deal(address(0xDEA2), 1);
+        uint256 older = vm.snapshotState();
+        vm.deal(address(0xDEA2), 2);
+        vm.deal(address(0xDEA2), 3);
+        uint256 newer = vm.snapshotState();
+        expectHelperRevert(
+            abi.encodeCall(helper.restoreOlderThenNewerRevert, (older, newer, targets)), "restore reverted"
+        );
+        assertEq(address(0xDEA2).balance, 3);
+        for (uint256 i; i < targets.length; i++) {
+            assertEq(targets[i].balance, i + 1);
+        }
+    }
+
+    // A transaction's account creation survives the revert whole, so a restore before it does not
+    // bring back the nonce written over the restore.
+    function testRevertedRestoreKeepsLaterExecutedCreate() public {
+        revertedCreate(true, true);
+    }
+
+    function testRevertedRestoreKeepsLaterRawCreate() public {
+        revertedCreate(true, false);
+    }
+
+    function testRevertedCallKeepsRawCreate() public {
+        revertedCreate(false, false);
+    }
+
+    function revertedCreate(bool restore, bool execute) internal {
+        // Returns the code `STOP`.
+        bytes memory rawTx = signedCreation(hex"600060005360016000f3");
+        address target = vm.computeCreateAddress(vm.addr(1), 0);
+        uint256 snapshotId = vm.snapshotState();
+        expectHelperRevert(
+            abi.encodeCall(helper.createRevert, (snapshotId, restore, rawTx, target, execute)), "restore reverted"
+        );
+        assertEq(target.code, hex"00");
+        assertEq(vm.getNonce(target), 1);
+    }
+
+    // A write after a restore keeps setting the value it left when an enclosing call reverts too.
+    function testRevertedCallKeepsBalanceSetAfterRestore() public {
+        address payable target = payable(address(0xDEA1));
+        vm.deal(address(helper), 1 ether);
+        uint256 snapshotId = vm.snapshotState();
+        expectHelperRevert(
+            abi.encodeCall(helper.transferAroundRestoreDealRevert, (snapshotId, target)), "outer reverted"
+        );
+        assertEq(target.balance, 20);
+    }
+
+    // A deal after a restore still sets its value once a reverted call replayed it.
+    function testRevertedRestoreKeepsDealFromRevertedCall() public {
+        address target = address(0xDEA1);
+        uint256 snapshotId = vm.snapshotState();
+        vm.deal(target, 50);
+        expectHelperRevert(abi.encodeCall(helper.restoreAroundDealRevert, (snapshotId, target)), "restore reverted");
+        assertEq(target.balance, 10);
+    }
+
+    function testRevertedCallKeepsNonceSetAfterRestore() public {
+        uint256 snapshotId = vm.snapshotState();
+        expectHelperRevert(abi.encodeCall(helper.createAroundRestoreSetNonceRevert, (snapshotId)), "outer reverted");
+        assertEq(vm.getNonce(address(helper)), 20);
+    }
+
+    // The value a transaction sends to the account it creates is a change of its balance, so the
+    // revert still undoes an earlier transfer to it, with or without a restore.
+    function testRevertedCallUndoesTransferToRawCreate() public {
+        revertedTransferCreate(false, false);
+    }
+
+    function testRevertedCallUndoesTransferToExecutedCreate() public {
+        revertedTransferCreate(false, true);
+    }
+
+    function testRevertedRestoreUndoesTransferToRawCreate() public {
+        revertedTransferCreate(true, false);
+    }
+
+    function testRevertedRestoreUndoesTransferToExecutedCreate() public {
+        revertedTransferCreate(true, true);
+    }
+
+    function revertedTransferCreate(bool restore, bool execute) internal {
+        // Sends 2 wei and returns the code `STOP`.
+        bytes memory rawTx = signedCreation(hex"600060005360016000f3", 2);
+        address payable target = payable(vm.computeCreateAddress(vm.addr(1), 0));
+        vm.deal(address(helper), 1 ether);
+        uint256 snapshotId = vm.snapshotState();
+        expectHelperRevert(
+            abi.encodeCall(helper.transferCreateRevert, (snapshotId, restore, rawTx, target, execute)), "outer reverted"
+        );
+        assertEq(target.code, hex"00");
+        assertEq(target.balance, 2);
+        assertEq(address(helper).balance, 1 ether);
+    }
+
+    // An account a transaction creates and destroys is left empty, with or without a restore.
+    function testRevertedRestoreKeepsLaterDestruction() public {
+        revertedDestruction(true);
+    }
+
+    function testRevertedCallKeepsDestruction() public {
+        revertedDestruction(false);
+    }
+
+    function revertedDestruction(bool restore) internal {
+        // `SELFDESTRUCT`s to itself.
+        bytes memory rawTx = signedCreation(hex"30ff");
+        address target = vm.computeCreateAddress(vm.addr(1), 0);
+        vm.deal(target, 5);
+        uint256 snapshotId = vm.snapshotState();
+        expectHelperRevert(
+            abi.encodeCall(helper.dealCreateDestroyRevert, (snapshotId, restore, rawTx, target)), "restore reverted"
+        );
+        assertEq(vm.getNonce(vm.addr(1)), 1);
+        assertEq(target.balance, 0);
+        assertEq(vm.getNonce(target), 0);
+    }
+
     function caughtTransactionRestore() external {
         uint256 snapshotId = prepare(0);
         expectHelperRevert(abi.encodeCall(helper.restoreFillRevert, (snapshotId, store, 1)), "restore reverted");
@@ -461,6 +851,18 @@ abstract contract NestedRestoreFrameRevertBase is Test {
     }
 
     function signedTransaction(bytes memory data) internal returns (bytes memory) {
+        return signTransaction(abi.encodePacked(address(this)), "", data);
+    }
+
+    function signedCreation(bytes memory initCode) internal returns (bytes memory) {
+        return signTransaction("", "", initCode);
+    }
+
+    function signedCreation(bytes memory initCode, uint8 value) internal returns (bytes memory) {
+        return signTransaction("", abi.encodePacked(value), initCode);
+    }
+
+    function signTransaction(bytes memory to, bytes memory value, bytes memory data) internal returns (bytes memory) {
         uint256 privateKey = 1;
         vm.chainId(1);
         vm.deal(vm.addr(privateKey), 1 ether);
@@ -468,7 +870,8 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         bytes[] memory unsigned = new bytes[](9);
         unsigned[1] = hex"01";
         unsigned[2] = hex"030d40";
-        unsigned[3] = abi.encodePacked(address(this));
+        unsigned[3] = to;
+        unsigned[4] = value;
         unsigned[5] = data;
         unsigned[6] = hex"01";
 

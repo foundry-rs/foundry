@@ -1,5 +1,6 @@
 use crate::{
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedTraceStep,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedCallLog, DecodedCallTrace,
+    DecodedTraceStep,
     debug::DebugTraceIdentifier,
     erc8021,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
@@ -11,6 +12,7 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_sol_types::SolValue;
+use evm2::interpreter::{InstrStop, opcode::OpCode};
 use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN,
     abi::{get_indexed_event, reconstruct_event_params},
@@ -35,17 +37,12 @@ use foundry_evm_networks::{
     NetworkConfigs, NetworkVariant, TEMPO_PRECOMPILES, celo::transfer::CELO_TRANSFER_LABEL,
 };
 use itertools::Itertools;
-use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
-use std::{collections::BTreeMap, sync::OnceLock};
+use std::{borrow::Cow, collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
     CURRENT_COMMITTEE_ADDRESS, IAccountKeychain, IAddressRegistry, ICurrentCommittee, IFeeManager,
-    IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, IStorageCredits, ITIP20ChannelReserve,
-    ITIP20Factory, ITIP403Registry, IValidatorConfig,
-};
-use tempo_precompiles::{
-    PATH_USD_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS, nonce::INonce,
-    tip20::ITIP20,
+    INonce, IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, IStorageCredits, ITIP20,
+    ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry, IValidatorConfig, PATH_USD_ADDRESS,
+    RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
 
 #[cfg(feature = "base")]
@@ -300,6 +297,21 @@ pub struct CallTraceDecoder {
     pub compact_labels: bool,
 }
 
+/// The identities a [`CallTraceDecoder`] collected for addresses, see
+/// [`CallTraceDecoder::address_identities`].
+#[derive(Clone, Debug, Default)]
+pub struct AddressIdentities {
+    contracts: HashMap<Address, String>,
+    labels: HashMap<Address, String>,
+    receive_contracts: HashSet<Address>,
+    fallback_contracts: HashMap<Address, HashSet<Selector>>,
+    non_fallback_contracts: HashMap<Address, HashSet<Selector>>,
+    functions_by_address: HashMap<Address, HashMap<Selector, Vec<Function>>>,
+    constructors_by_address: HashMap<Address, Constructor>,
+    constructor_args_offsets: HashMap<Address, usize>,
+    events_by_address: Option<Box<AddressEvents>>,
+}
+
 impl CallTraceDecoder {
     fn register_celo_metadata(&mut self) {
         if precompiles::is_known_precompile(
@@ -514,6 +526,35 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Returns a copy of everything [`Self::clear_addresses`] resets, so that
+    /// [`Self::restore_address_identities`] can bring the decoder back to this point.
+    pub fn address_identities(&self) -> AddressIdentities {
+        AddressIdentities {
+            contracts: self.contracts.clone(),
+            labels: self.labels.clone(),
+            receive_contracts: self.receive_contracts.clone(),
+            fallback_contracts: self.fallback_contracts.clone(),
+            non_fallback_contracts: self.non_fallback_contracts.clone(),
+            functions_by_address: self.functions_by_address.clone(),
+            constructors_by_address: self.constructors_by_address.clone(),
+            constructor_args_offsets: self.constructor_args_offsets.clone(),
+            events_by_address: self.events_by_address.clone(),
+        }
+    }
+
+    /// Restores the identities saved by [`Self::address_identities`].
+    pub fn restore_address_identities(&mut self, identities: &AddressIdentities) {
+        self.contracts.clone_from(&identities.contracts);
+        self.labels.clone_from(&identities.labels);
+        self.receive_contracts.clone_from(&identities.receive_contracts);
+        self.fallback_contracts.clone_from(&identities.fallback_contracts);
+        self.non_fallback_contracts.clone_from(&identities.non_fallback_contracts);
+        self.functions_by_address.clone_from(&identities.functions_by_address);
+        self.constructors_by_address.clone_from(&identities.constructors_by_address);
+        self.constructor_args_offsets.clone_from(&identities.constructor_args_offsets);
+        self.events_by_address.clone_from(&identities.events_by_address);
+    }
+
     /// Clears all known addresses.
     pub fn clear_addresses(&mut self) {
         self.contracts.clear();
@@ -562,15 +603,19 @@ impl CallTraceDecoder {
         self.collect_identified_addresses(self.identify_addresses(arena, identifier), true);
     }
 
-    /// Identifies unknown addresses without re-registering their ABIs globally.
+    /// Identifies unknown addresses without re-registering their ABIs globally, and returns
+    /// whether it identified any address.
     ///
     /// The identified ABIs must already be registered in this decoder.
     pub fn identify_scoped(
         &mut self,
         arena: &CallTraceArena,
         identifier: &mut impl TraceIdentifier,
-    ) {
-        self.collect_identified_addresses(self.identify_addresses(arena, identifier), false);
+    ) -> bool {
+        let identified = self.identify_addresses(arena, identifier);
+        let any = !identified.is_empty();
+        self.collect_identified_addresses(identified, false);
+        any
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -601,7 +646,10 @@ impl CallTraceDecoder {
 
     /// Adds a single event to the decoder.
     pub fn push_event(&mut self, event: Event) {
-        self.events.entry((event.selector(), indexed_inputs(&event))).or_default().push(event);
+        push_unique(
+            self.events.entry((event.selector(), indexed_inputs(&event))).or_default(),
+            Cow::Owned(event),
+        );
     }
 
     /// Adds a single event to the decoder for a specific contract address.
@@ -613,17 +661,18 @@ impl CallTraceDecoder {
             .or_default()
             .entry(((!event.anonymous).then(|| event.selector()), indexed_inputs(&event)))
             .or_default();
-        if !events.contains(&event) {
-            events.push(event);
-        }
+        push_unique(events, Cow::Owned(event));
     }
 
     /// Adds a single function to the decoder.
     pub fn push_function(&mut self, function: Function) {
-        let selector = function.selector();
+        self.push_function_with_selector(function.selector(), Cow::Owned(function));
+    }
+
+    fn push_function_with_selector(&mut self, selector: Selector, function: Cow<'_, Function>) {
         let functions = self.functions.entry(selector).or_default();
 
-        if Self::push_function_to(functions, function) && functions.len() > 1 {
+        if push_unique(functions, function) && functions.len() > 1 {
             let function = functions.last().expect("function was just inserted");
             let signature = function.signature();
             trace!(target: "evm::traces", %selector, new=%signature, "duplicate function selector");
@@ -638,16 +687,7 @@ impl CallTraceDecoder {
             .or_default()
             .entry(function.selector())
             .or_default();
-        Self::push_function_to(functions, function);
-    }
-
-    fn push_function_to(functions: &mut Vec<Function>, function: Function) -> bool {
-        if functions.contains(&function) {
-            false
-        } else {
-            functions.push(function);
-            true
-        }
+        push_unique(functions, Cow::Owned(function));
     }
 
     /// Returns the functions registered for `selector` at `address`.
@@ -794,27 +834,27 @@ impl CallTraceDecoder {
             .entry(foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
             .or_insert_with(|| "MonadVM".to_string());
         self.register_address_abi(
-            monad_revm::staking::STAKING_ADDRESS,
+            monad_evm2::staking::STAKING_ADDRESS,
             &monad::IMonadStaking::abi::contract(),
         );
         self.register_address_abi(
-            monad_revm::staking::STAKING_ADDRESS,
+            monad_evm2::staking::STAKING_ADDRESS,
             &monad::IMonadStakingSyscalls::abi::contract(),
         );
         self.labels
-            .entry(monad_revm::staking::STAKING_ADDRESS)
+            .entry(monad_evm2::staking::STAKING_ADDRESS)
             .or_insert_with(|| "Staking".to_string());
 
         if foundry_evm_networks::is_monad_precompile_active_at(
-            monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
             hardfork,
         ) {
             self.register_address_abi(
-                monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+                monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
                 &monad::IReserveBalance::abi::contract(),
             );
             self.labels
-                .entry(monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+                .entry(monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS)
                 .or_insert_with(|| "ReserveBalance".to_string());
         }
     }
@@ -936,12 +976,21 @@ impl CallTraceDecoder {
             return;
         }
         trace!(target: "evm::traces", len, ?address, "collecting ABI");
+        let mut selectors = HashSet::default();
         for function in abi.functions() {
+            let selector = function.selector();
             if let Some(address) = address {
-                self.push_address_function(address, function.clone());
+                let functions = self
+                    .functions_by_address
+                    .entry(address)
+                    .or_default()
+                    .entry(selector)
+                    .or_default();
+                push_unique(functions, Cow::Borrowed(function));
+                selectors.insert(selector);
             }
             if global {
-                self.push_function(function.clone());
+                self.push_function_with_selector(selector, Cow::Borrowed(function));
             }
         }
         if let Some(address) = address
@@ -951,7 +1000,10 @@ impl CallTraceDecoder {
         }
         if global {
             for event in abi.events() {
-                self.push_event(event.clone());
+                push_unique(
+                    self.events.entry((event.selector(), indexed_inputs(event))).or_default(),
+                    Cow::Borrowed(event),
+                );
             }
             for error in abi.errors() {
                 self.push_error(error.clone());
@@ -963,11 +1015,9 @@ impl CallTraceDecoder {
             }
 
             if abi.fallback.is_some() {
-                self.fallback_contracts
-                    .insert(address, abi.functions().map(|f| f.selector()).collect());
+                self.fallback_contracts.insert(address, selectors);
             } else {
-                self.non_fallback_contracts
-                    .insert(address, abi.functions().map(|f| f.selector()).collect());
+                self.non_fallback_contracts.insert(address, selectors);
             }
         }
     }
@@ -979,40 +1029,31 @@ impl CallTraceDecoder {
         for node in traces {
             if !self.opcodes.is_empty() {
                 for step in &mut node.trace.steps {
-                    if step.decoded.is_some() {
+                    if step.decoded.is_some() || !self.opcodes.contains(&step.op) {
                         continue;
                     }
-                    for opcode in &self.opcodes {
-                        if step.op == *opcode {
-                            let res = match &step.storage_change {
-                                Some(change) if step.op == OpCode::SSTORE => {
-                                    if let Some(had_value) = change.had_value {
-                                        format!(
-                                            "[{}] {} 0x{:x}: 0x{:x} → 0x{:x}",
-                                            step.gas_cost,
-                                            opcode,
-                                            change.key,
-                                            had_value,
-                                            change.value
-                                        )
-                                    } else {
-                                        format!(
-                                            "[{}] {} 0x{:x} → (0x{:x})",
-                                            step.gas_cost, opcode, change.key, change.value
-                                        )
-                                    }
-                                }
-                                Some(change) => format!(
-                                    "[{}] {} 0x{:x} → (0x{:x})",
-                                    step.gas_cost, opcode, change.key, change.value
-                                ),
-                                None => format!("[{}] {}", step.gas_cost, opcode),
-                            };
-
-                            step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
-                            break;
+                    let res = match &step.storage_change {
+                        Some(change) if step.op == OpCode::SSTORE => {
+                            if let Some(had_value) = change.had_value {
+                                format!(
+                                    "[{}] {} {:#x}: {:#x} → {:#x}",
+                                    step.gas_cost, step.op, change.key, had_value, change.value
+                                )
+                            } else {
+                                format!(
+                                    "[{}] {} {:#x} → ({:#x})",
+                                    step.gas_cost, step.op, change.key, change.value
+                                )
+                            }
                         }
-                    }
+                        Some(change) => format!(
+                            "[{}] {} {:#x} → ({:#x})",
+                            step.gas_cost, step.op, change.key, change.value
+                        ),
+                        None => format!("[{}] {}", step.gas_cost, step.op),
+                    };
+
+                    step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
                 }
             }
 
@@ -1254,10 +1295,8 @@ impl CallTraceDecoder {
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
             "expectRevert" => {
-                let decoded = match data.get(SELECTOR_LEN..) {
-                    Some(data) => func.abi_decode_input(data).ok(),
-                    None => None,
-                };
+                let decoded =
+                    data.get(SELECTOR_LEN..).and_then(|data| func.abi_decode_input(data).ok());
                 let Some(decoded) = decoded else {
                     return Some(vec![self.revert_decoder.decode(data, None)]);
                 };
@@ -1290,7 +1329,13 @@ impl CallTraceDecoder {
                 // getNonce(Wallet)
                 (!func.inputs.is_empty() && func.inputs[0].ty == "tuple").then(|| vec!["<pk>".to_string()])
             }
-            "sign" | "signCompact" | "signP256" | "signKeychain" | "signKeychainAdmin" => {
+            "sign" |
+            "signCompact" |
+            "signP256" |
+            "signKeychain" |
+            "signKeychainAdmin" |
+            "signConfigurableAccount" |
+            "signKeychainConfigurableAccount" => {
                 // Fail closed: when the arguments of a key-taking cheatcode cannot be
                 // decoded, redact everything instead of deferring to generic rendering.
                 let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
@@ -1298,10 +1343,14 @@ impl CallTraceDecoder {
                 };
 
                 // Redact private key and replace in trace when the first parameter is a raw
-                // private key (uint256) or a Wallet struct (tuple); digest-only and
-                // signer-address overloads carry no key material and are left as-is.
+                // private key (uint256), a Wallet struct (tuple), or a list of owner keys
+                // (uint256[] or OwnerKey[]); digest-only and signer-address overloads carry no
+                // key material and are left as-is.
                 if !decoded.is_empty() &&
-                    (func.inputs[0].ty == "uint256" || func.inputs[0].ty == "tuple")
+                    matches!(
+                        func.inputs[0].ty.as_str(),
+                        "uint256" | "tuple" | "uint256[]" | "tuple[]"
+                    )
                 {
                     decoded[0] = DynSolValue::String("<pk>".to_string());
                 }
@@ -1485,11 +1534,8 @@ impl CallTraceDecoder {
 
     /// The default decoded return data for a trace.
     async fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
-        // For calls with status None or successful status, don't decode revert data
-        // This is due to trace.status is derived from the revm_interpreter::InstructionResult in
-        // revm-inspectors status will `None` post revm 27, as `InstructionResult::Continue` does
-        // not exists anymore.
-        if trace.status.is_none_or(|s| s.is_ok()) || trace.success {
+        // For calls with status None or successful status, don't decode revert data.
+        if trace.status.is_none_or(InstrStop::is_success) || trace.success {
             return None;
         }
         Some(self.decode_revert_at(trace.address, &trace.output, trace.status).await)
@@ -1501,7 +1547,7 @@ impl CallTraceDecoder {
     /// with the signatures identifier, like unknown function and event signatures. This resolves
     /// errors from the local signatures cache populated by `forge build`, or from remote signature
     /// databases.
-    async fn decode_revert(&self, output: &[u8], status: Option<InstructionResult>) -> String {
+    async fn decode_revert(&self, output: &[u8], status: Option<InstrStop>) -> String {
         if let Some(reason) = self.revert_decoder.maybe_decode_known(output) {
             return reason;
         }
@@ -1519,7 +1565,7 @@ impl CallTraceDecoder {
         &self,
         address: Address,
         output: &[u8],
-        status: Option<InstructionResult>,
+        status: Option<InstrStop>,
     ) -> String {
         #[cfg(feature = "base")]
         if let Some(reason) =
@@ -1731,7 +1777,7 @@ impl CallTraceDecoder {
             .iter()
             .filter(|&n| {
                 // Only consider reverted traces whose output the revert decoder cannot decode.
-                n.trace.status.is_some_and(|s| !s.is_ok())
+                n.trace.status.is_some_and(|s| !s.is_success())
                     && !n.trace.success
                     && self.revert_decoder.maybe_decode_known(&n.trace.output).is_none()
             })
@@ -1896,15 +1942,24 @@ fn constructor_signature(constructor: &Constructor) -> String {
     )
 }
 
+/// Appends `item` unless an equal value is already present, and returns whether it was appended.
+fn push_unique<T: Clone + PartialEq>(items: &mut Vec<T>, item: Cow<'_, T>) -> bool {
+    if items.contains(&item) {
+        false
+    } else {
+        items.push(item.into_owned());
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::CallKind;
     use alloy_primitives::{address, aliases::U96, bytes, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
-    use foundry_evm_core::{abi::Vm, precompiles::P256_VERIFY};
-    use std::borrow::Cow;
-    use tempo_precompiles::{
+    use foundry_evm_core::{abi::Vm, precompiles::P256_VERIFY, tempo::TEMPO_PRECOMPILE_ADDRESSES};
+    use tempo_contracts::precompiles::{
         ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,
         TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
         VALIDATOR_CONFIG_V2_ADDRESS,
@@ -1914,8 +1969,8 @@ mod tests {
     use foundry_evm_hardforks::BaseUpgrade;
 
     #[cfg(feature = "monad")]
-    use monad_revm::{
-        reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
+    use monad_evm2::{
+        reserve_balance::IReserveBalance::dippedIntoReserveCall,
         staking::interface::IMonadStaking::getEpochCall,
     };
 
@@ -1962,74 +2017,74 @@ mod tests {
 
     #[test]
     #[cfg(feature = "monad")]
-    fn test_monad_decoder_abis_match_monad_revm() {
-        use monad_revm::{
-            reserve_balance::interface::IReserveBalance as RevmReserveBalance,
-            staking::interface::IMonadStaking as RevmMonadStaking,
+    fn test_monad_decoder_abis_match_monad_evm2() {
+        use monad_evm2::{
+            reserve_balance::IReserveBalance as CanonicalReserveBalance,
+            staking::interface::IMonadStaking as CanonicalMonadStaking,
         };
 
         let local_staking_functions = monad::IMonadStaking::abi::functions()
             .into_values()
             .chain(monad::IMonadStakingSyscalls::abi::functions().into_values())
             .flatten();
-        let mut revm_staking_functions = vec![
-            typed_call_abi_item::<RevmMonadStaking::addValidatorCall>(),
-            typed_call_abi_item::<RevmMonadStaking::delegateCall>(),
-            typed_call_abi_item::<RevmMonadStaking::undelegateCall>(),
-            typed_call_abi_item::<RevmMonadStaking::withdrawCall>(),
-            typed_call_abi_item::<RevmMonadStaking::compoundCall>(),
-            typed_call_abi_item::<RevmMonadStaking::claimRewardsCall>(),
-            typed_call_abi_item::<RevmMonadStaking::changeCommissionCall>(),
-            typed_call_abi_item::<RevmMonadStaking::externalRewardCall>(),
-            typed_call_abi_item::<RevmMonadStaking::getEpochCall>(),
-            typed_call_abi_item::<RevmMonadStaking::getProposerValIdCall>(),
-            typed_call_abi_item::<RevmMonadStaking::getValidatorCall>(),
-            typed_call_abi_item::<RevmMonadStaking::getDelegatorCall>(),
-            typed_call_abi_item::<RevmMonadStaking::getWithdrawalRequestCall>(),
-            typed_call_abi_item::<RevmMonadStaking::getConsensusValidatorSetCall>(),
-            typed_call_abi_item::<RevmMonadStaking::getSnapshotValidatorSetCall>(),
-            typed_call_abi_item::<RevmMonadStaking::getExecutionValidatorSetCall>(),
-            typed_call_abi_item::<RevmMonadStaking::getDelegationsCall>(),
-            typed_call_abi_item::<RevmMonadStaking::getDelegatorsCall>(),
-            typed_call_abi_item::<RevmMonadStaking::syscallOnEpochChangeCall>(),
-            typed_call_abi_item::<RevmMonadStaking::syscallRewardCall>(),
-            typed_call_abi_item::<RevmMonadStaking::syscallSnapshotCall>(),
+        let mut canonical_staking_functions = vec![
+            typed_call_abi_item::<CanonicalMonadStaking::addValidatorCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::delegateCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::undelegateCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::withdrawCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::compoundCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::claimRewardsCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::changeCommissionCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::externalRewardCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::getEpochCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::getProposerValIdCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::getValidatorCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::getDelegatorCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::getWithdrawalRequestCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::getConsensusValidatorSetCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::getSnapshotValidatorSetCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::getExecutionValidatorSetCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::getDelegationsCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::getDelegatorsCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::syscallOnEpochChangeCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::syscallRewardCall>(),
+            typed_call_abi_item::<CanonicalMonadStaking::syscallSnapshotCall>(),
         ];
-        revm_staking_functions.sort();
+        canonical_staking_functions.sort();
         assert_eq!(
             function_abi_items(local_staking_functions),
-            revm_staking_functions,
-            "Monad staking function selectors drifted from monad_revm",
+            canonical_staking_functions,
+            "Monad staking function selectors drifted from monad_evm2",
         );
 
-        let mut revm_staking_events = vec![
-            typed_event_abi_item::<RevmMonadStaking::ClaimRewards>(),
-            typed_event_abi_item::<RevmMonadStaking::CommissionChanged>(),
-            typed_event_abi_item::<RevmMonadStaking::Delegate>(),
-            typed_event_abi_item::<RevmMonadStaking::EpochChanged>(),
-            typed_event_abi_item::<RevmMonadStaking::Undelegate>(),
-            typed_event_abi_item::<RevmMonadStaking::ValidatorCreated>(),
-            typed_event_abi_item::<RevmMonadStaking::ValidatorRewarded>(),
-            typed_event_abi_item::<RevmMonadStaking::ValidatorStatusChanged>(),
-            typed_event_abi_item::<RevmMonadStaking::Withdraw>(),
+        let mut canonical_staking_events = vec![
+            typed_event_abi_item::<CanonicalMonadStaking::ClaimRewards>(),
+            typed_event_abi_item::<CanonicalMonadStaking::CommissionChanged>(),
+            typed_event_abi_item::<CanonicalMonadStaking::Delegate>(),
+            typed_event_abi_item::<CanonicalMonadStaking::EpochChanged>(),
+            typed_event_abi_item::<CanonicalMonadStaking::Undelegate>(),
+            typed_event_abi_item::<CanonicalMonadStaking::ValidatorCreated>(),
+            typed_event_abi_item::<CanonicalMonadStaking::ValidatorRewarded>(),
+            typed_event_abi_item::<CanonicalMonadStaking::ValidatorStatusChanged>(),
+            typed_event_abi_item::<CanonicalMonadStaking::Withdraw>(),
         ];
-        revm_staking_events.sort();
+        canonical_staking_events.sort();
         assert_eq!(
             event_abi_items(monad::IMonadStaking::abi::events().into_values().flatten()),
-            revm_staking_events,
-            "Monad staking event selectors drifted from monad_revm",
+            canonical_staking_events,
+            "Monad staking event selectors drifted from monad_evm2",
         );
 
         assert_eq!(
             function_abi_items(monad::IReserveBalance::abi::functions().into_values().flatten()),
-            vec![typed_call_abi_item::<RevmReserveBalance::dippedIntoReserveCall>()],
-            "Monad reserve-balance function selectors drifted from monad_revm",
+            vec![typed_call_abi_item::<CanonicalReserveBalance::dippedIntoReserveCall>()],
+            "Monad reserve-balance function selectors drifted from monad_evm2",
         );
 
         assert_eq!(
             event_abi_items(monad::IReserveBalance::abi::events().into_values().flatten()),
             Vec::<(String, usize, String)>::new(),
-            "Monad reserve-balance event selectors drifted from monad_revm",
+            "Monad reserve-balance event selectors drifted from monad_evm2",
         );
     }
 
@@ -2092,7 +2147,7 @@ mod tests {
                             address,
                             kind,
                             success,
-                            status: (!success).then_some(InstructionResult::Revert),
+                            status: (!success).then_some(InstrStop::Revert),
                             data: data.into(),
                             output: vec![0xff; 64].into(),
                             ..Default::default()
@@ -2115,9 +2170,6 @@ mod tests {
 
     #[test]
     fn test_selector_collision_resolution() {
-        use alloy_json_abi::Function;
-        use alloy_primitives::Address;
-
         // Create two functions with the same selector but different signatures
         let func1 = Function::parse("transferFrom(address,address,uint256)").unwrap();
         let func2 = Function::parse("gasprice_bit_ether(int128)").unwrap();
@@ -2146,9 +2198,6 @@ mod tests {
 
     #[test]
     fn test_selector_collision_resolution_second_function() {
-        use alloy_json_abi::Function;
-        use alloy_primitives::Address;
-
         // Create two functions with the same selector but different signatures
         let func1 = Function::parse("transferFrom(address,address,uint256)").unwrap();
         let func2 = Function::parse("gasprice_bit_ether(int128)").unwrap();
@@ -2524,7 +2573,7 @@ mod tests {
         data.extend_from_slice(&args);
         let trace = CallTrace {
             address,
-            kind: revm_inspectors::tracing::types::CallKind::Create,
+            kind: crate::CallKind::Create,
             data: data.into(),
             ..Default::default()
         };
@@ -2828,6 +2877,66 @@ mod tests {
                     "0x1111111111111111111111111111111111111111".to_string(),
                     "0x0000000000000000000000000000000000000000000000000000000000000000"
                         .to_string(),
+                ]),
+            ),
+            (
+                // Owner key lists are redacted as a whole.
+                "signConfigurableAccount(uint256[],address,(bytes32,uint64,uint8,(address,uint8)[]),bytes32)",
+                hex!(
+                    "
+                    9f493d1c
+                    0000000000000000000000000000000000000000000000000000000000000080
+                    0000000000000000000000002222222222222222222222222222222222222222
+                    00000000000000000000000000000000000000000000000000000000000000c0
+                    0000000000000000000000000000000000000000000000000000000000000000
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    000000000000000000000000000000000000000000000000000000000000005a
+                    0000000000000000000000000000000000000000000000000000000000000000
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    0000000000000000000000000000000000000000000000000000000000000080
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000001
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "signer: [0x2222222222222222222222222222222222222222]".to_string(),
+                    "(0x000000000000000000000000000000000000000000000000000000000000005a, 0, 1, [(0x1111111111111111111111111111111111111111, 1)])".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+                ]),
+            ),
+            (
+                "signKeychainConfigurableAccount((uint8,uint256)[],address,(bytes32,uint64,uint8,(address,uint8)[]),address,bytes32)",
+                hex!(
+                    "
+                    b6468902
+                    00000000000000000000000000000000000000000000000000000000000000a0
+                    0000000000000000000000002222222222222222222222222222222222222222
+                    0000000000000000000000000000000000000000000000000000000000000100
+                    0000000000000000000000003333333333333333333333333333333333333333
+                    0000000000000000000000000000000000000000000000000000000000000000
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    0000000000000000000000000000000000000000000000000000000000000002
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    000000000000000000000000000000000000000000000000000000000000005a
+                    0000000000000000000000000000000000000000000000000000000000000000
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    0000000000000000000000000000000000000000000000000000000000000080
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000001
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "signer: [0x2222222222222222222222222222222222222222]".to_string(),
+                    "(0x000000000000000000000000000000000000000000000000000000000000005a, 0, 1, [(0x1111111111111111111111111111111111111111, 1)])".to_string(),
+                    "0x3333333333333333333333333333333333333333".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
                 ]),
             ),
             (
@@ -3440,11 +3549,11 @@ mod tests {
     #[cfg(feature = "monad")]
     async fn test_decodes_monad_staking_precompile_call() {
         let trace = CallTrace {
-            address: monad_revm::staking::STAKING_ADDRESS,
+            address: monad_evm2::staking::STAKING_ADDRESS,
             data: getEpochCall::SELECTOR.into(),
             output:
-                monad_revm::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
-                    &monad_revm::staking::interface::IMonadStaking::getEpochReturn {
+                monad_evm2::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
+                    &monad_evm2::staking::interface::IMonadStaking::getEpochReturn {
                         epoch: 42,
                         inEpochDelayPeriod: true,
                     },
@@ -3468,7 +3577,7 @@ mod tests {
     async fn test_decodes_monad_staking_syscall() {
         let block_author = Address::repeat_byte(0x42);
         let trace = CallTrace {
-            address: monad_revm::staking::STAKING_ADDRESS,
+            address: monad_evm2::staking::STAKING_ADDRESS,
             data: monad::IMonadStakingSyscalls::syscallRewardCall { blockAuthor: block_author }
                 .abi_encode()
                 .into(),
@@ -3490,7 +3599,7 @@ mod tests {
     #[cfg(feature = "monad")]
     async fn test_decodes_monad_reserve_balance_precompile_call() {
         let trace = CallTrace {
-            address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            address: monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
             data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
@@ -3521,7 +3630,7 @@ mod tests {
 
         let decoder = monad_decoder(MonadHardfork::MonadEight);
         let decoded =
-            decoder.decode_event_with_address(monad_revm::staking::STAKING_ADDRESS, &log).await;
+            decoder.decode_event_with_address(monad_evm2::staking::STAKING_ADDRESS, &log).await;
 
         assert_eq!(decoded.name.as_deref(), Some("Delegate"));
         let params = decoded.params.expect("params");
@@ -3531,10 +3640,7 @@ mod tests {
         assert_eq!(params[3], ("activationEpoch".to_string(), "9".to_string()));
 
         let collision = decoder
-            .decode_event_with_address(
-                monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-                &log,
-            )
+            .decode_event_with_address(monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS, &log)
             .await;
         assert_eq!(collision.name, None);
     }
@@ -3545,18 +3651,18 @@ mod tests {
         let decoder = CallTraceDecoderBuilder::new().with_chain_id(Some(1)).build();
         for address in [
             foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS,
-            monad_revm::staking::STAKING_ADDRESS,
-            monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            monad_evm2::staking::STAKING_ADDRESS,
+            monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
         ] {
             assert!(!decoder.labels.contains_key(&address));
         }
 
         let staking_trace = CallTrace {
-            address: monad_revm::staking::STAKING_ADDRESS,
+            address: monad_evm2::staking::STAKING_ADDRESS,
             data: getEpochCall::SELECTOR.into(),
             output:
-                monad_revm::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
-                    &monad_revm::staking::interface::IMonadStaking::getEpochReturn {
+                monad_evm2::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
+                    &monad_evm2::staking::interface::IMonadStaking::getEpochReturn {
                         epoch: 42,
                         inEpochDelayPeriod: true,
                     },
@@ -3572,7 +3678,7 @@ mod tests {
         );
 
         let reserve_trace = CallTrace {
-            address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            address: monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
             data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
@@ -3597,8 +3703,8 @@ mod tests {
             (U256::from(1000), 9_u64).abi_encode().into(),
         );
         for address in [
-            monad_revm::staking::STAKING_ADDRESS,
-            monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            monad_evm2::staking::STAKING_ADDRESS,
+            monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
         ] {
             let decoded = decoder.decode_event_with_address(address, &log).await;
             assert_eq!(decoded.name, None);
@@ -3618,17 +3724,15 @@ mod tests {
             Some("MonadVM")
         );
         assert_eq!(
-            monad_eight.labels.get(&monad_revm::staking::STAKING_ADDRESS).map(String::as_str),
+            monad_eight.labels.get(&monad_evm2::staking::STAKING_ADDRESS).map(String::as_str),
             Some("Staking")
         );
         assert!(
-            !monad_eight
-                .labels
-                .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+            !monad_eight.labels.contains_key(&monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS)
         );
 
         let trace = CallTrace {
-            address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            address: monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
             data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
@@ -3645,7 +3749,7 @@ mod tests {
         assert_eq!(
             monad_nine
                 .labels
-                .get(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+                .get(&monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS)
                 .map(String::as_str),
             Some("ReserveBalance")
         );
@@ -3660,7 +3764,7 @@ mod tests {
     #[cfg(feature = "monad")]
     async fn test_monad_metadata_refreshes_across_hardforks() {
         let trace = CallTrace {
-            address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            address: monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
             data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
@@ -3673,7 +3777,7 @@ mod tests {
         assert_eq!(
             decoder
                 .labels
-                .get(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+                .get(&monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS)
                 .map(String::as_str),
             Some("ReserveBalance")
         );
@@ -3686,12 +3790,10 @@ mod tests {
         decoder.set_hardfork(Some(MonadHardfork::MonadEight.into()));
         assert_eq!(decoder.hardfork(), Some(MonadHardfork::MonadEight.into()));
         assert!(
-            !decoder
-                .labels
-                .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+            !decoder.labels.contains_key(&monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS)
         );
         assert_eq!(
-            decoder.labels.get(&monad_revm::staking::STAKING_ADDRESS).map(String::as_str),
+            decoder.labels.get(&monad_evm2::staking::STAKING_ADDRESS).map(String::as_str),
             Some("Staking")
         );
         let monad_eight = decoder.decode_function(&trace).await;
@@ -3809,6 +3911,21 @@ mod tests {
         assert_eq!(decoder.functions_by_address[&address][&selector], [function]);
     }
 
+    #[test]
+    fn repeated_identification_does_not_duplicate_global_events() {
+        let abi = JsonAbi::parse(["event Scoped(uint256 value)"]).unwrap();
+        let event = abi.events().next().unwrap().clone();
+        let mut decoder = CallTraceDecoder::new().clone();
+
+        let mut arena = CallTraceArena::default();
+        for byte in [0x42, 0x43] {
+            arena.nodes_mut()[0].trace.address = Address::repeat_byte(byte);
+            decoder.identify(&arena, &mut AbiIdentifier { abi: abi.clone() });
+        }
+
+        assert_eq!(decoder.events[&(event.selector(), 0)], [event]);
+    }
+
     #[tokio::test]
     async fn inactive_p256_address_uses_contract_identity() {
         let abi = JsonAbi::parse(["function ordinaryCode()"]).unwrap();
@@ -3837,8 +3954,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_skips_evm_precompiles() {
-        use foundry_evm_core::precompiles::SHA_256;
-
         let decoder = CallTraceDecoder::new();
 
         let mut arena = CallTraceArena::default();
@@ -3877,8 +3992,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_skips_tempo_precompiles() {
-        use foundry_evm_core::tempo::{TEMPO_PRECOMPILE_ADDRESSES, TIP20_CHANNEL_RESERVE_ADDRESS};
-
         // Decoder with Tempo chain ID (4217).
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
@@ -4071,7 +4184,7 @@ mod tests {
             address: CURRENT_COMMITTEE_ADDRESS,
             output: output.clone().into(),
             success: false,
-            status: Some(InstructionResult::Revert),
+            status: Some(InstrStop::Revert),
             ..Default::default()
         };
         let decoder = CallTraceDecoderBuilder::new()
@@ -4152,8 +4265,6 @@ mod tests {
 
     #[test]
     fn test_tempo_hardfork_none_does_not_remove_user_reserve_label() {
-        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
-
         let reserve_label = "UserReserve".to_string();
         let decoder = CallTraceDecoderBuilder::new()
             .with_labels([(TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone())])
@@ -4453,8 +4564,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_does_not_skip_future_tempo_precompiles() {
-        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
-
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
             .with_hardfork(Some(TempoHardfork::T4.into()))
@@ -4483,8 +4592,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_does_not_skip_tempo_precompiles_on_other_chains() {
-        use foundry_evm_core::tempo::TEMPO_PRECOMPILE_ADDRESSES;
-
         // Decoder with Ethereum mainnet chain ID (1).
         let mut decoder = CallTraceDecoder::new().clone();
         decoder.chain_id = Some(1);
@@ -4523,7 +4630,7 @@ mod tests {
 
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
-                address: monad_revm::staking::STAKING_ADDRESS,
+                address: monad_evm2::staking::STAKING_ADDRESS,
                 depth: 1,
                 maybe_precompile: None,
                 ..Default::default()
@@ -4533,7 +4640,7 @@ mod tests {
         });
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
-                address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+                address: monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
                 depth: 1,
                 maybe_precompile: None,
                 ..Default::default()
@@ -4559,7 +4666,7 @@ mod tests {
 
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
-                address: monad_revm::staking::STAKING_ADDRESS,
+                address: monad_evm2::staking::STAKING_ADDRESS,
                 depth: 1,
                 maybe_precompile: None,
                 ..Default::default()
@@ -4569,7 +4676,7 @@ mod tests {
         });
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
-                address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+                address: monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
                 depth: 1,
                 maybe_precompile: None,
                 ..Default::default()
@@ -4585,8 +4692,8 @@ mod tests {
             identifier.queried,
             vec![
                 regular_addr,
-                monad_revm::staking::STAKING_ADDRESS,
-                monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+                monad_evm2::staking::STAKING_ADDRESS,
+                monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
             ]
         );
     }
@@ -4595,7 +4702,7 @@ mod tests {
     #[cfg(feature = "monad")]
     fn execution_network_overrides_nested_source_monad_precompile_detection() {
         assert!(!precompiles::is_known_precompile(
-            monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS,
             Some(NetworkVariant::Ethereum.into()),
             Some(143),
             Some(MonadHardfork::MonadNine.into()),

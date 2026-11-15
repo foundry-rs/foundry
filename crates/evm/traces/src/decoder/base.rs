@@ -238,9 +238,9 @@ mod tests {
         self as canonical, ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage,
         TxContextStorage,
     };
+    use evm2::interpreter::InstrStop;
     use foundry_evm_hardforks::{BaseUpgrade, FoundryHardfork};
     use foundry_evm_networks::NetworkConfigs;
-    use revm::interpreter::InstructionResult;
 
     #[tokio::test]
     async fn registered_abis_decode_base_precompile_calls() {
@@ -345,7 +345,7 @@ mod tests {
             address: ActivationRegistryStorage::ADDRESS,
             output: super::IActivationRegistry::NonPayable {}.abi_encode().into(),
             success: false,
-            status: Some(InstructionResult::Revert),
+            status: Some(InstrStop::Revert),
             ..Default::default()
         };
         let base = CallTraceDecoderBuilder::new()

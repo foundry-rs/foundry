@@ -10,11 +10,10 @@ use clap::{Parser, Subcommand};
 use eyre::{Result, WrapErr, ensure};
 use foundry_cli::opts::RpcOpts;
 use foundry_common::provider::RetryProvider;
-use foundry_evm::hardfork::TempoHardfork;
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use serde_json::{Value, json};
 use std::str::FromStr;
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, chainspec::hardfork::TempoHardfork};
 use tempo_contracts::precompiles::{
     ADDRESS_REGISTRY_ADDRESS, IAddressRegistry, IReceivePolicyGuard, ITIP403Registry,
     RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS,

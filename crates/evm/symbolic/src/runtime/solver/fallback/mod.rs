@@ -1,6 +1,6 @@
 //! Bounded fallback model generation for hard arithmetic constraints.
 
-use super::*;
+use super::{normalize::ConstraintContext, *};
 
 impl SymBoolExpr {
     pub(crate) fn contains_hard_arith(&self) -> bool {
@@ -357,18 +357,9 @@ fn checked_mul_guard_operands(condition: &SymBoolExpr) -> Option<(SymExpr, SymEx
         let Some(zero_operand) = zero_condition.zero_check_operand() else {
             continue;
         };
-        let Some((numerator, denominator)) = quotient.udiv_operands() else {
-            continue;
-        };
-        if denominator != zero_operand {
-            continue;
-        }
-        let SymExprKind::BinOp(SymBinOp::Mul, product_left, product_right) = numerator.kind()
-        else {
-            continue;
-        };
-        if (product_left == denominator && product_right == expected)
-            || (product_right == denominator && product_left == expected)
+        if let Some((denominator, factor)) = ConstraintContext::mul_div_operands(quotient)
+            && denominator == zero_operand
+            && factor.matches(expected)
         {
             return Some((zero_operand.clone(), expected.clone(), zero_condition.clone()));
         }

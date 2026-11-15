@@ -15,11 +15,7 @@ pub fn must_be_ssz(headers: &HeaderMap) -> bool {
                 .split(';')
                 .find_map(|param| {
                     let param = param.trim();
-                    if let Some(q) = param.strip_prefix("q=") {
-                        q.parse::<f32>().ok()
-                    } else {
-                        None
-                    }
+                    param.strip_prefix("q=").and_then(|q| q.parse::<f32>().ok())
                 })
                 .unwrap_or(1.0); // Default quality factor is 1.0
 

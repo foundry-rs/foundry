@@ -1,6 +1,6 @@
-use super::assert_symbolic_witness;
+use super::json_test_result;
 use crate::skip_unless_z3;
-use foundry_test_utils::{forgetest_init, str};
+use foundry_test_utils::forgetest_init;
 
 // ---------------------------------------------------------------------------
 // crytic/properties ERC20 — sum-of-balances invariant on a BUGGY token.
@@ -11,6 +11,8 @@ use foundry_test_utils::{forgetest_init, str};
 #[forgetest_init]
 fn crytic_properties_erc20_sum_invariant_buggy(prj: _, cmd: _) {
     skip_unless_z3!("crytic_properties_erc20_sum_invariant_buggy");
+    // A concrete fuzz fallback must not satisfy this symbolic parity test.
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "CryticPropertiesErc20Parity.t.sol",
@@ -30,15 +32,18 @@ contract BuggyToken {
     }
 
     function transfer(address to, uint256 amount) external {
+        // Keep transfers inside the holder set summed by the invariant.
+        if (to != TRACKED_A && to != TRACKED_B) return;
         if (balanceOf[msg.sender] < amount) return;
         unchecked {
             balanceOf[msg.sender] -= amount;
         }
+        // Concrete keys avoid abstract initial values for symbolic mapping reads.
         // BUG: doubles the credit when `to` is a specific address.
         if (to == TRACKED_A) {
-            balanceOf[to] += amount * 2;
+            balanceOf[TRACKED_A] += amount * 2;
         } else {
-            balanceOf[to] += amount;
+            balanceOf[TRACKED_B] += amount;
         }
     }
 }
@@ -63,28 +68,16 @@ contract CryticPropertiesErc20Parity is Test {
 "#,
     );
 
-    // Witness sequence picks arbitrary `transfer(address,uint256)` args.
-    assert_symbolic_witness(cmd.args([
-        "test",
-        "--symbolic",
-        "--match-test",
-        "invariant_sumOfBalances",
-    ]))
-    .failure()
-    .stdout_eq(str![[r#"
-...
-Failing tests:
-Encountered 1 failing test in test/CryticPropertiesErc20Parity.t.sol:CryticPropertiesErc20Parity
-[FAIL: [..]]
-	[Sequence] (original: [..], shrunk: 1)
-		[SENDER] [SENDER] calldata=transfer(address,uint256) [ARGS]
- invariant_sumOfBalances() ([METRICS])
-
-Encountered a total of 1 failing tests, 0 tests succeeded
-
-Tip: Run `forge test --rerun` to retry only the 1 failed test
-
-[SEED] (use `--fuzz-seed` to reproduce)
-
-"#]]);
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_sumOfBalances"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_sumOfBalances()");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{result}");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{result}");
+    let sequence =
+        result["invariant_failures"][0]["counterexample"]["Sequence"][1].as_array().unwrap();
+    assert_eq!(sequence.len(), 1, "{result}");
 }

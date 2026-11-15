@@ -1,11 +1,29 @@
 //! Contains various tests for checking the `forge create` subcommand
 
-use crate::constants::*;
-use alloy_primitives::hex;
+use crate::{
+    constants::*,
+    utils::{tempo_linked_keystore, tempo_two_of_three_account},
+};
+use alloy_consensus::Transaction;
+use alloy_network::ReceiptResponse;
+use alloy_primitives::{U256, hex};
+use alloy_provider::Provider;
+use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
+use foundry_common::tempo::ALPHA_USD_ADDRESS;
 use foundry_compilers::artifacts::BytecodeHash;
-use foundry_test_utils::{forgetest, snapbox::IntoData, str, util::OutputExt};
-use std::{fs, time::Duration};
+use foundry_evm::hardfork::TempoHardfork;
+use foundry_test_utils::{
+    assert_data_eq, forgetest, rpc::spawn_rpc_proxy_mapping_method, snapbox::IntoData, str,
+    util::OutputExt,
+};
+use serde_json::Value;
+use std::{
+    fs,
+    str::FromStr,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 
 #[forgetest]
 fn create_rejects_unsupported_remote_sponsor(cmd: _) {
@@ -183,6 +201,47 @@ async fn can_create_with_interval_mining(prj: _, cmd: _) {
     let (_api, handle) =
         spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(1)))).await;
     let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    cmd.forge_fuse()
+        .args([
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+[TX_HASH]
+
+"#]]);
+}
+
+// A load-balanced RPC can see the deployment mined before the node serving receipts has it.
+// <https://github.com/foundry-rs/foundry/issues/18229>
+#[forgetest_init]
+async fn can_create_with_lagging_receipts(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let receipt_requests = AtomicUsize::new(0);
+    let rpc = spawn_rpc_proxy_mapping_method(
+        handle.http_endpoint(),
+        "eth_getTransactionReceipt",
+        move |_, receipt| {
+            if receipt_requests.fetch_add(1, Ordering::SeqCst) < 6 { Value::Null } else { receipt }
+        },
+    )
+    .await;
     let wallet = handle.dev_wallets().next().unwrap();
     let pk = hex::encode(wallet.credential().to_bytes());
 
@@ -684,4 +743,112 @@ contract RevertingContract {
 Error: deployment transaction failed (receipt status 0): [..]
 
 "#]]);
+}
+
+/// `forge create` deploys from a 2-of-3 Tempo configurable account, signed by two local owners:
+/// the first deployment registers the account with `--tempo.config`, and a later one detects it
+/// from the chain. The estimate models both approvals, and one owner alone fails clearly.
+#[forgetest_init]
+async fn create_from_tempo_configurable_account(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    prj.update_config(|config| config.bytecode_hash = BytecodeHash::None);
+
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = tempo_two_of_three_account();
+    api.anvil_deal_tip20(account, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+    let contract = format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}");
+    let (account_arg, fee_token) = (account.to_string(), ALPHA_USD_ADDRESS.to_string());
+    let owner = |key: &str| format!("private-key://{key}");
+
+    let mut deploy = |args: &[&str]| {
+        cmd.forge_fuse()
+            .args(["create", &contract, "--broadcast", "--rpc-url", &rpc])
+            .args(["--from", &account_arg, "--tempo.fee-token", &fee_token])
+            .args(args);
+        cmd.assert_success().get_output().stdout_lossy()
+    };
+    for args in [
+        vec![
+            "--private-key",
+            &keys[0],
+            "--tempo.owner",
+            &owner(&keys[2]),
+            "--tempo.config",
+            &config,
+        ],
+        vec!["--private-key", &keys[1], "--tempo.owner", &owner(&keys[0])],
+    ] {
+        let stdout = deploy(&args);
+        let block = provider.get_block_number().await.unwrap();
+        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipt.last().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.from(), account);
+        let deployed = receipt.contract_address().expect("a deployment");
+        assert_data_eq!(
+            stdout,
+            format!("...\nDeployer: {account}\nDeployed to: {deployed}\nTransaction hash: [..]\n")
+        );
+        assert!(!provider.get_code_at(deployed).await.unwrap().is_empty());
+        let tx = provider.get_transaction_by_hash(receipt.transaction_hash()).await.unwrap();
+        assert_eq!(tx.unwrap().gas_limit(), receipt.gas_used());
+    }
+
+    cmd.forge_fuse().args(["create", &contract, "--broadcast", "--rpc-url", &rpc]).args([
+        "--from",
+        &account_arg,
+        "--tempo.fee-token",
+        &fee_token,
+        "--private-key",
+        &keys[0],
+    ]);
+    let [low, mid, high] = [&keys[0], &keys[1], &keys[2]]
+        .map(|key| PrivateKeySigner::from_str(key).unwrap().address());
+    cmd.assert_failure().stderr_eq(format!(
+        "Error: {account} is a Tempo configurable account that needs owner weight 2, but the local \
+         owner keys {low} reach weight 1. Its owners are {low} (weight 1), {mid} (weight 1), \
+         {high} (weight 1). forge create needs the owner keys locally: pass the other owners with \
+         --tempo.owner, or keep them in the Tempo Accounts store.\n"
+    ));
+}
+
+/// On T14, `forge create` with a keystore that `cast wallet new` linked to a configurable account
+/// deploys from the account, and `--eoa` deploys from the key.
+#[forgetest_init]
+async fn create_from_tempo_linked_keystore(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (keystore, account, owner) = tempo_linked_keystore(prj.root());
+    for address in [account, owner] {
+        api.anvil_deal_tip20(address, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+            .await
+            .unwrap();
+    }
+    let contract = format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}");
+    let fee_token = ALPHA_USD_ADDRESS.to_string();
+    for (extra, deployer) in [(&[][..], account), (&["--eoa"][..], owner)] {
+        cmd.forge_fuse()
+            .args(["create", &contract, "--broadcast", "--rpc-url", &rpc])
+            .args(["--keystore", keystore.to_str().unwrap(), "--password", "keystorepassword"])
+            .args(["--tempo.fee-token", &fee_token])
+            .args(extra);
+        let stdout = cmd.assert_success().get_output().stdout_lossy();
+        let block = provider.get_block_number().await.unwrap();
+        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipt.last().unwrap();
+        assert_eq!(receipt.from(), deployer);
+        let deployed = receipt.contract_address().expect("a deployment");
+        assert_data_eq!(
+            stdout,
+            format!("...\nDeployer: {deployer}\nDeployed to: {deployed}\nTransaction hash: [..]\n")
+        );
+    }
 }

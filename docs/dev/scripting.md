@@ -155,12 +155,16 @@ pending. In multichain runs, broadcast and reconcile errors name their chain, an
 number when several sequences share it. A confirmed success removes the hash from `pending` and
 appends its receipt. A revert removes the hash, records it in `reverted` rather than `receipts`,
 which consumers treat as successful, and returns an error. A later `--resume` never resubmits a
-recorded revert. The script would have stopped at the failed call, so resume fails, pointing to
-`--broadcast --start-fresh`, while a sequence with a recorded revert still has operations without a
-receipt or recorded revert; otherwise it warns about each revert and replaces the final success
-message with a warning listing them. Receipt-watcher timeouts keep retrying without
-consuming the retry budget while the selected RPC still returns the transaction, so ordinary polling
-is unbounded; Tempo batches use `transaction_timeout`. Outside `--batch`, each polled hash prints
+recorded revert. The script would have stopped at the failed call, so from the first sequence with a
+recorded revert on, on any chain, resume sends no operation that was never submitted, with neither a
+hash nor a saved attempt. Operations submitted before the revert was recorded are still reconciled,
+and their saved attempts replayed. While such never-submitted operations remain, resume fails,
+pointing to `--broadcast --start-fresh`: before broadcasting when nothing is left to recover, and
+otherwise once the recovered attempts all have a receipt or recorded revert. Otherwise it warns
+about each revert and replaces the final success message with a warning listing them.
+Receipt-watcher timeouts keep retrying without consuming the retry budget while the selected RPC
+still returns the transaction, so ordinary polling is unbounded; Tempo batches use
+`transaction_timeout`. Outside `--batch`, each polled hash prints
 one warning naming it after its first such timeout (hidden by `--quiet`), and waiting continues. If
 that endpoint returns no transaction, the durable attempt remains the source of identity: signed
 bytes may be replayed; delegated attempts with a known hash remain checkpointed for a later plain
@@ -216,7 +220,8 @@ transaction hash or a saved attempt, and left an operation, on any chain, with n
 a recorded revert. Without a snapshot, progress written before snapshots existed is checked through
 the broadcast export. A broadcast export written with a snapshot cannot show a submission whose
 response was lost, so when its snapshot is missing, for example in a checkout without `cache/`, it
-blocks while any operation lacks a receipt or recorded revert, even if nothing was sent. With
+blocks while any operation lacks a receipt or recorded revert, even if nothing was sent. Without a
+snapshot, an existing but unreadable broadcast export also blocks. With
 `--start-fresh`, it first moves the snapshot, including an interrupted pending commit, and both
 exports to timestamped names. Dry runs never block, and neither do runs that never signed or sent
 anything while their snapshot is present.

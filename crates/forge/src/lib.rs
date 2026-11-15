@@ -35,6 +35,7 @@ pub use runner::ContractRunner;
 
 mod progress;
 pub mod result;
+mod sandbox;
 mod symbolic_minimizer;
 mod symbolic_regression;
 

@@ -369,7 +369,7 @@ mod tests {
                 serialize_value_as_json(DynSolValue::Uint(l.try_into().unwrap(), l_min_bits), None, false).unwrap(),
                 serde_json::json!(l)
             );
-            // values that dont fit in u64 should be serialized as a string in !strict mode
+            // values that don't fit in u64 should be serialized as a string in !strict mode
             assert_eq!(
                 serialize_value_as_json(DynSolValue::Uint(h.try_into().unwrap(), h_min_bits), None, false).unwrap(),
                 serde_json::json!(h.to_string())
@@ -404,7 +404,7 @@ mod tests {
                 serialize_value_as_json(DynSolValue::Int(l.try_into().unwrap(), l_min_bits), None, false).unwrap(),
                 serde_json::json!(l)
             );
-            // values that dont fit in i64 should be serialized as a string in !strict mode
+            // values that don't fit in i64 should be serialized as a string in !strict mode
             assert_eq!(
                 serialize_value_as_json(DynSolValue::Int(h.try_into().unwrap(), h_min_bits), None, false).unwrap(),
                 serde_json::json!(h.to_string())
