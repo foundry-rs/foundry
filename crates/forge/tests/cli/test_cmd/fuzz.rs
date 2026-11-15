@@ -7105,7 +7105,8 @@ contract FuzzWorkerOrderTest {
     // Four workers with 64 runs each. With this seed, the second run of the second worker is the
     // first failure, and it is slow. The first worker finds a fast failure in its third run. The
     // first run of the first worker is slow in the passing test.
-    let args = ["test", "--mc", "FuzzWorkerOrderTest", "--fuzz-seed", "185", "--threads", "4"];
+    let args =
+        ["test", "--mc", "FuzzWorkerOrderTest", "--fuzz-seed", "185", "--threads", "4", "-vv"];
     cmd.args(args).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -7114,6 +7115,9 @@ Compiler run successful!
 Ran 2 tests for test/FuzzWorkerOrder.t.sol:FuzzWorkerOrderTest
 [FAIL: slow failure; counterexample: calldata=0xbcb54bf10000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzz_failure(uint256) (runs: 5, [AVG_GAS])
 [PASS] testFuzz_success(uint256) (runs: 256, [AVG_GAS])
+Logs:
+  20545516810883930015437282216
+
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
@@ -7177,6 +7181,9 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
         "status": "Success",
         "reason": null,
         "counterexample": null,
+        "decoded_logs": [
+          "20545516810883930015437282216"
+        ],
         "kind": {
           "Fuzz": {
             "first_case": {

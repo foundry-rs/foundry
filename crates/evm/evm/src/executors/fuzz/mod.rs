@@ -91,10 +91,6 @@ struct WorkerState<FEN: FoundryEvmNetwork> {
     failure: Option<TestCaseError>,
     /// Fuzz run metadata that produced the failure.
     failure_run: Option<FuzzRunMetadata>,
-    /// Last run timestamp in milliseconds
-    ///
-    /// Used to identify which worker ran last and collect its traces and call breakpoints
-    last_run_timestamp: u128,
     /// Failed corpus replays
     failed_corpus_replays: usize,
     /// Branch frontiers captured for symbolic follow-up.
@@ -117,7 +113,6 @@ impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
             runs: 0,
             failure: None,
             failure_run: None,
-            last_run_timestamp: 0,
             failed_corpus_replays: 0,
             frontiers: Vec::new(),
         }
@@ -780,11 +775,12 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             return (result, None, None);
         }
 
-        // Find last run worker. Set `failed_corpus_replays`.
+        // Find the worker of the last run, in the order of `SharedFuzzState::failure_order`. Set
+        // `failed_corpus_replays`.
         let mut last_run_worker = None;
         for (i, worker) in workers.iter().enumerate() {
-            if last_run_worker.is_none_or(|(t, _)| worker.last_run_timestamp > t) {
-                last_run_worker = Some((worker.last_run_timestamp, i));
+            if last_run_worker.is_none_or(|(runs, _)| worker.runs >= runs) {
+                last_run_worker = Some((worker.runs, i));
             }
 
             // Only set replays from master which is responsible for replaying persisted corpus.
@@ -1115,7 +1111,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 }
             };
 
-            worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
             let case_input = input.clone();
             match self.single_fuzz(
                 &mut executor,
