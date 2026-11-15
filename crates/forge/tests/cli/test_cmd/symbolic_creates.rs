@@ -439,6 +439,17 @@ contract SymbolicCreateEip3541 is Test {
         caller.expectRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
     }
 
+    function checkAssumeNoRevertMissWithExpectRevert() public {
+        // The assumption handles the uncaught revert, so the expectation does not.
+        vm.assumeNoRevert(VmSafe.PotentialRevert(address(0x1234), false, ""));
+        vm.expectRevert();
+        vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkAssumeNoRevertMissWithExpectRevertInCaller() public {
+        caller.assumeMissExpectRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
     function checkSymbolicMismatchInCaller(uint256 x) public {
         (bool ok,) = address(caller).call(abi.encodeCall(
             DeployCodeCaller.expectOtherRevertThenRevert,
@@ -632,6 +643,12 @@ contract DeployCodeCaller {
         vm.deployCode(what, args);
     }
 
+    function assumeMissExpectRevertDeployCode(string memory what, bytes memory args) external {
+        vm.assumeNoRevert(VmSafe.PotentialRevert(address(0x1234), false, ""));
+        vm.expectRevert();
+        vm.deployCode(what, args);
+    }
+
     function expectOtherRevertThenRevert(string memory what, bytes memory args, uint256 x) external {
         vm.expectRevert(bytes("other"));
         try vm.deployCode(what, args) returns (address) {} catch {}
@@ -672,11 +689,13 @@ contract DeployCodeCaller {
         "test",
         "--symbolic",
         "--match-test",
-        "checkMismatchedExpectRevertOnDeployCode|checkOverlappingExpectRevertOnDeployCode|checkSymbolicMismatchInCaller",
+        "checkMismatchedExpectRevertOnDeployCode|checkOverlappingExpectRevertOnDeployCode|checkSymbolicMismatchInCaller|checkAssumeNoRevertMiss",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
+[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkAssumeNoRevertMissWithExpectRevert() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert pending after vm.assumeNoRevert] checkAssumeNoRevertMissWithExpectRevertInCaller() ([METRICS])
 [FAIL: call reverted as expected, but without data; counterexample: 		[SENDER] [SENDER] calldata=0xe668c5ba args=[]] checkMismatchedExpectRevertOnDeployCode() ([METRICS])
 [FAIL: Error != expected error: vm.expectRevert: you must call another function prior to expecting a second revert != other; counterexample: 		[SENDER] [SENDER] calldata=0x67563089 args=[]] checkOverlappingExpectRevertOnDeployCode() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert mismatch data] checkSymbolicMismatchInCaller(uint256) ([METRICS])

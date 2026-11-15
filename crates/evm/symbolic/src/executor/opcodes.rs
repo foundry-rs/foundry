@@ -1616,7 +1616,8 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         // Forge consumes this assumption in call_end, not create_end. A constructor must leave
         // both its revert bytes and any pending assumption for the caller to handle.
-        if !state.frame.is_constructor
+        let assumed = !state.frame.is_constructor && state.assume_no_revert_next_call.is_some();
+        if assumed
             && let Some(assumption) = state.assume_no_revert_next_call.take()
             && self.assume_no_revert_matches(
                 state,
@@ -1627,6 +1628,13 @@ impl SymbolicExecutor {
         {
             state.return_data =
                 SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
+        }
+        // Forge's call_end then skips `vm.expectRevert` for this revert. A nested frame leaves it
+        // pending for later calls, which is not modeled.
+        if assumed && state.call_depth != 0 && state.expected_revert.is_some() {
+            return Err(SymbolicError::Unsupported(
+                "symbolic vm.expectRevert pending after vm.assumeNoRevert",
+            ));
         }
         if state.call_depth != 0 {
             return Ok(StepOutcome::Revert);
@@ -1650,6 +1658,7 @@ impl SymbolicExecutor {
         // Like Forge's `call_end` for the test call, a pending `vm.expectRevert` that a frame
         // deeper left pending passes the depth check and turns a matching revert into a return.
         if state.root_calldata.is_some()
+            && !assumed
             && let Some(mut expected) = state.expected_revert.take_if(|e| e.deeper_frame_ran())
         {
             let reverter = expected.reverted_by(Some(state.address), state.first_failed_callee);
