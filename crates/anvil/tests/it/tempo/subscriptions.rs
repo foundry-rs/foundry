@@ -180,7 +180,7 @@ async fn tempo_consensus_subscription_rejects_non_tempo() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tempo_consensus_subscription_skips_non_native_block_without_stopping_mining() {
+async fn tempo_consensus_subscription_rejects_blob_transaction_without_stopping_mining() {
     let (api, handle) =
         spawn(NodeConfig::test_tempo().with_no_mining(true).with_auto_impersonate(true)).await;
     let http = handle.http_provider();
@@ -188,9 +188,9 @@ async fn tempo_consensus_subscription_skips_non_native_block_without_stopping_mi
     let mut events = subscribe(&provider).await;
     let from = handle.dev_accounts().next().unwrap();
     let gas_price = http.get_gas_price().await.unwrap();
-    let blob_transaction: B256 = http
+    let error = http
         .client()
-        .request(
+        .request::<_, B256>(
             "eth_sendTransaction",
             (TransactionRequest {
                 from: Some(from),
@@ -206,14 +206,17 @@ async fn tempo_consensus_subscription_skips_non_native_block_without_stopping_mi
             },),
         )
         .await
-        .unwrap();
-
-    api.mine_one().await.unwrap();
-    let receipt = http.get_transaction_receipt(blob_transaction).await.unwrap().unwrap();
-    assert!(receipt.status());
-    assert_eq!(receipt.block_number, Some(1));
+        .unwrap_err();
+    assert_eq!(
+        serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+        serde_json::json!({
+            "code": -32003,
+            "message": "EIP-4844 blob transactions are not supported on Tempo",
+            "data": null,
+        }),
+    );
 
     api.mine_one().await.unwrap();
     let event = next_event(&mut events).await.certified;
-    assert_eq!(event, tempo_finalization(&http, 2).await);
+    assert_eq!(event, tempo_finalization(&http, 1).await);
 }

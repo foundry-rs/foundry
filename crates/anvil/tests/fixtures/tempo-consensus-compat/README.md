@@ -1,7 +1,7 @@
 # Native Tempo certificate verification
 
 This test-only workspace member starts local Anvil nodes and decodes their HTTP
-responses using Commonware 2026.9.0's
+responses using Commonware 2026.10.0's
 `Finalization<Scheme<PublicKey, MinSig>, Digest>` and `tempo_primitives::Block`.
 It covers empty blocks, blocks containing Ethereum and Tempo transactions, and
 T3/T4 epoch boundaries. It checks byte-identical re-encoding, header and body
@@ -11,11 +11,24 @@ bytes, Ethereum block hashes and consensus digests must identify the same block.
 Fork checks inherit skipped views from a native root in a nonzero epoch and verify
 that the next epoch restarts at view one with parent view zero.
 
-Rotation checks begin with one trusted identity, authenticate the boundary block,
-and decode its DKG outcome to obtain the next epoch's key. The next certificate
-must verify under that announced key and reject the old key. Snapshot replay
-must restore the same announcement and activation without trusting a fresh
-identity RPC response for each block.
+Rotation checks begin with one trusted identity and authenticate the boundary
+that announces a full DKG for the following epoch. Its output retains the old
+key, while its next players commit to the new committee. The following boundary
+publishes that committee's key under the old key's signature, and the next
+epoch's certificate must verify under the announced key and reject the old key.
+Snapshot replay must restore both announcements and activation without trusting
+a fresh identity RPC response for each block.
+
+The T15 boundary test initializes `ValidatorConfigV2` with Anvil's development
+validator and freezes the parent state. It checks that Anvil's next, unrotated
+boundary outcome equals the one Tempo derives from that registry, and that
+Tempo's native `apply_pre_execution_changes` accepts the boundary block under
+the Moderato configuration with T15 and Anvil's epoch length. That pre-stage
+also checks the beneficiary, which passes because Anvil's default coinbase and
+the migrated validator's fee recipient are both zero. This checks compatibility
+with a matching development registry, not full block execution or native
+consensus acceptance. Under T15, rotation boundaries and forked registries do
+not match an initialized `ValidatorConfigV2`, because Anvil does not update it.
 
 The package shares the root workspace lockfile and target directory. Its
 one-way dependency on Anvil keeps `commonware-consensus` and its runtime out of

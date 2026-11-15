@@ -63,15 +63,17 @@ pub struct EvmArgs {
 
     /// Number of retries.
     ///
-    /// See --rpc-url.
-    #[arg(long, requires = "rpc_url", value_name = "RETRIES")]
+    /// Applies to the fork created by --rpc-url, and to forks created by cheatcodes unless their
+    /// `rpc_endpoints` entry sets `retries`.
+    #[arg(long, value_name = "RETRIES")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retries: Option<u32>,
 
     /// Initial retry backoff on encountering errors.
     ///
-    /// See --rpc-url.
-    #[arg(long, requires = "rpc_url", value_name = "BACKOFF")]
+    /// Applies to the fork created by --rpc-url, and to forks created by cheatcodes unless their
+    /// `rpc_endpoints` entry sets `retry_backoff`.
+    #[arg(long, value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
@@ -93,9 +95,12 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub no_fork_bal: bool,
 
-    /// Prefetch a new fork block's cache from the keys of an older cached block on the same chain.
+    /// Prefetch remote fork state before the EVM reads it.
     ///
-    /// Helps forks of `latest`, which start with an empty cache on each new head.
+    /// While reads miss the cache, each call into a fork contract is simulated on the endpoint
+    /// with `eth_createAccessList` and the state it touches is fetched in batches. With
+    /// storage caching, a new fork block also fetches the keys cached for an older block on
+    /// the same chain.
     #[arg(long)]
     #[serde(skip)]
     pub fork_prefetch: bool,
@@ -115,7 +120,10 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub ffi: bool,
 
-    /// Whether to show `console.log` outputs in realtime during script/test execution
+    /// Whether to show `console.log` outputs in realtime during script/test execution.
+    ///
+    /// Ignored when `--json` or `--junit` writes a report to stdout. Otherwise, logs print live
+    /// instead of being captured, so `forge test --json-file` does not include them.
     #[arg(long)]
     #[serde(skip)]
     pub live_logs: bool,
@@ -334,6 +342,7 @@ fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Err
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use foundry_config::{
         NamedChain,
         figment::{Figment, providers::Serialized},
@@ -466,8 +475,6 @@ mod tests {
 
     #[test]
     fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
-        use clap::CommandFactory;
-
         let command = EvmArgs::command();
         let rpc_url =
             command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");

@@ -26,16 +26,28 @@ use base_common_consensus::{
     BaseTimeDepositSource, Call, DepositSourceDomain, Eip8130Constants, Eip8130Contracts,
     Eip8130Signed, Predeploys, SystemAddresses, TxEip8130,
 };
-use base_common_evm::BaseTime;
-use base_common_precompiles::NonceManagerStorage;
+use base_common_eip8130::NonceManagerSlots as NonceManagerStorage;
 use base_protocol::{BaseTimeUpdateTx, L1BlockInfoTx};
 use foundry_common::provider::RetryProvider;
 use foundry_config::Config;
-use foundry_evm::{hardforks::BaseUpgrade, opts::EvmOpts};
+use foundry_evm_core::opts::EvmOpts;
+use foundry_evm_hardforks::BaseUpgrade;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use op_alloy_consensus::TxDeposit;
 use std::time::Duration;
+
+/// `BaseTime` proxy storage slots.
+struct BaseTime;
+
+impl BaseTime {
+    const IMPLEMENTATION_SLOT: U256 = alloy_primitives::uint!(
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc_U256
+    );
+    const ADMIN_SLOT: U256 = alloy_primitives::uint!(
+        0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103_U256
+    );
+}
 
 const ACTIVATION_REGISTRY: Address = address!("8453000000000000000000000000000000000001");
 const MAINNET_BERYL_ACTIVATION_ADMIN: Address =

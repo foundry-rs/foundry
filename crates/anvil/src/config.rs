@@ -2,7 +2,11 @@ use crate::{
     FeeManager, PrecompileFactory,
     eth::{
         backend::{
-            db::{Db, SerializableState},
+            db::{BlockchainDb, BlockchainDbMeta, Db, SerializableState, SharedBackend},
+            env::{
+                BlobExcessGasAndPrice, BlockEnv, CfgEnv, EvmEnv, SpecId,
+                apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
+            },
             fork::{
                 ClientFork, ClientForkConfig, ForkEndpointIdentity, ensure_fork_network_supported,
             },
@@ -20,7 +24,6 @@ use crate::{
 use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, eip1559::BaseFeeParams, eip7840::BlobParams};
-use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{
@@ -42,26 +45,16 @@ use foundry_common::{
     provider::{ProviderBuilder, RetryProvider, is_rpc_method_not_found, redact_url},
 };
 use foundry_config::Config;
-use foundry_evm::{
-    backend::{
-        BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend, account_fetch_policy_for_source,
-    },
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    hardfork::FoundryHardfork,
-    traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
-    utils::{
-        apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
-        get_blob_params_by_hardfork,
-    },
+use foundry_evm_core::{
+    backend::account_fetch_policy_for_source, constants::DEFAULT_CREATE2_DEPLOYER,
+    utils::get_blob_params_by_hardfork,
 };
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_evm_traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
+use foundry_fork_db::ForkBlock;
 use parking_lot::RwLock;
 use rand_08::thread_rng;
-use revm::{
-    context::{BlockEnv, CfgEnv},
-    context_interface::block::BlobExcessGasAndPrice,
-    primitives::hardfork::SpecId,
-};
 use serde_json::{Value, json};
 use std::{
     fmt::Write as FmtWrite,
@@ -116,7 +109,7 @@ pub(crate) fn source_hardfork(
     #[cfg(feature = "base")]
     if matches!(NamedChain::try_from(chain_id), Ok(NamedChain::Base | NamedChain::BaseSepolia)) {
         #[cfg(feature = "optimism")]
-        return foundry_evm::hardfork::OpHardfork::from_chain_and_timestamp(
+        return foundry_evm_hardforks::OpHardfork::from_chain_and_timestamp(
             Chain::from_id(chain_id),
             timestamp,
         )
@@ -137,6 +130,7 @@ struct ForkOverrides {
 struct StableForkSnapshot {
     endpoint_identity: ForkEndpointIdentity,
     state_is_mutable: bool,
+    tempo_epoch_length: Option<NonZeroU64>,
     block_number: u64,
     transaction_replay: Option<ForkTransactionReplay>,
     block: Option<AnyRpcBlock>,
@@ -350,7 +344,7 @@ pub struct NodeConfig {
     ///
     /// If set to `Some(num)` keep latest num state in memory only.
     pub prune_history: PruneStateHistoryConfig,
-    /// Max number of states cached on disk.
+    /// Max number of older states to keep, beyond the most recent ones.
     pub max_persisted_states: Option<usize>,
     /// The initial state to apply and consume during startup.
     pub init_state: Option<SerializableState>,
@@ -375,8 +369,9 @@ pub struct NodeConfig {
     ///
     /// Must be an unlocked signer account. Defaults to the last dev account on Tempo networks.
     pub tempo_fee_payer: Option<Address>,
-    /// Number of block heights in a Tempo consensus epoch.
-    pub tempo_epoch_length: NonZeroU64,
+    /// Explicit Tempo consensus epoch length; otherwise inferred from the fork source or
+    /// defaulted.
+    pub tempo_epoch_length: Option<NonZeroU64>,
     /// Optional development consensus seed; otherwise derived from the account mnemonic.
     pub tempo_consensus_seed: Option<B256>,
     /// Do not print log messages.
@@ -494,7 +489,7 @@ Chain ID
             );
         }
 
-        if SpecId::from(self.get_hardfork()).is_enabled_in(SpecId::LONDON) {
+        if SpecId::from(self.get_hardfork()).enables(SpecId::LONDON) {
             let _ = write!(
                 s,
                 r#"
@@ -736,7 +731,7 @@ impl Default for NodeConfig {
             #[cfg(feature = "base")]
             base_activation_admin: None,
             tempo_fee_payer: None,
-            tempo_epoch_length: DEFAULT_TEMPO_EPOCH_LENGTH,
+            tempo_epoch_length: None,
             tempo_consensus_seed: None,
             silent: false,
             cache_path: None,
@@ -748,7 +743,7 @@ impl Default for NodeConfig {
 impl NodeConfig {
     /// Applies Tempo's safe default beneficiary for forked nodes while preserving
     /// explicit coinbase selections.
-    pub(crate) fn apply_tempo_fork_beneficiary_default<N>(&self, evm_env: &mut EvmEnv<N>) {
+    pub(crate) fn apply_tempo_fork_beneficiary_default(&self, evm_env: &mut EvmEnv) {
         if self.networks.is_tempo()
             && !self.fork_urls.is_empty()
             && evm_env.block_env.beneficiary.is_zero()
@@ -763,17 +758,14 @@ impl NodeConfig {
         }
     }
 
-    /// Sets the execution spec, its mainnet gas parameters, and the transaction gas limit cap.
+    /// Sets the execution spec and the transaction gas limit cap.
     ///
-    /// The Amsterdam gas features follow the spec in both directions, so switching to an earlier
-    /// spec disables them. The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except
-    /// under EIP-8037, where the cap divides a transaction's gas into regular gas and the state
-    /// gas reservoir instead of limiting it.
+    /// The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except under EIP-8037, where
+    /// the cap divides a transaction's gas into regular gas and the state gas reservoir instead of
+    /// limiting it.
     pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, spec: SpecId) {
-        cfg.set_spec_and_mainnet_gas_params(spec);
+        cfg.spec = spec;
         let is_amsterdam = spec >= SpecId::AMSTERDAM;
-        cfg.enable_amsterdam_eip8037 = is_amsterdam;
-        cfg.enable_amsterdam_eip2780 = is_amsterdam;
         cfg.tx_gas_limit_cap = (!self.enable_tx_gas_limit && !is_amsterdam).then_some(u64::MAX);
     }
 
@@ -811,16 +803,14 @@ impl NodeConfig {
     }
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
-        if let Some(value) = self.blob_excess_gas_and_price {
-            value
-        } else {
+        self.blob_excess_gas_and_price.unwrap_or_else(|| {
             let excess_blob_gas =
                 self.genesis.as_ref().and_then(|g| g.excess_blob_gas).unwrap_or(0);
             BlobExcessGasAndPrice::new(
                 excess_blob_gas,
                 self.get_blob_params().update_fraction as u64,
             )
-        }
+        })
     }
 
     /// Returns the [`BlobParams`] that should be used.
@@ -952,7 +942,7 @@ impl NodeConfig {
         self
     }
 
-    /// Sets max number of states to cache on disk.
+    /// Sets max number of older states to keep, beyond the most recent ones.
     #[must_use]
     pub fn with_max_persisted_states<U: Into<usize>>(
         mut self,
@@ -1324,10 +1314,7 @@ impl NodeConfig {
 
     /// Returns the ipc path for the ipc endpoint if any
     pub fn get_ipc_path(&self) -> Option<String> {
-        match &self.ipc_path {
-            Some(path) => path.clone().or_else(|| Some(DEFAULT_IPC_ENDPOINT.to_string())),
-            None => None,
-        }
+        self.ipc_path.clone().map(|path| path.unwrap_or_else(|| DEFAULT_IPC_ENDPOINT.to_string()))
     }
 
     /// Prints the config info
@@ -1419,10 +1406,17 @@ impl NodeConfig {
     }
 
     /// Sets the number of block heights in a Tempo consensus epoch.
+    ///
+    /// `None` infers the length from the fork source, falling back to 21600.
     #[must_use]
-    pub const fn with_tempo_epoch_length(mut self, epoch_length: NonZeroU64) -> Self {
+    pub const fn with_tempo_epoch_length(mut self, epoch_length: Option<NonZeroU64>) -> Self {
         self.tempo_epoch_length = epoch_length;
         self
+    }
+
+    /// Returns the Tempo epoch length to use: explicit, else the fork source's, else the default.
+    pub(crate) fn effective_tempo_epoch_length(&self, source: Option<NonZeroU64>) -> NonZeroU64 {
+        self.tempo_epoch_length.or(source).unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH)
     }
 
     /// Overrides the development consensus seed on Tempo networks.
@@ -1537,7 +1531,7 @@ impl NodeConfig {
     {
         // configure the revm environment
 
-        let mut cfg = CfgEnv::new();
+        let mut cfg = CfgEnv::default();
         self.set_cfg_spec(&mut cfg, self.get_hardfork().into());
 
         cfg.chain_id = self.get_chain_id();
@@ -1906,6 +1900,54 @@ impl NodeConfig {
         Ok(identity)
     }
 
+    /// Reads the fork source's Tempo epoch length without making metadata RPC support mandatory.
+    ///
+    /// Skipped when an explicit epoch length or an explicit non-Tempo network is configured.
+    /// Timeouts and native endpoints that reject `debug_chainConfig` mean the length is unknown;
+    /// identified Anvil sources only treat method-not-found as unknown. A present invalid
+    /// `epochLength` is rejected.
+    async fn fork_tempo_epoch_length(
+        &self,
+        provider: &RetryProvider,
+        identity: ForkEndpointIdentity,
+    ) -> Result<Option<NonZeroU64>> {
+        if self.tempo_epoch_length.is_some()
+            || identity.network != Some(NetworkVariant::Tempo)
+            || (self.has_explicit_network_selection() && !self.networks.is_tempo())
+        {
+            return Ok(None);
+        }
+        let anvil = identity.is_authoritative();
+        let method = if anvil { "anvil_tempoConsensusIdentity" } else { "debug_chainConfig" };
+        let Ok(response) = tokio::time::timeout(
+            FORK_IDENTITY_PROBE_TIMEOUT,
+            provider.raw_request::<_, Value>(method.into(), ()),
+        )
+        .await
+        else {
+            return Ok(None);
+        };
+        let value = match response {
+            Ok(value) => value,
+            Err(error) if anvil && !is_rpc_method_not_found(&error) => {
+                return Err(error)
+                    .wrap_err_with(|| format!("failed to read Tempo epoch length from {method}"));
+            }
+            Err(_) => return Ok(None),
+        };
+        value
+            .get("epochLength")
+            .cloned()
+            .map(alloy_serde::quantity::deserialize)
+            .transpose()
+            .wrap_err_with(|| {
+                format!(
+                    "invalid Tempo epoch configuration from {method}; epochLength must be a nonzero u64"
+                )
+            })
+    }
+
+    /// Resolves a replacement endpoint for the active fork and the Tempo epoch length it reports.
     pub(crate) async fn replacement_fork_provider(
         &self,
         eth_rpc_url: &str,
@@ -1913,7 +1955,7 @@ impl NodeConfig {
         block_number: u64,
         block_hash: B256,
         serving_instance_id: B256,
-    ) -> Result<(Arc<RetryProvider>, ForkEndpointIdentity)> {
+    ) -> Result<(Arc<RetryProvider>, ForkEndpointIdentity, Option<NonZeroU64>)> {
         let provider = Arc::new(self.fork_provider(eth_rpc_url)?);
         let mut node_info_probe = self.node_info_probe(false);
         for _ in 0..3 {
@@ -1927,6 +1969,7 @@ impl NodeConfig {
                 .get_block(BlockId::number(block_number))
                 .await
                 .wrap_err("failed to confirm active fork block on replacement endpoint")?;
+            let tempo_epoch_length = self.fork_tempo_epoch_length(&provider, before).await?;
             let after =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             if before != after {
@@ -1941,7 +1984,7 @@ impl NodeConfig {
                     "replacement fork endpoint does not contain active fork block {block_number} with hash {block_hash}"
                 );
             }
-            return Ok((provider, before));
+            return Ok((provider, before, tempo_epoch_length));
         }
         eyre::bail!(
             "fork endpoint changed while its identity and active fork block were being resolved"
@@ -1978,12 +2021,14 @@ impl NodeConfig {
             } else {
                 provider.get_gas_price().await.unwrap_or(INITIAL_GAS_PRICE)
             };
+            let tempo_epoch_length = self.fork_tempo_epoch_length(provider, before).await?;
             let after =
                 self.resolved_fork_endpoint_identity(provider, &mut node_info_probe).await?;
             if before == after {
                 return Ok(StableForkSnapshot {
                     endpoint_identity: before,
                     state_is_mutable: node_info_probe.identified || node_info_probe.inconclusive,
+                    tempo_epoch_length,
                     block_number,
                     transaction_replay,
                     block,
@@ -2135,6 +2180,7 @@ impl NodeConfig {
         let StableForkSnapshot {
             endpoint_identity: fork_identity,
             state_is_mutable,
+            mut tempo_epoch_length,
             block_number: fork_block_number,
             transaction_replay: fork_transaction_replay,
             block,
@@ -2219,7 +2265,7 @@ latest block number: {latest_block}"
 
         // Cache identity must describe the remote fork block, not local execution overrides that
         // can change after mining (for example, the locally advanced base fee).
-        let cache_block_env: BlockEnv = block_env_from_header(&block.header);
+        let cache_block_env = block_env_from_header(&block.header);
 
         evm_env.block_env = BlockEnv {
             gas_limit,
@@ -2336,7 +2382,7 @@ latest block number: {latest_block}"
         let block_hash = block.header.hash;
 
         // Apply changes such as difficulty -> prevrandao for the remote source chain.
-        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork>(
             evm_env,
             &block,
             source_chain_id,
@@ -2354,6 +2400,19 @@ latest block number: {latest_block}"
                     redact_url(mirror_url)
                 );
             }
+            let provider = self.fork_provider(mirror_url)?;
+            let mirror_epoch_length =
+                self.fork_tempo_epoch_length(&provider, fork_identity).await?;
+            if let Some((expected, actual)) = tempo_epoch_length.zip(mirror_epoch_length)
+                && expected != actual
+            {
+                eyre::bail!(
+                    "fork fallback endpoint `{}` reports Tempo epoch length {actual}, expected \
+                     {expected}",
+                    redact_url(mirror_url)
+                );
+            }
+            tempo_epoch_length = tempo_epoch_length.or(mirror_epoch_length);
         }
         if self.requires_primary_fork_revalidation(fork_identity)
             && !self
@@ -2434,6 +2493,7 @@ latest block number: {latest_block}"
             hardfork: Some(effective_hardfork),
             endpoint_identity: fork_identity,
             state_is_mutable,
+            tempo_epoch_length,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
@@ -2448,7 +2508,11 @@ latest block number: {latest_block}"
 
         debug!(target: "node", fork_number=config.block_number, fork_hash=%config.block_hash, "set up fork db");
 
-        let mut db = ForkedDatabase::new(backend, block_chain_db);
+        let mut db = ForkedDatabase::new(
+            backend,
+            block_chain_db,
+            self.prune_history.is_state_history_supported(),
+        );
 
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
@@ -2792,16 +2856,16 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
+    use foundry_evm_hardforks::{EthereumHardfork, latest_active_tempo_hardfork};
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     #[cfg(feature = "base")]
-    use foundry_evm::hardforks::BaseUpgrade;
+    use foundry_evm_hardforks::BaseUpgrade;
 
     #[cfg(feature = "optimism")]
-    use foundry_evm::hardfork::OpHardfork;
+    use foundry_evm_hardforks::OpHardfork;
 
     #[cfg(not(feature = "base"))]
     use alloy_chains::NamedChain;
@@ -3132,7 +3196,7 @@ mod tests {
         assert_eq!(config.get_chain_id(), 1);
         assert_eq!(
             config.get_hardfork(),
-            FoundryHardfork::Monad(foundry_evm::hardfork::MonadHardfork::MonadEight)
+            FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight)
         );
     }
 
@@ -3171,16 +3235,22 @@ mod tests {
     #[test]
     fn tempo_consensus_configuration_defaults_and_overrides() {
         let config = NodeConfig::default();
-        assert_eq!(config.tempo_epoch_length.get(), 21_600);
+        assert_eq!(config.tempo_epoch_length, None);
+        assert_eq!(config.effective_tempo_epoch_length(None), DEFAULT_TEMPO_EPOCH_LENGTH);
+        assert_eq!(
+            config.effective_tempo_epoch_length(NonZeroU64::new(3)),
+            NonZeroU64::new(3).unwrap()
+        );
         assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(DEFAULT_MNEMONIC));
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let config =
             config.with_account_generator(AccountGenerator::new(1).phrase(mnemonic)).unwrap();
         assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(mnemonic));
         let seed = B256::repeat_byte(7);
-        let config =
-            config.with_tempo_epoch_length(NonZeroU64::MIN).with_tempo_consensus_seed(Some(seed));
-        assert_eq!(config.tempo_epoch_length, NonZeroU64::MIN);
+        let config = config
+            .with_tempo_epoch_length(Some(NonZeroU64::MIN))
+            .with_tempo_consensus_seed(Some(seed));
+        assert_eq!(config.effective_tempo_epoch_length(NonZeroU64::new(3)), NonZeroU64::MIN);
         assert_eq!(config.tempo_consensus_seed(), seed);
     }
 }

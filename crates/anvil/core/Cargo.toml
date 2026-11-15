@@ -14,14 +14,9 @@ workspace = true
 
 [dependencies]
 foundry-common.workspace = true
-foundry-evm.workspace = true
 foundry-primitives = { workspace = true, default-features = false }
-revm = { workspace = true, default-features = false, features = [
-    "std",
-    "serde",
-    "memory_limit",
-    "c-kzg",
-] }
+evm2 = { workspace = true, features = ["serde"] }
+evm2-inspectors.workspace = true
 
 alloy-primitives = { workspace = true, features = ["serde", "rlp"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace"] }
@@ -47,5 +42,4 @@ base = []
 optimism = [
     "foundry-primitives/optimism",
     "foundry-common/optimism",
-    "foundry-evm/optimism",
 ]

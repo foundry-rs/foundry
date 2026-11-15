@@ -1,6 +1,12 @@
 //! Support for forking off another client
 
-use crate::eth::{backend::db::Db, error::BlockchainError};
+use crate::eth::{
+    backend::{
+        db::{BlockchainDb, Db},
+        env::{BlobExcessGasAndPrice, SpecId},
+    },
+    error::BlockchainError,
+};
 use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount};
 use alloy_eips::{eip2930::AccessListResult, eip7840::BlobParams};
@@ -36,19 +42,19 @@ use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{RetryProvider, is_rpc_method_not_found};
-use foundry_evm::{
-    backend::{AccountFetchPolicy, BlockchainDb, account_fetch_policy_for_source},
+use foundry_evm_core::{
+    backend::account_fetch_policy_for_source,
     fork::{cache_bal, validate_bal},
-    hardfork::FoundryHardfork,
 };
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_fork_db::AccountFetchPolicy;
 use foundry_primitives::{FoundryHeader, FoundryTxReceipt};
 use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
-use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroU64, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,7 +194,7 @@ impl<N: Network> ClientFork<N> {
         account_fetch_policy_for_source(
             config.chain_id,
             config.endpoint_identity.network_profile.unwrap_or_default(),
-        ) == AccountFetchPolicy::RequireAccountInfo
+        ) != AccountFetchPolicy::Auto
     }
 
     /// Returns the execution chain ID exposed by the forked node.
@@ -958,6 +964,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub(crate) endpoint_identity: ForkEndpointIdentity,
     /// Discovery identified a local node or could not rule out mutable source state.
     pub(crate) state_is_mutable: bool,
+    /// Tempo consensus epoch length reported by the fork source, if it exposes one.
+    pub(crate) tempo_epoch_length: Option<NonZeroU64>,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block

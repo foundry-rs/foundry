@@ -9,7 +9,34 @@ contract B {
     }
 }
 
+contract Refunder {
+    uint256 slot = 1;
+
+    function set(uint256 value) public returns (uint256) {
+        slot = value;
+        return value;
+    }
+}
+
+contract RefundDriver {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Refunder refunder = new Refunder();
+
+    function run() public returns (int64) {
+        refunder.set(2);
+        vm.resetGasMetering();
+        // Restoring the original value refunds more than the frame spends, and the frame returns.
+        refunder.set(1);
+        return vm.lastFrameGas().gasRefunded;
+    }
+}
+
 contract GasMeteringTest is Test {
+    // https://github.com/foundry-rs/foundry/issues/4370
+    function testGasMeteringResetClampsRefundOnReturn() public {
+        assertEq(new RefundDriver().run(), 0);
+    }
+
     function testGasMetering() public {
         uint256 gas_start = gasleft();
 

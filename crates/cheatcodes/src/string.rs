@@ -166,7 +166,9 @@ where
     }
 }
 
-pub(super) fn parse_value(s: &str, ty: &DynSolType) -> Result<DynSolValue> {
+/// Parses `s` as `ty` like the `vm.parse*` cheatcodes, with Forge's lenient fallbacks and error
+/// message.
+pub fn parse_value(s: &str, ty: &DynSolType) -> Result<DynSolValue> {
     match ty.coerce_str(s) {
         Ok(value) => Ok(value),
         Err(e) => match parse_value_fallback(s, ty) {

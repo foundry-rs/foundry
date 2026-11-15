@@ -4,9 +4,11 @@ mod assert_state_change;
 mod cheatcode_environment;
 mod dangerous_unary_operator;
 mod div_mul;
+mod duplicate_storage_namespace;
 mod ecrecover;
 mod incorrect_erc20_interface;
 mod incorrect_erc721_interface;
+mod incorrect_storage_namespace_slot;
 mod incorrect_strict_equality;
 mod locked_ether;
 mod mapping_deletion;
@@ -43,4 +45,8 @@ register_lints!(
     non_reentrant_not_first: (NonReentrantNotFirst, late, (NON_REENTRANT_NOT_FIRST));
     weak_prng: (WeakPrng, late, (WEAK_PRNG));
     tautological_compare: (TautologicalCompare, late, (TAUTOLOGICAL_COMPARE));
+    duplicate_storage_namespace:
+        (DuplicateStorageNamespace, late, (DUPLICATE_STORAGE_NAMESPACE));
+    incorrect_storage_namespace_slot:
+        (IncorrectStorageNamespaceSlot, late, (INCORRECT_STORAGE_NAMESPACE_SLOT));
 );

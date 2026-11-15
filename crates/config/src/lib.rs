@@ -234,12 +234,20 @@ pub struct Config {
     pub out: PathBuf,
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
-    /// Remappings to use for this repo
+    /// Remappings to use for this repo.
     #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
+    ///
+    /// Defaults to `true`. Dependency declarations that conflict with root paths or other
+    /// dependency mappings are scoped to their owner, with a configuration warning. Unique aliases
+    /// remain global. Dependencies with source directories outside their package retain their
+    /// existing declaration scope.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
+    ///
+    /// These addresses are granted cheatcode access in forked tests and scripts, even when not
+    /// referenced by a contract.
     pub libraries: Vec<String>,
     /// Whether to enable the build cache.
     pub cache: bool,
@@ -405,7 +413,10 @@ pub struct Config {
     pub tracing: TracingConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
-    /// Whether to show `console.log` outputs in realtime during script/test execution
+    /// Whether to show `console.log` outputs in realtime during script/test execution.
+    ///
+    /// Ignored when `--json` or `--junit` writes a report to stdout. Otherwise, logs print live
+    /// instead of being captured, so `forge test --json-file` does not include them.
     pub live_logs: bool,
     /// Whether to allow `expectRevert` for internal functions.
     pub allow_internal_expect_revert: bool,
@@ -532,13 +543,13 @@ pub struct Config {
     /// change forks already created by `setUp`.
     #[serde(default)]
     pub no_fork_bal: bool,
-    /// Prefetches a new fork block's remote cache from the keys of an older cached block.
+    /// Prefetches remote fork state before the EVM reads it.
     ///
-    /// Defaults to `false`. When a fork starts on a block with an empty disk cache, the accounts
-    /// and storage slots in the cache of the newest older block on the same chain are fetched
-    /// again at the new block in the background. This helps forks of `latest`, which start
-    /// cold on each new head. Values come from the fork block and never replace cached values,
-    /// so results do not change; unused keys cost extra RPC requests. Requires storage caching.
+    /// Defaults to `false`. While reads miss the cache, each call into a fork contract is
+    /// simulated on the endpoint with `eth_createAccessList`, and the state it touches is
+    /// fetched in batches. With storage caching, a fork block with an empty disk cache also
+    /// fetches the keys cached for the newest older block on the same chain. Values come from
+    /// the fork block; extra keys cost requests.
     #[serde(default)]
     pub fork_prefetch: bool,
     /// Disables rate limiting entirely. This overrides any settings made in
@@ -997,6 +1008,7 @@ impl Config {
         allowed.invariant.max_time_delay = self.invariant.max_time_delay;
         allowed.invariant.max_block_delay = self.invariant.max_block_delay;
         allowed.invariant.check_interval = self.invariant.check_interval;
+        allowed.invariant.call_gas_limit = self.invariant.call_gas_limit;
         allowed.invariant.show_metrics = self.invariant.show_metrics;
         allowed.invariant.show_solidity = self.invariant.show_solidity;
         allowed.allow_internal_expect_revert = self.allow_internal_expect_revert;
@@ -1105,9 +1117,9 @@ impl Config {
     }
 
     fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
-        self.networks.validate().map_err(Error::from)?;
+        self.networks.validate()?;
         let Some(hardfork) = self.hardfork else { return Ok(()) };
-        self.networks = self.networks.normalize_for_hardfork(hardfork).map_err(Error::from)?;
+        self.networks = self.networks.normalize_for_hardfork(hardfork)?;
         Ok(())
     }
 
@@ -1195,6 +1207,16 @@ impl Config {
                     .unwrap_or_else(|_| Cow::Borrowed(&self.libs)),
                 root,
                 remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+                project_paths: [("src", &self.src), ("test", &self.test), ("script", &self.script)]
+                    .into_iter()
+                    .map(|(key, default)| {
+                        figment.extract_inner::<PathBuf>(key).unwrap_or_else(|_| default.clone())
+                    })
+                    .collect(),
+                warnings: match figment.extract_inner::<Vec<Warning>>("__warnings") {
+                    Err(error) if error.missing() => Ok(Vec::new()),
+                    warnings => warnings,
+                },
             };
             figment = figment.merge(remappings);
         }
@@ -1535,11 +1557,12 @@ impl Config {
         let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
 
         // Solar warns on every build that its code generation is experimental. Configuring Solar
-        // already chose that, so the notice is not a project warning, including under `deny`.
-        let solar_codes = self
-            .solc_version()
-            .is_some_and(|version| version.build.as_str().contains("solar"))
-            .then_some(2264);
+        // already chose that, so the notice is not a project warning, including under `deny`. A
+        // Solar pin counts before its first install, since the compiler is resolved after
+        // this.
+        let solar_codes = (matches!(self.solc, Some(SolcReq::Solar(_)))
+            || self.solc_version().is_some_and(|version| version.build.as_str().contains("solar")))
+        .then_some(2264);
 
         let mut builder = ProjectBuilder::<C>::default()
             .artifacts(self.configured_artifacts_handler())
@@ -1745,6 +1768,9 @@ impl Config {
     /// If `solc` is [`SolcReq::Version`] then this will download and install the solc version if
     /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
+    /// If `solc` is [`SolcReq::Solar`] then this will download and install the Solar release if
+    /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
+    ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if let Some(solc) = &self.solc {
@@ -1759,6 +1785,18 @@ impl Config {
                             )));
                         }
                         Solc::blocking_install(version)?
+                    }
+                }
+                SolcReq::Solar(version) => {
+                    if let Some(solar) = Solc::find_installed_solar(version) {
+                        solar
+                    } else {
+                        if self.offline {
+                            return Err(SolcError::msg(format!(
+                                "can't install missing solar {version} in offline mode"
+                            )));
+                        }
+                        Solc::blocking_install_solar(version)?
                     }
                 }
                 SolcReq::Local(solc) => Solc::new(resolve_solc_path(solc)?)?,
@@ -1829,11 +1867,29 @@ impl Config {
 
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn solc_compiler(&self) -> Result<SolcCompiler, SolcError> {
-        if let Some(solc) = self.ensure_solc()? {
+        if let Some(mut solc) = self.ensure_solc()? {
+            self.forward_solar_threads(&mut solc);
             Ok(SolcCompiler::Specific(solc))
         } else {
             Ok(SolcCompiler::AutoDetect)
         }
+    }
+
+    /// Runs Solar with as many threads as the global thread pool, so `-j` reaches it and it
+    /// otherwise uses every core instead of its own default. The count is passed on the compiler
+    /// instance rather than in the settings, so it does not change the build cache. A thread
+    /// count already set in `extra_args` wins.
+    fn forward_solar_threads(&self, solc: &mut Solc) {
+        if solc.solar_version().is_none() {
+            return;
+        }
+        let is_threads_arg = |arg: &str| {
+            arg.starts_with("--threads") || arg.starts_with("--jobs") || arg.starts_with("-j")
+        };
+        if solc.extra_args.iter().chain(&self.extra_args).any(|arg| is_threads_arg(arg)) {
+            return;
+        }
+        solc.extra_args.push(format!("--threads={}", rayon::current_num_threads()));
     }
 
     /// Returns the solc version, if any.
@@ -2045,7 +2101,7 @@ impl Config {
         &'a self,
         fallback: impl Into<Cow<'a, str>>,
     ) -> Result<Cow<'a, str>, UnresolvedEnvVarError> {
-        if let Some(url) = self.get_rpc_url() { url } else { Ok(fallback.into()) }
+        self.get_rpc_url().unwrap_or_else(|| Ok(fallback.into()))
     }
 
     /// Returns the configured rpc or `"http://localhost:8545"` if no `eth_rpc_url` is set
@@ -3413,13 +3469,46 @@ pub enum SolcReq {
     /// Requires a specific solc version, that's either already installed (via `svm`) or will be
     /// auto installed (via `svm`)
     Version(Version),
+    /// Requires an exact Solar release, written as `solar:<version>`.
+    ///
+    /// Uses the release installed in `~/.foundry/solar/<version>`, and otherwise downloads and
+    /// verifies it.
+    Solar(
+        #[serde(
+            serialize_with = "serialize_solar_req",
+            deserialize_with = "deserialize_solar_req"
+        )]
+        Version,
+    ),
     /// Path to an existing local solc installation, or an executable name on `PATH`.
     Local(PathBuf),
+}
+
+fn serialize_solar_req<S: Serializer>(version: &Version, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(&format_args!("solar:{version}"))
+}
+
+fn deserialize_solar_req<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Version, D::Error> {
+    let req = String::deserialize(deserializer)?;
+    parse_solar_pin(&req).ok_or_else(|| de::Error::custom("not a Solar pin"))
+}
+
+/// Parses `solar:<version>`, which must name a downloadable release that reports its Solar
+/// version, so 0.2.0 or later without pre-release or build metadata.
+fn parse_solar_pin(req: &str) -> Option<Version> {
+    let version = Version::parse(req.strip_prefix("solar:")?).ok()?;
+    (version >= Version::new(0, 2, 0) && version.pre.is_empty() && version.build.is_empty())
+        .then_some(version)
 }
 
 fn resolve_solc_path(solc: &Path) -> Result<PathBuf, SolcError> {
     if solc.is_file() {
         Ok(solc.to_path_buf())
+    } else if solc.to_str().is_some_and(|solc| solc.starts_with("solar:")) {
+        Err(SolcError::msg(format!(
+            "invalid Solar pin {solc:?}, expected `solar:<version>` naming a release 0.2.0 or \
+             later, without pre-release or build metadata"
+        )))
     } else {
         which::which(solc).map_err(|_| SolcError::msg(format!("`solc` {solc:?} does not exist")))
     }
@@ -3429,10 +3518,14 @@ impl SolcReq {
     /// Tries to get the solc version from the `SolcReq`
     ///
     /// If the `SolcReq` is a `Version` it will return the version, if it's a path to a binary it
-    /// will try to get the version from the binary.
+    /// will try to get the version from the binary. A Solar pin returns the version of the
+    /// installed release, and never downloads it.
     pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
+            Self::Solar(version) => Solc::find_installed_solar(version)
+                .map(|solar| solar.version)
+                .ok_or_else(|| SolcError::msg(format!("solar {version} is not installed"))),
             Self::Local(path) => Solc::new(resolve_solc_path(path)?).map(|solc| solc.version),
         }
     }
@@ -3441,7 +3534,13 @@ impl SolcReq {
 impl<T: AsRef<str>> From<T> for SolcReq {
     fn from(s: T) -> Self {
         let s = s.as_ref();
-        if let Ok(v) = Version::from_str(s) { Self::Version(v) } else { Self::Local(s.into()) }
+        if let Ok(v) = Version::from_str(s) {
+            Self::Version(v)
+        } else if let Some(v) = parse_solar_pin(s) {
+            Self::Solar(v)
+        } else {
+            Self::Local(s.into())
+        }
     }
 }
 
@@ -5118,6 +5217,25 @@ mod tests {
 
             let config = Config::load().unwrap();
             assert_eq!(config.solc, Some(SolcReq::Local("path/to/local/solc".into())));
+
+            // A Solar pin survives a round trip, while bare `solar` and malformed pins stay
+            // executable names.
+            for (solc, expected) in [
+                ("solar:0.3.0", SolcReq::Solar(Version::new(0, 3, 0))),
+                ("solar:0.3.0-dev", SolcReq::Local("solar:0.3.0-dev".into())),
+                ("solar:0.1.8", SolcReq::Local("solar:0.1.8".into())),
+                ("solar", SolcReq::Local("solar".into())),
+                ("solar:0.3", SolcReq::Local("solar:0.3".into())),
+            ] {
+                jail.create_file("foundry.toml", &format!("[profile.default]\nsolc = {solc:?}"))?;
+                let config = Config::load().unwrap();
+                assert_eq!(config.solc, Some(expected.clone()));
+                assert_eq!(SolcReq::from(solc), expected);
+                assert_eq!(Config::from_provider(&config).unwrap().solc, Some(expected));
+            }
+            jail.set_env("FOUNDRY_SOLC_VERSION", "solar:0.3.0");
+            let config = Config::load().unwrap();
+            assert_eq!(config.solc, Some(SolcReq::Solar(Version::new(0, 3, 0))));
 
             jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
             let config = Config::load().unwrap();
@@ -8901,6 +9019,52 @@ mod tests {
             assert!(cfg.warnings.iter().any(
                 |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "unknown_key_xyz")
             ));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_unknown_keys_in_endpoint_entries() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default.rpc_endpoints]
+                local = { endpoint = "http://localhost:8545", retriez = 3 }
+
+                [rpc_endpoints]
+                mainnet = "https://eth.example"
+                sepolia = { url = "https://sepolia.example", retries = 2, auth = "token" }
+                optimism = { endpoints = ["https://op.example"], compute_units_per_second = 10 }
+                base = { endpoint = "https://base.example", timeout = 5 }
+
+                [etherscan]
+                mainnet = { key = "KEY", chainId = 1 }
+                sepolia = { key = "KEY", chain = 11155111, url = "https://api.example" }
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            let unknown: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter_map(|w| match w {
+                    crate::Warning::UnknownSectionKey { key, section, .. } => {
+                        Some((key.as_str(), section.as_str()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                unknown,
+                [
+                    ("retriez", "rpc_endpoints.local"),
+                    ("timeout", "rpc_endpoints.base"),
+                    ("chainId", "etherscan.mainnet"),
+                ],
+                "{:?}",
+                cfg.warnings
+            );
             Ok(())
         });
     }

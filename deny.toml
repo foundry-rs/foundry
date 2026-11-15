@@ -25,6 +25,15 @@ ignore = [
     "RUSTSEC-2026-0391",
     "RUSTSEC-2026-0398",
     "RUSTSEC-2026-0403",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0441 pin-utils is unmaintained
+    # and is pulled in transitively with no safe upgrade available.
+    "RUSTSEC-2026-0441",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0459 SQLite before 3.54.0 can
+    # read uninitialized memory from a crafted database and `-wal` file pair.
+    # libsqlite3-sys 0.36 comes from rusqlite 0.38 via mpp, which only opens its
+    # own channel store under ~/.tempo/wallet. Remove once mpp-rs moves to
+    # rusqlite 0.41 (libsqlite3-sys 0.39) and Foundry bumps its mpp rev.
+    "RUSTSEC-2026-0459",
 ]
 
 # This section is considered when running `cargo deny check bans`.

@@ -11,13 +11,14 @@
 //! epoch boundary serve as view-zero parents. An unsigned contextless anchor uses the no-skips
 //! local convention: view `h` in epoch zero and `h % L + 1` in later epochs. A boundary at
 //! `h % L == L - 1` announces the next committee in a native [`OnchainDkgOutcome`]. The boundary
-//! is signed by the old committee; the next epoch activates the announced key. The outcome's
-//! `is_next_full_dkg = false` describes the next ceremony, not whether this local key changed.
+//! is signed by the old committee; the next epoch activates the announced key. A fresh committee
+//! is scheduled two epochs ahead, so the preceding boundary can announce its players and
+//! `is_next_full_dkg = true` for the intervening ceremony.
 //!
 //! [`TempoHeader`] owns the full RLP encoding and hash, including all execution fields and the
 //! optional context. Genesis is unsigned and contextless. Context is omitted before T4, following
-//! [TIP-1031's activation gate][tip1031]. The supported wire mapping is pinned to Tempo `2c25f7cd`
-//! and Commonware `2026.9.0`, and rejects unknown hardforks pending review. This is not a claim of
+//! [TIP-1031's activation gate][tip1031]. The supported wire mapping is pinned to Tempo `7354e02`
+//! and Commonware `2026.10.0`, and rejects unknown hardforks pending review. This is not a claim of
 //! upstream format stability; protocol-owner confirmation remains tracked by OSS-1186. Older
 //! execution hardforks still use the pinned certificate/DKG codec, not historical Commonware
 //! codecs.
@@ -254,11 +255,13 @@ impl TempoConsensus {
         let extra_data = if height % self.epoch_length == self.epoch_length.get() - 1 {
             let next_epoch = epoch.checked_add(1).ok_or(TempoConsensusError::EpochOverflow)?;
             let committee = self.committee_at(next_epoch).1;
+            let full_dkg_committee =
+                next_epoch.checked_add(1).and_then(|epoch| self.state.committees.get(&epoch));
             OnchainDkgOutcome {
                 epoch: next_epoch,
                 output: committee.output.clone(),
-                next_players: committee.output.players().clone(),
-                is_next_full_dkg: false,
+                next_players: full_dkg_committee.unwrap_or(committee).output.players().clone(),
+                is_next_full_dkg: full_dkg_committee.is_some(),
             }
             .encode()
             .into()
@@ -274,15 +277,16 @@ impl TempoConsensus {
         Ok(PreparedHeaderMetadata { consensus_context, extra_data })
     }
 
-    /// Schedules a fresh committee after the epoch containing the next block.
+    /// Schedules a fresh committee two epochs after the epoch containing the next block.
     ///
     /// Repeated calls replace the pending key for the same epoch, consuming one counter each.
-    /// A key already announced by a finalized boundary cannot be replaced by this operation.
+    /// The first boundary announces the intervening full DKG and its players; the following
+    /// boundary publishes the new key. A finalized announcement cannot be replaced.
     pub fn rotate(&mut self) -> Result<TempoConsensusIdentity, TempoConsensusError> {
         let next_height =
             self.state.height.checked_add(1).ok_or(TempoConsensusError::HeightOverflow)?;
         let from_epoch = (next_height / self.epoch_length)
-            .checked_add(1)
+            .checked_add(2)
             .ok_or(TempoConsensusError::EpochOverflow)?;
         let counter =
             self.state.counter.checked_add(1).ok_or(TempoConsensusError::CounterOverflow)?;
@@ -469,7 +473,7 @@ pub enum TempoConsensusError {
     /// The current height has no representable successor.
     #[error("Tempo consensus block height overflow")]
     HeightOverflow,
-    /// The next epoch cannot be represented.
+    /// A required epoch cannot be represented.
     #[error("Tempo consensus epoch overflow")]
     EpochOverflow,
     /// The header is not the strict successor of the local head.
@@ -531,7 +535,8 @@ impl Committee {
 
 const fn ensure_supported_hardfork(hardfork: TempoHardfork) -> Result<(), TempoConsensusError> {
     // Upstream appends new hardforks; extending support requires a wire-format review.
-    if hardfork as u64 <= TempoHardfork::T14 as u64 {
+    // T15 leaves the consensus wire format unchanged.
+    if hardfork as u64 <= TempoHardfork::T15 as u64 {
         Ok(())
     } else {
         Err(TempoConsensusError::UnsupportedHardfork(hardfork))

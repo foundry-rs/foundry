@@ -48,7 +48,10 @@ use crate::{
     config::DEFAULT_TEMPO_EPOCH_LENGTH,
     eth::{
         backend::{
-            db::MaybeFullDatabase,
+            db::{
+                AccountInfo, AccountState, Bytecode, CacheDB, DatabaseRef, DatabaseResult,
+                DbAccount, EmptyDb, MaybeFullDatabase, StateSnapshot,
+            },
             fork::ClientFork,
             tempo_consensus::{
                 TempoConsensus, TempoConsensusError, TempoConsensusIdentity, TempoFinalization,
@@ -68,15 +71,8 @@ use alloy_provider::Provider;
 use alloy_rpc_types::EIP1186AccountProofResponse as AccountProof;
 use anvil_core::eth::block::{Block, canonical_block};
 use anvil_rpc::error::{ErrorCode, RpcError};
-use foundry_evm::backend::{DatabaseError, DatabaseResult, EmptyDBWrapper, StateSnapshot};
 use foundry_primitives::FoundryHeader;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use revm::{
-    DatabaseRef,
-    bytecode::Bytecode,
-    database::{AccountState, CacheDB, DbAccount},
-    state::AccountInfo,
-};
 use std::{
     fmt,
     sync::Arc,
@@ -287,16 +283,25 @@ impl TempoChain {
             FoundryHeader::Tempo(_) => header,
             FoundryHeader::Ethereum(inner) => FoundryHeader::tempo(inner),
         };
+        let source_epoch_length = fork.config.read().tempo_epoch_length;
+        let epoch_length = config.effective_tempo_epoch_length(source_epoch_length);
         TempoConsensus::at_fork_header(
             config.tempo_consensus_seed(),
-            config.tempo_epoch_length,
+            epoch_length,
             header.as_tempo().expect("the fork anchor is a Tempo header"),
         )
         .map_err(|error| {
             let message = if matches!(error, TempoConsensusError::InvalidAnchorEpoch { .. }) {
+                let origin = if config.tempo_epoch_length.is_some() {
+                    "--tempo.epoch-length"
+                } else if source_epoch_length.is_some() {
+                    "the fork source"
+                } else {
+                    "the default"
+                };
                 format!(
-                    "{error}; set --tempo.epoch-length to match the fork source \
-                     (default: {DEFAULT_TEMPO_EPOCH_LENGTH})"
+                    "{error} (epoch length {epoch_length} from {origin}); \
+                     set --tempo.epoch-length to match the fork source"
                 )
             } else {
                 error.to_string()
@@ -314,7 +319,27 @@ impl TempoChain {
 
     /// Starts an unsigned local segment without inferring fork metadata.
     pub(super) fn local_consensus(config: &NodeConfig, height: u64) -> TempoConsensus {
-        TempoConsensus::at_height(config.tempo_consensus_seed(), config.tempo_epoch_length, height)
+        TempoConsensus::at_height(
+            config.tempo_consensus_seed(),
+            config.effective_tempo_epoch_length(None),
+            height,
+        )
+    }
+
+    /// Captures a fallback diagnostic from the fork's final metadata for output after commit.
+    pub(super) fn epoch_length_fallback_warning(
+        config: &NodeConfig,
+        fork: &ClientFork,
+    ) -> Option<String> {
+        (!config.silent
+            && config.tempo_epoch_length.is_none()
+            && fork.config.read().tempo_epoch_length.is_none())
+        .then(|| {
+            format!(
+                "Tempo fork epoch length is unavailable; using {DEFAULT_TEMPO_EPOCH_LENGTH}. \
+                 Set --tempo.epoch-length to match the source."
+            )
+        })
     }
 }
 
@@ -325,17 +350,15 @@ impl TempoChain {
 pub(super) struct SealedAccounts(pub(super) Arc<AddressMap<DbAccount>>);
 
 impl DatabaseRef for SealedAccounts {
-    type Error = DatabaseError;
-
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         match self.0.get(&address) {
             Some(account) => Ok(account.info()),
-            None => EmptyDBWrapper::default().basic_ref(address),
+            None => EmptyDb.basic_ref(address),
         }
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
-        EmptyDBWrapper::default().code_by_hash_ref(code_hash)
+        EmptyDb.code_by_hash_ref(code_hash)
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
@@ -347,7 +370,7 @@ impl DatabaseRef for SealedAccounts {
     }
 
     fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
-        EmptyDBWrapper::default().block_hash_ref(number)
+        EmptyDb.block_hash_ref(number)
     }
 }
 
@@ -388,7 +411,7 @@ impl MaybeFullDatabase for SealedAccounts {
     }
 
     fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
-        let mut db = CacheDB::new(EmptyDBWrapper::default());
+        let mut db = CacheDB::new(EmptyDb);
         db.init_from_state_snapshot(snapshot);
         self.0 = Arc::new(db.cache.accounts);
     }
@@ -584,6 +607,19 @@ impl<N: Network> Backend<N> {
         drop(states);
         Ok(Some(super::prove_account(&accounts, address, keys)))
     }
+
+    /// Captures the startup diagnostic before the backend is exposed to concurrent resets.
+    pub(crate) async fn tempo_epoch_length_fallback_warning(&self) -> Option<String> {
+        let config = self.node_config.read().await;
+        let storage = self.blockchain.storage.read();
+        if storage.tempo.is_some()
+            && let Some(fork) = self.get_fork()
+        {
+            TempoChain::epoch_length_fallback_warning(&config, &fork)
+        } else {
+            None
+        }
+    }
 }
 
 fn tempo_chain<N: Network>(storage: &BlockchainStorage<N>) -> Result<&TempoChain, BlockchainError> {
@@ -635,7 +671,7 @@ mod tests {
             api::EthApi,
             backend::{
                 db::{SerializableState, StateDb},
-                mem::MiningCommitHook,
+                mem::{MiningCommitHook, in_memory_db::MemDb},
             },
         },
         spawn,
@@ -650,10 +686,7 @@ mod tests {
     use alloy_serde::WithOtherFields;
     use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
     use anvil_core::types::ReorgOptions;
-    use foundry_evm::{
-        backend::MemDb,
-        hardfork::{EthereumHardfork, FoundryHardfork},
-    };
+    use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
     use foundry_primitives::FoundryNetwork;
     use std::{
         num::NonZeroU64,
@@ -953,8 +986,7 @@ mod tests {
         // The exact snapshot retains the pending key and derivation counter.
         let mut restored = consensus(&api);
         assert_eq!(restored.rotate().unwrap(), replaced);
-        api.mine_one().await.unwrap();
-        api.mine_one().await.unwrap();
+        api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
         assert_eq!(consensus(&api).identity(), scheduled);
         assert_certified_head(&api);
     }
@@ -1253,7 +1285,7 @@ mod tests {
             assert_eq!(consensus(&api).rotate().unwrap(), next_rotation);
             assert_eq!(api.balance(account, None).await.unwrap(), U256::from(2));
             assert_certified_head(&api);
-            api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+            api.anvil_mine(Some(U256::from(6)), None).await.unwrap();
             assert_eq!(consensus(&api).identity(), scheduled);
             assert!(api.evm_revert(snapshot).await.unwrap());
             assert_eq!(api.balance(account, None).await.unwrap(), U256::ONE);
@@ -1409,7 +1441,7 @@ mod tests {
     fn tempo_config(epoch_length: u64) -> NodeConfig {
         NodeConfig::test_tempo()
             .with_no_mining(true)
-            .with_tempo_epoch_length(NonZeroU64::new(epoch_length).unwrap())
+            .with_tempo_epoch_length(NonZeroU64::new(epoch_length))
     }
 
     async fn queue_transfer(api: &EthApi<FoundryNetwork>, sender: Address) -> B256 {
