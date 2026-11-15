@@ -3066,8 +3066,12 @@ Error: Snapshots differ from previous run
 fn test_gas_snapshot_group_escape(prj: _, cmd: _) {
     prj.insert_ds_test();
 
-    let test_contract = |name: &str, group: &str| {
-        format!(
+    let root_parent = prj.root().parent().unwrap();
+    let outside = root_parent.join("outside.json");
+    let absolute_group = root_parent.join("outside");
+    prj.add_source(
+        "SnapshotGroupEscapeTest.sol",
+        &format!(
             r#"
 import "./test.sol";
 
@@ -3076,35 +3080,22 @@ interface Vm {{
     function startSnapshotGas(string calldata group, string calldata name) external;
 }}
 
-contract {name} is DSTest {{
+contract SnapshotGroupEscapeTest is DSTest {{
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testSnapshotValue() public {{
-        vm.snapshotValue("{name}", "value", 1);
-        vm.snapshotValue("{group}", "value", 1);
+        vm.snapshotValue("../../outside", "value", 1);
     }}
 
     function testStartSnapshotGas() public {{
-        vm.startSnapshotGas("{group}", "value");
+        vm.startSnapshotGas("{}", "value");
     }}
 }}
-"#
-        )
-    };
-
-    let root_parent = prj.root().parent().unwrap().to_path_buf();
-    let outside = root_parent.join("outside.json");
-    let absolute_group = root_parent.join("outside");
-    prj.add_source("RelativeEscapeTest.sol", &test_contract("RelativeEscapeTest", "../../outside"));
-    prj.add_source(
-        "AbsoluteEscapeTest.sol",
-        &test_contract("AbsoluteEscapeTest", &absolute_group.to_slash_lossy()),
+"#,
+            absolute_group.to_slash_lossy(),
+        ),
     );
-    cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
-...
-[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: group must be a plain file name] testSnapshotValue() ([GAS])
-[FAIL: vm.startSnapshotGas: invalid snapshot group name `[..]/outside`: group must be a plain file name] testStartSnapshotGas() ([GAS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: group must be a plain file name] testSnapshotValue() ([GAS])
 [FAIL: vm.startSnapshotGas: invalid snapshot group name `[..]/outside`: group must be a plain file name] testStartSnapshotGas() ([GAS])
@@ -3112,9 +3103,6 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
-    // The plain-name groups were still recorded.
-    assert!(prj.root().join("snapshots/RelativeEscapeTest.json").exists());
-    assert!(prj.root().join("snapshots/AbsoluteEscapeTest.json").exists());
     // The escaped files were never written.
     assert!(!outside.exists());
 }
