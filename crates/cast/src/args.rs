@@ -55,6 +55,7 @@ use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::{
+    path::{Component, Path},
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
@@ -1369,6 +1370,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let metadata = client.contract_source_code(address.parse()?).await?;
             match (directory, flatten) {
                 (Some(dir), false) => {
+                    for item in &metadata.items {
+                        ensure_safe_contract_name(&item.contract_name)?;
+                    }
                     metadata.source_tree().write_to(&dir)?;
                 }
                 (None, false) => sh_println!("{}", metadata.source_code())?,
@@ -1660,6 +1664,21 @@ fn explorer_client(
     builder.build().map_err(Into::into)
 }
 
+/// Ensures that an explorer-supplied contract name is a single, non-hidden directory component.
+///
+/// The source tree roots every source under `Path::new(contract_name)`, and its entries are written
+/// with `std::fs::write`. A name such as `""` or `"."` would therefore place the reply's files
+/// directly in the output directory and silently replace existing files there, while `.git` would
+/// let it write into repository metadata.
+fn ensure_safe_contract_name(contract_name: &str) -> Result<()> {
+    let mut components = Path::new(contract_name).components();
+    let safe = matches!(components.next(), Some(Component::Normal(_)))
+        && components.next().is_none()
+        && !contract_name.starts_with('.');
+    eyre::ensure!(safe, "invalid contract name from explorer: {contract_name:?}");
+    Ok(())
+}
+
 fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>(
     tx: &str,
 ) -> Result<serde_json::Value> {
@@ -1910,5 +1929,15 @@ mod tests {
         // Too few arguments never mention flags, even when one starts with `--`.
         assert_eq!(hint(2, &["--packed"]), "encode length mismatch");
         assert_eq!(hint(1, &[]), "encode length mismatch");
+    }
+
+    #[test]
+    fn safe_contract_name() {
+        for name in ["Example", "Contract_1", "Ünïcode"] {
+            assert!(ensure_safe_contract_name(name).is_ok(), "{name:?}");
+        }
+        for name in ["", ".", "..", ".git", "a/b", "/abs", "../x", "foundry.toml/x"] {
+            assert!(ensure_safe_contract_name(name).is_err(), "{name:?}");
+        }
     }
 }

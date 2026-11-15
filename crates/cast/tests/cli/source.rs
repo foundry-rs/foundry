@@ -373,6 +373,53 @@ async fn source_plain_and_directory(prj: _, cmd: _) {
     server.abort();
 }
 
+// Explorer replies root their sources under the reported contract name, so a name that is not a
+// single, non-hidden directory component must not be expanded into the output directory.
+#[casttest]
+async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
+    let directory = prj.root().join("sources");
+    fs::create_dir_all(&directory).unwrap();
+    let sentinel = directory.join("foundry.toml");
+    let sentinel_contents = "[profile.default]\nffi = false\n";
+    fs::write(&sentinel, sentinel_contents).unwrap();
+
+    for contract_name in ["", ".", ".git", "a/b"] {
+        let response = json!({
+            "status": "1", "message": "OK", "result": [{
+                "SourceCode": { "foundry.toml": "[profile.default]\nffi = true\n" },
+                "ABI": "[]", "ContractName": contract_name,
+                "CompilerVersion": "v0.8.30+commit.73712a01", "OptimizationUsed": "0",
+                "Runs": "200", "EVMVersion": "Default", "Proxy": "0"
+            }]
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/api",
+            get(move || {
+                let response = response.clone();
+                async move { Json(response) }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let args = [
+            "source",
+            "0x0000000000000000000000000000000000000001",
+            "--explorer-api-url",
+            &format!("{url}/api"),
+            "--explorer-url",
+            &url,
+            "-d",
+        ];
+        cmd.cast_fuse().args(args).arg(&directory).assert_failure().stderr_eq(format!(
+            "Error: invalid contract name from explorer: \"{contract_name}\"\n"
+        ));
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
+        server.abort();
+    }
+}
+
 // Tests that proxy interfaces include the implementation and remain valid Solidity.
 #[casttest]
 async fn interface_follows_etherscan_proxy_implementation(prj: _, cmd: _) {
