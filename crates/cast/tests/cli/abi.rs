@@ -413,6 +413,26 @@ fn abi_encode_event_anonymous(cmd: _) {
 }
 
 #[casttest]
+fn abi_encode_event_limits_topics(cmd: _) {
+    let signature = "Log(uint256 indexed,uint256 indexed,uint256 indexed,uint256 indexed)";
+    cmd.args(["abi-encode-event", signature, "1", "2", "3", "4"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq("Error: an EVM log can have at most 4 topics\n");
+
+    cmd.cast_fuse()
+        .args(["abi-encode-event", &format!("{signature} anonymous"), "1", "2", "3", "4"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x0000000000000000000000000000000000000000000000000000000000000001
+[topic1]: 0x0000000000000000000000000000000000000000000000000000000000000002
+[topic2]: 0x0000000000000000000000000000000000000000000000000000000000000003
+[topic3]: 0x0000000000000000000000000000000000000000000000000000000000000004
+
+"#]]);
+}
+
+#[casttest]
 fn abi_decode_output(cmd: _) {
     cmd.cast_fuse()
         .args([

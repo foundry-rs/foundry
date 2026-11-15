@@ -420,7 +420,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
 
             let data = DynSolValue::Tuple(data_tokens).abi_encode_params();
-            let log_data = LogData::new_unchecked(topics, data.into());
+            let log_data = LogData::new(topics, data.into())
+                .ok_or_eyre("an EVM log can have at most 4 topics")?;
             if shell::is_json() {
                 #[derive(serde::Serialize)]
                 struct EncodedEvent {
