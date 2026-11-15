@@ -545,6 +545,10 @@ pub struct InspectorStackInner {
     hooked_steps: OpcodeSet,
     /// Which hooks stepped the running instruction, as [`STEPPED_STATIC`] and [`STEPPED_CHEAT`].
     stepped: u8,
+    /// [`Self::stepped`] of the instruction that made each message in flight. The frames of a
+    /// message overwrite [`Self::stepped`], and the instruction's `step_end` must run the static
+    /// hooks only if its `step` ran them.
+    suspended_stepped: Vec<u8>,
 }
 
 /// Mutable references to both parts of [InspectorStack] and the backend the execution runs over,
@@ -1760,6 +1764,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     fn top_level_frame_start(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         warm_arbitrum_system_contract::<FEN>(interp);
         self.inner.tx_created.clear();
+        // A transaction that ended with an error skipped the end hooks that pop the suspended
+        // steps; keep only the entry this frame's message just pushed.
+        let stale = self.inner.suspended_stepped.len().saturating_sub(1);
+        self.inner.suspended_stepped.drain(..stale);
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.root_depth = usize::from(interp.host().initial_call_depth());
             // Transactions run from the test or script carry no access list.
@@ -2010,14 +2018,25 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
+    /// Saves which hooks stepped the instruction that makes a message, before the frames of the
+    /// message overwrite it. [`Self::restore_cheat_stepped`] takes it back when the message ends.
+    #[inline]
+    fn suspend_stepped(&mut self) {
+        let inner = &mut *self.inner;
+        inner.suspended_stepped.push(inner.stepped);
+    }
+
     /// Refreshes the stepped opcodes after a message's end hooks finish mutating the inspectors'
-    /// state. The message's frames overwrote whether the cheatcodes and the other inspectors
-    /// stepped the instruction that made it, so that instruction's `step_end` runs their hooks
-    /// whenever they step any instruction.
+    /// state, and restores which hooks stepped the instruction that made the message.
+    ///
+    /// The static hooks are paired: the instruction's `step_end` runs them only if its `step`
+    /// did. The message can change the cheatcode state, so the cheatcode `step_end` hook runs
+    /// whenever the cheatcodes step any instruction.
     fn restore_cheat_stepped(&mut self) {
         self.refresh_cheat_steps();
         let inner = &mut *self.inner;
-        inner.stepped = if inner.static_end_steps == OpcodeSet::EMPTY { 0 } else { STEPPED_STATIC }
+        let suspended = inner.suspended_stepped.pop().unwrap_or_default();
+        inner.stepped = (suspended & STEPPED_STATIC)
             | if inner.cheat_steps == OpcodeSet::EMPTY { 0 } else { STEPPED_CHEAT };
     }
 
@@ -2203,6 +2222,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Option<MessageResultFor<FEN>> {
+        self.suspend_stepped();
         if self.start_inner_root(interp, message) {
             return None;
         }
@@ -2415,6 +2435,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Option<MessageResultFor<FEN>> {
+        self.suspend_stepped();
         if self.start_inner_root(interp, message) {
             return None;
         }
@@ -2424,6 +2445,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         // A CREATE redirected to the CREATE2 factory is observed as a call to the factory.
         if self.redirect_create2(interp, message) {
+            // The call hook suspends the step again, and `create_end` ends it through `call_end`.
+            self.inner.suspended_stepped.pop();
             return self.call(interp, message);
         }
         if let Some(provenance) =

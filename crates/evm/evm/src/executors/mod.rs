@@ -2103,7 +2103,7 @@ mod tests {
     use alloy_eips::eip4788::SYSTEM_ADDRESS;
     use alloy_primitives::{address, bytes};
     use alloy_rpc_types::TransactionRequest;
-    use evm2::SpecId;
+    use evm2::{OpcodeSet, SpecId, interpreter::opcode::OpCode};
     use foundry_cheatcodes::{
         CheatsConfig,
         Vm::{
@@ -2119,7 +2119,9 @@ mod tests {
         evm::TempoEvmNetwork,
         opts::EvmOpts,
     };
-    use foundry_evm_traces::InternalTraceMode;
+    use foundry_evm_traces::{
+        InternalTraceMode, StackSnapshotType, TracingInspector, TracingInspectorConfig,
+    };
     use std::{sync::mpsc, thread};
 
     #[cfg(feature = "monad")]
@@ -2898,6 +2900,57 @@ mod tests {
         assert!(result.execution_cancelled);
         assert!(!result.reverted);
         assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+    }
+
+    #[test]
+    fn filtered_tracer_pairs_steps_across_nested_calls_stepped_by_the_cheatcodes() {
+        let env = default_env::<EthEvmNetwork>();
+        let mut executor = ExecutorBuilder::<EthEvmNetwork>::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config()))
+            .gas_limit(1 << 20)
+            .build(
+                env,
+                TransactionRequest::default(),
+                Backend::spawn(None, env).unwrap(),
+                NetworkConfigs::default(),
+            );
+        let (outer, middle, inner) =
+            (Address::repeat_byte(0x11), Address::repeat_byte(0x22), Address::repeat_byte(0x33));
+        // The outer contract calls the middle one: PUSH0 x5; PUSH20 middle; GAS; CALL; STOP.
+        let mut outer_code = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x73];
+        outer_code.extend_from_slice(middle.as_slice());
+        outer_code.extend_from_slice(&[0x5a, 0xf1, 0x00]);
+        // The middle contract makes a successful static call, then reverts:
+        // PUSH0 x4; PUSH20 inner; GAS; STATICCALL; PUSH0; PUSH0; REVERT.
+        let mut middle_code = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x73];
+        middle_code.extend_from_slice(inner.as_slice());
+        middle_code.extend_from_slice(&[0x5a, 0xfa, 0x5f, 0x5f, 0xfd]);
+        executor.set_code(outer, Bytecode::new_raw(outer_code.into())).unwrap();
+        executor.set_code(middle, Bytecode::new_raw(middle_code.into())).unwrap();
+        executor.set_code(inner, Bytecode::new_raw(Bytes::from_static(&[0x00]))).unwrap();
+
+        // The tracer steps only CALL, while the failure identity makes the cheatcodes step
+        // everything, so the STATICCALL is stepped by the cheatcodes alone.
+        let mut config =
+            TracingInspectorConfig::none().steps().set_stack_snapshots(StackSnapshotType::Pushes);
+        config.record_opcodes_filter =
+            Some([OpCode::CALL.get()].into_iter().collect::<OpcodeSet>());
+        executor.inspector_mut().set_tracer(Some(Box::new(TracingInspector::new(config))));
+        executor.inspector_mut().collect_failure_identity(true);
+
+        let result = executor.call_raw(CALLER, outer, Bytes::new(), U256::ZERO).unwrap();
+        let arena = result.traces.unwrap().arena;
+        let steps = arena
+            .nodes()
+            .iter()
+            .flat_map(|node| node.trace.steps.iter().map(move |step| (node.trace.address, step)))
+            .collect::<Vec<_>>();
+        assert_eq!(steps.len(), 1);
+        let (address, call) = steps[0];
+        assert_eq!(address, outer);
+        assert_eq!(call.op, OpCode::CALL);
+        // The outer CALL pushes 0, since the middle contract reverted.
+        assert_eq!(call.push_stack.as_deref(), Some(&[U256::ZERO][..]));
     }
 
     #[test]
