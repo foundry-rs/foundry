@@ -1,4 +1,5 @@
 use figment::Profile;
+use foundry_compilers::artifacts::remappings::RelativeRemapping;
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf};
 
@@ -70,6 +71,11 @@ pub enum Warning {
         /// The selected profile that does not exist
         profile: String,
     },
+    /// A formerly global dependency declaration now applies only within its owner.
+    ScopedDependencyRemapping {
+        /// The original alias and target with their generated owner context.
+        remapping: RelativeRemapping,
+    },
 }
 
 impl fmt::Display for Warning {
@@ -121,6 +127,16 @@ impl fmt::Display for Warning {
                 write!(
                     f,
                     "Found unknown `{key}` config key in section `{section}` defined in {source}."
+                )
+            }
+            Self::ScopedDependencyRemapping { remapping } => {
+                let mut global = remapping.clone();
+                let context = global.context.take().unwrap_or_default();
+                write!(
+                    f,
+                    "Dependency remapping `{global}` now applies only within `{context}`. \
+                     Root imports may resolve differently. To retain the previous target, \
+                     add `{global}` to your root remappings."
                 )
             }
             Self::UnknownProfile { profile } => {

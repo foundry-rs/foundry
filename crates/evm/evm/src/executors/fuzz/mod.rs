@@ -1205,6 +1205,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         break 'stop;
                     }
                     TestCaseError::Reject(_) => {
+                        // The persisted replay is not part of the campaign, so its reject does
+                        // not count against `max_test_rejects`.
+                        if is_persisted_replay {
+                            continue 'stop;
+                        }
                         let max = self.config.max_test_rejects;
 
                         let total = shared_state.increment_rejects();

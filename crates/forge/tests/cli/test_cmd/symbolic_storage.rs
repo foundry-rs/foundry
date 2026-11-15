@@ -807,3 +807,66 @@ Suite result: FAILED. 3 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+// A build without storage layouts after an edit keeps the cached symbolic profile, so the next
+// symbolic run must recompile the artifacts it wrote without layouts.
+#[forgetest_init]
+fn symbolic_recompiles_cached_artifacts_without_storage_layouts(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_recompiles_cached_artifacts_without_storage_layouts");
+
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.ast = true;
+    });
+    // A source without contracts has an artifact without a layout, which must stay cached.
+    prj.add_source("Helpers.sol", "function five() pure returns (uint256) { return 5; }");
+    let source = r#"
+import {five} from "../src/Helpers.sol";
+
+contract FoldedStore {
+    mapping(uint256 => uint256) public values;
+
+    function set(uint256 key, uint256 value) external {
+        values[key] = value;
+    }
+
+    function readFive() external view returns (uint256) {
+        return values[five()];
+    }
+}
+
+contract SymbolicStaleLayout {
+    FoldedStore store = new FoldedStore();
+
+    function checkFoldedSlotAliases(uint256 key) public {
+        store.set(key, 1);
+        assert(store.readFive() == 0);
+    }
+}
+"#;
+    prj.add_test("SymbolicStaleLayout.t.sol", source);
+    let args = ["test", "--symbolic", "--match-contract", "SymbolicStaleLayout"];
+    assert_symbolic_witness(cmd.args(args)).failure().stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]]);
+
+    prj.add_test("SymbolicStaleLayout.t.sol", &format!("{source}// Edited.\n"));
+    cmd.forge_fuse().arg("build").assert_success();
+
+    assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]]);
+
+    // The recompiled artifacts have layouts, so the next run reuses them.
+    assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/SymbolicStaleLayout.t.sol:SymbolicStaleLayout
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]]);
+}
