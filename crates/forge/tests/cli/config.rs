@@ -3066,9 +3066,11 @@ Error: Snapshots differ from previous run
 fn test_gas_snapshot_group_escape(prj: _, cmd: _) {
     prj.insert_ds_test();
 
-    let root_parent = prj.root().parent().unwrap();
-    let outside = root_parent.join("outside.json");
-    let absolute_group = root_parent.join("outside");
+    let outside_dir = tempfile::tempdir_in(prj.root().parent().unwrap()).unwrap();
+    let absolute_group = outside_dir.path().join("outside");
+    let relative_group =
+        Path::new("../..").join(outside_dir.path().file_name().unwrap()).join("outside");
+    let outside = absolute_group.with_extension("json");
     prj.add_source(
         "SnapshotGroupEscapeTest.sol",
         &format!(
@@ -3084,7 +3086,7 @@ contract SnapshotGroupEscapeTest is DSTest {{
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testSnapshotValue() public {{
-        vm.snapshotValue("../../outside", "value", 1);
+        vm.snapshotValue("{}", "value", 1);
     }}
 
     function testStartSnapshotGas() public {{
@@ -3092,6 +3094,7 @@ contract SnapshotGroupEscapeTest is DSTest {{
     }}
 }}
 "#,
+            relative_group.to_slash_lossy(),
             absolute_group.to_slash_lossy(),
         ),
     );
