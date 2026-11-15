@@ -6,7 +6,8 @@
 
 use crate::{
     cmd::test::RerunFailure,
-    result::{TestResult, TestStatus},
+    result::TestStatus,
+    sandbox::{RUN_TIMEOUT, Sandbox, TestFile, ensure_inside, run_session, stderr, suite_results},
     workspace,
 };
 use alloy_primitives::{U256, keccak256};
@@ -16,15 +17,13 @@ use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{fs::canonicalize_path, sh_println, sh_warn};
 use foundry_compilers::{
     Graph,
-    cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         Language,
         multi::{MultiCompilerLanguage, MultiCompilerParser},
-        solc::Solc,
     },
     utils::source_files_iter,
 };
-use foundry_config::{Config, DenyLevel, impl_figment_convert};
+use foundry_config::{Config, impl_figment_convert};
 use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -37,21 +36,14 @@ use std::{
     io::{self, Write},
     ops::Add,
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Output, Stdio},
+    process::{Command, Output, Stdio},
     sync::{
         LazyLock,
         atomic::{AtomicUsize, Ordering},
     },
     thread,
-    time::{Duration, Instant, SystemTime},
+    time::SystemTime,
 };
-use tempfile::TempDir;
-use toml_edit::DocumentMut;
-
-#[cfg(unix)]
-use rustix::process::{Pid, Signal, kill_process_group};
-#[cfg(unix)]
-use std::{os::unix::process::CommandExt, sync::Mutex};
 
 mod matcher;
 
@@ -61,50 +53,20 @@ mod matcher;
 /// of independent agents rarely repeat.
 const DEFAULT_AGENTS: usize = 4;
 const DEFAULT_QUORUM: usize = 2;
-/// How often Forge checks whether an agent session with a timeout has exited. Sessions take
-/// minutes, so this adds no noticeable delay.
-const SESSION_POLL: Duration = Duration::from_millis(100);
-/// How long one Forge build or test run in a workspace can take.
-const RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-/// Agent settings and instruction files that a workspace leaves out at every level. Settings can
-/// hold hooks that run commands on the host. `CLAUDE.md` and `AGENTS.md` are project docs, but
-/// they steer the agents that work in the copy, so a user who wants them passes them with
-/// `--context`. Entries of dependency directories are links, so they keep their own files.
-const AGENT_CONFIG: [&str; 14] = [
-    ".agents",
-    ".claude",
-    ".clinerules",
-    ".codex",
-    ".cursor",
-    ".cursorrules",
-    ".gemini",
-    ".windsurf",
-    ".windsurfrules",
-    "AGENT.md",
-    "AGENTS.md",
-    "CLAUDE.local.md",
-    "CLAUDE.md",
-    "GEMINI.md",
+/// The focus of each agent without `--focus`, by agent number, wrapping: the four strategy lanes
+/// of ultrafuzz's smoke benchmark (MIT). On an audited vault, five runs of four agents with these
+/// focuses found 3.6 distinct real bugs per run against 2.2 without, at a lower cost and with
+/// the same hit rate on the audit's findings. A single agent gets no focus.
+const DEFAULT_FOCUSES: [&str; 4] = [
+    "block and time transitions, accrual, vesting, auctions, deadlines, stale snapshots, and \
+     sequences whose result depends on elapsed time.",
+    "stale, reverting, zero, extreme, or adversarial oracle, strategy, pool, token, gauge, hook, \
+     and callback values.",
+    "cached or stored balances, donations, fees, rewards, bad debt, utilization, exchange rates, \
+     and state that can diverge from live balances.",
+    "agreement of max, preview, and view functions before, during, and after lifecycle \
+     transitions, especially empty, paused, removed, nested, and terminal states.",
 ];
-/// The environment variables that builds and test runs of generated code see, besides `HOME`,
-/// `FOUNDRY_PROFILE`, and the seed settings. Generated tests run outside the agent's sandbox, so
-/// they must not read the secrets of Forge's environment with the env cheatcodes.
-const PASSED_ENV: [&str; 7] = ["LANG", "LC_ALL", "PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR"];
-/// Overrides configured test filters, so they cannot hide generated tests. `$^` matches no
-/// contract or test name, and no project file is under `/forge-properties-none`.
-pub(crate) const SELECT_ALL_TESTS: [&str; 10] = [
-    "--match-contract",
-    ".*",
-    "--match-test",
-    ".*",
-    "--no-match-contract",
-    "$^",
-    "--no-match-test",
-    "$^",
-    "--no-match-path",
-    "/forge-properties-none/**",
-];
-
 /// The task of a verifier session. The placeholders are the targets, the group file, the verdict
 /// file, and the tests of the group.
 const VERIFY_PROMPT: &str = include_str!("properties/verify_prompt.md");
@@ -120,10 +82,6 @@ static BLOCKED: LazyLock<Regex> = LazyLock::new(|| {
 static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)//[^\n]*|/\*.*?\*/").unwrap());
 /// A contract declaration and its name.
 static CONTRACT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bcontract\s+(\w+)").unwrap());
-/// The process groups of the running agent sessions, which Forge ends if it is interrupted.
-#[cfg(unix)]
-static SESSIONS: Mutex<Vec<Pid>> = Mutex::new(Vec::new());
-
 /// Run agents that prove bugs with failing tests and report the bugs that they agree on.
 #[derive(Clone, Debug, Parser)]
 pub struct PropertiesArgs {
@@ -149,6 +107,7 @@ pub struct PropertiesArgs {
     /// FORGE_PROPERTIES_CONTEXT  absolute paths of the --context files, one per line
     /// FORGE_PROPERTIES_OUT      absolute, empty directory for the agent's tests
     /// FORGE_PROPERTIES_SEED     the agent's own seed, in hex
+    /// FORGE_PROPERTIES_FOCUS    the agent's focus, as in the task, or empty
     /// FORGE_PROPERTIES_USAGE    file where the agent can write its model usage as JSON:
     ///                           {"input_tokens": N, "output_tokens": N, "cost_usd": X}
     ///
@@ -205,6 +164,19 @@ pub struct PropertiesArgs {
     /// copy of the project, with its own seed.
     #[arg(long, default_value_t = DEFAULT_AGENTS, value_name = "N")]
     agents: usize,
+
+    /// An area for one agent to search first. Agent N gets the Nth focus, wrapping. Can be given
+    /// at most --agents times.
+    ///
+    /// Without it, two or more agents get built-in focuses: time and sequence effects, external
+    /// dependency boundaries, stored state against live balances, and limit and view functions
+    /// across lifecycle states.
+    #[arg(long, value_name = "TEXT")]
+    focus: Vec<String>,
+
+    /// Give every agent the same task, without a focus.
+    #[arg(long, conflicts_with = "focus")]
+    no_focus: bool,
 
     /// Number of agents that must report the same root cause before Forge reports it as a
     /// possible bug.
@@ -264,13 +236,6 @@ impl Add for Usage {
             cost_usd: self.cost_usd + other.cost_usd,
         }
     }
-}
-
-/// A Solidity file that an agent wrote, by its path relative to the project root.
-#[derive(Clone, Debug)]
-pub(crate) struct TestFile {
-    pub(crate) path: PathBuf,
-    pub(crate) content: String,
 }
 
 /// A test that fails on every seed.
@@ -422,9 +387,8 @@ struct TestRun {
 /// What one agent session left.
 struct Session {
     id: usize,
-    /// Why the agent command failed, if it did.
-    error: Option<String>,
-    timed_out: bool,
+    /// How the agent command ended.
+    exit: AgentExit,
     usage: Option<Usage>,
     possible_bugs: Vec<AgentFailure>,
     rejected: Vec<Rejected>,
@@ -435,6 +399,16 @@ struct Session {
     /// The files of `files` that each of them imports, directly or not, as the compiler resolves
     /// the imports.
     imports: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+}
+
+/// How an agent command ended.
+enum AgentExit {
+    /// The command exited successfully.
+    Succeeded,
+    /// The command failed, for this reason.
+    Failed(String),
+    /// The command reached the timeout, so Forge ended it.
+    TimedOut,
 }
 
 /// The output directories that a run reserved. The ones it left empty are removed on drop.
@@ -458,6 +432,7 @@ impl PropertiesArgs {
         ensure!(self.agents > 0, "--agents must be greater than zero");
         let quorum = self.quorum.unwrap_or(self.agents.min(DEFAULT_QUORUM));
         ensure!((1..=self.agents).contains(&quorum), "--quorum must be between 1 and --agents");
+        ensure!(self.focus.len() <= self.agents, "--focus can be given at most --agents times");
         ensure!(
             self.target.iter().all(|path| workspace::is_safe_relative_path(path)),
             "--target paths must be project-relative paths"
@@ -469,8 +444,7 @@ impl PropertiesArgs {
             let root = paths.try_project_root()?;
             paths.root = Some(root.canonicalize().wrap_err("failed to resolve project root")?);
         }
-        let mut config = self.load_config()?;
-        restrict_config(&mut config, self.allow_ffi, self.allow_network);
+        let config = self.load_config()?;
         let generated_tests =
             workspace::relative_to_root(&config.root, &config.test).join("generated");
         workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
@@ -518,7 +492,12 @@ impl PropertiesArgs {
             .transpose()?;
         // Workspaces leave out the project's generated tests, so every agent starts without
         // earlier generated tests.
-        let mut sandbox = Sandbox::new(&config, vec![config.root.join(&generated_tests)])?;
+        let mut sandbox = Sandbox::new(
+            &config,
+            vec![config.root.join(&generated_tests)],
+            self.allow_ffi,
+            self.allow_network,
+        )?;
         sandbox.end_on_interrupt(run_dirs.0.clone())?;
         if let Some(errors) = sandbox.build()? {
             sh_warn!("the project does not build, so every test run builds it: {errors}")?;
@@ -553,40 +532,6 @@ struct Campaign<'a> {
     run: usize,
     cache_root: PathBuf,
     quorum: usize,
-}
-
-/// Turns off `ffi` unless `allow_ffi`, and removes the RPC and Etherscan settings unless
-/// `allow_network`. Every workspace of a [`Sandbox`] writes this config, so no generated test can
-/// call `vm.ffi` or reach an endpoint that the config names. Config ignores `FFI` environment
-/// variables.
-pub(crate) fn restrict_config(config: &mut Config, allow_ffi: bool, allow_network: bool) {
-    config.ffi &= allow_ffi;
-    // Generated tests could send data to any host, and the endpoints can hold API keys.
-    if !allow_network {
-        config.eth_rpc_url = None;
-        config.eth_rpc_jwt = None;
-        config.eth_rpc_headers = None;
-        config.etherscan_api_key = None;
-        config.etherscan = Default::default();
-        config.rpc_endpoints = Default::default();
-    }
-}
-
-/// Builds and runs generated code in temporary copies of the project. Generated code runs outside
-/// the sandbox of whatever wrote it, so a copy leaves out hidden root entries such as `.env` and
-/// agent settings, and Forge runs in it with only a few environment variables.
-pub(crate) struct Sandbox<'a> {
-    config: &'a Config,
-    forge: PathBuf,
-    /// Project paths that workspaces leave out, besides the build output and the cache.
-    skipped: Vec<PathBuf>,
-    /// The workspace whose build output every new workspace copies.
-    build_cache: Option<TempDir>,
-    /// The home directory of builds and test runs, whose `.svm` links to the installed compilers.
-    home: PathBuf,
-    /// The temporary directory that holds the home directory and every workspace, so one removal
-    /// cleans up after an interrupt. It drops last.
-    root: TempDir,
 }
 
 /// The inputs that every agent shares.
@@ -639,8 +584,9 @@ impl Campaign<'_> {
         for (id, result) in (1..).zip(results) {
             match result {
                 Ok(session) => {
-                    errors
-                        .extend(session.error.as_ref().map(|error| format!("agent {id}: {error}")));
+                    if let AgentExit::Failed(error) = &session.exit {
+                        errors.push(format!("agent {id}: {error}"));
+                    }
                     sessions.push(session);
                 }
                 Err(error) => errors.push(format!("agent {id}: {error:#}")),
@@ -797,7 +743,7 @@ impl Campaign<'_> {
         }
         let timed_out = sessions
             .iter()
-            .filter(|session| session.timed_out)
+            .filter(|session| matches!(session.exit, AgentExit::TimedOut))
             .map(|session| session.id)
             .collect::<Vec<_>>();
         if !timed_out.is_empty() {
@@ -902,8 +848,21 @@ impl Campaign<'_> {
         let out_dir = workspace.path().join(&out);
         ensure_inside(workspace.path(), &out_dir, &out)?;
         fs::create_dir_all(&out_dir)?;
+        let focuses = if args.no_focus || (args.focus.is_empty() && args.agents == 1) {
+            vec![]
+        } else if args.focus.is_empty() {
+            DEFAULT_FOCUSES.to_vec()
+        } else {
+            args.focus.iter().map(String::as_str).collect()
+        };
+        let focus = (!focuses.is_empty()).then(|| focuses[(id - 1) % focuses.len()]);
+        // The other agents have other focuses only when each agent has its own.
+        let distinct = args.agents > 1 && args.agents <= focuses.len();
         let prompt = cache.join("prompt.md");
-        fs::write(&prompt, session_prompt(&inputs.targets, &inputs.context, &out_dir))?;
+        fs::write(
+            &prompt,
+            session_prompt(&inputs.targets, &inputs.context, &out_dir, focus, distinct),
+        )?;
         let usage_path = cache.join("usage.json");
         let log_path = cache.join("agent.log");
         let log = fs::File::create(&log_path)?;
@@ -924,20 +883,25 @@ impl Campaign<'_> {
             .env("FORGE_PROPERTIES_CONTEXT", lines(&inputs.context))
             .env("FORGE_PROPERTIES_OUT", &out_dir)
             .env("FORGE_PROPERTIES_SEED", format!("{seed:#x}"))
+            .env("FORGE_PROPERTIES_FOCUS", focus.unwrap_or_default())
             .env("FORGE_PROPERTIES_USAGE", &usage_path)
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log);
         let status = run_session(&mut command, args.timeout, "agent")?;
         let log_display = log_path.strip_prefix(&self.config.root).unwrap_or(&log_path);
-        let error = status.filter(|status| !status.success()).map(|status| {
-            format!("agent command failed ({status}): see {}", log_display.display())
-        });
+        let exit = match status {
+            None => AgentExit::TimedOut,
+            Some(status) if status.success() => AgentExit::Succeeded,
+            Some(status) => AgentExit::Failed(format!(
+                "agent command failed ({status}): see {}",
+                log_display.display()
+            )),
+        };
         let usage = read_usage(&usage_path, &format!("agent {id}"))?;
         let mut session = Session {
             id,
-            error,
-            timed_out: status.is_none(),
+            exit,
             usage,
             possible_bugs: vec![],
             rejected: vec![],
@@ -1035,19 +999,11 @@ impl Campaign<'_> {
 
     /// Runs every test in the files on every seed.
     fn run_tests(&self, workspace: &Path, files: &[TestFile]) -> Result<TestRun> {
-        let paths =
-            files.iter().map(|file| file.path.display().to_string()).collect::<Vec<_>>().join(",");
         let mut run = TestRun::default();
         // The passing seeds and the failures of each test.
         let mut outcomes = BTreeMap::<(String, String), (usize, Vec<String>)>::new();
         for seed in &self.args.seed {
-            let mut command = self.forge_command(workspace, seed);
-            command.args(["test", "--json", "--match-path", &format!("{{{paths}}}")]);
-            command.args(SELECT_ALL_TESTS);
-            command.arg("--restrict-inline-config");
-            if !self.args.allow_network {
-                command.arg("--no-network");
-            }
+            let mut command = self.test_command(workspace, files, seed);
             let Some(output) = self.sandbox.output(&mut command)? else {
                 run.errors
                     .push(format!("tests reached the timeout of {RUN_TIMEOUT:?} on seed {seed}"));
@@ -1102,11 +1058,12 @@ impl Campaign<'_> {
         Ok(run)
     }
 
-    /// Returns a Forge command for one seed. Each seed persists fuzz and invariant failures in
-    /// its own directory, so a counterexample found with one seed is not replayed with another.
-    fn forge_command(&self, workspace: &Path, seed: &U256) -> Command {
+    /// Returns the test command for the files on one seed. Each seed persists fuzz and invariant
+    /// failures in its own directory, so a counterexample found with one seed is not replayed with
+    /// another.
+    fn test_command(&self, workspace: &Path, files: &[TestFile], seed: &U256) -> Command {
         let seed_dir = seed_dir(self.config, workspace, seed);
-        let mut command = self.sandbox.command(workspace);
+        let mut command = self.sandbox.test_command(workspace, files);
         command
             .env("FOUNDRY_FUZZ_SEED", format!("{seed:#x}"))
             .env("FOUNDRY_FUZZ_FAILURE_PERSIST_DIR", seed_dir.join("fuzz"))
@@ -1246,179 +1203,6 @@ impl Campaign<'_> {
     }
 }
 
-impl<'a> Sandbox<'a> {
-    /// Returns a sandbox for the project of `config`, whose workspaces leave out the `skipped`
-    /// project paths.
-    pub(crate) fn new(config: &'a Config, skipped: Vec<PathBuf>) -> Result<Self> {
-        let forge = std::env::current_exe().wrap_err("failed to resolve Forge executable")?;
-        let root = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
-        let home = root.path().join("home");
-        fs::create_dir(&home)?;
-        if let Some(svm) = Solc::svm_home().filter(|svm| svm.is_dir()) {
-            workspace::symlink_entry(&svm, &home.join(".svm"), fs::metadata(&svm)?.file_type())?;
-        }
-        Ok(Self { config, forge, skipped, build_cache: None, home, root })
-    }
-
-    /// Makes an interrupt end every session and test run and remove the workspaces before Forge
-    /// exits. They run in their own process groups, so a terminal interrupt does not reach them.
-    pub(crate) fn end_on_interrupt(&self, reserved: Vec<PathBuf>) -> Result<()> {
-        let root = self.root.path().to_path_buf();
-        ctrlc::set_handler(move || {
-            // The lock stays held until Forge exits, so no thread starts another process.
-            #[cfg(unix)]
-            let sessions = SESSIONS.lock().unwrap();
-            #[cfg(unix)]
-            for group in sessions.iter() {
-                let _ = kill_process_group(*group, Signal::KILL);
-            }
-            let _ = fs::remove_dir_all(&root);
-            // Exiting skips the drops, so the reserved directories that stayed empty go here.
-            for dir in &reserved {
-                let _ = fs::remove_dir(dir);
-            }
-            std::process::exit(130);
-        })?;
-        Ok(())
-    }
-
-    /// Builds the project once in a workspace whose build output later workspaces copy, so a
-    /// test run compiles only the files that it adds. Returns the compiler errors of a project
-    /// that does not build; it gets no shared output, and each test run builds it in full.
-    pub(crate) fn build(&mut self) -> Result<Option<String>> {
-        let workspace = self.workspace(&[])?;
-        if let Some(errors) = self.build_errors(workspace.path())? {
-            return Ok(Some(errors));
-        }
-        self.build_cache = Some(workspace);
-        Ok(None)
-    }
-
-    /// Builds a workspace and returns the compiler errors, if any. If the project denies
-    /// warnings, the warnings are errors. A workspace starts from a build without such warnings,
-    /// so only the files that this build compiles can warn.
-    pub(crate) fn build_errors(&self, workspace: &Path) -> Result<Option<String>> {
-        // The lint step can fail where the compiler succeeds, and it does not change the tests.
-        let Some(output) = self.output(self.command(workspace).args(["build", "--no-lint"]))?
-        else {
-            return Ok(Some(format!("the build reached the timeout of {RUN_TIMEOUT:?}")));
-        };
-        if !output.status.success() {
-            return Ok(Some(stderr(&output)));
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.find("Warning (").filter(|_| self.config.deny.warnings()).map(|start| {
-            format!("the project denies compiler warnings: {}", shorten(&stdout[start..]))
-        }))
-    }
-
-    /// Copies the project and the shared build output into a temporary workspace and adds the
-    /// files.
-    pub(crate) fn workspace(&self, files: &[TestFile]) -> Result<TempDir> {
-        let config = self.config;
-        let workspace =
-            tempfile::Builder::new().prefix("workspace-").tempdir_in(self.root.path())?;
-        let dependencies = self.dependencies();
-        let skipped = [config.out.clone(), config.cache_path.clone()]
-            .into_iter()
-            .chain(self.skipped.iter().cloned())
-            .collect::<Vec<_>>();
-        copy_project_tree(config, workspace.path(), Path::new(""), &dependencies, &skipped)?;
-        // Internal runs see the project's resolved config, including inherited `extends` values,
-        // absolute paths, and environment overrides, without reading files outside the workspace.
-        let mut rebased = workspace::rebase_config_paths(config, workspace.path());
-        rebased.extends = None;
-        // Foundry turns the compiler cache off when it denies warnings, so a workspace builds with
-        // `deny = "never"`, and `Sandbox::build_errors` checks the warnings instead.
-        rebased.deny = DenyLevel::Never;
-        // With dynamic test linking, every new source file makes the compiler rebuild all files, so
-        // a workspace compiles without it. It changes how tests deploy contracts, not what they
-        // assert.
-        rebased.dynamic_test_linking = false;
-        // Dependency entries link to the project's entries, and the compiler resolves links before
-        // it checks the allowed paths. A source that the compiler reads itself, such as an import
-        // that climbs above the root into a nested library, must stay readable.
-        rebased.allow_paths.extend(
-            dependencies
-                .iter()
-                .filter(|path| path.is_dir())
-                .filter_map(|path| canonicalize_path(path).ok()),
-        );
-        let mut toml = rebased.to_string_pretty()?.parse::<DocumentMut>()?;
-        // Inline config may name the project's other profiles, so they must still exist. The TOML
-        // writer quotes names such as `""` or `a.b` that are not bare keys.
-        let profiles = toml[Config::PROFILE_SECTION]
-            .as_table_mut()
-            .expect("the resolved config has a profile table");
-        for profile in config.profiles.iter().filter(|profile| **profile != config.profile) {
-            profiles.entry(profile.as_str().as_str()).or_insert_with(toml_edit::table);
-        }
-        fs::write(workspace.path().join(Config::FILE_NAME), toml.to_string())?;
-        // Remappings are already resolved and rebased in the workspace config. The Soldeer lock
-        // goes too: `forge build` then hashes each Soldeer dependency to check it, and the hash
-        // panics when the dependency is a link, as in a workspace.
-        for file in ["remappings.txt", "soldeer.lock"] {
-            let path = workspace.path().join(file);
-            if path.exists() {
-                fs::remove_file(path)?;
-            }
-        }
-        if let Some(build) = &self.build_cache {
-            copy_build_output(config, build.path(), workspace.path())?;
-        }
-        for file in files {
-            let path = workspace.path().join(&file.path);
-            ensure_inside(workspace.path(), &path, &file.path)?;
-            fs::create_dir_all(path.parent().expect("test path has a parent"))?;
-            fs::write(path, &file.content)?;
-        }
-        Ok(workspace)
-    }
-
-    /// Returns the dependency directories of the project, whose entries workspaces link instead of
-    /// copying them.
-    fn dependencies(&self) -> Vec<PathBuf> {
-        let config = self.config;
-        config
-            .libs
-            .iter()
-            .map(|lib| lib.as_path())
-            .chain(["node_modules".as_ref(), "dependencies".as_ref()])
-            .map(|path| config.root.join(path))
-            .collect()
-    }
-
-    /// Returns a Forge command in a workspace. A workspace has its own resolved `foundry.toml`, so
-    /// the command needs only the selected profile from the environment. Generated tests cannot
-    /// read other variables.
-    pub(crate) fn command(&self, workspace: &Path) -> Command {
-        let mut command = Command::new(&self.forge);
-        command
-            .current_dir(workspace)
-            .env_clear()
-            .envs(PASSED_ENV.iter().filter_map(|key| Some((key, std::env::var_os(key)?))))
-            .env("HOME", &self.home)
-            .env("FOUNDRY_PROFILE", self.config.profile.as_str().as_str());
-        command
-    }
-
-    /// Runs a command of [`Sandbox::command`] and returns its output, or `None` if it reached
-    /// [`RUN_TIMEOUT`]. Generated tests can loop for as long as their gas lasts, so Forge ends the
-    /// command and every process that it started at the timeout.
-    pub(crate) fn output(&self, command: &mut Command) -> Result<Option<Output>> {
-        let dir = tempfile::Builder::new().prefix("output-").tempdir_in(self.root.path())?;
-        let (stdout, stderr) = (dir.path().join("stdout"), dir.path().join("stderr"));
-        command
-            .stdin(Stdio::null())
-            .stdout(fs::File::create(&stdout)?)
-            .stderr(fs::File::create(&stderr)?);
-        let Some(status) = run_session(command, Some(RUN_TIMEOUT.as_secs()), "forge")? else {
-            return Ok(None);
-        };
-        Ok(Some(Output { status, stdout: fs::read(stdout)?, stderr: fs::read(stderr)? }))
-    }
-}
-
 /// Groups the failing tests of all agents by root cause with the root-cause matcher. Groups with a
 /// claim come first, then groups with more agents.
 fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
@@ -1456,7 +1240,13 @@ fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
 /// Returns the task of an agent session. On 26 held-out cases, plain independent small-model
 /// audits with a task of this kind found 0.05 to 0.10 more planted bugs at every spend level than
 /// agents that returned candidate JSON in short rounds.
-fn session_prompt(targets: &[PathBuf], context: &[PathBuf], out: &Path) -> String {
+fn session_prompt(
+    targets: &[PathBuf],
+    context: &[PathBuf],
+    out: &Path,
+    focus: Option<&str>,
+    distinct: bool,
+) -> String {
     let list = |paths: &[PathBuf]| {
         paths.iter().map(|path| format!("- {}\n", path.display())).collect::<String>()
     };
@@ -1482,6 +1272,13 @@ fn session_prompt(targets: &[PathBuf], context: &[PathBuf], out: &Path) -> Strin
          freely.\n",
         out.display()
     ));
+    if let Some(focus) = focus {
+        let others = if distinct { " (the other agents have other focuses)" } else { "" };
+        prompt.push_str(&format!(
+            "\nYour focus{others}: {focus} Trace a small number of concrete high-signal paths in \
+             this area first; then widen if budget is left.\n"
+        ));
+    }
     prompt
 }
 
@@ -1658,15 +1455,6 @@ fn kept_files(
     Ok(kept)
 }
 
-/// Fails if the nearest existing ancestor of `path` resolves outside `root`, for example through a
-/// linked directory.
-fn ensure_inside(root: &Path, path: &Path, orig: &Path) -> Result<()> {
-    match path.ancestors().find(|ancestor| ancestor.exists()) {
-        Some(existing) => workspace::ensure_within_root(root, existing, "generated test", orig),
-        None => Ok(()),
-    }
-}
-
 /// Returns the size and modification time of each file that workspaces share with the project, by
 /// path relative to the root: the files in the `dependencies` directories, whose entries workspaces
 /// link, and behind links that lead outside the project. Workspaces copy every other file, so a
@@ -1708,91 +1496,6 @@ fn project_fingerprint(config: &Config, dependencies: &[PathBuf]) -> Fingerprint
         }
     }
     files
-}
-
-/// Copies a project directory into a workspace, without Git data, the `skipped` paths, agent
-/// settings and instructions (`AGENT_CONFIG`), and, at the project root, hidden entries such as
-/// `.env`.
-///
-/// A dependency directory becomes a real directory whose entries link to the project's entries.
-/// A linked dependency directory would resolve outside the workspace, and the compiler then
-/// cannot resolve a dependency's own absolute imports, such as `src/lib/X.sol` in a pnpm package.
-/// A link to a path in the project leads to that path in the workspace, so it stays inside it.
-fn copy_project_tree(
-    config: &Config,
-    copy: &Path,
-    dir: &Path,
-    dependencies: &[PathBuf],
-    skipped: &[PathBuf],
-) -> Result<()> {
-    fs::create_dir_all(copy.join(dir))?;
-    for entry in fs::read_dir(config.root.join(dir))? {
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let rel = dir.join(&name);
-        let target = copy.join(&rel);
-        if name == ".git"
-            || AGENT_CONFIG.iter().any(|config| name == *config)
-            || (dir.as_os_str().is_empty() && name.to_string_lossy().starts_with('.'))
-            || skipped.contains(&path)
-        {
-            continue;
-        }
-        let file_type = entry.file_type()?;
-        if dependencies.contains(&path) && path.is_dir() {
-            fs::create_dir_all(&target)?;
-            for dependency in fs::read_dir(&path)? {
-                let dependency = dependency?;
-                let link = target.join(dependency.file_name());
-                workspace::symlink_entry(&dependency.path(), &link, dependency.file_type()?)?;
-            }
-        } else if file_type.is_symlink() {
-            let link = match path.canonicalize() {
-                Ok(resolved) => match resolved.strip_prefix(&config.root) {
-                    Ok(resolved) => copy.join(resolved),
-                    Err(_) => resolved,
-                },
-                // A dangling link stays as it is.
-                Err(_) => fs::read_link(&path)?,
-            };
-            workspace::symlink_entry(&link, &target, file_type)?;
-        } else if file_type.is_dir() {
-            copy_project_tree(config, copy, &rel, dependencies, skipped)?;
-        } else {
-            fs::copy(&path, &target)?;
-        }
-    }
-    Ok(())
-}
-
-/// Copies the build output and the compiler cache of a built workspace into another workspace.
-/// The copy clones files where the file system can (APFS, Btrfs, XFS).
-///
-/// The compiler cache keys sources by their path relative to the root, but it stores remappings
-/// with the absolute root, and other remappings invalidate it. Both workspaces have the same files
-/// at the same relative paths, so moving the remappings to the new root keeps the cache valid, and
-/// the compiler rebuilds only sources whose content changed.
-fn copy_build_output(config: &Config, build: &Path, workspace: &Path) -> Result<()> {
-    let out = workspace::relative_to_root(&config.root, &config.out);
-    let cache = workspace::relative_to_root(&config.root, &config.cache_path)
-        .join(SOLIDITY_FILES_CACHE_FILENAME);
-    // Shared output outside the project would mix the builds of all workspaces.
-    if out.is_absolute() || cache.is_absolute() || !build.join(&cache).exists() {
-        return Ok(());
-    }
-    workspace::copy_dir_recursive(&build.join(&out), &workspace.join(&out))?;
-    let mut text = fs::read_to_string(build.join(&cache))?;
-    // The compiler can see either spelling of a temporary path, such as `/private/var` on macOS.
-    for (from, to) in [
-        (canonicalize_path(build)?, canonicalize_path(workspace)?),
-        (build.to_path_buf(), workspace.to_path_buf()),
-    ] {
-        text = text.replace(&format!("{}/", from.display()), &format!("{}/", to.display()));
-    }
-    fs::create_dir_all(workspace.join(&cache).parent().expect("cache file has a parent"))?;
-    fs::write(workspace.join(&cache), text)?;
-    Ok(())
 }
 
 /// Returns every test result in Forge's JSON output, with one result per invariant predicate of a
@@ -1855,25 +1558,6 @@ fn test_results(output: &Output) -> Result<Vec<(RerunFailure, TestStatus, Option
     Ok(results)
 }
 
-/// Returns every test result in Forge's JSON output with its contract and test name.
-pub(crate) fn suite_results(output: &Output) -> Result<Vec<(String, String, TestResult)>> {
-    let suites = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-        .wrap_err_with(|| format!("invalid Forge JSON: {}", stderr(output)))?;
-    let suites = suites.as_object().ok_or_else(|| eyre!("Forge JSON is not an object"))?;
-    let mut results = Vec::new();
-    for (contract, suite) in suites {
-        let Some(tests) = suite.get("test_results").and_then(serde_json::Value::as_object) else {
-            continue;
-        };
-        for (test, result) in tests {
-            let result = TestResult::deserialize(result)
-                .wrap_err_with(|| format!("invalid result for {contract}::{test}"))?;
-            results.push((contract.clone(), test.clone(), result));
-        }
-    }
-    Ok(results)
-}
-
 /// Appends the counterexample calls to a failure reason.
 fn failure_reason(reason: &str, counterexample: Option<&CounterExample>) -> String {
     let Some(counterexample) = counterexample else { return reason.to_string() };
@@ -1904,47 +1588,6 @@ fn seed_dir(config: &Config, workspace: &Path, seed: &U256) -> PathBuf {
         .join(workspace::relative_to_root(&config.root, &config.cache_path))
         .join("properties/seeds")
         .join(format!("{seed:#x}"))
-}
-
-/// Returns stderr without compiler warning blocks and keeps both ends when it is still long.
-/// Warnings can fill the limit before the decisive error, and many tools print the error last.
-/// Without a compiler error, as with `deny = "warnings"`, the warnings are the errors and stay.
-pub(crate) fn stderr(output: &Output) -> String {
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let has_error = stderr.lines().any(|line| line.starts_with("Error ("));
-    let mut in_warning = false;
-    let stderr = stderr
-        .lines()
-        .filter(|line| {
-            if !has_error {
-                return true;
-            }
-            if line.starts_with("Warning") {
-                in_warning = true;
-            } else if line.starts_with("Error") {
-                in_warning = false;
-            } else if in_warning && line.trim().is_empty() {
-                in_warning = false;
-                return false;
-            }
-            !in_warning
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    shorten(&stderr)
-}
-
-/// Keeps both ends of a long tool output. Many tools print the decisive error last.
-pub(crate) fn shorten(text: &str) -> String {
-    const HALF: usize = 1_000;
-    let text = text.trim();
-    let chars = text.chars().count();
-    if chars <= 2 * HALF {
-        return text.to_string();
-    }
-    let head = text.chars().take(HALF).collect::<String>();
-    let tail = text.chars().skip(chars - HALF).collect::<String>();
-    format!("{head}\n[...]\n{tail}")
 }
 
 /// Returns the task of a verifier session.
@@ -1996,56 +1639,6 @@ fn group_files(sessions: &[Session], group: &BugGroup) -> Vec<TestFile> {
         files.extend(session.files.iter().filter(|file| paths.contains(&file.path)).cloned());
     }
     files
-}
-
-/// Runs a session command in its own process group until it exits or reaches the timeout in
-/// seconds, then ends the process group, so no process that the session started keeps running.
-/// Returns `None` if the session reached the timeout.
-fn run_session(
-    command: &mut Command,
-    timeout: Option<u64>,
-    session: &str,
-) -> Result<Option<ExitStatus>> {
-    #[cfg(unix)]
-    command.process_group(0);
-    // The lock spans the spawn, so an interrupt cannot miss a session that just started.
-    #[cfg(unix)]
-    let mut sessions = SESSIONS.lock().unwrap();
-    let mut child = command.spawn().wrap_err_with(|| format!("failed to run {session} command"))?;
-    #[cfg(unix)]
-    let group = Pid::from_child(&child);
-    #[cfg(unix)]
-    {
-        sessions.push(group);
-        drop(sessions);
-    }
-    let status = match timeout {
-        Some(timeout) => {
-            let deadline = Instant::now() + Duration::from_secs(timeout);
-            loop {
-                match child.try_wait() {
-                    Ok(None) if Instant::now() < deadline => thread::sleep(SESSION_POLL),
-                    status => break status,
-                }
-            }
-        }
-        None => child.wait().map(Some),
-    };
-    // The session ends with the command: no process that it started keeps running.
-    #[cfg(unix)]
-    {
-        let _ = kill_process_group(group, Signal::KILL);
-        SESSIONS.lock().unwrap().retain(|running| *running != group);
-    }
-    Ok(match status? {
-        Some(status) => Some(status),
-        None => {
-            #[cfg(not(unix))]
-            let _ = child.kill();
-            child.wait()?;
-            None
-        }
-    })
 }
 
 /// Reads the usage file of an agent or verifier. A missing file is no usage, and an invalid one

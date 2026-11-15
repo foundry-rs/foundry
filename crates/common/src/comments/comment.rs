@@ -1,5 +1,6 @@
 //! Modified from [`rustc_ast::util::comments`](https://github.com/rust-lang/rust/blob/07d3fd1d9b9c1f07475b96a9d168564bf528db68/compiler/rustc_ast/src/util/comments.rs).
 
+use super::inline_config::{InlineConfigItem, InvalidInlineConfigItem};
 use solar::parse::{
     ast::{CommentKind, Span},
     interface::BytePos,
@@ -66,5 +67,28 @@ impl Comment {
             CommentKind::Line => None,
             CommentKind::Block => Some("*/"),
         }
+    }
+
+    /// Parses formatter directives on the first and last lines of the comment.
+    pub fn format_directives(
+        &self,
+    ) -> impl Iterator<Item = Result<InlineConfigItem<()>, InvalidInlineConfigItem>> + '_ {
+        let mut lines = self.lines.iter().flat_map(|line| line.lines());
+        let first = lines.next();
+        let last = lines.last();
+        [first, last].into_iter().flatten().filter_map(|line| self.parse_format_directive(line))
+    }
+
+    fn parse_format_directive(
+        &self,
+        mut text: &str,
+    ) -> Option<Result<InlineConfigItem<()>, InvalidInlineConfigItem>> {
+        if let Some(prefix) = self.prefix() {
+            text = text.strip_prefix(prefix).unwrap_or(text);
+        }
+        if let Some(suffix) = self.suffix() {
+            text = text.strip_suffix(suffix).unwrap_or(text);
+        }
+        Some(text.trim_start().strip_prefix("forgefmt:")?.trim().parse())
     }
 }

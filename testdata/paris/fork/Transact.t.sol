@@ -194,4 +194,29 @@ contract TransactOnForkTest is Test {
 
         assertEq(recorder.caller(), alice);
     }
+
+    function testTransactCreateWithSetEvmVersion() public {
+        vm.createSelectFork("mainnet", 17134914);
+        vm.setEvmVersion("cancun");
+        transactCreate();
+    }
+
+    function testTransactCreateWithChainId() public {
+        vm.createSelectFork("mainnet", 17134914);
+        vm.chainId(99);
+        transactCreate();
+    }
+
+    // Replays a contract creation on a frame EVM built for the requested spec or chain ID, whose
+    // root must keep the replay's call depth so the sender nonce is only incremented once.
+    function transactCreate() internal {
+        // https://etherscan.io/tx/0x571e9f46bce9d5de4fa7f08a5a39a5710414621fc618dfd11711d5c949b6bf24
+        address sender = address(0x0DE44a74c8675E834c94a1a23D91169E7fd39Eb8);
+        uint64 nonce = vm.getNonce(sender);
+
+        vm.transact(0x571e9f46bce9d5de4fa7f08a5a39a5710414621fc618dfd11711d5c949b6bf24);
+
+        assertEq(vm.getNonce(sender), nonce + 1);
+        assertGt(vm.computeCreateAddress(sender, nonce).code.length, 0);
+    }
 }

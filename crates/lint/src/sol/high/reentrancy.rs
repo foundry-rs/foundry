@@ -340,6 +340,9 @@ struct Analyzer<'ctx, 's, 'c, 'gcx> {
     reentrancy_eth_enabled: bool,
     reentrancy_no_eth_enabled: bool,
     reentrancy_balance_enabled: bool,
+    /// Prunes branches that path predicates rule out; tied to the lint config so the ETH lints
+    /// report the same whether or not an entry point reads a balance.
+    prune_paths: bool,
     /// Set while re-running code only to refine the balance analysis.
     balance_only_analysis: bool,
     /// Balance facts about the return values of each analysed internal call site.
@@ -374,7 +377,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         gcx: Gcx<'gcx>,
         entry: &'gcx hir::Function<'gcx>,
     ) -> Self {
-        let reentrancy_balance_enabled = ctx.is_lint_enabled(REENTRANCY_BALANCE.id);
+        let prune_paths = ctx.is_lint_enabled(REENTRANCY_BALANCE.id);
+        let reentrancy_balance_enabled = prune_paths && reaches_balance_read(gcx, entry);
         Self {
             ctx,
             gcx,
@@ -387,6 +391,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
             reentrancy_balance_enabled,
+            prune_paths,
             balance_only_analysis: false,
             call_balance_values: HashMap::new(),
             return_collectors: Vec::new(),
@@ -607,8 +612,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         then_state: &mut FlowState,
         else_state: &mut FlowState,
     ) -> (bool, bool) {
-        let predicate =
-            self.reentrancy_balance_enabled.then(|| path_predicate(self.gcx, cond)).flatten();
+        let predicate = self.prune_paths.then(|| path_predicate(self.gcx, cond)).flatten();
         let Some((predicate, value)) = predicate else { return (true, true) };
         (
             then_state.constrain_path((predicate, value)),
@@ -715,8 +719,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 }
             }
             ExprKind::Binary(lhs, op, rhs)
-                if self.reentrancy_balance_enabled
-                    && matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
+                if self.prune_paths && matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
             {
                 self.analyze_expr(lhs, state);
                 let rhs_outcome = op.kind == BinOpKind::And;
@@ -825,6 +828,23 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             Vec::new()
         };
 
+        // The callee can neither read nor change other functions' balance-independent locals, so
+        // they stay out of its cache key.
+        let inert = take_inert_locals(&self.gcx.hir, func_id, state);
+        let returns = self.inline_internal_call(func_id, func, body, parameter_predicates, state);
+        state.balance_local_forms.extend(inert.0);
+        state.balance_local_dependencies.extend(inert.1);
+        returns
+    }
+
+    fn inline_internal_call(
+        &mut self,
+        func_id: FunctionId,
+        func: &'gcx hir::Function<'gcx>,
+        body: hir::Block<'gcx>,
+        parameter_predicates: Vec<Option<(PathPredicate, bool)>>,
+        state: &mut FlowState,
+    ) -> Vec<BalanceValue> {
         let key = InlineCallKey {
             func_id,
             recursive_cut: self.first_recursive_cut(func_id),
@@ -1688,6 +1708,27 @@ fn remap_return_paths(
     }
 }
 
+/// Takes out the balance forms and dependencies that are balance-independent and belong to locals
+/// of functions other than `func_id`, whose paths do not mention `func_id`'s locals.
+fn take_inert_locals(
+    hir: &hir::Hir<'_>,
+    func_id: FunctionId,
+    state: &mut FlowState,
+) -> (BTreeMap<VariableId, BTreeSet<BalanceForm>>, BTreeMap<VariableId, BTreeSet<BalanceForm>>) {
+    let owned = owned_by(hir, func_id);
+    let take = |map: &mut BTreeMap<VariableId, BTreeSet<BalanceForm>>| {
+        let (inert, kept) = std::mem::take(map).into_iter().partition(|(var_id, forms)| {
+            !owned(*var_id)
+                && forms.iter().all(|form| {
+                    form.terms.is_empty() && !form.path.keys().any(|p| p.mentions(&owned))
+                })
+        });
+        *map = kept;
+        inert
+    };
+    (take(&mut state.balance_local_forms), take(&mut state.balance_local_dependencies))
+}
+
 /// Drops every path fact that mentions the (re)assigned local `var_id`.
 fn forget_path_predicates(state: &mut FlowState, var_id: VariableId) {
     let mentions = |predicate: &PathPredicate| predicate.mentions(|v| v == var_id);
@@ -1920,6 +1961,52 @@ fn const_value(
         }
         _ => None,
     }
+}
+
+/// Whether `entry`, or a modifier or internal function it can reach, reads a `.balance`.
+///
+/// The balance analysis only reports stale reads of the contract's own balance, so it can skip
+/// entry points that never read one.
+fn reaches_balance_read<'gcx>(gcx: Gcx<'gcx>, entry: &'gcx hir::Function<'gcx>) -> bool {
+    struct Finder<'gcx> {
+        gcx: Gcx<'gcx>,
+        pending: Vec<FunctionId>,
+    }
+
+    impl<'gcx> Visit<'gcx> for Finder<'gcx> {
+        type BreakValue = ();
+
+        fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+            &self.gcx.hir
+        }
+
+        fn visit_modifier(&mut self, modifier: &'gcx hir::Modifier<'gcx>) -> ControlFlow<()> {
+            self.pending.extend(modifier.id.as_function());
+            self.visit_call_args(&modifier.args)
+        }
+
+        fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
+            if let ExprKind::Member(_, member) = &expr.kind
+                && member.name == kw::Balance
+            {
+                return ControlFlow::Break(());
+            }
+            self.pending.extend(static_internal_callee(self.gcx, expr));
+            self.walk_expr(expr)
+        }
+    }
+
+    let mut finder = Finder { gcx, pending: Vec::new() };
+    if finder.visit_function(entry).is_break() {
+        return true;
+    }
+    let mut seen = HashSet::new();
+    while let Some(id) = finder.pending.pop() {
+        if seen.insert(id) && finder.visit_function(gcx.hir.function(id)).is_break() {
+            return true;
+        }
+    }
+    false
 }
 
 /// The reentrancy-guard lock, if any, that protects every entry point of every deployable

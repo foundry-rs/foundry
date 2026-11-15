@@ -1,6 +1,6 @@
 //! Query-level SMT-LIB assertion emission with common-subexpression bindings.
 
-use super::*;
+use super::{normalize::ConstraintContext, *};
 
 pub(super) fn write_smt_assertions(
     cx: &SymCx,
@@ -14,14 +14,7 @@ pub(super) fn write_smt_assertions(
         return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
     }
 
-    let plan = SmtCsePlan::new(constraints);
-    if plan.bindings.is_empty() {
-        for constraint in constraints {
-            let _ = writeln!(out, "(assert {})", constraint.smt(cx));
-        }
-        return Ok(());
-    }
-
+    let plan = SmtCsePlan::new(constraints, narrow_division_widths(constraints));
     let writer = SmtCseWriter { cx, plan: &plan };
     // define binding_0 = term_0
     // ...
@@ -57,14 +50,16 @@ struct SmtCsePlan {
     expr_visits: HashMap<SymExpr, SmtCseVisit>,
     bool_visits: HashMap<SymBoolExpr, SmtCseVisit>,
     bindings: Vec<SmtBinding>,
+    narrow_divisions: HashMap<SymExpr, usize>,
 }
 
 impl SmtCsePlan {
-    fn new(constraints: &[SymBoolExpr]) -> Self {
+    fn new(constraints: &[SymBoolExpr], narrow_divisions: HashMap<SymExpr, usize>) -> Self {
         let mut plan = Self {
             expr_visits: HashMap::default(),
             bool_visits: HashMap::default(),
             bindings: Vec::new(),
+            narrow_divisions,
         };
         for constraint in constraints {
             plan.count_bool(constraint);
@@ -88,9 +83,13 @@ impl SmtCsePlan {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => {}
             SymExprKind::Not(value) => self.count_expr(value),
-            SymExprKind::BinOp(_, left, right) => {
+            SymExprKind::BinOp(op, left, right) => {
                 self.count_expr(left);
                 self.count_expr(right);
+                // Narrow unsigned division emits the divisor again for its zero case.
+                if *op == SymBinOp::UDiv && self.narrow_divisions.contains_key(expr) {
+                    self.count_expr(right);
+                }
             }
             SymExprKind::TernOp(_, left, right, modulus) => {
                 self.count_expr(modulus);
@@ -281,6 +280,10 @@ impl SmtCseWriter<'_> {
                 out.push(')');
             }
             SymExprKind::BinOp(op, left, right) => {
+                if let Some(width) = self.plan.narrow_divisions.get(expr) {
+                    self.write_narrow_division(out, *op, left, right, *width);
+                    return;
+                }
                 let _ = write!(out, "({} ", op.smt());
                 self.write_expr(out, left, skip_expr, skip_bool);
                 out.push(' ');
@@ -299,6 +302,39 @@ impl SmtCseWriter<'_> {
                 self.write_expr(out, right, skip_expr, skip_bool);
                 out.push(')');
             }
+        }
+    }
+
+    /// Writes a division whose operands fit `width` bits over that width.
+    ///
+    /// `bvurem` by zero returns the dividend at any width. `bvudiv` by zero returns all ones, so
+    /// that case keeps the 256-bit result.
+    fn write_narrow_division(
+        &self,
+        out: &mut String,
+        op: SymBinOp,
+        left: &SymExpr,
+        right: &SymExpr,
+        width: usize,
+    ) {
+        if op == SymBinOp::UDiv {
+            out.push_str("(ite (= ");
+            self.write_expr(out, right, None, None);
+            let _ = write!(out, " (_ bv0 256)) (_ bv{} 256) ", U256::MAX);
+        }
+        let _ = write!(
+            out,
+            "((_ zero_extend {}) ({} ((_ extract {} 0) ",
+            256 - width,
+            op.smt(),
+            width - 1
+        );
+        self.write_expr(out, left, None, None);
+        let _ = write!(out, ") ((_ extract {} 0) ", width - 1);
+        self.write_expr(out, right, None, None);
+        out.push_str(")))");
+        if op == SymBinOp::UDiv {
+            out.push(')');
         }
     }
 
@@ -365,4 +401,23 @@ impl SmtCseWriter<'_> {
             }
         }
     }
+}
+
+/// Returns the bit width each unsigned division can run at once the constraints bound both
+/// operands, so the solver bit-blasts a narrow divider instead of a 256-bit one.
+fn narrow_division_widths(constraints: &[SymBoolExpr]) -> HashMap<SymExpr, usize> {
+    let context = ConstraintContext::new(constraints);
+    let mut widths = HashMap::default();
+    for constraint in constraints {
+        let _ = constraint.visit_exprs(&mut |expr| {
+            if let SymExprKind::BinOp(SymBinOp::UDiv | SymBinOp::URem, left, right) = expr.kind() {
+                let width = context.unsigned_bits(left).max(context.unsigned_bits(right));
+                if width < 256 {
+                    widths.insert(expr.clone(), width);
+                }
+            }
+            ControlFlow::<()>::Continue(())
+        });
+    }
+    widths
 }

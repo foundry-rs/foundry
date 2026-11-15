@@ -3,6 +3,7 @@
 use crate::utils::http_provider_with_signer;
 use alloy_chains::NamedChain;
 use alloy_consensus::Transaction;
+use alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA as TX_GAS_LIMIT_CAP;
 use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
@@ -15,16 +16,14 @@ use alloy_serde::WithOtherFields;
 use anvil::{
     EthereumHardfork, NodeConfig,
     eth::{
+        backend::env::BlobExcessGasAndPrice,
         error::{BlockchainError, InvalidTransactionError},
         fees::INITIAL_BASE_FEE,
     },
     spawn,
 };
-use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
+use foundry_evm_core::constants::HARDHAT_CONSOLE_ADDRESS;
 use foundry_evm_networks::arbitrum;
-use revm::{
-    context_interface::block::BlobExcessGasAndPrice, primitives::eip7825::TX_GAS_LIMIT_CAP,
-};
 
 const GAS_TRANSFER: u64 = 21_000;
 
@@ -623,6 +622,25 @@ async fn test_estimate_gas_without_from_with_gas_price_uses_transfer_fast_path()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_without_from_with_gas_price_does_not_fund_caller() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let contract = Address::random();
+    // Reverts if `BALANCE(ORIGIN)` is zero.
+    api.anvil_set_code(contract, bytes!("323115600757005b5f5ffd")).await.unwrap();
+
+    let tx =
+        TransactionRequest::default().with_to(contract).with_gas_price(INITIAL_BASE_FEE as u128);
+    let error =
+        api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        BlockchainError::InvalidTransaction(InvalidTransactionError::Revert(Some(data)))
+            if data.is_empty()
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_estimate_gas_fee_token_does_not_skip_funds_check_outside_tempo() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let to = handle.dev_accounts().next().unwrap();
@@ -1020,4 +1038,99 @@ async fn test_amsterdam_state_gas_reservoir() {
         let output = provider.call(WithOtherFields::new(tx)).await.unwrap();
         assert_eq!(U256::from_be_slice(&output), expected_gasleft);
     }
+}
+
+// A gas limit below the EIP-7623 calldata floor is an intrinsic gas error, which gas estimation
+// reports as out of gas and the pool rejects at submission.
+#[tokio::test(flavor = "multi_thread")]
+async fn gas_limit_below_calldata_floor() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let tx = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_from(handle.dev_accounts().next().unwrap())
+            .with_to(Address::random())
+            .with_input(vec![0xab; 1000])
+            .with_gas_limit(50_000),
+    );
+
+    let err = provider.call(tx.clone()).await.unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32000);
+    assert_eq!(err.message, "intrinsic gas too high -- GasFloorMoreThanGasLimit");
+
+    let err = provider.estimate_gas(tx.clone()).await.unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32003);
+    assert_eq!(err.message, "Out of gas: gas required exceeds allowance: 50000");
+
+    let err = provider.send_transaction(tx.clone()).await.unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32000);
+    assert_eq!(err.message, "intrinsic gas too high -- GasFloorMoreThanGasLimit");
+
+    // Below the calldata intrinsic gas, which is lower than the floor.
+    let err = provider.send_transaction(tx.with_gas_limit(30_000)).await.unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32000);
+    assert_eq!(err.message, "intrinsic gas too high -- CallGasCostMoreThanGasLimit");
+    assert_eq!(provider.get_block_number().await.unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn access_list_gas_retains_ethereum_floor_and_refunds() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let contract = Address::repeat_byte(0x54);
+
+    // STOP leaves the calldata floor above execution consumption.
+    api.anvil_set_code(contract, bytes!("00")).await.unwrap();
+    let request = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(sender)
+            .to(contract)
+            .gas_limit(200_000)
+            .input(Bytes::from(vec![1; 1000]).into()),
+    );
+    let access_list = provider.create_access_list(&request).await.unwrap();
+    assert_eq!(access_list.error, None);
+    assert_eq!(access_list.gas_used, U256::from(61_000));
+    let balance_before = provider.get_balance(sender).await.unwrap();
+    let receipt = provider.send_transaction(request).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+    assert_eq!(U256::from(receipt.gas_used()), access_list.gas_used);
+    assert_eq!(
+        balance_before - provider.get_balance(sender).await.unwrap(),
+        U256::from(receipt.gas_used()) * U256::from(receipt.effective_gas_price())
+    );
+    let block = provider.get_block_by_hash(receipt.block_hash().unwrap()).await.unwrap().unwrap();
+    assert_eq!(block.header.gas_used, receipt.gas_used());
+
+    // Clearing an existing slot refunds 4,800 gas with the generated access list applied.
+    api.anvil_set_code(contract, bytes!("5f5f5500")).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    let request = WithOtherFields::new(
+        TransactionRequest::default().from(sender).to(contract).gas_limit(200_000),
+    );
+    let access_list = provider.create_access_list(&request).await.unwrap();
+    assert_eq!(access_list.error, None);
+    assert_eq!(access_list.gas_used, U256::from(23_404));
+    let balance_before = provider.get_balance(sender).await.unwrap();
+    let receipt = provider
+        .send_transaction(request.with_access_list(access_list.access_list))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+    assert_eq!(U256::from(receipt.gas_used()), access_list.gas_used);
+    assert_eq!(
+        balance_before - provider.get_balance(sender).await.unwrap(),
+        U256::from(receipt.gas_used()) * U256::from(receipt.effective_gas_price())
+    );
+    let block = provider.get_block_by_hash(receipt.block_hash().unwrap()).await.unwrap().unwrap();
+    assert_eq!(block.header.gas_used, receipt.gas_used());
 }

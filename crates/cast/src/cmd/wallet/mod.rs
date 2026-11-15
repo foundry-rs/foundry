@@ -1,7 +1,7 @@
 use crate::cmd::{confirm_continue, rpc_provider};
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{Address, B256, Signature, U256, hex};
+use alloy_primitives::{Address, Signature, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::Authorization;
 use alloy_signer::Signer;
@@ -13,10 +13,18 @@ use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::{
     json::{print_json_success, print_scalar},
-    opts::RpcOpts,
+    opts::{ChainValueParser, RpcOpts},
     utils::parse_json,
 };
-use foundry_common::{errors::FsPathError, fs, fs::canonicalize_path, sh_println, shell};
+use foundry_common::{
+    errors::FsPathError,
+    fs,
+    fs::canonicalize_path,
+    sh_println, shell,
+    tempo::configurable_account::{
+        LINKED_ACCOUNT_SUFFIX, ensure_link_available, link_keystore, unlink_keystore,
+    },
+};
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, RawWalletOpts, WalletOpts, WalletSigner};
 use rand_08::thread_rng;
@@ -41,15 +49,34 @@ use session::SessionArgs;
 mod touch_id;
 use touch_id::TouchIdArgs;
 
+pub(crate) mod configurable_account;
+use configurable_account::{AssembleArgs, OwnersArgs, UpgradeArgs};
+
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    /// Create a new random keypair
+    /// Create a new random keypair, or a Tempo configurable account on Tempo
+    ///
+    /// With a Tempo signal, the new key becomes the only owner of a Tempo configurable account
+    /// (TIP-1107) with threshold 1 and salt 0, and both the account address and the owner key
+    /// address are printed. Send from the account address. A Tempo signal is `--chain` (or
+    /// `CHAIN` with `--configurable-account`), `chain` or a Tempo network in `foundry.toml`, or an
+    /// RPC (`--rpc-url`, `ETH_RPC_URL` or `foundry.toml`) that serves a Tempo chain. The account is
+    /// only created where the T14 hardfork is active: the RPC is asked when one is given,
+    /// otherwise the compiled Tempo hardfork schedule is read for the chain. Without a Tempo
+    /// signal, or before T14, it creates a plain key (EOA). Pass `--eoa` to always create one: MPP
+    /// payment channels need an EOA.
+    ///
+    /// The account needs no saved configuration: it is recomputed from the key. A keystore is
+    /// linked to its account in a `<keystore>.tempo-account` file next to it, so that
+    /// `--account <name>` sends from the account on T14; pass `--eoa` there to send from the key.
     ///
     /// Examples:
     /// - cast wallet new (print a new private key and address)
     /// - cast wallet new my-wallet (save to the default keystore directory)
     /// - cast wallet new ~/.foundry/keystores dev (save to an encrypted keystore)
+    /// - cast wallet new --chain tempo (create a Tempo configurable account)
+    /// - cast wallet new --chain tempo --eoa (create a plain key on Tempo)
     #[command(verbatim_doc_comment, visible_alias = "n")]
     New {
         /// If provided, then keypair will be written to an encrypted JSON keystore.
@@ -89,6 +116,24 @@ pub enum WalletSubcommands {
         /// The macOS login password and explicit keystore passwords remain available.
         #[arg(long, hide = !cfg!(all(target_os = "macos", feature = "touch-id")))]
         touch_id: bool,
+
+        /// Create a Tempo configurable account owned by the new key. This is the default when a
+        /// Tempo signal is present and T14 is active there; the flag also reports when there is
+        /// none.
+        #[arg(long)]
+        configurable_account: bool,
+
+        /// Create a plain key (EOA) even with a Tempo signal.
+        #[arg(long, conflicts_with = "configurable_account")]
+        eoa: bool,
+
+        /// The chain to create the wallet for. A Tempo chain creates a configurable account.
+        /// Defaults to `CHAIN` with `--configurable-account`.
+        #[arg(long, value_parser = ChainValueParser::default())]
+        chain: Option<Chain>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
     },
 
     /// Generates a random BIP39 mnemonic phrase
@@ -296,6 +341,42 @@ pub enum WalletSubcommands {
     /// Manage Touch ID enrollment for encrypted keystores.
     TouchId(TouchIdArgs),
 
+    /// Show or change the owners of a Tempo configurable account.
+    ///
+    /// The configuration is rebuilt from the chain, from the account's latest configuration event.
+    ///
+    /// Examples:
+    /// - cast wallet owners $ACCOUNT (show the owners and threshold)
+    /// - cast wallet owners add $ACCOUNT $OWNER --threshold 2 --account dev
+    /// - cast wallet owners remove $ACCOUNT $OWNER --account dev
+    /// - cast wallet owners threshold $ACCOUNT 1 --account dev
+    #[command(verbatim_doc_comment)]
+    Owners(OwnersArgs),
+
+    /// Upgrade an EOA to a Tempo configurable account in place (TIP-1113).
+    ///
+    /// The account keeps its address, and its key can no longer sign for it: only the owners
+    /// can. This is irreversible, and the account can no longer act as an MPP voucher signer.
+    ///
+    /// Examples:
+    /// - cast wallet upgrade --account dev (the account's key becomes its only owner)
+    /// - cast wallet upgrade --owner $A --owner $B:2 --threshold 2 --account dev
+    #[command(verbatim_doc_comment)]
+    Upgrade(UpgradeArgs),
+
+    /// Combine owner signatures into a signed Tempo configurable account transaction.
+    ///
+    /// Owners on other machines sign the digest from `cast mktx --raw-unsigned --tempo.digest`.
+    /// Prints the signed raw transaction for `cast publish`.
+    ///
+    /// Examples:
+    /// - read TX DIGEST <<< "$(cast mktx $TO 'f()' --from $ACCOUNT --raw-unsigned --tempo.digest)"
+    /// - cast wallet sign --no-hash $DIGEST --account owner1 (on each owner's machine)
+    /// - cast wallet assemble $TX $SIG1 $SIG2 --from $ACCOUNT
+    /// - cast wallet assemble $TX passkey-assertion.json --from $ACCOUNT
+    #[command(verbatim_doc_comment)]
+    Assemble(AssembleArgs),
+
     /// Remove a wallet from the keystore.
     ///
     /// This command requires the wallet alias and will prompt for a password to ensure that only
@@ -393,8 +474,19 @@ impl WalletSubcommands {
                 password,
                 force,
                 touch_id,
+                configurable_account,
+                eoa,
+                chain,
+                rpc,
             } => {
                 ensure_touch_id_available(touch_id)?;
+                let configurable = configurable_account::new_wallet_is_configurable(
+                    eoa,
+                    configurable_account,
+                    chain,
+                    &rpc,
+                )
+                .await?;
 
                 let path = match path {
                     Some(path) => Some(resolve_new_dir(path, &mut account_name)?),
@@ -418,8 +510,9 @@ impl WalletSubcommands {
                         number,
                         force,
                         touch_id,
+                        configurable,
                     )?,
-                    None => new_keypairs(number)?,
+                    None => new_keypairs(number, configurable)?,
                 };
                 if shell::is_json() {
                     print_json_success(json)?;
@@ -457,7 +550,7 @@ impl WalletSubcommands {
                 let mut accounts = Vec::new();
                 for (i, wallet) in wallets.iter().enumerate() {
                     let public_key = hex::encode_prefixed(wallet.public_key());
-                    let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
+                    let private_key = hex::encode_prefixed(wallet.to_bytes());
                     if format_json {
                         let mut account = serde_json::Map::new();
                         account.insert("address".into(), json!(wallet.address().to_string()));
@@ -512,7 +605,7 @@ impl WalletSubcommands {
                     };
 
                     let address = wallet.address().to_checksum(None);
-                    let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
+                    let private_key = hex::encode_prefixed(wallet.to_bytes());
                     if format_json {
                         accounts_json.push(if insecure {
                             json!({ "address": address, "private_key": private_key })
@@ -683,11 +776,14 @@ flag to set your key via:
                 let (wallet, _) = PrivateKeySigner::encrypt_keystore(
                     dir,
                     &mut thread_rng(),
-                    wallet.credential().to_bytes(),
+                    wallet.to_bytes(),
                     &password,
                     Some(&account_name),
                 )?;
                 let address = wallet.address();
+                // An imported key is not linked to a configurable account; drop a link that a
+                // removed keystore of the same name left.
+                unlink_keystore(&keystore_path)?;
 
                 if touch_id {
                     let action = format!("keystore was imported at {}", keystore_path.display());
@@ -722,6 +818,15 @@ flag to set your key via:
             Self::TouchId(args) => {
                 args.run()?;
             }
+            Self::Owners(args) => {
+                args.run().await?;
+            }
+            Self::Upgrade(args) => {
+                args.run().await?;
+            }
+            Self::Assemble(args) => {
+                args.run().await?;
+            }
             Self::Remove { name, dir, unsafe_password } => {
                 let keystore_path = existing_keystore_path(&name, dir)?;
                 let password = password_or_prompt(unsafe_password, "Enter password: ")?;
@@ -730,6 +835,7 @@ flag to set your key via:
                 }
 
                 remove_touch_id_sidecar(&keystore_path)?;
+                unlink_keystore(&keystore_path)?;
                 std::fs::remove_file(&keystore_path).wrap_err_with(|| {
                     format!("Failed to remove keystore file at {}", keystore_path.display())
                 })?;
@@ -771,7 +877,7 @@ flag to set your key via:
                     eyre::bail!("Only local wallets are supported by this command.");
                 };
 
-                let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
+                let private_key = hex::encode_prefixed(wallet.to_bytes());
                 if shell::verbosity() == 0 {
                     print_scalar(private_key)?;
                 } else if shell::is_json() {
@@ -789,7 +895,7 @@ flag to set your key via:
                 let password = password_or_prompt(unsafe_password, "Enter password: ")?;
                 let wallet = PrivateKeySigner::decrypt_keystore(keypath, password)?;
 
-                let private_key = B256::from_slice(&wallet.credential().to_bytes());
+                let private_key = wallet.to_bytes();
                 if shell::is_json() {
                     print_json_success(
                         json!({"account": account_name, "private_key": private_key}),
@@ -852,7 +958,7 @@ flag to set your key via:
                 let (wallet, _) = PrivateKeySigner::encrypt_keystore(
                     keypath.parent().unwrap_or(Path::new("")),
                     &mut thread_rng(),
-                    wallet.credential().to_bytes(),
+                    wallet.to_bytes(),
                     &new_password,
                     Some(&account_name),
                 )?;
@@ -921,6 +1027,7 @@ fn new_keystores(
     number: u32,
     force: bool,
     touch_id: bool,
+    configurable: bool,
 ) -> Result<Vec<Value>> {
     let password = password_or_prompt(unsafe_password, "Enter secret: ")?;
     let names = (0..number)
@@ -930,6 +1037,12 @@ fn new_keystores(
     if touch_id {
         for name in names.iter().flatten() {
             ensure_touch_id_sidecar_available(&dir.join(name))?;
+        }
+    }
+    // A link must not replace a keystore that an earlier version created under its name.
+    if configurable {
+        for name in names.iter().flatten() {
+            ensure_link_available(&dir.join(name))?;
         }
     }
 
@@ -964,13 +1077,24 @@ fn new_keystores(
             enroll_new_keystore(&keystore_path, &password, &action, i)?;
         }
 
-        let address = wallet.address().to_checksum(None);
+        let owner = wallet.address().to_checksum(None);
+        let account = new_account(wallet.address(), configurable)?;
+        // Link the keystore to its configurable account, so that `--account` sends from it, and
+        // drop a link that an overwritten keystore left.
+        if configurable {
+            link_keystore(&keystore_path, wallet.address())?;
+        } else {
+            unlink_keystore(&keystore_path)?;
+        }
         if shell::is_json() {
             let mut result = json!({
-                "address": address,
+                "address": account.as_deref().unwrap_or(&owner),
                 "public_key": hex::encode_prefixed(wallet.public_key()),
                 "path": format!("{}", keystore_path.display()),
             });
+            if account.is_some() {
+                result["owner"] = json!(owner);
+            }
             if touch_id {
                 result["touch_id"] = json!(true);
             }
@@ -980,14 +1104,17 @@ fn new_keystores(
             if touch_id {
                 sh_status!("{TOUCH_ID_ENROLLED_STATUS}")?;
             }
-            sh_status!("Address:    {address}")?;
+            print_new_addresses(&owner, account.as_deref(), "Address:    ", "Owner key:  ")?;
             if shell::verbosity() > 0 {
                 sh_status!("Public key: {}", hex::encode_prefixed(wallet.public_key()))?;
             }
             // The machine-readable stdout record duplicates the prose above when stdout is an
             // interactive terminal.
             if !shell::is_out_tty() {
-                sh_println!("{address}")?;
+                match &account {
+                    Some(account) => sh_println!("{account}\t{owner}")?,
+                    None => sh_println!("{owner}")?,
+                }
             }
         }
     }
@@ -995,34 +1122,77 @@ fn new_keystores(
 }
 
 /// Generates `number` random keypairs, returning their JSON records in JSON mode.
-fn new_keypairs(number: u32) -> Result<Vec<Value>> {
+///
+/// With `configurable`, each key is the only owner of a Tempo configurable account, whose address
+/// leads the record.
+fn new_keypairs(number: u32, configurable: bool) -> Result<Vec<Value>> {
     let mut rng = thread_rng();
     let mut json_values = Vec::new();
     for _ in 0..number {
         let wallet = PrivateKeySigner::random_with(&mut rng);
-        let address = wallet.address().to_checksum(None);
-        let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
+        let owner = wallet.address().to_checksum(None);
+        let account = new_account(wallet.address(), configurable)?;
+        let private_key = hex::encode_prefixed(wallet.to_bytes());
         if shell::is_json() {
-            json_values.push(json!({
-                "address": address,
+            let mut result = json!({
+                "address": account.as_deref().unwrap_or(&owner),
                 "public_key": hex::encode_prefixed(wallet.public_key()),
                 "private_key": private_key,
-            }));
+            });
+            if account.is_some() {
+                result["owner"] = json!(owner);
+            }
+            json_values.push(result);
         } else {
-            sh_status!("Successfully created new keypair.")?;
-            sh_status!("Address:     {address}")?;
+            if account.is_some() {
+                sh_status!("Successfully created new Tempo configurable account.")?;
+            } else {
+                sh_status!("Successfully created new keypair.")?;
+            }
+            print_new_addresses(&owner, account.as_deref(), "Address:     ", "Owner key:   ")?;
             if shell::verbosity() > 0 {
                 sh_status!("Public key:  {}", hex::encode_prefixed(wallet.public_key()))?;
             }
             sh_status!("Private key: {private_key}")?;
             // The machine-readable stdout record duplicates the prose above when stdout is an
-            // interactive terminal.
+            // interactive terminal. A configurable account appends its owner key's address.
             if !shell::is_out_tty() {
-                sh_println!("{address}\t{private_key}")?;
+                match &account {
+                    Some(account) => sh_println!("{account}\t{private_key}\t{owner}")?,
+                    None => sh_println!("{owner}\t{private_key}")?,
+                }
             }
         }
     }
     Ok(json_values)
+}
+
+/// Returns the checksummed address of the configurable account that `owner` alone controls when
+/// `configurable` is set.
+fn new_account(owner: Address, configurable: bool) -> Result<Option<String>> {
+    configurable
+        .then(|| {
+            Ok(foundry_common::tempo::configurable_account::single_owner_account(owner)?
+                .to_checksum(None))
+        })
+        .transpose()
+}
+
+/// Prints the address of a new wallet: the account and its owner key for a configurable account.
+fn print_new_addresses(
+    owner: &str,
+    account: Option<&str>,
+    address_label: &str,
+    owner_label: &str,
+) -> Result<()> {
+    match account {
+        Some(account) => {
+            sh_status!("{address_label}{account}")?;
+            sh_status!("{owner_label}{owner}")?;
+        }
+        None => sh_status!("{address_label}{owner}")?,
+    }
+    Ok(())
 }
 
 fn raw_wallet(raw: RawWalletOpts) -> WalletOpts {
@@ -1137,8 +1307,10 @@ fn ensure_account_name_available(name: &str) -> Result<()> {
     if name.is_empty() || name.contains('\\') || file_name != Some(name) {
         eyre::bail!("account name must be a single path segment");
     }
-    if name.ends_with(TOUCH_ID_SIDECAR_SUFFIX) {
-        eyre::bail!("account names ending in `{TOUCH_ID_SIDECAR_SUFFIX}` are reserved");
+    for suffix in [TOUCH_ID_SIDECAR_SUFFIX, LINKED_ACCOUNT_SUFFIX] {
+        if name.ends_with(suffix) {
+            eyre::bail!("account names ending in `{suffix}` are reserved");
+        }
     }
     Ok(())
 }
@@ -1428,8 +1600,9 @@ mod tests {
         let sidecar = dir.path().join("batch_2.touchid");
         std::fs::write(&sidecar, r#"{"version":3,"crypto":{}}"#).unwrap();
 
-        let error = new_keystores(dir.path(), Some("batch"), Some("pw".into()), 2, false, true)
-            .unwrap_err();
+        let error =
+            new_keystores(dir.path(), Some("batch"), Some("pw".into()), 2, false, true, false)
+                .unwrap_err();
         assert_eq!(
             error.to_string(),
             format!(

@@ -3,6 +3,7 @@ use super::symbolic_helpers::{
     assert_symbolic_witness, json_test_result, read_artifact_ref,
 };
 use crate::skip_unless_z3;
+use alloy_primitives::address;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
 #[cfg(unix)]
@@ -301,6 +302,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 #[forgetest_init]
 fn symbolic_secondary_replay_preserves_storage(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_secondary_replay_preserves_storage");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicSecondaryStorage.t.sol",
@@ -381,9 +383,6 @@ contract SymbolicSecondaryStorage is Test {
     assert_eq!(original["storage"].as_array().expect("storage assignments").len(), 1);
     assert_eq!(original["storage"][0]["value"], "0x2a");
 
-    prj.update_config(|config| {
-        config.invariant.runs = 0;
-    });
     for _ in 0..2 {
         let output = cmd
             .forge_fuse()
@@ -395,12 +394,14 @@ contract SymbolicSecondaryStorage is Test {
         let result = json_test_result(&output, "invariant_anchor()");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample");
         let failures = result["invariant_failures"].as_array().expect("invariant failures");
-        assert_eq!(failures.len(), 2);
+        assert_eq!(failures.len(), 1);
         assert_eq!(failures[0]["name"], "invariant_anchor");
         assert_eq!(failures[0]["reason"], "anchor hit");
-        assert_eq!(failures[1]["name"], "invariant_secondary");
-        assert_eq!(failures[1]["reason"], "hit");
-        assert_eq!(failures[1]["counterexample"]["Sequence"][1][0]["func_name"], "useStore");
+
+        let result = json_test_result(&output, "invariant_secondary()");
+        assert_eq!(result["status"], "Failure");
+        assert_eq!(result["reason"], "hit");
+        assert_eq!(result["counterexample"]["Sequence"][1][0]["func_name"], "useStore");
 
         let replayed: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
@@ -750,9 +751,12 @@ contract SymbolicInvariantHandlerFailure is Test {
 }
 
 #[forgetest_init]
-fn symbolic_invariant_omits_unchecked_predicate_pass_rows(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_invariant_omits_unchecked_predicate_pass_rows");
-    prj.update_config(|config| config.invariant.runs = 0);
+fn symbolic_invariant_suite_checks_each_predicate_after_failure(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_suite_checks_each_predicate_after_failure");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 1;
+    });
 
     prj.add_test(
         "SymbolicInvariantMultiPredicate.t.sol",
@@ -775,42 +779,54 @@ contract SymbolicInvariantMultiPredicate is Test {
     function setUp() public {
         target = new SymbolicInvariantMultiPredicateTarget();
         targetContract(address(target));
+        targetSender(address(this));
     }
 
-    /// forge-config: default.symbolic.invariant_depth = 1
     function invariant_anchorBreak() public view {
         assertEq(target.value(), 0);
     }
 
-    function invariant_neverCheckedBySymbolicFastFail() public pure {
+    function invariant_stillCheckedAfterFailure() public pure {
         assertTrue(true);
     }
 }
 "#,
     );
 
-    let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--match-contract",
-            "SymbolicInvariantMultiPredicate",
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout
-        .clone();
-    let result = json_test_result(&output, "invariant_anchorBreak()");
-    assert_eq!(result["status"], "Failure");
-    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
-    assert_eq!(result["invariant_count"], 2);
-
-    let predicates = result["invariant_predicate_results"].as_array().unwrap();
-    assert_eq!(predicates.len(), 1);
-    assert_eq!(predicates[0]["name"], "invariant_anchorBreak");
-    assert_eq!(predicates[0]["status"], "Failure");
-    assert!(predicates.iter().all(|predicate| predicate["status"] != "Success"));
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--json",
+        "--match-contract",
+        "SymbolicInvariantMultiPredicate",
+    ])
+    .assert_json_stdout_with_status(
+        false,
+        str![[r#"
+{
+  "test/SymbolicInvariantMultiPredicate.t.sol:SymbolicInvariantMultiPredicate": {
+    "test_results": {
+      "invariant_anchorBreak()": {
+        "status": "Failure",
+        "symbolic": {
+          "status": "fail_counterexample",
+          "replay": { "required": true, "status": "confirmed", "reason": null },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      },
+      "invariant_stillCheckedAfterFailure()": {
+        "status": "Success",
+        "symbolic": { "status": "pass", "...": "{...}" },
+        "kind": { "Invariant": { "runs": 0, "calls": 0, "...": "{...}" } },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+    );
 }
 
 #[forgetest_init]
@@ -894,29 +910,40 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 #[forgetest_init]
 fn symbolic_invariant_replays_initial_state_failure(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_replays_initial_state_failure");
-    prj.update_config(|config| config.invariant.runs = 0);
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.sender = address!("0x000000000000000000000000000000000000ABCD");
+    });
 
     prj.add_test(
         "SymbolicInvariantInitialState.t.sol",
         r#"
 import "forge-std/Test.sol";
 
-contract NoopTarget {
-    function touch() external {}
+contract RepairTarget {
+    uint256 public x;
+
+    function fix() external {
+        x = 1;
+    }
 }
 
 contract SymbolicInvariantInitialState is Test {
-    NoopTarget target;
-    uint256 x;
+    address constant CALLER = 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38;
+    RepairTarget target;
 
     function setUp() public {
-        target = new NoopTarget();
+        target = new RepairTarget();
         targetContract(address(target));
     }
 
+    // Forge calls the predicate from CALLER, not the configured sender, and checks it right
+    // after setUp, where the only handler has not repaired `x` yet.
     /// forge-config: default.symbolic.invariant_depth = 1
     function invariant_xIsOne() public view {
-        assertEq(x, 1);
+        assertEq(msg.sender, CALLER);
+        assertEq(tx.origin, CALLER);
+        assertEq(target.x(), 1);
     }
 }
 "#,
@@ -936,35 +963,17 @@ contract SymbolicInvariantInitialState is Test {
     let result = json_test_result(&output, "invariant_xIsOne()");
     assert_eq!(result["status"], "Failure");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
-    assert_eq!(result["invariant_failures"][0]["counterexample"]["Sequence"][0], 1);
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+    assert_eq!(result["invariant_failures"][0]["counterexample"]["Sequence"][0], 0);
     assert!(
         result["invariant_failures"][0]["counterexample"]["Sequence"][1]
             .as_array()
             .unwrap()
             .is_empty()
     );
-
-    let artifact_ref = &result["invariant_failures"][0]["artifact"];
-    assert_eq!(result["symbolic"]["artifact"], *artifact_ref);
-    let artifact_path = artifact_ref["path"].as_str().unwrap();
-    assert!(result["symbolic"].get("minimization").is_none());
-    assert!(result["invariant_failures"][0].get("minimization").is_none());
-    let artifact = read_artifact_ref(artifact_ref);
-    assert_eq!(artifact["calls"].as_array().unwrap().len(), 1);
-
-    let replay_output = cmd
-        .forge_fuse()
-        .args(["test", "--json", "--replay-symbolic-artifact", artifact_path])
-        .assert_failure()
-        .get_output()
-        .stdout
-        .clone();
-    let replay_result = json_test_result(&replay_output, "invariant_xIsOne()");
-    assert_eq!(replay_result["status"], "Failure");
-    assert!(
-        replay_result["reason"].as_str().unwrap().contains("assertion failed"),
-        "{replay_result}"
-    );
+    // An empty sequence has no calls to persist, so no artifact is written.
+    assert!(result["invariant_failures"][0].get("artifact").is_none());
+    assert!(result["symbolic"].get("artifact").is_none());
 }
 
 #[forgetest_init]
@@ -1665,16 +1674,42 @@ contract SetupSpender {
     }
 }
 
+contract SetupReceiver {
+    function sender() external view returns (address) {
+        return msg.sender;
+    }
+}
+
+// A setUp prank of the test contract does not apply to this handler's calls.
+contract SetupPoker {
+    SetupReceiver receiver;
+    bool public bad;
+
+    constructor(SetupReceiver receiver_) {
+        receiver = receiver_;
+    }
+
+    function poke() external {
+        if (receiver.sender() != address(0xABC)) bad = true;
+    }
+}
+
 contract SymbolicSetupMappingStorageInvariant is Test {
     SetupToken token;
     SetupSpender spender;
+    SetupPoker poker;
 
     function setUp() public {
         token = new SetupToken();
         spender = new SetupSpender();
+        poker = new SetupPoker(new SetupReceiver());
         token.setBalance(address(this), 10);
         token.approve(address(spender), type(uint256).max);
         targetContract(address(this));
+        targetContract(address(poker));
+        vm.startPrank(address(0xABC));
+        // Apply the prank once so `pull` may override it.
+        token.setBalance(address(this), 10);
     }
 
     function pull(uint8 amount) external {
@@ -1689,6 +1724,230 @@ contract SymbolicSetupMappingStorageInvariant is Test {
     function invariant_balanceStaysInitialized() public view {
         assertEq(token.balanceOf(address(this)), 10);
     }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_pokerIsNotPranked() public view {
+        assert(!poker.bad());
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicHandlerPrankInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SenderReporter {
+    function who() external view returns (address) {
+        return msg.sender;
+    }
+}
+
+contract PrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool public called;
+
+    function act() external {
+        VM.startPrank(address(0x777));
+        called = true;
+    }
+}
+
+contract RepeatPrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    uint256 calls;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function act() external {
+        if (calls++ == 0) {
+            VM.startPrank(address(0x777));
+            return;
+        }
+        violated = reporter.who() == address(0x777);
+    }
+}
+
+contract SymbolicHandlerPrankInvariant is Test {
+    PrankingHandler handler;
+    SenderReporter reporter;
+
+    function setUp() public {
+        handler = new PrankingHandler();
+        reporter = new SenderReporter();
+        targetContract(address(handler));
+    }
+
+    // Concretely the prank does not reach the predicate, so one act() breaks this. No fuzz
+    // runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.invariant.runs = 0
+    function invariant_prankEndsWithHandlerCall() public view {
+        assert(!handler.called() || reporter.who() == address(0x777));
+    }
+}
+
+contract StartingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    bool started;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function start() external {
+        started = true;
+        VM.startPrank(address(0x777));
+    }
+
+    function query() external {
+        if (started && reporter.who() != address(0x777)) {
+            violated = true;
+        }
+    }
+}
+
+contract StoppingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function stop() external {
+        VM.stopPrank();
+    }
+}
+
+contract OneShotPrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    bool armed;
+    bool queried;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function arm() external {
+        if (!armed) {
+            armed = true;
+            VM.prank(address(0x777));
+        }
+    }
+
+    function query() external {
+        if (armed && !queried) {
+            queried = true;
+            violated = reporter.who() != address(0x777);
+        }
+    }
+}
+
+contract CallingHandler {
+    SenderReporter reporter;
+    address public lastSender;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function ping() external {
+        lastSender = reporter.who();
+    }
+}
+
+contract SymbolicRepeatHandlerPrankInvariant is Test {
+    RepeatPrankingHandler handler;
+
+    function setUp() public {
+        handler = new RepeatPrankingHandler(new SenderReporter());
+        targetContract(address(handler));
+    }
+
+    // Concretely the prank stays with the handler, so its second act() breaks this. No fuzz
+    // runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.runs = 0
+    function invariant_prankStaysWithHandler() public view {
+        assert(!handler.violated());
+    }
+}
+
+contract SymbolicStoppedPrankInvariant is Test {
+    StartingHandler starter;
+
+    function setUp() public {
+        starter = new StartingHandler(new SenderReporter());
+        targetContract(address(starter));
+        targetContract(address(new StoppingHandler()));
+    }
+
+    // Concretely root frames share one prank slot, so another handler's stopPrank ends the
+    // prank. No fuzz runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 3
+    /// forge-config: default.invariant.runs = 0
+    function invariant_stoppedPrankStaysStopped() public view {
+        assert(!starter.violated());
+    }
+}
+
+contract RevertingPrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function arm() external {
+        VM.startPrank(address(0x777));
+        revert("boom");
+    }
+
+    function query() external {
+        if (reporter.who() == address(0x777)) violated = true;
+    }
+}
+
+contract SymbolicRevertedPrankInvariant is Test {
+    RevertingPrankingHandler handler;
+
+    function setUp() public {
+        handler = new RevertingPrankingHandler(new SenderReporter());
+        targetContract(address(handler));
+    }
+
+    // Concretely cheatcode state is not journaled, so a prank set by a reverted handler call
+    // stays with the handler. No fuzz runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.runs = 0
+    function invariant_revertedPrankStaysWithHandler() public view {
+        assert(!handler.violated());
+    }
+}
+
+contract SymbolicConsumedPrankInvariant is Test {
+    OneShotPrankingHandler handler;
+
+    function setUp() public {
+        SenderReporter reporter = new SenderReporter();
+        handler = new OneShotPrankingHandler(reporter);
+        targetContract(address(handler));
+        targetContract(address(new CallingHandler(reporter)));
+    }
+
+    // A root call from another handler consumes an unused one-shot prank.
+    /// forge-config: default.symbolic.invariant_depth = 3
+    /// forge-config: default.invariant.runs = 0
+    function invariant_oneShotPrankEndsAfterOtherHandlerCalls() public view {
+        assert(!handler.violated());
+    }
 }
 "#,
     );
@@ -1696,18 +1955,148 @@ contract SymbolicSetupMappingStorageInvariant is Test {
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "invariant_balanceStaysInitialized",
+        "--match-contract",
+        "SymbolicSetupMappingStorageInvariant",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
 Failing tests:
-Encountered 1 failing test in test/SymbolicSetupMappingStorageInvariant.t.sol:SymbolicSetupMappingStorageInvariant
+Encountered 2 failing tests in test/SymbolicSetupMappingStorageInvariant.t.sol:SymbolicSetupMappingStorageInvariant
 [FAIL: assertion failed: 3 != 10]
-	[Sequence] (original: 1, shrunk: 1)
+	[Sequence] (original: [..], shrunk: 1)
 		[SENDER] [SENDER] calldata=pull(uint8) [ARGS]
  invariant_balanceStaysInitialized() ([METRICS])
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=poke() [ARGS]
+ invariant_pokerIsNotPranked() ([METRICS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_prankEndsWithHandlerCall",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicHandlerPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=act() [ARGS]
+ invariant_prankEndsWithHandlerCall() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_prankStaysWithHandler",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicRepeatHandlerPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=act() [ARGS]
+		[SENDER] [SENDER] calldata=act() [ARGS]
+ invariant_prankStaysWithHandler() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_stoppedPrankStaysStopped",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicStoppedPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 3, shrunk: 3)
+		[SENDER] [SENDER] calldata=start() [ARGS]
+		[SENDER] [SENDER] calldata=stop() [ARGS]
+		[SENDER] [SENDER] calldata=query() [ARGS]
+ invariant_stoppedPrankStaysStopped() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_revertedPrankStaysWithHandler",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicRevertedPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=arm() [ARGS]
+		[SENDER] [SENDER] calldata=query() [ARGS]
+ invariant_revertedPrankStaysWithHandler() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_oneShotPrankEndsAfterOtherHandlerCalls",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicConsumedPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 3, shrunk: 3)
+		[SENDER] [SENDER] calldata=arm() [ARGS]
+		[SENDER] [SENDER] calldata=ping() [ARGS]
+		[SENDER] [SENDER] calldata=query() [ARGS]
+ invariant_oneShotPrankEndsAfterOtherHandlerCalls() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -2551,4 +2940,277 @@ contract SymbolicHandlerUnmetExpectRevert is Test {
 }
 "#]],
         );
+}
+
+#[forgetest_init]
+fn symbolic_invariant_suite_checks_non_anchor_predicate(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_suite_checks_non_anchor_predicate");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 1;
+    });
+
+    prj.add_test(
+        "SymbolicSuite.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SuiteTarget {
+    bool public broken;
+
+    function step(uint256 value) external {
+        if (value == 123456789012345678901234567890) broken = true;
+    }
+}
+
+contract SymbolicSuite is Test {
+    SuiteTarget target;
+
+    function setUp() public {
+        target = new SuiteTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    function invariant_a() public pure {}
+
+    function invariant_z() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--json", "--match-contract", "SymbolicSuite"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/SymbolicSuite.t.sol:SymbolicSuite": {
+    "test_results": {
+      "invariant_a()": {
+        "status": "Success",
+        "symbolic": { "status": "pass", "...": "{...}" },
+        "kind": { "Invariant": { "runs": 0, "calls": 0, "...": "{...}" } },
+        "...": "{...}"
+      },
+      "invariant_z()": {
+        "status": "Failure",
+        "symbolic": {
+          "status": "fail_counterexample",
+          "replay": { "required": true, "status": "confirmed", "reason": null },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+}
+
+#[forgetest_init]
+fn symbolic_invariant_suite_preserves_predicate_bounds(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_suite_preserves_predicate_bounds");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.enabled = true;
+    });
+
+    prj.add_test(
+        "SymbolicSuiteBounds.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SuiteCounter {
+    uint256 public count;
+
+    function step() external {
+        count++;
+    }
+}
+
+contract SymbolicSuiteBounds is Test {
+    SuiteCounter target;
+
+    function setUp() public {
+        target = new SuiteCounter();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_a() public view {
+        assertLt(target.count(), 2);
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    function invariant_z() public view {
+        assertLt(target.count(), 2);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--json", "--match-contract", "SymbolicSuiteBounds"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/SymbolicSuiteBounds.t.sol:SymbolicSuiteBounds": {
+    "test_results": {
+      "invariant_a()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "bounds": { "invariant_depth": 1, "...": "{...}" },
+          "...": "{...}"
+        },
+        "kind": { "Invariant": { "runs": 0, "calls": 0, "...": "{...}" } },
+        "...": "{...}"
+      },
+      "invariant_z()": {
+        "status": "Failure",
+        "symbolic": {
+          "status": "fail_counterexample",
+          "bounds": { "invariant_depth": 2, "...": "{...}" },
+          "replay": { "required": true, "status": "confirmed", "reason": null },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+}
+
+#[forgetest_init]
+fn symbolic_invariant_suite_honors_non_anchor_inline_enable(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_suite_honors_non_anchor_inline_enable");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 1;
+    });
+
+    prj.add_test(
+        "SymbolicSuiteInline.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InlineSuiteTarget {
+    bool public broken;
+
+    function step(bool value) external {
+        broken = value;
+    }
+}
+
+contract SymbolicSuiteInline is Test {
+    InlineSuiteTarget target;
+
+    function setUp() public {
+        target = new InlineSuiteTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    function invariant_a() public pure {}
+
+    /// forge-config: default.symbolic.enabled = true
+    function invariant_z() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--json", "--match-contract", "SymbolicSuiteInline"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/SymbolicSuiteInline.t.sol:SymbolicSuiteInline": {
+    "test_results": {
+      "invariant_a()": {
+        "status": "Success",
+        "kind": { "Invariant": { "runs": 0, "calls": 0, "...": "{...}" } },
+        "...": "{...}"
+      },
+      "invariant_z()": {
+        "status": "Failure",
+        "symbolic": {
+          "status": "fail_counterexample",
+          "replay": { "required": true, "status": "confirmed", "reason": null },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+}
+
+// A timed campaign's shrink deadline passes during minimization, which must keep the candidates it
+// confirmed before then.
+#[forgetest_init]
+fn symbolic_invariant_keeps_minimization_at_shrink_deadline(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_keeps_minimization_at_shrink_deadline");
+    prj.update_config(|config| {
+        config.invariant.timeout = Some(1);
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        // Leave the failure to the timed campaign, whose shrink deadline minimization shares.
+        config.symbolic.invariant_depth = 0;
+    });
+
+    prj.add_test(
+        "SymbolicShrinkDeadline.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SlowTarget {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool public broken;
+
+    function step(uint256 x) external {
+        vm.sleep(100);
+        if (x > 1000) broken = true;
+    }
+}
+
+contract SymbolicShrinkDeadline is Test {
+    SlowTarget target;
+
+    function setUp() public {
+        target = new SlowTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--fuzz-seed", "1"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_notBroken()");
+    let failure = &result["invariant_failures"][0];
+    let accepted = failure["minimization"]["accepted"].as_u64();
+    assert!(accepted.is_some_and(|accepted| accepted > 0), "{result}");
+    // The deadline stops minimization before it reaches the smallest failing value.
+    assert_ne!(failure["counterexample"]["Sequence"][1][0]["args"], "1001", "{result}");
 }

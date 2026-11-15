@@ -153,15 +153,16 @@ impl<'a> BacktraceBuilder<'a> {
                 // Match and insert artifacts using trace labels
                 artifacts_by_address
                     .insert(*address, (artifact_id.clone(), SourceData { source_map, bytecode }));
-            } else if let Some(&lib_address) =
-                // Match and insert the linked library artifacts
-                linked_lib_targets.get(&artifact_id.identifier()).or_else(|| {
-                        let id = artifact_id
-                            .clone()
-                            .with_stripped_file_prefixes(&self.root)
-                            .identifier();
-                        linked_lib_targets.get(&id)
-                    })
+            } else if !linked_lib_targets.is_empty()
+                && let Some(&lib_address) =
+                    // Match and insert the linked library artifacts
+                    linked_lib_targets.get(&artifact_id.identifier()).or_else(|| {
+                            let id = artifact_id
+                                .clone()
+                                .with_stripped_file_prefixes(&self.root)
+                                .identifier();
+                            linked_lib_targets.get(&id)
+                        })
                 && let Some((source_map, bytecode)) = get_source(artifact)
             {
                 // Insert linked libraries

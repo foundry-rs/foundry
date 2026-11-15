@@ -8,15 +8,12 @@ use alloy_consensus::{
         eip4844::{TxEip4844Variant, TxEip4844WithSidecar},
     },
 };
-use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_network::{
     AnyRpcTransaction, AnyTxEnvelope, TransactionResponse, eip2718::Encodable2718,
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash};
 use alloy_rpc_types::ConversionError;
-use revm::context::TxEnv;
 use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction};
-use tempo_revm::TempoTxEnv;
 
 #[cfg(all(feature = "base", not(feature = "optimism")))]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
@@ -25,14 +22,12 @@ use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
 use alloy_consensus::Sealed;
 
 #[cfg(feature = "base")]
-use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
-#[cfg(feature = "base")]
-use base_common_evm::EIP8130_TRANSACTION_TYPE;
+use base_common_consensus::{
+    BaseTxEnvelope, EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE, Eip8130Signed, TxEip8130,
+};
 #[cfg(feature = "base")]
 use base_common_rpc_types::Transaction;
 
-#[cfg(feature = "optimism")]
-use alloy_consensus::Transaction as _;
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{
     DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, PostExecPayload, TxDeposit, TxPostExec,
@@ -543,95 +538,6 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
     }
 }
 
-impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
-    fn from_recovered_tx(tx: &FoundryTxEnvelope, caller: Address) -> Self {
-        match tx {
-            FoundryTxEnvelope::Legacy(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::Eip2930(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::Eip1559(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            // Anvil preserves the CIP-64 envelope but executes with native EIP-1559 fees.
-            FoundryTxEnvelope::Celo(signed_tx) => {
-                Self::from_recovered_tx(&signed_tx.tx().inner, caller)
-            }
-            FoundryTxEnvelope::Eip4844(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::Eip7702(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            #[cfg(any(feature = "base", feature = "optimism"))]
-            FoundryTxEnvelope::Deposit(sealed_tx) => {
-                let tx = sealed_tx.inner();
-                Self {
-                    tx_type: tx.ty(),
-                    caller,
-                    gas_limit: tx.gas_limit,
-                    kind: tx.to,
-                    value: tx.value,
-                    data: tx.input.clone(),
-                    ..Default::default()
-                }
-            }
-            #[cfg(feature = "optimism")]
-            FoundryTxEnvelope::PostExec(sealed_tx) => {
-                let tx = sealed_tx.inner();
-                Self {
-                    tx_type: tx.ty(),
-                    caller,
-                    kind: tx.kind(),
-                    data: tx.input.clone(),
-                    ..Default::default()
-                }
-            }
-            #[cfg(feature = "base")]
-            FoundryTxEnvelope::Eip8130(_) => {
-                unreachable!("EIP-8130 transaction in Ethereum context")
-            }
-            FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo tx in Ethereum context"),
-        }
-    }
-}
-
-impl FromTxWithEncoded<FoundryTxEnvelope> for TxEnv {
-    fn from_encoded_tx(tx: &FoundryTxEnvelope, sender: Address, _encoded: Bytes) -> Self {
-        Self::from_recovered_tx(tx, sender)
-    }
-}
-
-impl FromRecoveredTx<FoundryTxEnvelope> for TempoTxEnv {
-    fn from_recovered_tx(tx: &FoundryTxEnvelope, caller: Address) -> Self {
-        match tx {
-            FoundryTxEnvelope::Legacy(signed_tx) => {
-                Self::from(TxEnv::from_recovered_tx(signed_tx, caller))
-            }
-            FoundryTxEnvelope::Eip2930(signed_tx) => {
-                Self::from(TxEnv::from_recovered_tx(signed_tx, caller))
-            }
-            FoundryTxEnvelope::Eip1559(signed_tx) => {
-                Self::from(TxEnv::from_recovered_tx(signed_tx, caller))
-            }
-            FoundryTxEnvelope::Eip4844(signed_tx) => {
-                Self::from(TxEnv::from_recovered_tx(signed_tx, caller))
-            }
-            FoundryTxEnvelope::Eip7702(signed_tx) => {
-                Self::from(TxEnv::from_recovered_tx(signed_tx, caller))
-            }
-            #[cfg(any(feature = "base", feature = "optimism"))]
-            FoundryTxEnvelope::Deposit(_) => unreachable!("Deposit tx in Tempo context"),
-            #[cfg(feature = "optimism")]
-            FoundryTxEnvelope::PostExec(_) => unreachable!("Post-exec tx in Tempo context"),
-            #[cfg(feature = "base")]
-            FoundryTxEnvelope::Eip8130(_) => {
-                unreachable!("EIP-8130 transaction in Tempo context")
-            }
-            FoundryTxEnvelope::Tempo(aa_signed) => Self::from_recovered_tx(aa_signed, caller),
-            FoundryTxEnvelope::Celo(_) => unreachable!("CIP-64 transaction in Tempo context"),
-        }
-    }
-}
-
-impl FromTxWithEncoded<FoundryTxEnvelope> for TempoTxEnv {
-    fn from_encoded_tx(tx: &FoundryTxEnvelope, sender: Address, _encoded: Bytes) -> Self {
-        Self::from_recovered_tx(tx, sender)
-    }
-}
-
 impl std::fmt::Display for FoundryTxType {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -904,8 +810,6 @@ mod tests {
     // Blobscan: https://sepolia.blobscan.com/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
     #[test]
     fn test_decode_live_4844_tx() {
-        use alloy_primitives::{address, b256};
-
         // https://sepolia.etherscan.io/getRawTx?tx=0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
         let raw_tx = alloy_primitives::hex::decode("0x03f9011d83aa36a7820fa28477359400852e90edd0008252089411e9ca82a3a762b4b5bd264d4173a242e7a770648080c08504a817c800f8a5a0012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921aa00152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4a0013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7a001148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1a0011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e654901a0c8de4cced43169f9aa3d36506363b2d2c44f6c49fc1fd91ea114c86f3757077ea01e11fdd0d1934eda0492606ee0bb80a7bf8f35cc5f86ec60fe5031ba48bfd544").unwrap();
         let res = FoundryTxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
@@ -980,41 +884,10 @@ mod tests {
         let _typed_tx: FoundryTxEnvelope = serde_json::from_str(tx).unwrap();
     }
 
-    #[test]
-    fn test_from_recovered_tx_legacy() {
-        let tx = r#"
-        {
-            "type": "0x0",
-            "chainId": "0x1",
-            "nonce": "0x0",
-            "gas": "0x5208",
-            "gasPrice": "0x1",
-            "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-            "value": "0x1",
-            "input": "0x",
-            "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
-            "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
-            "v": "0x1b",
-            "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
-        }"#;
-
-        let typed_tx: FoundryTxEnvelope = serde_json::from_str(tx).unwrap();
-        let sender = typed_tx.recover().unwrap();
-
-        // Test TxEnv conversion via FromRecoveredTx trait
-        let tx_env = TxEnv::from_recovered_tx(&typed_tx, sender);
-        assert_eq!(tx_env.caller, sender);
-        assert_eq!(tx_env.gas_limit, 0x5208);
-        assert_eq!(tx_env.gas_price, 1);
-    }
-
     // Test vector from Tempo testnet:
     // https://explorer.testnet.tempo.xyz/tx/0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd
     #[test]
     fn test_decode_encode_tempo_tx() {
-        use alloy_primitives::address;
-        use tempo_primitives::TEMPO_TX_TYPE_ID;
-
         let tx_hash: TxHash =
             b256!("0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd");
 
