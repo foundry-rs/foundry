@@ -1373,7 +1373,16 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     for item in &metadata.items {
                         ensure_safe_contract_name(&item.contract_name)?;
                     }
-                    metadata.source_tree().write_to(&dir)?;
+                    let source_tree = metadata.source_tree();
+                    for entry in &source_tree.entries {
+                        eyre::ensure!(
+                            metadata.items.iter().any(|item| {
+                                source_path_is_scoped(&entry.path, &item.contract_name)
+                            }),
+                            "invalid source path from explorer"
+                        );
+                    }
+                    source_tree.write_to(&dir)?;
                 }
                 (None, false) => sh_println!("{}", metadata.source_code())?,
                 (dir, true) => {
@@ -1672,11 +1681,58 @@ fn explorer_client(
 /// let it write into repository metadata.
 fn ensure_safe_contract_name(contract_name: &str) -> Result<()> {
     let mut components = Path::new(contract_name).components();
-    let safe = matches!(components.next(), Some(Component::Normal(_)))
-        && components.next().is_none()
+    let safe = matches!(
+        components.next(),
+        Some(Component::Normal(name))
+            if name.to_str().is_some_and(is_safe_output_path_component)
+    ) && components.next().is_none()
         && !contract_name.starts_with('.');
     eyre::ensure!(safe, "invalid contract name from explorer: {contract_name:?}");
     Ok(())
+}
+
+fn is_safe_output_path_component(component: &str) -> bool {
+    !cfg!(windows) || is_safe_windows_path_component(component)
+}
+
+/// Reject names that Win32 treats as path syntax, aliases, or device names.
+fn is_safe_windows_path_component(component: &str) -> bool {
+    if component.is_empty()
+        || component.ends_with('.')
+        || component.ends_with(' ')
+        || component.chars().any(|character| {
+            character < ' '
+                || matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        })
+    {
+        return false;
+    }
+
+    let device_name = component.split('.').next().unwrap_or_default().to_ascii_uppercase();
+    !matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        && !["COM", "LPT"].iter().any(|prefix| {
+            device_name.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        })
+}
+
+fn source_path_is_scoped(source_path: &Path, contract_name: &str) -> bool {
+    let Ok(relative_path) = source_path.strip_prefix(contract_name) else { return false };
+    let mut components = relative_path.components();
+    matches!(
+        components.next(),
+        Some(Component::Normal(name))
+            if name.to_str().is_some_and(is_safe_output_path_component)
+    ) && components.all(|component| {
+        matches!(
+            component,
+            Component::Normal(name) if name.to_str().is_some_and(is_safe_output_path_component)
+        )
+    })
 }
 
 fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>(
@@ -1938,6 +1994,18 @@ mod tests {
         }
         for name in ["", ".", "..", ".git", "a/b", "/abs", "../x", "foundry.toml/x"] {
             assert!(ensure_safe_contract_name(name).is_err(), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn safe_windows_path_component() {
+        for component in ["Example", "My Contract.sol", "Ünïcode"] {
+            assert!(is_safe_windows_path_component(component), "{component:?}");
+        }
+        for component in
+            [".. ", ". ", "name.", "name ", "file:stream", "NUL.sol", "COM1", "LPT³.txt"]
+        {
+            assert!(!is_safe_windows_path_component(component), "{component:?}");
         }
     }
 }
