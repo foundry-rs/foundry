@@ -7063,3 +7063,138 @@ contract ProbesTest is Test {
     prj.update_config(|config| config.fuzz.corpus.instrumented_edges = true);
     cmd.assert_success();
 }
+
+// With a fixed seed, the outcome of a fuzz campaign does not depend on the worker that is first in
+// time. Each worker has its own input stream, and the campaign reports the failure and the cases
+// that are first in worker order. The inputs that are first in this order are slow, so the other
+// workers complete their runs before.
+#[forgetest_init]
+fn fuzz_outcome_does_not_depend_on_worker_timing(prj: _, cmd: _) {
+    prj.add_test(
+        "FuzzWorkerOrder.t.sol",
+        r#"
+import {console} from "forge-std/console.sol";
+
+contract FuzzWorkerOrderTest {
+    // Fails with one of two reasons. The inputs that fail with the first reason are slow.
+    function testFuzz_failure(uint256 x) public pure {
+        if (x % 8 == 0) {
+            burn();
+            revert("slow failure");
+        }
+        require(x % 8 != 1, "fast failure");
+    }
+
+    // Passes for every input. One input in eight is slow.
+    function testFuzz_success(uint256 x) public pure {
+        console.log(x);
+        if (x % 8 == 2) {
+            burn();
+        }
+    }
+
+    function burn() internal pure {
+        for (uint256 i; i < 5000; ++i) {
+            keccak256(abi.encode(i));
+        }
+    }
+}
+   "#,
+    );
+
+    // Four workers with 64 runs each. With this seed, the second run of the second worker is the
+    // first failure, and it is slow. The first worker finds a fast failure in its third run. The
+    // first run of the first worker is slow in the passing test.
+    let args = ["test", "--mc", "FuzzWorkerOrderTest", "--fuzz-seed", "185", "--threads", "4"];
+    cmd.args(args).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/FuzzWorkerOrder.t.sol:FuzzWorkerOrderTest
+[FAIL: slow failure; counterexample: calldata=0xbcb54bf10000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzz_failure(uint256) (runs: 5, [AVG_GAS])
+[PASS] testFuzz_success(uint256) (runs: 256, [AVG_GAS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/FuzzWorkerOrder.t.sol:FuzzWorkerOrderTest
+[FAIL: slow failure; counterexample: calldata=0xbcb54bf10000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzz_failure(uint256) (runs: 5, [AVG_GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    // The first worker replays the persisted failure before its first run, so the campaign reports
+    // this failure again.
+    cmd.forge_fuse().args(args).arg("--json").assert_json_stdout_with_status(
+        false,
+        str![[r#"
+{
+  "test/FuzzWorkerOrder.t.sol:FuzzWorkerOrderTest": {
+    "test_results": {
+      "testFuzz_failure(uint256)": {
+        "status": "Failure",
+        "reason": "slow failure",
+        "counterexample": {
+          "Single": {
+            "warp": null,
+            "roll": null,
+            "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
+            "addr": "0x7fa9385be102ac3eac297483dd6233d62b3e1496",
+            "calldata": "0xbcb54bf10000000000000000000000000000000000000000000000000000000000000000",
+            "contract_name": null,
+            "func_name": null,
+            "signature": null,
+            "args": "0",
+            "raw_args": "0",
+            "fuzz_seed": "0xb9",
+            "fuzz_run": 2,
+            "fuzz_worker": 1
+          }
+        },
+        "kind": {
+          "Fuzz": {
+            "first_case": {
+              "gas": 0,
+              "stipend": 0
+            },
+            "runs": 0,
+            "mean_gas": 0,
+            "median_gas": 0,
+            "failed_corpus_replays": 0
+          }
+        },
+        "...": "{...}"
+      },
+      "testFuzz_success(uint256)": {
+        "status": "Success",
+        "reason": null,
+        "counterexample": null,
+        "kind": {
+          "Fuzz": {
+            "first_case": {
+              "gas": 1755752,
+              "stipend": 21492
+            },
+            "runs": 256,
+            "mean_gas": 240230,
+            "median_gas": 3619,
+            "failed_corpus_replays": 0
+          }
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+    );
+}
