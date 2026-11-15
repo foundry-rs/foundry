@@ -204,7 +204,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let output = match value {
                 s if s.starts_with('@') => hex::encode(std::env::var(&s[1..])?),
                 s if s.starts_with('/') => hex::encode(fs::read(s)?),
-                s => s.split(':').map(|s| s.trim_start_matches("0x").to_lowercase()).collect(),
+                s => {
+                    s.to_ascii_lowercase().split(':').map(|s| s.trim_start_matches("0x")).collect()
+                }
             };
             print_scalar(format!("0x{output}"))?;
         }
