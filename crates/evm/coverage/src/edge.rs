@@ -1,6 +1,6 @@
 use alloy_primitives::{
     Address, U256,
-    map::{Entry, HashMap},
+    map::{AddressHashMap, Entry, HashMap},
 };
 use core::{
     fmt,
@@ -214,6 +214,8 @@ pub struct EdgeCovInspector {
     /// Addresses of the frames that hit an edge in this execution. A [`PackedEdge`] holds the
     /// index of its address.
     addresses: Vec<Address>,
+    /// Index in `addresses` of each address, for the hits that do not come from the latest one.
+    address_indices: AddressHashMap<usize>,
     /// Index in `addresses` of the address of the latest hit.
     last_address: usize,
     /// Comparison operand log for CmpLog-style guided fuzzing.
@@ -271,6 +273,7 @@ impl EdgeCovInspector {
             dense_hitcount: HashMap::default(),
             wide_hitcount: HashMap::default(),
             addresses: Vec::new(),
+            address_indices: AddressHashMap::default(),
             last_address: 0,
             cmp_log: None,
             cmp_site_counts: HashMap::default(),
@@ -296,6 +299,7 @@ impl EdgeCovInspector {
                 self.dense_hitcount.clear();
                 self.wide_hitcount.clear();
                 self.addresses.clear();
+                self.address_indices.clear();
                 self.last_address = 0;
             }
             EdgeCovKind::Hash => self.hitcount.fill(0),
@@ -358,18 +362,24 @@ impl EdgeCovInspector {
 
     /// Returns the index of `address` in the addresses of this execution, adding it if needed.
     ///
-    /// Consecutive hits mostly come from the same frame, and an execution runs few contracts, so
-    /// this compares the latest address first and scans the others.
+    /// Consecutive hits mostly come from the same frame, so this compares the latest address
+    /// first and looks the others up by hash, which stays constant per hit when an execution
+    /// visits many contracts.
     #[inline]
     fn address_index(&mut self, address: Address) -> usize {
         if self.addresses.get(self.last_address) != Some(&address) {
-            self.last_address =
-                self.addresses.iter().position(|known| *known == address).unwrap_or_else(|| {
-                    self.addresses.push(address);
-                    self.addresses.len() - 1
-                });
+            self.last_address = self.other_address_index(address);
         }
         self.last_address
+    }
+
+    /// Returns the index of an address that is not the latest one, adding it if needed.
+    fn other_address_index(&mut self, address: Address) -> usize {
+        let next = self.addresses.len();
+        *self.address_indices.entry(address).or_insert_with(|| {
+            self.addresses.push(address);
+            next
+        })
     }
 
     /// Returns the hits of this execution, in no particular order.
@@ -766,6 +776,30 @@ mod tests {
         with_depth.store_hit(addr, 1, 0, U256::ONE);
         assert_eq!(with_depth.edge_count(), 2);
         assert_eq!(dense_counts(&with_depth), [1, 1]);
+    }
+
+    #[test]
+    fn edges_keep_their_addresses_across_many_contracts() {
+        // More contracts than a packed edge can index, visited in turn twice, as a multicall does.
+        let addresses =
+            (0..5000u32).map(|i| Address::left_padding_from(&i.to_be_bytes())).collect::<Vec<_>>();
+        let config = EdgeCovConfig::new(EdgeCovKind::CollisionFree, false);
+        let mut inspector = EdgeCovInspector::with_config(config);
+        for _ in 0..2 {
+            for &address in &addresses {
+                inspector.store_hit(address, 1, 7, U256::from(42));
+            }
+        }
+
+        let expected = addresses
+            .iter()
+            .map(|&address| EdgeCovHit {
+                edge: EdgeKey::new(address, 1, 7, U256::from(42), false),
+                count: 2,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(inspector.dense_hits(), expected);
+        assert_eq!(inspector.addresses.len(), addresses.len());
     }
 
     #[test]
