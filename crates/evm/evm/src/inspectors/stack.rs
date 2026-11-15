@@ -528,6 +528,11 @@ pub struct InspectorStackInner {
     cheat_steps: OpcodeSet,
     /// Whether the cheatcodes stepped the running instruction.
     cheat_stepped: bool,
+    /// The opcodes the other step inspectors step, see [`Self::static_steps`]. Refreshed with
+    /// [`Self::cheat_steps`].
+    static_steps: OpcodeSet,
+    /// Whether the other step inspectors stepped the running instruction.
+    static_stepped: bool,
 }
 
 /// Mutable references to both parts of [InspectorStack] and the backend the execution runs over,
@@ -1822,9 +1827,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     #[inline(always)]
     fn step_inlined(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
-        let storage_hook_active =
-            self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
-
         #[cfg(test)]
         if interp.opcode() == op::JUMPDEST
             && let Some(gate) = &self.inner.early_exit_test_gate
@@ -1853,8 +1855,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         }
 
+        // The frame steps the union of every inspector's opcodes, so most instructions stepped for
+        // the cheatcodes or the cancellation poll skip the other inspectors.
         let inner = &mut *self.inner;
-        if inner.has_static_step_inspectors {
+        let static_stepped = inner.static_steps.contains(interp.opcode());
+        inner.static_stepped = static_stepped;
+        if static_stepped {
+            let storage_hook_active =
+                self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
             if !storage_hook_active {
                 call_inspectors!(
                     [
@@ -1882,18 +1890,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // Other inspectors may step instructions the cheatcodes do not.
         let cheat_stepped = self.inner.cheat_steps.contains(interp.opcode());
         self.inner.cheat_stepped = cheat_stepped;
-        if let Some((cheats, backend, _)) = self.cheats_and_backend() {
-            if cheat_stepped {
-                crate::utils::cold_path();
-                cheats.step_hook(interp, backend);
-            } else {
-                cheats.pc = interp.pc();
-            }
+        if cheat_stepped && let Some((cheats, backend, _)) = self.cheats_and_backend() {
+            crate::utils::cold_path();
+            cheats.step_hook(interp, backend);
         }
 
         // evm2 skips `step_end` if an inspector halted the frame in `step`. Only a stack with step
         // inspectors can hold a recorder, so other stacks skip the check.
-        if self.inner.has_static_step_inspectors
+        if static_stepped
             && let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
             && interp.result().is_err()
         {
@@ -1904,7 +1908,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     #[inline(always)]
     fn step_end_inlined(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         let inner = &mut *self.inner;
-        if inner.has_static_step_end_inspectors {
+        if inner.static_stepped && inner.has_static_step_end_inspectors {
             call_inspectors!(
                 [
                     // These are sorted in definition order.
@@ -1926,18 +1930,21 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
-    /// Reads the opcodes the cheatcodes step again.
+    /// Reads the opcodes the cheatcodes and the other step inspectors step again.
     fn refresh_cheat_steps(&mut self) {
         self.inner.cheat_steps =
             self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps);
+        self.inner.static_steps = self.inner.static_steps::<FEN>();
     }
 
-    /// Refreshes the cheatcodes' opcodes after a message's end hooks finish mutating their state.
-    /// The message's frames overwrote whether the cheatcodes stepped the instruction that made it,
-    /// so that instruction's `step_end` runs the cheatcode hook whenever they step any instruction.
+    /// Refreshes the stepped opcodes after a message's end hooks finish mutating the inspectors'
+    /// state. The message's frames overwrote whether the cheatcodes and the other inspectors
+    /// stepped the instruction that made it, so that instruction's `step_end` runs their hooks
+    /// whenever they step any instruction.
     fn restore_cheat_stepped(&mut self) {
         self.refresh_cheat_steps();
         self.inner.cheat_stepped = self.inner.cheat_steps != OpcodeSet::EMPTY;
+        self.inner.static_stepped = self.inner.static_steps != OpcodeSet::EMPTY;
     }
 
     /// Rewrites a CREATE frame into a call to the CREATE2 factory if the cheatcodes request it.
@@ -2064,25 +2071,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if !inner.has_static_step_inspectors && !inner.has_static_step_end_inspectors {
             return InspectorConfig::new().with_steps(steps);
         }
-        // Steps the union of the opcodes of every inspector `step_inlined` and `step_end_inlined`
-        // call. An inspector that does not declare its opcodes steps all of them.
-        let inspectors: [Option<&dyn Inspector<TypesFor<FEN>>>; 8] = [
-            inner.tracer.as_deref().map(|i| i as _),
-            inner.chisel_state.as_deref().map(|i| i as _),
-            inner.debug_recorder.as_deref().map(|i| i as _),
-            inner.edge_coverage.as_deref().map(|i| i as _),
-            inner.line_coverage.as_deref().map(|i| i as _),
-            inner.printer.as_deref().map(|i| i as _),
-            inner.revert_diag.as_deref().map(|i| i as _),
-            inner.script_execution_inspector.as_deref().map(|i| i as _),
-        ];
-        for inspector in inspectors.into_iter().flatten() {
-            if steps == OpcodeSet::ALL {
-                break;
-            }
-            steps = steps.union(inspector.inspector_config().steps());
-        }
-        InspectorConfig::new().with_steps(steps)
+        InspectorConfig::new().with_steps(steps.union(inner.static_steps::<FEN>()))
     }
 
     fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
@@ -2615,6 +2604,33 @@ impl InspectorStackInner {
             || self.revert_diag.is_some()
             || self.tracer.is_some()
             || self.debug_recorder.is_some();
+    }
+
+    /// Returns the union of the opcodes of every inspector `step_inlined` and `step_end_inlined`
+    /// call besides the cheatcodes. An inspector that does not declare its opcodes steps all of
+    /// them.
+    fn static_steps<FEN: FoundryEvmNetwork>(&self) -> OpcodeSet {
+        if !self.has_static_step_inspectors && !self.has_static_step_end_inspectors {
+            return OpcodeSet::EMPTY;
+        }
+        let inspectors: [Option<&dyn Inspector<TypesFor<FEN>>>; 8] = [
+            self.tracer.as_deref().map(|i| i as _),
+            self.chisel_state.as_deref().map(|i| i as _),
+            self.debug_recorder.as_deref().map(|i| i as _),
+            self.edge_coverage.as_deref().map(|i| i as _),
+            self.line_coverage.as_deref().map(|i| i as _),
+            self.printer.as_deref().map(|i| i as _),
+            self.revert_diag.as_deref().map(|i| i as _),
+            self.script_execution_inspector.as_deref().map(|i| i as _),
+        ];
+        let mut steps = OpcodeSet::EMPTY;
+        for inspector in inspectors.into_iter().flatten() {
+            if steps == OpcodeSet::ALL {
+                break;
+            }
+            steps = steps.union(inspector.inspector_config().steps());
+        }
+        steps
     }
 
     /// Derive the next `--batch` CREATE2 salt and advance the per-batch counter.
