@@ -906,7 +906,7 @@ impl MultiContractRunnerBuilder {
         // bounds and ERC-7201 namespaces must not depend on the build history.
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
-            configure_pcx_from_compile_output(&mut pcx, &self.config, output, None)?;
+            configure_pcx_from_compile_output(&mut pcx, &self.config, output)?;
             pcx.parse();
             let _ = compiler.lower_asts();
             Ok(())
