@@ -162,9 +162,15 @@ pub(crate) async fn resolve_session_or_wallet_signer(
     wallet: &WalletOpts,
     chain_id: u64,
 ) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+    // `--from` names the parent of a configurable access key, whose own access key in the Tempo
+    // Accounts store must not sign instead.
+    let mut store_wallet = wallet.clone();
+    if tempo.configurable_access_key.is_some() {
+        store_wallet.from = None;
+    }
     let (signer, access_key) = match tempo.session_signer_for_wallet(wallet, chain_id)? {
         Some(session) => (None, Some(session.access_key)),
-        None => foundry_common::tempo::maybe_signer(wallet, Some(chain_id)).await?,
+        None => foundry_common::tempo::maybe_signer(&store_wallet, Some(chain_id)).await?,
     };
     if let (Some(from), Some(access_key)) = (wallet.from, &access_key) {
         eyre::ensure!(

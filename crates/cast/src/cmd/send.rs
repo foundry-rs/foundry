@@ -132,6 +132,12 @@ impl SendTxArgs {
     }
 
     pub async fn run(self) -> Result<()> {
+        // Tempo rejects keychain transactions whose first call is a CREATE.
+        eyre::ensure!(
+            self.tx.tempo.configurable_access_key.is_none()
+                || !matches!(self.command, Some(SendTxSubcommands::Create { .. })),
+            "--tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE"
+        );
         if self.to.is_none() && matches!(self.command, Some(SendTxSubcommands::Create { .. })) {
             if !self.tx.auth.is_empty() {
                 eyre::bail!(

@@ -350,30 +350,45 @@ Error: browser key authorization signing does not support the configurable key t
     let from = ["--from", root_address.as_str()];
     let rejected = [
         (
-            [&["send"][..], &call].concat(),
+            &["send"][..],
+            call.to_vec(),
             str![[r#"
 Error: --tempo.configurable-access-key needs the account it signs for: pass --from
 
 "#]],
         ),
         (
-            [&["mktx", "--raw-unsigned"][..], &call, &from].concat(),
+            &["mktx", "--raw-unsigned"],
+            [&call[..], &from].concat(),
             str![[r#"
 Error: --tempo.configurable-access-key cannot be combined with --raw-unsigned, --ethsign, --signature or a Tempo access key
 
 "#]],
         ),
         (
-            [&["keychain", "authorize", "0x5555555555555555555555555555555555555555"][..], &from]
-                .concat(),
+            &["send"],
+            [&from[..], &["--create", "0x00"]].concat(),
+            str![[r#"
+Error: --tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE
+
+"#]],
+        ),
+        (
+            &["keychain", "authorize", "0x5555555555555555555555555555555555555555"],
+            from.to_vec(),
             str![[r#"
 Error: an access key cannot manage the keys of the account it signs for
 
 "#]],
         ),
     ];
-    for (args, error) in rejected {
-        cmd.cast_fuse().args(args).args(&access_args).assert_failure().stderr_eq(error);
+    for (command, args, error) in rejected {
+        cmd.cast_fuse()
+            .args(command)
+            .args(&access_args)
+            .args(args)
+            .assert_failure()
+            .stderr_eq(error);
     }
 
     // The owner approves the keychain V2 hash, which recovers the account as the access key.
@@ -487,5 +502,60 @@ Error: an access key cannot manage the keys of the account it signs for
         let keychain = sent.signature().as_keychain().expect("a keychain signature");
         assert_eq!(keychain.key_id(&sent.signature_hash()).unwrap(), account);
         assert_eq!(keychain.signature.as_configurable_account().unwrap().config().version, 1);
+    }
+
+    // The batch commands also skip root's stored access key, with the owner given only through
+    // `--tempo.owner`.
+    let access_args = [&access_key[..], &["--tempo.owner", &owner_signer]].concat();
+    for (command, amount) in [("batch-mktx", "4"), ("batch-send", "5")] {
+        let batch_call = format!("{fee_token}::approve(address,uint256):{},{amount}", call[2]);
+        cmd.cast_fuse();
+        cmd.env("TEMPO_HOME", tempo_home.path());
+        let output = cmd
+            .args([command, "--call", &batch_call])
+            .args(from)
+            .args(&access_args)
+            .arg("--json")
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let raw = if command == "batch-mktx" {
+            let raw = parse_json::<serde_json::Value>(output.trim())
+                .map(|json| json["data"].as_str().unwrap_or_default().to_owned())
+                .unwrap_or_else(|_| output.trim().to_owned());
+            cmd.cast_fuse().args(["publish", &raw, "--rpc-url", &rpc]).assert_success();
+            raw
+        } else {
+            assert_data_eq!(
+                output.trim().is_json(),
+                format!(
+                    r#"{{
+  "status": "0x1",
+  "from": "{:#x}",
+  "...": "{{...}}"
+}}"#,
+                    root.address()
+                )
+                .is_json()
+                .unordered()
+            );
+            let hash = parse_json::<serde_json::Value>(output.trim()).unwrap()["transactionHash"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            cmd.cast_fuse()
+                .args(["tx", &hash, "--raw", "--rpc-url", &rpc])
+                .assert_success()
+                .get_output()
+                .stdout_lossy()
+        };
+        let TempoTxEnvelope::AA(sent) =
+            TempoTxEnvelope::decode_2718_exact(&hex::decode(raw.trim()).unwrap()).unwrap()
+        else {
+            panic!("expected a Tempo transaction");
+        };
+        let keychain = sent.signature().as_keychain().expect("a keychain signature");
+        assert_eq!(keychain.user_address, root.address());
+        assert_eq!(keychain.key_id(&sent.signature_hash()).unwrap(), account);
     }
 }

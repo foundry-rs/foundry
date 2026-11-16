@@ -126,6 +126,12 @@ impl MakeTxArgs {
                  --tempo.sponsor-signer or --tempo.sponsor-sig"
             );
         }
+        // Tempo rejects keychain transactions whose first call is a CREATE.
+        eyre::ensure!(
+            self.tx.tempo.configurable_access_key.is_none()
+                || !matches!(self.command, Some(MakeTxSubcommands::Create { .. })),
+            "--tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE"
+        );
 
         let (network, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.eth).await?;
