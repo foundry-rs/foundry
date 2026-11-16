@@ -3,7 +3,10 @@
 //! This module provides functionality to identify and decode storage slots based on
 //! Solidity storage layout information from the compiler.
 
-use crate::mapping_slots::MappingSlots;
+use crate::{
+    constants::{EIP1967_ADMIN_SLOT, EIP1967_BEACON_SLOT, EIP1967_IMPLEMENTATION_SLOT},
+    mapping_slots::MappingSlots,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{B256, U256, hex, keccak256, map::B256Map};
 use foundry_common_fmt::format_token_raw;
@@ -384,6 +387,31 @@ impl Serialize for DecodedSlotValues {
         state.serialize_field("newValue", &format_token_raw(&self.new_value))?;
         state.end()
     }
+}
+
+/// Identifies the standard [EIP-1967](https://eips.ethereum.org/EIPS/eip-1967) proxy slots, which
+/// proxies write from assembly constants that no storage layout covers.
+///
+/// Callers should prefer a layout's identification of the same slot.
+pub fn identify_eip1967_slot(slot: &B256) -> Option<SlotInfo> {
+    let label = match *slot {
+        EIP1967_IMPLEMENTATION_SLOT => "eip1967.proxy.implementation",
+        EIP1967_ADMIN_SLOT => "eip1967.proxy.admin",
+        EIP1967_BEACON_SLOT => "eip1967.proxy.beacon",
+        _ => return None,
+    };
+    Some(SlotInfo {
+        label: label.to_string(),
+        slot_type: StorageTypeInfo {
+            label: "address".to_string(),
+            dyn_sol_type: DynSolType::Address,
+        },
+        offset: 0,
+        slot: U256::from_be_bytes(slot.0).to_string(),
+        members: None,
+        decoded: None,
+        keys: None,
+    })
 }
 
 /// Storage slot identifier that uses Solidity [`StorageLayout`] to identify storage slots.
@@ -1682,5 +1710,25 @@ mod tests {
         for slot in [2, 3] {
             assert!(identifier.identify(&B256::from(U256::from(slot)), None).is_none());
         }
+    }
+
+    #[test]
+    fn identifies_eip1967_slots() {
+        let implementation = Address::repeat_byte(0x11);
+        for (slot, label) in [
+            (EIP1967_IMPLEMENTATION_SLOT, "eip1967.proxy.implementation"),
+            (EIP1967_ADMIN_SLOT, "eip1967.proxy.admin"),
+            (EIP1967_BEACON_SLOT, "eip1967.proxy.beacon"),
+        ] {
+            let mut info = identify_eip1967_slot(&slot).unwrap();
+            assert_eq!(info.label, label);
+            assert_eq!(info.slot_type.label, "address");
+            assert_eq!(info.slot, U256::from_be_bytes(slot.0).to_string());
+            info.decode_values(B256::ZERO, implementation.into_word());
+            let decoded = info.decoded.unwrap();
+            assert_eq!(format_token_raw(&decoded.previous_value), Address::ZERO.to_string());
+            assert_eq!(format_token_raw(&decoded.new_value), implementation.to_string());
+        }
+        assert!(identify_eip1967_slot(&B256::ZERO).is_none());
     }
 }

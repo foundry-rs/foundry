@@ -22,9 +22,10 @@ use evm2::{
 use foundry_common::{
     TransactionMaybeSigned,
     fs::{read_json_file, write_json_file},
+    mapping_slots::MappingSlots,
     slot_identifier::{
         ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
-        SlotInfo,
+        SlotInfo, identify_eip1967_slot,
     },
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
@@ -49,10 +50,12 @@ use std::{
     fmt::Display,
     path::Path,
     str::FromStr,
+    sync::Arc,
 };
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
+use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::{ExecutionSpec, evm_spec_id_from_str, fs_permissions::FsAccessKind};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::{Serialize, Serializer, ser::SerializeMap};
@@ -2477,25 +2480,12 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
                                 .as_ref()
                                 .and_then(|slots| slots.get(&storage_access.account));
 
-                            let slot_info = layout.and_then(|layout| {
-                                let decoder = SlotIdentifier::new(layout.clone());
-                                decoder.identify(&storage_access.slot, mapping_slots).or_else(
-                                    || {
-                                        // Create a map of new values for bytes/string
-                                        // identification. These values are used to determine
-                                        // the length of the data which helps determine how many
-                                        // slots to search
-                                        let current_base_slot_values = raw_changes_by_slot
-                                            .iter()
-                                            .map(|(slot, (_, new_val))| (*slot, *new_val))
-                                            .collect::<B256Map<_>>();
-                                        decoder.identify_bytes_or_string(
-                                            &storage_access.slot,
-                                            &current_base_slot_values,
-                                        )
-                                    },
-                                )
-                            });
+                            let slot_info = identify_slot(
+                                layout,
+                                &storage_access.slot,
+                                mapping_slots,
+                                &raw_changes_by_slot,
+                            );
 
                             slot_state_diff.insert(SlotStateDiff {
                                 previous_value: storage_access.previousValue,
@@ -2524,6 +2514,31 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
             }
         });
     state_diffs
+}
+
+/// Identifies a written slot with the layout of the code that wrote it, falling back to the
+/// standard EIP-1967 proxy slots, which no layout covers.
+fn identify_slot(
+    layout: Option<&Arc<StorageLayout>>,
+    slot: &B256,
+    mapping_slots: Option<&MappingSlots>,
+    raw_changes_by_slot: &BTreeMap<B256, (B256, B256)>,
+) -> Option<SlotInfo> {
+    layout
+        .and_then(|layout| {
+            let decoder = SlotIdentifier::new(layout.clone());
+            decoder.identify(slot, mapping_slots).or_else(|| {
+                // Create a map of new values for bytes/string identification. These values are
+                // used to determine the length of the data which helps determine how many slots
+                // to search
+                let current_base_slot_values = raw_changes_by_slot
+                    .iter()
+                    .map(|(slot, (_, new_val))| (*slot, *new_val))
+                    .collect::<B256Map<_>>();
+                decoder.identify_bytes_or_string(slot, &current_base_slot_values)
+            })
+        })
+        .or_else(|| identify_eip1967_slot(slot))
 }
 
 /// EIP-1967 implementation storage slot
@@ -2581,8 +2596,30 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::artifacts::StorageLayout;
-    use std::sync::Arc;
+    use foundry_common::EIP1967_IMPLEMENTATION_SLOT;
+
+    #[test]
+    fn identifies_eip1967_slots_unless_a_layout_covers_them() {
+        let slot = EIP1967_IMPLEMENTATION_SLOT;
+        let no_changes = BTreeMap::new();
+
+        let fallback = identify_slot(None, &slot, None, &no_changes).unwrap();
+        assert_eq!(fallback.label, "eip1967.proxy.implementation");
+        let empty = Arc::new(StorageLayout::default());
+        let fallback = identify_slot(Some(&empty), &slot, None, &no_changes).unwrap();
+        assert_eq!(fallback.label, "eip1967.proxy.implementation");
+
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "custom", "offset": 0, "slot": U256::from_be_bytes(slot.0).to_string(), "type": "t_uint256" }
+            ],
+            "types": { "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" } }
+        }))
+        .unwrap();
+        let info = identify_slot(Some(&Arc::new(layout)), &slot, None, &no_changes).unwrap();
+        assert_eq!(info.label, "custom");
+        assert_eq!(info.slot_type.label, "uint256");
+    }
 
     #[test]
     fn state_diff_preserves_raw_values_with_partial_decoding() {

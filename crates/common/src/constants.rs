@@ -1,6 +1,6 @@
 //! Commonly used constants.
 
-use alloy_primitives::{Address, address};
+use alloy_primitives::{Address, B256, address, b256};
 use std::time::Duration;
 
 /// The dev chain-id, inherited from hardhat
@@ -77,6 +77,19 @@ pub fn is_known_system_sender(sender: Address) -> bool {
     .contains(&sender)
 }
 
+/// EIP-1967 proxy implementation slot: `bytes32(uint256(keccak256('eip1967.proxy.implementation'))
+/// - 1)`.
+pub const EIP1967_IMPLEMENTATION_SLOT: B256 =
+    b256!("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc");
+
+/// EIP-1967 proxy admin slot: `bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1)`.
+pub const EIP1967_ADMIN_SLOT: B256 =
+    b256!("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103");
+
+/// EIP-1967 proxy beacon slot: `bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)`.
+pub const EIP1967_BEACON_SLOT: B256 =
+    b256!("0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +100,14 @@ mod tests {
         assert_eq!(arb, ARBITRUM_SENDER);
         let base = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001");
         assert_eq!(base, OPTIMISM_SYSTEM_ADDRESS);
+    }
+
+    #[test]
+    fn eip1967_slots() {
+        use alloy_primitives::{U256, keccak256};
+        let slot = |id: &str| B256::from(U256::from_be_bytes(keccak256(id).0) - U256::from(1));
+        assert_eq!(slot("eip1967.proxy.implementation"), EIP1967_IMPLEMENTATION_SLOT);
+        assert_eq!(slot("eip1967.proxy.admin"), EIP1967_ADMIN_SLOT);
+        assert_eq!(slot("eip1967.proxy.beacon"), EIP1967_BEACON_SLOT);
     }
 }
