@@ -1,6 +1,6 @@
 use crate::FoundryReceiptEnvelope;
 use alloy_network::{AnyReceiptEnvelope, AnyTransactionReceipt, ReceiptResponse};
-use alloy_primitives::{Address, B256, BlockHash, TxHash};
+use alloy_primitives::{Address, B256, BlockHash, TxHash, U64};
 use alloy_rpc_types::{ConversionError, Log, TransactionReceipt};
 use alloy_serde::WithOtherFields;
 use derive_more::AsRef;
@@ -34,9 +34,10 @@ impl FoundryTxReceipt {
         timestamp: u64,
     ) -> Self {
         let mut receipt = WithOtherFields::new(inner);
-        receipt
-            .other
-            .insert("blockTimestamp".to_string(), serde_json::to_value(timestamp).unwrap());
+        receipt.other.insert(
+            "blockTimestamp".to_string(),
+            serde_json::to_value(U64::from(timestamp)).unwrap(),
+        );
         Self(receipt)
     }
 
@@ -54,7 +55,13 @@ impl FoundryTxReceipt {
 
     /// Get block timestamp from other fields if present.
     pub fn block_timestamp(&self) -> Option<u64> {
-        self.0.other.get_deserialized::<u64>("blockTimestamp").transpose().ok().flatten()
+        self.0
+            .other
+            .get_deserialized::<U64>("blockTimestamp")
+            .transpose()
+            .ok()
+            .flatten()
+            .map(|ts| ts.to())
     }
 }
 
