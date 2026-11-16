@@ -301,14 +301,16 @@ impl<'a> AnchorIndex<'a> {
             .filter(|&instruction| is_in_source_range(&self.source_map[instruction], loc));
         // Cold validation stubs can precede the statement's main code in the bytecode.
         // A revert statement itself may have only failure-path candidates, so retain the fallback.
-        let live = candidates
+        let mut live = candidates
             .clone()
-            .filter(|&instruction| !in_reverting_run(&self.reverting_runs, instruction));
+            .filter(|&instruction| !in_reverting_run(&self.reverting_runs, instruction))
+            .collect::<Vec<_>>();
+        live.sort_unstable();
         let instruction = live
-            .clone()
-            .filter(|&instruction| !self.is_entered_only_from_inside(instruction, loc))
-            .min()
-            .or_else(|| live.min())
+            .iter()
+            .copied()
+            .find(|&instruction| !self.is_entered_only_from_inside(instruction, loc))
+            .or_else(|| live.first().copied())
             .or_else(|| candidates.min());
         ItemAnchor::from_instruction(instruction, self.ic_pc_map, item_id, loc)
     }
@@ -678,6 +680,64 @@ mod tests {
                     opcode::JUMP,
                 ],
                 "0:100:0;;10:50:0;;16:4:0;10:50:0;",
+                5,
+            ),
+            // A block that is also entered from outside, as a loop head is, stays an entry.
+            (
+                vec![opcode::JUMPDEST, opcode::JUMPDEST, opcode::PUSH1, 1, opcode::JUMP],
+                "0:100:0;12:3:0;15:2:0;;",
+                1,
+            ),
+            (
+                vec![
+                    opcode::PUSH1,
+                    5,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    3,
+                    opcode::STOP,
+                    opcode::PUSH1,
+                    3,
+                    opcode::STOP,
+                ],
+                "0:100:0;;15:5:0;;12:3:0;;;0:100:0;;",
+                3,
+            ),
+            // A push from outside to an unmapped `JUMPDEST` makes the block it leads an entry.
+            (
+                vec![
+                    opcode::PUSH1,
+                    4,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    3,
+                    opcode::STOP,
+                ],
+                "0:100:0;;15:5:0;-1:-1:-1;12:3:0;;",
+                5,
+            ),
+            // A block that nothing is known to reach is an entry even when a later block is
+            // entered from outside.
+            (
+                vec![
+                    opcode::PUSH1,
+                    7,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "0:100:0;;15:5:0;;16:4:0;;17:3:0;;",
                 5,
             ),
             // The lowest instruction stays the anchor when nothing is known to reach it, as with
