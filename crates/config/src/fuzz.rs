@@ -41,11 +41,11 @@ pub struct FuzzConfig {
     /// Seed for the fuzzer's random number generator, which makes fuzz and invariant campaigns
     /// reproducible.
     ///
-    /// Accepts an integer, or a decimal or hexadecimal string such as `"0x1234"`. Each worker
-    /// derives its own random stream from the seed; worker `0` uses it unchanged. In fuzz tests
-    /// the seed also drives cheatcode randomness, such as `vm.randomUint`. Invariant tests read
-    /// this value too: there is no `invariant.seed`. When unset, every campaign uses a fresh
-    /// random seed.
+    /// Write it as a decimal or hexadecimal string, such as `"0x1234"`; TOML integers are
+    /// rejected. Each worker derives its own random stream from the seed; worker `0` uses it
+    /// unchanged. In fuzz tests the seed also drives cheatcode randomness, such as
+    /// `vm.randomUint`. Invariant tests read this value too: there is no `invariant.seed`. When
+    /// unset, every campaign uses a fresh random seed.
     pub seed: Option<U256>,
     /// Fuzz dictionary settings, flattened into this section.
     #[serde(flatten)]

@@ -33,11 +33,7 @@ const SPECIAL_ENV: &[(&str, &[&str])] = &[
 ];
 
 /// Environment variables read by providers other than the prefixed ones, and the keys they set.
-const OTHER_ENV: &[(&str, &str)] = &[
-    ("ETHERSCAN_API_KEY", "etherscan_api_key"),
-    ("FOUNDRY_SOLC_VERSION", "solc"),
-    ("DAPP_SOLC_VERSION", "solc"),
-];
+const OTHER_ENV: &[(&str, &str)] = &[("ETHERSCAN_API_KEY", "etherscan_api_key")];
 
 /// Legacy names that the providers rewrite to a key, rather than serde aliases.
 const OTHER_ALIASES: &[(&str, &str)] = &[("solc_version", "solc")];
@@ -95,7 +91,7 @@ const EXTERNAL_TYPES: &[(&str, &str)] = &[
     ("SoldeerDependencyConfig", "table"),
     ("SolidityErrorCode", "string or integer"),
     ("String", "string"),
-    ("U256", "integer or string"),
+    ("U256", "string (decimal or hex integer)"),
     ("Url", "string (URL)"),
     ("Version", "string (version)"),
     ("VyperOptimizationLevel", "string"),
@@ -437,7 +433,6 @@ impl Generator {
                 features.insert(value.clone(), feature);
             }
             values.push(value);
-            values.extend(attrs.aliases);
         }
         (values, features)
     }
@@ -529,18 +524,10 @@ impl Generator {
                     default = Some("{}".to_string());
                 }
             }
-            let mut env = env_vars(&path, section.is_some(), children.is_some());
-            // The environment providers lowercase keys, so only lowercase aliases are reachable.
-            for alias in attrs.aliases.iter().filter(|alias| alias.to_lowercase() == **alias) {
-                let mut alias_path = prefix.to_vec();
-                alias_path.push(alias.clone());
-                for var in env_vars(&alias_path, section.is_some(), children.is_some()) {
-                    if !env.contains(&var) {
-                        env.push(var);
-                    }
-                }
-            }
-            let mut aliases = attrs.aliases;
+            let env = env_vars(&path, section.is_some(), children.is_some());
+            // The defaults layer always sets a serialized key, so an alias of one fails to load
+            // as a duplicate field.
+            let mut aliases = if default.is_some() { Vec::new() } else { attrs.aliases };
             aliases.extend(
                 OTHER_ALIASES
                     .iter()

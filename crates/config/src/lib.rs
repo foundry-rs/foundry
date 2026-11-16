@@ -566,8 +566,9 @@ pub struct Config {
     /// path of a `solar` binary instead.
     ///
     /// The legacy key `solc_version` is still accepted and is used only when `solc` is not set.
-    /// The `FOUNDRY_SOLC_VERSION` environment variable overrides both, and `--use` overrides it
-    /// for one invocation (accepting the same values, plus a `solc:` prefix).
+    /// For profiles that `foundry.toml` defines, the `FOUNDRY_SOLC_VERSION` (or
+    /// `DAPP_SOLC_VERSION`) environment variable overrides both. `--use` overrides it for one
+    /// invocation (accepting the same values, plus a `solc:` prefix).
     #[doc(hidden)]
     pub solc: Option<SolcReq>,
     // Only `Config::is_auto_detect` reads this; `Config::solc_compiler` auto-detects whenever
@@ -1115,8 +1116,9 @@ pub struct Config {
     ///
     /// Forge sets it on the test contract before deployment, so it is available in the
     /// constructor, and then resets the test `sender` and Forge's internal caller and library
-    /// deployer accounts to it. Accepts an integer or a string; write values above 64 bits as a
-    /// string, such as `"0xffffffffffffffffffffffff"`. The `--initial-balance` flag overrides it.
+    /// deployer accounts to it. Write it as a decimal or hexadecimal string, such as
+    /// `"0xffffffffffffffffffffffff"`; TOML integers are rejected. The `--initial-balance` flag
+    /// overrides it.
     pub initial_balance: U256,
     /// The `block.number` value during local EVM execution.
     ///
@@ -1161,8 +1163,8 @@ pub struct Config {
     /// `chainid` value during EVM execution: when unset, local execution uses 31337 and forks use
     /// the chain ID reported by the RPC, and when set it overrides the fork's chain ID. Commands
     /// also use it to choose the block explorer settings and API key from `[etherscan]`, and
-    /// `cast` commands use it as the transaction chain. The key can also be written as `chain`.
-    /// The `--chain` (`--chain-id`) flag overrides it.
+    /// `cast` commands use it as the transaction chain. The `--chain` (`--chain-id`) flag
+    /// overrides it.
     ///
     /// ```toml
     /// [profile.default]

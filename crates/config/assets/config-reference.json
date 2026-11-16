@@ -343,11 +343,9 @@
       "env": [
         "FOUNDRY_SOLC",
         "DAPP_SOLC",
-        "DAPP_TEST_SOLC",
-        "FOUNDRY_SOLC_VERSION",
-        "DAPP_SOLC_VERSION"
+        "DAPP_TEST_SOLC"
       ],
-      "description": "The Solidity compiler to use for the whole project, instead of detecting versions per file.\n\nThe value can be:\n\n- an exact version, such as `\"0.8.28\"`, which is installed if it's missing (unless\n  `offline` is set, in which case the build fails);\n- `\"solar:<version>\"`, which pins an exact [Solar](https://github.com/paradigmxyz/solar)\n  release, 0.2.0 or later without pre-release or build metadata;\n- a path to a local compiler binary, or the name of an executable on `PATH`.\n\n```toml\n[profile.default]\nsolc = \"0.8.28\"\n# solc = \"solar:0.3.0\"\n# solc = \"custom-solc\"\n```\n\nVersion requirements such as `\"^0.8.0\"` are not supported. When set, version auto-detection\nis off and `auto_detect_solc` is ignored.\n\nA Solar release is used from `~/.foundry/solar/<version>`. If it's missing, Forge downloads\nit from the Solar GitHub release, checks it against the release's SHA-256 checksum file and\nthe version it reports, and installs it there. Releases are published for macOS, x86_64\nLinux, aarch64 Linux with glibc, and x86_64 Windows; on other platforms, set `solc` to the\npath of a `solar` binary instead.\n\nThe legacy key `solc_version` is still accepted and is used only when `solc` is not set.\nThe `FOUNDRY_SOLC_VERSION` environment variable overrides both, and `--use` overrides it\nfor one invocation (accepting the same values, plus a `solc:` prefix)."
+      "description": "The Solidity compiler to use for the whole project, instead of detecting versions per file.\n\nThe value can be:\n\n- an exact version, such as `\"0.8.28\"`, which is installed if it's missing (unless\n  `offline` is set, in which case the build fails);\n- `\"solar:<version>\"`, which pins an exact [Solar](https://github.com/paradigmxyz/solar)\n  release, 0.2.0 or later without pre-release or build metadata;\n- a path to a local compiler binary, or the name of an executable on `PATH`.\n\n```toml\n[profile.default]\nsolc = \"0.8.28\"\n# solc = \"solar:0.3.0\"\n# solc = \"custom-solc\"\n```\n\nVersion requirements such as `\"^0.8.0\"` are not supported. When set, version auto-detection\nis off and `auto_detect_solc` is ignored.\n\nA Solar release is used from `~/.foundry/solar/<version>`. If it's missing, Forge downloads\nit from the Solar GitHub release, checks it against the release's SHA-256 checksum file and\nthe version it reports, and installs it there. Releases are published for macOS, x86_64\nLinux, aarch64 Linux with glibc, and x86_64 Windows; on other platforms, set `solc` to the\npath of a `solar` binary instead.\n\nThe legacy key `solc_version` is still accepted and is used only when `solc` is not set.\nFor profiles that `foundry.toml` defines, the `FOUNDRY_SOLC_VERSION` (or\n`DAPP_SOLC_VERSION`) environment variable overrides both. `--use` overrides it for one\ninvocation (accepting the same values, plus a `solc:` prefix)."
     },
     {
       "key": "auto_detect_solc",
@@ -834,13 +832,13 @@
     {
       "key": "fuzz.seed",
       "section": "fuzz",
-      "type": "integer or string",
+      "type": "string (decimal or hex integer)",
       "table": false,
       "default": null,
       "env": [
         "FOUNDRY_FUZZ_SEED"
       ],
-      "description": "Seed for the fuzzer's random number generator, which makes fuzz and invariant campaigns\nreproducible.\n\nAccepts an integer, or a decimal or hexadecimal string such as `\"0x1234\"`. Each worker\nderives its own random stream from the seed; worker `0` uses it unchanged. In fuzz tests\nthe seed also drives cheatcode randomness, such as `vm.randomUint`. Invariant tests read\nthis value too: there is no `invariant.seed`. When unset, every campaign uses a fresh\nrandom seed."
+      "description": "Seed for the fuzzer's random number generator, which makes fuzz and invariant campaigns\nreproducible.\n\nWrite it as a decimal or hexadecimal string, such as `\"0x1234\"`; TOML integers are\nrejected. Each worker derives its own random stream from the seed; worker `0` uses it\nunchanged. In fuzz tests the seed also drives cheatcode randomness, such as\n`vm.randomUint`. Invariant tests read this value too: there is no `invariant.seed`. When\nunset, every campaign uses a fresh random seed."
     },
     {
       "key": "fuzz.dictionary_weight",
@@ -1244,8 +1242,7 @@
       "default": "\"fixed\"",
       "values": [
         "fixed",
-        "random",
-        "uniform"
+        "random"
       ],
       "env": [
         "FOUNDRY_INVARIANT_DEPTH_MODE"
@@ -2474,7 +2471,7 @@
     {
       "key": "initial_balance",
       "section": null,
-      "type": "integer or string",
+      "type": "string (decimal or hex integer)",
       "table": false,
       "default": "\"0xffffffffffffffffffffffff\"",
       "env": [
@@ -2482,7 +2479,7 @@
         "DAPP_INITIAL_BALANCE",
         "DAPP_TEST_INITIAL_BALANCE"
       ],
-      "description": "The balance, in wei, given to each test contract and to the accounts that deploy and call\nit.\n\nForge sets it on the test contract before deployment, so it is available in the\nconstructor, and then resets the test `sender` and Forge's internal caller and library\ndeployer accounts to it. Accepts an integer or a string; write values above 64 bits as a\nstring, such as `\"0xffffffffffffffffffffffff\"`. The `--initial-balance` flag overrides it."
+      "description": "The balance, in wei, given to each test contract and to the accounts that deploy and call\nit.\n\nForge sets it on the test contract before deployment, so it is available in the\nconstructor, and then resets the test `sender` and Forge's internal caller and library\ndeployer accounts to it. Write it as a decimal or hexadecimal string, such as\n`\"0xffffffffffffffffffffffff\"`; TOML integers are rejected. The `--initial-balance` flag\noverrides it."
     },
     {
       "key": "block_number",
@@ -2538,12 +2535,9 @@
       "env": [
         "FOUNDRY_CHAIN_ID",
         "DAPP_CHAIN_ID",
-        "DAPP_TEST_CHAIN_ID",
-        "FOUNDRY_CHAIN",
-        "DAPP_CHAIN",
-        "DAPP_TEST_CHAIN"
+        "DAPP_TEST_CHAIN_ID"
       ],
-      "description": "The chain Foundry targets, as a chain name or EIP-155 chain ID.\n\nAccepts a name such as `\"mainnet\"` or `\"sepolia\"`, or a number such as `1`. It sets the\n`chainid` value during EVM execution: when unset, local execution uses 31337 and forks use\nthe chain ID reported by the RPC, and when set it overrides the fork's chain ID. Commands\nalso use it to choose the block explorer settings and API key from `[etherscan]`, and\n`cast` commands use it as the transaction chain. The key can also be written as `chain`.\nThe `--chain` (`--chain-id`) flag overrides it.\n\n```toml\n[profile.default]\nchain_id = \"sepolia\"\n```"
+      "description": "The chain Foundry targets, as a chain name or EIP-155 chain ID.\n\nAccepts a name such as `\"mainnet\"` or `\"sepolia\"`, or a number such as `1`. It sets the\n`chainid` value during EVM execution: when unset, local execution uses 31337 and forks use\nthe chain ID reported by the RPC, and when set it overrides the fork's chain ID. Commands\nalso use it to choose the block explorer settings and API key from `[etherscan]`, and\n`cast` commands use it as the transaction chain. The `--chain` (`--chain-id`) flag\noverrides it.\n\n```toml\n[profile.default]\nchain_id = \"sepolia\"\n```"
     },
     {
       "key": "gas_limit",
@@ -3035,7 +3029,6 @@
       "default": "\"attributes_first\"",
       "values": [
         "params_always",
-        "params_first",
         "params_first_multi",
         "attributes_first",
         "all",
