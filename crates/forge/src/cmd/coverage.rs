@@ -610,47 +610,16 @@ impl CoverageArgs {
         if reporters.iter().any(|reporter| reporter.needs_source_maps()) {
             eyre::bail!("`--instrumented` does not support the bytecode report");
         }
+        // The coverage map is per-source compiler output that the compiler caches in the build
+        // info, which a warm hit reloads along with the source list, so both are read from the same
+        // place and survive caching without recompiling.
+        let mut sources = BTreeMap::<&Path, String>::new();
+        let mut items_by_build = BTreeMap::<&str, (Vec<_>, Vec<_>)>::new();
         let mut report = CoverageReport::default();
         for (build_id, build) in output.builds() {
             for (source_id, path) in &build.source_id_to_path {
-                let path = path.strip_prefix(&project_paths.root).unwrap_or(path);
-                report.add_source(build_id.clone(), *source_id as usize, path.to_path_buf());
-            }
-        }
-
-        // The artifact cache does not carry the compiler's coverage map, so a warm hit returns the
-        // cached artifacts and build contexts but no map. Persist every map beside the cached
-        // artifacts and reload it on a warm hit. The sidecar lives in the cache directory, which
-        // the build wipes whenever the cache is invalidated, so it never serves a stale map.
-        let sidecar = project_paths
-            .cache
-            .parent()
-            .filter(|dir| dir.join(Config::COVERAGE_CACHE_MARKER).is_file())
-            .map(|dir| dir.join("coverage-maps.json"));
-        let mut maps: BTreeMap<PathBuf, foundry_compilers::artifacts::SourceCoverage> = sidecar
-            .as_ref()
-            .and_then(|path| fs::read(path).ok())
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default();
-        // A fresh compile carries the maps in its output; merge them over the persisted ones.
-        for (path, files) in &output.output().sources.0 {
-            if let Some(fresh) = files.iter().find_map(|file| file.source_file.coverage.clone()) {
-                maps.insert(path.clone(), fresh);
-            }
-        }
-        if let Some(path) = &sidecar
-            && let Ok(bytes) = serde_json::to_vec(&maps)
-        {
-            let _ = fs::write(path, bytes);
-        }
-
-        // Build the items from each build's source list, which a warm hit still populates even when
-        // the compiler output's sources are empty.
-        let mut sources = BTreeMap::<&Path, String>::new();
-        let mut items_by_build = BTreeMap::<&str, (Vec<_>, Vec<_>)>::new();
-        for (build_id, build) in output.builds() {
-            for (source_id, path) in &build.source_id_to_path {
                 let rel = path.strip_prefix(&project_paths.root).unwrap_or(path);
+                report.add_source(build_id.clone(), *source_id as usize, rel.to_path_buf());
                 if rel
                     .extension()
                     .and_then(|s| s.to_str())
@@ -663,7 +632,7 @@ impl CoverageArgs {
                 {
                     continue;
                 }
-                let Some(coverage) = maps.get(rel) else {
+                let Some(coverage) = build.coverage.get(source_id) else {
                     eyre::bail!(
                         "the compiler returned no coverage map for {}; \
                          `--instrumented` requires a Solar version with `-Zinstrument-coverage`",
