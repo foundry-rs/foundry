@@ -14,11 +14,7 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{Git, LoadConfig},
 };
-use foundry_common::{
-    compile::{ProjectCompiler, write_etherscan_sources},
-    fs,
-    fs::canonicalize_path,
-};
+use foundry_common::{compile::ProjectCompiler, fs, fs::canonicalize_path};
 use foundry_compilers::{
     ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{
@@ -542,7 +538,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     // first we dump the sources to a temporary directory
     let tmp_dump_dir = root.join("raw_sources");
     let contract_dir = tmp_dump_dir.join(&meta.contract_name);
-    write_etherscan_sources(std::slice::from_ref(meta), &tmp_dump_dir)?;
+    meta.source_tree()?.write_to(&tmp_dump_dir)?;
 
     // check whether we need to re-organize directories in the original sources, since we do not
     // want to put all the sources in the `src` directory if the original directory structure is

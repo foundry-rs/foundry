@@ -38,7 +38,6 @@ use foundry_common::{
         abi_decode_calldata, abi_decode_event_data, encode_function_args,
         encode_function_args_packed, encode_function_args_raw, get_error, get_event, get_func,
     },
-    compile::write_etherscan_sources,
     fmt::{UIfmt, UIfmtSignatureExt, format_uint_exp, get_pretty_block_attr, get_pretty_tx_attr},
     fs,
     provider::{ProviderBuilder, RetryProvider},
@@ -1370,7 +1369,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let metadata = client.contract_source_code(address.parse()?).await?;
             match (directory, flatten) {
                 (Some(dir), false) => {
-                    write_etherscan_sources(&metadata.items, &dir)?;
+                    metadata.source_tree()?.write_to(&dir)?;
                 }
                 (None, false) => sh_println!("{}", metadata.source_code())?,
                 (dir, true) => {

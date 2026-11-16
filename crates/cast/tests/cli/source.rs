@@ -398,7 +398,7 @@ async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
     fs::write(&external_source, external_contents).unwrap();
     let source = "[profile.default]\nffi = true\n";
 
-    // Full name boundaries are covered in common; exercise each CLI validation entry point.
+    // Full name boundaries are covered in core; exercise each CLI validation entry point.
     for (contract_name, flatten) in [("", false), (external.to_str().unwrap(), true)] {
         let response = json!({
             "status": "1", "message": "OK", "result": [{
