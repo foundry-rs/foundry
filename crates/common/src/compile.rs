@@ -1006,12 +1006,8 @@ pub fn write_etherscan_sources(metadata: &[Metadata], target_path: &Path) -> Res
         source_tree.entries.extend(entries);
     }
 
-    for path in source_tree_write_paths(&source_tree) {
-        ensure_no_symlink_components(target_path, &path)?;
-    }
-
-    source_tree.write_to(target_path)?;
-    Ok(())
+    source_tree
+        .write_to_checked(target_path, |path| ensure_no_symlink_components(target_path, path))
 }
 
 /// Ensures that an explorer-supplied contract name is a single, non-hidden directory component.
@@ -1067,16 +1063,18 @@ fn is_safe_windows_path_component(component: &str) -> bool {
         return false;
     }
 
-    let device_name =
-        component.split('.').next().unwrap_or_default().trim_end_matches(' ').to_ascii_uppercase();
-    !matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+    let device_name = component.split('.').next().unwrap_or_default().trim_end_matches(' ');
+    !["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"]
+        .iter()
+        .any(|name| device_name.eq_ignore_ascii_case(name))
         && !["COM", "LPT"].iter().any(|prefix| {
-            device_name.strip_prefix(prefix).is_some_and(|suffix| {
-                matches!(
-                    suffix,
-                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-                )
-            })
+            device_name.get(..3).is_some_and(|name| name.eq_ignore_ascii_case(prefix))
+                && device_name.get(3..).is_some_and(|suffix| {
+                    matches!(
+                        suffix,
+                        "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                    )
+                })
         })
 }
 
@@ -1092,20 +1090,6 @@ fn source_path_is_scoped(source_path: &Path, contract_name: &str) -> bool {
             component,
             Component::Normal(name) if name.to_str().is_some_and(is_safe_output_path_component)
         )
-    })
-}
-
-/// Mirrors `SourceTree::write_to`'s extension fallback for symlink preflight.
-fn source_tree_write_paths(source_tree: &SourceTree) -> impl Iterator<Item = PathBuf> + '_ {
-    source_tree.entries.iter().map(|entry| {
-        let mut path = entry.path.clone();
-        if path.extension().is_none() {
-            let with_extension = path.with_extension("sol");
-            if !source_tree.entries.iter().any(|other| other.path == with_extension) {
-                path = with_extension;
-            }
-        }
-        path
     })
 }
 
@@ -1586,7 +1570,17 @@ mod tests {
 
     #[test]
     fn safe_windows_path_component() {
-        for component in ["Example", "My Contract.sol", "Ünïcode"] {
+        for component in [
+            "Example",
+            "My Contract.sol",
+            "Ünïcode",
+            "中.sol",
+            "😀.sol",
+            "COM0",
+            "COM10",
+            "COM⁴",
+            "LPT١",
+        ] {
             assert!(is_safe_windows_path_component(component), "{component:?}");
         }
         for component in [
@@ -1600,6 +1594,10 @@ mod tests {
             "LPT1 .sol",
             "COM1",
             "LPT³.txt",
+            "cOm¹ .sol",
+            "lPt².txt",
+            "conin$.sol",
+            "CoNoUt$ .txt",
             "git~1",
             "GIT~1",
         ] {
