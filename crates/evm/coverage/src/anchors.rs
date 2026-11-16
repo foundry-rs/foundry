@@ -318,7 +318,8 @@ impl<'a> AnchorIndex<'a> {
 
     /// Returns whether an instruction of the block at `pc` is mapped inside `loc`. The block runs
     /// to the first jump or halt, so it covers the entry code of an arm, which can start with
-    /// instructions mapped to the enclosing expression, but not the code after the join point.
+    /// instructions mapped to the enclosing expression. An arm that falls into the join point
+    /// also scans the code after it, which is mapped outside both arms.
     fn block_maps_inside(&self, pc: u32, loc: &SourceLocation) -> bool {
         let Ok(start) = self.pcs.binary_search(&pc) else { return false };
         for (ic, &next) in self.pcs.iter().enumerate().skip(start) {
