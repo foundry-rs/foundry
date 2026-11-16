@@ -29,13 +29,9 @@ contract ForStatement {
 
         for (type(uint256).min;;) {}
 
-        for (;;) {
-            "test";
-        }
+        for (;;) "test";
 
-        for (uint256 i4; i4 < 10; i4++) {
-            i4++;
-        }
+        for (uint256 i4; i4 < 10; i4++) i4++;
 
         for (uint256 i5;;) {
             for (uint256 i6 = 10; i6 > i5; i6--) {
@@ -43,18 +39,14 @@ contract ForStatement {
             }
         }
 
-        for (;;) {
-            doIt();
-        }
+        for (;;) doIt();
         for (;;) {
             doIt();
             doIt();
         }
 
         while (c) {
-            for (;;) {
-                x();
-            }
+            for (;;) x();
         }
     }
 
@@ -68,9 +60,7 @@ contract ForStatement {
 
     function bracelessTrailingComment() external {
         uint256 x;
-        for (uint256 i = 0; i < 10; ++i) {
-            x++; // step
-        }
+        for (uint256 i = 0; i < 10; ++i) x++; // step
     }
 
     function emptyBodyTrailingComment() external {

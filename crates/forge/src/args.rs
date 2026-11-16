@@ -137,6 +137,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Tree(cmd) => cmd.run(),
         ForgeSubcommand::Geiger(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Exploit(cmd) => global.block_on(cmd.run()),
+        ForgeSubcommand::Equivalence(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Doc(cmd) => {
             if cmd.is_watch() {
                 block_on_watch(global, watch::watch_doc(cmd))

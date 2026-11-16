@@ -66,6 +66,10 @@ contract Reverter {
     }
 }
 
+contract Payee {
+    function pay() external payable {}
+}
+
 contract ReverterTest is Test {
     Reverter reverter;
 
@@ -120,6 +124,13 @@ contract ReverterTest is Test {
         );
         vm.warp(block.timestamp + 1000);
         reverter.revertIf2(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` rejects a call that fails for lack of funds, like a revert
+    function testAssumeNoRevertOutOfFunds(bool short) public {
+        Payee payee = new Payee();
+        vm.assumeNoRevert();
+        payee.pay{value: short ? address(this).balance + 1 : 0}();
     }
 
     /// @dev Test that `assumeNoRevert` correctly rejects two different error selectors

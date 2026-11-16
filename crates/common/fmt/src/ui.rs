@@ -1,10 +1,11 @@
 //! Helper trait and functions to format Ethereum types.
 
 use alloy_consensus::{
-    BlockHeader, Eip658Value, Signed, Transaction as TxTrait, TxEip1559, TxEip2930,
+    BlockHeader, Eip658Value, Signed, Transaction as TxTrait, TxEip1559, TxEip2930, TxEip4844,
     TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, TxReceipt, Typed2718,
     transaction::TxHashRef,
 };
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{
     AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope,
     BlockResponse, Network, ReceiptResponse, primitives::HeaderResponse,
@@ -16,7 +17,6 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use revm::context_interface::transaction::SignedAuthorization;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
 use tempo_alloy::{
@@ -447,7 +447,6 @@ input                {}",
 
 impl UIfmt for TxEip4844Variant {
     fn pretty(&self) -> String {
-        use alloy_consensus::TxEip4844;
         let tx: &TxEip4844 = match self {
             Self::TxEip4844(tx) => tx,
             Self::TxEip4844WithSidecar(tx) => tx.tx(),

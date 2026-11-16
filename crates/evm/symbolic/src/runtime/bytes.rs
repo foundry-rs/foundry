@@ -26,6 +26,14 @@ impl SymBytes {
         cx.mk_bytes_kind(kind)
     }
 
+    /// Returns the bytes a sized buffer was cut from, whose bytes past the size are not zeroed.
+    pub(crate) fn without_size(&self) -> Self {
+        match self.kind() {
+            SymBytesKind::Sized { bytes, .. } => bytes.without_size(),
+            _ => self.clone(),
+        }
+    }
+
     fn kind(&self) -> &SymBytesKind {
         self.kind.value()
     }

@@ -1,6 +1,7 @@
 //! ERC-7201 storage inspection through the CLI.
 
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
 
 #[forgetest]
 fn erc7201_storage_layout(prj: _, cmd: _) {
@@ -150,4 +151,87 @@ contract CounterTest {
     // Only `Other.t.sol` is recompiled.
     prj.add_test("Other.t.sol", "contract OtherTest { function testOther() public pure {} }");
     cmd.forge_fuse().arg("test").assert_success();
+}
+
+#[forgetest]
+fn erc7201_state_diff_with_compiler_profiles(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.extra_output = vec![ContractOutputSelection::StorageLayout];
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "via-ir".into(),
+            via_ir: Some(true),
+            evm_version: None,
+            optimizer: Some(true),
+            optimizer_runs: Some(200),
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "test/Profiled.t.sol".parse().unwrap(),
+            version: None,
+            via_ir: Some(true),
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+interface Vm {
+    function startStateDiffRecording() external;
+    function getStateDiffJson() external returns (string memory);
+    function contains(string calldata subject, string calldata search) external returns (bool);
+}
+
+contract Counter {
+    uint256 public ordinary;
+    /// @custom:storage-location erc7201:example.counter
+    struct CounterStorage { uint256 count; }
+
+    function increment() external {
+        CounterStorage storage $;
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("example.counter")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+        $.count += 1;
+        ordinary += 1;
+    }
+}
+
+abstract contract NamespaceCheck {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testNamespaceLabel() public {
+        Counter counter = new Counter();
+        vm.startStateDiffRecording();
+        counter.increment();
+        string memory json = vm.getStateDiffJson();
+        require(vm.contains(json, '"label":"example.counter.count"'), json);
+        require(vm.contains(json, '"label":"ordinary"'), json);
+        require(counter.ordinary() == 1);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Normal.t.sol",
+        r#"import "../src/Counter.sol"; contract NormalTest is NamespaceCheck {}"#,
+    );
+    prj.add_test(
+        "Profiled.t.sol",
+        r#"import "../src/Counter.sol"; contract ProfiledTest is NamespaceCheck {}"#,
+    );
+    // Both the fresh and cached runs must decode the default and suffixed artifacts.
+    for _ in 0..2 {
+        cmd.forge_fuse().args(["test", "--no-dynamic-test-linking"]).assert_success().stdout_eq(
+            str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]],
+        );
+    }
 }

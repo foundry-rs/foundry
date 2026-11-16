@@ -15,7 +15,7 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm::hardfork::FoundryHardfork;
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -224,7 +224,10 @@ pub struct NodeArgs {
     #[arg(long)]
     pub prune_history: Option<Option<usize>>,
 
-    /// Max number of states to persist on disk.
+    /// Max number of older states to keep, beyond the most recent ones.
+    ///
+    /// Block states of local and forked chains share unchanged data and stay in memory; states
+    /// loaded from a dump are persisted on disk.
     ///
     /// Note that `prune_history` will overwrite `max_persisted_states` to 0.
     #[arg(long, conflicts_with = "prune_history")]
@@ -1003,15 +1006,15 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::hardfork::EthereumHardfork;
+    use foundry_evm_hardforks::EthereumHardfork;
     use std::{env, net::Ipv4Addr};
     use tempo_hardfork::TempoHardfork;
 
     #[cfg(feature = "base")]
-    use foundry_evm::hardforks::BaseUpgrade;
+    use foundry_evm_hardforks::BaseUpgrade;
 
     #[cfg(feature = "optimism")]
-    use foundry_evm::hardfork::OpHardfork;
+    use foundry_evm_hardforks::OpHardfork;
 
     #[tokio::test]
     async fn final_dump_cancels_suspended_periodic_dump() {
@@ -1484,7 +1487,7 @@ mod tests {
         let args: NodeArgs =
             NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
         let config = args.into_node_config().unwrap();
-        assert_eq!(config.hardfork, Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
+        assert_eq!(config.hardfork, Some(foundry_evm_hardforks::MonadHardfork::MonadNine.into()));
         assert!(config.networks.is_monad());
     }
 
@@ -1494,7 +1497,7 @@ mod tests {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, None);
-        assert_eq!(config.get_hardfork(), foundry_evm::hardfork::MonadHardfork::default().into());
+        assert_eq!(config.get_hardfork(), foundry_evm_hardforks::MonadHardfork::default().into());
         assert!(config.networks.is_monad());
     }
 

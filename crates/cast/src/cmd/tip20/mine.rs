@@ -9,11 +9,11 @@ use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::utils::get_chain;
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
-use foundry_evm::hardfork::TempoHardfork;
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use std::time::{Duration, Instant};
 use tempo_alloy::{
     TempoNetwork,
+    chainspec::hardfork::TempoHardfork,
     contracts::precompiles::{ADDRESS_REGISTRY_ADDRESS, IAddressRegistry},
 };
 use tempo_primitives::{MasterId, TempoAddressExt, UserTag};
@@ -204,8 +204,7 @@ pub(crate) async fn register_virtual_master(
         Some(_) => {}
         None if quiet => {
             if !send_tx.cast_async {
-                let hash = format!("{tx_hash:#x}");
-                cast.receipt(hash, None, send_tx.confirmations, Some(timeout), false).await?;
+                cast.sent_tx_receipt(tx_hash, send_tx.confirmations, timeout).await?;
             }
         }
         None => {

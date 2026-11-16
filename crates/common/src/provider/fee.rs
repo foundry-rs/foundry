@@ -196,6 +196,8 @@ fn estimate_priority_fee(rewards: &[Vec<u128>], gas_used_ratio: &[f64]) -> u128 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use alloy_rpc_types::FeeHistory;
 
     /// A gas used ratio above [`MIN_GAS_USED_RATIO`].
     const BUSY: f64 = 0.5;
@@ -261,9 +263,6 @@ mod tests {
     /// Drives the public async estimator so `gas_used_ratio` wiring is covered.
     #[tokio::test]
     async fn estimate_filters_near_empty_block_outliers() {
-        use alloy_provider::{ProviderBuilder, mock::Asserter};
-        use alloy_rpc_types::FeeHistory;
-
         let base = 20_000_000_000u128; // 20 gwei
         let big = 41_000_000_000_000u128; // outlier tip in near-empty blocks
         let fee_history = FeeHistory {

@@ -462,6 +462,19 @@ fn to_int256(cmd: _) {
 }
 
 #[casttest]
+fn to_int256_rejects_values_above_max(cmd: _) {
+    for value in [
+        "57896044618658097711785492504343953926634992332820282019728792003956564819968",
+        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    ] {
+        cmd.cast_fuse().args(["to-int256", value]).assert_failure().stderr_eq(str![[r#"
+Error: value out of range for a signed 256-bit integer
+
+"#]]);
+    }
+}
+
+#[casttest]
 fn to_fixed_point(cmd: _) {
     cmd.cast_fuse().args(["to-fixed-point", "2", "10"]).assert_success().stdout_eq("0.10\n");
     cmd.cast_fuse().args(["to-fixed-point", "3", "-10"]).assert_success().stdout_eq("-0.010\n");

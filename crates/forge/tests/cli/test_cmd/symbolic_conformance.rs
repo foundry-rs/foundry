@@ -38,6 +38,7 @@ import "forge-std/Test.sol";
 
 contract SymbolicConformanceBlock is Test {
     function checkBlock(uint256 timestamp, uint256 number, uint256 chain) public {
+        vm.assume(chain <= type(uint64).max);
         vm.warp(timestamp);
         vm.roll(number);
         vm.chainId(chain);
@@ -190,7 +191,7 @@ contract SymbolicConformanceHalmosFeatureMatrix is Test {
 
     /// forge-config: default.symbolic.max_calldata_bytes = 36
     function checkMatrixCreateCalldataDispatch() public {
-        bytes memory data = MatrixSvm(SVM_ADDRESS).createCalldata("matrix-dispatch");
+        bytes memory data = MatrixSvm(SVM_ADDRESS).createCalldata("MatrixDispatcher");
         (bool ok,) = address(dispatcher).call(data);
         ok;
 
@@ -222,13 +223,13 @@ contract SymbolicConformanceHalmosFeatureMatrix is Test {
     .stdout_eq(str![[r#"
 ...
 Ran 6 tests for test/SymbolicConformanceHalmosFeatureMatrix.t.sol:SymbolicConformanceHalmosFeatureMatrix
-[PASS] checkMatrixCreateCalldataDispatch() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMatrixCreateCalldataDispatch() ([METRICS])
 [PASS] checkMatrixDynamicAbi(bytes,string,(bytes,string,uint256[])) ([METRICS])
 [PASS] checkMatrixEmptyUnknownTarget(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkMatrixErc20SupplyAccounting(uint256,address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMatrixErc721ClearsApproval(address,address) ([METRICS])
 [FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkMatrixRevertAll(uint256) ([METRICS])
-Suite result: FAILED. 3 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]].unordered());
 }
@@ -597,7 +598,7 @@ contract SymbolicConformanceHalmosElection is Test {
     .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/SymbolicConformanceHalmosElection.t.sol:SymbolicConformanceHalmosElection
-[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCannotVoteTwiceWithAlternateSignature(uint256,address) ([METRICS])
+[FAIL: assertion failed: 2 != 1; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCannotVoteTwiceWithAlternateSignature(uint256,address) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])

@@ -58,7 +58,9 @@ fn finalized_boundary_authenticates_rotation_and_preserves_announced_key() {
     assert_eq!(consensus.identity(), initial);
     assert_certificate(&initial, &boundary, &certificate);
 
-    let ceremony = OnchainDkgOutcome::decode(boundary.inner.extra_data.as_ref()).unwrap();
+    let ceremony =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
+            .unwrap();
     assert_eq!(ceremony.epoch, 1);
     assert_eq!(ceremony.network_identity().encode().as_ref(), initial.identity.as_ref());
     assert_eq!(ceremony.output.quorum::<N3f1>(), 1);
@@ -75,7 +77,9 @@ fn finalized_boundary_authenticates_rotation_and_preserves_announced_key() {
     }
     let (boundary, certificate) = finalize(&mut consensus, 5);
     assert_certificate(&initial, &boundary, &certificate);
-    let outcome = OnchainDkgOutcome::decode(boundary.inner.extra_data.as_ref()).unwrap();
+    let outcome =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
+            .unwrap();
     assert_eq!(outcome.epoch, 2);
     assert_eq!(outcome.network_identity().encode().as_ref(), first.identity.as_ref());
     assert_eq!(ceremony.next_players, *outcome.output.players());
@@ -89,7 +93,9 @@ fn finalized_boundary_authenticates_rotation_and_preserves_announced_key() {
     finalize(&mut consensus, 7);
     let (boundary, certificate) = finalize(&mut consensus, 8);
     assert_certificate(&first, &boundary, &certificate);
-    let next = OnchainDkgOutcome::decode(boundary.inner.extra_data.as_ref()).unwrap();
+    let next =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
+            .unwrap();
     assert_eq!(next.epoch, 3);
     assert_eq!(next.network_identity().encode().as_ref(), second.identity.as_ref());
     assert_eq!(outcome.next_players, *next.output.players());
@@ -111,7 +117,9 @@ fn single_block_epochs_announce_before_switching_identity() {
     assert_eq!((certificate.epoch, certificate.view), (1, 1));
     assert_eq!(boundary.consensus_context.unwrap().parent_view, 0);
     assert_certificate(&initial, &boundary, &certificate);
-    let ceremony = OnchainDkgOutcome::decode(boundary.inner.extra_data.as_ref()).unwrap();
+    let ceremony =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
+            .unwrap();
     assert_eq!(ceremony.epoch, 2);
     assert!(ceremony.is_next_full_dkg);
     assert_eq!(ceremony.network_identity().encode().as_ref(), initial.identity.as_ref());
@@ -121,7 +129,9 @@ fn single_block_epochs_announce_before_switching_identity() {
     let (boundary, certificate) = finalize(&mut consensus, 2);
     assert_eq!(consensus.identity(), initial);
     assert_certificate(&initial, &boundary, &certificate);
-    let outcome = OnchainDkgOutcome::decode(boundary.inner.extra_data.as_ref()).unwrap();
+    let outcome =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
+            .unwrap();
     assert_eq!(outcome.epoch, 3);
     assert!(outcome.is_next_full_dkg);
     assert_eq!(outcome.network_identity().encode().as_ref(), next.identity.as_ref());
@@ -129,7 +139,9 @@ fn single_block_epochs_announce_before_switching_identity() {
     let (boundary, certificate) = finalize(&mut consensus, 3);
     assert_eq!(consensus.identity(), next);
     assert_certificate(&next, &boundary, &certificate);
-    let announcement = OnchainDkgOutcome::decode(boundary.inner.extra_data.as_ref()).unwrap();
+    let announcement =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
+            .unwrap();
     assert_eq!(announcement.epoch, 4);
     assert!(!announcement.is_next_full_dkg);
     assert_eq!(announcement.network_identity().encode().as_ref(), later.identity.as_ref());
@@ -280,7 +292,9 @@ fn stale_or_invalid_boundary_data_does_not_advance_consensus() {
     );
 
     consensus.prepare_header(&mut header, TempoHardfork::T4).unwrap();
-    let outcome = OnchainDkgOutcome::decode(header.inner.extra_data.as_ref()).unwrap();
+    let outcome =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(header.inner.extra_data.as_ref()))
+            .unwrap();
     let mut wrong_epoch = outcome.clone();
     wrong_epoch.epoch += 1;
     let mut wrong_players = outcome.clone();
@@ -405,7 +419,9 @@ fn rejected_heights_and_overflows_leave_state_unchanged() {
     let (header, certificate) = finalize(&mut largest_view, u64::MAX - 1);
     assert_eq!((certificate.epoch, certificate.view), (0, u64::MAX - 1));
     assert_certificate(&identity, &header, &certificate);
-    let outcome = OnchainDkgOutcome::decode(header.inner.extra_data.as_ref()).unwrap();
+    let outcome =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(header.inner.extra_data.as_ref()))
+            .unwrap();
     assert_eq!(outcome.epoch, 1);
 }
 
@@ -423,12 +439,12 @@ fn assert_certificate(
     finalization: &TempoFinalization,
 ) -> (u64, u64, u64) {
     let bytes = finalization.certificate.as_ref();
-    let mut input = bytes;
+    let mut input = commonware_codec::Copying(bytes);
     let epoch = u64::from(UInt::<u64>::read(&mut input).unwrap());
     let view = u64::from(UInt::<u64>::read(&mut input).unwrap());
     let parent_view = u64::from(UInt::<u64>::read(&mut input).unwrap());
     assert_eq!((epoch, view), (finalization.epoch, finalization.view));
-    assert_eq!(B256::from_slice(&input[..32]), finalization.digest);
+    assert_eq!(B256::from_slice(&input.0[..32]), finalization.digest);
     assert_eq!(finalization.digest, keccak256(alloy_rlp::encode(header)));
     assert_ne!(finalization.digest, header.inner.hash_slow());
     if let Some(context) = header.consensus_context {
@@ -444,16 +460,16 @@ fn certificate_verifies(
     finalization: &TempoFinalization,
 ) -> bool {
     let bytes = finalization.certificate.as_ref();
-    let mut input = bytes;
+    let mut input = commonware_codec::Copying(bytes);
     UInt::<u64>::read(&mut input).unwrap();
     UInt::<u64>::read(&mut input).unwrap();
-    let round_len = bytes.len() - input.len();
+    let round_len = bytes.len() - input.0.len();
     UInt::<u64>::read(&mut input).unwrap();
-    assert_eq!(input.len(), 32 + 48 + 48);
+    assert_eq!(input.0.len(), 32 + 48 + 48);
     let proposal_len = bytes.len() - 96;
-    let vote = G1::decode(&input[32..80]).unwrap();
-    let seed = G1::decode(&input[80..]).unwrap();
-    let public = G2::decode(identity.identity.as_ref()).unwrap();
+    let vote = G1::decode(commonware_codec::Copying(&input.0[32..80])).unwrap();
+    let seed = G1::decode(commonware_codec::Copying(&input.0[80..])).unwrap();
+    let public = G2::decode(commonware_codec::Copying(identity.identity.as_ref())).unwrap();
     ops::verify_message::<MinSig>(&public, b"TEMPO_FINALIZE", &bytes[..proposal_len], &vote).is_ok()
         && ops::verify_message::<MinSig>(&public, b"TEMPO_SEED", &bytes[..round_len], &seed).is_ok()
 }
@@ -496,7 +512,10 @@ fn rounds_start_after_genesis_and_restart_after_boundaries() {
                 assert!(header.consensus_context.is_none());
             }
             if let Some(epoch) = next_epoch {
-                let outcome = OnchainDkgOutcome::decode(header.inner.extra_data.as_ref()).unwrap();
+                let outcome = OnchainDkgOutcome::decode(commonware_codec::Copying(
+                    header.inner.extra_data.as_ref(),
+                ))
+                .unwrap();
                 assert_eq!(outcome.epoch, epoch);
                 assert!(!outcome.is_next_full_dkg);
                 assert_eq!(outcome.next_players, *outcome.output.players());
@@ -837,7 +856,9 @@ fn last_representable_dkg_outcome_preserves_announced_committee() {
 
     let (header, certificate) = finalize(&mut consensus, u64::MAX - 2);
     assert_certificate(&initial, &header, &certificate);
-    let ceremony = OnchainDkgOutcome::decode(header.inner.extra_data.as_ref()).unwrap();
+    let ceremony =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(header.inner.extra_data.as_ref()))
+            .unwrap();
     assert_eq!(ceremony.epoch, u64::MAX - 1);
     assert!(ceremony.is_next_full_dkg);
     assert_eq!(consensus.rotate(), Err(TempoConsensusError::EpochOverflow));
@@ -846,7 +867,9 @@ fn last_representable_dkg_outcome_preserves_announced_committee() {
 
     let (header, certificate) = finalize(&mut consensus, u64::MAX - 1);
     assert_certificate(&initial, &header, &certificate);
-    let outcome = OnchainDkgOutcome::decode(header.inner.extra_data.as_ref()).unwrap();
+    let outcome =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(header.inner.extra_data.as_ref()))
+            .unwrap();
     assert_eq!(outcome.epoch, u64::MAX);
     assert!(!outcome.is_next_full_dkg);
     assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
