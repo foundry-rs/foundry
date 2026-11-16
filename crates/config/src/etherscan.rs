@@ -334,7 +334,7 @@ impl ResolvedEtherscanConfig {
     /// Returns the corresponding `foundry_block_explorers::Client`, configured with the `api_url`,
     /// `api_key` and cache.
     ///
-    /// Responses are cached for 24 hours under [`Self::explorer_cache_dir`].
+    /// Responses are cached for 24 hours using the cache directory for this chain or endpoint.
     pub fn into_client(
         self,
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
