@@ -10089,7 +10089,8 @@ impl Backend<FoundryNetwork> {
                         }
                         // Simulated transactions default to the node's chain id.
                         if defaults_chain_id
-                            && request.preferred_type() != alloy_consensus::TxType::Legacy
+                            && (!is_ethereum_request
+                                || request.preferred_type() != alloy_consensus::TxType::Legacy)
                         {
                             request.chain_id.get_or_insert(evm_env.cfg_env.chain_id);
                         }
