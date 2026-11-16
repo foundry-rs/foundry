@@ -414,6 +414,16 @@ impl SlotIdentifier {
     ///
     /// It can also identify whether a slot belongs to a mapping if provided with [`MappingSlots`].
     pub fn identify(&self, slot: &B256, mapping_slots: Option<&MappingSlots>) -> Option<SlotInfo> {
+        self.identify_at_depth(slot, mapping_slots, 0)
+    }
+
+    /// [`Self::identify`], `depth` dynamic arrays below the slot it was first called for.
+    fn identify_at_depth(
+        &self,
+        slot: &B256,
+        mapping_slots: Option<&MappingSlots>,
+        depth: usize,
+    ) -> Option<SlotInfo> {
         trace!(?slot, "identifying slot");
         let slot_u256 = Into::<U256>::into(*slot);
         let slot_str = slot_u256.to_string();
@@ -444,7 +454,7 @@ impl SlotIdentifier {
                 if let Some(parsed_type) = dyn_type
                     && let DynSolType::FixedArray(_, _) = parsed_type
                     && let Some(slot_info) = self.handle_array_slot(
-                        storage,
+                        &storage.label,
                         storage_type,
                         parsed_type,
                         slot_u256,
@@ -482,6 +492,18 @@ impl SlotIdentifier {
                         return Some(slot_info);
                     }
                 }
+            } else if storage_type.encoding == ENCODING_DYN_ARRAY
+                && let Ok(base_slot) = U256::from_str(&storage.slot)
+                && let Some(info) = self.handle_dynamic_array(
+                    &storage.label,
+                    storage_type,
+                    base_slot,
+                    slot_u256,
+                    &slot_str,
+                    0,
+                )
+            {
+                return Some(info);
             } else if storage_type.encoding == ENCODING_MAPPING
                 && let Some(mapping_slots) = mapping_slots
                 && let Ok(base_slot) = U256::from_str(&storage.slot)
@@ -498,7 +520,172 @@ impl SlotIdentifier {
             }
         }
 
-        None
+        mapping_slots.and_then(|mapping_slots| {
+            self.handle_hashed_array(slot_u256, &slot_str, mapping_slots, depth)
+        })
+    }
+
+    /// Identifies an element of a dynamic array whose own slot is computed, e.g. a mapping value
+    /// or an element of another array, from the recorded hash of that slot.
+    ///
+    /// The slot is attributed to the nearest recorded hash below it whose input identifies as a
+    /// dynamic array, so a hash of anything else (a string's slot, an ERC-7201 namespace id) is
+    /// never taken for an array's data.
+    fn handle_hashed_array(
+        &self,
+        slot: U256,
+        slot_str: &str,
+        mapping_slots: &MappingSlots,
+        depth: usize,
+    ) -> Option<SlotInfo> {
+        const MAX_DEPTH: usize = 10;
+        if depth >= MAX_DEPTH {
+            return None;
+        }
+        let mut candidates = mapping_slots
+            .seen_word_sha3
+            .iter()
+            .filter_map(|(data_start, array_slot)| {
+                let index_slot = slot.checked_sub(U256::from_be_bytes(data_start.0))?;
+                (index_slot < MAX_ARRAY_SLOTS).then_some((index_slot, *array_slot))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_unstable();
+        candidates.into_iter().find_map(|(_, array_slot)| {
+            let array = self.identify_at_depth(&array_slot, Some(mapping_slots), depth + 1)?;
+            let array_type = self.dynamic_array_type(&array.slot_type.label)?;
+            let mut info = self.handle_dynamic_array(
+                &array.label,
+                array_type,
+                U256::from_be_bytes(array_slot.0),
+                slot,
+                slot_str,
+                depth + 1,
+            )?;
+            info.keys = array.keys;
+            Some(info)
+        })
+    }
+
+    /// The dynamic array type labeled `label`, or held by the mapping labeled `label`: a value
+    /// reached through a mapping is labeled with the mapping's type.
+    fn dynamic_array_type(&self, label: &str) -> Option<&StorageType> {
+        self.storage_layout.types.values().filter(|t| t.label == label).find_map(|mut t| {
+            while t.encoding == ENCODING_MAPPING {
+                t = self.storage_layout.types.get(t.value.as_ref()?)?;
+            }
+            (t.encoding == ENCODING_DYN_ARRAY).then_some(t)
+        })
+    }
+
+    /// Handles identification of dynamic array elements.
+    ///
+    /// The elements of the array at `base_slot` start at `keccak256(base_slot)`, several to a slot
+    /// when they are value types that fit, otherwise each taking whole slots. The length is not
+    /// checked, so an element just cleared by `pop` is still identified.
+    ///
+    /// # Arguments
+    /// * `label` - The label of the array
+    /// * `array_type` - Type information for the array
+    /// * `base_slot` - The slot holding the array's length
+    /// * `slot` - The target slot being identified
+    /// * `slot_str` - String representation of the slot for output
+    /// * `depth` - Current recursion depth
+    fn handle_dynamic_array(
+        &self,
+        label: &str,
+        array_type: &StorageType,
+        base_slot: U256,
+        slot: U256,
+        slot_str: &str,
+        depth: usize,
+    ) -> Option<SlotInfo> {
+        const MAX_DEPTH: usize = 10;
+        if depth > MAX_DEPTH || array_type.encoding != ENCODING_DYN_ARRAY {
+            return None;
+        }
+        let data_start = U256::from_be_bytes(keccak256(B256::from(base_slot)).0);
+        let index_slot = slot.checked_sub(data_start).filter(|i| *i < MAX_ARRAY_SLOTS)?;
+        let index_slot = index_slot.to::<u128>();
+
+        let element_id = array_type.other.get("base")?.as_str()?;
+        let element_type = self.storage_layout.types.get(element_id)?;
+        let element_bytes = element_type.number_of_bytes.parse::<u128>().ok()?;
+        let element = self.parsed_type(element_id);
+
+        // Value types up to 16 bytes share slots; structs and arrays always start a new one.
+        if element_bytes <= 16
+            && let Some(element) = element
+            && !matches!(element, DynSolType::FixedArray(..))
+            && !is_struct(&element_type.label)
+        {
+            let per_slot = 32 / element_bytes;
+            let members = (0..per_slot)
+                .map(|i| SlotInfo {
+                    label: format!("{label}[{}]", index_slot * per_slot + i),
+                    slot_type: StorageTypeInfo {
+                        label: element_type.label.clone(),
+                        dyn_sol_type: element.clone(),
+                    },
+                    offset: (i * element_bytes) as i64,
+                    slot: slot_str.to_string(),
+                    members: None,
+                    decoded: None,
+                    keys: None,
+                })
+                .collect::<Vec<_>>();
+            let label = members.iter().map(|m| m.label.as_str()).collect::<Vec<_>>().join(", ");
+            let tuple = DynSolType::Tuple(vec![element.clone(); members.len()]);
+            return Some(SlotInfo {
+                label,
+                slot_type: StorageTypeInfo { label: tuple.to_string(), dyn_sol_type: tuple },
+                offset: 0,
+                slot: slot_str.to_string(),
+                members: Some(members),
+                decoded: None,
+                keys: None,
+            });
+        }
+
+        let element_slots = element_bytes.div_ceil(32).max(1);
+        let index = index_slot / element_slots;
+        let element_start = data_start + U256::from(index * element_slots);
+        let element_label = format!("{label}[{index}]");
+
+        if is_struct(&element_type.label) {
+            return self.handle_struct(
+                &element_label,
+                element_type,
+                slot,
+                element_start,
+                0,
+                slot_str,
+                depth + 1,
+            );
+        }
+        if let Some(element @ DynSolType::FixedArray(..)) = element {
+            return self.handle_array_slot(
+                &element_label,
+                element_type,
+                element,
+                slot,
+                element_start,
+                slot_str,
+            );
+        }
+        (slot == element_start).then(|| SlotInfo {
+            label: element_label,
+            slot_type: StorageTypeInfo {
+                label: element_type.label.clone(),
+                // An element without an ABI equivalent (e.g. an array of structs) is shown raw.
+                dyn_sol_type: element.cloned().unwrap_or(DynSolType::FixedBytes(32)),
+            },
+            offset: 0,
+            slot: slot_str.to_string(),
+            members: None,
+            decoded: None,
+            keys: None,
+        })
     }
 
     /// Identifies a bytes or string storage slot by checking all bytes/string variables
@@ -544,14 +731,14 @@ impl SlotIdentifier {
     /// Handles identification of array slots.
     ///
     /// # Arguments
-    /// * `storage` - The storage metadata from the layout
+    /// * `label` - The label of the array
     /// * `storage_type` - Type information for the storage slot
     /// * `slot` - The target slot being identified
     /// * `array_start_slot` - The starting slot of the array in storage i.e base_slot
     /// * `slot_str` - String representation of the slot for output
     fn handle_array_slot(
         &self,
-        storage: &Storage,
+        label: &str,
         storage_type: &StorageType,
         parsed_type: &DynSolType,
         slot: U256,
@@ -571,13 +758,13 @@ impl SlotIdentifier {
                         // 2D array: calculate row and column
                         let row = index / (*inner_size as u64);
                         let col = index % (*inner_size as u64);
-                        format!("{}[{row}][{col}]", storage.label)
+                        format!("{label}[{row}][{col}]")
                     } else {
                         // 1D array
-                        format!("{}[{index}]", storage.label)
+                        format!("{label}[{index}]")
                     }
                 }
-                _ => storage.label.clone(),
+                _ => label.to_string(),
             };
 
             return Some(SlotInfo {
@@ -736,6 +923,19 @@ impl SlotIdentifier {
                 if member_slot == target_slot || slot_info.is_some() {
                     return slot_info;
                 }
+            }
+
+            if member_type_info.encoding == ENCODING_DYN_ARRAY
+                && let Some(slot_info) = self.handle_dynamic_array(
+                    &member_label,
+                    member_type_info,
+                    member_slot,
+                    target_slot,
+                    slot_str,
+                    depth + 1,
+                )
+            {
+                return Some(slot_info);
             }
 
             if member_slot == target_slot {
@@ -1109,6 +1309,10 @@ impl SlotIdentifier {
         })
     }
 }
+
+/// How many slots past its data start an element of a dynamic array is searched for. Data starts
+/// are hashes, so any other slot this close to one would be a hash collision.
+const MAX_ARRAY_SLOTS: U256 = U256::from_limbs([0, 1, 0, 0]);
 
 /// How far into a mapping value a recorded entry is searched for: the slot offset of a struct
 /// field from the entry holding the struct.
@@ -1938,5 +2142,156 @@ mod tests {
             decoded(&info),
             [("x", "0".to_string(), "5".to_string()), ("y", "0".to_string(), "7".to_string())]
         );
+    }
+
+    fn dynamic_array_layout() -> SlotIdentifier {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "nums", "offset": 0, "slot": "0", "type": "t_array(t_uint256)dyn_storage" },
+                { "astId": 2, "contract": "C", "label": "packed", "offset": 0, "slot": "1", "type": "t_array(t_uint128)dyn_storage" },
+                { "astId": 3, "contract": "C", "label": "items", "offset": 0, "slot": "2", "type": "t_array(t_struct(Item))dyn_storage" },
+                { "astId": 4, "contract": "C", "label": "holder", "offset": 0, "slot": "3", "type": "t_struct(Holder)" },
+                { "astId": 5, "contract": "C", "label": "byOwner", "offset": 0, "slot": "5", "type": "t_mapping(t_address,t_array(t_uint256)dyn_storage)" },
+                { "astId": 6, "contract": "C", "label": "nested", "offset": 0, "slot": "6", "type": "t_array(t_array(t_uint256)dyn_storage)dyn_storage" },
+                { "astId": 7, "contract": "C", "label": "name", "offset": 0, "slot": "7", "type": "t_string_storage" },
+                { "astId": 12, "contract": "C", "label": "wrapped", "offset": 0, "slot": "8", "type": "t_struct(Wrapper)" }
+            ],
+            "types": {
+                "t_array(t_uint256)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "uint256[]", "numberOfBytes": "32", "base": "t_uint256"
+                },
+                "t_array(t_uint128)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "uint128[]", "numberOfBytes": "32", "base": "t_uint128"
+                },
+                "t_array(t_struct(Item))dyn_storage": {
+                    "encoding": "dynamic_array", "label": "struct C.Item[]", "numberOfBytes": "32", "base": "t_struct(Item)"
+                },
+                "t_struct(Item)": {
+                    "encoding": "inplace", "label": "struct C.Item", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 8, "contract": "C", "label": "a", "offset": 0, "slot": "0", "type": "t_uint256" },
+                        { "astId": 9, "contract": "C", "label": "b", "offset": 0, "slot": "1", "type": "t_address" }
+                    ]
+                },
+                "t_struct(Holder)": {
+                    "encoding": "inplace", "label": "struct C.Holder", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 10, "contract": "C", "label": "count", "offset": 0, "slot": "0", "type": "t_uint256" },
+                        { "astId": 11, "contract": "C", "label": "list", "offset": 0, "slot": "1", "type": "t_array(t_address)dyn_storage" }
+                    ]
+                },
+                "t_struct(Wrapper)": {
+                    "encoding": "inplace", "label": "struct C.Wrapper", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 13, "contract": "C", "label": "inner", "offset": 0, "slot": "0", "type": "t_struct(Holder)" }
+                    ]
+                },
+                "t_array(t_address)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "address[]", "numberOfBytes": "32", "base": "t_address"
+                },
+                "t_mapping(t_address,t_array(t_uint256)dyn_storage)": {
+                    "encoding": "mapping", "label": "mapping(address => uint256[])", "numberOfBytes": "32",
+                    "key": "t_address", "value": "t_array(t_uint256)dyn_storage"
+                },
+                "t_array(t_array(t_uint256)dyn_storage)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "uint256[][]", "numberOfBytes": "32", "base": "t_array(t_uint256)dyn_storage"
+                },
+                "t_string_storage": { "encoding": "bytes", "label": "string", "numberOfBytes": "32" },
+                "t_uint128": { "encoding": "inplace", "label": "uint128", "numberOfBytes": "16" },
+                "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" },
+                "t_address": { "encoding": "inplace", "label": "address", "numberOfBytes": "20" }
+            }
+        }))
+        .unwrap();
+        SlotIdentifier::new(Arc::new(layout))
+    }
+
+    /// The slot `index` slots into the data of the dynamic array at `base`.
+    fn element(base: U256, index: u64) -> B256 {
+        B256::from(U256::from_be_bytes(keccak256(B256::from(base)).0) + U256::from(index))
+    }
+
+    #[test]
+    fn identifies_dynamic_array_elements() {
+        let identifier = dynamic_array_layout();
+
+        let mut info = identifier.identify(&element(U256::ZERO, 1), None).unwrap();
+        assert_eq!((info.label.as_str(), info.slot_type.label.as_str()), ("nums[1]", "uint256"));
+        info.decode_values(B256::ZERO, B256::from(U256::from(9)));
+        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), "9");
+
+        // Two uint128 elements share each slot.
+        let mut word = [0u8; 32];
+        word[15] = 6;
+        word[31] = 5;
+        let mut info = identifier.identify(&element(U256::from(1), 1), None).unwrap();
+        assert_eq!(info.label, "packed[2], packed[3]");
+        info.decode_values(B256::ZERO, B256::from(word));
+        assert_eq!(
+            decoded(&info),
+            [
+                ("packed[2]", "0".to_string(), "5".to_string()),
+                ("packed[3]", "0".into(), "6".into())
+            ]
+        );
+
+        // Struct elements take two slots each.
+        let info = identifier.identify(&element(U256::from(2), 3), None).unwrap();
+        assert_eq!((info.label.as_str(), info.slot_type.label.as_str()), ("items[1].b", "address"));
+
+        // An array inside a struct.
+        let info = identifier.identify(&element(U256::from(4), 0), None).unwrap();
+        assert_eq!(info.label, "holder.list[0]");
+    }
+
+    #[test]
+    fn identifies_members_of_a_wrapped_multi_slot_struct() {
+        let identifier = dynamic_array_layout();
+        // `wrapped`'s only member starts at slot 0 but spans two slots.
+        let info = identifier.identify(&B256::from(U256::from(8)), None).unwrap();
+        assert_eq!(
+            (info.label.as_str(), info.slot_type.label.as_str()),
+            ("wrapped.inner.count", "uint256")
+        );
+        let info = identifier.identify(&B256::from(U256::from(9)), None).unwrap();
+        assert_eq!(info.label, "wrapped.inner.list");
+        let info = identifier.identify(&element(U256::from(9), 0), None).unwrap();
+        assert_eq!(info.label, "wrapped.inner.list[0]");
+    }
+
+    #[test]
+    fn identifies_elements_of_arrays_at_computed_slots() {
+        let identifier = dynamic_array_layout();
+        let mut slots = MappingSlots::default();
+
+        // `byOwner[USER]` is a mapping entry; its elements start at the entry's hash.
+        let array = entry(&mut slots, USER.into_word(), U256::from(5));
+        let data = element(array, 0);
+        slots.record_word_hash(keccak256(B256::from(array)), B256::from(array));
+        assert!(identifier.identify(&data, None).is_none());
+        let info = identifier.identify(&data, Some(&slots)).unwrap();
+        assert_eq!(info.label, format!("byOwner[{USER}][0]"));
+        assert_eq!(info.slot_type.label, "uint256");
+        assert_eq!(info.keys, Some(vec![USER.to_string()]));
+
+        // `nested[1]` is an element of the outer array; its elements start at its hash.
+        let inner = U256::from_be_bytes(element(U256::from(6), 1).0);
+        slots.record_word_hash(keccak256(B256::from(inner)), B256::from(inner));
+        let info = identifier.identify(&element(inner, 2), Some(&slots)).unwrap();
+        assert_eq!(
+            (info.label.as_str(), info.slot_type.label.as_str()),
+            ("nested[1][2]", "uint256")
+        );
+    }
+
+    #[test]
+    fn ignores_hashes_of_slots_that_are_not_dynamic_arrays() {
+        let identifier = dynamic_array_layout();
+        let mut slots = MappingSlots::default();
+        // A long string's data and an unrelated hashed word start at recorded hashes too.
+        for word in [U256::from(7), U256::from(1234)] {
+            slots.record_word_hash(keccak256(B256::from(word)), B256::from(word));
+            assert!(identifier.identify(&element(word, 0), Some(&slots)).is_none());
+        }
     }
 }
