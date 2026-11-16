@@ -234,10 +234,15 @@ pub struct Config {
     pub out: PathBuf,
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
-    /// Remappings to use for this repo
+    /// Remappings to use for this repo.
     #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
+    ///
+    /// Defaults to `true`. Dependency declarations that conflict with root paths or other
+    /// dependency mappings are scoped to their owner, with a configuration warning. Unique aliases
+    /// remain global. Dependencies with source directories outside their package retain their
+    /// existing declaration scope.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
     ///
@@ -1202,6 +1207,16 @@ impl Config {
                     .unwrap_or_else(|_| Cow::Borrowed(&self.libs)),
                 root,
                 remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+                project_paths: [("src", &self.src), ("test", &self.test), ("script", &self.script)]
+                    .into_iter()
+                    .map(|(key, default)| {
+                        figment.extract_inner::<PathBuf>(key).unwrap_or_else(|_| default.clone())
+                    })
+                    .collect(),
+                warnings: match figment.extract_inner::<Vec<Warning>>("__warnings") {
+                    Err(error) if error.missing() => Ok(Vec::new()),
+                    warnings => warnings,
+                },
             };
             figment = figment.merge(remappings);
         }
@@ -5730,7 +5745,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.set_env(
                 "FOUNDRY_LIBRARIES",
-                "[src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222]",
+                " [src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222,]\n",
             );
             let config = Config::load().unwrap();
 
@@ -5756,6 +5771,31 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn can_parse_empty_libraries() {
+        for env_var in ["DAPP_LIBRARIES", "FOUNDRY_LIBRARIES"] {
+            for value in ["", "[]", "[ ]", "[\t\n]", " [,]\n"] {
+                figment::Jail::expect_with(|jail| {
+                    jail.create_file(
+                        "foundry.toml",
+                        r#"
+                        [profile.default]
+                        libraries = ["src/A.sol:A:0x1111111111111111111111111111111111111111"]
+                        "#,
+                    )?;
+                    assert_eq!(Config::load().unwrap().libraries.len(), 1);
+
+                    jail.set_env(env_var, value);
+                    let config = Config::load().unwrap();
+                    assert!(config.libraries.is_empty(), "{env_var}={value:?}");
+                    assert!(config.parsed_libraries().unwrap().libs.is_empty());
+
+                    Ok(())
+                });
+            }
+        }
     }
 
     #[test]
