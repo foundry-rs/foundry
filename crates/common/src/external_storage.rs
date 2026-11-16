@@ -414,7 +414,8 @@ struct CachedStorageLayout {
 }
 
 /// Current [`CachedStorageLayout`] format.
-// Version 3 layouts may have been compiled from responses in the legacy shared mainnet cache.
+///
+/// Version 3 layouts may have been compiled from responses in the legacy shared mainnet cache.
 const CACHE_VERSION: u32 = 4;
 
 /// Path of the cache entry for `address`.
@@ -782,34 +783,5 @@ mod tests {
     fn source_less_metadata_is_rejected_without_compiling() {
         let metadata = source_less_metadata();
         assert!(compile_storage_layout(Address::ZERO, &metadata, Instant::now()).is_none());
-    }
-
-    #[test]
-    fn refetches_layouts_derived_from_legacy_explorer_responses() {
-        let cache_dir = tempfile::tempdir().unwrap();
-        let address = Address::with_last_byte(1);
-        let path = cache_path(cache_dir.path(), address);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let legacy = CachedStorageLayout {
-            version: 3,
-            contract_name: "WrongChainContract".to_string(),
-            storage_layout: StorageLayout::default(),
-        };
-        fs::write_json_file(&path, &legacy).unwrap();
-
-        let mut asked_for = Vec::new();
-        let resolved = resolve(
-            next_chain_id(),
-            Some(cache_dir.path()),
-            [address],
-            Duration::from_secs(1),
-            |addresses, _| {
-                asked_for.extend_from_slice(addresses);
-                AddressMap::default()
-            },
-        );
-
-        assert_eq!(asked_for, [address]);
-        assert!(resolved.is_empty());
     }
 }

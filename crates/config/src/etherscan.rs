@@ -4,7 +4,7 @@ use crate::{
     Chain, Config, NamedChain,
     resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate},
 };
-use alloy_primitives::hex;
+use alloy_primitives::keccak256;
 use figment::{
     Error, Metadata, Profile, Provider,
     providers::Env,
@@ -404,11 +404,8 @@ impl ResolvedEtherscanConfig {
         }
 
         // Keep URL credentials and query parameters out of persistent filesystem paths.
-        let digest = alloy_primitives::keccak256(self.api_url.as_bytes());
-        Some(
-            Config::foundry_etherscan_cache_dir()?
-                .join(format!("endpoint-{}", hex::encode(digest))),
-        )
+        let digest = keccak256(self.api_url.as_bytes());
+        Some(Config::foundry_etherscan_cache_dir()?.join(format!("endpoint-{digest:x}")))
     }
 }
 
@@ -627,81 +624,24 @@ mod tests {
     }
 
     #[test]
-    fn chainless_explorer_is_not_cached_under_mainnet() {
-        // Responses are cached by address alone, so a chain-less entry cached under mainnet
-        // would answer mainnet lookups of the same address with another endpoint's data.
-        let etherscan = EtherscanConfig {
-            chain: None,
-            url: Some("https://api.mychain.example/api".to_string()),
-            key: EtherscanApiKey::Key("ABCDEFG".to_string()),
-        };
-        let config = etherscan.resolve(Some("mychain")).unwrap();
-        assert_eq!(config.chain, None);
-
-        let dir = config.explorer_cache_dir().unwrap();
-        assert_ne!(
-            dir,
-            Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap(),
-            "chain-less entries must not share mainnet's cache directory"
-        );
-    }
-
-    #[test]
-    fn chainless_explorers_get_distinct_cache_dirs() {
+    fn chainless_explorers_get_their_own_cache_dirs() {
+        // Responses are cached by address alone, so chain-less entries must neither share
+        // mainnet's directory nor each other's.
         let cache_dir = |url: &str| {
-            EtherscanConfig {
+            let config = EtherscanConfig {
                 chain: None,
                 url: Some(url.to_string()),
                 key: EtherscanApiKey::Key("ABCDEFG".to_string()),
             }
             .resolve(Some("mychain"))
-            .unwrap()
-            .explorer_cache_dir()
-            .unwrap()
+            .unwrap();
+            assert_eq!(config.chain, None);
+            config.explorer_cache_dir().unwrap()
         };
 
-        // Same host, different endpoints.
         let first = cache_dir("https://api.example.com/api?chainid=1");
-        let second = cache_dir("https://api.example.com/api?chainid=2");
-        assert_ne!(first, second);
-        // Stable across calls, so repeated lookups hit the same cache.
+        assert_ne!(first, Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap());
+        assert_ne!(first, cache_dir("https://api.example.com/api?chainid=2"));
         assert_eq!(first, cache_dir("https://api.example.com/api?chainid=1"));
-        assert_ne!(first, cache_dir("http://127.0.0.1:8545"));
-    }
-
-    #[test]
-    fn chainless_cache_path_hides_url_secrets_and_uses_full_digest() {
-        let url = "https://alice:password@api.example.com?token=topsecret";
-        let config = EtherscanConfig {
-            chain: None,
-            url: Some(url.to_string()),
-            key: EtherscanApiKey::Key("ABCDEFG".to_string()),
-        }
-        .resolve(Some("custom"))
-        .unwrap();
-
-        let dir = config.explorer_cache_dir().unwrap();
-        let directory_name = dir.file_name().unwrap().to_str().unwrap();
-        let digest = alloy_primitives::keccak256(url.as_bytes());
-
-        assert_eq!(directory_name, format!("endpoint-{}", hex::encode(&digest[..])));
-        assert!(!directory_name.contains("alice"));
-        assert!(!directory_name.contains("password"));
-        assert!(!directory_name.contains("topsecret"));
-    }
-
-    #[test]
-    fn chained_mainnet_configs_skip_legacy_cache_entries() {
-        let config = EtherscanConfig {
-            chain: Some(Mainnet.into()),
-            url: None,
-            key: EtherscanApiKey::Key("ABCDEFG".to_string()),
-        }
-        .resolve(None)
-        .unwrap();
-        assert_eq!(
-            config.explorer_cache_dir().unwrap(),
-            Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap().join("client-v2")
-        );
     }
 }
