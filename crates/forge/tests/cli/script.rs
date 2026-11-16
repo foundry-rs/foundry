@@ -10533,7 +10533,6 @@ contract UpgradeScript is Script {{
             new IConfigurableAccount.ConfigurableAccountOwner[](1);
         owners[0] = IConfigurableAccount.ConfigurableAccountOwner({owner}, 1);
         vm.startBroadcast();
-        // A low-level call: the precompile has no code for Solidity's code size check.
         (bool ok,) = address(0xAACC000000000000000000000000000000000000).call(
             abi.encodeCall(IConfigurableAccount.upgradeAccount, (1, owners))
         );

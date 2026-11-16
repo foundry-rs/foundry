@@ -808,6 +808,26 @@ Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]
     ]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_derived_account_matches_precompile", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/TempoT14ConfigurableAccount.t.sol:TempoT14ConfigurableAccountTest
+[PASS] test_derived_account_matches_precompile() ([GAS])
+Traces:
+  [..] TempoT14ConfigurableAccountTest::test_derived_account_matches_precompile()
+    ├─ [..] ConfigurableAccount::deriveAccount(0x0000000000000000000000000000000000000000000000000000000000000000, 2, [(0x22F8f1c700f14B68f0B4987348685d08A67f8444, 1), (0x2529d5fD061c1d4E7350Bec775cE38FbB39a434a, 1), (0xe05fcC23807536bEe418f142D19fa0d21BB0cfF7, 1)]) [staticcall]
+    │   └─ ← [Return] 0xFf9A5F2996A1C7EA2F1739C754589F995BC688D1
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 }
 
 // tests transfer using celo precompile.
