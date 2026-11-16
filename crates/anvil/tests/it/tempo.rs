@@ -4426,11 +4426,11 @@ async fn test_tempo_simulate_rejects_max_protocol_nonce() {
     let create = || Call { to: TxKind::Create, value: U256::ZERO, input: Bytes::new() };
 
     // 2D nonce lanes do not spend the protocol nonce, and an exhausted creation is a no-op.
-    for (nonce_key, call, validation, rejected) in [
-        (U256::ZERO, call(), false, true),
-        (U256::ONE, call(), false, false),
-        (U256::ONE, create(), false, false),
-        (U256::ONE, create(), true, false),
+    for (nonce_key, call, rejected) in [
+        (U256::ZERO, call(), true),
+        (U256::ZERO, create(), true),
+        (U256::ONE, call(), false),
+        (U256::ONE, create(), false),
     ] {
         let mut request = tempo_call_request(from, [call]);
         request["nonceKey"] = serde_json::json!(nonce_key);
@@ -4439,18 +4439,18 @@ async fn test_tempo_simulate_rejects_max_protocol_nonce() {
                 "stateOverrides": {(from.to_string()): {"nonce": "0xffffffffffffffff"}},
                 "calls": [request],
             }],
-            "validation": validation,
+            "validation": false,
         });
         let response =
             provider.raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,)).await;
         if rejected {
             let error = response.unwrap_err();
             let error = error.as_error_resp().unwrap();
-            assert_eq!(error.code, -32603, "{nonce_key} {validation}");
+            assert_eq!(error.code, -32603, "{nonce_key}");
             assert_eq!(
                 error.message,
                 format!("nonce has max value: address {from}, nonce: {}", u64::MAX),
-                "{nonce_key} {validation}"
+                "{nonce_key}"
             );
         } else {
             response.unwrap();
