@@ -1,6 +1,7 @@
 //! CLI tests for Tempo key authorizations signed by a configurable account's owners (T14,
 //! TIP-1111).
 
+use alloy_eips::Decodable2718;
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -10,8 +11,11 @@ use foundry_common::tempo::configurable_account::single_owner_account;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, util::OutputExt};
 use tempo_hardfork::TempoHardfork;
-use tempo_primitives::transaction::{
-    KeyAuthorization, SignatureType, SignedKeyAuthorization, configurable_account_digest,
+use tempo_primitives::{
+    TempoTxEnvelope,
+    transaction::{
+        KeyAuthorization, SignatureType, SignedKeyAuthorization, configurable_account_digest,
+    },
 };
 
 /// Anvil's Tempo chain ID.
@@ -275,14 +279,17 @@ Error: configurable account owners approve with their own keys, not a Tempo acce
     assert!(is_provisioned(&mut cmd, &rpc, account, inline_key.address()));
 }
 
-/// An EOA authorizes a configurable account as its access key (key type 3).
+/// An EOA authorizes a configurable account as its access key (key type 3), which then signs for
+/// the EOA with `--tempo.configurable-access-key`: its owner approves the keychain V2 hash in a
+/// `0x05` signature that a keychain signature wraps for the EOA.
 #[casttest]
 async fn tempo_t14_keychain_authorizes_configurable_account_as_access_key(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
     let rpc = handle.http_endpoint();
     let root = handle.dev_wallets().next().unwrap();
-    let account = single_owner_account(Address::repeat_byte(0x11)).unwrap();
+    let owner = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).unwrap();
+    let account = single_owner_account(owner.address()).unwrap();
 
     cmd.cast_fuse()
         .args([
@@ -322,4 +329,96 @@ async fn tempo_t14_keychain_authorizes_configurable_account_as_access_key(cmd: _
 Error: browser key authorization signing does not support the configurable key type yet
 
 "#]]);
+
+    // The account then signs for the EOA as its access key. Only its local owners can sign the
+    // keychain signature, and an access key cannot manage the keys of the account it signs for.
+    let fee_token = PATH_USD_ADDRESS.to_string();
+    let call =
+        [&fee_token, "approve(address,uint256)", &Address::repeat_byte(0x44).to_string(), "1"];
+    let access_args = [
+        "--tempo.configurable-access-key".to_string(),
+        account.to_string(),
+        "--private-key".into(),
+        hex::encode_prefixed(owner.to_bytes()),
+        "--rpc-url".into(),
+        rpc,
+        "--tempo.fee-token".into(),
+        fee_token.clone(),
+    ];
+    let root_address = root.address().to_string();
+    let from = ["--from", root_address.as_str()];
+    let rejected = [
+        (
+            [&["send"][..], &call].concat(),
+            str![[r#"
+Error: --tempo.configurable-access-key needs the account it signs for: pass --from
+
+"#]],
+        ),
+        (
+            [&["mktx", "--raw-unsigned"][..], &call, &from].concat(),
+            str![[r#"
+Error: --tempo.configurable-access-key cannot be combined with --raw-unsigned, --ethsign, --signature or a Tempo access key
+
+"#]],
+        ),
+        (
+            [&["keychain", "authorize", "0x5555555555555555555555555555555555555555"][..], &from]
+                .concat(),
+            str![[r#"
+Error: an access key cannot manage the keys of the account it signs for
+
+"#]],
+        ),
+    ];
+    for (args, error) in rejected {
+        cmd.cast_fuse().args(args).args(&access_args).assert_failure().stderr_eq(error);
+    }
+
+    // The owner approves the keychain V2 hash, which recovers the account as the access key.
+    let raw = cmd
+        .cast_fuse()
+        .arg("mktx")
+        .args(call)
+        .args(from)
+        .args(&access_args)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let TempoTxEnvelope::AA(signed) =
+        TempoTxEnvelope::decode_2718_exact(&hex::decode(raw.trim()).unwrap()).unwrap()
+    else {
+        panic!("expected a Tempo transaction");
+    };
+    let keychain = signed.signature().as_keychain().expect("a keychain signature");
+    assert_eq!(keychain.user_address, root.address());
+    assert!(!keychain.is_legacy());
+    assert_eq!(keychain.key_id(&signed.signature_hash()).unwrap(), account);
+
+    // The estimate models the keychain-wrapped quorum exactly.
+    let estimate = cmd
+        .cast_fuse()
+        .arg("estimate")
+        .args(call)
+        .args(from)
+        .args(&access_args)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    cmd.cast_fuse()
+        .arg("send")
+        .args(call)
+        .args(from)
+        .args(&access_args)
+        .arg("--json")
+        .assert_json_stdout(format!(
+            r#"{{
+  "status": "0x1",
+  "from": "{:#x}",
+  "gasUsed": "{:#x}",
+  "...": "{{...}}"
+}}"#,
+            root.address(),
+            estimate.trim().parse::<u64>().unwrap()
+        ));
 }

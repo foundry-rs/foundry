@@ -345,11 +345,11 @@ impl SendTxArgs {
                 (tx, prepared.account())
             } else if let Some(account) = &configurable_account {
                 let Some(tx) =
-                    confirm_and_build(builder, account.account(), force, None, false).await?
+                    confirm_and_build(builder, account.sender(), force, None, false).await?
                 else {
                     return Ok(());
                 };
-                (tx, account.account())
+                (tx, account.sender())
             } else {
                 let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
                     eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
@@ -478,7 +478,7 @@ impl SendTxArgs {
             }
         // Case 4: a Tempo configurable account signed by its local owners.
         } else if let Some(account) = configurable_account {
-            let from = account.account();
+            let from = account.sender();
             let Some(mut tx_request) = confirm_and_build(builder, from, force, lane, false).await?
             else {
                 return Ok(());

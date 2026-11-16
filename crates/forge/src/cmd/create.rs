@@ -353,7 +353,7 @@ impl CreateArgs {
             )
             .await
         } else if let Some(account) = configurable_account {
-            let deployer_address = account.account();
+            let deployer_address = account.sender();
             self.deploy(
                 abi,
                 bin,

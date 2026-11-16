@@ -230,6 +230,12 @@ impl MakeTxArgs {
             || ethsign
             || signature.is_some()
         {
+            // Only local owners can sign the keychain signature of a configurable access key.
+            eyre::ensure!(
+                tx.tempo.configurable_access_key.is_none(),
+                "--tempo.configurable-access-key cannot be combined with --raw-unsigned, \
+                 --ethsign, --signature or a Tempo access key"
+            );
             None
         } else {
             tempo::resolve_configurable_account::<N>(&tx.tempo, &config, &eth.wallet, &mut signer)
@@ -254,11 +260,11 @@ impl MakeTxArgs {
                 (tx, prepared.account())
             } else if let Some(account) = &configurable_account {
                 let Some(tx) =
-                    confirm_and_build(tx_builder, account.account(), force, None, false).await?
+                    confirm_and_build(tx_builder, account.sender(), force, None, false).await?
                 else {
                     return Ok(());
                 };
-                (tx, account.account())
+                (tx, account.sender())
             } else {
                 let signer = match signer {
                     Some(signer) => signer,
@@ -387,7 +393,7 @@ impl MakeTxArgs {
             .await?;
             tx.sign_with_tempo_wallet(&prepared).await?
         } else if let Some(account) = &configurable_account {
-            let from = account.account();
+            let from = account.sender();
             let Some(mut tx) = confirm_and_build(tx_builder, from, force, lane, false).await?
             else {
                 return Ok(());
