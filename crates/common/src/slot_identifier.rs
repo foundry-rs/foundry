@@ -482,11 +482,11 @@ impl SlotIdentifier {
                 }
             } else if storage_type.encoding == ENCODING_MAPPING
                 && let Some(mapping_slots) = mapping_slots
+                && let Ok(base_slot) = U256::from_str(&storage.slot)
                 && let Some(info) = self.handle_mapping(
                     &storage.label,
                     storage_type,
-                    B256::from(U256::from_str(&storage.slot).ok()?),
-                    storage.offset,
+                    base_slot.into(),
                     slot,
                     &slot_str,
                     mapping_slots,
@@ -769,17 +769,14 @@ impl SlotIdentifier {
     /// * `base_label` - The label of the mapping variable or struct member
     /// * `storage_type` - Type information for the mapping
     /// * `base_slot` - The slot of the mapping
-    /// * `base_offset` - The byte offset reported for a plain value
     /// * `slot` - The accessed slot being identified
     /// * `slot_str` - String representation of the slot for output
     /// * `mapping_slots` - Tracked mapping slot accesses for key resolution
-    #[allow(clippy::too_many_arguments)]
     fn handle_mapping(
         &self,
         base_label: &str,
         storage_type: &StorageType,
         base_slot: B256,
-        base_offset: i64,
         slot: &B256,
         slot_str: &str,
         mapping_slots: &MappingSlots,
@@ -878,7 +875,7 @@ impl SlotIdentifier {
                             .cloned()
                             .unwrap_or(DynSolType::Bytes),
                     },
-                    offset: base_offset,
+                    offset: 0,
                     slot: slot_str.to_string(),
                     members: None,
                     decoded: None,
@@ -924,7 +921,6 @@ impl SlotIdentifier {
                     &format!("{base_label}.{member_label}"),
                     member_type,
                     parent,
-                    0,
                     slot,
                     slot_str,
                     mapping_slots,
@@ -1566,22 +1562,35 @@ mod tests {
         assert_eq!(info.label, "pools[1].total");
     }
 
-    /// A struct variable holding a mapping directly (`s.balances`) and one holding an
+    /// A struct variable holding mappings directly (`s.balances`, `s.vaults`) and one holding an
     /// OpenZeppelin `EnumerableSet.AddressSet`, whose `_positions` mapping is a member of the
     /// nested `Set` struct.
     fn struct_mapping_layout() -> SlotIdentifier {
         let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
             "storage": [
                 { "astId": 1, "contract": "C", "label": "s", "offset": 0, "slot": "0", "type": "t_struct(S)" },
-                { "astId": 2, "contract": "C", "label": "set", "offset": 0, "slot": "2", "type": "t_struct(AddressSet)" }
+                { "astId": 2, "contract": "C", "label": "set", "offset": 0, "slot": "3", "type": "t_struct(AddressSet)" }
             ],
             "types": {
                 "t_struct(S)": {
-                    "encoding": "inplace", "label": "struct C.S", "numberOfBytes": "64",
+                    "encoding": "inplace", "label": "struct C.S", "numberOfBytes": "96",
                     "members": [
                         { "astId": 3, "contract": "C", "label": "total", "offset": 0, "slot": "0", "type": "t_uint256" },
-                        { "astId": 4, "contract": "C", "label": "balances", "offset": 0, "slot": "1", "type": "t_mapping(t_address,t_uint256)" }
+                        { "astId": 4, "contract": "C", "label": "balances", "offset": 0, "slot": "1", "type": "t_mapping(t_address,t_uint256)" },
+                        { "astId": 8, "contract": "C", "label": "vaults", "offset": 0, "slot": "2", "type": "t_mapping(t_uint256,t_struct(V))" }
                     ]
+                },
+                "t_struct(V)": {
+                    "encoding": "inplace", "label": "struct C.V", "numberOfBytes": "96",
+                    "members": [
+                        { "astId": 9, "contract": "C", "label": "owner", "offset": 0, "slot": "0", "type": "t_address" },
+                        { "astId": 10, "contract": "C", "label": "shares", "offset": 0, "slot": "1", "type": "t_uint256" },
+                        { "astId": 11, "contract": "C", "label": "allowed", "offset": 0, "slot": "2", "type": "t_mapping(t_address,t_uint256)" }
+                    ]
+                },
+                "t_mapping(t_uint256,t_struct(V))": {
+                    "encoding": "mapping", "label": "mapping(uint256 => struct C.V)", "numberOfBytes": "32",
+                    "key": "t_uint256", "value": "t_struct(V)"
                 },
                 "t_struct(AddressSet)": {
                     "encoding": "inplace", "label": "struct EnumerableSet.AddressSet", "numberOfBytes": "64",
@@ -1629,6 +1638,22 @@ mod tests {
         assert_eq!(info.slot_type.label, "mapping(address => uint256)");
         assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Uint(256));
         assert_eq!(info.keys, Some(vec!["0x1111111111111111111111111111111111111111".to_string()]));
+
+        // `s.vaults[3].shares` and `s.vaults[3].allowed[user]`: a mapping member of a struct held
+        // by a mapping member.
+        let vault = entry(&mut slots, U256::from(3).into(), U256::from(2));
+        let shares = vault + U256::from(1);
+        slots.insert(shares.into());
+        let info = identifier.identify(&B256::from(shares), Some(&slots)).unwrap();
+        assert_eq!(info.label, "s.vaults[3].shares");
+        assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Uint(256));
+
+        let allowed = entry(&mut slots, USER.into_word(), vault + U256::from(2));
+        slots.insert(allowed.into());
+        let info = identifier.identify(&B256::from(allowed), Some(&slots)).unwrap();
+        assert_eq!(info.label, "s.vaults[3].allowed[0x1111111111111111111111111111111111111111]");
+        assert_eq!(info.slot_type.label, "mapping(address => uint256)");
+        assert_eq!(info.keys, Some(vec!["3".to_string(), USER.to_string()]));
     }
 
     /// `set._inner._positions[value]`: a mapping that is a member of a struct nested in a struct
@@ -1637,7 +1662,7 @@ mod tests {
     fn identifies_a_mapping_member_of_a_nested_struct() {
         let identifier = struct_mapping_layout();
         let mut slots = MappingSlots::default();
-        let position = entry(&mut slots, USER.into_word(), U256::from(3));
+        let position = entry(&mut slots, USER.into_word(), U256::from(4));
         slots.insert(position.into());
 
         let info = identifier.identify(&B256::from(position), Some(&slots)).unwrap();
@@ -1649,7 +1674,7 @@ mod tests {
         assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Uint(256));
 
         // A slot past the struct's mappings is left unidentified.
-        let other = entry(&mut slots, USER.into_word(), U256::from(4));
+        let other = entry(&mut slots, USER.into_word(), U256::from(5));
         assert!(identifier.identify(&B256::from(other), Some(&slots)).is_none());
     }
 
