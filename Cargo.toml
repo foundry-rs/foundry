@@ -341,7 +341,7 @@ foundry-primitives = { path = "crates/primitives", default-features = false }
 foundry-tui = { path = "crates/tui", default-features = false }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.25.0", default-features = false }
+foundry-block-explorers = { version = "0.26.0", default-features = false }
 foundry-compilers = { version = "0.21.0", default-features = false, features = [
     "rustls",
     "svm-solc",
@@ -592,10 +592,10 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "8a76c601c93273192b8540a50bc8e420e3612dd6" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "8a76c601c93273192b8540a50bc8e420e3612dd6" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "8a76c601c93273192b8540a50bc8e420e3612dd6" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "8a76c601c93273192b8540a50bc8e420e3612dd6" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "5b87670fd88b2afe0bd70f850f6f44d5bed3ac08" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "5b87670fd88b2afe0bd70f850f6f44d5bed3ac08" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "5b87670fd88b2afe0bd70f850f6f44d5bed3ac08" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "5b87670fd88b2afe0bd70f850f6f44d5bed3ac08" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
