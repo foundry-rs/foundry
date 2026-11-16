@@ -2138,6 +2138,17 @@
       "description": "Whether to compile with `viaIR` and minimum optimization, as a workaround for \"stack too\ndeep\" errors.\n\nBy default `forge coverage` disables the optimizer and `viaIR` for accurate source maps.\nThis setting enables `viaIR` with minimum optimization instead, which fixes most \"stack too\ndeep\" errors at the cost of less accurate source mappings, so use it only when you need\nit. The `--ir-minimum` flag also enables it; it cannot turn off a `true` value."
     },
     {
+      "key": "coverage.keep_optimizer",
+      "section": "coverage",
+      "type": "boolean",
+      "table": false,
+      "default": "false",
+      "env": [
+        "FOUNDRY_COVERAGE_KEEP_OPTIMIZER"
+      ],
+      "description": "Whether to keep the project's optimizer and `viaIR` settings instead of disabling them.\n\nOptimized builds can miss or merge coverage items. Cannot be combined with `ir_minimum`,\nincluding the `--ir-minimum` flag, so enabling it here also rules out that flag. The\n`--keep-optimizer` flag also enables it; it cannot turn off a `true` value."
+    },
+    {
       "key": "coverage.report_file",
       "section": "coverage",
       "type": "string (path)",
