@@ -4444,8 +4444,14 @@ async fn test_tempo_simulate_rejects_max_protocol_nonce() {
         let response =
             provider.raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,)).await;
         if rejected {
-            let error = response.unwrap_err().to_string();
-            assert!(error.contains("nonce has max value"), "{nonce_key} {validation}: {error}");
+            let error = response.unwrap_err();
+            let error = error.as_error_resp().unwrap();
+            assert_eq!(error.code, -32603, "{nonce_key} {validation}");
+            assert_eq!(
+                error.message,
+                format!("nonce has max value: address {from}, nonce: {}", u64::MAX),
+                "{nonce_key} {validation}"
+            );
         } else {
             response.unwrap();
         }
