@@ -1388,18 +1388,26 @@ pub struct Config {
     ///
     /// Prefetching works in two ways:
     ///
-    /// - While reads miss the cache, each call into a fork contract is first simulated on the
-    ///   endpoint with `eth_createAccessList`, and the accounts and slots it touches are fetched
-    ///   in batches.
+    /// - Each call into a contract on the fork is simulated on the endpoint with
+    ///   `eth_createAccessList` while the EVM runs it. Foundry then fetches the storage slots in
+    ///   the result in parallel batch requests, and the accounts in parallel separate requests. A
+    ///   top-level call, such as a test function, sends the state that exists only locally, such
+    ///   as the test contract and balances set with cheatcodes, as state overrides. A cold call
+    ///   then costs a few round trips instead of one per slot. A call is simulated again on each
+    ///   run until its access list holds at most two new keys or reads mostly hit the cache. An
+    ///   endpoint without `eth_createAccessList` turns the simulations off, and one that rejects
+    ///   state overrides turns them off for top-level calls. The first failed or slow (over 3
+    ///   seconds) batch request, for example from a rate limit, stops prefetching on that fork.
     /// - A fork of the latest block whose storage cache is empty is warmed in the background with
-    ///   the accounts and slots cached for the newest older block on the same chain. This speeds
-    ///   up forks of `latest`, which start cold on each new head, for example in CI. It needs
-    ///   storage caching, so it does not run with `no_storage_caching`, for endpoints or chains
-    ///   that `rpc_storage_caching` excludes, with a pinned `fork_block_number`, or with
-    ///   `fork_state_by_number`.
+    ///   the accounts and slots cached for the newest older block on the same chain, read again at
+    ///   the new block. Such forks start cold on each new head, for example in CI, so this saves
+    ///   the first reads. It needs storage caching, so it does not run with `no_storage_caching`,
+    ///   for endpoints or chains that `rpc_storage_caching` excludes, with a pinned
+    ///   `fork_block_number`, or with `fork_state_by_number`.
     ///
-    /// Results do not change, because every value comes from the fork block; keys the run does not
-    /// read only cost extra RPC requests. The `--fork-prefetch` flag enables it for a single run.
+    /// Results do not change, because every value comes from the fork block. Keys the run does not
+    /// read cost extra RPC requests, and the simulations and batch requests count against the
+    /// endpoint's rate limit. The `--fork-prefetch` flag enables it for a single run.
     ///
     /// ```toml
     /// [profile.ci]
