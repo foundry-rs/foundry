@@ -124,7 +124,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         // Recompile the project and ensure no errors occurred.
         let output = self.build()?;
 
-        let (bytecode, final_pc) = output.enter(|output| -> Result<_> {
+        let (bytecode, final_pc, run_is_empty) = output.enter(|output| -> Result<_> {
             let contract = output
                 .repl_contract()
                 .ok_or_else(|| eyre::eyre!("failed to find REPL contract"))?;
@@ -132,10 +132,19 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             let bytecode = contract
                 .get_bytecode_bytes()
                 .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
-            Ok((bytecode.into_owned(), output.final_pc(contract)?))
+            Ok((
+                bytecode.into_owned(),
+                output.final_pc(contract)?,
+                output.run_func_body().is_empty(),
+            ))
         })?;
         let mut runner = self.build_runner(final_pc).await?;
-        runner.run(bytecode)
+        let mut result = runner.run(bytecode)?;
+        // An empty `run()` has no state to dump, only the dispatcher's.
+        if run_is_empty {
+            result.state = None;
+        }
+        Ok(result)
     }
 
     /// Inspect a contract element inside of the current session

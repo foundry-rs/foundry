@@ -48,11 +48,14 @@ impl<T: EvmTypesHost> Inspector<T> for ChiselState {
 
     #[cold]
     fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        // A source span may be absent or map to an instruction that never executes. In that case,
-        // capture the completed root frame, not PC zero or a nested call's stack and memory.
-        // The result is only an error after the instruction that halts the frame.
+        // Reaching the byte after the final instruction, such as a loop's exit, also completes the
+        // statement. A source span may be absent or map to an instruction that never executes. In
+        // that case, capture the completed root frame instead. The result is only an error after
+        // the instruction that halts the frame.
         if is_root_frame(interp)
-            && (self.at_final_pc || (self.state.is_none() && interp.result().is_err()))
+            && (self.at_final_pc
+                || self.final_pc.is_some_and(|pc| interp.pc() == pc + 1)
+                || (self.state.is_none() && interp.result().is_err()))
         {
             self.state =
                 Some((interp.stack().as_slice().to_vec(), interp.memory().as_slice().to_vec()));
