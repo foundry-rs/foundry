@@ -743,7 +743,7 @@ type               {:#x}
                     ",
                     tx.hash.pretty(),
                     tx.ty(),
-                    tx.inner.fields.pretty().trim_start(),
+                    tx.inner.fields().pretty().trim_start(),
                 )
             }
         }
