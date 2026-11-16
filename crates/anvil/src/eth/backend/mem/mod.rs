@@ -712,8 +712,8 @@ fn with_nonce(tx: FoundryTxEnvelope, nonce: u64) -> FoundryTxEnvelope {
     map_simulated_tx(tx, set).expect("setting the nonce is infallible")
 }
 
-/// Returns whether `tx` spends the sender's protocol nonce.
-fn uses_protocol_nonce(tx: &FoundryTxEnvelope) -> bool {
+/// Returns whether `tx` is rejected when its sender's protocol nonce is already `u64::MAX`.
+fn hits_max_nonce_cap(tx: &FoundryTxEnvelope) -> bool {
     match tx {
         // 2D lanes have their own nonce, and an exhausted creation there is a no-op in Tempo.
         FoundryTxEnvelope::Tempo(tx) => tx.tx().nonce_key.is_zero(),
@@ -9984,7 +9984,7 @@ impl Backend<FoundryNetwork> {
                     // With validation, a mismatched protocol nonce is reported first.
                     if caller_nonce == u64::MAX
                         && (!validation || request.nonce == Some(u64::MAX))
-                        && uses_protocol_nonce(&tx.tx)
+                        && hits_max_nonce_cap(&tx.tx)
                     {
                         return Err(simulate_rpc_error(
                             -32603,
