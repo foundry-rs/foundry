@@ -715,11 +715,8 @@ fn with_nonce(tx: FoundryTxEnvelope, nonce: u64) -> FoundryTxEnvelope {
 /// Returns whether `tx` spends the sender's protocol nonce.
 fn uses_protocol_nonce(tx: &FoundryTxEnvelope) -> bool {
     match tx {
-        // Tempo creations bump the protocol nonce whatever the nonce key.
-        FoundryTxEnvelope::Tempo(tx) => {
-            let tx = tx.tx();
-            tx.nonce_key.is_zero() || tx.calls.iter().any(|call| call.to.is_create())
-        }
+        // 2D lanes have their own nonce, and an exhausted creation there is a no-op in Tempo.
+        FoundryTxEnvelope::Tempo(tx) => tx.tx().nonce_key.is_zero(),
         tx if is_deposit(tx) => false,
         // EIP-8130 transactions count nonces in the nonce manager or the protocol lane.
         #[cfg(feature = "base")]
@@ -9985,9 +9982,8 @@ impl Backend<FoundryNetwork> {
                     apply_tempo_envelope_identity(&mut tx, simulated_tempo_tx.as_ref());
                     // EIP-2681 caps the sender nonce, and the cap holds without validation too.
                     // With validation, a mismatched protocol nonce is reported first.
-                    let protocol_lane = tempo_nonce_key.is_none_or(|key| key.is_zero());
                     if caller_nonce == u64::MAX
-                        && (!validation || !protocol_lane || request.nonce == Some(u64::MAX))
+                        && (!validation || request.nonce == Some(u64::MAX))
                         && uses_protocol_nonce(&tx.tx)
                     {
                         return Err(simulate_rpc_error(

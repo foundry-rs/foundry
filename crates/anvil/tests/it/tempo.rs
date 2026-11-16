@@ -4806,12 +4806,12 @@ async fn test_tempo_simulate_rejects_max_protocol_nonce() {
         || Call { to: TxKind::Call(Address::random()), value: U256::ZERO, input: Bytes::new() };
     let create = || Call { to: TxKind::Create, value: U256::ZERO, input: Bytes::new() };
 
-    // 2D nonce lanes do not spend the protocol nonce, but creations always do.
+    // 2D nonce lanes do not spend the protocol nonce, and an exhausted creation is a no-op.
     for (nonce_key, call, validation, rejected) in [
         (U256::ZERO, call(), false, true),
         (U256::ONE, call(), false, false),
-        (U256::ONE, create(), false, true),
-        (U256::ONE, create(), true, true),
+        (U256::ONE, create(), false, false),
+        (U256::ONE, create(), true, false),
     ] {
         let mut request = tempo_call_request(from, [call]);
         request["nonceKey"] = serde_json::json!(nonce_key);
