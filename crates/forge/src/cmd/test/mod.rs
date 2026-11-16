@@ -82,7 +82,6 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_tui::tui_mode;
-use path_slash::PathExt;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use rand::Rng;
 use regex::Regex;
@@ -1808,9 +1807,7 @@ impl TestArgs {
                 .into_values()
                 .flatten()
                 .flat_map(|(version, sources, (profile, _))| {
-                    sources.into_iter().map(move |(path, _)| {
-                        (PathBuf::from(path.to_slash_lossy().as_ref()), version.clone(), profile)
-                    })
+                    sources.into_iter().map(move |(path, _)| (path, version.clone(), profile))
                 })
                 .collect::<HashSet<_>>();
                 stale.retain(|(source, file)| {

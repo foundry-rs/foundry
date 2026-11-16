@@ -1,5 +1,5 @@
 use foundry_common::sh_eprintln;
-use foundry_compilers::artifacts::BytecodeHash;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
 use foundry_test_utils::{
     forgetest_init, str,
@@ -877,70 +877,105 @@ Ran 1 test for test/SymbolicStaleLayout.t.sol:SymbolicStaleLayout
 }
 
 // A filtered symbolic run must only recompile the artifacts of the compiler profiles it uses, or
-// the cache keeps pointing at deleted artifacts of other profiles and every run recompiles.
+// the cache keeps pointing at deleted artifacts of other profiles and every run recompiles. The
+// kept artifact of the other profile has no layout, so it must take the default profile's layout.
 #[forgetest_init]
 fn symbolic_keeps_cached_artifacts_of_other_profiles(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_keeps_cached_artifacts_of_other_profiles");
 
     prj.update_config(|config| {
+        config.optimizer = Some(true);
         config.ast = true;
         config.additional_compiler_profiles = vec![SettingsOverrides {
-            name: "no-metadata".to_string(),
+            name: "cancun".to_string(),
             via_ir: None,
-            evm_version: None,
+            evm_version: Some(EvmVersion::Cancun),
             optimizer: None,
             optimizer_runs: None,
-            bytecode_hash: Some(BytecodeHash::None),
+            bytecode_hash: None,
         }];
         config.compilation_restrictions = vec![CompilationRestrictions {
-            paths: "test/NoMetadata.t.sol".parse().unwrap(),
+            paths: "test/Cancun.t.sol".parse().unwrap(),
             version: None,
             via_ir: None,
-            bytecode_hash: Some(BytecodeHash::None),
+            bytecode_hash: None,
             min_optimizer_runs: None,
             optimizer_runs: None,
             max_optimizer_runs: None,
             min_evm_version: None,
             evm_version: None,
-            max_evm_version: None,
+            max_evm_version: Some(EvmVersion::Cancun),
         }];
     });
-    let source = "contract Shared { uint256 public value; }\n";
-    prj.add_source("Shared.sol", source);
+    let source = r#"
+function five() pure returns (uint256) {
+    return 5;
+}
+
+contract FoldedStore {
+    mapping(uint256 => uint256) public values;
+
+    function set(uint256 key, uint256 value) external {
+        values[key] = value;
+    }
+
+    function readFive() external view returns (uint256) {
+        return values[five()];
+    }
+}
+"#;
+    prj.add_source("FoldedStore.sol", source);
     prj.add_test(
         "Default.t.sol",
         r#"
-import {Shared} from "../src/Shared.sol";
+import {FoldedStore} from "../src/FoldedStore.sol";
+
+interface Vm {
+    function deployCode(string calldata artifactPath) external returns (address);
+}
 
 contract SymbolicDefaultProfile {
-    function checkShared() public {
-        assert(new Shared().value() == 0);
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    FoldedStore store = FoldedStore(vm.deployCode("FoldedStore.sol:FoldedStore:cancun"));
+
+    function checkFoldedSlotAliases(uint256 key) public {
+        store.set(key, 1);
+        assert(store.readFive() == 0);
     }
 }
 "#,
     );
     prj.add_test(
-        "NoMetadata.t.sol",
+        "Cancun.t.sol",
         r#"
-import {Shared} from "../src/Shared.sol";
+import {FoldedStore} from "../src/FoldedStore.sol";
 
-contract NoMetadataProfile {
-    Shared shared = new Shared();
+contract CancunProfile {
+    FoldedStore store = new FoldedStore();
 }
 "#,
     );
-    cmd.args(["test", "--symbolic"]).assert_success();
+    let failure = str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]];
+    assert_symbolic_witness(cmd.args(["test", "--symbolic"])).failure().stdout_eq(failure.clone());
 
-    prj.add_source("Shared.sol", &format!("{source}// Edited.\n"));
+    prj.add_source("FoldedStore.sol", &format!("{source}// Edited.\n"));
     cmd.forge_fuse().arg("build").assert_success();
 
     let args = ["test", "--symbolic", "--match-path", "test/Default.t.sol"];
-    cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+    assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(failure).stderr_eq(
+        str![[r#"
 Recompiling cached artifacts without storage layouts...
-
-"#]]);
-    cmd.forge_fuse().args(args).assert_success().stdout_eq(str![[r#"
+...
+"#]],
+    );
+    assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(str![[r#"
 No files changed, compilation skipped
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
 ...
 "#]]);
 }
