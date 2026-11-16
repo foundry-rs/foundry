@@ -138,6 +138,11 @@ struct AnchorIndex<'a> {
     fallen_into: Vec<(usize, usize)>,
     /// `(target pc, push instruction)` for every push that feeds a `JUMP` or `JUMPI`, sorted.
     jumps: Vec<(u32, usize)>,
+    /// `(target pc, push instruction)` for every push of a `JUMPDEST` address, sorted. Unlike
+    /// `jumps`, this includes return addresses that code pushes before jumping to a helper.
+    address_pushes: Vec<(u32, usize)>,
+    /// Whether execution can fall through from the previous instruction into each instruction.
+    falls_through: Vec<bool>,
 }
 
 impl<'a> AnchorIndex<'a> {
@@ -151,6 +156,8 @@ impl<'a> AnchorIndex<'a> {
         let mut branches = Vec::new();
         let mut reverting_runs = Vec::new();
         let mut jumps = Vec::new();
+        let mut address_pushes = Vec::new();
+        let mut falls_through = Vec::new();
         // `(pc, instruction)` of every `JUMPDEST`.
         let mut jumpdests = Vec::new();
         // Instructions that end a straight-line run, and `(JUMPI, static target pc)` pairs.
@@ -162,6 +169,15 @@ impl<'a> AnchorIndex<'a> {
         let mut prev = opcode::STOP;
         let mut prev_target = None;
         for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
+            falls_through.push(!matches!(
+                prev,
+                opcode::JUMP
+                    | opcode::STOP
+                    | opcode::RETURN
+                    | opcode::REVERT
+                    | opcode::INVALID
+                    | opcode::SELFDESTRUCT
+            ));
             match inst.opcode.get() {
                 opcode::JUMPDEST => jumpdests.push((pc, ic)),
                 opcode::JUMPI => conditional_jumps.push((ic, prev_target)),
@@ -209,13 +225,20 @@ impl<'a> AnchorIndex<'a> {
                 if jump == Some(opcode::JUMPI) {
                     branches.push((ic, next_pc, inst.immediate));
                 }
-                if matches!(jump, Some(opcode::JUMP | opcode::JUMPI)) && inst.immediate.len() <= 4 {
+                if inst.immediate.len() <= 4 {
                     let target = inst.immediate.iter().fold(0, |acc, &byte| acc << 8 | byte as u32);
-                    jumps.push((target, ic));
+                    address_pushes.push((target, ic));
+                    if matches!(jump, Some(opcode::JUMP | opcode::JUMPI)) {
+                        jumps.push((target, ic));
+                    }
                 }
             }
         }
         jumps.sort_unstable();
+        address_pushes.retain(|&(target, _)| {
+            jumpdests.binary_search_by_key(&(target as usize), |&(pc, _)| pc).is_ok()
+        });
+        address_pushes.sort_unstable();
         let jumpdest_at = |pc: Option<usize>| {
             pc.and_then(|pc| jumpdests.binary_search_by_key(&pc, |&(pc, _)| pc).ok())
                 .map(|i| jumpdests[i].1)
@@ -244,10 +267,26 @@ impl<'a> AnchorIndex<'a> {
                 (run_start < ic).then_some((ic, run_start))
             })
             .collect();
-        Self { source_map, ic_pc_map, entries, branches, reverting_runs, fallen_into, jumps }
+        Self {
+            source_map,
+            ic_pc_map,
+            entries,
+            branches,
+            reverting_runs,
+            fallen_into,
+            jumps,
+            address_pushes,
+            falls_through,
+        }
     }
 
-    /// Finds the first opcode in the source range, preferring code outside a failure stub.
+    /// Finds the entry opcode of the source range, preferring code outside a failure stub.
+    ///
+    /// The entry is the lowest instruction in the range that is not provably reached only from
+    /// inside the range. A compiler can lay out blocks that belong to the range before its entry,
+    /// such as the cleanup of a failed condition, and only code inside the range reaches those.
+    /// Dynamic jumps are not tracked, so an instruction with no known way in, such as the entry of
+    /// an internal function, counts as an entry.
     fn simple(&self, item_id: u32, loc: &SourceLocation) -> eyre::Result<ItemAnchor> {
         let source = loc.source_id as i32;
         let start = self
@@ -262,10 +301,14 @@ impl<'a> AnchorIndex<'a> {
             .filter(|&instruction| is_in_source_range(&self.source_map[instruction], loc));
         // Cold validation stubs can precede the statement's main code in the bytecode.
         // A revert statement itself may have only failure-path candidates, so retain the fallback.
-        let instruction = candidates
+        let live = candidates
             .clone()
-            .filter(|&instruction| !in_reverting_run(&self.reverting_runs, instruction))
+            .filter(|&instruction| !in_reverting_run(&self.reverting_runs, instruction));
+        let instruction = live
+            .clone()
+            .filter(|&instruction| !self.is_entered_only_from_inside(instruction, loc))
             .min()
+            .or_else(|| live.min())
             .or_else(|| candidates.min());
         ItemAnchor::from_instruction(instruction, self.ic_pc_map, item_id, loc)
     }
@@ -315,6 +358,44 @@ impl<'a> AnchorIndex<'a> {
         self.fallen_into
             .binary_search_by_key(&to, |&(jumpdest, _)| jumpdest)
             .is_ok_and(|i| (self.fallen_into[i].1..to).contains(&from))
+    }
+
+    /// Returns whether every known way into `instruction` comes from an instruction mapped inside
+    /// `loc`, and there is at least one. The known ways in are falling through and a push of its
+    /// address, which is a static jump or a return address. Unmapped instructions, such as the
+    /// `JUMPDEST` that a compiler puts before a loop body, belong to the block they lead, so the
+    /// ways into that block count.
+    fn is_entered_only_from_inside(&self, instruction: usize, loc: &SourceLocation) -> bool {
+        let inside = |element: &SourceElement| is_in_source_range(element, loc);
+        let (mut any, mut all) = (false, true);
+        let mut ic = instruction;
+        loop {
+            if let Some(pc) = self.ic_pc_map.get(ic as u32) {
+                let start = self.address_pushes.partition_point(|&(target, _)| target < pc);
+                for &(_, push) in
+                    self.address_pushes[start..].iter().take_while(|&&(target, _)| target == pc)
+                {
+                    any = true;
+                    all &= self.source_map.get(push).is_some_and(inside);
+                }
+            }
+            let Some(prev) = ic.checked_sub(1) else {
+                // Execution starts at the first instruction.
+                return false;
+            };
+            if !self.falls_through.get(ic).copied().unwrap_or(false) {
+                break;
+            }
+            match self.source_map.get(prev) {
+                Some(element) if element.index().is_none() => ic = prev,
+                element => {
+                    any = true;
+                    all &= element.is_some_and(inside);
+                    break;
+                }
+            }
+        }
+        any && all
     }
 
     /// Returns whether a static jump mapped outside `loc` targets `instruction`.
@@ -504,6 +585,113 @@ mod tests {
             let ic_pc_map = IcPcMap::new(&bytecode);
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
             assert_eq!(index.simple(0, &loc).unwrap().instruction, expected);
+        }
+    }
+
+    #[test]
+    fn statement_anchor_skips_blocks_reached_only_from_inside() {
+        let loc =
+            SourceLocation { source_id: 0, contract_name: "T".into(), bytes: 10..30, lines: 1..2 };
+        // Code outside the span (`0:100`) jumps over a block that belongs to the span, and which
+        // is laid out before the span's entry.
+        for (bytecode, source_map, expected) in [
+            // The entry falls through from outside, and the earlier block is only jumped to from
+            // inside.
+            (
+                vec![
+                    opcode::PUSH1,
+                    5,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "0:100:0;;15:5:0;;0:100:0;12:3:0;",
+                6,
+            ),
+            // A return address pushed from inside does not make the earlier block an entry.
+            (
+                vec![
+                    opcode::PUSH1,
+                    5,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    3,
+                    opcode::STOP,
+                ],
+                "0:100:0;;15:5:0;;0:100:0;12:3:0;",
+                6,
+            ),
+            // The entry is jumped to from outside.
+            (
+                vec![
+                    opcode::PUSH1,
+                    5,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "0:100:0;;15:5:0;;16:4:0;12:3:0;",
+                5,
+            ),
+            // An unmapped `JUMPDEST` belongs to the block it leads, so it does not make the code
+            // after it an entry.
+            (
+                vec![
+                    opcode::PUSH1,
+                    7,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "0:100:0;;15:5:0;-1:-1:-1;15:5:0;;16:4:0;12:3:0;",
+                7,
+            ),
+            // A jump mapped to a longer span that starts inside the item, as the parent
+            // expression's merge label does, does not make the earlier block an entry.
+            (
+                vec![
+                    opcode::PUSH1,
+                    5,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "0:100:0;;10:50:0;;16:4:0;10:50:0;",
+                5,
+            ),
+            // The lowest instruction stays the anchor when nothing is known to reach it, as with
+            // a function entered by a dynamic jump.
+            (
+                vec![opcode::STOP, opcode::JUMPDEST, opcode::PUSH0, opcode::STOP],
+                "0:100:0;15:5:0;;",
+                1,
+            ),
+        ] {
+            let source_map = sourcemap::parse(source_map).unwrap();
+            let ic_pc_map = IcPcMap::new(&bytecode);
+            let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+            assert_eq!(index.simple(0, &loc).unwrap().instruction, expected, "{source_map:?}");
         }
     }
 
