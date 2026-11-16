@@ -263,6 +263,12 @@ impl SymbolicExecutor {
                     outcome.state.frame.return_data =
                         error_string_return_data(&mut self.cx, DEPTH_REASON);
                 }
+                // Forge's depth check also passes for a halt, which it matches like a revert.
+                CallStatus::ExceptionalHalt if expected.deeper_frame_ran() => {
+                    return Err(SymbolicError::Unsupported(
+                        "symbolic vm.expectRevert pending at an exceptional halt",
+                    ));
+                }
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {}
             }
         }
