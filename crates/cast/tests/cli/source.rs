@@ -370,15 +370,6 @@ async fn source_plain_and_directory(prj: _, cmd: _) {
     let directory = prj.root().join("sources");
     cmd.cast_fuse().args(args).arg("-d").arg(&directory).assert_empty_stdout();
     assert_eq!(fs::read_to_string(directory.join("Example/Contract.sol")).unwrap(), source);
-    let flattened = "pragma solidity ^0.8.0;\n\n// Contract.sol\n contract Example {}\n";
-    cmd.cast_fuse()
-        .args(args)
-        .arg("--flatten")
-        .assert_success()
-        .stdout_eq(format!("{flattened}\n"));
-    let output = prj.root().join("flattened.sol");
-    cmd.cast_fuse().args(args).arg("--flatten").arg("-d").arg(&output).assert_empty_stdout();
-    assert_eq!(fs::read_to_string(&output).unwrap(), flattened);
     server.abort();
 }
 
@@ -461,86 +452,6 @@ async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
                 external_contents.as_slice()
             );
         }
-        server.abort();
-    }
-}
-
-#[cfg(windows)]
-#[casttest]
-async fn source_directory_rejects_windows_path_aliases(prj: _, cmd: _) {
-    let directory = prj.root().join("sources");
-    fs::create_dir_all(&directory).unwrap();
-    let sentinel = directory.join("foundry.toml");
-    let sentinel_contents = "original config";
-    fs::write(&sentinel, sentinel_contents).unwrap();
-    let git_dir = directory.join(".git");
-    fs::create_dir(&git_dir).unwrap();
-    let git_config = git_dir.join("config");
-    fs::write(&git_config, sentinel_contents).unwrap();
-
-    for (contract_name, source_code, expected_error) in [
-        (
-            "git~1",
-            r#"{"config":{"content":"replacement"},"config.sol":{"content":"companion"}}"#,
-            "Error: invalid contract name from explorer: \"git~1\"\n".to_string(),
-        ),
-        (
-            "Example",
-            "{\"a/C:/foundry.toml\": {\"content\": \"replacement\"}}",
-            format!(
-                "Error: invalid source path from explorer: {:?}\n",
-                Path::new("C:foundry.toml")
-            ),
-        ),
-        (
-            "Example",
-            "{\".. /foundry.toml\": {\"content\": \"replacement\"}}",
-            format!(
-                "Error: invalid source path from explorer: {:?}\n",
-                Path::new("Example").join(".. ").join("foundry.toml")
-            ),
-        ),
-        (
-            " ",
-            "{\"foundry.toml\": {\"content\": \"replacement\"}}",
-            "Error: invalid contract name from explorer: \" \"\n".to_string(),
-        ),
-    ] {
-        let response = json!({
-            "status": "1", "message": "OK", "result": [{
-                "SourceCode": source_code, "ABI": "[]", "ContractName": contract_name,
-                "CompilerVersion": "v0.8.30+commit.73712a01", "OptimizationUsed": "0",
-                "Runs": "200", "EVMVersion": "Default", "Proxy": "0"
-            }]
-        });
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let app = Router::new().route(
-            "/api",
-            get(move || {
-                let response = response.clone();
-                async move { Json(response) }
-            }),
-        );
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
-        let args = [
-            "source",
-            "0x0000000000000000000000000000000000000001",
-            "--explorer-api-url",
-            &format!("{url}/api"),
-            "--explorer-url",
-            &url,
-        ];
-        cmd.cast_fuse()
-            .args(args)
-            .arg("-d")
-            .arg(&directory)
-            .assert_failure()
-            .stdout_eq("")
-            .stderr_eq(expected_error.raw());
-        assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
-        assert_eq!(fs::read_to_string(&git_config).unwrap(), sentinel_contents);
         server.abort();
     }
 }

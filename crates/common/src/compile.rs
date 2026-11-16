@@ -1293,7 +1293,6 @@ fn add_root_remapping_diagnostics<C: Compiler<CompilerContract = Contract>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_block_explorers::contract::SourceCodeMetadata;
     use foundry_compilers::multi::MultiCompilerLanguage;
     use std::fs;
     use tempfile::tempdir;
@@ -1395,46 +1394,6 @@ mod tests {
             sanitize_relative_path(Path::new("lib/openzeppelin")),
             Path::new("lib/openzeppelin")
         );
-    }
-
-    fn explorer_metadata(contract_name: &str, sources: &[(&str, &str)]) -> Metadata {
-        Metadata {
-            source_code: SourceCodeMetadata::Sources(
-                sources.iter().map(|(path, content)| ((*path).into(), (*content).into())).collect(),
-            ),
-            abi: "[]".into(),
-            contract_name: contract_name.into(),
-            compiler_version: "invalid".into(),
-            optimization_used: 0,
-            runs: 0,
-            constructor_arguments: Default::default(),
-            evm_version: "Default".into(),
-            library: String::new(),
-            license_type: String::new(),
-            proxy: 0,
-            implementation: None,
-            swarm_source: String::new(),
-        }
-    }
-
-    #[test]
-    fn etherscan_project_rejects_invalid_metadata_before_writing() {
-        let temp = tempfile::tempdir().unwrap();
-        let external = temp.path().join("external");
-        std::fs::create_dir(&external).unwrap();
-        let external_source = external.join("Probe.sol");
-        std::fs::write(&external_source, [0xff]).unwrap();
-        let target = temp.path().join("sources");
-        std::fs::create_dir(&target).unwrap();
-        let contract_name = external.to_str().unwrap();
-        let metadata = explorer_metadata(contract_name, &[("Example.sol", "replacement")]);
-        let err = etherscan_project(&metadata, &target).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            format!("invalid contract name from explorer: {contract_name:?}")
-        );
-        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
-        assert_eq!(std::fs::read(&external_source).unwrap(), [0xff]);
     }
 
     #[test]

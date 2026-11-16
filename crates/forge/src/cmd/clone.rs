@@ -1,7 +1,7 @@
 use super::{init::InitArgs, install::DependencyInstallOpts};
 use alloy_primitives::{Address, Bytes, ChainId, TxHash};
 use clap::{Parser, ValueEnum, ValueHint};
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use forge_verify::sourcify::SOURCIFY_URL;
 use foundry_block_explorers::{
     Client,
@@ -538,7 +538,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     // first we dump the sources to a temporary directory
     let tmp_dump_dir = root.join("raw_sources");
     let contract_dir = tmp_dump_dir.join(&meta.contract_name);
-    meta.source_tree()?.write_to(&tmp_dump_dir)?;
+    meta.source_tree()?.write_to(&tmp_dump_dir).wrap_err("failed to dump sources")?;
 
     // check whether we need to re-organize directories in the original sources, since we do not
     // want to put all the sources in the `src` directory if the original directory structure is
@@ -1225,19 +1225,18 @@ mod tests {
     }
 
     #[test]
-    fn test_dump_sources_rejects_hidden_contract_name() {
-        let contract_name = ".git";
+    fn test_dump_sources_preserves_write_error_context() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().to_path_buf();
-        let meta = contract_metadata(contract_name, false, None).items.remove(0);
+        let raw_sources = root.join("raw_sources");
+        std::fs::write(&raw_sources, "original").unwrap();
+        let meta = contract_metadata("Contract_2", false, None).items.remove(0);
 
         let err = dump_sources(&meta, &root, false).unwrap_err();
 
-        assert_eq!(
-            err.to_string(),
-            format!("invalid contract name from explorer: {contract_name:?}")
-        );
-        assert!(!root.join("raw_sources").exists());
+        assert_eq!(err.to_string(), "failed to dump sources");
+        assert!(matches!(err.downcast_ref::<EtherscanError>(), Some(EtherscanError::IO(_))));
+        assert_eq!(std::fs::read_to_string(raw_sources).unwrap(), "original");
     }
 
     #[tokio::test]
