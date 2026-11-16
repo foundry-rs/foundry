@@ -77,10 +77,20 @@ contract StateDiffNestedStructTest is Test {
         set.add(address(0xBEEF));
         string memory json = vm.getStateDiffJson();
 
+        // `members` is the namespace's second slot.
+        uint256 slot = uint256(
+            keccak256(abi.encode(uint256(keccak256("example.storage.Members")) - 1)) & ~bytes32(uint256(0xff))
+        ) + 1;
         assertTrue(!vm.contains(json, '"decoded":{"previousValue":"()","newValue":"()"}'));
         assertTrue(
-            vm.contains(json, '"label":"example.storage.Members.members._inner._values","type":"bytes32[]","offset":0')
+            vm.contains(
+                json,
+                string.concat(
+                    '"label":"example.storage.Members.members._inner._values","type":"bytes32[]","offset":0,"slot":"',
+                    vm.toString(slot),
+                    '","decoded":{"previousValue":"0","newValue":"1"}'
+                )
+            )
         );
-        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"1"}'));
     }
 }

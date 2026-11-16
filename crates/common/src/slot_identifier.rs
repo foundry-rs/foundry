@@ -619,15 +619,23 @@ impl SlotIdentifier {
             && let Some(first_member) = members.iter().find(|m| m.slot == "0")
         {
             let member_type_info = self.storage_layout.types.get(&first_member.storage_type)?;
+            let member_label = format!("{}.{}", base_label, first_member.label);
 
-            // A struct fits in one slot by its size: a sole member at slot "0" can still span
-            // several slots (e.g. `struct AddressSet { Set _inner; }`).
-            let is_single_slot = storage_type
-                .number_of_bytes
-                .parse::<u64>()
-                .map_or_else(|_| members.iter().all(|m| m.slot == "0"), |bytes| bytes <= 32);
+            // A nested struct starts its own slot, so it is the only member at slot "0".
+            if is_struct(&member_type_info.label) {
+                return self.handle_struct(
+                    &member_label,
+                    member_type_info,
+                    target_slot,
+                    struct_start_slot,
+                    first_member.offset,
+                    slot_str,
+                    depth + 1,
+                );
+            }
 
-            if is_single_slot {
+            // Structs fill whole slots; a sole member at slot "0" can still span several.
+            if storage_type.number_of_bytes == "32" {
                 // Build member info for single-slot struct
                 let mut member_infos = Vec::new();
                 for member in &members {
@@ -677,23 +685,7 @@ impl SlotIdentifier {
                 });
             }
 
-            // Multi-slot struct - return the first member.
-            let member_label = format!("{}.{}", base_label, first_member.label);
-
-            // If the first member is itself a struct, recurse
-            if is_struct(&member_type_info.label) {
-                return self.handle_struct(
-                    &member_label,
-                    member_type_info,
-                    target_slot,
-                    struct_start_slot,
-                    first_member.offset,
-                    slot_str,
-                    depth + 1,
-                );
-            }
-
-            // Return the primitive members packed into the first slot.
+            // Multi-slot struct - return the primitive members packed into the first slot.
             return self.slot_variables(
                 members
                     .iter()
@@ -1690,15 +1682,32 @@ mod tests {
         }
     }
 
-    /// OpenZeppelin's `EnumerableSet.AddressSet`: a struct whose sole member, at slot "0", is a
-    /// two-slot struct holding a dynamic array and a mapping.
+    /// A struct whose sole member is a struct: OpenZeppelin's `EnumerableSet.AddressSet`, which
+    /// wraps a two-slot struct holding a dynamic array and a mapping, and `wrapped`, which wraps a
+    /// packed single-slot struct.
     #[test]
-    fn descends_into_a_struct_whose_sole_member_spans_several_slots() {
+    fn descends_into_a_struct_whose_sole_member_is_a_struct() {
         let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
             "storage": [
-                { "astId": 1, "contract": "C", "label": "set", "offset": 0, "slot": "0", "type": "t_struct(AddressSet)" }
+                { "astId": 1, "contract": "C", "label": "set", "offset": 0, "slot": "0", "type": "t_struct(AddressSet)" },
+                { "astId": 5, "contract": "C", "label": "wrapped", "offset": 0, "slot": "2", "type": "t_struct(A)" }
             ],
             "types": {
+                "t_struct(A)": {
+                    "encoding": "inplace", "label": "struct C.A", "numberOfBytes": "32",
+                    "members": [
+                        { "astId": 6, "contract": "C", "label": "b", "offset": 0, "slot": "0", "type": "t_struct(B)" }
+                    ]
+                },
+                "t_struct(B)": {
+                    "encoding": "inplace", "label": "struct C.B", "numberOfBytes": "32",
+                    "members": [
+                        { "astId": 7, "contract": "C", "label": "x", "offset": 0, "slot": "0", "type": "t_uint128" },
+                        { "astId": 8, "contract": "C", "label": "y", "offset": 16, "slot": "0", "type": "t_uint64" }
+                    ]
+                },
+                "t_uint128": { "encoding": "inplace", "label": "uint128", "numberOfBytes": "16" },
+                "t_uint64": { "encoding": "inplace", "label": "uint64", "numberOfBytes": "8" },
                 "t_struct(AddressSet)": {
                     "encoding": "inplace", "label": "struct EnumerableSet.AddressSet", "numberOfBytes": "64",
                     "members": [
@@ -1731,8 +1740,18 @@ mod tests {
         assert_eq!(info.slot_type.label, "bytes32[]");
         // The array's own slot holds its length.
         info.decode_values(B256::ZERO, B256::from(U256::from(1)));
-        let decoded = info.decoded.unwrap();
-        assert_eq!(format_token_raw(&decoded.previous_value), "0");
-        assert_eq!(format_token_raw(&decoded.new_value), "1");
+        let length = info.decoded.unwrap();
+        assert_eq!(format_token_raw(&length.previous_value), "0");
+        assert_eq!(format_token_raw(&length.new_value), "1");
+
+        let mut info = identifier.identify(&B256::from(U256::from(2)), None).unwrap();
+        assert_eq!(info.label, "wrapped.b");
+        assert_eq!(info.slot_type.label, "struct C.B");
+        // `y = 7` sits above `x = 5`.
+        info.decode_values(B256::ZERO, B256::from((U256::from(7) << 128) | U256::from(5)));
+        assert_eq!(
+            decoded(&info),
+            [("x", "0".to_string(), "5".to_string()), ("y", "0".to_string(), "7".to_string())]
+        );
     }
 }
