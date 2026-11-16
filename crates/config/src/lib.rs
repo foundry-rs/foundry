@@ -315,10 +315,10 @@ pub struct Config {
     /// When enabled, Forge looks through each library directory for dependencies (including their
     /// own `foundry.toml` and `remappings.txt` files) and generates remappings for them, including
     /// contextual remappings for nested dependencies. Remappings you configure explicitly always
-    /// take precedence over detected ones. Dependency declarations that conflict with root paths or
-    /// other dependency mappings are scoped to their owner, with a configuration warning. Unique
-    /// aliases remain global. Dependencies with source directories outside their package retain
-    /// their existing declaration scope.
+    /// take precedence over detected ones. Dependency declarations that conflict with root paths
+    /// or other dependency mappings are scoped to their owner, with a configuration warning.
+    /// Unique aliases remain global. Dependencies with source directories outside their package
+    /// retain their existing declaration scope.
     ///
     /// When disabled, only the remappings from `remappings`, `remappings.txt`, the
     /// `FOUNDRY_REMAPPINGS` environment variable and `--remappings` are used.
