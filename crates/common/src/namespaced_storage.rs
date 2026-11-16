@@ -525,9 +525,23 @@ fn parse_namespace(annotation: &str) -> Result<Option<&str>> {
     Ok(Some(id))
 }
 
+/// Prefix of a type ID scoped to a namespace, `erc7201(<namespace>)::<id>`.
+const SCOPE_PREFIX: &str = "erc7201(";
+/// Separator between a scoped type ID's namespace and the ID itself.
+const SCOPE_SEPARATOR: &str = ")::";
+
+/// Returns the type ID as the compiler wrote it, without the namespace scope [`scope_layout`] adds.
+///
+/// IDs that are not scoped are returned as is.
+pub fn unscoped_type_id(id: &str) -> &str {
+    id.strip_prefix(SCOPE_PREFIX)
+        .and_then(|scoped| scoped.split_once(SCOPE_SEPARATOR))
+        .map_or(id, |(_, id)| id)
+}
+
 /// Scopes type IDs to `namespace` and attributes every entry to `contract`.
 fn scope_layout(output: &mut StorageLayoutOutput, namespace: &str, contract: &str) {
-    let scope = |id: &mut String| *id = format!("erc7201({namespace})::{id}");
+    let scope = |id: &mut String| *id = format!("{SCOPE_PREFIX}{namespace}{SCOPE_SEPARATOR}{id}");
     for entry in &mut output.storage {
         scope(&mut entry.r#type);
         entry.contract = contract.to_owned();
@@ -583,6 +597,19 @@ fn solar_error(sess: &Session) -> eyre::Error {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unscopes_type_ids() {
+        assert_eq!(super::unscoped_type_id("t_uint256"), "t_uint256");
+        assert_eq!(
+            super::unscoped_type_id("erc7201(example.main)::t_userDefinedValueType(Id)12"),
+            "t_userDefinedValueType(Id)12"
+        );
+        assert_eq!(
+            super::unscoped_type_id("erc7201(example.main)::t_mapping(t_address,t_uint256)"),
+            "t_mapping(t_address,t_uint256)"
+        );
+    }
+
     use super::*;
     use foundry_compilers::artifacts::Source;
 
