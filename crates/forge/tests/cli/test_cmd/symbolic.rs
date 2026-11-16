@@ -1822,6 +1822,37 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 }
 
 #[forgetest_init]
+fn symbolic_minimizer_keeps_non_reverting_assertion_failure(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_minimizer_keeps_non_reverting_assertion_failure");
+
+    // The failed soft assertion is followed by a revert that `x == 0` also hits, so the zero
+    // candidate fails with the same reason without failing the assertion.
+    prj.add_test(
+        "SymbolicMinimizeSoftAssert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicMinimizeSoftAssert is Test {
+    /// forge-config: default.assertions_revert = false
+    function checkSoftAssert(uint256 x) public pure {
+        vm.assertTrue(x != 7);
+        require(x != 7 && x != 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkSoftAssert"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMinimizeSoftAssert.t.sol:SymbolicMinimizeSoftAssert
+[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] calldata=0x6bab43b10000000000000000000000000000000000000000000000000000000000000007 args=[7]] checkSoftAssert(uint256) ([METRICS])
+...
+"#]]);
+}
+
+#[forgetest_init]
 fn symbolic_minimizes_echidna_address_array_duplicate_fixture(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(

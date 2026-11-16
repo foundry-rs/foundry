@@ -24,8 +24,9 @@ use foundry_block_explorers::{contract::Metadata, source_tree::SourceTree};
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Error as SolcError, Severity, Source,
-        output_selection::OutputSelection, remappings::Remapping,
+        BytecodeObject, Contract, Error as SolcError, SecondarySourceLocation, Severity, Source,
+        output_selection::OutputSelection,
+        remappings::{RelativeRemapping, Remapping},
     },
     compilers::{
         CompilationError, Compiler,
@@ -360,6 +361,7 @@ impl ProjectCompiler {
             {
                 external.merge(&mut output)?;
             }
+            add_root_remapping_diagnostics(&mut output, &project.paths);
             Ok(output)
         })
     }
@@ -981,6 +983,18 @@ pub fn write_etherscan_sources(metadata: &[Metadata], target_path: &Path) -> Res
     let mut source_tree = SourceTree { entries: Vec::new() };
     for item in metadata {
         ensure_safe_contract_name(&item.contract_name)?;
+        // Resolve existing NTFS short names before treating the contract directory as non-hidden.
+        #[cfg(windows)]
+        match canonicalize_path(target_path.join(&item.contract_name)) {
+            Ok(path) => {
+                let name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
+                    eyre::eyre!("invalid contract directory from explorer: {path:?}")
+                })?;
+                ensure_safe_contract_name(name)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         let entries = item.source_entries();
         for entry in &entries {
             eyre::ensure!(
@@ -1045,6 +1059,11 @@ fn is_safe_windows_path_component(component: &str) -> bool {
                 || matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
         })
     {
+        return false;
+    }
+
+    // NTFS may expose `.git` through this 8.3 alias, as recognized by Git's `core.protectNTFS`.
+    if component.eq_ignore_ascii_case("git~1") {
         return false;
     }
 
@@ -1318,13 +1337,126 @@ fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'s
     reason
 }
 
+/// Finds root aliases that would resolve an import currently restricted to dependency contexts.
+fn root_remapping_candidates<L: Clone>(
+    paths: &ProjectPathsConfig<L>,
+    import: &Path,
+    file: &Path,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let file = paths.root.join(file);
+    let mut candidates = BTreeMap::<_, BTreeSet<_>>::new();
+    let Some(cwd) = file.parent() else { return candidates };
+    if !file.starts_with(&paths.root)
+        || paths.libraries.iter().any(|lib| file.starts_with(paths.root.join(lib)))
+        // An applicable root or CLI mapping remains authoritative, even if its target is missing.
+        || paths.resolve_library_import(cwd, import).is_some()
+    {
+        return candidates;
+    }
+
+    let mut candidate_paths = paths.clone();
+    candidate_paths.libraries.clear();
+    for remapping in &paths.remappings {
+        if let Some(context) = &remapping.context
+            && paths
+                .libraries
+                .iter()
+                .any(|lib| paths.root.join(context).starts_with(paths.root.join(lib)))
+        {
+            let mut global = remapping.clone();
+            global.context = None;
+            candidate_paths.remappings = vec![global.clone()];
+            if candidate_paths
+                .resolve_library_import(cwd, import)
+                .is_some_and(|target| target.is_file())
+            {
+                candidates.entry(global.name.clone()).or_default().insert(
+                    RelativeRemapping::new(global, &paths.root).to_relative_remapping().to_string(),
+                );
+            }
+        }
+    }
+    candidates
+}
+
+/// Adds actionable alias migration help to existing import errors, including JSON diagnostics.
+fn add_root_remapping_diagnostics<C: Compiler<CompilerContract = Contract>>(
+    output: &mut ProjectCompileOutput<C>,
+    paths: &ProjectPathsConfig<C::Language>,
+) {
+    if !output.output().errors.iter().any(|error| error.error_code() == Some(6275)) {
+        return;
+    }
+
+    let mut suggestions = BTreeMap::<_, BTreeMap<_, BTreeSet<_>>>::new();
+    for (import, file) in output.graph().unresolved_imports() {
+        for (alias, mappings) in root_remapping_candidates(paths, import, file) {
+            suggestions
+                .entry(paths.root.join(file))
+                .or_default()
+                .entry(alias)
+                .or_default()
+                .extend(mappings);
+        }
+    }
+
+    for error in &mut output.output_mut().errors {
+        // CompilationError has no mutable diagnostic accessors; reuse concrete solc errors.
+        let error = error as &mut dyn Any;
+        let error = if error.is::<SolcError>() {
+            error.downcast_mut::<SolcError>().unwrap()
+        } else if let Some(MultiCompilerError::Solc(error)) =
+            error.downcast_mut::<MultiCompilerError>()
+        {
+            error
+        } else {
+            continue;
+        };
+        if error.error_code == Some(6275)
+            && let Some(location) = &error.source_location
+            && let Some(aliases) = suggestions.remove(&paths.root.join(&location.file))
+        {
+            for (alias, mappings) in aliases {
+                let action = if mappings.len() == 1 {
+                    "add a remapping to foundry.toml or remappings.txt"
+                } else {
+                    "choose a root remapping in foundry.toml or remappings.txt"
+                };
+                let help = format!(
+                    "help: this file imports the alias {alias:?}, which is scoped to a dependency. \
+                     To use it from the root project, {action}:\n      {}",
+                    mappings.into_iter().collect::<Vec<_>>().join("\n      ")
+                );
+                error.secondary_source_locations.push(SecondarySourceLocation {
+                    file: None,
+                    start: None,
+                    end: None,
+                    message: Some(help.clone()),
+                });
+                // Keep the original message intact so text rendering does not print help twice.
+                let message = error.formatted_message.as_mut().unwrap_or(&mut error.message);
+                message.truncate(message.trim_end().len());
+                message.push_str("\n\n");
+                message.push_str(&help);
+                message.push('\n');
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use foundry_block_explorers::contract::SourceCodeMetadata;
+    use foundry_compilers::multi::MultiCompilerLanguage;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
+
+    #[cfg(windows)]
+    use std::process::Command;
 
     #[test]
     fn parse_contract_identifiers() {
@@ -1468,6 +1600,8 @@ mod tests {
             "LPT1 .sol",
             "COM1",
             "LPT³.txt",
+            "git~1",
+            "GIT~1",
         ] {
             assert!(!is_safe_windows_path_component(component), "{component:?}");
         }
@@ -1585,6 +1719,13 @@ mod tests {
             explorer_metadata("Example", &[("config", "replacement"), ("config.sol", "companion")]);
         assert!(write_etherscan_sources(&[metadata], &target).is_err());
         assert_eq!(std::fs::read_to_string(&git_config).unwrap(), "original file config");
+
+        // Extensionless sources are written to `.sol` unless a companion already uses that path.
+        std::fs::remove_file(contract_dir.join("config")).unwrap();
+        symlink(&git_config, contract_dir.join("config.sol")).unwrap();
+        let metadata = explorer_metadata("Example", &[("config", "replacement")]);
+        assert!(write_etherscan_sources(&[metadata], &target).is_err());
+        assert_eq!(std::fs::read_to_string(&git_config).unwrap(), "original file config");
     }
 
     #[test]
@@ -1613,5 +1754,74 @@ mod tests {
             format!("invalid source path from explorer: {:?}", Path::new("Example").join(""))
         );
         assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn root_remapping_candidates_respect_targets_choices_and_importers() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(root.join("lib/a/src")).unwrap();
+        fs::write(root.join("lib/a/src/Target.sol"), "contract Target {}\n").unwrap();
+        let root = dunce::canonicalize(root).unwrap();
+        let paths = ProjectPathsConfig::builder()
+            .root(&root)
+            .lib(root.join("lib"))
+            .remapping(Remapping::from_str("lib/a/:@alias/=lib/a/src/").unwrap())
+            .remapping(Remapping::from_str("lib/a/:File.sol=lib/a/src/Target.sol").unwrap())
+            .build::<MultiCompilerLanguage>()
+            .unwrap();
+        let file = root.join("src/Root.sol");
+        let import = Path::new("@alias/Target.sol");
+
+        assert_eq!(
+            root_remapping_candidates(&paths, Path::new("File.sol"), &file),
+            BTreeMap::from([(
+                "File.sol".to_string(),
+                BTreeSet::from(["File.sol=lib/a/src/Target.sol".to_string()])
+            )])
+        );
+
+        for (import, file) in [
+            (Path::new("@alias/Missing.sol"), file.clone()),
+            (import, root.join("lib/a/src/Target.sol")),
+            (import, temp.path().join("Outside.sol")),
+        ] {
+            assert_eq!(root_remapping_candidates(&paths, import, &file), BTreeMap::new());
+        }
+
+        for explicit in ["@alias/=missing/", "src/:@alias/=missing/"] {
+            let mut paths = paths.clone();
+            paths.remappings.push(Remapping::from_str(explicit).unwrap());
+            assert_eq!(root_remapping_candidates(&paths, import, &file), BTreeMap::new());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn etherscan_sources_reject_hidden_short_name_aliases() {
+        let temp = tempfile::tempdir().unwrap();
+        // Force a different short-name suffix when 8.3 names are enabled.
+        std::fs::create_dir(temp.path().join("git~1")).unwrap();
+        let git_dir = temp.path().join(".git");
+        std::fs::create_dir(&git_dir).unwrap();
+        let git_config = git_dir.join("config");
+        std::fs::write(&git_config, "original config").unwrap();
+        let output = Command::new("cmd")
+            .args(["/d", "/c", "for %I in (.git) do @echo %~snxI"])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let short_path = String::from_utf8(output.stdout).unwrap();
+        let name = Path::new(short_path.trim()).file_name().unwrap().to_str().unwrap();
+        if name.starts_with('.') {
+            // This volume does not generate 8.3 aliases.
+            return;
+        }
+        let metadata =
+            explorer_metadata(name, &[("config", "replacement"), ("config.sol", "companion")]);
+        let err = write_etherscan_sources(&[metadata], temp.path()).unwrap_err();
+        assert_eq!(err.to_string(), "invalid contract name from explorer: \".git\"");
+        assert_eq!(std::fs::read_to_string(&git_config).unwrap(), "original config");
     }
 }

@@ -513,8 +513,17 @@ async fn source_directory_rejects_windows_path_aliases(prj: _, cmd: _) {
     let sentinel = directory.join("foundry.toml");
     let sentinel_contents = "original config";
     fs::write(&sentinel, sentinel_contents).unwrap();
+    let git_dir = directory.join(".git");
+    fs::create_dir(&git_dir).unwrap();
+    let git_config = git_dir.join("config");
+    fs::write(&git_config, sentinel_contents).unwrap();
 
     for (contract_name, source_code, expected_error) in [
+        (
+            "git~1",
+            r#"{"config":{"content":"replacement"},"config.sol":{"content":"companion"}}"#,
+            "Error: invalid contract name from explorer: \"git~1\"\n".to_string(),
+        ),
         (
             "Example",
             "{\"a/C:/foundry.toml\": {\"content\": \"replacement\"}}",
@@ -571,6 +580,7 @@ async fn source_directory_rejects_windows_path_aliases(prj: _, cmd: _) {
             .stdout_eq("")
             .stderr_eq(expected_error);
         assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
+        assert_eq!(fs::read_to_string(&git_config).unwrap(), sentinel_contents);
         server.abort();
     }
 }

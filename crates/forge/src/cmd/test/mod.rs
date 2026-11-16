@@ -50,7 +50,7 @@ use foundry_common::{
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{
-        BytecodeObject, ConfigurableContractArtifact, Libraries,
+        BytecodeObject, ConfigurableContractArtifact, Libraries, ast::NodeType,
         output_selection::ContractOutputSelection,
     },
     compilers::{
@@ -1717,13 +1717,15 @@ impl TestArgs {
         }
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let compiler = ProjectCompiler::new()
-            .allow_linked_libraries(config.allow_linked_libraries || self.list)
-            .external_compilers(&config)
-            .dynamic_test_linking(config.dynamic_test_linking)
-            .quiet(shell::is_json() || self.junit);
+        let compiler = || {
+            ProjectCompiler::new()
+                .allow_linked_libraries(config.allow_linked_libraries || self.list)
+                .external_compilers(&config)
+                .dynamic_test_linking(config.dynamic_test_linking)
+                .quiet(shell::is_json() || self.junit)
+        };
         let (output, selected_sources, inline_config) = if self.list {
-            let compiler = compiler.external_artifacts(false);
+            let compiler = compiler().external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
                 && config.extra_output.is_empty()
@@ -1746,16 +1748,51 @@ impl TestArgs {
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
-            let compiler = if filter.is_empty() {
-                compiler
-            } else {
-                compiler.source_order_fallback(
-                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
-                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
-                    ),
-                )
+            let compile = || {
+                let compiler = if filter.is_empty() {
+                    compiler()
+                } else {
+                    compiler().source_order_fallback(
+                        source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                            .chain(source_files_iter(
+                                &config.test,
+                                MultiCompilerLanguage::FILE_EXTENSIONS,
+                            )),
+                    )
+                };
+                compiler.files(files.clone()).compile(&project)
             };
-            let output = compiler.files(files.clone()).compile(&project);
+            let mut output = compile();
+            // A build without storage layouts keeps a cached profile that requested them, so its
+            // artifacts are reused here without layouts. Delete them so they are recompiled.
+            // Artifacts of sources without contracts never have layouts, and their AST has no
+            // contract definition.
+            if config.extra_output.contains(&ContractOutputSelection::StorageLayout)
+                && let Ok(compiled) = &output
+            {
+                let stale = compiled
+                    .cached_artifacts()
+                    .artifact_files()
+                    .filter(|file| {
+                        file.artifact.storage_layout.is_none()
+                            && file.artifact.ast.as_ref().is_none_or(|ast| {
+                                ast.nodes
+                                    .iter()
+                                    .any(|node| node.node_type == NodeType::ContractDefinition)
+                            })
+                    })
+                    .map(|file| file.file.clone())
+                    .collect::<Vec<_>>();
+                if !stale.is_empty() {
+                    if !(shell::is_json() || self.junit) {
+                        sh_status!("Recompiling cached artifacts without storage layouts...")?;
+                    }
+                    for file in stale {
+                        fs::remove_file(file)?;
+                    }
+                    output = compile();
+                }
+            }
             let output = if should_mutate {
                 output.wrap_err(
                     "Mutation testing compiler profile failed to compile before applying mutations",
