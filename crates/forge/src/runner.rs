@@ -1443,6 +1443,24 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         Ok((raw, reason))
     }
 
+    /// Replays `calldata` on the test contract and returns whether it ran out of gas at `pc` on a
+    /// memory access beyond `memory_limit`.
+    fn replays_memory_halt(&self, calldata: &Bytes, svm_returns: &[Bytes], pc: usize) -> bool {
+        let Ok(mut executor) = self.clone_executor_with_svm_returns(svm_returns) else {
+            return false;
+        };
+        executor.inspector_mut().collect_failure_identity(true);
+        let memory_limit = U256::from(executor.evm_env().version.memory_limit);
+        executor.call_raw(self.sender, self.address, calldata.clone(), U256::ZERO).is_ok_and(
+            |raw| {
+                replay_ran_out_of_gas(&raw)
+                    && raw
+                        .failure_halt
+                        .is_some_and(|(halt_pc, end)| halt_pc == pc && end > memory_limit)
+            },
+        )
+    }
+
     /// Shrinks and replays a failing invariant call sequence, persisting the confirmed
     /// counterexample as a symbolic artifact.
     #[expect(clippy::too_many_arguments)]
@@ -2495,15 +2513,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     None,
                 ),
             ),
-            SymbolicRunResult::Counterexample { args, calldata, svm_returns, stats } => self
-                .replay_symbolic_counterexample(
-                    func,
-                    args,
-                    calldata,
-                    svm_returns,
-                    stats,
-                    &symbolic_config,
-                ),
+            SymbolicRunResult::Counterexample {
+                args,
+                calldata,
+                svm_returns,
+                memory_halt_pc,
+                stats,
+            } => self.replay_symbolic_counterexample(
+                func,
+                args,
+                calldata,
+                svm_returns,
+                memory_halt_pc,
+                stats,
+                &symbolic_config,
+            ),
         };
         let symbolic_result = match corpus_seed_metadata {
             Some(metadata) => symbolic_result.with_corpus_seeds(metadata),
@@ -2515,12 +2539,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
     /// Replays a symbolic counterexample concretely, minimizing and persisting it when it
     /// reproduces.
+    #[expect(clippy::too_many_arguments)]
     fn replay_symbolic_counterexample(
         &mut self,
         func: &Function,
         args: Vec<DynSolValue>,
         calldata: Bytes,
         svm_returns: Vec<Bytes>,
+        memory_halt_pc: Option<usize>,
         stats: SymbolicStats,
         symbolic_config: &SymbolicConfig,
     ) -> (TestStatus, Option<String>, Option<CounterExample>, SymbolicResult) {
@@ -2587,7 +2613,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // A replay that runs out of `svm` values left the solver path, so its failure proves
         // nothing.
         let svm_exhausted = svm_returns_exhausted(&svm_returns, &raw);
-        let out_of_gas = replay_ran_out_of_gas(&raw);
+        // Concrete execution charges gas for a memory access before it checks `memory_limit`, so
+        // a model that halts on that access may replay as out of gas, but only at that access.
+        let out_of_gas = replay_ran_out_of_gas(&raw)
+            && memory_halt_pc.is_none_or(|pc| {
+                !self.replays_memory_halt(&base_counterexample.calldata, &svm_returns, pc)
+            });
         if rejected_by_assume
             || svm_exhausted
             || out_of_gas

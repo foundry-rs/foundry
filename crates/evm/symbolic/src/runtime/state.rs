@@ -58,6 +58,8 @@ pub(crate) struct PathState {
     pub(crate) first_reverted_callee: Option<Address>,
     /// Assertion cheatcodes set this even when their revert is caught by the handler.
     pub(crate) assertion_failed: bool,
+    /// Pc of the memory access beyond `memory_limit` or the host word that halted this path.
+    pub(crate) memory_halt_pc: Option<usize>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -144,6 +146,7 @@ impl PathState {
             first_failed_callee: None,
             first_reverted_callee: None,
             assertion_failed: false,
+            memory_halt_pc: None,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),

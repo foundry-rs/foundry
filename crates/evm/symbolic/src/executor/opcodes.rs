@@ -316,8 +316,7 @@ impl SymbolicExecutor {
             if self.ignores_out_of_gas() {
                 return Ok(Some(StepOutcome::AssumeRejected));
             }
-            state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::ExceptionalHalt));
+            return Ok(Some(self.memory_halt(state)));
         }
 
         let expanded_size_bound = state
@@ -345,8 +344,7 @@ impl SymbolicExecutor {
             if self.ignores_out_of_gas() {
                 return Ok(Some(StepOutcome::AssumeRejected));
             }
-            state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::ExceptionalHalt));
+            return Ok(Some(self.memory_halt(state)));
         }
         let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit);
@@ -359,7 +357,11 @@ impl SymbolicExecutor {
             state.constraints = constraints;
             return Ok(None);
         }
-        self.apply_memory_access_guard(state, worklist, valid_access)
+        let outcome = self.apply_memory_access_guard(state, worklist, valid_access)?;
+        if matches!(outcome, Some(StepOutcome::ExceptionalHalt)) {
+            state.memory_halt_pc = Some(state.pc - 1);
+        }
+        Ok(outcome)
     }
 
     fn apply_memory_access_guard(
@@ -400,6 +402,14 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Halts `state` exceptionally on a memory access the EVM cannot expand to. The access is
+    /// the instruction before `state.pc`.
+    fn memory_halt(&mut self, state: &mut PathState) -> StepOutcome {
+        state.return_data = SymReturnData::empty(&mut self.cx);
+        state.memory_halt_pc = Some(state.pc - 1);
+        StepOutcome::ExceptionalHalt
+    }
+
     pub(super) fn guard_memory_range(
         &mut self,
         executor: &ExecutorView<'_>,
@@ -422,8 +432,7 @@ impl SymbolicExecutor {
                 if self.ignores_out_of_gas() {
                     return Ok(Some(StepOutcome::AssumeRejected));
                 }
-                state.return_data = SymReturnData::empty(&mut self.cx);
-                return Ok(Some(StepOutcome::ExceptionalHalt));
+                return Ok(Some(self.memory_halt(state)));
             }
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
             return Ok(None);
@@ -474,6 +483,9 @@ impl SymbolicExecutor {
         let outcome = self.apply_memory_access_guard(state, worklist, valid_access)?;
         if outcome.is_none() {
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
+        }
+        if matches!(outcome, Some(StepOutcome::ExceptionalHalt)) {
+            state.memory_halt_pc = Some(state.pc - 1);
         }
         Ok(outcome)
     }
