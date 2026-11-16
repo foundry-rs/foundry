@@ -37,8 +37,8 @@ use foundry_evm_core::{
     },
     evm::{
         EvmEnvFor, EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork,
-        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, TxEnvelopeFor, TxPayload,
-        TypesFor, evm_env,
+        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, Replay, TxEnvelopeFor,
+        TxPayload, TypesFor, evm_env,
     },
 };
 use foundry_evm_traces::TraceRequirements;
@@ -846,7 +846,8 @@ impl Cheatcode for dealCall {
             old_balance
         };
         // The balance survives reverts of the enclosing calls.
-        let write = PersistentWrite::balance(address, old_balance, new_balance);
+        let write =
+            PersistentWrite::balance(address, old_balance, new_balance).with_replay(Replay::Set);
         ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
@@ -1678,6 +1679,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    let fork_id = ccx.active_fork_id();
     let (evm, db) = ccx.evm_db_mut();
     if let Some(replaced) = db.revert_state(
         snapshot_id,
@@ -1685,7 +1687,8 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertKeep,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.restore_persistent_writes(snapshot_id, replaced, false);
+        let switched = ccx.active_fork_id() != fork_id;
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, false, switched);
         // A restore can make a different path look like the recorded one, so its identity is
         // unknown.
         if let Some(trace) = &mut ccx.state.failure_trace {
@@ -1711,6 +1714,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    let fork_id = ccx.active_fork_id();
     let (evm, db) = ccx.evm_db_mut();
     if let Some(replaced) = db.revert_state(
         snapshot_id,
@@ -1718,7 +1722,8 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertRemove,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.restore_persistent_writes(snapshot_id, replaced, true);
+        let switched = ccx.active_fork_id() != fork_id;
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, true, switched);
         if let Some(trace) = &mut ccx.state.failure_trace {
             trace.unidentified = true;
         }
@@ -1921,7 +1926,7 @@ fn set_persistent_nonce<FEN: FoundryEvmNetwork>(
     account.warm();
     let previous = account.nonce();
     account.set_nonce(nonce);
-    let write = PersistentWrite::nonce(&account, previous);
+    let write = PersistentWrite::nonce(&account, previous).with_replay(Replay::Set);
     drop(account);
     ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
     Ok(Default::default())

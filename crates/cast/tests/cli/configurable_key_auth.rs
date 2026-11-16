@@ -121,8 +121,33 @@ async fn tempo_t14_configurable_account_authorizes_access_keys(cmd: _) {
         .assert_success();
     assert!(is_provisioned(&mut cmd, &rpc, account, lane_key.address()));
 
+    // The next transaction on the lane takes the account's lane counter, now 1, which differs from
+    // both the protocol nonce and the owners' counters.
+    let second_lane_key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x37)).unwrap();
+    let receipt = cmd
+        .cast_fuse()
+        .args(["keychain", "authorize", &second_lane_key.address().to_string()])
+        .args(&send_args)
+        .args(["--tempo.owner", &second_owner, "--tempo.lane", "grants"])
+        .args(["--tempo.lanes-file", lanes_file.to_str().unwrap(), "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt = parse_json::<serde_json::Value>(receipt.trim()).unwrap();
+    let hash = receipt["transactionHash"].as_str().unwrap().to_owned();
+    let sent = cmd
+        .cast_fuse()
+        .args(["tx", &hash, "--rpc-url", &rpc, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let sent = parse_json::<serde_json::Value>(sent.trim()).unwrap();
+    assert_eq!(sent["data"]["nonce"], "0x1", "{sent}");
+    assert_eq!(sent["data"]["nonceKey"], "0x7", "{sent}");
+    assert!(is_provisioned(&mut cmd, &rpc, account, second_lane_key.address()));
+
     // Expiring nonce mode overrides the lane: its nonce is the discriminator, 0 by default, not
-    // the lane's counter, which is now 1.
+    // the lane's counter, which is now 2.
     let expiring_key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x36)).unwrap();
     let receipt = cmd
         .cast_fuse()

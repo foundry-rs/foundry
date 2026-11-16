@@ -613,9 +613,11 @@ Context:
 fn test_beacon_block_root_in_cancun(prj: _, cmd: _) {
     prj.clear();
     let eth_rpc_url = next_http_rpc_endpoint();
+    // Contract labels from external metadata must not affect the replay snapshot.
     cmd.args([
         "run",
         "0xae290fe8c89c3e83dff20eeb2b8e3261bcdce0d66441c7056918dfb5fafe6d96",
+        "--disable-labels",
         "--rpc-url",
         eth_rpc_url.as_str(),
     ])

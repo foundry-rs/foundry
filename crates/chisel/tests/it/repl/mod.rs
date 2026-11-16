@@ -405,6 +405,15 @@ repl_test!(inline_assembly_expression, |repl| {
     repl.expect("Decimal: 7");
 });
 
+repl_test!(inspection_rejects_early_return, |repl| {
+    for input in ["return;", "assembly { mstore(0, 42) return(0, 32) }"] {
+        repl.sendln("!clear");
+        repl.sendln(input);
+        repl.sendln("uint256(1)");
+        repl.expect("Failed to inspect expression");
+    }
+});
+
 repl_test!(
     eval_tempo_network_uses_tempo_executor,
     "--network tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",

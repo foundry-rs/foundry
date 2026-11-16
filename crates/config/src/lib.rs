@@ -234,10 +234,15 @@ pub struct Config {
     pub out: PathBuf,
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
-    /// Remappings to use for this repo
+    /// Remappings to use for this repo.
     #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
+    ///
+    /// Defaults to `true`. Dependency declarations that conflict with root paths or other
+    /// dependency mappings are scoped to their owner, with a configuration warning. Unique aliases
+    /// remain global. Dependencies with source directories outside their package retain their
+    /// existing declaration scope.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
     ///
@@ -538,13 +543,13 @@ pub struct Config {
     /// change forks already created by `setUp`.
     #[serde(default)]
     pub no_fork_bal: bool,
-    /// Prefetches a new fork block's remote cache from the keys of an older cached block.
+    /// Prefetches remote fork state before the EVM reads it.
     ///
-    /// Defaults to `false`. When a fork starts on a block with an empty disk cache, the accounts
-    /// and storage slots in the cache of the newest older block on the same chain are fetched
-    /// again at the new block in the background. This helps forks of `latest`, which start
-    /// cold on each new head. Values come from the fork block and never replace cached values,
-    /// so results do not change; unused keys cost extra RPC requests. Requires storage caching.
+    /// Defaults to `false`. While reads miss the cache, each call into a fork contract is
+    /// simulated on the endpoint with `eth_createAccessList`, and the state it touches is
+    /// fetched in batches. With storage caching, a fork block with an empty disk cache also
+    /// fetches the keys cached for the newest older block on the same chain. Values come from
+    /// the fork block; extra keys cost requests.
     #[serde(default)]
     pub fork_prefetch: bool,
     /// Disables rate limiting entirely. This overrides any settings made in
@@ -1202,6 +1207,16 @@ impl Config {
                     .unwrap_or_else(|_| Cow::Borrowed(&self.libs)),
                 root,
                 remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+                project_paths: [("src", &self.src), ("test", &self.test), ("script", &self.script)]
+                    .into_iter()
+                    .map(|(key, default)| {
+                        figment.extract_inner::<PathBuf>(key).unwrap_or_else(|_| default.clone())
+                    })
+                    .collect(),
+                warnings: match figment.extract_inner::<Vec<Warning>>("__warnings") {
+                    Err(error) if error.missing() => Ok(Vec::new()),
+                    warnings => warnings,
+                },
             };
             figment = figment.merge(remappings);
         }

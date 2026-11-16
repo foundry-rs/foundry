@@ -106,7 +106,7 @@ pub struct EvmOpts {
     #[serde(default)]
     pub no_fork_bal: bool,
 
-    /// Prefetches a new fork block's cache from the keys of an older cached block.
+    /// Prefetches remote fork state before the EVM reads it, see `Config::fork_prefetch`.
     #[serde(default)]
     pub fork_prefetch: bool,
 

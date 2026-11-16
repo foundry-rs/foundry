@@ -728,7 +728,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Writes that survive reverts of the enclosing calls, with the depth of the frame that made
     /// them and the journal length right after them, replayed when that frame or an enclosing one
-    /// reverts and its rollback undid them.
+    /// reverts and its rollback undid them. Writes accepted outside the journal have length zero,
+    /// see [`Self::record_accepted`].
     pub persistent_writes: Vec<(usize, usize, PersistentWrite)>,
 
     /// The depth of the frame that ended last and the journal length of its checkpoint, which a
@@ -736,7 +737,7 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub frame_rollback: Option<(usize, usize)>,
 
     /// The number of persistent writes recorded when each snapshot of the running transaction
-    /// was taken.
+    /// was taken, capped by the restorations that dropped some of them since.
     pub persistent_write_snapshots: HashMap<U256, usize>,
 
     /// Message of the first `vm.assert*` cheatcode that failed during the current call.
@@ -1901,11 +1902,20 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         })
     }
 
-    /// Returns the opcodes for which [`Self::step_hook`] and [`Self::step_end_hook`] must run.
+    /// Returns the opcodes the cheatcodes step: those of [`Self::hook_steps`], and `JUMPI` while
+    /// failure provenance is collected.
     ///
     /// This is the only place that decides which instructions the cheatcodes step: the inspector
     /// asks the EVM for these opcodes, and skips the hooks for every other instruction.
     pub fn steps(&self) -> OpcodeSet {
+        let steps = self.hook_steps();
+        // Failure provenance records every branch, through [`Self::record_branch`].
+        if self.failure_provenance.is_some() { steps.union(opcodes([op::JUMPI])) } else { steps }
+    }
+
+    /// Returns the opcodes at which [`Self::step_hook`] and [`Self::step_end_hook`] must run. The
+    /// other opcodes of [`Self::steps`] only need [`Self::record_branch`].
+    pub fn hook_steps(&self) -> OpcodeSet {
         if self.is_storage_hook_active()
             || self.has_storage_hooks()
             || self.broadcast.is_some()
@@ -1949,9 +1959,18 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
         }
         if self.failure_provenance.is_some() {
-            steps = steps.union(opcodes([op::JUMPI, op::REVERT, op::INVALID]));
+            steps = steps.union(opcodes([op::REVERT, op::INVALID]));
         }
         steps
+    }
+
+    /// Records the `JUMPI` about to execute for the failure provenance, as [`Self::step_hook`]
+    /// does. Fuzz campaigns step every `JUMPI` only for this, so it skips the other hooks.
+    #[inline]
+    pub fn record_branch(&mut self, interp: &InterpreterFor<'_, '_, FEN>) {
+        if let Some(provenance) = &mut self.failure_provenance {
+            provenance.record_jumpi(usize::from(interp.message().depth) + 1, interp.pc());
+        }
     }
 
     #[inline(always)]
@@ -2248,24 +2267,49 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.persistent_writes.extend(writes.into_iter().map(|write| (depth, len, write)));
     }
 
+    /// Records `writes` the frame at `depth` just accepted into the running state outside the
+    /// journal, at journal length zero: no rollback undoes them, so only a failing frame that
+    /// reinstates the state a snapshot restoration replaced replays them.
+    pub fn record_accepted(
+        &mut self,
+        depth: usize,
+        writes: impl IntoIterator<Item = PersistentWrite>,
+    ) {
+        self.persistent_writes.extend(writes.into_iter().map(|write| (depth, 0, write)));
+    }
+
     /// Retains `replaced`, the running state a revert to `snapshot_id` replaced, and drops the
     /// persistent writes recorded since the snapshot, which the restored state does not hold.
+    /// `switched` is whether the revert switched to another fork.
     pub(crate) fn restore_persistent_writes(
         &mut self,
         snapshot_id: U256,
         replaced: StateSnapshot,
         remove: bool,
+        switched: bool,
     ) {
-        self.snapshot_restores.capture(replaced, &self.persistent_writes);
         let len = if remove {
             self.persistent_write_snapshots.remove(&snapshot_id)
         } else {
             self.persistent_write_snapshots.get(&snapshot_id).copied()
-        };
+        }
+        .unwrap_or_default();
+        self.snapshot_restores.capture(replaced, &self.persistent_writes, len);
+        // Like a fork switch, a revert to a snapshot of another fork is a context switch.
+        if switched {
+            self.snapshot_restores.accept_writes();
+        }
         // A snapshot of an earlier transaction holds none of this transaction's writes. Under the
-        // inspector stack a failing frame reinstates the captured ledger instead; this covers the
-        // stackless executor.
-        self.persistent_writes.truncate(len.unwrap_or_default());
+        // inspector stack a failing frame reinstates the captured ledger, followed by the writes
+        // recorded since, instead; this covers the stackless executor.
+        self.persistent_writes.truncate(len);
+        // The writes recorded from here on replace the dropped ones, so a later restoration to a
+        // snapshot that counted those only keeps the writes kept here. The state it restores
+        // already holds the others.
+        let len = self.persistent_writes.len();
+        for stored in self.persistent_write_snapshots.values_mut() {
+            *stored = (*stored).min(len);
+        }
     }
 
     /// Replays the persistent writes made in the frame at `depth` or deeper after the frame
@@ -2285,13 +2329,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let state = interp.host().state_mut();
         let mut failed = None;
         if !success && depth > root {
-            // Without the frame's rollback, such as without the inspector stack, every write of
-            // the frame was undone. A context switch in the frame can leave later writes below
-            // its checkpoint, which the rollback keeps.
+            // Without the frame's rollback, such as without the inspector stack, every journaled
+            // write of the frame was undone. A context switch in the frame can leave later writes
+            // below its checkpoint, which the rollback keeps.
             let rollback =
                 self.frame_rollback.take().filter(|(end, _)| *end == depth).map(|(_, len)| len);
             let undone = |&(write_depth, len, _): &(usize, usize, PersistentWrite)| {
-                write_depth >= depth && rollback.is_none_or(|rollback| len > rollback)
+                write_depth >= depth && len > rollback.unwrap_or_default()
             };
             let writes = self.persistent_writes.iter().filter(|entry| undone(entry));
             let applied = PersistentWrite::apply_all(writes.map(|(_, _, write)| write), state);
@@ -2301,7 +2345,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     return true;
                 }
                 entry.1 = len;
-                !entry.2.is_delta()
+                !entry.2.is_balance_or_nonce()
             });
             match applied {
                 Ok(applied) => self

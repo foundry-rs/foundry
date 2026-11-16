@@ -224,7 +224,10 @@ pub struct NodeArgs {
     #[arg(long)]
     pub prune_history: Option<Option<usize>>,
 
-    /// Max number of states to persist on disk.
+    /// Max number of older states to keep, beyond the most recent ones.
+    ///
+    /// Block states of local and forked chains share unchanged data and stay in memory; states
+    /// loaded from a dump are persisted on disk.
     ///
     /// Note that `prune_history` will overwrite `max_persisted_states` to 0.
     #[arg(long, conflicts_with = "prune_history")]

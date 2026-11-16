@@ -4,7 +4,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_common::contracts::{
-    ContractsByArtifact, bytecode_diff_score, matches_contract_creation,
+    ContractData, ContractsByArtifact, bytecode_diff_score, matches_contract_creation,
 };
 use foundry_compilers::ArtifactId;
 use std::borrow::Cow;
@@ -13,8 +13,8 @@ use std::borrow::Cow;
 pub struct LocalTraceIdentifier<'a> {
     /// Known contracts to search through.
     known_contracts: &'a ContractsByArtifact,
-    /// Vector of pairs of artifact ID and the runtime code length of the given artifact.
-    ordered_ids: Vec<(&'a ArtifactId, usize)>,
+    /// Artifact IDs and their contracts, ordered by the runtime code length of the artifact.
+    ordered_ids: Vec<(&'a ArtifactId, &'a ContractData, usize)>,
     /// The contracts bytecode.
     contracts_bytecode: Option<&'a AddressHashMap<Bytes>>,
 }
@@ -24,10 +24,9 @@ impl<'a> LocalTraceIdentifier<'a> {
     pub fn new(known_contracts: &'a ContractsByArtifact) -> Self {
         let mut ordered_ids = known_contracts
             .iter()
-            .filter_map(|(id, contract)| Some((id, contract.deployed_bytecode()?)))
-            .map(|(id, bytecode)| (id, bytecode.len()))
+            .filter_map(|(id, contract)| Some((id, contract, contract.deployed_bytecode()?.len())))
             .collect::<Vec<_>>();
-        ordered_ids.sort_by_key(|(_, len)| *len);
+        ordered_ids.sort_by_key(|(_, _, len)| *len);
         Self { known_contracts, ordered_ids, contracts_bytecode: None }
     }
 
@@ -53,8 +52,7 @@ impl<'a> LocalTraceIdentifier<'a> {
         let mut min_score = f64::MAX;
         let mut min_score_id = None;
 
-        let mut check = |id, is_creation, min_score: &mut f64| {
-            let contract = self.known_contracts.get(id)?;
+        let mut check = |id, contract: &'a ContractData, is_creation, min_score: &mut f64| {
             // Select bytecodes to compare based on `is_creation` flag.
             let (contract_bytecode, current_bytecode) = if is_creation {
                 (contract.bytecode_without_placeholders(), creation_code)
@@ -97,11 +95,11 @@ impl<'a> LocalTraceIdentifier<'a> {
 
             // Start at artifacts with the same code length: `len..len*1.1`.
             let same_length_idx = self.find_index(len);
-            for &(id, len) in &self.ordered_ids[same_length_idx..] {
+            for &(id, contract, len) in &self.ordered_ids[same_length_idx..] {
                 if len > max_len {
                     break;
                 }
-                if let found @ Some(_) = check(id, true, &mut min_score) {
+                if let found @ Some(_) = check(id, contract, true, &mut min_score) {
                     return found;
                 }
             }
@@ -109,8 +107,8 @@ impl<'a> LocalTraceIdentifier<'a> {
             // Iterate over the remaining artifacts with less code length: `len*0.9..len`.
             let min_len = (len * 9) / 10;
             let idx = self.find_index(min_len);
-            for &(id, _) in &self.ordered_ids[idx..same_length_idx] {
-                if let found @ Some(_) = check(id, true, &mut min_score) {
+            for &(id, contract, _) in &self.ordered_ids[idx..same_length_idx] {
+                if let found @ Some(_) = check(id, contract, true, &mut min_score) {
                     return found;
                 }
             }
@@ -144,8 +142,8 @@ impl<'a> LocalTraceIdentifier<'a> {
 
         // Fallback to comparing deployed code if min score greater than threshold.
         if min_score >= 0.85 {
-            for (artifact, _) in &self.ordered_ids {
-                if let found @ Some(_) = check(artifact, false, &mut min_score) {
+            for &(id, contract, _) in &self.ordered_ids {
+                if let found @ Some(_) = check(id, contract, false, &mut min_score) {
                     return found;
                 }
             }
@@ -162,10 +160,10 @@ impl<'a> LocalTraceIdentifier<'a> {
     /// artifact with a greater code length if the exact code length is not found.
     fn find_index(&self, len: usize) -> usize {
         let (Ok(mut idx) | Err(mut idx)) =
-            self.ordered_ids.binary_search_by_key(&len, |(_, probe)| *probe);
+            self.ordered_ids.binary_search_by_key(&len, |(_, _, probe)| *probe);
 
         // In case of multiple artifacts with the same code length, we need to find the first one.
-        while idx > 0 && self.ordered_ids[idx - 1].1 == len {
+        while idx > 0 && self.ordered_ids[idx - 1].2 == len {
             idx -= 1;
         }
 

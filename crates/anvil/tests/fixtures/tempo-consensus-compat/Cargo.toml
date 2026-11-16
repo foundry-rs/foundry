@@ -30,3 +30,8 @@ tokio.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 commonware-consensus = "=2026.10.0"
+evm2.workspace = true
+reth-evm.workspace = true
+reth-primitives-traits = "0.8"
+tempo-evm.workspace = true
+tempo-precompiles.workspace = true

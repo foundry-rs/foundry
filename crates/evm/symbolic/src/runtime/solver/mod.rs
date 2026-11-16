@@ -381,22 +381,7 @@ impl SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        let output = match self.query_normalized(cx, &smt_constraints, true, constraints) {
-            Ok(output) => output,
-            Err(SymbolicError::SolverUnknown) => {
-                if let Some(model) =
-                    validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
-                {
-                    self.heuristic_witnesses += 1;
-                    trace!("model: validated hard arithmetic fallback model after solver unknown");
-                    self.cache_sat_result(cache_key.clone(), true);
-                    self.cache_model_result(cache_key, model.clone());
-                    return Ok(model);
-                }
-                return Err(SymbolicError::SolverUnknown);
-            }
-            Err(err) => return Err(err),
-        };
+        let output = self.query_normalized(cx, &smt_constraints, true, constraints)?;
         let mut lines = output.lines();
         match lines.next().unwrap_or_default().trim() {
             "sat" => {
@@ -410,18 +395,7 @@ impl SmtLibSubprocessSolver {
                 self.cache_sat_result(cache_key, false);
                 Err(SymbolicError::Solver("counterexample path became unsat".to_string()))
             }
-            "unknown" => {
-                if let Some(model) =
-                    validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
-                {
-                    self.heuristic_witnesses += 1;
-                    self.cache_sat_result(cache_key.clone(), true);
-                    self.cache_model_result(cache_key, model.clone());
-                    Ok(model)
-                } else {
-                    Err(SymbolicError::SolverUnknown)
-                }
-            }
+            "unknown" => Err(SymbolicError::SolverUnknown),
             other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
         }
     }
@@ -541,20 +515,7 @@ impl SmtLibSubprocessSolver {
                 return Ok(BranchFeasibility::NeedsSolver);
             }
         }
-        let output = match self.query_normalized(cx, &smt_constraints, false, constraints) {
-            Ok(output) => output,
-            Err(SymbolicError::SolverUnknown) => {
-                if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some()
-                {
-                    self.heuristic_witnesses += 1;
-                    trace!("is_sat: validated hard arithmetic fallback model after solver unknown");
-                    self.cache_sat_result(cache_key, true);
-                    return Ok(BranchFeasibility::Sat);
-                }
-                return Err(SymbolicError::SolverUnknown);
-            }
-            Err(err) => return Err(err),
-        };
+        let output = self.query_normalized(cx, &smt_constraints, false, constraints)?;
         match output.lines().next().unwrap_or_default().trim() {
             "sat" => {
                 self.cache_sat_result(cache_key, true);
@@ -564,16 +525,7 @@ impl SmtLibSubprocessSolver {
                 self.cache_sat_result(cache_key, false);
                 Ok(BranchFeasibility::Unsat)
             }
-            "unknown" => {
-                if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some()
-                {
-                    self.heuristic_witnesses += 1;
-                    self.cache_sat_result(cache_key, true);
-                    Ok(BranchFeasibility::Sat)
-                } else {
-                    Err(SymbolicError::SolverUnknown)
-                }
-            }
+            "unknown" => Err(SymbolicError::SolverUnknown),
             other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
         }
     }

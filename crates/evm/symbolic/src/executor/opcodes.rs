@@ -739,7 +739,7 @@ impl SymbolicExecutor {
                 state.stack.push(balance)?;
             }
             opcode::SELFBALANCE => {
-                let balance = state.balance(&mut self.cx, executor, state.address);
+                let balance = state.balance(&mut self.cx, executor, state.address)?;
                 state.stack.push(balance)?;
             }
             opcode::EXTCODESIZE => {
@@ -1389,7 +1389,7 @@ impl SymbolicExecutor {
                         executor,
                         state.address,
                         beneficiary,
-                    );
+                    )?;
                 }
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 return Ok(StepOutcome::Halt);

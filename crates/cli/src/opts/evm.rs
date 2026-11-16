@@ -95,9 +95,12 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub no_fork_bal: bool,
 
-    /// Prefetch a new fork block's cache from the keys of an older cached block on the same chain.
+    /// Prefetch remote fork state before the EVM reads it.
     ///
-    /// Helps forks of `latest`, which start with an empty cache on each new head.
+    /// While reads miss the cache, each call into a fork contract is simulated on the endpoint
+    /// with `eth_createAccessList` and the state it touches is fetched in batches. With
+    /// storage caching, a new fork block also fetches the keys cached for an older block on
+    /// the same chain.
     #[arg(long)]
     #[serde(skip)]
     pub fork_prefetch: bool,

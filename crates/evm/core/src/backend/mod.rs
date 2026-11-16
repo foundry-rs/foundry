@@ -45,7 +45,7 @@ use alloy_eips::BlockNumHash;
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, TransactionResponse};
 use alloy_primitives::{
-    Address, B256, ChainId, KECCAK256_EMPTY, TxKind, U256, keccak256,
+    Address, B256, Bytes, ChainId, KECCAK256_EMPTY, TxKind, U256, keccak256,
     map::{AddressMap, AddressSet, HashSet},
     uint,
 };
@@ -995,7 +995,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             executor.set_inspector(inspector);
         }
         let executed = executor.transact(tx).map_err(transaction_error)?;
-        let persistent = merge_untracked_nested_changes(evm.state_mut(), &executed)?;
+        let (persistent, _) = merge_untracked_nested_changes(evm.state_mut(), &executed)?;
         Ok((executed.result().clone(), persistent))
     }
 
@@ -1228,6 +1228,22 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         };
         self.lifecycle.refresh_switched_slot(&address, slot, value);
         Ok(write)
+    }
+
+    /// Prefetches the remote state a call is about to read, if the active context is an RPC fork.
+    ///
+    /// A `top_level` call is simulated with the local state that differs from the remote, such as
+    /// the test contract, as overrides. A nested call is simulated as is.
+    pub fn prefetch_call(
+        &self,
+        caller: Address,
+        target: Address,
+        value: U256,
+        input: Bytes,
+        top_level: bool,
+    ) {
+        let context = self.lifecycle.active();
+        context.db.prefetch_call(caller, target, value, input, context.cache.as_deref(), top_level);
     }
 
     // ---- Snapshots ----
