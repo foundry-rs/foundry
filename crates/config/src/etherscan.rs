@@ -387,27 +387,28 @@ impl ResolvedEtherscanConfig {
 
     /// Returns the directory to cache responses from this explorer's endpoint in.
     ///
-    /// A config that names its chain is cached under that chain's directory, which is what every
-    /// chain-bound lookup reads. A config without a chain can point at any endpoint, so its
-    /// responses are keyed by the endpoint instead: the explorer crate derives cache file names
-    /// from the contract address alone, and putting such responses under a chain's directory would
-    /// serve them to that chain's lookups of the same address.
+    /// A config that names its chain is cached under that chain's directory. Mainnet uses a new
+    /// subdirectory to avoid legacy chain-less entries. A config without a chain can point at any
+    /// endpoint, so its responses are keyed by the endpoint instead: the explorer crate derives
+    /// cache file names from the contract address alone, and putting such responses under a chain's
+    /// directory would serve them to that chain's lookups of the same address.
     fn explorer_cache_dir(&self) -> Option<PathBuf> {
         if let Some(chain) = self.chain {
-            return Config::foundry_etherscan_chain_cache_dir(chain);
+            let cache_dir = Config::foundry_etherscan_chain_cache_dir(chain)?;
+            return Some(if chain == Chain::mainnet() {
+                // Older chain-less clients wrote into this directory via their mainnet fallback.
+                cache_dir.join("client-v2")
+            } else {
+                cache_dir
+            });
         }
 
-        // Keep the host readable, and disambiguate endpoints on the same host, e.g. different
-        // ports or `?chainid=` query parameters.
-        let endpoint =
-            self.api_url.split_once("://").map_or(self.api_url.as_str(), |(_, rest)| rest);
-        let label = endpoint
-            .split_once('/')
-            .map_or(endpoint, |(authority, _)| authority)
-            .replace(|c: char| !c.is_ascii_alphanumeric() && !matches!(c, '.' | '-' | '_'), "_");
+        // Keep URL credentials and query parameters out of persistent filesystem paths.
         let digest = alloy_primitives::keccak256(self.api_url.as_bytes());
-        let digest = hex::encode(&digest[..4]);
-        Some(Config::foundry_etherscan_cache_dir()?.join(format!("endpoint-{label}-{digest}")))
+        Some(
+            Config::foundry_etherscan_cache_dir()?
+                .join(format!("endpoint-{}", hex::encode(digest))),
+        )
     }
 }
 
@@ -669,7 +670,28 @@ mod tests {
     }
 
     #[test]
-    fn chained_configs_keep_caching_under_their_chain() {
+    fn chainless_cache_path_hides_url_secrets_and_uses_full_digest() {
+        let url = "https://alice:password@api.example.com?token=topsecret";
+        let config = EtherscanConfig {
+            chain: None,
+            url: Some(url.to_string()),
+            key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+        }
+        .resolve(Some("custom"))
+        .unwrap();
+
+        let dir = config.explorer_cache_dir().unwrap();
+        let directory_name = dir.file_name().unwrap().to_str().unwrap();
+        let digest = alloy_primitives::keccak256(url.as_bytes());
+
+        assert_eq!(directory_name, format!("endpoint-{}", hex::encode(&digest[..])));
+        assert!(!directory_name.contains("alice"));
+        assert!(!directory_name.contains("password"));
+        assert!(!directory_name.contains("topsecret"));
+    }
+
+    #[test]
+    fn chained_mainnet_configs_skip_legacy_cache_entries() {
         let config = EtherscanConfig {
             chain: Some(Mainnet.into()),
             url: None,
@@ -679,7 +701,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             config.explorer_cache_dir().unwrap(),
-            Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap()
+            Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap().join("client-v2")
         );
     }
 }
