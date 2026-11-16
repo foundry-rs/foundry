@@ -334,15 +334,14 @@ impl CoverageArgs {
                      set `solc = \"/path/to/solar\"` in `foundry.toml` or pass `--use`"
                 );
             }
-            // Standard JSON takes output-changing flags only from its input.
-            project
-                .settings
-                .solc
-                .settings
-                .solar
-                .get_or_insert_default()
-                .unstable
-                .push("instrument-coverage".into());
+            // Standard JSON takes output-changing flags only from its input, so every compiler
+            // profile needs the flag.
+            for settings in std::iter::once(&mut project.settings)
+                .chain(project.additional_settings.values_mut())
+            {
+                let solar = settings.solc.settings.solar.get_or_insert_default();
+                solar.unstable.push("instrument-coverage".into());
+            }
         } else if ir_minimum {
             sh_warn!(
                 "`--ir-minimum` enables `viaIR` with minimum optimization, \
@@ -383,7 +382,9 @@ impl CoverageArgs {
                 .allow_linked_libraries(config.allow_linked_libraries)
                 .external_compilers(config)
                 .external_artifacts(false)
-                .dynamic_test_linking(config.dynamic_test_linking);
+                // Dynamic test linking rewrites test sources, which shifts the byte offsets of
+                // the compiler's coverage map away from the files on disk.
+                .dynamic_test_linking(config.dynamic_test_linking && !settings.instrumented);
             if let Some(files) = &files {
                 compiler = compiler.files(files.iter().cloned());
             }

@@ -143,8 +143,10 @@ impl SiteCmpLog {
 /// This thread's instrumentation state.
 #[derive(Debug)]
 struct State {
-    /// Whether the opcodes execute instead of failing as undefined.
-    enabled: bool,
+    /// How many guards are alive on this thread. The opcodes execute while it is nonzero. A
+    /// counter rather than a flag keeps them enabled when a nested guard, such as one a cheatcode
+    /// or rayon work-stealing starts during a transaction, is dropped before the outer one.
+    depth: u32,
     /// Whether `EDGECOV` records hits.
     edges: bool,
     /// Whether `CMPLOG` records operands.
@@ -157,7 +159,7 @@ thread_local! {
     // An `UnsafeCell` rather than a `RefCell` keeps the probes free of borrow-flag updates.
     static STATE: UnsafeCell<State> = const {
         UnsafeCell::new(State {
-            enabled: false,
+            depth: 0,
             edges: false,
             cmp_log: false,
             hits: EdgeHits { counts: Vec::new(), touched: Vec::new() },
@@ -178,14 +180,18 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
 pub struct EdgeCovGuard(());
 
 impl EdgeCovGuard {
-    /// Clears the hits and operands of the previous call and enables the opcodes.
+    /// Enables the opcodes, and on the outermost guard clears the hits and operands of the
+    /// previous call. A nested guard keeps the outer guard's recording settings and tables, so it
+    /// does not reset another transaction's hits.
     pub fn new(edges: bool, cmp_log: bool) -> Self {
         with_state(|state| {
-            state.enabled = true;
-            state.edges = edges;
-            state.cmp_log = cmp_log;
-            state.hits.take();
-            state.cmps.take();
+            if state.depth == 0 {
+                state.edges = edges;
+                state.cmp_log = cmp_log;
+                state.hits.take();
+                state.cmps.take();
+            }
+            state.depth += 1;
         });
         Self(())
     }
@@ -193,7 +199,7 @@ impl EdgeCovGuard {
 
 impl Drop for EdgeCovGuard {
     fn drop(&mut self) {
-        with_state(|state| state.enabled = false);
+        with_state(|state| state.depth = state.depth.saturating_sub(1));
     }
 }
 
@@ -216,7 +222,7 @@ fn probe_id(word: U256) -> Option<u32> {
 #[instruction(dynamic_gas, no_stack_preamble)]
 fn edgecov(cx: _) -> Result {
     with_state(|state| {
-        if !state.enabled {
+        if state.depth == 0 {
             return Err(InstrStop::OpcodeNotFound);
         }
         let id = stack.pop()?;
@@ -236,7 +242,7 @@ fn edgecov(cx: _) -> Result {
 #[instruction(dynamic_gas, no_stack_preamble)]
 fn cmplog(cx: _) -> Result {
     with_state(|state| {
-        if !state.enabled {
+        if state.depth == 0 {
             return Err(InstrStop::OpcodeNotFound);
         }
         let tag = stack.pop()?;
@@ -264,7 +270,7 @@ fn cmplog(cx: _) -> Result {
 #[instruction(dynamic_gas, no_stack_preamble)]
 fn coverage(cx: _) -> Result {
     with_state(|state| {
-        if !state.enabled {
+        if state.depth == 0 {
             return Err(InstrStop::OpcodeNotFound);
         }
         stack.pop()?;
