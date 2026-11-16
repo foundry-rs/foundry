@@ -275,7 +275,9 @@ impl HitMaps {
 
     /// Merges two `HitMaps`.
     pub fn merge(&mut self, other: Self) {
-        self.reserve(other.len());
+        // Most code hashes are usually in both collections, so reserve only for the difference.
+        let additional = other.len().saturating_sub(self.len());
+        self.reserve(additional);
         for (code_hash, other) in other.0 {
             self.entry(code_hash).and_modify(|e| e.merge(&other)).or_insert(other);
         }
@@ -430,7 +432,7 @@ impl HitMap {
     pub(crate) fn flush(&mut self) {
         let pending = std::mem::take(&mut self.pending);
         let pcs = std::mem::take(&mut self.pcs);
-        self.reserve(pcs.len());
+        self.reserve_new(pcs.len());
         for pc in pcs {
             self.hits(pc, pending[pc as usize]);
         }
@@ -455,9 +457,17 @@ impl HitMap {
         self.hits.reserve(additional);
     }
 
+    /// Reserves space for `incoming` program counters, most of which are usually present.
+    ///
+    /// Reserving space for all of them doubles the capacity of a map that already has them. A
+    /// coverage run keeps one map per contract for each test, so the spare capacity adds up.
+    fn reserve_new(&mut self, incoming: usize) {
+        self.reserve(incoming.saturating_sub(self.len()));
+    }
+
     /// Merge another hitmap into this, assuming the bytecode is consistent
     pub fn merge(&mut self, other: &Self) {
-        self.reserve(other.len());
+        self.reserve_new(other.len());
         for (pc, hits) in other.iter() {
             self.hits(pc, hits);
         }

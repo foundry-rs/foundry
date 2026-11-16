@@ -2372,6 +2372,55 @@ contract CheckIntervalInlineTest is Test {
     ]]);
 }
 
+// Tests that a revert between checks fails every unbroken invariant and keeps earlier failures.
+#[forgetest]
+fn check_interval_revert_between_checks(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.check_interval = 2;
+        config.invariant.fail_on_revert = true;
+    });
+    prj.add_test(
+        "CheckIntervalRevertTest.t.sol",
+        r#"
+contract Stepper {
+    uint256 public count;
+    bool public broken;
+
+    // Call 1 breaks `invariant_a`, call 2 is checked, call 3 reverts between checks.
+    function step() external {
+        count++;
+        if (count == 1) broken = true;
+        if (count == 3) revert("boom");
+    }
+}
+
+contract CheckIntervalRevertTest {
+    Stepper stepper;
+
+    function setUp() public {
+        stepper = new Stepper();
+    }
+
+    function invariant_a() public view {
+        require(!stepper.broken(), "A broken");
+    }
+
+    function invariant_b() public view {}
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+CheckIntervalRevertTest invariants: 2/2 invariants broken
+[FAIL: A broken] invariant_a
+[FAIL: boom] invariant_b
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn invariant_campaign_merges_selected_predicates(prj: _, cmd: _) {
     prj.update_config(|config| {

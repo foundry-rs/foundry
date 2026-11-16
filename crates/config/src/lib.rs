@@ -234,10 +234,15 @@ pub struct Config {
     pub out: PathBuf,
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
-    /// Remappings to use for this repo
+    /// Remappings to use for this repo.
     #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
+    ///
+    /// Defaults to `true`. Dependency declarations that conflict with root paths or other
+    /// dependency mappings are scoped to their owner, with a configuration warning. Unique aliases
+    /// remain global. Dependencies with source directories outside their package retain their
+    /// existing declaration scope.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
     ///
@@ -1202,6 +1207,16 @@ impl Config {
                     .unwrap_or_else(|_| Cow::Borrowed(&self.libs)),
                 root,
                 remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+                project_paths: [("src", &self.src), ("test", &self.test), ("script", &self.script)]
+                    .into_iter()
+                    .map(|(key, default)| {
+                        figment.extract_inner::<PathBuf>(key).unwrap_or_else(|_| default.clone())
+                    })
+                    .collect(),
+                warnings: match figment.extract_inner::<Vec<Warning>>("__warnings") {
+                    Err(error) if error.missing() => Ok(Vec::new()),
+                    warnings => warnings,
+                },
             };
             figment = figment.merge(remappings);
         }
