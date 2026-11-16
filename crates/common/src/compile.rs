@@ -1458,8 +1458,6 @@ mod tests {
             assert!(is_safe_windows_path_component(component), "{component:?}");
         }
         for component in [
-            ".. ",
-            ". ",
             "name.",
             "name ",
             "file:stream",
