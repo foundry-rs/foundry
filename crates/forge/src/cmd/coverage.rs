@@ -289,11 +289,13 @@ impl CoverageArgs {
         let ir_minimum = settings.ir_minimum;
         let mut project = config.ephemeral_project()?;
         // A contended or unavailable cache retains ephemeral compilation. Keep the lock until
-        // artifacts and build contexts have been loaded or published together. Instrumented builds
-        // are not cached: the compiler's coverage map is not persisted in the artifact cache, so a
-        // warm cache would reuse bytecode without a map and report no coverage.
-        let cache = (config.cache && !config.deny.warnings() && !settings.instrumented)
-            .then(|| config.coverage_cache_path())
+        // artifacts and build contexts have been loaded or published together. Source-map and
+        // instrumented coverage build different bytecode, so each caches under its own directory.
+        // The artifact cache does not carry the compiler's coverage map, so `prepare_instrumented`
+        // persists it beside the cached artifacts and reloads it on a warm hit.
+        let cache_leaf = if settings.instrumented { "coverage-instrumented" } else { "coverage" };
+        let cache = (config.cache && !config.deny.warnings())
+            .then(|| config.coverage_cache_path_leaf(cache_leaf))
             .flatten()
             .and_then(|path| {
                 fs::create_dir_all(path.parent()?).ok()?;
@@ -616,33 +618,69 @@ impl CoverageArgs {
             }
         }
 
-        let mut items_by_build = BTreeMap::<&str, (Vec<_>, Vec<_>)>::new();
+        // The artifact cache does not carry the compiler's coverage map, so a warm hit returns the
+        // cached artifacts and build contexts but no map. Persist every map beside the cached
+        // artifacts and reload it on a warm hit. The sidecar lives in the cache directory, which
+        // the build wipes whenever the cache is invalidated, so it never serves a stale map.
+        let sidecar = project_paths
+            .cache
+            .parent()
+            .filter(|dir| dir.join(Config::COVERAGE_CACHE_MARKER).is_file())
+            .map(|dir| dir.join("coverage-maps.json"));
+        let mut maps: BTreeMap<PathBuf, foundry_compilers::artifacts::SourceCoverage> = sidecar
+            .as_ref()
+            .and_then(|path| fs::read(path).ok())
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        // A fresh compile carries the maps in its output; merge them over the persisted ones.
         for (path, files) in &output.output().sources.0 {
-            if path
-                .extension()
-                .and_then(|s| s.to_str())
-                .is_some_and(|ext| VYPER_EXTENSIONS.contains(&ext))
-            {
-                continue;
+            if let Some(fresh) = files.iter().find_map(|file| file.source_file.coverage.clone()) {
+                maps.insert(path.clone(), fresh);
             }
-            for file in files {
-                let Some(coverage) = &file.source_file.coverage else {
-                    eyre::bail!(
-                        "the compiler returned no coverage map for {}; \
-                         `--instrumented` requires a Solar version with `-Zinstrument-coverage`",
-                        path.display()
-                    );
-                };
-                if (!settings.include_libs && project_paths.has_library_ancestor(path))
-                    || (settings.exclude_tests && project_paths.is_test(path))
+        }
+        if let Some(path) = &sidecar
+            && let Ok(bytes) = serde_json::to_vec(&maps)
+        {
+            let _ = fs::write(path, bytes);
+        }
+
+        // Build the items from each build's source list, which a warm hit still populates even when
+        // the compiler output's sources are empty.
+        let mut sources = BTreeMap::<&Path, String>::new();
+        let mut items_by_build = BTreeMap::<&str, (Vec<_>, Vec<_>)>::new();
+        for (build_id, build) in output.builds() {
+            for (source_id, path) in &build.source_id_to_path {
+                let rel = path.strip_prefix(&project_paths.root).unwrap_or(path);
+                if rel
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|ext| VYPER_EXTENSIONS.contains(&ext))
                 {
                     continue;
                 }
-                let source = fs::read_to_string(project_paths.root.join(path))?;
-                let (items, counts) = items_by_build.entry(&file.build_id).or_default();
+                if (!settings.include_libs && project_paths.has_library_ancestor(rel))
+                    || (settings.exclude_tests && project_paths.is_test(rel))
+                {
+                    continue;
+                }
+                let Some(coverage) = maps.get(rel) else {
+                    eyre::bail!(
+                        "the compiler returned no coverage map for {}; \
+                         `--instrumented` requires a Solar version with `-Zinstrument-coverage`",
+                        rel.display()
+                    );
+                };
+                let source = match sources.get(rel) {
+                    Some(source) => source,
+                    None => {
+                        let read = fs::read_to_string(project_paths.root.join(rel))?;
+                        sources.entry(rel).or_insert(read)
+                    }
+                };
+                let (items, counts) = items_by_build.entry(build_id.as_str()).or_default();
                 crate::coverage::instrumented::source_items(
-                    file.source_file.id as usize,
-                    &source,
+                    *source_id as usize,
+                    source,
                     coverage,
                     items,
                     counts,
