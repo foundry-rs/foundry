@@ -349,14 +349,12 @@ then `cast wallet sign --no-hash <DIGEST>` (adding `--p256` for a raw P-256 owne
             .get_output()
             .stdout_lossy();
         let approval = if p256 {
+            // A default keystore from the environment does not get in the way of the raw key.
             cmd.cast_fuse()
                 .args(["wallet", "sign", "--no-hash", "--p256", &digest.to_string()])
-                .args(["--private-key", &hex::encode_prefixed(passkey.to_bytes())])
-                .assert_success()
-                .get_output()
-                .stdout_lossy()
-                .trim()
-                .to_string()
+                .args(["--private-key", &hex::encode_prefixed(passkey.to_bytes())]);
+            cmd.env("ETH_KEYSTORE_ACCOUNT", "dev");
+            cmd.assert_success().get_output().stdout_lossy().trim().to_string()
         } else {
             // An approval of another digest is rejected.
             let wrong = passkey_assertion(&passkey, B256::repeat_byte(1)).to_string();
@@ -408,9 +406,9 @@ For more information, try '--help'.
 "#]],
         ),
         (
-            vec!["--no-hash", "--p256", hash.as_str(), "--account", "dev"],
+            vec!["--no-hash", "--p256", hash.as_str(), "--ledger"],
             str![[r#"
-error: the argument '--p256' cannot be used with '--account <ACCOUNT_NAME>'
+error: the argument '--p256' cannot be used with '--ledger'
 
 Usage: cast wallet sign --no-hash --p256 [..]<MESSAGE>
 

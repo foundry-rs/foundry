@@ -235,10 +235,7 @@ pub enum WalletSubcommands {
         #[arg(
             long,
             requires = "no_hash",
-            conflicts_with_all = [
-                "browser", "ledger", "trezor", "mnemonic", "keystore_path",
-                "keystore_account_name", "aws", "gcp", "turnkey",
-            ]
+            conflicts_with_all = ["browser", "ledger", "trezor", "mnemonic", "aws", "gcp", "turnkey"]
         )]
         p256: bool,
 
