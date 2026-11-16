@@ -60,6 +60,8 @@ use tempo_primitives::{
     },
 };
 
+pub use foundry_common_fmt::ConfigJson;
+
 /// Blocks per `eth_getLogs` request when a configuration lookup starts. The window is halved
 /// whenever the RPC rejects a request, which covers providers that cap the block range or the
 /// number of results.
@@ -600,54 +602,6 @@ fn parse_webauthn_assertion(json: &Value) -> Result<PrimitiveSignature> {
         pub_key_y: B256::from_slice(&point[32..]),
         webauthn_data: Bytes::from(webauthn_data),
     }))
-}
-
-/// A configuration as `cast wallet owners --json` prints it, and as `forge script` saves it for
-/// owners on other machines.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConfigJson {
-    salt: B256,
-    version: u64,
-    threshold: u8,
-    owners: Vec<OwnerJson>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct OwnerJson {
-    owner: Address,
-    weight: u8,
-}
-
-impl From<&ConfigurableAccountConfig> for ConfigJson {
-    fn from(config: &ConfigurableAccountConfig) -> Self {
-        Self {
-            salt: config.salt,
-            version: config.version,
-            threshold: config.threshold,
-            owners: config
-                .owners
-                .iter()
-                .map(|owner| OwnerJson { owner: owner.owner, weight: owner.weight })
-                .collect(),
-        }
-    }
-}
-
-impl TryFrom<ConfigJson> for ConfigurableAccountConfig {
-    type Error = eyre::Report;
-
-    /// Sorts the owners by address and validates the configuration.
-    fn try_from(json: ConfigJson) -> Result<Self> {
-        let ConfigJson { salt, version, threshold, owners } = json;
-        let mut owners = owners
-            .into_iter()
-            .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
-            .collect::<Vec<_>>();
-        owners.sort_by_key(|owner| owner.owner);
-        let config = Self { salt, version, threshold, owners };
-        config.validate().map_err(|err| eyre::eyre!("invalid configuration: {err}"))?;
-        Ok(config)
-    }
 }
 
 /// Parses a configuration given as JSON, or as the path of a JSON file: `salt`, `version`,
