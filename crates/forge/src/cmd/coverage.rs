@@ -98,6 +98,14 @@ pub struct CoverageArgs {
     #[arg(long)]
     ir_minimum: bool,
 
+    /// Keep the project's optimizer and viaIR settings instead of disabling them.
+    ///
+    /// Optimized builds can miss or merge coverage items. Cannot be combined with
+    /// `--ir-minimum`, including when either is enabled in config, where it can only be turned
+    /// off. Falls back to the `[profile.<name>.coverage] keep_optimizer` config value.
+    #[arg(long)]
+    keep_optimizer: bool,
+
     /// The path to output the report.
     ///
     /// Used only when a single file report is requested. If not specified, the
@@ -131,6 +139,8 @@ struct CoverageSettings {
     lcov_version: Version,
     /// Whether to enable viaIR with minimum optimization.
     ir_minimum: bool,
+    /// Whether to keep the project's optimizer and viaIR settings.
+    keep_optimizer: bool,
     /// The path to output a single file report to.
     report_file: Option<PathBuf>,
     /// Whether to include dependency sources in the coverage report.
@@ -186,7 +196,13 @@ impl CoverageSettings {
 
 impl CoverageArgs {
     pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
-        self.test.ensure_coverage_mode_compatible()
+        self.test.ensure_coverage_mode_compatible()?;
+        let settings = self.resolve(&self.load_config_no_warnings()?.coverage);
+        eyre::ensure!(
+            !(settings.ir_minimum && settings.keep_optimizer),
+            "`ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled"
+        );
+        Ok(())
     }
 
     pub async fn run(self) -> Result<()> {
@@ -209,7 +225,7 @@ impl CoverageArgs {
         let filter = self.test.filter(&config)?;
 
         let (paths, mut output) = {
-            let (project, output) = Self::build(&config, &filter, settings.ir_minimum)?;
+            let (project, output) = Self::build(&config, &filter, &settings)?;
             (project.paths, output)
         };
 
@@ -258,6 +274,7 @@ impl CoverageArgs {
                 .clone()
                 .unwrap_or_else(|| config.lcov_version.clone()),
             ir_minimum: self.ir_minimum || config.ir_minimum,
+            keep_optimizer: self.keep_optimizer || config.keep_optimizer,
             report_file: self.report_file.clone().or_else(|| config.report_file.clone()),
             include_libs: self.include_libs || config.include_libs,
             exclude_tests: self.exclude_tests || config.exclude_tests,
@@ -271,7 +288,7 @@ impl CoverageArgs {
     fn build(
         config: &Config,
         filter: &ProjectPathsAwareFilter,
-        ir_minimum: bool,
+        settings: &CoverageSettings,
     ) -> Result<(Project, ProjectCompileOutput)> {
         let mut project = config.ephemeral_project()?;
         // A contended or unavailable cache retains ephemeral compilation. Keep the lock until
@@ -308,13 +325,18 @@ impl CoverageArgs {
             project.paths.slash_paths();
         }
 
-        if ir_minimum {
+        if settings.ir_minimum {
             sh_warn!(
                 "`--ir-minimum` enables `viaIR` with minimum optimization, \
                  which can result in inaccurate source mappings.\n\
                  Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
                  Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
                  See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep"
+            )?;
+        } else if settings.keep_optimizer {
+            sh_warn!(
+                "`--keep-optimizer` keeps the optimizer and `viaIR` settings, so coverage can miss \
+                 or merge items that the optimizer removes or combines."
             )?;
         } else {
             sh_warn!(
@@ -325,7 +347,9 @@ impl CoverageArgs {
             )?;
         }
 
-        config.disable_optimizations(&mut project, ir_minimum);
+        if !settings.keep_optimizer {
+            config.disable_optimizations(&mut project, settings.ir_minimum);
+        }
 
         let files = (filter.args().path_pattern.is_some()
             || filter.args().path_pattern_inverse.is_some())
