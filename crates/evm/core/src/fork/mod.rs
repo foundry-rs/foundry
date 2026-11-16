@@ -6,7 +6,7 @@ use alloy_primitives::{B256, BlockNumber, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use eyre::OptionExt;
-use serde::ser::SerializeStruct;
+use foundry_fork_db::StateBlockId;
 use std::{
     fmt,
     hash::{Hash, Hasher},
@@ -23,30 +23,6 @@ mod bal;
 pub use bal::{cache_bal, validate_bal};
 
 pub(crate) mod prefetch;
-
-/// Encodes a fork state selector as an RPC block parameter.
-///
-/// A hash selector without a canonicality requirement is sent as `{"blockHash": "0x…"}`. Alloy
-/// serializes it as a bare hash string, which Moonbeam parses as a block number, and Rootstock
-/// rejects an explicit boolean `requireCanonical` with `-32603`. The object form works on both and
-/// matches the fork backend's state reads in `foundry-fork-db`. Other selectors serialize
-/// unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct StateBlockId(pub(crate) BlockId);
-
-impl serde::Serialize for StateBlockId {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if let BlockId::Hash(hash) = self.0
-            && hash.require_canonical.is_none()
-        {
-            let mut object = serializer.serialize_struct("StateBlockId", 1)?;
-            object.serialize_field("blockHash", &hash.block_hash)?;
-            object.end()
-        } else {
-            self.0.serialize(serializer)
-        }
-    }
-}
 
 /// Represents a _fork_ of a remote chain whose data is available only via the `url` endpoint.
 #[derive(Clone, Debug)]
@@ -372,7 +348,7 @@ mod tests {
         let mut numbered = exact.clone();
         numbered.state_by_number = true;
         assert_eq!(serde_json::to_value(numbered.state_block_id()).unwrap(), json!("0x2a"));
-        assert_eq!(exact.state_block_id(), StateBlockId(BlockId::hash(block.hash)));
+        assert_eq!(exact.state_block_id().0, BlockId::hash(block.hash));
         assert_eq!(numbered.exact_block_id(), exact.exact_block_id());
         assert_ne!(numbered, exact);
         assert_eq!(numbered.source_id(), exact.source_id());
