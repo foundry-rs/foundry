@@ -4756,3 +4756,86 @@ contract ShrinkBudgetTest is Test {
     cmd.args(["test", "--fuzz-seed", "1"]).assert_failure();
     assert_eq!(std::fs::read_to_string(prj.root().join("runs.txt")).unwrap(), "run\nrun\n");
 }
+
+// A minimized sender sends at most its balance, and the counterexample reports what was sent.
+#[forgetest]
+fn invariant_minimization_reports_sent_value(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.shrink_run_limit = 2;
+        config.invariant.dictionary.dictionary_weight = 100;
+        config.invariant.corpus.payable_value_weight = 100;
+    });
+    prj.add_test(
+        "SentValue.t.sol",
+        r#"
+interface Vm {
+    function deal(address, uint256) external;
+    function assertFalse(bool) external;
+}
+
+contract Gate {
+    bool public touched;
+    function touch() external payable { touched = true; }
+}
+
+contract SentValueTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Gate gate;
+    function setUp() public {
+        gate = new Gate();
+        vm.deal(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, 1000);
+        vm.deal(address(gate), 1000);
+        vm.deal(address(this), 1000);
+    }
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(gate);
+    }
+    function invariant_touch() public { vm.assertFalse(gate.touched()); }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fuzz-seed", "9", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
+...
+		sender=0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 addr=[..] value=1000 calldata=touch() args=[]
+...
+  [..] Gate::touch{value: 1000}()
+...
+"#]]);
+}
+
+// A single call that the failure does not need is removed.
+#[forgetest_init]
+fn invariant_minimization_removes_single_call(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    prj.add_test(
+        "AfterInvariantRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Noop {
+    function touch(uint256) external {}
+}
+
+contract AfterInvariantRevertTest is Test {
+    function setUp() public { targetContract(address(new Noop())); }
+    function invariant_ok() public {}
+    function afterInvariant() public { revert("always"); }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fuzz-seed", "1"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: always]
+	[Sequence] (original: 1, shrunk: 0)
+...
+"#]]);
+}
