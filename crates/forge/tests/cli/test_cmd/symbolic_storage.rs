@@ -943,7 +943,7 @@ Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 "#]]);
 
     // Concrete execution charges copy gas before it checks `memory_limit`, so the modeled
-    // memory-limit halt replays as out of gas and still confirms the model.
+    // memory-limit halt replays as out of gas and still confirms and minimizes the model.
     prj.add_test(
         "SymbolicReplayMemoryLimit.t.sol",
         r#"
@@ -966,7 +966,7 @@ contract SymbolicReplayMemoryLimit {
     .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/SymbolicReplayMemoryLimit.t.sol:SymbolicReplayMemoryLimit
-[FAIL: EvmError: OutOfGas; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkNewBytes(uint256) ([METRICS])
+[FAIL: EvmError: OutOfGas; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[11453013985 [1.145e10]]] checkNewBytes(uint256) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
