@@ -623,7 +623,7 @@
         "DAPP_TEST_DENY_WARNINGS"
       ],
       "deprecated": "deny = \"warnings\"",
-      "description": "Deprecated: use `deny = \"warnings\"` instead.\n\n`deny_warnings = true` is read as `deny = \"warnings\"` and `false` as `deny = \"never\"`,\nunless `deny` is also set in the same profile, in which case `deny` wins. The\n`--deny-warnings` flag is deprecated in the same way in favor of `--deny warnings`."
+      "description": "Whether to fail on warnings.\n\n`deny_warnings = true` is read as `deny = \"warnings\"` and `false` as `deny = \"never\"`,\nunless `deny` is also set in the same profile, in which case `deny` wins. The\n`--deny-warnings` flag is deprecated in the same way in favor of `--deny warnings`."
     },
     {
       "key": "match_test",
@@ -3509,7 +3509,7 @@
       "table": false,
       "default": "{}",
       "deprecated": "tracing.labels",
-      "description": "Deprecated: use `tracing.labels` instead.\n\nAddress labels shown in traces. Foundry still reads a top-level `[labels]` table and a\nprofile-level `labels` table, merges them into `tracing.labels`, where existing\n`tracing.labels` entries win for duplicate addresses, and prints a deprecation warning.\n\n```toml\n[profile.default.tracing.labels]\n\"0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045\" = \"vitalik.eth\"\n```"
+      "description": "Legacy location of `tracing.labels`.\n\nAddress labels shown in traces. Foundry still reads a top-level `[labels]` table and a\nprofile-level `labels` table, merges them into `tracing.labels`, where existing\n`tracing.labels` entries win for duplicate addresses, and prints a deprecation warning.\n\n```toml\n[profile.default.tracing.labels]\n\"0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045\" = \"vitalik.eth\"\n```"
     },
     {
       "key": "unchecked_cheatcode_artifacts",

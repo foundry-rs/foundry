@@ -888,7 +888,7 @@ pub struct Config {
     /// `never`. `--deny` (`-D`) overrides it for one invocation.
     pub deny: DenyLevel,
     // Not serialized; `BackwardsCompatTomlProvider` moves it to `deny` when that key is unset.
-    /// Deprecated: use `deny = "warnings"` instead.
+    /// Whether to fail on warnings.
     ///
     /// `deny_warnings = true` is read as `deny = "warnings"` and `false` as `deny = "never"`,
     /// unless `deny` is also set in the same profile, in which case `deny` wins. The
@@ -1599,7 +1599,7 @@ pub struct Config {
 
     // Legacy alias kept for backwards compatibility. LegacyLabelsProvider and
     // normalize_legacy_labels_in_profile fold it into tracing.labels; read tracing.labels instead.
-    /// Deprecated: use `tracing.labels` instead.
+    /// Legacy location of `tracing.labels`.
     ///
     /// Address labels shown in traces. Foundry still reads a top-level `[labels]` table and a
     /// profile-level `labels` table, merges them into `tracing.labels`, where existing
