@@ -5,7 +5,7 @@
 
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
-    SymCmpOp, SymExpr, SymExprKind, U256, WordInterval,
+    SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, rounded_product_operands,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -136,6 +136,74 @@ impl ConstraintContext {
             }
         }
         None
+    }
+
+    /// Decides a comparison between a division result and one of its operands.
+    ///
+    /// With a nonzero divisor, `a % d < d` and `a / d <= a`. For every divisor, `a % d <= a` and
+    /// `(a / d) * d <= a`, and `x * y / k <= x` once `y <= k` and `x * y` cannot wrap.
+    pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
+        if let SymBoolExprKind::Not(inner) = expr.kind() {
+            return self.division_comparison_value(inner).map(|value| !value);
+        }
+        let SymBoolExprKind::Cmp(op, left, right) = expr.kind() else { return None };
+        if let Some(strict) = self.division_order(left, right) {
+            return match op {
+                SymCmpOp::Ule => Some(true),
+                SymCmpOp::Ugt => Some(false),
+                SymCmpOp::Ult if strict => Some(true),
+                SymCmpOp::Uge if strict => Some(false),
+                _ => None,
+            };
+        }
+        if let Some(strict) = self.division_order(right, left) {
+            return match op {
+                SymCmpOp::Uge => Some(true),
+                SymCmpOp::Ult => Some(false),
+                SymCmpOp::Ugt if strict => Some(true),
+                SymCmpOp::Ule if strict => Some(false),
+                _ => None,
+            };
+        }
+        None
+    }
+
+    /// Returns whether a division shape proves `small <= large`, and whether the order is strict.
+    fn division_order(&self, small: &SymExpr, large: &SymExpr) -> Option<bool> {
+        let nonzero =
+            |expr: &SymExpr| self.interval(expr).is_some_and(|range| !range.min.is_zero());
+        match small.kind() {
+            SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) => {
+                if dividend == large {
+                    return Some(false);
+                }
+                (divisor == large && nonzero(divisor)).then_some(true)
+            }
+            SymExprKind::BinOp(SymBinOp::UDiv, dividend, divisor) => {
+                if dividend == large {
+                    return nonzero(divisor).then_some(false);
+                }
+                let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
+                    return None;
+                };
+                let other = if left == large {
+                    right
+                } else if right == large {
+                    left
+                } else {
+                    return None;
+                };
+                let divisor = self.interval(divisor)?;
+                (!divisor.min.is_zero()
+                    && self.interval(other)?.max <= divisor.min
+                    && self.mul_cannot_overflow_256(left, right))
+                .then_some(false)
+            }
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => rounded_product_operands(left, right)
+                .is_some_and(|(dividend, _)| dividend == large)
+                .then_some(false),
+            _ => None,
+        }
     }
 
     /// Bounds a subtraction only when the relation proves it cannot underflow.

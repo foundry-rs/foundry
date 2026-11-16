@@ -32,15 +32,7 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
     "map-indexmap",
 ] }
-revm = { workspace = true, features = [
-    "std",
-    "serde",
-    "memory_limit",
-    "optional_eip3607",
-    "optional_block_gas_limit",
-    "optional_no_base_fee",
-    "arbitrary",
-] }
+evm2.workspace = true
 
 eyre.workspace = true
 itertools.workspace = true
@@ -50,6 +42,9 @@ rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+alloy-network.workspace = true
 
 [features]
 default = ["optimism"]

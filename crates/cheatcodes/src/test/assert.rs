@@ -1,14 +1,15 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{I256, U256, U512, uint};
+use alloy_primitives::{Address, B256, Bytes, I256, U256, U512, keccak256, uint};
+use alloy_sol_types::SolCall;
+use evm2::interpreter::{InstrStop, op, opcode::OpCode};
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
     constants::CHEATCODE_ADDRESS,
     decode::ASSERTION_FAILED_PREFIX,
-    evm::FoundryEvmNetwork,
+    evm::{FoundryEvmNetwork, InterpreterFor, MessageResultFor},
 };
 use itertools::Itertools;
-use revm::context::{ContextTr, JournalTr};
 use std::{borrow::Cow, fmt};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = uint!(18_U256);
@@ -192,6 +193,7 @@ type ComparisonResult<'a, T> = Result<(), ComparisonAssertionError<'a, T>>;
 fn handle_assertion_result<FEN: FoundryEvmNetwork, E>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     executor: &mut dyn CheatcodesExecutor<FEN>,
+    selector: [u8; 4],
     err: E,
     error_formatter: Option<&dyn Fn(&E) -> String>,
     error_msg: Option<&str>,
@@ -202,6 +204,14 @@ fn handle_assertion_result<FEN: FoundryEvmNetwork, E>(
     } else {
         Cow::Borrowed(error_msg)
     };
+    let reverts = ccx.state.core.config.assertions_revert;
+    if let Some(trace) = &mut ccx.state.failure_trace {
+        let revert = reverts.then(|| keccak256(crate::Error::encode(msg.to_string())));
+        trace.record_assertion(selector, error_msg, revert);
+    }
+    if let Some(provenance) = &mut ccx.state.failure_provenance {
+        provenance.pending_assertion = Some(keccak256([&selector[..], msg.as_bytes()].concat()));
+    }
     handle_assertion_result_mono(ccx, executor, msg)
 }
 
@@ -210,11 +220,12 @@ fn handle_assertion_result_mono<FEN: FoundryEvmNetwork>(
     executor: &mut dyn CheatcodesExecutor<FEN>,
     msg: Cow<'_, str>,
 ) -> Result {
+    ccx.state.failed_assertion.get_or_insert_with(|| msg.to_string());
     if ccx.state.core.config.assertions_revert {
         Err(msg.into_owned().into())
     } else {
         executor.console_log(&msg);
-        ccx.ecx.journal_mut().sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::ONE)?;
+        ccx.evm.state_mut().storage_slot(&CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)?.set(U256::ONE);
         Ok(Default::default())
     }
 }
@@ -256,7 +267,14 @@ macro_rules! impl_assertions {
                 let Self { $($arg),* } = self;
                 match $body {
                     Ok(()) => Ok(Default::default()),
-                    Err(err) => handle_assertion_result(ccx, executor, err, $error_formatter, None)
+                    Err(err) => handle_assertion_result(
+                        ccx,
+                        executor,
+                        Self::SELECTOR,
+                        err,
+                        $error_formatter,
+                        None,
+                    ),
                 }
             }
         }
@@ -270,9 +288,14 @@ macro_rules! impl_assertions {
                 let Self { $($arg,)* err } = self;
                 match $body {
                     Ok(()) => Ok(Default::default()),
-                    Err(assertion_err) => {
-                        handle_assertion_result(ccx, executor, assertion_err, $error_formatter, Some(err))
-                    }
+                    Err(assertion_err) => handle_assertion_result(
+                        ccx,
+                        executor,
+                        Self::SELECTOR,
+                        assertion_err,
+                        $error_formatter,
+                        Some(err),
+                    ),
                 }
             }
         }
@@ -617,4 +640,404 @@ fn int_assert_approx_eq_rel(
             real_delta: EqRelDelta::Defined(delta),
         })))
     }
+}
+
+/// Records the failed assertions and frames of a call by value-independent call sites, so a
+/// minimizer can tell whether a smaller input fails the same way.
+#[derive(Clone, Debug, Default)]
+pub struct FailureTrace {
+    /// Site of the latest call made by an executing frame.
+    pending: B256,
+    /// Tracking of each executing frame, indexed by call depth.
+    frames: Vec<SiteFrame>,
+    /// Failed assertions and failed frames, in execution order.
+    events: Vec<FailureEvent>,
+    /// Whether a snapshot was restored or a cheatcode with effects outside the EVM was skipped,
+    /// which can make a different path look like this one.
+    pub(crate) unidentified: bool,
+}
+
+/// Call site tracking of one executing frame.
+#[derive(Clone, Debug, Default)]
+struct SiteFrame {
+    /// Site of the call that entered this frame.
+    entry: B256,
+    /// For each stack slot, the pc of the `PUSH` its value was copied from, if any.
+    pushed_at: Vec<Option<usize>>,
+    /// Address and code of this frame, to identify the instruction that halted it.
+    destination: Address,
+    /// See [`Self::destination`].
+    code: Bytes,
+    /// Whether this frame runs initcode.
+    is_create: bool,
+    /// Highest pc executed so far, used to hash the executed part of initcode.
+    max_pc: usize,
+    /// Pc of the latest instruction, which halted the frame if it halted.
+    last_pc: usize,
+    /// Pc of the latest `JUMPI`, taken or not.
+    last_jumpi: usize,
+    /// Number of failure events recorded before this frame started.
+    events_before: usize,
+    /// Site of the `REVERT` or `INVALID` instruction that failed this frame, if any.
+    failed_at: Option<B256>,
+}
+
+impl SiteFrame {
+    /// Returns the site of the instruction about to execute: the frame's entry, the executing
+    /// code and pc, and the return labels of the internal functions that led to it. Values that
+    /// are not pushed constants, such as inputs, are ignored.
+    fn site<FEN: FoundryEvmNetwork>(&self, interpreter: &InterpreterFor<'_, '_, FEN>) -> B256 {
+        let code = interpreter.original_bytecode_slice();
+        let mut preimage = self.entry.to_vec();
+        // Initcode embeds constructor arguments, so constructors only hash executed code, and
+        // their address can derive from those arguments, so the entry identifies them instead.
+        let code_hash = if self.is_create {
+            keccak256(code.get(..=self.max_pc).unwrap_or(code))
+        } else {
+            preimage.extend_from_slice(interpreter.message().destination.as_slice());
+            interpreter.original_bytecode_hash()
+        };
+        preimage.extend_from_slice(code_hash.as_slice());
+        preimage.extend_from_slice(&interpreter.pc().to_be_bytes());
+        for (value, pushed_at) in interpreter.stack().as_slice().iter().zip(&self.pushed_at) {
+            if let Some(pushed_at) = pushed_at
+                && is_return_label(code, value)
+            {
+                preimage.extend_from_slice(&pushed_at.to_be_bytes());
+            }
+        }
+        keccak256(preimage)
+    }
+
+    /// Returns the site of the latest instruction, which halted the frame, without the return
+    /// labels on its stack.
+    fn halt_site(&self) -> B256 {
+        let mut preimage = self.entry.to_vec();
+        let code_hash = if self.is_create {
+            keccak256(self.code.get(..=self.max_pc).unwrap_or(&self.code))
+        } else {
+            preimage.extend_from_slice(self.destination.as_slice());
+            keccak256(&self.code)
+        };
+        preimage.extend_from_slice(code_hash.as_slice());
+        preimage.extend_from_slice(&self.last_pc.to_be_bytes());
+        preimage.extend_from_slice(&self.last_jumpi.to_be_bytes());
+        keccak256(preimage)
+    }
+}
+
+/// A failure recorded by [`FailureTrace`].
+#[derive(Clone, Debug)]
+enum FailureEvent {
+    /// A failed assertion, identified by its call site, cheatcode and unformatted message, with
+    /// the hash of its revert data when assertions revert.
+    Assertion { identity: B256, revert: Option<B256> },
+    /// A call or create that reverted or halted, identified by the site where it failed, or of
+    /// the call when it ran no instructions, with the number of failure events recorded within it.
+    Frame { site: B256, stop: InstrStop, events: usize },
+}
+
+impl FailureTrace {
+    /// Starts tracking the frame of `interpreter` at `depth`.
+    pub(crate) fn enter_frame<FEN: FoundryEvmNetwork>(
+        &mut self,
+        interpreter: &InterpreterFor<'_, '_, FEN>,
+        depth: usize,
+    ) {
+        let frame = SiteFrame {
+            entry: self.pending,
+            events_before: self.events.len(),
+            ..Default::default()
+        };
+        // Frames entered without an interpreter, such as cheatcode calls, were entered at
+        // `pending` too.
+        self.frames.resize(depth, frame.clone());
+        self.frames.push(SiteFrame {
+            destination: interpreter.message().destination,
+            code: interpreter.original_bytecode(),
+            is_create: interpreter.message().kind.is_create(),
+            ..frame
+        });
+    }
+
+    /// Records the site of external calls and tracks which stack values are pushed constants.
+    pub(crate) fn step<FEN: FoundryEvmNetwork>(
+        &mut self,
+        interpreter: &mut InterpreterFor<'_, '_, FEN>,
+        depth: usize,
+    ) {
+        let Some(frame) = self.frames.get_mut(depth) else { return };
+        let height = interpreter.stack().len();
+        frame.pushed_at.resize(height, None);
+        let pc = interpreter.pc();
+        frame.max_pc = frame.max_pc.max(pc);
+        frame.last_pc = pc;
+        let opcode = interpreter.opcode();
+        match opcode {
+            op::PUSH0..=op::PUSH32 => return frame.pushed_at.push(Some(pc)),
+            op::DUP1..=op::DUP16 => {
+                let n = (opcode - op::DUP1 + 1) as usize;
+                if let Some(slot) = height.checked_sub(n) {
+                    frame.pushed_at.push(frame.pushed_at[slot]);
+                }
+                return;
+            }
+            op::SWAP1..=op::SWAP16 => {
+                let n = (opcode - op::SWAP1 + 1) as usize;
+                if let Some(slot) = height.checked_sub(n + 1) {
+                    frame.pushed_at.swap(slot, height - 1);
+                }
+                return;
+            }
+            // Their stack effect depends on an immediate, so stop trusting the tracked slots.
+            op::SWAPN | op::EXCHANGE => frame.pushed_at.fill(None),
+            op::CALL
+            | op::CALLCODE
+            | op::DELEGATECALL
+            | op::STATICCALL
+            | op::CREATE
+            | op::CREATE2 => self.pending = frame.site::<FEN>(interpreter),
+            op::JUMPI => frame.last_jumpi = pc,
+            op::REVERT | op::INVALID => {
+                // The optimizer shares revert blocks between checks, which the latest branch tells
+                // apart.
+                let site = frame.site::<FEN>(interpreter);
+                let preimage = [site.as_slice(), &frame.last_jumpi.to_be_bytes()].concat();
+                frame.failed_at = Some(keccak256(preimage));
+            }
+            _ => {}
+        }
+        if let Some(info) = OpCode::new(opcode) {
+            frame.pushed_at.truncate(height.saturating_sub(info.inputs() as usize));
+            frame.pushed_at.extend(std::iter::repeat_n(None, info.outputs() as usize));
+        }
+    }
+
+    /// Records a failed assertion, or a `fail()`, made by the latest call.
+    pub(crate) fn record_assertion(
+        &mut self,
+        selector: [u8; 4],
+        message: &str,
+        revert: Option<B256>,
+    ) {
+        let identity = keccak256([self.pending.as_slice(), &selector, message.as_bytes()].concat());
+        self.events.push(FailureEvent::Assertion { identity, revert });
+    }
+
+    /// Records the outcome of the frame at `depth` once all inspectors have finalized it.
+    pub fn finish_frame<FEN: FoundryEvmNetwork>(
+        &mut self,
+        depth: usize,
+        result: &MessageResultFor<FEN>,
+    ) {
+        if !result.stop.is_success() {
+            // Frames without an interpreter, such as cheatcode calls, were entered at `pending`.
+            let (site, events_before) =
+                self.frames.get(depth + 1).map_or((self.pending, self.events.len()), |frame| {
+                    (frame.failed_at.unwrap_or_else(|| frame.halt_site()), frame.events_before)
+                });
+            let events = self.events.len() - events_before;
+            self.events.push(FailureEvent::Frame { site, stop: result.stop, events });
+        }
+        self.frames.truncate(depth + 1);
+    }
+
+    /// Returns the value-independent identity of the finished call that stopped with `exit` and
+    /// returned `output`, and starts recording the next call.
+    ///
+    /// The identity is unknown when a snapshot restore discarded part of the history, when a
+    /// cheatcode with effects outside the EVM was skipped, when the call succeeded without a failed
+    /// assertion or `fail()`, such as after a legacy DSTest failure that only wrote its own flag,
+    /// or when several failed assertions could have produced the revert data.
+    pub fn take_identity(&mut self, exit: InstrStop, output: &[u8]) -> Option<B256> {
+        let Self { events, unidentified, .. } = std::mem::take(self);
+        if unidentified {
+            return None;
+        }
+        let mut preimage = vec![exit as u8];
+        for event in &events {
+            match event {
+                FailureEvent::Assertion { identity, .. } => {
+                    preimage.push(0);
+                    preimage.extend_from_slice(identity.as_slice());
+                }
+                FailureEvent::Frame { site, stop, events } => {
+                    preimage.push(1);
+                    preimage.extend_from_slice(site.as_slice());
+                    preimage.push(*stop as u8);
+                    preimage.extend_from_slice(&events.to_be_bytes());
+                }
+            }
+        }
+        if exit.is_success() {
+            if !events.iter().any(|event| matches!(event, FailureEvent::Assertion { .. })) {
+                return None;
+            }
+        } else {
+            // Revert data produced by exactly one failed assertion is identified by that
+            // assertion, without the values in its message. Other revert data is compared in full,
+            // as custom error arguments can tell apart failures raised from one `REVERT`, such as
+            // a failure code. Errors that carry the minimized values therefore do not shrink.
+            let output_hash = keccak256(output);
+            let mut sources = events.iter().enumerate().filter(|(_, event)| {
+                matches!(event, FailureEvent::Assertion { revert, .. } if *revert == Some(output_hash))
+            });
+            match (sources.next(), sources.next()) {
+                (Some((index, _)), None) => {
+                    preimage.push(2);
+                    preimage.extend_from_slice(&index.to_be_bytes());
+                }
+                (None, _) => {
+                    preimage.push(3);
+                    preimage.extend_from_slice(output_hash.as_slice());
+                }
+                (Some(_), Some(_)) => return None,
+            }
+        }
+        Some(keccak256(preimage))
+    }
+}
+
+/// Records where a call failed, cheaply enough to run during campaigns, so a replay of the same
+/// input can be checked to fail the same way, unlike its revert data, exit reason and gas, which
+/// other failure paths can reproduce.
+///
+/// Unlike [`FailureTrace`], sites include values such as return labels, so only runs of the same
+/// input are comparable.
+#[derive(Clone, Debug, Default)]
+pub struct FailureProvenance {
+    /// Frame index and site of the `REVERT` or `INVALID` instruction about to end a frame.
+    pending_revert: Option<(usize, B256)>,
+    /// Identity of the failed assertion made by the cheatcode call in progress.
+    pub(crate) pending_assertion: Option<B256>,
+    /// Hash of the failed assertions and failed frames so far, in execution order.
+    hash: B256,
+    /// Whether a frame halted at an instruction that is not recorded, so the call has no
+    /// provenance.
+    unknown: bool,
+    /// Sites of the calls that entered the frames in progress, by depth.
+    callers: Vec<B256>,
+    /// Pc of the latest `JUMPI` of each frame in progress, taken or not, by the depth
+    /// [`Self::record_revert`] receives.
+    jumpis: Vec<usize>,
+}
+
+impl FailureProvenance {
+    /// Returns the site of the instruction about to execute: the executing address, code and pc,
+    /// and the stack values that look like return labels of internal functions.
+    fn site<FEN: FoundryEvmNetwork>(interpreter: &InterpreterFor<'_, '_, FEN>) -> B256 {
+        let code = interpreter.original_bytecode_slice();
+        let mut preimage = interpreter.message().destination.to_vec();
+        preimage.extend_from_slice(interpreter.original_bytecode_hash().as_slice());
+        preimage.extend_from_slice(&interpreter.pc().to_be_bytes());
+        for value in interpreter.stack().as_slice() {
+            if is_return_label(code, value) {
+                preimage.extend_from_slice(&value.to_be_bytes::<32>());
+            }
+        }
+        keccak256(preimage)
+    }
+
+    /// Records the site of the `REVERT` or `INVALID` instruction about to execute in the frame at
+    /// `depth`.
+    pub(crate) fn record_revert<FEN: FoundryEvmNetwork>(
+        &mut self,
+        interpreter: &InterpreterFor<'_, '_, FEN>,
+        depth: usize,
+    ) {
+        // The optimizer shares revert blocks between checks, which the frame's latest branch
+        // tells apart.
+        let jumpi = self.jumpis.get(depth).copied().unwrap_or_default();
+        let site = Self::site::<FEN>(interpreter);
+        self.pending_revert =
+            Some((depth, keccak256([site.as_slice(), &jumpi.to_be_bytes()].concat())));
+    }
+
+    /// Records the `JUMPI` about to execute at `pc` in the frame at `depth`.
+    pub(crate) fn record_jumpi(&mut self, depth: usize, pc: usize) {
+        if self.jumpis.len() <= depth {
+            self.jumpis.resize(depth + 1, 0);
+        }
+        self.jumpis[depth] = pc;
+    }
+
+    /// Records the site of `interpreter`'s call that enters the frame at `depth`.
+    pub fn enter_frame<FEN: FoundryEvmNetwork>(
+        &mut self,
+        depth: usize,
+        interpreter: &InterpreterFor<'_, '_, FEN>,
+    ) {
+        self.callers.truncate(depth);
+        self.callers.push(Self::site::<FEN>(interpreter));
+        // The entered frame, stepped at `depth + 1`, has not branched yet.
+        self.jumpis.truncate(depth + 1);
+    }
+
+    /// Records the failed assertion of the finished cheatcode call, if any, by the sites of the
+    /// calls that led to it, so the same assertion reached through different callers differs.
+    pub(crate) fn finish_assertion(&mut self) {
+        if let Some(assertion) = self.pending_assertion.take() {
+            let site = keccak256(self.callers.concat());
+            self.fold(keccak256([site.as_slice(), assertion.as_slice()].concat()));
+        }
+    }
+
+    /// Records the outcome of the frame at `depth` once all inspectors have finalized it, by the
+    /// sites of the calls that led to it, given the interpreter of its caller, or of the frame
+    /// itself for the first frame.
+    pub fn finish_frame<FEN: FoundryEvmNetwork>(
+        &mut self,
+        depth: usize,
+        interpreter: &InterpreterFor<'_, '_, FEN>,
+        result: &MessageResultFor<FEN>,
+    ) {
+        let pending_revert = self.pending_revert.take();
+        // The same callee fails the same way when entered through different calls.
+        let callers = (!result.stop.is_success()).then(|| keccak256(self.callers.concat()));
+        self.callers.truncate(depth);
+        let Some(callers) = callers else { return };
+        let stop = result.stop as u8;
+        let site = match pending_revert {
+            Some((frame, site)) if frame == depth + 1 => site,
+            // Halts such as invalid jumps or running out of gas can happen at any instruction,
+            // which is not recorded.
+            _ if result.stop != InstrStop::Revert => {
+                self.unknown = true;
+                return;
+            }
+            // Frames without instructions, such as cheatcode calls, are identified by the call
+            // that entered them.
+            _ => {
+                let entry = if usize::from(interpreter.message().depth) < depth {
+                    Self::site::<FEN>(interpreter)
+                } else {
+                    keccak256(interpreter.message().destination)
+                };
+                keccak256([entry.as_slice(), &[stop]].concat())
+            }
+        };
+        let output = keccak256(&result.output);
+        self.fold(keccak256(
+            [callers.as_slice(), site.as_slice(), &[stop], output.as_slice()].concat(),
+        ));
+    }
+
+    /// Returns the provenance of the finished call, if known, and starts recording the next call.
+    pub fn take(&mut self) -> Option<B256> {
+        let this = std::mem::take(self);
+        (!this.unknown).then_some(this.hash)
+    }
+
+    /// Appends a failure event to the hash.
+    fn fold(&mut self, event: B256) {
+        self.hash = keccak256([self.hash.as_slice(), event.as_slice()].concat());
+    }
+}
+
+/// Returns whether `value` is the pc of a `JUMPDEST` right after a `JUMP` in `code`, as the
+/// return label of an internal function call is.
+fn is_return_label(code: &[u8], value: &U256) -> bool {
+    usize::try_from(*value).is_ok_and(|label| {
+        label > 0 && code.get(label) == Some(&op::JUMPDEST) && code[label - 1] == op::JUMP
+    })
 }

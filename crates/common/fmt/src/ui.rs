@@ -5,6 +5,7 @@ use alloy_consensus::{
     TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, TxReceipt, Typed2718,
     transaction::TxHashRef,
 };
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{
     AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope,
     BlockResponse, Network, ReceiptResponse, primitives::HeaderResponse,
@@ -16,7 +17,6 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use revm::context_interface::transaction::SignedAuthorization;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
 use tempo_alloy::{

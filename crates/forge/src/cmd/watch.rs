@@ -61,6 +61,66 @@ fn keyboard_action(events: &[Event]) -> Option<KeyboardAction> {
     rerun.then_some(KeyboardAction::Rerun)
 }
 
+/// What the watcher does with one batch of events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WatchAction {
+    /// A termination signal or the end of keyboard input: stop watching.
+    Quit,
+    /// Nothing that warrants running the command again.
+    Ignore,
+    /// Run the command, restarting it if it is still running and restarts are allowed.
+    Run,
+}
+
+/// Decides what the watcher does with a batch of `events` that came with `signals`.
+///
+/// `has_paths` is whether any of the events names a filesystem path.
+fn watch_action(signals: &[Signal], events: &[Event], has_paths: bool) -> WatchAction {
+    let keyboard_action = keyboard_action(events);
+    if signals.contains(&Signal::Terminate)
+        || signals.contains(&Signal::Interrupt)
+        || keyboard_action == Some(KeyboardAction::Quit)
+    {
+        return WatchAction::Quit;
+    }
+
+    // A keyboard rerun runs the command whatever else the batch holds.
+    if keyboard_action == Some(KeyboardAction::Rerun) {
+        return WatchAction::Run;
+    }
+
+    // Only filesystem or empty synthetic events below here.
+    let has_synthetic_events = events.iter().any(Event::is_empty);
+    if !has_paths && !has_synthetic_events {
+        debug!("no filesystem, rerun, or synthetic events, skip without doing more");
+        return WatchAction::Ignore;
+    }
+
+    // Reading a file now triggers `Access(Open)` events on Linux due to:
+    // https://github.com/notify-rs/notify/pull/612
+    // This causes an infinite rebuild loop: the build reads a file,
+    // which triggers a notification, which restarts the build, and so on.
+    // To prevent this, we ignore `Access(Open)` events during event processing.
+    if cfg!(target_os = "linux") && !has_synthetic_events && !has_file_events(events) {
+        debug!(
+            "no filesystem events (other than Access(Open)) or synthetic events, skip without doing more"
+        );
+        return WatchAction::Ignore;
+    }
+
+    WatchAction::Run
+}
+
+/// Whether any of `events` is a filesystem event other than `Access(Open)`.
+fn has_file_events(events: &[Event]) -> bool {
+    events.iter().flat_map(|event| &event.tags).any(|tag| {
+        matches!(
+            tag,
+            Tag::FileEventKind(kind) if !matches!(kind, FileEventKind::Access(AccessKind::Open(_)))
+        )
+    })
+}
+
 fn set_keyboard_events(config: &Option<KeyboardConfig>, enable: bool) {
     if let Some(config) = config.as_ref().and_then(|config| config.get()).and_then(Weak::upgrade) {
         config.keyboard_events(enable);
@@ -221,49 +281,11 @@ impl WatchArgs {
             };
 
             let signals = action.signals().collect::<Vec<_>>();
-            let keyboard_action = keyboard_action(&action.events);
-
-            if signals.contains(&Signal::Terminate)
-                || signals.contains(&Signal::Interrupt)
-                || keyboard_action == Some(KeyboardAction::Quit)
-            {
-                return quit(action);
-            }
-
-            // Only filesystem, keyboard rerun, or empty synthetic events below here.
-            if action.paths().next().is_none()
-                && keyboard_action != Some(KeyboardAction::Rerun)
-                && !action.events.iter().any(|e| e.is_empty())
-            {
-                debug!("no filesystem, rerun, or synthetic events, skip without doing more");
-                return action;
-            }
-
-            if cfg!(target_os = "linux") && keyboard_action != Some(KeyboardAction::Rerun) {
-                // Reading a file now triggers `Access(Open)` events on Linux due to:
-                // https://github.com/notify-rs/notify/pull/612
-                // This causes an infinite rebuild loop: the build reads a file,
-                // which triggers a notification, which restarts the build, and so on.
-                // To prevent this, we ignore `Access(Open)` events during event processing.
-                let mut has_file_events = false;
-                let mut has_synthetic_events = false;
-                'outer: for e in action.events.iter() {
-                    if e.is_empty() {
-                        has_synthetic_events = true;
-                        break;
-                    }
-                    for tag in &e.tags {
-                        if let Tag::FileEventKind(kind) = tag
-                            && !matches!(kind, FileEventKind::Access(AccessKind::Open(_))) {
-                                has_file_events = true;
-                                break 'outer;
-                            }
-                    }
-                }
-                if !has_file_events && !has_synthetic_events {
-                    debug!("no filesystem events (other than Access(Open)) or synthetic events, skip without doing more");
-                    return action;
-                }
+            let has_paths = action.paths().next().is_some();
+            match watch_action(&signals, &action.events, has_paths) {
+                WatchAction::Quit => return quit(action),
+                WatchAction::Ignore => return action,
+                WatchAction::Run => {}
             }
 
             // Let the child own stdin while it runs. This keeps prompts and the debugger from
@@ -303,6 +325,9 @@ fn setup_process(job: Job, _command: &Command, keyboard_config: Option<KeyboardC
 }
 
 fn end_of_process(state: &CommandState, keyboard_config: Option<KeyboardConfig>) {
+    // Hand stdin back to the watcher however the command ended: a command that failed to spawn
+    // leaves the job pending, and keyboard reruns would otherwise stay disabled for good.
+    set_keyboard_events(&keyboard_config, true);
     let CommandState::Finished { status, started, finished } = state else {
         return;
     };
@@ -324,7 +349,6 @@ fn end_of_process(state: &CommandState, keyboard_config: Option<KeyboardConfig>)
     };
 
     let quiet = false;
-    set_keyboard_events(&keyboard_config, true);
     if !quiet {
         let _ = sh_eprintln!("{}", format!("[{msg}]").paint(fg.foreground()));
     }
@@ -383,58 +407,19 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
         || Ok([&config.test, &config.src]),
         watch_keyboard,
         move |events, command| {
-            if keyboard_action(events) == Some(KeyboardAction::Rerun) {
-                return;
-            }
-
-            // Check if we should prioritize rerunning failed tests
-            let has_failures = rerun_failed && test_failures_file.exists();
-
-            if has_failures {
-                // Smart mode: rerun failed tests first
-                trace!("Smart watch mode: will rerun failed tests first");
-                command.arg("--rerun");
-                // Don't add file-specific filters when rerunning failures
-                return;
-            }
-
-            let mut changed_sol_test_files: HashSet<_> = events
-                .iter()
-                .flat_map(|e| e.paths())
-                .filter(|(path, _)| path.is_sol_test())
-                .filter_map(|(path, _)| path.to_str())
-                .map(str::to_string)
-                .collect();
-
-            if changed_sol_test_files.len() > 1 {
-                // Run all tests if multiple files were changed at once, for example when running
-                // `forge fmt`.
-                return;
-            }
-
-            if changed_sol_test_files.is_empty() {
-                // Reuse the old test files if a non-test file was changed.
-                let last = last_test_files.lock();
-                if last.is_empty() {
-                    return;
-                }
-                changed_sol_test_files = last.clone();
-            }
-
-            // append `--match-path` glob
-            let mut file = changed_sol_test_files.iter().next().expect("test file present").clone();
-
-            // remove the project root dir from the detected file
-            if let Some(f) = file.strip_prefix(&project_root) {
-                file = f.trim_start_matches('/').to_string();
-            }
-
-            trace!(?file, "reconfigure test command");
-
-            // Before appending `--match-path`, check if it already exists
-            if !no_reconfigure {
-                command.arg("--match-path").arg(file);
-            }
+            let rerun = if keyboard_action(events) == Some(KeyboardAction::Rerun) {
+                TestRerun::Unchanged
+            } else if rerun_failed && test_failures_file.exists() {
+                TestRerun::Failures
+            } else {
+                changed_test_rerun(
+                    events,
+                    &mut last_test_files.lock(),
+                    &project_root,
+                    no_reconfigure,
+                )
+            };
+            rerun.apply(command);
         },
     )?;
 
@@ -443,6 +428,83 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     }
 
     run_inner(config, keyboard_config).await
+}
+
+/// How `forge test --watch` narrows the test command for one batch of events.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TestRerun {
+    /// Run the command as given.
+    Unchanged,
+    /// Rerun the failures that the last run recorded, ahead of anything else.
+    Failures,
+    /// Run only the tests of this project-relative file.
+    MatchPath(String),
+}
+
+impl TestRerun {
+    fn apply(self, command: &mut TokioCommand) {
+        match self {
+            Self::Unchanged => {}
+            Self::Failures => {
+                // Don't add file-specific filters when rerunning failures.
+                trace!("Smart watch mode: will rerun failed tests first");
+                command.arg("--rerun");
+            }
+            Self::MatchPath(file) => {
+                command.arg("--match-path").arg(file);
+            }
+        }
+    }
+}
+
+/// Picks the tests to run for changed files: the one changed test file, or the last test files
+/// when only non-test files changed.
+///
+/// A single changed test file becomes the last test files, so later changes to non-test files
+/// keep running its tests.
+///
+/// `no_reconfigure` keeps the command as given, for runs that the user already filtered.
+fn changed_test_rerun(
+    events: &[Event],
+    last_test_files: &mut HashSet<String>,
+    project_root: &str,
+    no_reconfigure: bool,
+) -> TestRerun {
+    let mut changed_sol_test_files: HashSet<_> = events
+        .iter()
+        .flat_map(|e| e.paths())
+        .filter(|(path, _)| path.is_sol_test())
+        .filter_map(|(path, _)| path.to_str())
+        .map(str::to_string)
+        .collect();
+
+    if changed_sol_test_files.len() > 1 {
+        // Run all tests if multiple files were changed at once, for example when running
+        // `forge fmt`.
+        last_test_files.clear();
+        return TestRerun::Unchanged;
+    }
+
+    if changed_sol_test_files.is_empty() {
+        // Reuse the old test files if a non-test file was changed.
+        if last_test_files.is_empty() {
+            return TestRerun::Unchanged;
+        }
+        changed_sol_test_files = last_test_files.clone();
+    } else {
+        last_test_files.clone_from(&changed_sol_test_files);
+    }
+
+    let mut file = changed_sol_test_files.iter().next().expect("test file present").clone();
+
+    // remove the project root dir from the detected file
+    if let Some(f) = file.strip_prefix(project_root) {
+        file = f.trim_start_matches('/').to_string();
+    }
+
+    trace!(?file, "reconfigure test command");
+
+    if no_reconfigure { TestRerun::Unchanged } else { TestRerun::MatchPath(file) }
 }
 
 pub async fn watch_coverage(args: CoverageArgs) -> Result<()> {
@@ -740,6 +802,130 @@ mod tests {
             keyboard_action(&[key_event('a', Modifiers::default()), eof]),
             Some(KeyboardAction::Quit)
         );
+    }
+
+    fn file_event(kind: FileEventKind) -> Event {
+        Event {
+            tags: vec![
+                Tag::Path { path: PathBuf::from("src/A.sol"), file_type: None },
+                Tag::FileEventKind(kind),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn classifies_watch_actions() {
+        let modify = file_event(FileEventKind::Modify(watchexec_events::filekind::ModifyKind::Any));
+        let open = file_event(FileEventKind::Access(AccessKind::Open(
+            watchexec_events::filekind::AccessMode::Any,
+        )));
+        let rerun = key_event('a', Modifiers::default());
+        let eof = Event { tags: vec![Tag::Keyboard(Keyboard::Eof)], ..Default::default() };
+        let other_key = key_event('x', Modifiers::default());
+
+        // Signals and the end of input quit, whatever the events.
+        assert_eq!(
+            watch_action(&[Signal::Interrupt], std::slice::from_ref(&modify), true),
+            WatchAction::Quit
+        );
+        assert_eq!(watch_action(&[Signal::Terminate], &[], false), WatchAction::Quit);
+        assert_eq!(watch_action(&[], &[rerun.clone(), eof], false), WatchAction::Quit);
+
+        // A keyboard rerun, a synthetic event or a file change runs the command.
+        assert_eq!(watch_action(&[], &[rerun], false), WatchAction::Run);
+        assert_eq!(watch_action(&[], &[Event::default()], false), WatchAction::Run);
+        assert_eq!(watch_action(&[], std::slice::from_ref(&modify), true), WatchAction::Run);
+        assert_eq!(watch_action(&[], &[open.clone(), modify], true), WatchAction::Run);
+
+        // Anything else is ignored.
+        assert_eq!(watch_action(&[], &[other_key], false), WatchAction::Ignore);
+        let opened = watch_action(&[], &[open], true);
+        if cfg!(target_os = "linux") {
+            assert_eq!(opened, WatchAction::Ignore);
+        } else {
+            assert_eq!(opened, WatchAction::Run);
+        }
+    }
+
+    fn path_event(path: &str) -> Event {
+        Event {
+            tags: vec![Tag::Path { path: PathBuf::from(path), file_type: None }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn narrows_test_reruns_to_changed_test_file() {
+        let rerun = |events: &[Event], no_reconfigure| {
+            changed_test_rerun(events, &mut HashSet::default(), "/project", no_reconfigure)
+        };
+
+        assert_eq!(
+            rerun(&[path_event("/project/test/A.t.sol")], false),
+            TestRerun::MatchPath("test/A.t.sol".to_string())
+        );
+        assert_eq!(rerun(&[path_event("/project/test/A.t.sol")], true), TestRerun::Unchanged);
+        assert_eq!(
+            rerun(
+                &[path_event("/project/test/A.t.sol"), path_event("/project/test/B.t.sol")],
+                false
+            ),
+            TestRerun::Unchanged
+        );
+        assert_eq!(rerun(&[path_event("/project/src/A.sol")], false), TestRerun::Unchanged);
+
+        let mut last = HashSet::from_iter(["/project/test/B.t.sol".to_string()]);
+        assert_eq!(
+            changed_test_rerun(&[path_event("/project/src/A.sol")], &mut last, "/project", false),
+            TestRerun::MatchPath("test/B.t.sol".to_string())
+        );
+    }
+
+    #[test]
+    fn reruns_last_changed_test_file_after_source_change() {
+        let mut last = HashSet::default();
+        assert_eq!(
+            changed_test_rerun(
+                &[path_event("/project/test/A.t.sol")],
+                &mut last,
+                "/project",
+                false
+            ),
+            TestRerun::MatchPath("test/A.t.sol".to_string())
+        );
+        // A later change to a non-test file reruns the tests of the last changed test file.
+        assert_eq!(
+            changed_test_rerun(&[path_event("/project/src/A.sol")], &mut last, "/project", false),
+            TestRerun::MatchPath("test/A.t.sol".to_string())
+        );
+        // Multiple changed test files reset the selection for subsequent source changes.
+        assert_eq!(
+            changed_test_rerun(
+                &[path_event("/project/test/B.t.sol"), path_event("/project/test/C.t.sol")],
+                &mut last,
+                "/project",
+                false
+            ),
+            TestRerun::Unchanged
+        );
+        assert_eq!(
+            changed_test_rerun(&[path_event("/project/src/C.sol")], &mut last, "/project", false),
+            TestRerun::Unchanged
+        );
+    }
+
+    #[test]
+    fn reenables_keyboard_events_when_command_did_not_start() {
+        let config = Arc::new(watchexec::Config::default());
+        let keyboard_config = KeyboardConfig::default();
+        keyboard_config.set(Arc::downgrade(&config)).unwrap();
+        set_keyboard_events(&Some(keyboard_config.clone()), false);
+        assert!(!config.keyboard_events.get());
+
+        // A command that failed to spawn leaves the job pending rather than finished.
+        end_of_process(&CommandState::Pending, Some(keyboard_config));
+        assert!(config.keyboard_events.get());
     }
 
     #[test]

@@ -221,6 +221,29 @@ contract SymbolicExp {
             assert(y == 65536);
         }
     }
+
+    // A base the path pins resolves like a literal, so a constant exponent above 32 and a wide
+    // symbolic exponent stay supported.
+    function checkSymbolicExpBasePinnedConstantExponent(uint256 b) public pure {
+        require(b == 3);
+        uint256 r;
+        assembly {
+            r := exp(b, 33)
+        }
+        assert(r == 5559060566555523);
+    }
+
+    function checkSymbolicExpBasePinnedSymbolicExponent(uint256 b, uint8 raw) public pure {
+        require(b == 2);
+        uint256 e = uint256(raw) & 63;
+        uint256 r;
+        assembly {
+            r := exp(b, e)
+        }
+        if (e == 40) {
+            assert(r == 1099511627776);
+        }
+    }
 }
 "#,
     );
@@ -234,9 +257,11 @@ contract SymbolicExp {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicExp.t.sol:SymbolicExp
+Ran 3 tests for test/SymbolicExp.t.sol:SymbolicExp
 [PASS] checkSymbolicExpBase(uint8) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkSymbolicExpBasePinnedConstantExponent(uint256) ([METRICS])
+[PASS] checkSymbolicExpBasePinnedSymbolicExponent(uint256,uint8) ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -265,6 +290,11 @@ contract SymbolicExpExponent {
             assert(y == 243);
         }
     }
+
+    function checkRequireLeBoundsExponent(uint256 exponent) public pure {
+        require(exponent <= 6);
+        assert(uint256(3) ** exponent <= 729);
+    }
 }
 "#,
     );
@@ -272,15 +302,16 @@ contract SymbolicExpExponent {
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkSymbolicExpExponent",
+        "--match-contract",
+        "SymbolicExpExponent",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicExpExponent.t.sol:SymbolicExpExponent
+Ran 2 tests for test/SymbolicExpExponent.t.sol:SymbolicExpExponent
+[PASS] checkRequireLeBoundsExponent(uint256) ([METRICS])
 [PASS] checkSymbolicExpExponent(uint8) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

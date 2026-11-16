@@ -2554,3 +2554,48 @@ Error: aborting due to 1 linter warning(s)
 
 "#]]);
 }
+
+#[forgetest]
+fn inline_config_preserves_doc_suppression_after_unmatched_fmt_end(prj: _, cmd: _) {
+    for directives in [
+        "",
+        "// forgefmt: disable-end",
+        "// forgefmt: disable-end\n// forgefmt: disable-end",
+        r#"// forgefmt: disable-end
+// forgefmt: disable-start
+// forgefmt: disable-start
+// forgefmt: disable-end
+// forgefmt: disable-end
+// forgefmt: disable-end"#,
+    ] {
+        prj.add_source(
+            "Suppression",
+            &format!(
+                r#"
+contract Suppression {{
+    uint256 public reported;
+{directives}
+    /** forge-lint: disable-next-line(uninitialized-state) */
+    uint256 public suppressed;
+}}
+"#
+            ),
+        );
+
+        cmd.forge_fuse()
+            .args(["lint", "--only-lint", "uninitialized-state"])
+            .assert_success()
+            .stdout_eq("")
+            .stderr_eq(str![[r#"
+warning[uninitialized-state]: state variable is read but never written
+  [FILE]:5:5
+  │
+5 │     uint256 public reported;
+  │     ━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+
+"#]]);
+    }
+}

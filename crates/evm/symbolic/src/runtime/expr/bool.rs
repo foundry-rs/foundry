@@ -1,5 +1,4 @@
 use super::{hashcons::HashConsed, *};
-use foundry_evm::revm::interpreter::instructions::i256::i256_cmp;
 
 /// Bounds both the number of distinct word nodes inspected by constant-ITE equality expansion and
 /// the unfolded size of the Boolean expression it could produce.
@@ -96,6 +95,8 @@ impl SymBoolExpr {
             SymCmpOp::Eq => {
                 if let Some(condition) = Self::ite_eq_arm(cx, &left, &right)
                     .or_else(|| Self::ite_eq_arm(cx, &right, &left))
+                    .or_else(|| Self::keccak_eq_known_preimage(cx, &left, &right))
+                    .or_else(|| Self::keccak_eq_known_preimage(cx, &right, &left))
                 {
                     return condition;
                 }
@@ -131,6 +132,25 @@ impl SymBoolExpr {
                         Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
                     }
                     (
+                        SymExprKind::BinOp(SymBinOp::Add, left_value, left_offset),
+                        SymExprKind::BinOp(SymBinOp::Add, right_value, right_offset),
+                    ) if left_offset == right_offset && left_offset.as_const().is_some() => {
+                        // `a + c == b + c => a == b`, so a common offset on two hashes still
+                        // reaches the Keccak rewrite below.
+                        Self::eq(cx, left_value.clone(), right_value.clone())
+                    }
+                    (
+                        SymExprKind::Keccak { len: left_len, .. },
+                        SymExprKind::Keccak { len: right_len, .. },
+                    ) if left_len
+                        .as_const()
+                        .zip(right_len.as_const())
+                        .is_some_and(|(left_len, right_len)| left_len != right_len) =>
+                    {
+                        // `keccak(a) == keccak(b) => false` for different input lengths.
+                        Self::constant(cx, false)
+                    }
+                    (
                         SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
                         SymExprKind::Keccak { len: right_len, bytes: right_bytes, .. },
                     ) if left_bytes.len() == right_bytes.len() => {
@@ -152,9 +172,12 @@ impl SymBoolExpr {
                             algorithm: right_algorithm, bytes: right_bytes, ..
                         },
                     ) if left_algorithm == right_algorithm
+                        && matches!(*left_algorithm, "sha256" | "ripemd160")
                         && left_bytes.len() == right_bytes.len() =>
                     {
-                        // `hash(a) == hash(b) => bytes(a) == bytes(b)`.
+                        // `hash(a) == hash(b) => bytes(a) == bytes(b)` for collision-resistant
+                        // hashes. Other precompile outputs, such as modexp, BLAKE2f with zero
+                        // rounds, and ecrecover, collide, so they compare as words.
                         let conditions = left_bytes
                             .iter()
                             .cloned()
@@ -367,6 +390,30 @@ impl SymBoolExpr {
         None
     }
 
+    /// Compares a symbolic Keccak with a hash whose preimage was computed during the run.
+    ///
+    /// Assuming no collisions, the hashes are equal only when the inputs are equal.
+    fn keccak_eq_known_preimage(cx: &mut SymCx, keccak: &SymExpr, hash: &SymExpr) -> Option<Self> {
+        let SymExprKind::Keccak { len, bytes, .. } = keccak.kind() else {
+            return None;
+        };
+        let preimage = cx.concrete_keccak_preimage(hash.as_const()?)?;
+        let len = len.as_const()?;
+        if len != U256::from(preimage.len()) {
+            // `keccak(a) == keccak(b) => false` for different input lengths.
+            return Some(Self::constant(cx, false));
+        }
+        // `keccak(a) == keccak(b) => bytes(a) == bytes(b)`.
+        let conditions = bytes
+            .get(..preimage.len())?
+            .iter()
+            .cloned()
+            .zip(preimage.iter().cloned())
+            .map(|(byte, expected)| Self::eq(cx, byte, expected))
+            .collect();
+        Some(Self::and(cx, conditions))
+    }
+
     /// Computes a conservative upper bound for the unfolded Boolean result without interning it.
     ///
     /// Cached child costs are deliberately added again at each use. This keeps construction of a
@@ -568,7 +615,21 @@ impl SymBoolExpr {
 
     pub(crate) fn upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
         match self.kind() {
-            SymBoolExprKind::Const(_) | SymBoolExprKind::Not(_) => None,
+            SymBoolExprKind::Const(_) => None,
+            SymBoolExprKind::Not(value) => match value.kind() {
+                // `!(a > k) => a <= k`, so a negated comparison bounds through its complement.
+                SymBoolExprKind::Cmp(op, left, right) => {
+                    let complement = match op {
+                        SymCmpOp::Ult => SymCmpOp::Uge,
+                        SymCmpOp::Ugt => SymCmpOp::Ule,
+                        SymCmpOp::Ule => SymCmpOp::Ugt,
+                        SymCmpOp::Uge => SymCmpOp::Ult,
+                        SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => return None,
+                    };
+                    cmp_upper_bound_usize(complement, left, right, expr)
+                }
+                _ => None,
+            },
             SymBoolExprKind::And(values) => {
                 let mut bound: Option<usize> = None;
                 for value in values.iter() {
@@ -578,40 +639,7 @@ impl SymBoolExpr {
                 }
                 bound
             }
-            SymBoolExprKind::Cmp(op, left, right) => {
-                if *op == SymCmpOp::Eq {
-                    return match (left == expr, right == expr) {
-                        (true, _) => right.as_const().and_then(|value| usize::try_from(value).ok()),
-                        (_, true) => left.as_const().and_then(|value| usize::try_from(value).ok()),
-                        _ => None,
-                    };
-                }
-                if left == expr {
-                    match *op {
-                        SymCmpOp::Ult => right
-                            .as_const()
-                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
-                            .and_then(|value| usize::try_from(value).ok()),
-                        SymCmpOp::Ule => {
-                            right.as_const().and_then(|value| usize::try_from(value).ok())
-                        }
-                        _ => None,
-                    }
-                } else if right == expr {
-                    match *op {
-                        SymCmpOp::Ugt => left
-                            .as_const()
-                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
-                            .and_then(|value| usize::try_from(value).ok()),
-                        SymCmpOp::Uge => {
-                            left.as_const().and_then(|value| usize::try_from(value).ok())
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            }
+            SymBoolExprKind::Cmp(op, left, right) => cmp_upper_bound_usize(*op, left, right, expr),
         }
     }
 
@@ -764,38 +792,6 @@ impl SymBoolExpr {
             ControlFlow::Continue(())
         });
     }
-
-    pub(crate) fn smt(&self, cx: &SymCx) -> String {
-        let mut smt = String::new();
-        self.write_smt(cx, &mut smt);
-        smt
-    }
-
-    pub(in crate::runtime::expr) fn write_smt(&self, cx: &SymCx, out: &mut String) {
-        match self.kind() {
-            SymBoolExprKind::Const(value) => out.push_str(if *value { "true" } else { "false" }),
-            SymBoolExprKind::Not(value) => {
-                out.push_str("(not ");
-                value.write_smt(cx, out);
-                out.push(')');
-            }
-            SymBoolExprKind::And(values) => {
-                out.push_str("(and");
-                for value in values.iter() {
-                    out.push(' ');
-                    value.write_smt(cx, out);
-                }
-                out.push(')');
-            }
-            SymBoolExprKind::Cmp(op, left, right) => {
-                let _ = write!(out, "({} ", op.smt());
-                left.write_smt(cx, out);
-                out.push(' ');
-                right.write_smt(cx, out);
-                out.push(')');
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -829,9 +825,46 @@ impl SymCmpOp {
             Self::Ugt => left > right,
             Self::Ule => left <= right,
             Self::Uge => left >= right,
-            Self::Slt => i256_cmp(&left, &right).is_lt(),
-            Self::Sgt => i256_cmp(&left, &right).is_gt(),
+            Self::Slt => I256::from_raw(left) < I256::from_raw(right),
+            Self::Sgt => I256::from_raw(left) > I256::from_raw(right),
         }
+    }
+}
+
+/// Returns the constant upper bound a comparison places on `expr`, when it fits a `usize`.
+fn cmp_upper_bound_usize(
+    op: SymCmpOp,
+    left: &SymExpr,
+    right: &SymExpr,
+    expr: &SymExpr,
+) -> Option<usize> {
+    if op == SymCmpOp::Eq {
+        return match (left == expr, right == expr) {
+            (true, _) => right.as_const().and_then(|value| usize::try_from(value).ok()),
+            (_, true) => left.as_const().and_then(|value| usize::try_from(value).ok()),
+            _ => None,
+        };
+    }
+    if left == expr {
+        match op {
+            SymCmpOp::Ult => right
+                .as_const()
+                .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
+                .and_then(|value| usize::try_from(value).ok()),
+            SymCmpOp::Ule => right.as_const().and_then(|value| usize::try_from(value).ok()),
+            _ => None,
+        }
+    } else if right == expr {
+        match op {
+            SymCmpOp::Ugt => left
+                .as_const()
+                .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
+                .and_then(|value| usize::try_from(value).ok()),
+            SymCmpOp::Uge => left.as_const().and_then(|value| usize::try_from(value).ok()),
+            _ => None,
+        }
+    } else {
+        None
     }
 }
 

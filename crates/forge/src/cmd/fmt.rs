@@ -97,12 +97,11 @@ impl FmtArgs {
         };
 
         // Directory walks follow symlinks, so only keep discovered files that resolve inside the
-        // project root or the configured/explicit directory. Explicit file paths are always
-        // included.
+        // project root. Explicit directories may opt into external paths.
         let root = fs::canonicalize_path(&config.root).unwrap_or_else(|_| config.root.clone());
-        let is_contained = |file_path: &Path, dir: &Path| -> bool {
+        let is_contained = |file_path: &Path, dir: &Path, allow_external_dir: bool| -> bool {
             let Ok(resolved) = fs::canonicalize_path(file_path) else { return false };
-            if resolved.starts_with(&root) || resolved.starts_with(dir) {
+            if resolved.starts_with(&root) || (allow_external_dir && resolved.starts_with(dir)) {
                 return true;
             }
             let _ = sh_warn!(
@@ -116,7 +115,7 @@ impl FmtArgs {
         let default_paths = self.paths.is_empty();
         let paths = if default_paths {
             let paths = config.project_paths::<SolcLanguage>();
-            // Missing default directories are normal, and configured directories may be external.
+            // Missing default directories are normal; configured paths are checked below.
             [paths.sources, paths.tests, paths.scripts]
                 .into_iter()
                 .filter(|path| path.exists())
@@ -151,13 +150,16 @@ impl FmtArgs {
                                             || is_under_dir(p, &ignored)))
                                         || (exclude_libs && is_under_dir(p, &libs)))
                                 })
-                                .filter(|p| is_contained(p, &dir)),
+                                .filter(|p| is_contained(p, &dir, !default_paths)),
                         );
                     } else if path.is_sol() {
                         if default_paths
                             && ((!self.nearest && is_under_dir(path, &ignored))
                                 || is_under_dir(path, &libs))
                         {
+                            continue;
+                        }
+                        if default_paths && !is_contained(path, &root, false) {
                             continue;
                         }
                         // CLI file paths are always included, even if in a lib.

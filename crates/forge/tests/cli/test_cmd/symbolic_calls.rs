@@ -145,12 +145,26 @@ contract InvalidAssumeNoRevertChild {
     }
 }
 
+contract RevertingConstructorChild {
+    constructor(uint256 x) {
+        require(x != 5);
+    }
+}
+
 contract SymbolicAssumeNoRevertInvalidChild is Test {
     function checkAssumeNoRevertInvalidChild() public {
         InvalidAssumeNoRevertChild child = new InvalidAssumeNoRevertChild();
         vm.assumeNoRevert();
         (bool success,) = address(child).call("");
         assertTrue(success);
+    }
+
+    // A CREATE leaves the assumption pending, so the catch branch's revert rejects the input.
+    function checkAssumeNoRevertSkipsRevertingCreate(uint256 x) public {
+        vm.assumeNoRevert();
+        try new RevertingConstructorChild(x) {} catch {
+            assert(false);
+        }
     }
 }
 "#,
@@ -159,15 +173,16 @@ contract SymbolicAssumeNoRevertInvalidChild is Test {
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkAssumeNoRevertInvalidChild",
+        "--match-contract",
+        "SymbolicAssumeNoRevertInvalidChild",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicAssumeNoRevertInvalidChild.t.sol:SymbolicAssumeNoRevertInvalidChild
+Ran 2 tests for test/SymbolicAssumeNoRevertInvalidChild.t.sol:SymbolicAssumeNoRevertInvalidChild
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertInvalidChild() ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[PASS] checkAssumeNoRevertSkipsRevertingCreate(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1177,10 +1192,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 }
 
 #[forgetest_init]
-fn symbolic_svm_create_calldata_generates_bounded_dispatch(prj: _, cmd: _) {
+fn symbolic_svm_create_calldata_follows_contract_abi(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
-            "skipping symbolic_svm_create_calldata_generates_bounded_dispatch because z3 is not available"
+            "skipping symbolic_svm_create_calldata_follows_contract_abi because z3 is not available"
         );
         return;
     }
@@ -1190,36 +1205,104 @@ fn symbolic_svm_create_calldata_generates_bounded_dispatch(prj: _, cmd: _) {
         r#"
 interface Svm {
     function createCalldata(string calldata name) external returns (bytes memory);
+    function createCalldata(string calldata name, bool includeViewAndPureFunctions)
+        external
+        returns (bytes memory);
+    function createCalldata(string calldata filename, string calldata name) external returns (bytes memory);
+    function createCalldata(address target) external returns (bytes memory);
 }
 
+interface IEmpty {}
+
 contract OneSelectorTarget {
-    function ping() external pure returns (uint256) {
-        return 1;
+    uint256 value;
+
+    function ping(uint256 newValue, bytes calldata memo) external {
+        value = newValue ^ memo.length;
+    }
+
+    function last() external view returns (uint256) {
+        return value;
+    }
+}
+
+contract BackdoorToken {
+    address public immutable holder;
+    uint256 public holderBalance = 100;
+
+    constructor(address holder_) {
+        holder = holder_;
+    }
+
+    function transfer(address to, uint256 amount) external {
+        require(msg.sender == holder && to != address(0));
+        holderBalance -= amount;
+    }
+
+    function backdoor(address to, uint256 amount) external {
+        require(to != address(0));
+        holderBalance -= amount;
     }
 }
 
 contract SymbolicSvmCreateCalldata {
     address constant SVM_ADDRESS = address(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+    address constant HOLDER = address(0x1001);
     OneSelectorTarget target;
+    BackdoorToken token;
 
     function setUp() public {
         target = new OneSelectorTarget();
+        token = new BackdoorToken(HOLDER);
     }
 
-    /// forge-config: default.symbolic.max_calldata_bytes = 4
-    function checkSvmCreateCalldata() public {
-        bytes memory data = Svm(SVM_ADDRESS).createCalldata("data");
-        assert(data.length <= 4);
+    /// forge-config: default.symbolic.max_calldata_bytes = 132
+    function checkSvmCreateCalldataDispatch() public {
+        bytes memory data = Svm(SVM_ADDRESS).createCalldata("SymbolicSvmCreateCalldata.t.sol", "OneSelectorTarget");
         (bool ok,) = address(target).call(data);
+        assert(ok == (selectorOf(data) == OneSelectorTarget.ping.selector));
+    }
 
-        bytes4 selector;
-        assembly {
-            selector := mload(add(data, 0x20))
-        }
-        if (selector == OneSelectorTarget.ping.selector) {
-            assert(ok);
-        } else {
-            assert(!ok);
+    /// forge-config: default.symbolic.max_calldata_bytes = 132
+    function checkSvmCreateCalldataViewFunctions() public {
+        bytes memory data = Svm(SVM_ADDRESS).createCalldata("OneSelectorTarget", true);
+        (bool ok,) = address(target).call(data);
+        bytes4 selector = selectorOf(data);
+        assert(
+            ok == (selector == OneSelectorTarget.ping.selector || selector == OneSelectorTarget.last.selector)
+        );
+    }
+
+    /// forge-config: default.symbolic.max_calldata_bytes = 100
+    function checkSvmCreateCalldataNoBackdoor() public {
+        checkNoBackdoor(Svm(SVM_ADDRESS).createCalldata("BackdoorToken"));
+    }
+
+    /// forge-config: default.symbolic.max_calldata_bytes = 100
+    function checkSvmCreateCalldataAddressNoBackdoor() public {
+        checkNoBackdoor(Svm(SVM_ADDRESS).createCalldata(address(token)));
+    }
+
+    /// forge-config: default.symbolic.max_calldata_bytes = 100
+    function checkSvmCreateCalldataFallbackNoBackdoor() public {
+        checkNoBackdoor(Svm(SVM_ADDRESS).createCalldata("IEmpty"));
+    }
+
+    function checkSvmCreateCalldataUnknownContract() public {
+        Svm(SVM_ADDRESS).createCalldata("MissingContract");
+    }
+
+    function checkNoBackdoor(bytes memory data) internal {
+        uint256 balance = token.holderBalance();
+        (bool ok,) = address(token).call(data);
+        assert(!ok || token.holderBalance() >= balance);
+    }
+
+    function selectorOf(bytes memory data) internal pure returns (bytes4 selector) {
+        if (data.length >= 4) {
+            assembly {
+                selector := mload(add(data, 0x20))
+            }
         }
     }
 }
@@ -1232,14 +1315,22 @@ contract SymbolicSvmCreateCalldata {
         "--match-test",
         "checkSvmCreateCalldata",
     ]))
-    .success()
-    .stdout_eq(str![[r#"
+    .failure()
+    .stdout_eq(
+        str![[r#"
 ...
-Ran 1 test for test/SymbolicSvmCreateCalldata.t.sol:SymbolicSvmCreateCalldata
-[PASS] checkSvmCreateCalldata() ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Ran 6 tests for test/SymbolicSvmCreateCalldata.t.sol:SymbolicSvmCreateCalldata
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataAddressNoBackdoor() ([METRICS])
+[PASS] checkSvmCreateCalldataDispatch() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataFallbackNoBackdoor() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataNoBackdoor() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic svm.createCalldata unknown contract] checkSvmCreateCalldataUnknownContract() ([METRICS])
+[PASS] checkSvmCreateCalldataViewFunctions() ([METRICS])
+Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
-"#]])
+"#]]
+        .unordered(),
+    )
     .get_output()
     .stdout_lossy();
 
@@ -1346,11 +1437,74 @@ contract SymbolicDelegateCall {
 "#,
     );
 
+    prj.add_test(
+        "SymbolicCheatcodeDelegateCall.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function warp(uint256 timestamp) external;
+}
+
+contract SymbolicCheatcodeDelegateCall {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    // Like Forge, only CALL and STATICCALL reach a cheatcode. A DELEGATECALL or CALLCODE to the
+    // cheatcode address runs its one-byte code and has no effect.
+    function checkCheatcodeDelegateCall(uint256 x) public {
+        (bool ok,) = address(vm).delegatecall(abi.encodeCall(Vm.assume, (x > 10)));
+        assert(ok);
+        (ok,) = address(vm).delegatecall(abi.encodeCall(Vm.warp, (12345)));
+        assert(ok && block.timestamp != 12345);
+        bytes memory data = abi.encodeCall(Vm.assume, (false));
+        address target = address(vm);
+        assembly {
+            ok := callcode(gas(), target, 0, add(data, 32), mload(data), 0, 0)
+        }
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicDirtyCallTarget.t.sol",
+        r#"
+contract DirtyTargetProbe {
+    fallback() external {
+        assembly {
+            mstore(0, address())
+            return(0, 32)
+        }
+    }
+}
+
+contract SymbolicDirtyCallTarget {
+    DirtyTargetProbe probe;
+
+    function setUp() public {
+        probe = new DirtyTargetProbe();
+    }
+
+    // The callee's ADDRESS is the low 160 bits of a dirty CALL target word.
+    function checkDirtyCallTarget() public view {
+        uint256 clean = uint256(uint160(address(probe)));
+        uint256 dirty = clean | (uint256(0xdead) << 160);
+        uint256 seen;
+        assembly {
+            if iszero(staticcall(gas(), dirty, 0, 0, 0, 32)) { revert(0, 0) }
+            seen := mload(0)
+        }
+        assert(seen == clean);
+    }
+}
+"#,
+    );
+
     assert_symbolic(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkStatic|checkStaticCallValue|checkDelegate)\\(",
+        "^(checkStatic|checkStaticCallValue|checkDelegate|checkCheatcodeDelegateCall|checkDirtyCallTarget)\\(",
     ]))
     .success()
     .stdout_eq(
@@ -1366,6 +1520,14 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicStaticCallValue.t.sol:SymbolicStaticCallValue
 [PASS] checkStaticCallValue(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCheatcodeDelegateCall.t.sol:SymbolicCheatcodeDelegateCall
+[PASS] checkCheatcodeDelegateCall(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicDirtyCallTarget.t.sol:SymbolicDirtyCallTarget
+[PASS] checkDirtyCallTarget() ([METRICS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]
@@ -1607,14 +1769,15 @@ contract SymbolicCallcodeValue is Test {
         vm.deal(caller, 1);
         vm.prank(caller);
 
+        bytes memory input = abi.encodeWithSelector(SymbolicCallcodeValueTarget.echoValue.selector);
         bool ok;
         address callTarget = address(target);
         assembly {
-            ok := callcode(gas(), callTarget, 1, 0, 0, 0, 0)
+            ok := callcode(gas(), callTarget, 1, add(input, 0x20), mload(input), 0, 0)
         }
 
-        assert(!ok);
-        assertEq(caller.balance, 1);
+        assert(ok);
+        assertEq(caller.balance, 0);
         assertEq(address(this).balance, type(uint256).max);
     }
 
@@ -2039,6 +2202,269 @@ Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
     .stdout_eq(str![[r#"
 ...
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: revert cheatcode on a CREATE beyond the call depth limit] checkExpectedRevertOnCreateBeyondDepthLimit(uint256) ([METRICS])
+...
+"#]]);
+}
+
+// A call to an account holding an EIP-7702 delegation designator runs the delegate's code in the
+// account's context, one hop only, as in the concrete EVM.
+#[forgetest_init]
+fn symbolic_call_runs_eip7702_delegate_code(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_call_runs_eip7702_delegate_code");
+
+    prj.add_test(
+        "SymbolicEip7702Delegation.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract DelegateImpl {
+    uint256 constant SLOT = 0x7702;
+
+    function foo() external pure returns (uint256) {
+        return 42;
+    }
+
+    function bump() external payable {
+        assembly ("memory-safe") {
+            sstore(SLOT, add(sload(SLOT), 1))
+        }
+    }
+
+    function self() external view returns (address) {
+        return address(this);
+    }
+
+    function size() external pure returns (uint256 s) {
+        assembly ("memory-safe") {
+            s := codesize()
+        }
+    }
+
+    fallback() external {}
+}
+
+contract DelegateMock {
+    function foo() external pure returns (uint256) {
+        return 7;
+    }
+}
+
+contract SymbolicEip7702Delegation is Test {
+    bytes32 constant SLOT = bytes32(uint256(0x7702));
+    uint256 constant PK = 0xa11ce;
+
+    DelegateImpl impl;
+    address alice;
+    address bob = address(0xb0b);
+    address eve = address(0xe7e);
+
+    function setUp() public {
+        impl = new DelegateImpl();
+        alice = vm.addr(PK);
+        vm.signAndAttachDelegation(address(impl), PK);
+        vm.etch(bob, abi.encodePacked(hex"ef0100", address(impl)));
+        vm.etch(eve, abi.encodePacked(hex"ef0100", address(impl)));
+        // `vm.etch` rejects precompiles, but `vm.cloneAccount` copies a delegation onto one.
+        vm.cloneAccount(bob, address(2));
+    }
+
+    function checkCallsRunDelegateCode() public view {
+        assertEq(DelegateImpl(alice).foo(), 42);
+        assertEq(DelegateImpl(bob).foo(), 42);
+        assertEq(DelegateImpl(bob).self(), bob);
+        assertEq(bob.code.length, 23);
+        assertEq(DelegateImpl(bob).size(), address(impl).code.length);
+    }
+
+    function checkDelegatedCallWritesDelegatingAccountStorage() public {
+        DelegateImpl(bob).bump();
+        DelegateImpl(bob).bump{value: 3}();
+        assertEq(uint256(vm.load(bob, SLOT)), 2);
+        assertEq(uint256(vm.load(address(impl), SLOT)), 0);
+        assertEq(bob.balance, 3);
+        assertEq(address(impl).balance, 0);
+    }
+
+    function checkDelegatecallAndCallcodeRunDelegateCode() public {
+        bytes memory data = abi.encodeCall(DelegateImpl.bump, ());
+        (bool ok,) = bob.delegatecall(data);
+        assertTrue(ok);
+        address target = bob;
+        assembly ("memory-safe") {
+            ok := callcode(gas(), target, 0, add(data, 0x20), mload(data), 0, 0)
+        }
+        assertTrue(ok);
+        assertEq(uint256(vm.load(address(this), SLOT)), 2);
+        assertEq(uint256(vm.load(bob, SLOT)), 0);
+    }
+
+    function checkChainedDelegationRunsOneHop() public {
+        address carol = address(0xca401);
+        vm.etch(carol, abi.encodePacked(hex"ef0100", bob));
+        (bool ok,) = carol.call(abi.encodeCall(DelegateImpl.foo, ()));
+        assertFalse(ok);
+    }
+
+    function checkDelegationToPrecompileRunsEmptyCode() public {
+        address dave = address(0xda7e);
+        vm.etch(dave, abi.encodePacked(hex"ef0100", address(4)));
+        (bool ok, bytes memory ret) = dave.call("echo");
+        assertTrue(ok);
+        assertEq(ret.length, 0);
+    }
+
+    function checkMockFunctionIsKeyedByDelegate() public {
+        DelegateMock mock = new DelegateMock();
+        bytes memory data = abi.encodeCall(DelegateImpl.foo, ());
+        vm.mockFunction(bob, address(mock), data);
+        assertEq(DelegateImpl(bob).foo(), 42);
+        // Like Forge, only the address bits of the callee word count.
+        uint256 callee = uint256(uint160(address(impl))) | (1 << 200);
+        (bool ok,) = address(vm).call(
+            abi.encodeWithSelector(vm.mockFunction.selector, callee, address(mock), data)
+        );
+        assertTrue(ok);
+        assertEq(DelegateImpl(bob).foo(), 7);
+    }
+
+    function checkMockFunctionOnDelegateWithSymbolicSelector(bytes4 selector) public {
+        bytes memory data = abi.encodePacked(DelegateImpl.foo.selector);
+        vm.mockFunction(address(impl), address(new DelegateMock()), data);
+        (bool ok, bytes memory ret) = bob.call(abi.encodePacked(selector));
+        assertTrue(ok);
+        assertEq(ret.length, 32, "unmocked selector");
+    }
+
+    function checkSymbolicTargetIgnoresAuthorityFunctionMocks(address target, bytes1 suffix)
+        public
+    {
+        vm.assume(target == bob || target == eve);
+        // Function mocks on a delegated account never apply, as they are keyed by the delegate.
+        address mock = address(new DelegateMock());
+        bytes memory selector = abi.encodePacked(DelegateImpl.foo.selector);
+        vm.mockFunction(bob, mock, selector);
+        vm.mockFunction(eve, mock, selector);
+        bytes memory exact = abi.encodePacked(DelegateImpl.foo.selector, bytes1(0x00));
+        vm.mockCall(bob, exact, abi.encode(9));
+        vm.mockCall(eve, exact, abi.encode(9));
+        (bool ok, bytes memory ret) =
+            target.call(abi.encodePacked(DelegateImpl.foo.selector, suffix));
+        assertTrue(ok);
+        assertEq(abi.decode(ret, (uint256)), 9, "unmocked suffix");
+    }
+
+    function checkSymbolicTargetMockFunctionOnDelegate(address target, bytes4 selector) public {
+        vm.assume(target == bob || target == eve);
+        bytes memory data = abi.encodePacked(DelegateImpl.foo.selector);
+        vm.mockFunction(address(impl), address(new DelegateMock()), data);
+        (bool ok, bytes memory ret) = target.call(abi.encodePacked(selector));
+        assertTrue(ok);
+        assertEq(ret.length, 32, "unmocked selector");
+    }
+
+    function checkMockFunctionOnDelegatedPrecompile() public {
+        bytes memory data = abi.encodeCall(DelegateImpl.foo, ());
+        vm.mockFunction(address(impl), address(new DelegateMock()), data);
+        assertEq(DelegateImpl(address(2)).foo(), 7);
+        (, bytes memory ret) = address(2).call("abc");
+        assertEq(ret, abi.encode(sha256("abc")));
+    }
+
+    function checkMockCallOnSymbolicDelegation(address delegate) public {
+        address carol = address(0xca401);
+        vm.etch(carol, abi.encodePacked(hex"ef0100", delegate));
+        bytes memory data = abi.encodeCall(DelegateImpl.foo, ());
+        vm.mockCall(carol, data, abi.encode(9));
+        assertEq(DelegateImpl(carol).foo(), 9);
+        // A function mock that cannot match the calldata does not need the delegate either.
+        vm.mockFunction(address(impl), address(new DelegateMock()), data);
+        bytes memory short = hex"abcd";
+        vm.mockCall(carol, short, abi.encode(8));
+        (bool ok, bytes memory ret) = carol.call(short);
+        assertTrue(ok);
+        assertEq(abi.decode(ret, (uint256)), 8);
+    }
+
+    function checkMockCallOnSymbolicDelegationWithRuledOutMocks(
+        address delegate,
+        address mockCallee,
+        bytes4 selector
+    ) public {
+        // The path rules out one function mock by its selector and the other by its callee.
+        vm.assume(selector != DelegateImpl.foo.selector);
+        vm.assume(mockCallee != delegate);
+        address carol = address(0xca401);
+        vm.etch(carol, abi.encodePacked(hex"ef0100", delegate));
+        address mock = address(new DelegateMock());
+        vm.mockFunction(address(impl), mock, abi.encodeCall(DelegateImpl.foo, ()));
+        vm.mockFunction(mockCallee, mock, abi.encodePacked(selector));
+        bytes memory any;
+        vm.mockCall(carol, any, abi.encode(9));
+        (bool ok, bytes memory ret) = carol.call(abi.encodePacked(selector));
+        assertTrue(ok);
+        assertEq(abi.decode(ret, (uint256)), 9);
+    }
+
+    function checkExpectRevertOnDelegatedCall() public {
+        vm.expectRevert();
+        DelegateImpl(bob).bump();
+    }
+}
+
+/// forge-config: default.evm_version = "cancun"
+contract SymbolicEip7702DelegationCancun is Test {
+    address bob = address(0xb0b);
+
+    function setUp() public {
+        vm.etch(bob, abi.encodePacked(hex"ef0100", address(new DelegateImpl())));
+    }
+
+    function checkCallRunsDelegateCode() public view {
+        assertEq(DelegateImpl(bob).foo(), 42);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "^SymbolicEip7702Delegation$",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 13 tests for test/SymbolicEip7702Delegation.t.sol:SymbolicEip7702Delegation
+[PASS] checkCallsRunDelegateCode() ([METRICS])
+[PASS] checkChainedDelegationRunsOneHop() ([METRICS])
+[PASS] checkDelegatecallAndCallcodeRunDelegateCode() ([METRICS])
+[PASS] checkDelegatedCallWritesDelegatingAccountStorage() ([METRICS])
+[PASS] checkDelegationToPrecompileRunsEmptyCode() ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectRevertOnDelegatedCall() ([METRICS])
+[PASS] checkMockCallOnSymbolicDelegation(address) ([METRICS])
+[PASS] checkMockCallOnSymbolicDelegationWithRuledOutMocks(address,address,bytes4) ([METRICS])
+[PASS] checkMockFunctionIsKeyedByDelegate() ([METRICS])
+[FAIL: unmocked selector: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockFunctionOnDelegateWithSymbolicSelector(bytes4) ([METRICS])
+[PASS] checkMockFunctionOnDelegatedPrecompile() ([METRICS])
+[FAIL: unmocked suffix: 42 != 9; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicTargetIgnoresAuthorityFunctionMocks(address,bytes1) ([METRICS])
+[FAIL: unmocked selector: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicTargetMockFunctionOnDelegate(address,bytes4) ([METRICS])
+Suite result: FAILED. 9 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Delegations are resolved before Prague too, since the concrete EVM enables EIP-7702 on
+    // every spec.
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicEip7702DelegationCancun",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+[PASS] checkCallRunsDelegateCode() ([METRICS])
 ...
 "#]]);
 }

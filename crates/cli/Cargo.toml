@@ -23,6 +23,7 @@ foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 
+tempo-alloy.workspace = true
 tempo-primitives.workspace = true
 
 foundry-compilers.workspace = true

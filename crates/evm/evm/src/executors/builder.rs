@@ -2,16 +2,17 @@ use crate::{
     executors::Executor,
     inspectors::{InspectorStackBuilder, TempoLabels},
 };
+use alloy_network::TransactionBuilder;
 use alloy_primitives::Address;
+use foundry_common::FoundryTransactionBuilder;
 use foundry_evm_core::{
     backend::Backend,
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork,
-        TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork,
+        SpecFor, TempoEvmNetwork, TransactionRequestFor,
     },
 };
 use foundry_evm_networks::NetworkConfigs;
-use revm::context::{Block, Transaction};
 
 #[cfg(feature = "base")]
 use foundry_evm_core::evm::BaseEvmNetwork;
@@ -23,7 +24,7 @@ use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork}
 use foundry_evm_core::evm::OpEvmNetwork;
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
-/// [`revm::Inspector`]s, such as [`Cheatcodes`].
+/// evm2 inspectors, such as [`Cheatcodes`].
 ///
 /// By default, the [`Executor`] will be configured with an empty [`InspectorStack`] and no
 /// network-specific tooling. Command dispatch should use the concrete FEN's inherent `new`
@@ -38,7 +39,7 @@ pub struct ExecutorBuilder<FEN: FoundryEvmNetwork> {
     stack: InspectorStackBuilder<BlockEnvFor<FEN>>,
     /// The gas limit.
     gas_limit: Option<u64>,
-    /// The spec override. When `None`, the spec from `EvmEnv::cfg_env` is preserved.
+    /// The spec override. When `None`, the spec of the environment is preserved.
     spec: Option<SpecFor<FEN>>,
     legacy_assertions: bool,
 }
@@ -81,7 +82,7 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         self
     }
 
-    /// Optionally sets the EVM spec. When `None`, the spec from `EvmEnv::cfg_env` is preserved.
+    /// Optionally sets the EVM spec. When `None`, the spec of the environment is preserved.
     #[inline]
     pub const fn spec_id_opt(self, spec: Option<SpecFor<FEN>>) -> Self {
         if let Some(spec) = spec { self.spec_id(spec) } else { self }
@@ -102,29 +103,37 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
     }
 
     /// Builds the executor as configured.
+    ///
+    /// `tx` holds the transaction defaults, such as the sender and gas price, of the executor's
+    /// calls.
     #[inline]
     pub fn build(
         self,
         mut evm_env: EvmEnvFor<FEN>,
-        tx_env: TxEnvFor<FEN>,
+        tx: TransactionRequestFor<FEN>,
         db: Backend<FEN>,
         // TODO(monad-fen-lifecycle): Remove this argument after the backend's Monad fork-position
-        // migration and the inspector's separate Celo configuration cleanup are complete.
+        // migration and the Celo factory configuration cleanup are complete.
         networks: NetworkConfigs,
     ) -> Executor<FEN> {
         let Self { mut stack, gas_limit, spec, legacy_assertions, .. } = self;
-        stack.networks = networks;
         if stack.block.is_none() {
-            stack.block = Some(evm_env.block_env.clone());
+            stack.block = Some(evm_env.block);
         }
         if stack.gas_price.is_none() {
-            stack.gas_price = Some(tx_env.gas_price());
+            stack.gas_price =
+                tx.gas_price().or_else(|| tx.max_fee_per_gas()).filter(|price| *price != 0);
         }
-        let gas_limit = gas_limit.unwrap_or(evm_env.block_env.gas_limit());
+        let gas_limit = gas_limit.unwrap_or_else(|| evm_env.block.gas_limit.saturating_to());
         if let Some(spec) = spec {
-            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
+            evm_env = EvmFactoryFor::<FEN>::default().env_with_spec(evm_env, spec);
         }
-        Executor::new(db, evm_env, tx_env, stack.build(), networks, gas_limit, legacy_assertions)
+        let mut inspector = stack.build();
+        if let Some(cheats) = inspector.cheatcodes.as_mut() {
+            // Broadcast requests record the fee token of the executor's transactions.
+            cheats.fee_token = tx.fee_token();
+        }
+        Executor::new(db, evm_env, tx, inspector, networks, gas_limit, legacy_assertions)
     }
 }
 

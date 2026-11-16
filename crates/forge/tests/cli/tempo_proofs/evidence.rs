@@ -3,7 +3,7 @@
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_network::{AnyTransactionReceipt, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_provider::{
     Provider,
     ext::{AnvilApi, DebugApi},
@@ -18,16 +18,16 @@ use serde_json::{Value, json};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Identity {
-    identity: Bytes,
+pub(super) struct Identity {
+    pub(super) identity: Bytes,
     epoch_length: u64,
     from_epoch: u64,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
-struct Record {
-    height: u64,
-    evidence: Value,
+pub(super) struct Record {
+    pub(super) height: u64,
+    pub(super) evidence: Value,
 }
 
 pub(super) async fn collect(
@@ -70,7 +70,11 @@ pub(super) async fn collect(
     })
 }
 
-async fn record(provider: &RetryProvider, height: u64, account: Option<Address>) -> Record {
+pub(super) async fn record(
+    provider: &RetryProvider,
+    height: u64,
+    account: Option<Address>,
+) -> Record {
     let finalization = provider
         .client()
         .request::<_, TempoFinalization>(
@@ -80,13 +84,14 @@ async fn record(provider: &RetryProvider, height: u64, account: Option<Address>)
         .await
         .unwrap();
     let raw_header = provider.debug_get_raw_header(BlockId::number(height)).await.unwrap();
+    assert_eq!(keccak256(&raw_header), finalization.digest);
     let block = provider.get_block_by_number(height.into()).await.unwrap().unwrap();
     assert_eq!(block.header.hash, finalization.digest);
-    let mut cursor = finalization.certificate.as_ref();
+    let mut cursor = commonware_codec::Copying(finalization.certificate.as_ref());
     let epoch = UInt::<u64>::read(&mut cursor).unwrap().0;
     let view = UInt::<u64>::read(&mut cursor).unwrap().0;
     let parent = UInt::<u64>::read(&mut cursor).unwrap().0;
-    let (payload, signatures) = cursor.split_at(32);
+    let (payload, signatures) = cursor.0.split_at(32);
     assert_eq!(B256::from_slice(payload), finalization.digest);
     assert_eq!((epoch, view), (finalization.epoch, finalization.view));
     assert_eq!(signatures.len(), 96);
@@ -107,36 +112,45 @@ async fn record(provider: &RetryProvider, height: u64, account: Option<Address>)
     Record { height, evidence }
 }
 
-async fn send(
+pub(super) async fn send(
     provider: &RetryProvider,
     sender: Address,
     transaction: TransactionRequest,
 ) -> AnyTransactionReceipt {
+    let receipt = transact(provider, sender, transaction).await;
+    assert!(receipt.status());
+    receipt
+}
+
+pub(super) async fn transact(
+    provider: &RetryProvider,
+    sender: Address,
+    transaction: TransactionRequest,
+) -> AnyTransactionReceipt {
+    let gas_limit = transaction.gas.unwrap_or(5_000_000);
     let hash = provider
         .client()
         .request::<_, B256>(
             "eth_sendTransaction",
-            (transaction.from(sender).transaction_type(2).gas_limit(5_000_000),),
+            (transaction.from(sender).transaction_type(2).gas_limit(gas_limit),),
         )
         .await
         .unwrap();
     mine(provider).await;
-    let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
-    assert!(receipt.status());
-    receipt
+    provider.get_transaction_receipt(hash).await.unwrap().unwrap()
 }
 
 async fn mine(provider: &RetryProvider) {
     provider.anvil_mine(Some(1), None).await.unwrap();
 }
 
-fn write(account: Address, value: u64) -> TransactionRequest {
+pub(super) fn write(account: Address, value: u64) -> TransactionRequest {
     let setter = Function::parse("set(uint256)").unwrap();
     let input = setter.abi_encode_input(&[DynSolValue::Uint(U256::from(value), 256)]).unwrap();
     TransactionRequest::default().to(account).with_input(input)
 }
 
-fn key_coordinates(compressed: &[u8]) -> Bytes {
+pub(super) fn key_coordinates(compressed: &[u8]) -> Bytes {
     let encoded = PublicKey::key_validate(compressed).unwrap().serialize();
     let mut output = [0; 256];
     // blst puts each Fp2 imaginary component first; EIP-2537 uses padded real components first.
@@ -150,6 +164,7 @@ pub(super) async fn collect_fork(
     config: NodeConfig,
     bytecode: Bytes,
     deployed_bytecode: Bytes,
+    seed: B256,
 ) -> Value {
     let (source_api, source) = spawn(config.clone()).await;
     let remote = Address::repeat_byte(0x51);
@@ -168,7 +183,7 @@ pub(super) async fn collect_fork(
             .with_eth_rpc_url(Some(source.http_endpoint()))
             .with_fork_block_number(Some(1u64))
             .with_no_storage_caching(true)
-            .with_tempo_consensus_seed(Some(B256::repeat_byte(0x52))),
+            .with_tempo_consensus_seed(Some(seed)),
     )
     .await;
     let provider = handle.http_provider();

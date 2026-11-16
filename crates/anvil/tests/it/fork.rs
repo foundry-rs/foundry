@@ -9,6 +9,7 @@ use alloy_eips::{
     calc_next_block_base_fee,
     eip1559::BaseFeeParams,
     eip2718::Decodable2718,
+    eip7825::MAX_TX_GAS_LIMIT_OSAKA as TX_GAS_LIMIT_CAP,
     eip7840::BlobParams,
     eip7910::{EthConfig, SystemContract},
 };
@@ -33,7 +34,11 @@ use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{
     EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory,
-    eth::{EthApi, fees::INITIAL_BASE_FEE},
+    eth::{
+        EthApi,
+        backend::env::{BlobExcessGasAndPrice, BlockEnv, SpecId},
+        fees::INITIAL_BASE_FEE,
+    },
     spawn, try_spawn,
 };
 use anvil_core::types::{ReorgOptions, TransactionData};
@@ -57,12 +62,6 @@ use futures::{
     StreamExt,
     future::{join_all, pending},
 };
-use revm::{
-    context::BlockEnv,
-    context_interface::block::BlobExcessGasAndPrice,
-    precompile::PrecompileStatus,
-    primitives::{eip7825::TX_GAS_LIMIT_CAP, hardfork::SpecId},
-};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -74,7 +73,7 @@ use std::{
 };
 
 #[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
+use foundry_evm_hardforks::OpHardfork;
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 const DEAD_BALANCE_AT_BLOCK_NUMBER: u128 = 12_556_069_338_441_120_059_867u128;
@@ -901,7 +900,7 @@ async fn test_optimism_fork_transaction_hash_replay_uses_base_source_schedule() 
 
     let (origin_api, origin) = spawn(
         NodeConfig::test_base()
-            .with_hardfork(Some(foundry_evm::hardforks::BaseUpgrade::Azul.into()))
+            .with_hardfork(Some(foundry_evm_hardforks::BaseUpgrade::Azul.into()))
             .with_genesis_timestamp(Some(AZUL_ERA_TIMESTAMP - 100)),
     )
     .await;
@@ -4188,7 +4187,9 @@ async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
     assert!(api.backend.spec_id() >= SpecId::CANCUN);
     assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
     let err = call().await.unwrap_err();
-    assert!(err.to_string().contains("Excess blob gas not set"), "{err:?}");
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.message, "Excess blob gas not set.");
 
     api.anvil_reset(Some(Forking { json_rpc_url: Some(polygon_url), block_number: Some(0) }))
         .await
@@ -4205,6 +4206,16 @@ async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
             .map(|blob| blob.excess_blob_gas),
         Some(0)
     );
+
+    // The same Ethereum origin is valid when its required blob fields are preserved.
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(ethereum_origin.http_endpoint()),
+        block_number: Some(0),
+    }))
+    .await
+    .unwrap();
+    assert!(api.backend.spec_id() >= SpecId::CANCUN);
+    assert_eq!(call().await.unwrap(), Bytes::from(vec![0; 32]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4374,6 +4385,7 @@ async fn test_fork_get_account_info() {
             balance: U256::from(14353753764795095694u64),
             nonce: 6689,
             code: Default::default(),
+            ..Default::default()
         }
     );
 
@@ -4390,6 +4402,7 @@ async fn test_fork_get_account_info() {
             balance: U256::from(14352720829244098514u64),
             nonce: 6690,
             code: Default::default(),
+            ..Default::default()
         }
     );
 
@@ -4419,6 +4432,7 @@ async fn test_fork_get_account_info() {
             balance: U256::from(14352720829244098514u64),
             nonce: 6690,
             code: Default::default(),
+            ..Default::default()
         }
     );
 }
@@ -4621,20 +4635,15 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
     struct CustomPrecompileFactory;
 
     impl PrecompileFactory for CustomPrecompileFactory {
-        fn precompiles(&self) -> Vec<(Address, alloy_evm::precompiles::DynPrecompile)> {
+        fn precompiles(
+            &self,
+        ) -> Vec<(Address, anvil::evm::PrecompileId, anvil::evm::DynPrecompile)> {
             vec![(
                 Address::with_last_byte(0x71),
-                alloy_evm::precompiles::DynPrecompile::from(
-                    |input: alloy_evm::precompiles::PrecompileInput<'_>| {
-                        Ok(revm::precompile::PrecompileOutput {
-                            bytes: Bytes::copy_from_slice(input.data),
-                            gas_used: 0,
-                            gas_refunded: 0,
-                            status: PrecompileStatus::Success,
-                            state_gas_used: 0,
-                            state_gas_spilled: 0,
-                            reservoir: input.reservoir,
-                        })
+                anvil::evm::PrecompileId::custom("echo"),
+                Arc::new(
+                    |input: anvil::evm::PrecompileInput<'_>, _gas: &mut anvil::evm::GasTracker| {
+                        Ok(anvil::evm::PrecompileOutput::new(Bytes::copy_from_slice(input.data)))
                     },
                 ),
             )]
@@ -5404,6 +5413,35 @@ async fn test_fork_rollback_to_root() {
     assert_eq!(replacement.header.parent_hash, root.header.hash);
 }
 
+// Rolling back more than 256 blocks must restore the hashes of the surviving local blocks, which
+// the fork origin does not have.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rollback_beyond_blockhash_window_restores_blockhash() {
+    let (_source_api, source) = spawn(NodeConfig::test()).await;
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    let block1_hash =
+        api.block_by_number(BlockNumberOrTag::Number(1)).await.unwrap().unwrap().header.hash;
+    api.anvil_mine(Some(U256::from(300)), None).await.unwrap();
+
+    api.anvil_rollback(Some(300)).await.unwrap();
+    assert_eq!(api.block_number().unwrap(), U256::from(2));
+
+    // Runtime code returning BLOCKHASH(1):
+    // PUSH1 1, BLOCKHASH, PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN
+    let target = Address::repeat_byte(0xb1);
+    api.anvil_set_code(target, bytes!("0x60014060005260206000f3")).await.unwrap();
+    let tx = TransactionRequest::default().with_to(target);
+    let res = api.call(WithOtherFields::new(tx), None, EvmOverrides::default()).await.unwrap();
+
+    assert_eq!(B256::from_slice(res.as_ref()), block1_hash);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_rollback_to_root_restores_fee_and_gas_overrides() {
     for (case, source_base_fee, config, tx_gas_limit, block_gas_limit) in [
@@ -5647,4 +5685,141 @@ async fn test_fork_headers_are_not_sent_to_redirect_origins() {
     let (api, _handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(configured_url.clone()))).await;
     api.anvil_set_rpc_url(format!("{configured_url}/redirect")).await.unwrap();
+}
+
+// A pooled transaction has no receipt yet, so its receipt lookup must not reach the fork.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_pooled_transaction_receipt_skips_fork() {
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    let (fork_url, reject_receipts) = spawn_rpc_proxy_rejecting_method_when_enabled(
+        origin.http_endpoint(),
+        "eth_getTransactionReceipt",
+    )
+    .await;
+    let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    reject_receipts.store(true, Ordering::SeqCst);
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let tx = TransactionRequest::default().with_from(from).with_to(from).with_value(U256::from(1));
+    let hash = *provider.send_transaction(tx.into()).await.unwrap().tx_hash();
+    assert!(provider.get_transaction_receipt(hash).await.unwrap().is_none());
+
+    api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_receipt(hash).await.unwrap().is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rollback_past_in_memory_states() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let contract = Address::random();
+    origin_api.anvil_set_code(contract, bytes!("0x00")).await.unwrap();
+    origin_api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    let destructible = Address::random();
+    // CALLER SELFDESTRUCT.
+    origin_api.anvil_set_code(destructible, bytes!("0x33ff")).await.unwrap();
+    origin_api
+        .anvil_set_storage_at(destructible, U256::ZERO, B256::with_last_byte(7))
+        .await
+        .unwrap();
+    let block_hash_probe = Address::random();
+    // Returns BLOCKHASH(calldata[0]).
+    origin_api
+        .anvil_set_code(block_hash_probe, bytes!("0x6000354060005260206000f3"))
+        .await
+        .unwrap();
+    origin_api.mine_one().await.unwrap();
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            // Pre-Cancun, so SELFDESTRUCT removes the account and its storage.
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
+    )
+    .await;
+    let provider = handle.http_provider();
+    api.mine_one().await.unwrap();
+    let target = provider.get_block_number().await.unwrap();
+    // `anvil_setStorageAt` also changes the latest block's state, so write after the target's.
+    api.mine_one().await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(5)).await.unwrap();
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(sender).to(destructible).with_gas_limit(100_000);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+    // Moves the target's and the destroyed account's states out of the in-memory history.
+    api.anvil_mine(Some(U256::from(600)), None).await.unwrap();
+
+    let at_target = provider.get_storage_at(contract, U256::ZERO).block_id(target.into());
+    assert_eq!(at_target.await.unwrap(), U256::from(1));
+    let at_destroyed = provider
+        .get_storage_at(destructible, U256::ZERO)
+        .block_id(receipt.block_number.unwrap().into());
+    assert_eq!(at_destroyed.await.unwrap(), U256::ZERO);
+
+    let depth = provider.get_block_number().await.unwrap() - target;
+    api.anvil_rollback(Some(depth)).await.unwrap();
+    assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), U256::from(1));
+    assert_eq!(provider.get_storage_at(destructible, U256::ZERO).await.unwrap(), U256::from(7));
+
+    // The rolled back chain keeps its block hashes, also after mining on top of it.
+    api.mine_one().await.unwrap();
+    let probe = TransactionRequest::default()
+        .to(block_hash_probe)
+        .with_input(Bytes::from(U256::from(target).to_be_bytes::<32>().to_vec()));
+    let block_hash = provider.call(WithOtherFields::new(probe)).await.unwrap();
+    let target_block = provider.get_block_by_number(target.into()).await.unwrap().unwrap();
+    assert_eq!(B256::from_slice(&block_hash), target_block.header.hash);
+}
+
+// Retained block states read fork state fetched after them from the fork cache, so rolling back or
+// reverting must keep it for their dumps.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_dump_keeps_fetched_state_after_rollback_and_revert() {
+    for revert in [false, true] {
+        let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+        let contract = Address::random();
+        origin_api.anvil_set_code(contract, bytes!("0x00")).await.unwrap();
+        origin_api
+            .anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(7))
+            .await
+            .unwrap();
+        origin_api.mine_one().await.unwrap();
+
+        let (api, handle) =
+            spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+        let provider = handle.http_provider();
+        api.mine_one().await.unwrap();
+        let retained = api.backend.best_hash();
+        let snapshot = api.evm_snapshot().await.unwrap();
+        // Fetches the slot from the fork after the retained block.
+        assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), U256::from(7));
+        api.mine_one().await.unwrap();
+        if revert {
+            assert!(api.evm_revert(snapshot).await.unwrap());
+        } else {
+            api.anvil_rollback(Some(1)).await.unwrap();
+        }
+        assert_eq!(api.backend.best_hash(), retained);
+
+        let state = api.serialized_state(true).await.unwrap();
+        let (_, retained_state) = state
+            .historical_states
+            .unwrap()
+            .into_iter()
+            .find(|(hash, _)| *hash == retained)
+            .unwrap();
+        assert_eq!(
+            retained_state.storage[&contract][&U256::ZERO],
+            U256::from(7),
+            "revert: {revert}"
+        );
+    }
 }
