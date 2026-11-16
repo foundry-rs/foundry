@@ -26,7 +26,7 @@ use anvil::{NodeConfig, spawn};
 use anvil_core::eth::block::Block;
 use eyre::Ok;
 use foundry_evm_hardforks::EthereumHardfork;
-use foundry_primitives::FoundryReceiptEnvelope;
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxReceipt};
 use futures::{FutureExt, StreamExt, future::join_all};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
@@ -1360,6 +1360,46 @@ async fn test_tx_receipt() {
     // `to` field is none if it's a contract creation transaction: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_gettransactionreceipt
     assert!(tx.to.is_none());
     assert!(tx.contract_address.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_receipt_block_timestamp_is_quantity() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(1));
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let block_number = U64::from(receipt.block_number.unwrap());
+
+    let block = provider
+        .raw_request::<_, serde_json::Value>("eth_getBlockByNumber".into(), (block_number, false))
+        .await
+        .unwrap();
+    let receipt = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_getTransactionReceipt".into(),
+            (receipt.transaction_hash,),
+        )
+        .await
+        .unwrap();
+    let block_receipts = provider
+        .raw_request::<_, serde_json::Value>("eth_getBlockReceipts".into(), (block_number,))
+        .await
+        .unwrap();
+
+    assert!(block["timestamp"].is_string());
+    assert_eq!(receipt["blockTimestamp"], block["timestamp"]);
+    assert_eq!(block_receipts[0]["blockTimestamp"], block["timestamp"]);
+
+    let timestamp = serde_json::from_value::<U64>(block["timestamp"].clone()).unwrap();
+    let receipt = serde_json::from_value::<FoundryTxReceipt>(receipt).unwrap();
+    assert_eq!(receipt.block_timestamp(), Some(timestamp.to()));
 }
 
 // <https://github.com/foundry-rs/foundry/issues/12837>
