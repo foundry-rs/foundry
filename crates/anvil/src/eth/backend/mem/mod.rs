@@ -7426,7 +7426,8 @@ where
         let exit_reason = result.stop;
         let gas_used = result.tx_gas_used();
 
-        trace!(target: "backend", ?exit_reason, out = ?result.output, %gas_used, %block_number, "trace call");
+        let charged_gas = result.ext.charged_gas;
+        trace!(target: "backend", ?exit_reason, out = ?result.output, %gas_used, %charged_gas, %block_number, "trace call");
 
         let mut res = tracing_inspector.into_geth_builder().geth_traces_with_result_gas(
             &result,
@@ -7434,7 +7435,7 @@ where
             config,
         );
         // Only the root summary reports the charge; opcode and multidimensional gas stay intact.
-        res.gas = result.ext.charged_gas;
+        res.gas = charged_gas;
 
         Ok(res.into())
     }

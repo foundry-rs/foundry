@@ -3675,41 +3675,55 @@ async fn test_debug_trace_block_invalid_js_tracer_error() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_debug_trace_call_reports_consumed_gas() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
-    let sender = handle.dev_accounts().next().unwrap();
-    let contract = Address::repeat_byte(0x55);
-    for limit in [100_000, 1_000_000] {
-        for (code, expected) in
-            [(bytes!("5f5000"), 21_004), (bytes!("5f5ffd"), 21_004), (bytes!("fe"), limit)]
-        {
-            api.anvil_set_code(contract, code).await.unwrap();
-            let request = TransactionRequest::default().from(sender).to(contract).gas_limit(limit);
-            let trace = provider
-                .debug_trace_call(
-                    request.clone().into(),
-                    BlockId::latest(),
-                    GethDebugTracingCallOptions::default(),
-                )
-                .await
-                .unwrap();
-            let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
-            assert_eq!(frame.gas, expected);
-            let trace = provider
-                .debug_trace_call(
-                    request.into(),
-                    BlockId::latest(),
-                    GethDebugTracingCallOptions::default().with_tracing_options(
-                        GethDebugTracingOptions::default()
-                            .with_tracer(GethDebugBuiltInTracerType::CallTracer.into()),
-                    ),
-                )
-                .await
-                .unwrap();
-            let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
-            assert_eq!(frame.gas, U256::from(limit));
-            assert_eq!(frame.gas_used, U256::from(expected));
+async fn test_debug_trace_call_root_gas() {
+    // Monad roots report the charged limit; Ethereum reports consumption.
+    for (config, charges_limit) in [
+        (NodeConfig::test(), false),
+        #[cfg(feature = "monad")]
+        (NodeConfig::test_monad(), true),
+    ] {
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+        let contract = Address::repeat_byte(0x55);
+        for limit in [100_000, 1_000_000] {
+            for (code, consumed, failed) in [
+                (bytes!("5f5000"), 21_004, false),
+                (bytes!("5f5ffd"), 21_004, true),
+                (bytes!("fe"), limit, true),
+            ] {
+                let expected = if charges_limit { limit } else { consumed };
+                api.anvil_set_code(contract, code).await.unwrap();
+                let request =
+                    TransactionRequest::default().from(sender).to(contract).gas_limit(limit);
+                let trace = provider
+                    .debug_trace_call(
+                        request.clone().into(),
+                        BlockId::latest(),
+                        GethDebugTracingCallOptions::default(),
+                    )
+                    .await
+                    .unwrap();
+                let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
+                assert_eq!(frame.gas, expected);
+                assert_eq!(frame.failed, failed);
+                assert_eq!(frame.struct_logs[0].gas, limit - 21_000);
+                let trace = provider
+                    .debug_trace_call(
+                        request.into(),
+                        BlockId::latest(),
+                        GethDebugTracingCallOptions::default().with_tracing_options(
+                            GethDebugTracingOptions::default()
+                                .with_tracer(GethDebugBuiltInTracerType::CallTracer.into()),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+                assert_eq!(frame.gas, U256::from(limit));
+                assert_eq!(frame.gas_used, U256::from(expected));
+                assert_eq!(frame.error.is_some(), failed);
+            }
         }
     }
 }
