@@ -234,14 +234,13 @@ pub fn get_solar_sources_from_compile_output(
     Ok(solc)
 }
 
-/// Configures a [`ParsingContext`] from a [`ProjectCompileOutput`].
+/// Configures a [`ParsingContext`] with every source of a [`ProjectCompileOutput`].
 pub fn configure_pcx_from_compile_output(
     pcx: &mut ParsingContext<'_>,
     config: &Config,
     output: &ProjectCompileOutput,
-    target_paths: Option<&[PathBuf]>,
 ) -> Result<()> {
-    let solc = get_solar_sources_from_compile_output(config, output, target_paths, None)?;
+    let solc = get_solar_sources_from_compile_output(config, output, None, None)?;
     configure_pcx_from_solc(pcx, &config.project_paths(), &solc, true);
     Ok(())
 }

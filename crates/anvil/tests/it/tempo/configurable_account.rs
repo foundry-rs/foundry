@@ -6,11 +6,6 @@
 use super::*;
 use alloy_provider::PendingTransactionBuilder;
 
-/// A no-op call that every transaction in these tests makes.
-const fn noop() -> Call {
-    Call { to: TxKind::Call(Address::repeat_byte(0x73)), value: U256::ZERO, input: Bytes::new() }
-}
-
 /// A configuration over `owners`, given as keys and their weights.
 fn weighted_config(
     salt: B256,
@@ -80,16 +75,6 @@ async fn estimate(provider: &RetryProvider, request: serde_json::Value) -> Resul
         .await
         .map(|gas| gas.to())
         .map_err(|err| err.to_string())
-}
-
-async fn deal(provider: &RetryProvider, account: Address) {
-    provider
-        .raw_request::<_, ()>(
-            "anvil_dealTIP20".into(),
-            (account, ALPHA_USD, U256::from(1_000_000_000_000u64)),
-        )
-        .await
-        .unwrap();
 }
 
 /// Sends `account`'s owner-signed no-op at `nonce` with `gas_limit` and returns its gas used.
