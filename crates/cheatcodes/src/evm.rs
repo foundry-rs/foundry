@@ -47,16 +47,13 @@ use rand::Rng;
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
-    path::Path,
+    path::{Component, Path},
     str::FromStr,
 };
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
-use foundry_config::{
-    ExecutionSpec, evm_spec_id_from_str, fs_permissions::FsAccessKind,
-    utils::is_valid_snapshot_group,
-};
+use foundry_config::{ExecutionSpec, evm_spec_id_from_str, fs_permissions::FsAccessKind};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
@@ -1806,7 +1803,6 @@ fn inner_stop_gas_snapshot<FEN: FoundryEvmNetwork>(
         .zip(name)
         .or_else(|| ccx.state.gas_metering.active_gas_snapshot.clone())
         .ok_or_else(|| fmt_err!("no active gas snapshot; call `startGasSnapshot` first"))?;
-    ensure_valid_snapshot_group(&group)?;
 
     if let Some(record) = ccx
         .state
@@ -1856,7 +1852,10 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
 ) -> Result<(String, String)> {
     let group = match group {
         Some(group) => {
-            ensure_valid_snapshot_group(&group)?;
+            ensure!(
+                is_valid_snapshot_group(&group),
+                "invalid snapshot group name `{group}`: group must be a plain file name"
+            );
             group
         }
         None => {
@@ -1867,13 +1866,12 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
     Ok((group, name))
 }
 
-/// Bails if `group` cannot be used as a snapshot group, which would let the snapshot write escape
-/// the configured snapshots directory.
-fn ensure_valid_snapshot_group(group: &str) -> Result<()> {
-    if is_valid_snapshot_group(group) {
-        return Ok(());
-    }
-    bail!("invalid snapshot group name `{group}`: group must be a plain file name")
+/// Returns whether `group` is a single normal path component, so that the `{group}.json` snapshot
+/// file cannot escape the configured snapshots directory.
+fn is_valid_snapshot_group(group: &str) -> bool {
+    let mut components = Path::new(group).components();
+    matches!(components.next(), Some(Component::Normal(name)) if name == group)
+        && components.next().is_none()
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
@@ -2639,5 +2637,15 @@ mod tests {
             "- state diff:\n\
 @ 0x0000000000000000000000000000000000000000000000000000000000000000 (data, (bool,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000001\n    paused (bool): false → false\n"
         );
+    }
+
+    #[test]
+    fn validates_snapshot_groups() {
+        for group in ["Group", "a.b", "group with spaces", "..hidden"] {
+            assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
+        }
+        for group in ["", ".", "..", "../settings", "a/b", "./a", "/tmp/settings", "a/", "a/."] {
+            assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
     }
 }

@@ -3079,34 +3079,33 @@ import "./test.sol";
 
 interface Vm {{
     function snapshotValue(string calldata group, string calldata name, uint256 value) external;
-    function startSnapshotGas(string calldata group, string calldata name) external;
 }}
 
 contract SnapshotGroupEscapeTest is DSTest {{
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testSnapshotValue() public {{
+    function testAbsoluteGroup() public {{
         vm.snapshotValue("{}", "value", 1);
     }}
 
-    function testStartSnapshotGas() public {{
-        vm.startSnapshotGas("{}", "value");
+    function testRelativeGroup() public {{
+        vm.snapshotValue("{}", "value", 1);
     }}
 }}
 "#,
-            relative_group.to_slash_lossy(),
             absolute_group.to_slash_lossy(),
+            relative_group.to_slash_lossy(),
         ),
     );
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: group must be a plain file name] testSnapshotValue() ([GAS])
-[FAIL: vm.startSnapshotGas: invalid snapshot group name `[..]/outside`: group must be a plain file name] testStartSnapshotGas() ([GAS])
+[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: group must be a plain file name] testAbsoluteGroup() ([GAS])
+[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: group must be a plain file name] testRelativeGroup() ([GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
-    // The escaped files were never written.
+    // Neither escaped file was written.
     assert!(!outside.exists());
 }
 
