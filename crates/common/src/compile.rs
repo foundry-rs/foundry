@@ -975,7 +975,8 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
 /// Writes explorer sources after validating every contract name and source path.
 ///
 /// Each source must remain below its own non-hidden contract directory. All names and paths in
-/// the reply are validated before any files are written.
+/// the reply are validated before any files are written, and existing symlink components are
+/// rejected.
 pub fn write_etherscan_sources(metadata: &[Metadata], target_path: &Path) -> Result<()> {
     let mut source_tree = SourceTree { entries: Vec::new() };
     for item in metadata {
@@ -990,6 +991,11 @@ pub fn write_etherscan_sources(metadata: &[Metadata], target_path: &Path) -> Res
         }
         source_tree.entries.extend(entries);
     }
+
+    for path in source_tree_write_paths(&source_tree) {
+        ensure_no_symlink_components(target_path, &path)?;
+    }
+
     source_tree.write_to(target_path)?;
     Ok(())
 }
@@ -1007,9 +1013,22 @@ fn ensure_safe_contract_name(contract_name: &str) -> Result<()> {
         Some(Component::Normal(name))
             if name.to_str().is_some_and(is_safe_output_path_component)
     ) && components.next().is_none()
-        && !contract_name.starts_with('.');
+        && !contract_name.starts_with('.')
+        && !(cfg!(target_os = "macos") && has_hfs_ignored_prefix_before_dot(contract_name));
     eyre::ensure!(safe, "invalid contract name from explorer: {contract_name:?}");
     Ok(())
+}
+
+fn has_hfs_ignored_prefix_before_dot(name: &str) -> bool {
+    name.chars().find(|character| !is_hfs_ignored_character(*character)) == Some('.')
+}
+
+/// HFS+ ignores these codepoints during catalog comparison, matching Git's `core.protectHFS` list.
+const fn is_hfs_ignored_character(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x200c..=0x200f | 0x202a..=0x202e | 0x206a..=0x206f | 0xfeff
+    )
 }
 
 fn is_safe_output_path_component(component: &str) -> bool {
@@ -1029,7 +1048,8 @@ fn is_safe_windows_path_component(component: &str) -> bool {
         return false;
     }
 
-    let device_name = component.split('.').next().unwrap_or_default().to_ascii_uppercase();
+    let device_name =
+        component.split('.').next().unwrap_or_default().trim_end_matches(' ').to_ascii_uppercase();
     !matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
         && !["COM", "LPT"].iter().any(|prefix| {
             device_name.strip_prefix(prefix).is_some_and(|suffix| {
@@ -1054,6 +1074,39 @@ fn source_path_is_scoped(source_path: &Path, contract_name: &str) -> bool {
             Component::Normal(name) if name.to_str().is_some_and(is_safe_output_path_component)
         )
     })
+}
+
+/// Mirrors `SourceTree::write_to`'s extension fallback for symlink preflight.
+fn source_tree_write_paths(source_tree: &SourceTree) -> impl Iterator<Item = PathBuf> + '_ {
+    source_tree.entries.iter().map(|entry| {
+        let mut path = entry.path.clone();
+        if path.extension().is_none() {
+            let with_extension = path.with_extension("sol");
+            if !source_tree.entries.iter().any(|other| other.path == with_extension) {
+                path = with_extension;
+            }
+        }
+        path
+    })
+}
+
+fn ensure_no_symlink_components(target_path: &Path, source_path: &Path) -> Result<()> {
+    let mut current_path = target_path.to_path_buf();
+    for component in source_path.components() {
+        let Component::Normal(name) = component else {
+            eyre::bail!("invalid source path from explorer: {source_path:?}");
+        };
+        current_path.push(name);
+        match std::fs::symlink_metadata(&current_path) {
+            Ok(metadata) => eyre::ensure!(
+                !metadata.file_type().is_symlink(),
+                "source path from explorer traverses a symlink: {current_path:?}"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 /// Normalizes an untrusted path relative to the source root, discarding leading separators,
@@ -1270,6 +1323,9 @@ mod tests {
     use super::*;
     use foundry_block_explorers::contract::SourceCodeMetadata;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+
     #[test]
     fn parse_contract_identifiers() {
         let t = ["src/Counter.sol", "src/Counter.sol:Counter", "Counter"];
@@ -1377,6 +1433,23 @@ mod tests {
         for name in ["", ".", "..", ".git", "a/b", "/abs"] {
             assert!(ensure_safe_contract_name(name).is_err(), "{name:?}");
         }
+
+        #[cfg(target_os = "macos")]
+        assert!(ensure_safe_contract_name("\u{200c}.git").is_err());
+    }
+
+    #[test]
+    fn hfs_ignored_prefixes_before_dot_are_detected() {
+        for codepoint in [
+            0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x206a, 0x206b,
+            0x206c, 0x206d, 0x206e, 0x206f, 0xfeff,
+        ] {
+            let prefix = char::from_u32(codepoint).unwrap();
+            assert!(has_hfs_ignored_prefix_before_dot(&format!("{prefix}.git")));
+        }
+        assert!(has_hfs_ignored_prefix_before_dot("\u{200c}\u{202e}.git"));
+        assert!(!has_hfs_ignored_prefix_before_dot("Ünïcode"));
+        assert!(!has_hfs_ignored_prefix_before_dot("Example"));
     }
 
     #[test]
@@ -1384,9 +1457,20 @@ mod tests {
         for component in ["Example", "My Contract.sol", "Ünïcode"] {
             assert!(is_safe_windows_path_component(component), "{component:?}");
         }
-        for component in
-            [".. ", ". ", "name.", "name ", "file:stream", "NUL.sol", "COM1", "LPT³.txt"]
-        {
+        for component in [
+            ".. ",
+            ". ",
+            "name.",
+            "name ",
+            "file:stream",
+            "NUL.sol",
+            "NUL .sol",
+            "CON .txt",
+            "COM1 .sol",
+            "LPT1 .sol",
+            "COM1",
+            "LPT³.txt",
+        ] {
             assert!(!is_safe_windows_path_component(component), "{component:?}");
         }
     }
@@ -1454,6 +1538,55 @@ mod tests {
         ] {
             assert_eq!(std::fs::read_to_string(temp.path().join(path)).unwrap(), expected);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn etherscan_sources_reject_symlinked_destinations() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("output");
+        let git_dir = target.join(".git");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        let git_config = git_dir.join("config");
+        std::fs::write(&git_config, "original config").unwrap();
+        symlink(&git_dir, target.join("Example")).unwrap();
+
+        let metadata =
+            explorer_metadata("Example", &[("config", "replacement"), ("config.sol", "companion")]);
+        let valid = explorer_metadata("Safe", &[("Contract.sol", "valid")]);
+        assert!(write_etherscan_sources(&[valid, metadata], &target).is_err());
+        assert_eq!(std::fs::read_to_string(&git_config).unwrap(), "original config");
+        assert!(!target.join("Safe/Contract.sol").exists());
+
+        let target = temp.path().join("nested-output");
+        let git_dir = target.join(".git");
+        let contract_dir = target.join("Example");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::create_dir_all(&contract_dir).unwrap();
+        let git_config = git_dir.join("config");
+        std::fs::write(&git_config, "original nested config").unwrap();
+        symlink(&git_dir, contract_dir.join(".git")).unwrap();
+
+        let metadata = explorer_metadata(
+            "Example",
+            &[(".git/config", "replacement"), (".git/config.sol", "companion")],
+        );
+        assert!(write_etherscan_sources(&[metadata], &target).is_err());
+        assert_eq!(std::fs::read_to_string(&git_config).unwrap(), "original nested config");
+
+        let target = temp.path().join("file-output");
+        let git_dir = target.join(".git");
+        let contract_dir = target.join("Example");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::create_dir_all(&contract_dir).unwrap();
+        let git_config = git_dir.join("config");
+        std::fs::write(&git_config, "original file config").unwrap();
+        symlink(&git_config, contract_dir.join("config")).unwrap();
+
+        let metadata =
+            explorer_metadata("Example", &[("config", "replacement"), ("config.sol", "companion")]);
+        assert!(write_etherscan_sources(&[metadata], &target).is_err());
+        assert_eq!(std::fs::read_to_string(&git_config).unwrap(), "original file config");
     }
 
     #[test]
