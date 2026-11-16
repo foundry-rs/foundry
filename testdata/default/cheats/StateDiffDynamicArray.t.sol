@@ -27,8 +27,8 @@ contract DynamicArrays {
     }
 
     function pushPacked() public {
-        packed.push(1);
-        packed.push(2);
+        packed.push(5);
+        packed.push(6);
     }
 
     function pushItems() public {
@@ -111,9 +111,9 @@ contract StateDiffDynamicArrayTest is Test {
 
         assertTrue(vm.contains(json, '"label":"packed[0], packed[1]","type":"(uint128,uint128)"'));
         assertTrue(vm.contains(json, '"label":"packed[0]","type":"uint128","offset":0'));
-        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"1"}'));
+        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"5"}'));
         assertTrue(vm.contains(json, '"label":"packed[1]","type":"uint128","offset":16'));
-        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"2"}'));
+        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"6"}'));
     }
 
     function testStructArrayElements() public {

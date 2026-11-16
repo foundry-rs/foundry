@@ -1939,7 +1939,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if !self.allowed_mem_writes.is_empty() {
             steps = steps.union(MEMORY_OPCODES);
         }
-        // Mapping recording reads the stored slot and the 64-byte hash that derives it.
+        // Mapping recording reads the stored slot and the 32- or 64-byte hash that derives it.
         if self.core.mapping_slots.is_some() {
             steps = steps.union(opcodes([op::SSTORE, op::KECCAK256]));
         }

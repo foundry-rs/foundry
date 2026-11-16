@@ -613,12 +613,10 @@ impl SlotIdentifier {
         let element_bytes = element_type.number_of_bytes.parse::<u128>().ok()?;
         let element = self.parsed_type(element_id);
 
-        // Value types up to 16 bytes share slots; structs and arrays always start a new one.
-        if element_bytes <= 16
-            && let Some(element) = element
-            && !matches!(element, DynSolType::FixedArray(..))
-            && !is_struct(&element_type.label)
-        {
+        // Value types up to 16 bytes share slots; structs and static arrays fill whole slots.
+        if element_bytes <= 16 {
+            // Without a type, the elements sharing the slot cannot be told apart.
+            let element = element?;
             let per_slot = 32 / element_bytes;
             let members = (0..per_slot)
                 .map(|i| SlotInfo {
@@ -664,6 +662,16 @@ impl SlotIdentifier {
             );
         }
         if let Some(element @ DynSolType::FixedArray(..)) = element {
+            // `handle_array_slot` takes each slot for one element, so skip elements that share one.
+            let mut leaves = 1;
+            let mut leaf = element;
+            while let DynSolType::FixedArray(inner, len) = leaf {
+                leaves *= *len as u128;
+                leaf = inner;
+            }
+            if leaves != element_slots {
+                return None;
+            }
             return self.handle_array_slot(
                 &element_label,
                 element_type,
@@ -2154,7 +2162,10 @@ mod tests {
                 { "astId": 5, "contract": "C", "label": "byOwner", "offset": 0, "slot": "5", "type": "t_mapping(t_address,t_array(t_uint256)dyn_storage)" },
                 { "astId": 6, "contract": "C", "label": "nested", "offset": 0, "slot": "6", "type": "t_array(t_array(t_uint256)dyn_storage)dyn_storage" },
                 { "astId": 7, "contract": "C", "label": "name", "offset": 0, "slot": "7", "type": "t_string_storage" },
-                { "astId": 12, "contract": "C", "label": "wrapped", "offset": 0, "slot": "8", "type": "t_struct(Wrapper)" }
+                { "astId": 12, "contract": "C", "label": "wrapped", "offset": 0, "slot": "8", "type": "t_struct(Wrapper)" },
+                { "astId": 14, "contract": "C", "label": "pairs", "offset": 0, "slot": "10", "type": "t_array(t_array(t_uint128)2_storage)dyn_storage" },
+                { "astId": 15, "contract": "C", "label": "fns", "offset": 0, "slot": "11", "type": "t_array(t_function_internal_nonpayable()returns())dyn_storage" },
+                { "astId": 16, "contract": "C", "label": "wide", "offset": 0, "slot": "12", "type": "t_array(t_array(t_uint256)2_storage)dyn_storage" }
             ],
             "types": {
                 "t_array(t_uint256)dyn_storage": {
@@ -2195,6 +2206,24 @@ mod tests {
                 },
                 "t_array(t_array(t_uint256)dyn_storage)dyn_storage": {
                     "encoding": "dynamic_array", "label": "uint256[][]", "numberOfBytes": "32", "base": "t_array(t_uint256)dyn_storage"
+                },
+                "t_array(t_array(t_uint128)2_storage)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "uint128[2][]", "numberOfBytes": "32", "base": "t_array(t_uint128)2_storage"
+                },
+                "t_array(t_uint128)2_storage": {
+                    "encoding": "inplace", "label": "uint128[2]", "numberOfBytes": "32", "base": "t_uint128"
+                },
+                "t_array(t_array(t_uint256)2_storage)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "uint256[2][]", "numberOfBytes": "32", "base": "t_array(t_uint256)2_storage"
+                },
+                "t_array(t_uint256)2_storage": {
+                    "encoding": "inplace", "label": "uint256[2]", "numberOfBytes": "64", "base": "t_uint256"
+                },
+                "t_array(t_function_internal_nonpayable()returns())dyn_storage": {
+                    "encoding": "dynamic_array", "label": "function ()[]", "numberOfBytes": "32", "base": "t_function_internal_nonpayable()returns()"
+                },
+                "t_function_internal_nonpayable()returns()": {
+                    "encoding": "inplace", "label": "function ()", "numberOfBytes": "8"
                 },
                 "t_string_storage": { "encoding": "bytes", "label": "string", "numberOfBytes": "32" },
                 "t_uint128": { "encoding": "inplace", "label": "uint128", "numberOfBytes": "16" },
@@ -2242,6 +2271,16 @@ mod tests {
         // An array inside a struct.
         let info = identifier.identify(&element(U256::from(4), 0), None).unwrap();
         assert_eq!(info.label, "holder.list[0]");
+
+        // Static array elements fill whole slots.
+        let info = identifier.identify(&element(U256::from(12), 3), None).unwrap();
+        assert_eq!(info.label, "wide[1][1]");
+
+        // Elements packed several to a slot without a decodable type would be labeled one per
+        // slot, giving incorrect indices and values.
+        for base in [10, 11] {
+            assert!(identifier.identify(&element(U256::from(base), 1), None).is_none());
+        }
     }
 
     #[test]
