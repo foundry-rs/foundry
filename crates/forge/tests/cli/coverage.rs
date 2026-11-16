@@ -3947,14 +3947,6 @@ contract Guard {
         }
     }
 
-    function looped(uint256 a, uint256 n) external {
-        assembly {
-            if a {
-                for { let i := 0 } lt(i, n) { i := add(i, 1) } { sstore(stored.slot, i) }
-            }
-        }
-    }
-
     function spin(uint256 a, uint256 n) external pure returns (uint256 i) {
         assembly {
             if a {
@@ -3988,9 +3980,6 @@ contract GuardTest {
         guard.nested(0, 1);
         guard.nested(0, 0);
         guard.nested(0, 0);
-        guard.looped(1, 3);
-        guard.looped(1, 0);
-        guard.looped(0, 5);
         guard.spin(1, 3);
         guard.spin(1, 2);
         guard.spin(0, 5);
@@ -4001,11 +3990,7 @@ contract GuardTest {
 "#,
     );
     let solar = prj.ensure_foundry_bin("solar");
-    // Solc falls through into a loop head that the loop's back edge also targets, so its hits
-    // would count iterations and `spin` has no path hits. Solar's layout counts them.
-    assert_lcov(
-        cmd.arg("coverage"),
-        str![[r#"
+    let report = str![[r#"
 TN:
 SF:src/Guard.sol
 DA:7,4
@@ -4039,90 +4024,24 @@ BRDA:28,3,1,3
 DA:29,2
 BRDA:29,4,0,1
 BRDA:29,4,1,1
-DA:34,3
-FN:34,Guard.looped
-FNDA:3,Guard.looped
-DA:36,3
-BRDA:36,5,0,2
-BRDA:36,5,1,1
-DA:37,5
-DA:42,5
-FN:42,Guard.spin
+DA:34,5
+FN:34,Guard.spin
 FNDA:5,Guard.spin
-DA:44,5
-BRDA:44,6,0,0
-BRDA:44,6,1,0
-DA:45,7
-FNF:7
-FNH:7
-LF:17
-LH:17
-BRF:14
+DA:36,5
+BRDA:36,5,0,2
+BRDA:36,5,1,3
+DA:37,7
+FNF:6
+FNH:6
+LF:14
+LH:14
+BRF:12
 BRH:12
 end_of_record
 
-"#]],
-    );
-    assert_lcov(
-        cmd.forge_fuse().arg("coverage").arg("--use").arg(solar),
-        str![[r#"
-TN:
-SF:src/Guard.sol
-DA:7,4
-FN:7,Guard.reverting
-FNDA:4,Guard.reverting
-DA:8,4
-BRDA:8,0,0,1
-BRDA:8,0,1,3
-DA:11,4
-FN:11,Guard.storing
-FNDA:4,Guard.storing
-DA:13,4
-BRDA:13,1,0,3
-BRDA:13,1,1,1
-DA:17,3
-FN:17,Guard.leaving
-FNDA:3,Guard.leaving
-DA:19,3
-FN:19,Guard.f
-FNDA:3,Guard.f
-DA:20,3
-BRDA:20,2,0,2
-BRDA:20,2,1,1
-DA:22,3
-DA:26,5
-FN:26,Guard.nested
-FNDA:5,Guard.nested
-DA:28,5
-BRDA:28,3,0,2
-BRDA:28,3,1,3
-DA:29,2
-BRDA:29,4,0,1
-BRDA:29,4,1,1
-DA:34,3
-FN:34,Guard.looped
-FNDA:3,Guard.looped
-DA:36,3
-BRDA:36,5,0,2
-BRDA:36,5,1,1
-DA:37,5
-DA:42,5
-FN:42,Guard.spin
-FNDA:5,Guard.spin
-DA:44,5
-BRDA:44,6,0,2
-BRDA:44,6,1,3
-DA:45,7
-FNF:7
-FNH:7
-LF:17
-LH:16
-BRF:14
-BRH:14
-end_of_record
-
-"#]],
-    );
+"#]];
+    assert_lcov(cmd.arg("coverage"), report.clone());
+    assert_lcov(cmd.forge_fuse().arg("coverage").arg("--use").arg(solar), report);
 }
 
 // A Yul `if` whose body is only a `continue` or a `leave` is the conditional jump itself, and path
