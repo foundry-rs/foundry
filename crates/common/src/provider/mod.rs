@@ -624,8 +624,19 @@ fn is_dropped_connection(error: &TransportError) -> bool {
     let TransportError::Transport(TransportErrorKind::Custom(error)) = error else {
         return false;
     };
-    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&**error);
+    has_dropped_connection(&**error)
+}
+
+/// Returns `true` if `error` or one of its sources is a reset or closed connection.
+fn has_dropped_connection(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut source = Some(error);
     while let Some(error) = source {
+        if error
+            .downcast_ref::<runtime_transport::RedactedHttpError>()
+            .is_some_and(|error| error.dropped_connection)
+        {
+            return true;
+        }
         // h2 errors expose their I/O cause through get_io, not source.
         let io = error
             .downcast_ref::<std::io::Error>()

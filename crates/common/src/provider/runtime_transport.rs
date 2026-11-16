@@ -5,6 +5,7 @@
 use crate::{
     DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
     provider::{
+        has_dropped_connection,
         mpp::transport::{LazyMppHttpTransport, lazy_mpp_ws_connect},
         redact_url,
     },
@@ -441,11 +442,23 @@ fn is_known_mpp_endpoint(url: &Url) -> bool {
     url.host_str().is_some_and(|host| KNOWN_MPP_HOSTS.iter().any(|suffix| host.ends_with(suffix)))
 }
 
+/// An HTTP transport error with the endpoint redacted from its message.
+///
+/// The message replaces the source chain, so it records whether the chain held a dropped
+/// connection for the retry policy.
+#[derive(Debug, Error)]
+#[error("{message}")]
+pub(super) struct RedactedHttpError {
+    message: String,
+    pub(super) dropped_connection: bool,
+}
+
 fn redact_http_transport_error(error: TransportError, endpoint: &Url) -> TransportError {
     let alloy_json_rpc::RpcError::Transport(TransportErrorKind::Custom(source)) = &error else {
         return error;
     };
     let safe_endpoint = redact_url(endpoint.as_str());
+    let dropped_connection = has_dropped_connection(source.as_ref());
 
     let mut message = String::new();
     let mut error: Option<&(dyn StdError + 'static)> = Some(source.as_ref());
@@ -467,7 +480,10 @@ fn redact_http_transport_error(error: TransportError, endpoint: &Url) -> Transpo
             candidate.to_owned()
         }
     });
-    TransportErrorKind::custom_str(&message)
+    TransportErrorKind::custom(RedactedHttpError {
+        message: message.into_owned(),
+        dropped_connection,
+    })
 }
 
 impl tower::Service<RequestPacket> for RuntimeTransport {
@@ -572,6 +588,22 @@ mod tests {
         assert!(!report.contains("password"));
         assert!(!report.contains("private-api-key"));
         assert!(!report.contains("secret"));
+    }
+
+    #[test]
+    fn redacted_http_errors_keep_dropped_connections_retryable() {
+        let endpoint = Url::parse("https://example.com/private-api-key").unwrap();
+        let reset =
+            TransportErrorKind::custom(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
+        let refused =
+            TransportErrorKind::custom(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
+
+        assert!(super::super::is_dropped_connection(&redact_http_transport_error(
+            reset, &endpoint
+        )));
+        assert!(!super::super::is_dropped_connection(&redact_http_transport_error(
+            refused, &endpoint
+        )));
     }
 
     #[test]
