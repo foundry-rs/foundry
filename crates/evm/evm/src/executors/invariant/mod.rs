@@ -1222,16 +1222,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             if call_result.reverted
                                 && !discarded
                                 && !assertion_failure
-                                && (config.fail_on_revert
-                                    || invariant_contract.invariant_fns.iter().any(
-                                        |(invariant, fail_on_revert)| {
-                                            *fail_on_revert
-                                                && !invariant_test
-                                                    .test_data
-                                                    .failures
-                                                    .has_failure(invariant)
-                                        },
-                                    ))
+                                && invariant_contract.invariant_fns.iter().any(
+                                    |(invariant, fail_on_revert)| {
+                                        *fail_on_revert
+                                            && !invariant_test
+                                                .test_data
+                                                .failures
+                                                .has_failure(invariant)
+                                    },
+                                )
                             {
                                 let tx =
                                     BasicTxDetails { warp: None, roll: None, ..current_tx.clone() };
