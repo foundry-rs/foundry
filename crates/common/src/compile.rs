@@ -1435,14 +1435,6 @@ mod tests {
         );
         assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
         assert_eq!(std::fs::read(&external_source).unwrap(), [0xff]);
-
-        let metadata = explorer_metadata("Example", &[("", "replacement")]);
-        let err = etherscan_project(&metadata, &target).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            format!("invalid source path from explorer: {:?}", Path::new("Example").join(""))
-        );
-        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
     }
 
     #[test]

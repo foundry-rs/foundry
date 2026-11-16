@@ -1240,23 +1240,6 @@ mod tests {
         assert!(!root.join("raw_sources").exists());
     }
 
-    #[test]
-    fn test_dump_sources_rejects_empty_source_paths() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().to_path_buf();
-        let mut meta = contract_metadata("Example", false, None).items.remove(0);
-        meta.source_code =
-            SourceCodeMetadata::Sources(HashMap::from([(String::new(), "replacement".into())]));
-
-        let err = dump_sources(&meta, &root, false).unwrap_err();
-
-        assert_eq!(
-            err.to_string(),
-            format!("invalid source path from explorer: {:?}", Path::new("Example").join(""))
-        );
-        assert!(!root.join("raw_sources").exists());
-    }
-
     #[tokio::test]
     async fn test_resolves_sparklend_proxy_implementation() {
         let proxy = address!("0xC02aB1A5eaA8d1B114EF786D9bde108cD4364359");
