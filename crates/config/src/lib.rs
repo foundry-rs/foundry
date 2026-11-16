@@ -5745,7 +5745,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.set_env(
                 "FOUNDRY_LIBRARIES",
-                "[src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222]",
+                " [src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222,]\n",
             );
             let config = Config::load().unwrap();
 
@@ -5776,7 +5776,7 @@ mod tests {
     #[test]
     fn can_parse_empty_libraries() {
         for env_var in ["DAPP_LIBRARIES", "FOUNDRY_LIBRARIES"] {
-            for value in ["[]", "[ ]", "[\t\n]"] {
+            for value in ["", "[]", "[ ]", "[\t\n]", " [,]\n"] {
                 figment::Jail::expect_with(|jail| {
                     jail.create_file(
                         "foundry.toml",
