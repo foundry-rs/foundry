@@ -36,6 +36,12 @@ interface Vm {
     function rpc(string calldata, string calldata) external returns (bytes memory);
 }
 
+contract Local {
+    function ping() external pure returns (uint256) {
+        return 1;
+    }
+}
+
 contract ForkPrefetchTest {
     Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
     address constant SLOTS = 0x000000000000000000000000000000000000510c;
@@ -45,6 +51,7 @@ contract ForkPrefetchTest {
     }
 
     function test_sum() public {
+        require(new Local().ping() == 1, "local");
         (bool ok, bytes memory data) = SLOTS.call("");
         require(ok, "call");
         require(abi.decode(data, (uint256)) == 820, "sum");
@@ -112,7 +119,8 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 
     // The test function is simulated with the test contract sent as a state override, since it
-    // exists only locally, and the call into the slots contract is simulated as is.
+    // exists only locally, and the call into the slots contract is simulated as is. The call into
+    // the contract the test creates is not, since the endpoint has no code there.
     let simulations = simulations.lock().unwrap();
     let test_call = simulations
         .iter()
@@ -126,4 +134,9 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
         .expect("test contract override");
     assert!(test_contract["code"].is_string(), "{test_contract}");
     assert!(simulations.iter().any(|params| is_address(&params[0]["to"], SLOTS)));
+    let local = TEST_CONTRACT.create(1);
+    assert!(
+        !simulations.iter().any(|params| is_address(&params[0]["to"], local)),
+        "{simulations:?}"
+    );
 }

@@ -46,6 +46,10 @@ pub(crate) struct PathState {
     /// Backward jumps taken per destination and return addresses on the stack.
     pub(crate) loop_jumps: HashMap<(usize, Vec<usize>), u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
+    /// Whether a calling frame has a pending `vm.expectRevert`, which Forge tracks globally, so
+    /// this frame cannot set another. Storage hook callbacks start without it, as Forge sets the
+    /// pending expectation aside while they run.
+    pub(crate) outer_expected_revert: bool,
     /// Account of the first call, or reverting CREATE, that failed in or below this frame since
     /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
     pub(crate) first_failed_callee: Option<Address>,
@@ -136,6 +140,7 @@ impl PathState {
             needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
+            outer_expected_revert: false,
             first_failed_callee: None,
             first_reverted_callee: None,
             assertion_failed: false,
@@ -310,6 +315,7 @@ impl PathState {
         // semantics unless the callee sets its own prank.
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
+        child.outer_expected_revert = self.outer_expected_revert || self.expected_revert.is_some();
         child.expected_revert = None;
         child.first_failed_callee = None;
         child.first_reverted_callee = None;
@@ -331,6 +337,7 @@ impl PathState {
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
         let mut child = self.child(frame);
         child.storage_hook_active = true;
+        child.outer_expected_revert = false;
         child.recorded_logs = None;
         child.access_record = None;
         child.expected_emit = None;
@@ -591,6 +598,7 @@ impl PathState {
                 | SymExprKind::Keccak { .. }
                 | SymExprKind::Hash { .. } => None,
                 SymExprKind::Not(_) => None,
+                SymExprKind::TernOp(SymTernOp::MulDiv, _, _, _) => None,
                 SymExprKind::TernOp(_, _, _, modulus) => match modulus.as_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
                     Some(modulus) => usize::try_from(modulus - U256::ONE).ok(),
@@ -688,7 +696,8 @@ impl PathState {
                     | SymBinOp::SRem
                     | SymBinOp::Or
                     | SymBinOp::Xor
-                    | SymBinOp::Sar => None,
+                    | SymBinOp::Sar
+                    | SymBinOp::MulHigh => None,
                 },
             }
         });
@@ -1799,6 +1808,22 @@ impl FunctionMock {
 
     pub(crate) const fn target(&self) -> Address {
         self.target
+    }
+
+    /// The condition for this mock to match a call whose code address is `code_address`, with
+    /// `calldata` matching its data in full or as the selector.
+    pub(crate) fn code_match_condition(
+        &self,
+        cx: &mut SymCx,
+        code_address: &SymExpr,
+        calldata: &SymBytes,
+    ) -> Option<SymBoolExpr> {
+        if self.data.len() != calldata.len() && self.data.len() != 4 {
+            return None;
+        }
+        let data_condition = calldata.prefix_condition(cx, &self.data)?;
+        let callee_condition = SymBoolExpr::eq(cx, self.callee.clone(), code_address.clone());
+        Some(SymBoolExpr::and(cx, vec![callee_condition, data_condition]))
     }
 
     pub(crate) fn match_condition(

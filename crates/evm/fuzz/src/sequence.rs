@@ -494,7 +494,7 @@ impl ComparisonHint {
                 }),
             )
         });
-        hints
+        let mut applicable = hints
             .into_iter()
             .zip(&operands)
             .filter(|(_, (lhs, rhs))| {
@@ -505,7 +505,10 @@ impl ComparisonHint {
                 })
             })
             .map(|(hint, _)| hint)
-            .collect()
+            .collect::<Vec<_>>();
+        // A corpus entry keeps the hints of each of its calls for the whole campaign.
+        applicable.shrink_to_fit();
+        applicable
     }
 
     /// Returns whether a cmp mutation can replace one of this comparison's operands in

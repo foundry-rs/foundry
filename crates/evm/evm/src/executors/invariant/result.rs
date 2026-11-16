@@ -289,7 +289,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     };
 
     // Classify assertion failures first, so a caught `vm.assert*` that leaves no revert or fail
-    // slot is recorded the same way as on calls between checks.
+    // slot is recorded as a handler assertion bug.
     if !assertion_failure && !call_result.reverted && handlers_succeeded() {
         if let Some(traces) = call_result.traces {
             invariant_run.run_traces.push(traces);
@@ -447,13 +447,14 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
     // `afterInvariant` failures are contract-wide (no specific invariant body executed),
     // so attribute to the campaign anchor.
     let anchor = invariant_contract.anchor();
-    let case_data = InvariantRunCtx {
+    let mut case_data = InvariantRunCtx {
         contract: invariant_contract,
         config: invariant_config,
         targeted_contracts: &invariant_test.targeted_contracts,
         calldata: &invariant_run.inputs,
     }
     .failed_case(anchor, invariant_config.fail_on_revert, false, call_result, &[]);
+    case_data.after_invariant = true;
     invariant_test
         .test_data
         .failures

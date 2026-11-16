@@ -1279,6 +1279,57 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 "#]]);
 }
 
+// Tests that a persisted failure rejected by `vm.assume` does not count against
+// `max_test_rejects`.
+#[forgetest]
+fn fuzz_persisted_failure_reject_not_counted(prj: _, cmd: _) {
+    // 64 runs keep the campaign on a single worker, so the reject count does not depend on the CPU.
+    prj.update_config(|config| {
+        config.fuzz.runs = 64;
+        config.fuzz.seed = Some(U256::from(7u32));
+    });
+    let test = |body: &str| {
+        format!(
+            r#"
+interface Vm {{
+    function assume(bool) external;
+}}
+
+contract PersistedRejectTest {{
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testFuzz_reject(uint256 value) public {{
+        {body}
+    }}
+}}
+"#
+        )
+    };
+    let failure_path = prj.root().join("cache/fuzz/failures/PersistedRejectTest/testFuzz_reject");
+
+    // Persist a failing value, then reject it.
+    prj.add_test("PersistedReject.t.sol", &test("require(value % 4 != 0);"));
+    cmd.args(["test"]).assert_failure();
+    prj.add_test("PersistedReject.t.sol", &test("vm.assume(value % 4 != 0);"));
+
+    // The campaign rejects exactly 20 fresh inputs with this seed.
+    prj.update_config(|config| config.fuzz.max_test_rejects = 20);
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testFuzz_reject(uint256) (runs: 64, [AVG_GAS])
+...
+"#]]);
+
+    // Without the persisted failure, one reject fewer is not enough, so the boundary is exact.
+    std::fs::remove_file(&failure_path).unwrap();
+    prj.update_config(|config| config.fuzz.max_test_rejects = 19);
+    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: `vm.assume` rejected too many inputs (19 allowed)] testFuzz_reject(uint256) [..]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn forge_fuzz_replay_treats_persisted_skip_as_skip(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -5872,6 +5923,59 @@ Encountered a total of 1 failing tests, 0 tests succeeded
     test_literal(999, "testFuzz_BytesFromString", "bytes", "0x78797a7a79"); // abi.encodePacked("xyzzy")
 }
 
+// Literals of sources that weren't recompiled still seed the fuzz dictionary, so a fixed seed
+// finds the same counterexample after a partial recompile as from scratch.
+#[forgetest]
+fn should_fuzz_literals_after_partial_recompile(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.runs = 100;
+        config.fuzz.seed = Some(U256::from(600));
+    });
+    // The string reaches the dictionary only as a source literal: the bytecode holds its hash.
+    prj.add_test(
+        "MagicFuzz.t.sol",
+        r#"
+contract MagicTest {
+    function testFuzz_String(string memory v) public pure {
+        assert(keccak256(bytes(v)) != keccak256("xyzzy"));
+    }
+}
+"#,
+    );
+    prj.add_source("Unrelated.sol", "contract Unrelated { function one() external {} }");
+
+    let expected_output = str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/MagicFuzz.t.sol:MagicTest
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=["xyzzy"]] testFuzz_String(string) (runs: [..], [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/MagicFuzz.t.sol:MagicTest
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=["xyzzy"]] testFuzz_String(string) (runs: [..], [AVG_GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]];
+    cmd.arg("test").assert_failure().stdout_eq(expected_output.clone());
+
+    // Only `Unrelated.sol` is recompiled. Remove the persisted failure, so that the fuzzer has to
+    // find the counterexample again.
+    std::fs::remove_dir_all(prj.root().join("cache/fuzz")).unwrap();
+    prj.add_source("Unrelated.sol", "contract Unrelated { function two() external {} }");
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(expected_output);
+}
+
 // Tests that `vm.randomUint()` produces different values across fuzz runs.
 // Regression test for https://github.com/foundry-rs/foundry/issues/12817
 //
@@ -7011,4 +7115,146 @@ contract ProbesTest is Test {
     cmd.args(["test", "--mc", "ProbesTest"]).assert_failure();
     prj.update_config(|config| config.fuzz.corpus.instrumented_edges = true);
     cmd.assert_success();
+}
+
+// With a fixed seed, the outcome of a fuzz campaign does not depend on the worker that is first in
+// time. Each worker has its own input stream, and the campaign reports the failure and the cases
+// that are first in worker order. The inputs that are first in this order are slow, so the other
+// workers complete their runs before.
+#[forgetest_init]
+fn fuzz_outcome_does_not_depend_on_worker_timing(prj: _, cmd: _) {
+    prj.add_test(
+        "FuzzWorkerOrder.t.sol",
+        r#"
+import {console} from "forge-std/console.sol";
+
+contract FuzzWorkerOrderTest {
+    // Fails with one of two reasons. The inputs that fail with the first reason are slow.
+    function testFuzz_failure(uint256 x) public pure {
+        if (x % 8 == 0) {
+            burn();
+            revert("slow failure");
+        }
+        require(x % 8 != 1, "fast failure");
+    }
+
+    // Passes for every input. One input in eight is slow.
+    function testFuzz_success(uint256 x) public pure {
+        console.log(x);
+        if (x % 8 == 2) {
+            burn();
+        }
+    }
+
+    function burn() internal pure {
+        for (uint256 i; i < 5000; ++i) {
+            keccak256(abi.encode(i));
+        }
+    }
+}
+   "#,
+    );
+
+    // Four workers with 64 runs each. With this seed, the second run of the second worker is the
+    // first failure, and it is slow. The first worker finds a fast failure in its third run. The
+    // first run of the first worker is slow in the passing test.
+    let args =
+        ["test", "--mc", "FuzzWorkerOrderTest", "--fuzz-seed", "185", "--threads", "4", "-vv"];
+    cmd.args(args).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/FuzzWorkerOrder.t.sol:FuzzWorkerOrderTest
+[FAIL: slow failure; counterexample: calldata=0xbcb54bf10000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzz_failure(uint256) (runs: 5, [AVG_GAS])
+[PASS] testFuzz_success(uint256) (runs: 256, [AVG_GAS])
+Logs:
+  20545516810883930015437282216
+
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/FuzzWorkerOrder.t.sol:FuzzWorkerOrderTest
+[FAIL: slow failure; counterexample: calldata=0xbcb54bf10000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzz_failure(uint256) (runs: 5, [AVG_GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    // The first worker replays the persisted failure before its first run, so the campaign reports
+    // this failure again.
+    cmd.forge_fuse().args(args).arg("--json").assert_json_stdout_with_status(
+        false,
+        str![[r#"
+{
+  "test/FuzzWorkerOrder.t.sol:FuzzWorkerOrderTest": {
+    "test_results": {
+      "testFuzz_failure(uint256)": {
+        "status": "Failure",
+        "reason": "slow failure",
+        "counterexample": {
+          "Single": {
+            "warp": null,
+            "roll": null,
+            "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
+            "addr": "0x7fa9385be102ac3eac297483dd6233d62b3e1496",
+            "calldata": "0xbcb54bf10000000000000000000000000000000000000000000000000000000000000000",
+            "contract_name": null,
+            "func_name": null,
+            "signature": null,
+            "args": "0",
+            "raw_args": "0",
+            "fuzz_seed": "0xb9",
+            "fuzz_run": 2,
+            "fuzz_worker": 1
+          }
+        },
+        "kind": {
+          "Fuzz": {
+            "first_case": {
+              "gas": 0,
+              "stipend": 0
+            },
+            "runs": 0,
+            "mean_gas": 0,
+            "median_gas": 0,
+            "failed_corpus_replays": 0
+          }
+        },
+        "...": "{...}"
+      },
+      "testFuzz_success(uint256)": {
+        "status": "Success",
+        "reason": null,
+        "counterexample": null,
+        "decoded_logs": [
+          "20545516810883930015437282216"
+        ],
+        "kind": {
+          "Fuzz": {
+            "first_case": {
+              "gas": 1755752,
+              "stipend": 21492
+            },
+            "runs": 256,
+            "mean_gas": 240230,
+            "median_gas": 3619,
+            "failed_corpus_replays": 0
+          }
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+    );
 }
