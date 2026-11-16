@@ -2004,10 +2004,9 @@ async fn tempo_t14_configurable_account_run_fork_replay_matches_node(cmd: _) {
 
     // Replay forks at each transaction's parent block. The account is unregistered at the
     // registration's parent and registered with its commitment at the others'.
-    let hashes = [(registration, true), (update, true), (rotated_tx, true)];
-    for (hash, succeeds) in hashes {
+    for hash in [registration, update, rotated_tx] {
         let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
-        assert_eq!(receipt.status(), succeeds, "{receipt:?}");
+        assert!(receipt.status(), "{receipt:?}");
         assert_eq!(receipt.from, account);
         let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
         let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
@@ -2017,16 +2016,19 @@ async fn tempo_t14_configurable_account_run_fork_replay_matches_node(cmd: _) {
 
         cmd.cast_fuse();
         cmd.env("FOUNDRY_HARDFORK", "tempo:T14");
-        let output = cmd.args(["run", &hash.to_string(), "--rpc-url", &rpc]).assert_success();
+        let output = cmd
+            .args(["run", &hash.to_string(), "--rpc-url", &rpc])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+        // The snapshot redacts gas, which must match the node's.
         let stdout = output.get_output().stdout_lossy();
-        let stderr = output.get_output().stderr_lossy();
-        assert_eq!(stdout.contains("Transaction successfully executed."), succeeds, "{stdout}");
-        assert_eq!(stderr.contains("Error: Transaction failed."), !succeeds, "{stderr}");
-        let gas = stdout
-            .lines()
-            .find_map(|line| line.strip_prefix("Gas used: ")?.trim().parse::<u64>().ok())
-            .unwrap_or_else(|| panic!("`cast run` printed no gas for {hash}:\n{stdout}"));
-        assert_eq!(gas, receipt.gas_used, "replayed {hash}:\n{stdout}");
+        let gas = stdout.lines().find_map(|line| line.strip_prefix("Gas used: ")?.parse().ok());
+        assert_eq!(gas, Some(receipt.gas_used), "replayed {hash}:\n{stdout}");
     }
 }
 
