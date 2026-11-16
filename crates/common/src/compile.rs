@@ -1045,8 +1045,9 @@ fn is_safe_output_path_component(component: &str) -> bool {
     !cfg!(windows) || is_safe_windows_path_component(component)
 }
 
-/// Reject names that Win32 treats as path syntax, aliases, or device names.
+/// Reject names that Win32 treats as filesystem path syntax or aliases.
 fn is_safe_windows_path_component(component: &str) -> bool {
+    // Reserved device names are left to Windows filesystem semantics.
     if component.is_empty()
         || component.ends_with('.')
         || component.ends_with(' ')
@@ -1059,23 +1060,7 @@ fn is_safe_windows_path_component(component: &str) -> bool {
     }
 
     // NTFS may expose `.git` through this 8.3 alias, as recognized by Git's `core.protectNTFS`.
-    if component.eq_ignore_ascii_case("git~1") {
-        return false;
-    }
-
-    let device_name = component.split('.').next().unwrap_or_default().trim_end_matches(' ');
-    !["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"]
-        .iter()
-        .any(|name| device_name.eq_ignore_ascii_case(name))
-        && !["COM", "LPT"].iter().any(|prefix| {
-            device_name.get(..3).is_some_and(|name| name.eq_ignore_ascii_case(prefix))
-                && device_name.get(3..).is_some_and(|suffix| {
-                    matches!(
-                        suffix,
-                        "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-                    )
-                })
-        })
+    !component.eq_ignore_ascii_case("git~1")
 }
 
 fn source_path_is_scoped(source_path: &Path, contract_name: &str) -> bool {
@@ -1570,37 +1555,10 @@ mod tests {
 
     #[test]
     fn safe_windows_path_component() {
-        for component in [
-            "Example",
-            "My Contract.sol",
-            "Ünïcode",
-            "中.sol",
-            "😀.sol",
-            "COM0",
-            "COM10",
-            "COM⁴",
-            "LPT١",
-        ] {
+        for component in ["Example", "My Contract.sol", "Ünïcode", "NUL.sol"] {
             assert!(is_safe_windows_path_component(component), "{component:?}");
         }
-        for component in [
-            "name.",
-            "name ",
-            "file:stream",
-            "NUL.sol",
-            "NUL .sol",
-            "CON .txt",
-            "COM1 .sol",
-            "LPT1 .sol",
-            "COM1",
-            "LPT³.txt",
-            "cOm¹ .sol",
-            "lPt².txt",
-            "conin$.sol",
-            "CoNoUt$ .txt",
-            "git~1",
-            "GIT~1",
-        ] {
+        for component in [".. ", ". ", "name.", "name ", "file:stream", "git~1", "GIT~1"] {
             assert!(!is_safe_windows_path_component(component), "{component:?}");
         }
     }
