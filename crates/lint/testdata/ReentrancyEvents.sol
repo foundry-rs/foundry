@@ -650,18 +650,18 @@ contract SuperChild is SuperPureOverride {
 contract AssemblyEvents {
     event Tick();
 
-    function _tstore() private {
+    modifier nonReentrant() {
         assembly ("memory-safe") {
             tstore(0, 1)
         }
+        _;
     }
 
-    function emitAfterAssemblyWithoutCall() external {
+    function emitAfterAssemblyWithoutCall() external nonReentrant {
         uint256 x;
         assembly ("memory-safe") {
             x := keccak256(mload(0x40), 0x20)
         }
-        _tstore();
         emit Tick();
     }
 
@@ -674,7 +674,7 @@ contract AssemblyEvents {
 
     function emitAfterAssemblyCall(address target) external {
         assembly {
-            pop(call(gas(), target, 0, 0, 0, 0, 0))
+            if iszero(call(gas(), target, 0, 0, 0, 0, 0)) { revert(0, 0) }
         }
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
