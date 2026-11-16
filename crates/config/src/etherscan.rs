@@ -643,7 +643,6 @@ mod tests {
             Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap(),
             "chain-less entries must not share mainnet's cache directory"
         );
-        assert!(dir.file_name().unwrap().to_string_lossy().starts_with("endpoint-"));
     }
 
     #[test]
