@@ -77,8 +77,8 @@ pub fn is_known_system_sender(sender: Address) -> bool {
     .contains(&sender)
 }
 
-/// EIP-1967 proxy implementation slot: `bytes32(uint256(keccak256('eip1967.proxy.implementation'))
-/// - 1)`.
+/// EIP-1967 proxy implementation slot:
+/// `bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)`.
 pub const EIP1967_IMPLEMENTATION_SLOT: B256 =
     b256!("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc");
 
@@ -93,6 +93,7 @@ pub const EIP1967_BEACON_SLOT: B256 =
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::{U256, keccak256};
 
     #[test]
     fn test_constant_sender() {
@@ -104,7 +105,6 @@ mod tests {
 
     #[test]
     fn eip1967_slots() {
-        use alloy_primitives::{U256, keccak256};
         let slot = |id: &str| B256::from(U256::from_be_bytes(keccak256(id).0) - U256::from(1));
         assert_eq!(slot("eip1967.proxy.implementation"), EIP1967_IMPLEMENTATION_SLOT);
         assert_eq!(slot("eip1967.proxy.admin"), EIP1967_ADMIN_SLOT);
