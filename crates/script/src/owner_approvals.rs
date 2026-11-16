@@ -67,24 +67,13 @@ const GAS_CAP_HINT: &str = "the node may cap the gas of a whole simulation reque
 /// so that the other owners approve its transactions elsewhere.
 #[derive(Clone, Debug)]
 pub struct OfflineOwners {
-    account: Address,
-    config: ConfigurableAccountConfig,
+    pub(crate) account: Address,
+    pub(crate) config: ConfigurableAccountConfig,
     /// The local owner keys, which approve when the transactions are saved.
-    keys: Vec<ConfigurableAccountOwnerKey>,
+    pub(crate) keys: Vec<ConfigurableAccountOwnerKey>,
 }
 
 impl OfflineOwners {
-    /// Returns the owners of `account`, or `None` when the local `keys` form a quorum themselves:
-    /// they reach its threshold with at most the number of signatures Tempo accepts.
-    pub fn new(
-        account: Address,
-        config: ConfigurableAccountConfig,
-        keys: Vec<ConfigurableAccountOwnerKey>,
-    ) -> Option<Self> {
-        let owners = keys.iter().map(ConfigurableAccountOwnerKey::address).collect::<Vec<_>>();
-        (!reaches_threshold(&config, &owners)).then_some(Self { account, config, keys })
-    }
-
     /// Makes `tx` a Tempo transaction from the account. The owners that will approve are not
     /// known yet, so its gas models the largest quorum.
     fn prepare_request<N: Network>(&self, tx: &mut N::TransactionRequest)
@@ -818,46 +807,4 @@ where
             .to_string(),
     );
     Ok(lines.join("\n"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_signer_local::PrivateKeySigner;
-    use foundry_wallets::WalletSigner;
-    use std::sync::Arc;
-    use tempo_primitives::transaction::ConfigurableAccountOwner;
-
-    /// Nine local weight-1 owners reach threshold 9 by weight, but Tempo accepts at most eight
-    /// signatures, so the offline weight-9 owner approves.
-    #[test]
-    fn local_owners_beyond_signature_limit_are_offline() {
-        let signers = (1..=10u8)
-            .map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap())
-            .collect::<Vec<_>>();
-        let mut owners = signers
-            .iter()
-            .enumerate()
-            .map(|(i, signer)| ConfigurableAccountOwner {
-                owner: signer.address(),
-                weight: if i == 9 { 9 } else { 1 },
-            })
-            .collect::<Vec<_>>();
-        owners.sort_by_key(|owner| owner.owner);
-        let config =
-            ConfigurableAccountConfig { salt: B256::ZERO, version: 0, threshold: 9, owners };
-        let keys = |count: usize| {
-            signers[..count]
-                .iter()
-                .map(|signer| {
-                    ConfigurableAccountOwnerKey::Wallet(Arc::new(WalletSigner::Local(
-                        signer.clone(),
-                    )))
-                })
-                .collect::<Vec<_>>()
-        };
-        let account = Address::repeat_byte(0x42);
-        assert!(OfflineOwners::new(account, config.clone(), keys(9)).is_some());
-        assert!(OfflineOwners::new(account, config, keys(10)).is_none());
-    }
 }

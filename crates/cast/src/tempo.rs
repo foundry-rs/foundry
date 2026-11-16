@@ -334,16 +334,10 @@ where
         );
         return Ok(None);
     }
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(config)?.build()?;
-    let signers = signer.take().map(Arc::new).into_iter().collect::<Vec<_>>();
-    let linked = tempo.linked_account(wallet)?;
-    let account = tempo
-        .configurable_account_signer(&provider, wallet.from, linked, &signers, CAST_OWNERS_HINT)
-        .await?;
-    match &account {
-        Some(account) => sh_status!("Sending as Tempo configurable account {}", account.account())?,
-        // Only a configurable account keeps the signer.
-        None => *signer = signers.into_iter().next().and_then(Arc::into_inner),
+    let account =
+        tempo.configurable_account_signer(config, wallet, signer, CAST_OWNERS_HINT).await?;
+    if let Some(account) = &account {
+        sh_status!("Sending as Tempo configurable account {}", account.account())?;
     }
     Ok(account)
 }
