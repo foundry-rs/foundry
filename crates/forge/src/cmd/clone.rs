@@ -14,7 +14,11 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{Git, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, fs, fs::canonicalize_path};
+use foundry_common::{
+    compile::{ProjectCompiler, write_etherscan_sources},
+    fs,
+    fs::canonicalize_path,
+};
 use foundry_compilers::{
     ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{
@@ -31,7 +35,7 @@ use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap},
     fs::read_dir,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     time::Duration,
 };
 use tracing::trace;
@@ -530,15 +534,6 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     let lib_dir = &path_config.libraries[0];
     // Optional dir, if found in src
     let node_modules_dir = &root.join("node_modules");
-    let contract_name = Path::new(&meta.contract_name);
-    let mut components = contract_name.components();
-    eyre::ensure!(
-        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
-        "invalid contract name: {:?}",
-        meta.contract_name
-    );
-    let source_tree = meta.source_tree();
-
     // then we move the sources to the correct directories
     // we will first load existing remappings if necessary
     //  make sure this happens before dumping sources
@@ -546,10 +541,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 
     // first we dump the sources to a temporary directory
     let tmp_dump_dir = root.join("raw_sources");
-    let contract_dir = tmp_dump_dir.join(contract_name);
-    source_tree
-        .write_to(&tmp_dump_dir)
-        .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
+    let contract_dir = tmp_dump_dir.join(&meta.contract_name);
+    write_etherscan_sources(std::slice::from_ref(meta), &tmp_dump_dir)?;
 
     // check whether we need to re-organize directories in the original sources, since we do not
     // want to put all the sources in the `src` directory if the original directory structure is
@@ -1217,7 +1210,10 @@ mod tests {
 
             let err = dump_sources(&meta, &root, false).unwrap_err();
 
-            assert_eq!(err.to_string(), format!("invalid contract name: {contract_name:?}"));
+            assert_eq!(
+                err.to_string(),
+                format!("invalid contract name from explorer: {contract_name:?}")
+            );
             assert!(victim_file.exists());
             assert!(!root.join("raw_sources").exists());
             assert!(!root.join("src/outside.sol").exists());
@@ -1236,6 +1232,65 @@ mod tests {
 
         assert!(root.join("src/Contract.sol").exists());
         assert!(!root.join("raw_sources").exists());
+    }
+
+    #[test]
+    fn test_dump_sources_rejects_unsafe_contract_names() {
+        for contract_name in ["", ".", "..", ".git"] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().to_path_buf();
+            let meta = contract_metadata(contract_name, false, None).items.remove(0);
+
+            let err = dump_sources(&meta, &root, false).unwrap_err();
+
+            assert_eq!(
+                err.to_string(),
+                format!("invalid contract name from explorer: {contract_name:?}")
+            );
+            assert!(!root.join("raw_sources").exists());
+        }
+    }
+
+    #[test]
+    fn test_dump_sources_rejects_empty_source_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_path_buf();
+        let mut meta = contract_metadata("Example", false, None).items.remove(0);
+        meta.source_code =
+            SourceCodeMetadata::Sources(HashMap::from([(String::new(), "replacement".into())]));
+
+        let err = dump_sources(&meta, &root, false).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            format!("invalid source path from explorer: {:?}", Path::new("Example").join(""))
+        );
+        assert!(!root.join("raw_sources").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_dump_sources_rejects_windows_path_aliases() {
+        for (source_path, expected_path) in [
+            ("a/C:/foundry.toml", "C:foundry.toml"),
+            (".. /foundry.toml", r"Example\.. \foundry.toml"),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().to_path_buf();
+            let mut meta = contract_metadata("Example", false, None).items.remove(0);
+            meta.source_code = SourceCodeMetadata::Sources(HashMap::from([(
+                source_path.into(),
+                "replacement".into(),
+            )]));
+
+            let err = dump_sources(&meta, &root, false).unwrap_err();
+
+            assert_eq!(
+                err.to_string(),
+                format!("invalid source path from explorer: {expected_path:?}")
+            );
+            assert!(!root.join("raw_sources").exists());
+        }
     }
 
     #[tokio::test]

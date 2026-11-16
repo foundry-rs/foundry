@@ -370,11 +370,20 @@ async fn source_plain_and_directory(prj: _, cmd: _) {
     let directory = prj.root().join("sources");
     cmd.cast_fuse().args(args).arg("-d").arg(&directory).assert_empty_stdout();
     assert_eq!(fs::read_to_string(directory.join("Example/Contract.sol")).unwrap(), source);
+    let flattened = "pragma solidity ^0.8.0;\n\n// Contract.sol\n contract Example {}\n";
+    cmd.cast_fuse()
+        .args(args)
+        .arg("--flatten")
+        .assert_success()
+        .stdout_eq(format!("{flattened}\n"));
+    let output = prj.root().join("flattened.sol");
+    cmd.cast_fuse().args(args).arg("--flatten").arg("-d").arg(&output).assert_empty_stdout();
+    assert_eq!(fs::read_to_string(&output).unwrap(), flattened);
     server.abort();
 }
 
 // Explorer replies root their sources under the reported contract name, so a name that is not a
-// single, non-hidden directory component must not be expanded into the output directory.
+// single, non-hidden directory component must not be expanded or used as a project source root.
 #[casttest]
 async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
     let directory = prj.root().join("sources");
@@ -382,11 +391,17 @@ async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
     let sentinel = directory.join("foundry.toml");
     let sentinel_contents = "[profile.default]\nffi = false\n";
     fs::write(&sentinel, sentinel_contents).unwrap();
+    let external = prj.root().join("external");
+    fs::create_dir_all(&external).unwrap();
+    let external_source = external.join("Probe.sol");
+    let external_contents = b"\xff\xfe private source";
+    fs::write(&external_source, external_contents).unwrap();
+    let source = "[profile.default]\nffi = true\n";
 
-    for contract_name in ["", ".", ".git", "a/b"] {
+    for contract_name in ["", ".", ".git", "a/b", external.to_str().unwrap()] {
         let response = json!({
             "status": "1", "message": "OK", "result": [{
-                "SourceCode": { "foundry.toml": "[profile.default]\nffi = true\n" },
+                "SourceCode": { "foundry.toml": { "content": source } },
                 "ABI": "[]", "ContractName": contract_name,
                 "CompilerVersion": "v0.8.30+commit.73712a01", "OptimizationUsed": "0",
                 "Runs": "200", "EVMVersion": "Default", "Proxy": "0"
@@ -410,12 +425,27 @@ async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
             &format!("{url}/api"),
             "--explorer-url",
             &url,
-            "-d",
         ];
-        cmd.cast_fuse().args(args).arg(&directory).assert_failure().stderr_eq(format!(
-            "Error: invalid contract name from explorer: \"{contract_name}\"\n"
-        ));
+        let expected_error =
+            format!("Error: invalid contract name from explorer: {contract_name:?}\n");
+        cmd.cast_fuse().args(args).assert_success().stdout_eq(format!("{source}\n"));
+        cmd.cast_fuse()
+            .args(args)
+            .arg("-d")
+            .arg(&directory)
+            .assert_failure()
+            .stdout_eq("")
+            .stderr_eq(expected_error.clone());
+        for output in [None, Some(&sentinel)] {
+            let command = cmd.cast_fuse().args(args).arg("--flatten");
+            if let Some(output) = output {
+                command.arg("-d").arg(output);
+            }
+            command.assert_failure().stdout_eq("").stderr_eq(expected_error.clone());
+            assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
+        }
         assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
+        assert_eq!(fs::read(&external_source).unwrap().as_slice(), external_contents.as_slice());
         server.abort();
     }
 }
@@ -447,18 +477,34 @@ async fn source_directory_rejects_empty_source_paths(prj: _, cmd: _) {
     );
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    cmd.args([
+    let args = [
         "source",
         "0x0000000000000000000000000000000000000001",
         "--explorer-api-url",
         &format!("{url}/api"),
         "--explorer-url",
         &url,
-        "-d",
-    ])
-    .arg(&directory)
-    .assert_failure()
-    .stderr_eq("Error: invalid source path from explorer\n");
+    ];
+    let expected_error = format!(
+        "Error: invalid source path from explorer: {:?}\n",
+        Path::new("foundry.toml").join("")
+    );
+    cmd.args(args).assert_success().stdout_eq("replacement\n");
+    cmd.cast_fuse()
+        .args(args)
+        .arg("-d")
+        .arg(&directory)
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(expected_error.clone());
+    for output in [None, Some(&sentinel)] {
+        let command = cmd.cast_fuse().args(args).arg("--flatten");
+        if let Some(output) = output {
+            command.arg("-d").arg(output);
+        }
+        command.assert_failure().stdout_eq("").stderr_eq(expected_error.clone());
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
+    }
     assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
     server.abort();
 }
@@ -476,17 +522,23 @@ async fn source_directory_rejects_windows_path_aliases(prj: _, cmd: _) {
         (
             "Example",
             "{\"a/C:/foundry.toml\": {\"content\": \"replacement\"}}",
-            "Error: invalid source path from explorer\n",
+            format!(
+                "Error: invalid source path from explorer: {:?}\n",
+                Path::new("C:foundry.toml")
+            ),
         ),
         (
             "Example",
             "{\".. /foundry.toml\": {\"content\": \"replacement\"}}",
-            "Error: invalid source path from explorer\n",
+            format!(
+                "Error: invalid source path from explorer: {:?}\n",
+                Path::new("Example").join(".. ").join("foundry.toml")
+            ),
         ),
         (
             " ",
             "{\"foundry.toml\": {\"content\": \"replacement\"}}",
-            "Error: invalid contract name from explorer: \" \"\n",
+            "Error: invalid contract name from explorer: \" \"\n".to_string(),
         ),
     ] {
         let response = json!({
@@ -507,19 +559,30 @@ async fn source_directory_rejects_windows_path_aliases(prj: _, cmd: _) {
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
+        let args = [
+            "source",
+            "0x0000000000000000000000000000000000000001",
+            "--explorer-api-url",
+            &format!("{url}/api"),
+            "--explorer-url",
+            &url,
+        ];
+        cmd.cast_fuse().args(args).assert_success().stdout_eq("replacement\n");
         cmd.cast_fuse()
-            .args([
-                "source",
-                "0x0000000000000000000000000000000000000001",
-                "--explorer-api-url",
-                &format!("{url}/api"),
-                "--explorer-url",
-                &url,
-                "-d",
-            ])
+            .args(args)
+            .arg("-d")
             .arg(&directory)
             .assert_failure()
-            .stderr_eq(expected_error);
+            .stdout_eq("")
+            .stderr_eq(expected_error.clone());
+        for output in [None, Some(&sentinel)] {
+            let command = cmd.cast_fuse().args(args).arg("--flatten");
+            if let Some(output) = output {
+                command.arg("-d").arg(output);
+            }
+            command.assert_failure().stdout_eq("").stderr_eq(expected_error.clone());
+            assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
+        }
         assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
         server.abort();
     }

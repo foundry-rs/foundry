@@ -20,7 +20,7 @@ use evm2::{
     },
 };
 use eyre::{OptionExt, Result};
-use foundry_block_explorers::contract::Metadata;
+use foundry_block_explorers::{contract::Metadata, source_tree::SourceTree};
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
@@ -919,8 +919,8 @@ pub fn compile_target_abi(
 /// Creates a [Project] from an Etherscan source.
 pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Project> {
     let target_path = canonicalize_path(target_path)?;
+    write_etherscan_sources(std::slice::from_ref(metadata), &target_path)?;
     let sources_path = target_path.join(&metadata.contract_name);
-    metadata.source_tree().write_to(&target_path)?;
 
     let mut settings = metadata.settings()?;
 
@@ -970,6 +970,90 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
         .ephemeral()
         .no_artifacts()
         .build(compiler)?)
+}
+
+/// Writes explorer sources after validating every contract name and source path.
+///
+/// Each source must remain below its own non-hidden contract directory. All names and paths in
+/// the reply are validated before any files are written.
+pub fn write_etherscan_sources(metadata: &[Metadata], target_path: &Path) -> Result<()> {
+    let mut source_tree = SourceTree { entries: Vec::new() };
+    for item in metadata {
+        ensure_safe_contract_name(&item.contract_name)?;
+        let entries = item.source_entries();
+        for entry in &entries {
+            eyre::ensure!(
+                source_path_is_scoped(&entry.path, &item.contract_name),
+                "invalid source path from explorer: {:?}",
+                entry.path
+            );
+        }
+        source_tree.entries.extend(entries);
+    }
+    source_tree.write_to(target_path)?;
+    Ok(())
+}
+
+/// Ensures that an explorer-supplied contract name is a single, non-hidden directory component.
+///
+/// The source tree roots every source under `Path::new(contract_name)`, and its entries are written
+/// with `std::fs::write`. A name such as `""` or `"."` would therefore place the reply's files
+/// directly in the output directory and silently replace existing files there, while `.git` would
+/// let it write into repository metadata.
+fn ensure_safe_contract_name(contract_name: &str) -> Result<()> {
+    let mut components = Path::new(contract_name).components();
+    let safe = matches!(
+        components.next(),
+        Some(Component::Normal(name))
+            if name.to_str().is_some_and(is_safe_output_path_component)
+    ) && components.next().is_none()
+        && !contract_name.starts_with('.');
+    eyre::ensure!(safe, "invalid contract name from explorer: {contract_name:?}");
+    Ok(())
+}
+
+fn is_safe_output_path_component(component: &str) -> bool {
+    !cfg!(windows) || is_safe_windows_path_component(component)
+}
+
+/// Reject names that Win32 treats as path syntax, aliases, or device names.
+fn is_safe_windows_path_component(component: &str) -> bool {
+    if component.is_empty()
+        || component.ends_with('.')
+        || component.ends_with(' ')
+        || component.chars().any(|character| {
+            character < ' '
+                || matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        })
+    {
+        return false;
+    }
+
+    let device_name = component.split('.').next().unwrap_or_default().to_ascii_uppercase();
+    !matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        && !["COM", "LPT"].iter().any(|prefix| {
+            device_name.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        })
+}
+
+fn source_path_is_scoped(source_path: &Path, contract_name: &str) -> bool {
+    let Ok(relative_path) = source_path.strip_prefix(contract_name) else { return false };
+    let mut components = relative_path.components();
+    matches!(
+        components.next(),
+        Some(Component::Normal(name))
+            if name.to_str().is_some_and(is_safe_output_path_component)
+    ) && components.all(|component| {
+        matches!(
+            component,
+            Component::Normal(name) if name.to_str().is_some_and(is_safe_output_path_component)
+        )
+    })
 }
 
 /// Normalizes an untrusted path relative to the source root, discarding leading separators,
@@ -1184,6 +1268,7 @@ fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'s
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_block_explorers::contract::SourceCodeMetadata;
 
     #[test]
     fn parse_contract_identifiers() {
@@ -1282,5 +1367,120 @@ mod tests {
             sanitize_relative_path(Path::new("lib/openzeppelin")),
             Path::new("lib/openzeppelin")
         );
+    }
+
+    #[test]
+    fn safe_contract_name() {
+        for name in ["Example", "Contract_1", "Ünïcode"] {
+            assert!(ensure_safe_contract_name(name).is_ok(), "{name:?}");
+        }
+        for name in ["", ".", "..", ".git", "a/b", "/abs", "../x", "foundry.toml/x"] {
+            assert!(ensure_safe_contract_name(name).is_err(), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn safe_windows_path_component() {
+        for component in ["Example", "My Contract.sol", "Ünïcode"] {
+            assert!(is_safe_windows_path_component(component), "{component:?}");
+        }
+        for component in
+            [".. ", ". ", "name.", "name ", "file:stream", "NUL.sol", "COM1", "LPT³.txt"]
+        {
+            assert!(!is_safe_windows_path_component(component), "{component:?}");
+        }
+    }
+
+    fn explorer_metadata(contract_name: &str, sources: &[(&str, &str)]) -> Metadata {
+        Metadata {
+            source_code: SourceCodeMetadata::Sources(
+                sources.iter().map(|(path, content)| ((*path).into(), (*content).into())).collect(),
+            ),
+            abi: "[]".into(),
+            contract_name: contract_name.into(),
+            compiler_version: "invalid".into(),
+            optimization_used: 0,
+            runs: 0,
+            constructor_arguments: Default::default(),
+            evm_version: "Default".into(),
+            library: String::new(),
+            license_type: String::new(),
+            proxy: 0,
+            implementation: None,
+            swarm_source: String::new(),
+        }
+    }
+
+    #[test]
+    fn etherscan_sources_validate_entire_reply_before_writing() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("sources");
+        let valid = explorer_metadata("Valid", &[("Contract.sol", "valid")]);
+        for (invalid, expected) in [
+            (
+                explorer_metadata(".git", &[("config", "invalid")]),
+                "invalid contract name from explorer: \".git\"".to_string(),
+            ),
+            (
+                explorer_metadata("Invalid", &[("", "invalid")]),
+                format!("invalid source path from explorer: {:?}", Path::new("Invalid").join("")),
+            ),
+        ] {
+            let err = write_etherscan_sources(&[valid.clone(), invalid], &target).unwrap_err();
+            assert_eq!(err.to_string(), expected);
+            assert!(!target.exists());
+        }
+    }
+
+    #[test]
+    fn etherscan_sources_preserve_sanitized_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let metadata = [
+            explorer_metadata(
+                "Example",
+                &[("/contracts/Example.sol", "source"), ("../../README", "readme")],
+            ),
+            explorer_metadata("Other", &[("Other.sol", "other source")]),
+            explorer_metadata("Example", &[("Contract", "extensionless source")]),
+            explorer_metadata("Example", &[("Contract.sol", "Solidity source")]),
+        ];
+        write_etherscan_sources(&metadata, temp.path()).unwrap();
+        for (path, expected) in [
+            ("Example/contracts/Example.sol", "source"),
+            ("Example/README.sol", "readme"),
+            ("Other/Other.sol", "other source"),
+            ("Example/Contract", "extensionless source"),
+            ("Example/Contract.sol", "Solidity source"),
+        ] {
+            assert_eq!(std::fs::read_to_string(temp.path().join(path)).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn etherscan_project_rejects_invalid_metadata_before_writing() {
+        let temp = tempfile::tempdir().unwrap();
+        let external = temp.path().join("external");
+        std::fs::create_dir(&external).unwrap();
+        let external_source = external.join("Probe.sol");
+        std::fs::write(&external_source, [0xff]).unwrap();
+        let target = temp.path().join("sources");
+        std::fs::create_dir(&target).unwrap();
+        let contract_name = external.to_str().unwrap();
+        let metadata = explorer_metadata(contract_name, &[("Example.sol", "replacement")]);
+        let err = etherscan_project(&metadata, &target).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!("invalid contract name from explorer: {contract_name:?}")
+        );
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
+        assert_eq!(std::fs::read(&external_source).unwrap(), [0xff]);
+
+        let metadata = explorer_metadata("Example", &[("", "replacement")]);
+        let err = etherscan_project(&metadata, &target).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!("invalid source path from explorer: {:?}", Path::new("Example").join(""))
+        );
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
     }
 }

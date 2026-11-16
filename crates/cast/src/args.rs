@@ -38,6 +38,7 @@ use foundry_common::{
         abi_decode_calldata, abi_decode_event_data, encode_function_args,
         encode_function_args_packed, encode_function_args_raw, get_error, get_event, get_func,
     },
+    compile::write_etherscan_sources,
     fmt::{UIfmt, UIfmtSignatureExt, format_uint_exp, get_pretty_block_attr, get_pretty_tx_attr},
     fs,
     provider::{ProviderBuilder, RetryProvider},
@@ -55,7 +56,6 @@ use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::{
-    path::{Component, Path},
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
@@ -1370,19 +1370,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let metadata = client.contract_source_code(address.parse()?).await?;
             match (directory, flatten) {
                 (Some(dir), false) => {
-                    for item in &metadata.items {
-                        ensure_safe_contract_name(&item.contract_name)?;
-                    }
-                    let source_tree = metadata.source_tree();
-                    for entry in &source_tree.entries {
-                        eyre::ensure!(
-                            metadata.items.iter().any(|item| {
-                                source_path_is_scoped(&entry.path, &item.contract_name)
-                            }),
-                            "invalid source path from explorer"
-                        );
-                    }
-                    source_tree.write_to(&dir)?;
+                    write_etherscan_sources(&metadata.items, &dir)?;
                 }
                 (None, false) => sh_println!("{}", metadata.source_code())?,
                 (dir, true) => {
@@ -1673,68 +1661,6 @@ fn explorer_client(
     builder.build().map_err(Into::into)
 }
 
-/// Ensures that an explorer-supplied contract name is a single, non-hidden directory component.
-///
-/// The source tree roots every source under `Path::new(contract_name)`, and its entries are written
-/// with `std::fs::write`. A name such as `""` or `"."` would therefore place the reply's files
-/// directly in the output directory and silently replace existing files there, while `.git` would
-/// let it write into repository metadata.
-fn ensure_safe_contract_name(contract_name: &str) -> Result<()> {
-    let mut components = Path::new(contract_name).components();
-    let safe = matches!(
-        components.next(),
-        Some(Component::Normal(name))
-            if name.to_str().is_some_and(is_safe_output_path_component)
-    ) && components.next().is_none()
-        && !contract_name.starts_with('.');
-    eyre::ensure!(safe, "invalid contract name from explorer: {contract_name:?}");
-    Ok(())
-}
-
-fn is_safe_output_path_component(component: &str) -> bool {
-    !cfg!(windows) || is_safe_windows_path_component(component)
-}
-
-/// Reject names that Win32 treats as path syntax, aliases, or device names.
-fn is_safe_windows_path_component(component: &str) -> bool {
-    if component.is_empty()
-        || component.ends_with('.')
-        || component.ends_with(' ')
-        || component.chars().any(|character| {
-            character < ' '
-                || matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-        })
-    {
-        return false;
-    }
-
-    let device_name = component.split('.').next().unwrap_or_default().to_ascii_uppercase();
-    !matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
-        && !["COM", "LPT"].iter().any(|prefix| {
-            device_name.strip_prefix(prefix).is_some_and(|suffix| {
-                matches!(
-                    suffix,
-                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-                )
-            })
-        })
-}
-
-fn source_path_is_scoped(source_path: &Path, contract_name: &str) -> bool {
-    let Ok(relative_path) = source_path.strip_prefix(contract_name) else { return false };
-    let mut components = relative_path.components();
-    matches!(
-        components.next(),
-        Some(Component::Normal(name))
-            if name.to_str().is_some_and(is_safe_output_path_component)
-    ) && components.all(|component| {
-        matches!(
-            component,
-            Component::Normal(name) if name.to_str().is_some_and(is_safe_output_path_component)
-        )
-    })
-}
-
 fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>(
     tx: &str,
 ) -> Result<serde_json::Value> {
@@ -1985,27 +1911,5 @@ mod tests {
         // Too few arguments never mention flags, even when one starts with `--`.
         assert_eq!(hint(2, &["--packed"]), "encode length mismatch");
         assert_eq!(hint(1, &[]), "encode length mismatch");
-    }
-
-    #[test]
-    fn safe_contract_name() {
-        for name in ["Example", "Contract_1", "Ünïcode"] {
-            assert!(ensure_safe_contract_name(name).is_ok(), "{name:?}");
-        }
-        for name in ["", ".", "..", ".git", "a/b", "/abs", "../x", "foundry.toml/x"] {
-            assert!(ensure_safe_contract_name(name).is_err(), "{name:?}");
-        }
-    }
-
-    #[test]
-    fn safe_windows_path_component() {
-        for component in ["Example", "My Contract.sol", "Ünïcode"] {
-            assert!(is_safe_windows_path_component(component), "{component:?}");
-        }
-        for component in
-            [".. ", ". ", "name.", "name ", "file:stream", "NUL.sol", "COM1", "LPT³.txt"]
-        {
-            assert!(!is_safe_windows_path_component(component), "{component:?}");
-        }
     }
 }
