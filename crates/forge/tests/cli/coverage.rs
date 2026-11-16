@@ -4925,7 +4925,11 @@ fn dynamic_test_linking_source_edits(prj: _, cmd: _) {
         "Child.sol",
         r#"
 contract Child {
-    uint256 public value = 1;
+    uint256 public value;
+
+    constructor(uint256 _value) {
+        value = _value;
+    }
 }
     "#,
     );
@@ -4936,7 +4940,7 @@ import {Child} from "../src/Child.sol";
 
 contract Factory {
     function make(uint256 n) public returns (uint256 total) {
-        Child child = new Child();
+        Child child = new Child(1);
         total = child.value();
         if (n > 1) {
             total += n;
@@ -4977,6 +4981,19 @@ contract FactoryTest is DSTest {
         assert_lcov(
             cmd,
             str![[r#"
+TN:
+SF:src/Child.sol
+DA:7,1
+FN:7,Child.constructor
+FNDA:1,Child.constructor
+DA:8,1
+FNF:1
+FNH:1
+LF:2
+LH:2
+BRF:0
+BRH:0
+end_of_record
 TN:
 SF:test/Factory.sol
 DA:7,1

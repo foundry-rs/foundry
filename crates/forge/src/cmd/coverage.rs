@@ -845,15 +845,17 @@ fn to_original_source_map(
     mut source_map: SourceMap,
     source_edits: Option<&BTreeMap<u32, Vec<SourceEdit>>>,
 ) -> SourceMap {
-    let Some(source_edits) = source_edits.filter(|edits| !edits.is_empty()) else {
-        return source_map;
-    };
+    let Some(source_edits) = source_edits else { return source_map };
     for element in &mut source_map {
         let Some(edits) = element.index().and_then(|source| source_edits.get(&source)) else {
             continue;
         };
-        let start = element.offset() as usize;
-        let (start, end) = original_range(edits, start..start + element.length() as usize);
+        let offset = element.offset() as usize;
+        let length = element.length() as usize;
+        let (start, end) = original_range(edits, offset..offset + length);
+        if (start, end) == (offset, offset + length) {
+            continue;
+        }
         // Source maps have no setters, so rebuild the element from its textual form.
         let mapped = format!(
             "{start}:{}:{}:{}:{}",
@@ -862,10 +864,10 @@ fn to_original_source_map(
             element.jump(),
             element.modifier_depth()
         );
-        if let Some(mapped) = sourcemap::parse(&mapped).ok().and_then(|map| map.into_iter().next())
-        {
-            *element = mapped;
-        }
+        *element = sourcemap::parse(&mapped)
+            .ok()
+            .and_then(|map| map.into_iter().next())
+            .expect("source element should round-trip through its textual form");
     }
     source_map
 }
@@ -918,47 +920,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_edited_ranges_to_original() {
-        // "new C()" at 10..17 grows to 30 bytes, and 50..60 is removed.
-        let edits =
-            [SourceEdit { start: 10, end: 17, len: 30 }, SourceEdit { start: 50, end: 60, len: 0 }];
-        for (edited, original) in [
-            // Before the first edit.
-            (0..10, (0, 10)),
-            // The replacement itself, and ranges inside it, map to the replaced range.
-            (10..40, (10, 17)),
-            (15..20, (10, 17)),
-            (39..40, (10, 17)),
-            // A range that straddles one boundary of the replacement.
-            (5..20, (5, 17)),
-            (20..45, (10, 22)),
-            // Containing the replacement.
-            (5..45, (5, 22)),
-            // After the replacement, before and around the removal.
-            (40..43, (17, 20)),
-            (43..90, (20, 77)),
-            (90..95, (77, 82)),
-        ] {
-            assert_eq!(original_range(&edits, edited.clone()), original, "{edited:?}");
-        }
-        assert_eq!(original_range(&[], 7..9), (7, 9));
-    }
-
-    #[test]
-    fn converts_source_map_per_source() {
-        let edits = BTreeMap::from([(1, vec![SourceEdit { start: 10, end: 17, len: 30 }])]);
-        let map =
-            sourcemap::parse("0:5:1:-:0;45:3:1:i:2;12:2:1:o:1;45:3:0:-:0;-1:0:-1:-:0").unwrap();
-        // Elements of unedited sources and without a source are unchanged.
-        assert_eq!(to_original_source_map(map.clone(), None), map);
-        let converted = to_original_source_map(map, Some(&edits));
-        assert_eq!(
-            converted,
-            sourcemap::parse("0:5:1:-:0;22:3:1:i:2;10:7:1:o:1;45:3:0:-:0;-1:0:-1:-:0").unwrap()
-        );
-    }
-
-    #[test]
     fn lcov_version() {
         assert_eq!(parse_lcov_version("0").unwrap(), Version::new(0, 0, 0));
         assert_eq!(parse_lcov_version("1").unwrap(), Version::new(1, 0, 0));
@@ -995,5 +956,64 @@ mod tests {
         let settings = args.resolve(&config);
 
         assert_eq!(settings.lcov_version, Version::new(2, 0, 0));
+    }
+
+    #[test]
+    fn maps_edited_ranges_to_original() {
+        // "new C()" at 10..17 grows to 30 bytes, 50..60 is removed, and 5 bytes are inserted at
+        // 100.
+        let edits = [
+            SourceEdit { start: 10, end: 17, len: 30 },
+            SourceEdit { start: 50, end: 60, len: 0 },
+            SourceEdit { start: 100, end: 100, len: 5 },
+        ];
+        for (edited, original) in [
+            // Before the first edit.
+            (0..10, (0, 10)),
+            // The replacement itself, and ranges inside it, map to the replaced range.
+            (10..40, (10, 17)),
+            (15..20, (10, 17)),
+            (39..40, (10, 17)),
+            // A range that straddles one boundary of the replacement.
+            (5..20, (5, 17)),
+            (20..45, (10, 22)),
+            // Containing the replacement.
+            (5..45, (5, 22)),
+            // After the replacement, before and around the removal.
+            (40..43, (17, 20)),
+            (43..90, (20, 77)),
+            (90..95, (77, 82)),
+            // Around the insertion, which starts at 113 in the edited source.
+            (110..113, (97, 100)),
+            (113..118, (100, 100)),
+            (115..116, (100, 100)),
+            (118..120, (100, 102)),
+            // Empty ranges.
+            (10..10, (10, 10)),
+            (40..40, (17, 17)),
+            (12..12, (10, 17)),
+        ] {
+            assert_eq!(original_range(&edits, edited.clone()), original, "{edited:?}");
+        }
+        assert_eq!(original_range(&[], 7..9), (7, 9));
+    }
+
+    #[test]
+    fn converts_source_map_per_source() {
+        let edits = BTreeMap::from([(1, vec![SourceEdit { start: 10, end: 17, len: 30 }])]);
+        let map = sourcemap::parse(
+            "0:5:1:-:0;45:3:1:i:2;12:2:1:o:1;45:3:0:-:0;-1:0:-1:-:0;40:0:1:-:0;12:0:1:o:0",
+        )
+        .unwrap();
+        // Elements of unedited sources and without a source are unchanged.
+        assert_eq!(to_original_source_map(map.clone(), None), map);
+        let converted = to_original_source_map(map, Some(&edits));
+        assert_eq!(
+            converted,
+            sourcemap::parse(
+                "0:5:1:-:0;22:3:1:i:2;10:7:1:o:1;45:3:0:-:0;-1:0:-1:-:0;17:0:1:-:0;10:7:1:o:0"
+            )
+            .unwrap()
+        );
     }
 }
