@@ -3999,6 +3999,89 @@ end_of_record
     );
 }
 
+// A Yul `if` whose body is only a `continue` or a `leave` is the conditional jump itself, and path
+// 0 still enters the body.
+#[forgetest]
+fn yul_if_jump_body_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    uint256 public stored;
+
+    function skip(uint256 n) external {
+        assembly {
+            for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                if eq(i, 2) { continue }
+                sstore(stored.slot, i)
+            }
+        }
+    }
+
+    function early(uint256 x) external pure returns (uint256 r) {
+        assembly {
+            function f(a) -> y {
+                if lt(a, 5) { leave }
+                y := 3
+            }
+            r := f(x)
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        guard.skip(4);
+        guard.skip(1);
+        guard.early(1);
+        guard.early(9);
+        guard.early(9);
+    }
+}
+"#,
+    );
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Guard.sol
+DA:7,2
+FN:7,Guard.skip
+FNDA:2,Guard.skip
+DA:9,7
+DA:10,5
+BRDA:10,0,0,1
+BRDA:10,0,1,4
+DA:11,4
+DA:16,3
+FN:16,Guard.early
+FNDA:3,Guard.early
+DA:18,3
+FN:18,Guard.f
+FNDA:3,Guard.f
+DA:19,3
+BRDA:19,1,0,1
+BRDA:19,1,1,2
+DA:20,2
+DA:22,3
+FNF:3
+FNH:3
+LF:9
+LH:9
+BRF:4
+BRH:4
+end_of_record
+
+"#]],
+    );
+}
+
 // Test that coverage files are written even when tests fail.
 #[forgetest]
 fn coverage_with_failing_tests(prj: _, cmd: _) {

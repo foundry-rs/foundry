@@ -102,9 +102,9 @@ pub fn find_anchors(
                         // wherever the compiler placed it.
                         let swapped = match kind {
                             Some(BranchKind::Require) => index.taken_fails(&anchors, anchor_loc),
-                            Some(BranchKind::YulIf(body)) => {
-                                index.taken_starts_in(&anchors, body).unwrap_or(false)
-                            }
+                            Some(BranchKind::YulIf(body)) => index
+                                .taken_starts_in(&anchors, body)
+                                .unwrap_or_else(|| index.jump_is_body(&anchors, body)),
                             _ => false,
                         };
                         Ok(select_branch(anchors, path_id, swapped))
@@ -345,6 +345,17 @@ impl<'a> AnchorIndex<'a> {
             (false, true) => Some(true),
             (false, false) => None,
         }
+    }
+
+    /// Returns whether the jump's own target push is mapped inside `loc`, as when a body that is
+    /// only a `break`, `continue`, or `leave` becomes the conditional jump itself.
+    fn jump_is_body(
+        &self,
+        (fallthrough, _): &(ItemAnchor, ItemAnchor),
+        loc: &SourceLocation,
+    ) -> bool {
+        let jump = self.pcs.binary_search(&(fallthrough.instruction - 1)).ok();
+        jump.is_some_and(|jump| self.maps_inside(jump - 1, loc))
     }
 
     /// Returns whether the first instruction at `pc` after any `JUMPDEST`s is mapped inside `loc`.
@@ -759,6 +770,37 @@ mod tests {
             (&body_is_taken[..], "10:20:0;;;50:5:0;-1:-1:-1;50:5:0;", [(5, None), (6, Some(4))]),
         ] {
             assert_eq!(branch_anchors(bytecode, &[(10, kind.clone())], source_map), expected);
+        }
+    }
+
+    #[test]
+    fn yul_if_jump_only_body_is_the_taken_side() {
+        // A body that is only a `continue` becomes the conditional jump itself, so neither side
+        // starts in the body. The `if` spans bytes 10..30 and its body 22..30.
+        let kind = BranchKind::YulIf(SourceLocation {
+            source_id: 0,
+            contract_name: "T".into(),
+            bytes: 22..30,
+            lines: 1..2,
+        });
+        let bytecode = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            7,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        for (source_map, expected) in [
+            // The jump's push is mapped to the `continue`, inside the body.
+            ("12:5:0;25:2:0;12:5:0;50:5:0;;50:5:0;", [(7, Some(4)), (5, None)]),
+            // The push is mapped to the condition, so the positional default stays.
+            ("12:5:0;;;50:5:0;;50:5:0;", [(5, None), (7, Some(4))]),
+        ] {
+            assert_eq!(branch_anchors(&bytecode, &[(10, kind.clone())], source_map), expected);
         }
     }
 
