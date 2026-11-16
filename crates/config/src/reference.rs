@@ -511,6 +511,15 @@ impl Generator {
             if ty == "table" && default.is_some_and(Value::is_array) {
                 ty = "array of table".to_string();
             }
+            // The defaults layer always sets a serialized key, so an alias of one fails to load
+            // as a duplicate field.
+            let mut aliases = if default.is_some() { Vec::new() } else { attrs.aliases };
+            aliases.extend(
+                OTHER_ALIASES
+                    .iter()
+                    .filter(|(_, target)| prefix.is_empty() && *target == key)
+                    .map(|(alias, _)| alias.to_string()),
+            );
             // A table's default is the defaults of its keys.
             let mut default =
                 default.filter(|value| !value.is_null() && children.is_none()).map(toml_value);
@@ -524,18 +533,8 @@ impl Generator {
                     default = Some("{}".to_string());
                 }
             }
-            let env = env_vars(&path, section.is_some(), children.is_some());
-            // The defaults layer always sets a serialized key, so an alias of one fails to load
-            // as a duplicate field.
-            let mut aliases = if default.is_some() { Vec::new() } else { attrs.aliases };
-            aliases.extend(
-                OTHER_ALIASES
-                    .iter()
-                    .filter(|(_, target)| prefix.is_empty() && *target == key)
-                    .map(|(alias, _)| alias.to_string()),
-            );
             self.out.push(Setting {
-                env,
+                env: env_vars(&path, section.is_some(), children.is_some()),
                 key,
                 section,
                 ty,

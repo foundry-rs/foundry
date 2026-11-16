@@ -2529,9 +2529,6 @@
       "type": "string or integer (chain name or ID)",
       "table": false,
       "default": null,
-      "aliases": [
-        "chain"
-      ],
       "env": [
         "FOUNDRY_CHAIN_ID",
         "DAPP_CHAIN_ID",
