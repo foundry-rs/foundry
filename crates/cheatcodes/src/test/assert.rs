@@ -10,7 +10,14 @@ use foundry_evm_core::{
     evm::{FoundryEvmNetwork, InterpreterFor, MessageResultFor},
 };
 use itertools::Itertools;
-use std::{borrow::Cow, fmt};
+use std::{
+    borrow::Cow,
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = uint!(18_U256);
 
@@ -654,9 +661,15 @@ pub struct FailureTrace {
     events: Vec<FailureEvent>,
     /// See [`Self::halt`].
     halt: Option<(usize, U256)>,
-    /// Whether a snapshot was restored or a cheatcode with effects outside the EVM was skipped,
-    /// which can make a different path look like this one.
+    /// Whether a snapshot was restored, which can make a different path look like this one.
     pub(crate) unidentified: bool,
+    /// Whether a cheatcode with effects outside the EVM was skipped since recording started. Later
+    /// calls can read the state it would have changed, so it leaves them unidentified too. Shared
+    /// with the copies of the inspector that calls such as invariant checks run on and discard.
+    pub(crate) skipped_host_effects: Arc<AtomicBool>,
+    /// Whether recording is paused: calls still skip cheatcodes with effects outside the EVM, but
+    /// do not step every instruction and have no identity.
+    pub paused: bool,
 }
 
 /// Call site tracking of one executing frame.
@@ -856,19 +869,36 @@ impl FailureTrace {
     /// it failed, and the end of the memory that instruction accessed, or zero. `None` when the
     /// identity is unknown, as a skipped cheatcode can change the path.
     pub fn halt(&self) -> Option<(usize, U256)> {
-        self.halt.filter(|_| !self.unidentified)
+        self.halt.filter(|_| {
+            !self.paused && !self.unidentified && !self.skipped_host_effects.load(Ordering::Relaxed)
+        })
+    }
+
+    /// Returns whether a cheatcode with effects outside the EVM was skipped, and clears it for the
+    /// copies that share it.
+    pub fn take_skipped_host_effects(&self) -> bool {
+        self.skipped_host_effects.swap(false, Ordering::Relaxed)
     }
 
     /// Returns the value-independent identity of the finished call that stopped with `exit` and
     /// returned `output`, and starts recording the next call.
     ///
     /// The identity is unknown when a snapshot restore discarded part of the history, when a
-    /// cheatcode with effects outside the EVM was skipped, when the call succeeded without a failed
-    /// assertion or `fail()`, such as after a legacy DSTest failure that only wrote its own flag,
-    /// or when several failed assertions could have produced the revert data.
+    /// cheatcode with effects outside the EVM was skipped in this or an earlier call, when the call
+    /// succeeded without a failed assertion or `fail()`, such as after a legacy DSTest failure that
+    /// only wrote its own flag, or when several failed assertions could have produced the revert
+    /// data.
     pub fn take_identity(&mut self, exit: InstrStop, output: &[u8]) -> Option<B256> {
-        let Self { events, unidentified, .. } = std::mem::take(self);
-        if unidentified {
+        let skipped_host_effects = self.skipped_host_effects.clone();
+        let Self { events, unidentified, paused, .. } = std::mem::replace(
+            self,
+            Self {
+                skipped_host_effects: skipped_host_effects.clone(),
+                paused: self.paused,
+                ..Default::default()
+            },
+        );
+        if paused || unidentified || skipped_host_effects.load(Ordering::Relaxed) {
             return None;
         }
         let mut preimage = vec![exit as u8];
@@ -1051,8 +1081,6 @@ impl FailureProvenance {
     }
 }
 
-/// Returns whether `value` is the pc of a `JUMPDEST` right after a `JUMP` in `code`, as the
-/// return label of an internal function call is.
 /// Returns the end of the memory that `opcode` accesses with `stack`, whose top is last, or zero
 /// when it accesses none.
 fn memory_end(opcode: u8, stack: &[U256]) -> U256 {
@@ -1079,8 +1107,35 @@ fn memory_end(opcode: u8, stack: &[U256]) -> U256 {
         .unwrap_or_default()
 }
 
+/// Returns whether `value` is the pc of a `JUMPDEST` right after a `JUMP` in `code`, as the
+/// return label of an internal function call is.
 fn is_return_label(code: &[u8], value: &U256) -> bool {
     usize::try_from(*value).is_ok_and(|label| {
         label > 0 && code.get(label) == Some(&op::JUMPDEST) && code[label - 1] == op::JUMP
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_halt_requires_identified_trace() {
+        let halt = Some((42, U256::from(1024)));
+        let mut trace = FailureTrace { halt, ..Default::default() };
+        assert_eq!(trace.halt(), halt);
+
+        trace.paused = true;
+        assert_eq!(trace.halt(), None);
+        trace.paused = false;
+        trace.unidentified = true;
+        assert_eq!(trace.halt(), None);
+        trace.unidentified = false;
+
+        let copy = trace.clone();
+        copy.skipped_host_effects.store(true, Ordering::Relaxed);
+        assert_eq!(trace.halt(), None);
+        assert!(copy.take_skipped_host_effects());
+        assert_eq!(trace.halt(), halt);
+    }
 }

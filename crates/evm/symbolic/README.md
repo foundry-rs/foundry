@@ -366,10 +366,18 @@ a constant is zero becomes a comparison of the quotient itself, where
 to SMT as 512-bit bit-vector arithmetic. Local order rules prove that the
 quotient is monotone in its factors when the larger quotient fits a word, that
 `floor(a * b / d) * d <= a * b`, and that full products ordered this way order
-their high words, and their low words when the high words are equal. Models are
-still validated against the original bytecode terms and counterexamples are
-still replayed. Other properties of these terms go to the solver and can time
-out.
+their high words, and their low words when the high words are equal or the
+products are equal. They also use the Euclidean relation
+`a * b == q * d + mulmod(a, b, d)` with `mulmod(a, b, d) < d`. When the path
+asserts a zero remainder, a quotient `q` that fits a word is also the ceiling;
+when it asserts a nonzero one, `q + 1` is at most the ceiling. A `q + 1` that
+fits and does not wrap is at least the ceiling, so `a * b <= (q + 1) * d` for
+`d != 0`. This makes the rounding-up variants monotone and bounds
+`ceil(a * b / d) * d` below by `a * b`. A path where `q + 1` wraps is
+infeasible when a product at least as large, with the same divisor, has a zero
+remainder and a quotient that fits a word. Models are still validated against
+the original bytecode terms and counterexamples are still replayed. Other
+properties of these terms go to the solver and can time out.
 
 ## Writing Symbolic Tests
 

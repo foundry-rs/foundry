@@ -1256,7 +1256,12 @@ impl ConstraintContext {
                         (Some(bound), _) => (!bound.is_zero()).then(|| (right, bound - U256::ONE)),
                         _ => None,
                     },
-                    SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
+                    // `x != MAX => x <= MAX - 1`; normalized equalities put the constant on the
+                    // RHS.
+                    SymCmpOp::Eq => {
+                        (right.as_const() == Some(U256::MAX)).then(|| (left, U256::MAX - U256::ONE))
+                    }
+                    SymCmpOp::Slt | SymCmpOp::Sgt => None,
                 },
                 _ => None,
             },
