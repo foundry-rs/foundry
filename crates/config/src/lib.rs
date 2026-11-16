@@ -9946,6 +9946,7 @@ mod tests {
                 report = ["summary", "lcov"]
                 lcov_version = "2.2.0"
                 ir_minimum = true
+                keep_optimizer = true
                 report_file = "out/lcov.info"
                 include_libs = true
                 exclude_tests = true
@@ -9959,6 +9960,7 @@ mod tests {
             );
             assert_eq!(config.coverage.lcov_version, semver::Version::new(2, 2, 0));
             assert!(config.coverage.ir_minimum);
+            assert!(config.coverage.keep_optimizer);
             assert_eq!(
                 config.coverage.report_file.as_deref(),
                 Some(std::path::Path::new("out/lcov.info"))
