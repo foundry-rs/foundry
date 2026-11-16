@@ -61,6 +61,7 @@ alloy-rlp.workspace = true
 comfy-table.workspace = true
 dunce.workspace = true
 eyre.workspace = true
+h2.workspace = true
 itertools.workspace = true
 jiff.workspace = true
 num-format.workspace = true

@@ -6288,6 +6288,7 @@ dependencies = [
  "foundry-config",
  "foundry-evm-hardforks",
  "foundry-wallets",
+ "h2",
  "itertools 0.15.0",
  "jiff",
  "k256 0.13.4",
