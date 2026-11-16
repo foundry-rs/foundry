@@ -438,7 +438,7 @@ async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
         } else {
             command.arg(&directory);
         }
-        command.assert_failure().stdout_eq("").stderr_eq(expected_error);
+        command.assert_failure().stdout_eq("").stderr_eq(expected_error.raw());
         assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
         assert_eq!(fs::read(&external_source).unwrap().as_slice(), external_contents.as_slice());
         server.abort();
@@ -491,7 +491,7 @@ async fn source_directory_rejects_empty_source_paths(prj: _, cmd: _) {
         .arg(&directory)
         .assert_failure()
         .stdout_eq("")
-        .stderr_eq(expected_error.clone());
+        .stderr_eq(expected_error.clone().raw());
     assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
     cmd.cast_fuse()
         .args(args)
@@ -500,7 +500,7 @@ async fn source_directory_rejects_empty_source_paths(prj: _, cmd: _) {
         .arg(&sentinel)
         .assert_failure()
         .stdout_eq("")
-        .stderr_eq(expected_error);
+        .stderr_eq(expected_error.raw());
     assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
     server.abort();
 }
@@ -578,7 +578,7 @@ async fn source_directory_rejects_windows_path_aliases(prj: _, cmd: _) {
             .arg(&directory)
             .assert_failure()
             .stdout_eq("")
-            .stderr_eq(expected_error);
+            .stderr_eq(expected_error.raw());
         assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
         assert_eq!(fs::read_to_string(&git_config).unwrap(), sentinel_contents);
         server.abort();
