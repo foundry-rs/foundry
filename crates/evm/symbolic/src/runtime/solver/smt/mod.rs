@@ -284,6 +284,14 @@ impl SmtCseWriter<'_> {
                     self.write_narrow_division(out, *op, left, right, *width);
                     return;
                 }
+                if *op == SymBinOp::MulHigh {
+                    out.push_str("((_ extract 511 256) (bvmul ((_ zero_extend 256) ");
+                    self.write_expr(out, left, None, None);
+                    out.push_str(") ((_ zero_extend 256) ");
+                    self.write_expr(out, right, None, None);
+                    out.push_str(")))");
+                    return;
+                }
                 let _ = write!(out, "({} ", op.smt());
                 self.write_expr(out, left, skip_expr, skip_bool);
                 out.push(' ');
@@ -341,7 +349,7 @@ impl SmtCseWriter<'_> {
     fn write_wide_modular_arithmetic(
         &self,
         out: &mut String,
-        op: &'static str,
+        (op, reduce): (&'static str, &'static str),
         left: &SymExpr,
         right: &SymExpr,
         modulus: &SymExpr,
@@ -349,10 +357,12 @@ impl SmtCseWriter<'_> {
         // if modulus == 0:
         //   0
         // else:
-        //   low_256((zext(left) op zext(right)) urem zext(modulus))
+        //   low_256((zext(left) op zext(right)) reduce zext(modulus))
         out.push_str("(ite (= ");
         self.write_expr(out, modulus, None, None);
-        out.push_str(" (_ bv0 256)) (_ bv0 256) ((_ extract 255 0) (bvurem (");
+        out.push_str(" (_ bv0 256)) (_ bv0 256) ((_ extract 255 0) (");
+        out.push_str(reduce);
+        out.push_str(" (");
         out.push_str(op);
         out.push_str(" ((_ zero_extend 256) ");
         self.write_expr(out, left, None, None);
