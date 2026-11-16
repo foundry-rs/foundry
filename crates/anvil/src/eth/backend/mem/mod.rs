@@ -7791,7 +7791,6 @@ where
             // read through the database, keeping uncached values consistent with their proof.
             if self.get_fork().is_some()
                 && let Some(info) = block_db.basic_ref(address)?
-                && (db.contains_key(&address) || !info.is_empty())
             {
                 let mut accounts = db.clone();
                 let account = accounts.entry(address).or_default();
