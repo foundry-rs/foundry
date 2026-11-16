@@ -21,7 +21,7 @@ use crate::{
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, StateMutability};
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, I256, Selector, U256,
+    Address, B256, Bytes, FixedBytes, I256, Selector, U256,
     map::{AddressSet, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
@@ -87,10 +87,10 @@ pub use result::{InvariantFuzzTestResult, did_fail_on_assert};
 
 mod shrink;
 pub use shrink::{
-    CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome, HandlerReplayOutcome,
-    SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats, check_sequence,
-    check_sequence_value, deadline_passed, replay_handler_failure_sequence,
-    shrink_sequence_by_removing,
+    CandidateReplay, CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
+    HandlerReplayOutcome, SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats,
+    check_sequence, check_sequence_value, deadline_passed, replay_handler_failure_sequence,
+    reset_shrink_progress, shrink_sequence_by_removing,
 };
 
 mod snapshot;
@@ -602,9 +602,9 @@ impl InvariantTest {
         self.targeted_contracts.clear_created_contracts(run.created_contracts);
 
         if self.test_data.gas_report_traces.len() < gas_samples {
-            self.test_data
-                .gas_report_traces
-                .push(run.run_traces.into_iter().map(|arena| arena.arena).collect());
+            self.test_data.gas_report_traces.push(
+                run.run_traces.into_iter().map(SparsedTraceArena::into_gas_report_arena).collect(),
+            );
         }
         self.test_data.runs += 1;
         self.test_data.calls += run.fuzz_runs.len();
@@ -1216,6 +1216,30 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             );
                             assertion_failure = !discarded
                                 && did_fail_on_assert(call_result, &call_result.state_changeset);
+                            // A revert that fails an invariant is committed before the failure is
+                            // recorded, so its provenance is recorded now. The block delay was
+                            // already applied.
+                            if call_result.reverted
+                                && !discarded
+                                && !assertion_failure
+                                && invariant_contract.invariant_fns.iter().any(
+                                    |(invariant, fail_on_revert)| {
+                                        *fail_on_revert
+                                            && !invariant_test
+                                                .test_data
+                                                .failures
+                                                .has_failure(invariant)
+                                    },
+                                )
+                            {
+                                let tx =
+                                    BasicTxDetails { warp: None, roll: None, ..current_tx.clone() };
+                                call_result.failure_provenance = failure_provenance(
+                                    &current_run.executor,
+                                    &config,
+                                    |executor| execute_tx(executor, &tx).ok(),
+                                );
+                            }
                             pre_merge_edges_hash = assertion_failure
                                 .then(|| error::snapshot_edge_fingerprint(call_result))
                                 .flatten();
@@ -2382,6 +2406,29 @@ pub(crate) fn call_invariant_function<FEN: FoundryEvmNetwork>(
         executor.call_raw_without_fuzz_instrumentation(CALLER, address, calldata, U256::ZERO)?;
     let success = executor.is_raw_call_mut_success_handler_gate(address, &mut call_result);
     Ok((call_result, success))
+}
+
+/// Runs a failing campaign call again with `call` on a copy of `executor` that records its failure
+/// identity and provenance. The campaign does not record them for every call, since that steps
+/// their instructions.
+///
+/// Returns the provenance of the identified failure, for minimization to check that a replay
+/// reached it. `None` without a shrink budget or when the failure is not identified, which
+/// minimization handles alike.
+pub(crate) fn failure_provenance<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    config: &InvariantConfig,
+    call: impl FnOnce(&mut Executor<FEN>) -> Option<RawCallResult<FEN>>,
+) -> Option<B256> {
+    if config.shrink_run_limit == 0 {
+        return None;
+    }
+    let mut executor = executor.clone();
+    executor.inspector_mut().disable_fuzz_instrumentation();
+    executor.inspector_mut().collect_failure_identity(true);
+    executor.inspector_mut().collect_failure_provenance(true);
+    let result = call(&mut executor).filter(|result| !result.execution_cancelled)?;
+    result.failure_identity.and(result.failure_provenance)
 }
 
 /// Executes an invariant replay fuzz call and returns the result.

@@ -66,7 +66,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
     ops::Range,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, atomic::Ordering},
 };
 
 mod env_overrides;
@@ -1902,11 +1902,20 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         })
     }
 
-    /// Returns the opcodes for which [`Self::step_hook`] and [`Self::step_end_hook`] must run.
+    /// Returns the opcodes the cheatcodes step: those of [`Self::hook_steps`], and `JUMPI` while
+    /// failure provenance is collected.
     ///
     /// This is the only place that decides which instructions the cheatcodes step: the inspector
     /// asks the EVM for these opcodes, and skips the hooks for every other instruction.
     pub fn steps(&self) -> OpcodeSet {
+        let steps = self.hook_steps();
+        // Failure provenance records every branch, through [`Self::record_branch`].
+        if self.failure_provenance.is_some() { steps.union(opcodes([op::JUMPI])) } else { steps }
+    }
+
+    /// Returns the opcodes at which [`Self::step_hook`] and [`Self::step_end_hook`] must run. The
+    /// other opcodes of [`Self::steps`] only need [`Self::record_branch`].
+    pub fn hook_steps(&self) -> OpcodeSet {
         if self.is_storage_hook_active()
             || self.has_storage_hooks()
             || self.broadcast.is_some()
@@ -1915,7 +1924,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.gas_metering.recording
             || self.core.arbitrary_storage.is_some()
             || self.deploy_code_depth.is_some()
-            || self.failure_trace.is_some()
+            || self.failure_trace.as_ref().is_some_and(|trace| !trace.paused)
         {
             return OpcodeSet::ALL;
         }
@@ -1950,9 +1959,18 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
         }
         if self.failure_provenance.is_some() {
-            steps = steps.union(opcodes([op::JUMPI, op::REVERT, op::INVALID]));
+            steps = steps.union(opcodes([op::REVERT, op::INVALID]));
         }
         steps
+    }
+
+    /// Records the `JUMPI` about to execute for the failure provenance, as [`Self::step_hook`]
+    /// does. Fuzz campaigns step every `JUMPI` only for this, so it skips the other hooks.
+    #[inline]
+    pub fn record_branch(&mut self, interp: &InterpreterFor<'_, '_, FEN>) {
+        if let Some(provenance) = &mut self.failure_provenance {
+            provenance.record_jumpi(usize::from(interp.message().depth) + 1, interp.pc());
+        }
     }
 
     #[inline(always)]
@@ -3950,8 +3968,8 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
         && has_host_effects(calls)
     {
         // A replay must not repeat these effects and cannot reproduce these reads, so it skips
-        // them and leaves the failure unidentified.
-        trace.unidentified = true;
+        // them and leaves this and later failures unidentified.
+        trace.skipped_host_effects.store(true, Ordering::Relaxed);
         Ok(Default::default())
     } else if ccx.state.failure_trace.is_some() && matches!(calls, Vm::VmCalls::sleep(_)) {
         // A replay does not wait, which only `unixTime` could observe.

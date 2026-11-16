@@ -107,19 +107,16 @@ pub fn remappings_from_env_var(env_var: &str) -> Option<Result<Vec<Remapping>, R
 ///
 /// The values should be separated by commas, surrounding brackets are also supported `[a,b,c]`
 pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
-    let value: Value = match Value::from(val) {
-        Value::String(_, val) => val
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect::<Vec<_>>()
-            .into(),
-        Value::Empty(_, _) => Vec::<Value>::new().into(),
-        val @ Value::Array(_, _) => val,
-        _ => return Err(format!("Invalid value `{val}`, expected an array").into()),
-    };
-    Ok(value)
+    Ok(val
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect::<Vec<_>>()
+        .into())
 }
 
 /// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file

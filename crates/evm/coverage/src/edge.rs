@@ -1,6 +1,6 @@
 use alloy_primitives::{
     Address, U256,
-    map::{Entry, HashMap},
+    map::{AddressHashMap, Entry, HashMap},
 };
 use core::{
     fmt,
@@ -98,6 +98,51 @@ impl EdgeKey {
     }
 }
 
+/// An [`EdgeKey`] in 64 bits: the index of its address among those of the execution, its depth,
+/// its pc and its jump destination.
+///
+/// The map that counts hits is probed once per executed `JUMP` and `JUMPI`, and most hits of a
+/// call insert a new edge, so its entries are 16 bytes instead of the 88 of an [`EdgeKey`] entry.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct PackedEdge(u64);
+
+impl PackedEdge {
+    const ADDRESS_BITS: u32 = 12;
+    const DEPTH_BITS: u32 = 12;
+    const PC_BITS: u32 = 20;
+
+    /// Packs an edge, if every part fits its bits. Code is far smaller than the pc range, so only
+    /// an invalid jump destination or an unusual number of addresses does not fit.
+    #[inline]
+    const fn new(address: usize, depth: usize, pc: usize, jump_dest: U256) -> Option<Self> {
+        let [dest, 0, 0, 0] = jump_dest.into_limbs() else { return None };
+        if address >> Self::ADDRESS_BITS != 0
+            || depth >> Self::DEPTH_BITS != 0
+            || pc >> Self::PC_BITS != 0
+            || dest >> Self::PC_BITS != 0
+        {
+            return None;
+        }
+        let high = (address << Self::DEPTH_BITS | depth) as u64;
+        Some(Self((high << Self::PC_BITS | pc as u64) << Self::PC_BITS | dest))
+    }
+
+    /// Returns the edge this was packed from, given the addresses of the execution.
+    fn key(self, addresses: &[Address], include_depth: bool) -> EdgeKey {
+        let mask = |bits: u32| (1 << bits) - 1;
+        let dest = self.0 & mask(Self::PC_BITS);
+        let pc = (self.0 >> Self::PC_BITS) & mask(Self::PC_BITS);
+        let depth = (self.0 >> (2 * Self::PC_BITS)) & mask(Self::DEPTH_BITS);
+        let address = self.0 >> (2 * Self::PC_BITS + Self::DEPTH_BITS);
+        EdgeKey {
+            address: addresses[address as usize],
+            depth: include_depth.then_some(depth as usize),
+            pc: pc as usize,
+            jump_dest: U256::from(dest),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct EdgeIndexMap {
     edge_indices: HashMap<EdgeKey, usize>,
@@ -161,8 +206,18 @@ pub struct EdgeCovInspector {
     /// Whether to collect edge hits. Comparison-only consumers keep this off to avoid affecting
     /// the active coverage guidance source.
     collect_edges: bool,
-    /// Per-execution dense edge hitcounts. Stable IDs are assigned by the corpus history owner.
-    dense_hitcount: HashMap<EdgeKey, u8>,
+    /// Per-execution dense edge hitcounts, by [`PackedEdge`]. Stable IDs are assigned by the
+    /// corpus history owner.
+    dense_hitcount: HashMap<PackedEdge, u8>,
+    /// Per-execution hitcounts of the edges that do not fit a [`PackedEdge`].
+    wide_hitcount: HashMap<EdgeKey, u8>,
+    /// Addresses of the frames that hit an edge in this execution. A [`PackedEdge`] holds the
+    /// index of its address.
+    addresses: Vec<Address>,
+    /// Index in `addresses` of each address, for the hits that do not come from the latest one.
+    address_indices: AddressHashMap<usize>,
+    /// Index in `addresses` of the address of the latest hit.
+    last_address: usize,
     /// Comparison operand log for CmpLog-style guided fuzzing.
     cmp_log: Option<Vec<CmpOperands>>,
     cmp_site_counts: HashMap<CmpSiteKey, u8>,
@@ -216,6 +271,10 @@ impl EdgeCovInspector {
             config,
             collect_edges: true,
             dense_hitcount: HashMap::default(),
+            wide_hitcount: HashMap::default(),
+            addresses: Vec::new(),
+            address_indices: AddressHashMap::default(),
+            last_address: 0,
             cmp_log: None,
             cmp_site_counts: HashMap::default(),
             last_sub: None,
@@ -236,7 +295,13 @@ impl EdgeCovInspector {
     /// Reset the hitcount to zero and clear the comparison log.
     pub fn reset(&mut self) {
         match self.config.kind {
-            EdgeCovKind::CollisionFree => self.dense_hitcount.clear(),
+            EdgeCovKind::CollisionFree => {
+                self.dense_hitcount.clear();
+                self.wide_hitcount.clear();
+                self.addresses.clear();
+                self.address_indices.clear();
+                self.last_address = 0;
+            }
             EdgeCovKind::Hash => self.hitcount.fill(0),
         }
         if let Some(cmp_log) = &mut self.cmp_log {
@@ -262,7 +327,7 @@ impl EdgeCovInspector {
 
     /// Number of unique collision-free edges discovered so far.
     pub fn edge_count(&self) -> usize {
-        self.dense_hitcount.len()
+        self.dense_hitcount.len() + self.wide_hitcount.len()
     }
 
     /// Mark the edge `(address, depth, pc, jump_dest)` as hit.
@@ -282,9 +347,49 @@ impl EdgeCovInspector {
     }
 
     fn store_dense_hit(&mut self, address: Address, depth: usize, pc: usize, jump_dest: U256) {
-        let key = EdgeKey::new(address, depth, pc, jump_dest, self.config.include_call_depth);
-        let count = self.dense_hitcount.entry(key).or_default();
+        let include_depth = self.config.include_call_depth;
+        let index = self.address_index(address);
+        let packed_depth = if include_depth { depth } else { 0 };
+        let count = match PackedEdge::new(index, packed_depth, pc, jump_dest) {
+            Some(edge) => self.dense_hitcount.entry(edge).or_default(),
+            None => {
+                let key = EdgeKey::new(address, depth, pc, jump_dest, include_depth);
+                self.wide_hitcount.entry(key).or_default()
+            }
+        };
         *count = count.wrapping_add(1).max(1);
+    }
+
+    /// Returns the index of `address` in the addresses of this execution, adding it if needed.
+    ///
+    /// Consecutive hits mostly come from the same frame, so this compares the latest address
+    /// first and looks the others up by hash, which stays constant per hit when an execution
+    /// visits many contracts.
+    #[inline]
+    fn address_index(&mut self, address: Address) -> usize {
+        if self.addresses.get(self.last_address) != Some(&address) {
+            self.last_address = self.other_address_index(address);
+        }
+        self.last_address
+    }
+
+    /// Returns the index of an address that is not the latest one, adding it if needed.
+    fn other_address_index(&mut self, address: Address) -> usize {
+        let next = self.addresses.len();
+        *self.address_indices.entry(address).or_insert_with(|| {
+            self.addresses.push(address);
+            next
+        })
+    }
+
+    /// Returns the hits of this execution, in no particular order.
+    fn hits(&self) -> impl Iterator<Item = EdgeCovHit> + '_ {
+        let include_depth = self.config.include_call_depth;
+        let dense = self.dense_hitcount.iter().map(move |(edge, &count)| EdgeCovHit {
+            edge: edge.key(&self.addresses, include_depth),
+            count,
+        });
+        dense.chain(self.wide_hitcount.iter().map(|(&edge, &count)| EdgeCovHit { edge, count }))
     }
 
     fn hash_edge_id(
@@ -308,11 +413,7 @@ impl EdgeCovInspector {
 
     #[cfg(test)]
     fn dense_hits(&self) -> Vec<EdgeCovHit> {
-        let mut hits = self
-            .dense_hitcount
-            .iter()
-            .map(|(&edge, &count)| EdgeCovHit { edge, count })
-            .collect::<Vec<_>>();
+        let mut hits = self.hits().collect::<Vec<_>>();
         hits.sort_by_key(|hit| hit.edge);
         hits
     }
@@ -433,19 +534,13 @@ impl Default for EdgeCovInspector {
 
 impl From<EdgeCovInspector> for EdgeCoverage {
     fn from(inspector: EdgeCovInspector) -> Self {
-        let EdgeCovInspector { hitcount, config, dense_hitcount, .. } = inspector;
-        match config.kind {
+        match inspector.config.kind {
             // Hits are deliberately not sorted here — this is the per-call drain
             // path and `merge_edge_coverage` doesn't care about order. Consumers
             // that need a deterministic order (e.g. `snapshot_edge_fingerprint`)
             // sort locally.
-            EdgeCovKind::CollisionFree => Self::CollisionFree(
-                dense_hitcount
-                    .into_iter()
-                    .map(|(edge, count)| EdgeCovHit { edge, count })
-                    .collect(),
-            ),
-            EdgeCovKind::Hash => Self::Hash(hitcount),
+            EdgeCovKind::CollisionFree => Self::CollisionFree(inspector.hits().collect()),
+            EdgeCovKind::Hash => Self::Hash(inspector.hitcount),
         }
     }
 }
@@ -681,6 +776,61 @@ mod tests {
         with_depth.store_hit(addr, 1, 0, U256::ONE);
         assert_eq!(with_depth.edge_count(), 2);
         assert_eq!(dense_counts(&with_depth), [1, 1]);
+    }
+
+    #[test]
+    fn edges_keep_their_addresses_across_many_contracts() {
+        // More contracts than a packed edge can index, visited in turn twice, as a multicall does.
+        let addresses =
+            (0..5000u32).map(|i| Address::left_padding_from(&i.to_be_bytes())).collect::<Vec<_>>();
+        let config = EdgeCovConfig::new(EdgeCovKind::CollisionFree, false);
+        let mut inspector = EdgeCovInspector::with_config(config);
+        for _ in 0..2 {
+            for &address in &addresses {
+                inspector.store_hit(address, 1, 7, U256::from(42));
+            }
+        }
+
+        let expected = addresses
+            .iter()
+            .map(|&address| EdgeCovHit {
+                edge: EdgeKey::new(address, 1, 7, U256::from(42), false),
+                count: 2,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(inspector.dense_hits(), expected);
+        assert_eq!(inspector.addresses.len(), addresses.len());
+    }
+
+    #[test]
+    fn edges_report_their_keys_whether_packed_or_not() {
+        let first = Address::repeat_byte(0x11);
+        let second = Address::repeat_byte(0x22);
+        // The last three do not fit a packed edge: their jump destination, pc and depth are out
+        // of its range.
+        let edges = [
+            (first, 1, 7, U256::from(42)),
+            (second, 2, 7, U256::from(42)),
+            (first, 3, (1 << 20) - 1, U256::from((1 << 20) - 1)),
+            (second, 1, 7, U256::MAX),
+            (first, 1, 1 << 20, U256::ONE),
+            (second, 1 << 12, 7, U256::ONE),
+        ];
+        for include_depth in [false, true] {
+            let config = EdgeCovConfig::new(EdgeCovKind::CollisionFree, include_depth);
+            let mut inspector = EdgeCovInspector::with_config(config);
+            let mut expected = Vec::new();
+            for (address, depth, pc, jump_dest) in edges {
+                inspector.store_hit(address, depth, pc, jump_dest);
+                inspector.store_hit(address, depth, pc, jump_dest);
+                let edge = EdgeKey::new(address, depth, pc, jump_dest, include_depth);
+                expected.push(EdgeCovHit { edge, count: 2 });
+            }
+            expected.sort_by_key(|hit| hit.edge);
+            // The depth only takes part in the key when it is part of the edge identity.
+            assert_eq!(inspector.wide_hitcount.len(), if include_depth { 3 } else { 2 });
+            assert_eq!(inspector.dense_hits(), expected);
+        }
     }
 
     #[test]
