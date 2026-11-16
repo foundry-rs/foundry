@@ -87,6 +87,7 @@ mod build;
 mod execute;
 mod library_deployments;
 mod multi_sequence;
+mod owner_approvals;
 mod progress;
 mod providers;
 mod receipts;
@@ -233,6 +234,22 @@ pub struct ScriptArgs {
         conflicts_with = "resume_tx_hash"
     )]
     pub resume_retry: bool,
+
+    /// An owner's approval of a Tempo configurable account transaction that awaits its owners.
+    ///
+    /// When the local owner keys of a configurable account sender do not reach its threshold,
+    /// `--broadcast` saves its transactions unsigned and prints the digest of each. Owners sign
+    /// the digests with `cast wallet sign --no-hash <DIGEST>` or with a passkey, and `--resume`
+    /// sends the transactions once their approvals reach the threshold. Repeat for each approval,
+    /// in any order. Takes a hex signature, a JSON signature, or a browser WebAuthn assertion, as
+    /// `cast wallet assemble` does; a value naming a file is read from it.
+    #[arg(
+        long = "tempo.owner-signature",
+        value_name = "SIGNATURE",
+        requires = "resume",
+        conflicts_with = "batch"
+    )]
+    pub tempo_owner_signatures: Vec<String>,
 
     /// Archives an unfinished previous broadcast of this script and broadcasts it anew.
     ///
@@ -542,6 +559,10 @@ impl ScriptArgs {
                     } else {
                         bundled.broadcast().await?
                     };
+                    // Transactions saved for their owners are deployed and verified on resume.
+                    if owner_approvals::awaits_approvals(&broadcasted.sequence) {
+                        return Ok(());
+                    }
                     broadcasted.print_deployed_contracts()?;
                     if broadcasted.args.verify {
                         broadcasted.verify().await?;

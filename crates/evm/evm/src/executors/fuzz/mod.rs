@@ -600,7 +600,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             result.gas_by_case.push((call.gas_used, call.stipend));
             result.line_coverage = call.line_coverage;
             result.logs = call.logs;
-            result.gas_report_traces.extend(call.traces.into_iter().map(|trace| trace.arena));
+            result
+                .gas_report_traces
+                .extend(call.traces.into_iter().map(SparsedTraceArena::into_gas_report_arena));
         } else {
             let reason = call
                 .skip_reason()
@@ -867,7 +869,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             if self.config.show_logs {
                 result.logs.append(&mut worker.logs);
             }
-            result.gas_report_traces.extend(worker.traces.into_iter().map(|t| t.arena));
+            result
+                .gas_report_traces
+                .extend(worker.traces.into_iter().map(SparsedTraceArena::into_gas_report_arena));
             HitMaps::merge_opt(&mut result.line_coverage, worker.coverage);
             result.deprecated_cheatcodes.extend(worker.deprecated_cheatcodes);
         }
@@ -1205,6 +1209,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         break 'stop;
                     }
                     TestCaseError::Reject(_) => {
+                        // The persisted replay is not part of the campaign, so its reject does
+                        // not count against `max_test_rejects`.
+                        if is_persisted_replay {
+                            continue 'stop;
+                        }
                         let max = self.config.max_test_rejects;
 
                         let total = shared_state.increment_rejects();

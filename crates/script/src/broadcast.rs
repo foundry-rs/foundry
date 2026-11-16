@@ -3,6 +3,7 @@ use std::{cmp::Ordering, num::NonZeroU64, sync::Arc, time::Duration};
 use crate::{
     ScriptArgs, ScriptConfig,
     build::LinkedBuildData,
+    owner_approvals::{self, OfflineOwners},
     progress::ScriptProgress,
     receipts::is_mined_receipt_for,
     recovery::{AttemptKind, DelegatedStatus},
@@ -74,13 +75,6 @@ use tempo_alloy::{
 };
 use tempo_primitives::transaction::{Call, TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};
 
-/// How `forge script` tells the owners of a configurable account sender that are not local how to
-/// sign.
-const SCRIPT_OWNERS_HINT: &str = "forge script needs enough owner keys locally to sign as a \
-     configurable account: pass them with --private-keys, --account, --tempo.owner or other wallet \
-     options, or keep them in the Tempo Accounts store. Signing with owners on separate machines \
-     is not supported yet.";
-
 /// Represents how to send a single transaction.
 #[derive(Clone)]
 pub enum SendTransactionKind<'a, N: Network> {
@@ -90,6 +84,8 @@ pub enum SendTransactionKind<'a, N: Network> {
     Signed(N::TxEnvelope),
     AccessKey(N::TransactionRequest, Box<TempoAccountsWallet>),
     ConfigurableAccount(N::TransactionRequest, &'a ConfigurableAccountSigner),
+    /// A configurable account transaction that is saved for its owners to approve, not sent.
+    OfflineOwners(N::TransactionRequest, &'a OfflineOwners),
     PreparedRaw(Bytes, TxHash),
 }
 
@@ -125,6 +121,7 @@ where
                 (tx, None)
             }
             Self::Signed(_) | Self::PreparedRaw(..) => return Ok(()),
+            Self::OfflineOwners(..) => bail!("a transaction awaiting owner approvals is not sent"),
         };
 
         reject_access_key_create::<N>(tx, tempo_wallet.is_some())?;
@@ -239,6 +236,7 @@ where
             Self::PreparedRaw(payload, hash) => PreparedTransaction::Raw(payload, hash),
             Self::Unlocked(request) => PreparedTransaction::Unlocked(request),
             Self::Browser(request, signer) => PreparedTransaction::Browser(request, signer),
+            Self::OfflineOwners(..) => unreachable!("rejected by `prepare`"),
         })
     }
 
@@ -256,7 +254,8 @@ where
             | Self::Unlocked(tx)
             | Self::Browser(tx, _)
             | Self::AccessKey(tx, _)
-            | Self::ConfigurableAccount(tx, _) => tx.nonce_key(),
+            | Self::ConfigurableAccount(tx, _)
+            | Self::OfflineOwners(tx, _) => tx.nonce_key(),
             Self::Signed(tx) => {
                 <N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).nonce_key()
             }
@@ -484,11 +483,14 @@ where
             remaining_operation_indices(sequence, sequence_index).into_iter().filter_map(
                 move |index| {
                     let tx = deployment.transactions[index].tx();
-                    (tx.is_unsigned() && sequence.signed_payload(sequence_index, index).is_none())
-                        .then(|| SignerScope {
-                            chain: deployment.chain,
-                            sender: tx.from().expect("missing from"),
-                        })
+                    // A transaction saved for its owners is signed by their approvals.
+                    (tx.is_unsigned()
+                        && sequence.signed_payload(sequence_index, index).is_none()
+                        && !deployment.awaiting_owners.iter().any(|entry| entry.index == index))
+                    .then(|| SignerScope {
+                        chain: deployment.chain,
+                        sender: tx.from().expect("missing from"),
+                    })
                 },
             )
         })
@@ -666,6 +668,7 @@ pub enum SendTransactionsKind<N: Network> {
         browser: Option<BrowserSigner<N>>,
         access_keys: HashMap<SignerScope, TempoAccountsWallet>,
         configurable_accounts: HashMap<SignerScope, ConfigurableAccountSigner>,
+        offline_owners: HashMap<SignerScope, OfflineOwners>,
     },
 }
 
@@ -686,12 +689,20 @@ impl<N: Network> SendTransactionsKind<N> {
                 }
                 Ok(SendTransactionKind::Unlocked(tx))
             }
-            Self::Raw { eth_wallets, browser, access_keys, configurable_accounts } => {
+            Self::Raw {
+                eth_wallets,
+                browser,
+                access_keys,
+                configurable_accounts,
+                offline_owners,
+            } => {
                 let scope = SignerScope::new(chain, *addr);
                 if let Some(wallet) = access_keys.get(&scope) {
                     Ok(SendTransactionKind::AccessKey(tx, Box::new(wallet.clone())))
                 } else if let Some(account) = configurable_accounts.get(&scope) {
                     Ok(SendTransactionKind::ConfigurableAccount(tx, account))
+                } else if let Some(owners) = offline_owners.get(&scope) {
+                    Ok(SendTransactionKind::OfflineOwners(tx, owners))
                 } else if let Some(wallet) = eth_wallets.get(addr) {
                     Ok(SendTransactionKind::Raw(tx, wallet))
                 } else if let Some(b) = browser
@@ -784,6 +795,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         if self.script_config.tempo.expiring_nonce {
             reject_expiring_call_before_create(self.sequence.sequences())?;
         }
+        // Transactions saved for their owners are signed with their approvals before anything is
+        // sent, and are sent in order below.
+        owner_approvals::assemble(
+            &mut self.sequence,
+            &self.args.tempo_owner_signatures,
+            &self.script_config.config,
+        )
+        .await?;
         // Only operations without a saved or delegated attempt are sponsored again.
         let needs_sponsorship =
             self.sequence.sequences().iter().enumerate().any(|(sequence_index, deployment)| {
@@ -821,6 +840,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 browser: None,
                 access_keys: HashMap::default(),
                 configurable_accounts: HashMap::default(),
+                offline_owners: HashMap::default(),
             }
         } else if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
@@ -890,6 +910,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .map(Arc::new)
                 .collect::<Vec<_>>();
             let mut configurable_accounts = HashMap::default();
+            let mut offline_owners = HashMap::default();
             if self.script_config.evm_opts.networks.is_tempo() {
                 let tempo = &self.script_config.tempo;
                 // `--tempo.configurable-account` and `--tempo.config` describe one account: a
@@ -944,12 +965,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             if explicit || own_key_is_account {
                                 let tempo = if explicit { tempo } else { &own_key_tempo };
                                 tempo
-                                    .configurable_account_signer(
+                                    .configurable_account_owners(
                                         &provider,
                                         Some(scope.sender),
                                         None,
                                         &wallet_signers,
-                                        SCRIPT_OWNERS_HINT,
+                                        BlockId::latest(),
                                     )
                                     .await?
                             } else {
@@ -958,9 +979,20 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         }
                         _ => None,
                     };
+                    // Owners that are not local approve the account's transactions elsewhere.
                     match account {
-                        Some(account) => {
-                            configurable_accounts.insert(scope, account);
+                        Some((account, config, keys)) => {
+                            match OfflineOwners::new(account, config.clone(), keys.clone()) {
+                                Some(owners) => {
+                                    offline_owners.insert(scope, owners);
+                                }
+                                None => {
+                                    configurable_accounts.insert(
+                                        scope,
+                                        ConfigurableAccountSigner::new(account, config, keys, "")?,
+                                    );
+                                }
+                            }
                         }
                         None if missing => missing_scopes.push(scope),
                         None => {}
@@ -1000,11 +1032,56 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 }
             }
 
+            // Checked before any chain is sent to, with the nonce key that each transaction is
+            // sent with: the one of the Tempo options, or else the planned one.
+            let tempo = &self.script_config.tempo;
+            let offline_nonce_keys = self
+                .sequence
+                .sequences()
+                .iter()
+                .enumerate()
+                .flat_map(|(i, sequence)| {
+                    remaining_operation_indices(&self.sequence, i).into_iter().filter_map(|index| {
+                        match sequence.transactions[index].tx() {
+                            TransactionMaybeSigned::Unsigned(tx)
+                                if tx.from().is_some_and(|from| {
+                                    offline_owners
+                                        .contains_key(&SignerScope::new(sequence.chain, from))
+                                }) =>
+                            {
+                                Some(tempo.nonce_key.or(tx.nonce_key()).unwrap_or_default())
+                            }
+                            _ => None,
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            let expiring_nonce =
+                tempo.expiring_nonce || offline_nonce_keys.contains(&TEMPO_EXPIRING_NONCE_KEY);
+            if !offline_owners.is_empty() && (tempo.sponsor.is_some() || expiring_nonce) {
+                bail!(
+                    "the owners of a Tempo configurable account sender approve its transactions \
+                     on other machines, so they cannot be sponsored with --tempo.sponsor or use \
+                     the expiring nonce key (--tempo.expiring-nonce, --tempo.expires or \
+                     --tempo.nonce-key {TEMPO_EXPIRING_NONCE_KEY:#x}), whose validity window is too \
+                     short for them"
+                );
+            }
+            // Their nonces are fixed and checked against the account's protocol nonce.
+            if let Some(key) = offline_nonce_keys.iter().find(|key| !key.is_zero()) {
+                bail!(
+                    "the owners of a Tempo configurable account sender approve its transactions \
+                     on other machines, so its transactions use the protocol nonce, not \
+                     --tempo.nonce-key {key:#x}"
+                );
+            }
+
             SendTransactionsKind::Raw {
                 eth_wallets,
                 browser: self.browser_wallet,
                 access_keys,
                 configurable_accounts,
+                offline_owners,
             }
         };
         if let Some(error) = &self.resume_script_error {
@@ -1032,13 +1109,17 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let broadcast_sequence = async {
                 let sequence_offset = operation_ordinal(self.sequence.sequences(), i, 0);
                 let remaining_indices = remaining_operation_indices(&self.sequence, i);
+                // A transaction signed with its owners' approvals is recorded as a submission
+                // attempt only when it is sent, in order.
                 let signed_payloads = (0..self.sequence.sequences()[i].transactions.len())
-                    .map(|index| {
-                        self.sequence
-                            .signed_payload(i, index)
-                            .map(|signed| (signed.payload.clone(), signed.hash))
+                    .map(|index| match self.sequence.signed_payload(i, index) {
+                        Some(signed) => Ok(Some((signed.payload.clone(), signed.hash))),
+                        None if remaining_indices.contains(&index) => {
+                            owner_approvals::approved_payload(&self.sequence.sequences()[i], index)
+                        }
+                        None => Ok(None),
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>>>()?;
                 let rpc_url = self.sequence.rpc_url(i).to_owned();
                 let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
@@ -1177,6 +1258,25 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         };
                         transactions.push((kind, is_fixed_gas_limit, index));
                     }
+                    // The transactions saved for owners on other machines are checked and their
+                    // gas limits fixed before anything is sent, and nothing is sent from the
+                    // first of them.
+                    let awaiting_owners = owner_approvals::prepare(
+                        &self.sequence,
+                        i,
+                        &provider,
+                        &transactions,
+                        self.args.gas_estimate_multiplier,
+                    )
+                    .await?;
+                    sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
+                    let offline = transactions
+                        .iter()
+                        .position(|(kind, ..)| {
+                            matches!(kind, SendTransactionKind::OfflineOwners(..))
+                        })
+                        .unwrap_or(transactions.len());
+                    let transactions = &transactions[..offline];
 
                     let estimate_via_rpc = has_different_gas_calc(sequence.chain)
                         || self.script_config.evm_opts.networks.is_tempo()
@@ -1373,6 +1473,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         self.sequence.ensure_delegated_outcomes_known(i)?;
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                     }
+
+                    if !awaiting_owners.is_empty() {
+                        seq_progress.inner.write().set_status("Awaiting owner approvals");
+                        seq_progress.inner.write().finish();
+                        owner_approvals::export(&mut self.sequence, i, &provider, awaiting_owners)
+                            .await?;
+                        return Ok(true);
+                    }
                 }
 
                 let (total_gas, avg_gas_price, total_paid) = fee_totals(
@@ -1401,9 +1509,17 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     avg_gas_price.trim_end_matches('0').trim_end_matches('.')
                 ));
                 seq_progress.inner.write().finish();
-                Ok::<_, eyre::Report>(())
+                Ok::<_, eyre::Report>(false)
             };
-            broadcast_sequence.await.map_err(|err| self.sequence.label_error(i, err))?;
+            // Later operations wait for the transactions saved for their owners.
+            if broadcast_sequence.await.map_err(|err| self.sequence.label_error(i, err))? {
+                return Ok(BroadcastedState {
+                    args: self.args,
+                    script_config: self.script_config,
+                    build_data: self.build_data,
+                    sequence: self.sequence,
+                });
+            }
         }
 
         // Submitted operations can lack a receipt when the endpoint stopped returning them.
@@ -2148,7 +2264,7 @@ where
     Ok(())
 }
 
-fn convert_tempo_aa_create<N: Network>(tx: &mut N::TransactionRequest)
+pub(crate) fn convert_tempo_aa_create<N: Network>(tx: &mut N::TransactionRequest)
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
@@ -2361,6 +2477,7 @@ mod tests {
             browser: None,
             access_keys,
             configurable_accounts: HashMap::default(),
+            offline_owners: HashMap::default(),
         };
 
         let tx = TransactionRequest { from: Some(root_address), ..Default::default() };
@@ -2393,6 +2510,7 @@ mod tests {
             browser: None,
             access_keys,
             configurable_accounts: HashMap::default(),
+            offline_owners: HashMap::default(),
         };
 
         let tx = TransactionRequest { from: Some(root_address), ..Default::default() };

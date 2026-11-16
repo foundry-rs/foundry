@@ -1279,6 +1279,57 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 "#]]);
 }
 
+// Tests that a persisted failure rejected by `vm.assume` does not count against
+// `max_test_rejects`.
+#[forgetest]
+fn fuzz_persisted_failure_reject_not_counted(prj: _, cmd: _) {
+    // 64 runs keep the campaign on a single worker, so the reject count does not depend on the CPU.
+    prj.update_config(|config| {
+        config.fuzz.runs = 64;
+        config.fuzz.seed = Some(U256::from(7u32));
+    });
+    let test = |body: &str| {
+        format!(
+            r#"
+interface Vm {{
+    function assume(bool) external;
+}}
+
+contract PersistedRejectTest {{
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testFuzz_reject(uint256 value) public {{
+        {body}
+    }}
+}}
+"#
+        )
+    };
+    let failure_path = prj.root().join("cache/fuzz/failures/PersistedRejectTest/testFuzz_reject");
+
+    // Persist a failing value, then reject it.
+    prj.add_test("PersistedReject.t.sol", &test("require(value % 4 != 0);"));
+    cmd.args(["test"]).assert_failure();
+    prj.add_test("PersistedReject.t.sol", &test("vm.assume(value % 4 != 0);"));
+
+    // The campaign rejects exactly 20 fresh inputs with this seed.
+    prj.update_config(|config| config.fuzz.max_test_rejects = 20);
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testFuzz_reject(uint256) (runs: 64, [AVG_GAS])
+...
+"#]]);
+
+    // Without the persisted failure, one reject fewer is not enough, so the boundary is exact.
+    std::fs::remove_file(&failure_path).unwrap();
+    prj.update_config(|config| config.fuzz.max_test_rejects = 19);
+    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: `vm.assume` rejected too many inputs (19 allowed)] testFuzz_reject(uint256) [..]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn forge_fuzz_replay_treats_persisted_skip_as_skip(prj: _, cmd: _) {
     prj.update_config(|config| {

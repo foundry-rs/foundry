@@ -27,6 +27,9 @@ use solar::{
 use std::ops::ControlFlow;
 use yansi::Paint;
 
+/// Distinguishes inspection output from an early inline assembly return in the user's code.
+const INSPECTION_RESULT_PREFIX: B256 = B256::new(*b"chisel expression result\0\0\0\0\0\0\0\0");
+
 /// Result of inspecting a Solidity snippet.
 #[derive(Debug)]
 pub struct InspectResult {
@@ -87,8 +90,7 @@ fn yul_inspection(input: &str, session_source: &str) -> Option<YulInspection> {
         let mut assembly = input.to_string();
         assembly.replace_range(expr_range.clone(), &format!("{result_var} := {expression}"));
         let inspector_input = format!(
-            "uint256 {result_var}; {assembly}\nbytes memory inspectoor = abi.encode({result_var}); \
-             assembly {{ return(add(inspectoor, 0x20), mload(inspectoor)) }}"
+            "uint256 {result_var}; {assembly}\nbytes memory inspectoor = abi.encode({result_var});"
         );
 
         let mut replay_input = input.to_string();
@@ -147,12 +149,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     ///
     /// If the input is valid, returns its [`InspectResult`].
     pub async fn inspect(&self, input: &str) -> Result<InspectResult> {
-        // Return the encoding from `run()`: solar does not leave the `inspectoor` pointer on the
-        // stack, so reading it from the final stack and memory only works with solc.
-        let line = format!(
-            "bytes memory inspectoor = abi.encode({input}); \
-             assembly {{ return(add(inspectoor, 0x20), mload(inspectoor)) }}"
-        );
+        let line = format!("bytes memory inspectoor = abi.encode({input});");
         let (mut source, replay_input) = match self.clone_with_new_line(line) {
             Ok((source, _)) => (source, None),
             Err(err) => {
@@ -172,6 +169,15 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                 (source, Some(inspection.replay_input))
             }
         };
+
+        // Return the encoded value explicitly: source maps and local variable stack positions
+        // depend on the compiler and its optimization pipeline. Replace the bytes length with a
+        // marker so an early assembly return cannot be mistaken for an inspected value.
+        source.add_run_code(&format!(
+            "assembly {{ mstore(0, mload(inspectoor)) \
+             mstore(inspectoor, {}) return(inspectoor, add(mload(0), 32)) }}",
+            hex::encode_prefixed(INSPECTION_RESULT_PREFIX)
+        ));
 
         let mut source_without_inspector = self.clone();
 
@@ -243,9 +249,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         }
         drop(source_without_inspector);
 
-        // The inspector epilogue returns the `abi.encode` payload with either compiler.
-        let data = res.returned.clone();
-        if !res.success || data.is_empty() {
+        if !res.success || !res.returned.starts_with(INSPECTION_RESULT_PREFIX.as_slice()) {
             // Show traces and logs, if there are any, and return an error
             if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await {
                 ChiselDispatcher::<FEN>::show_traces(&decoder, &mut res).await?;
@@ -273,10 +277,11 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             return Ok(InspectResult::empty(ControlFlow::Continue(())));
         };
 
+        let data = &res.returned[INSPECTION_RESULT_PREFIX.len()..];
         let clear_last_result = dyn_ty_contains_function(&ty);
         let last_result = (!clear_last_result)
-            .then(|| format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(&data)));
-        let token = ty.abi_decode(&data).wrap_err("Could not decode inspected values")?;
+            .then(|| format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data)));
+        let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
         let c = if cont || replay_input.is_some() {
             ControlFlow::Continue(())
         } else {

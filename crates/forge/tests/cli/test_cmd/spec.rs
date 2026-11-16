@@ -2777,3 +2777,175 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
         }
     }
 }
+
+#[cfg(feature = "monad")]
+#[forgetest]
+fn monad_isolated_calls_preserve_execution_gas(prj: _, cmd: _) {
+    prj.add_test(
+        "MonadGas.t.sol",
+        r#"
+contract MonadGasChild {
+    function noop() external pure {}
+    function fail() external pure { revert(); }
+}
+
+contract MonadGasTest {
+    function test_repeated_calls_and_creates() public {
+        uint256 before = gasleft();
+        for (uint256 i; i < 3; ++i) {
+            MonadGasChild child = new MonadGasChild();
+            child.noop();
+            try child.fail() { revert("expected revert"); } catch {}
+        }
+        require(gasleft() > before / 2, "receipt charge consumed parent gas");
+    }
+}
+"#,
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        cmd.forge_fuse()
+            .args(["test", "--network", "monad", "--mc", "MonadGasTest", "--gas-limit", "10000000"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadGas.t.sol:MonadGasTest
+[PASS] test_repeated_calls_and_creates() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[cfg(feature = "monad")]
+#[forgetest_init]
+fn monad_storage_warmth_cheatcodes(prj: _, cmd: _) {
+    prj.add_test(
+        "MonadStorageWarmth.t.sol",
+        include_str!("../../fixtures/MonadStorageWarmth.t.sol"),
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.hardfork = Some("monad:MonadTen".parse().unwrap());
+            config.isolate = isolate;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--network", "monad", "--mc", "MonadStorageWarmthTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 12 tests for test/MonadStorageWarmth.t.sol:MonadStorageWarmthTest
+[PASS] test_arbitrary_storage_retains_page_warmth() ([GAS])
+[PASS] test_cool_clears_loaded_pages() ([GAS])
+[PASS] test_copy_storage_retains_native_page_warmth() ([GAS])
+[PASS] test_explicit_slot_warmth_updates_page() ([GAS])
+[PASS] test_isolation_resets_native_page_warmth() ([GAS])
+[PASS] test_isolation_resets_page_write_charges() ([GAS])
+[PASS] test_load_warms_only_its_page() ([GAS])
+[PASS] test_snapshot_restores_page_warmth() ([GAS])
+[PASS] test_store_preserves_first_write_charge() ([GAS])
+[PASS] test_store_seeds_warm_pages() ([GAS])
+[PASS] test_store_warmth_reverts_with_frame() ([GAS])
+[PASS] test_warmth_preserves_write_and_growth_accounting() ([GAS])
+Suite result: ok. 12 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+
+    for hardfork in ["monad:MonadNine", "prague"] {
+        prj.update_config(|config| config.hardfork = Some(hardfork.parse().unwrap()));
+        let network = if hardfork == "prague" { "ethereum" } else { "monad" };
+        cmd.forge_fuse()
+            .args(["test", "--network", network, "--mc", "StorageSlotWarmthTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadStorageWarmth.t.sol:StorageSlotWarmthTest
+[PASS] test_store_retains_slot_warmth_before_monad_ten() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[forgetest_init]
+fn isolated_calls_retain_calldata_floor(prj: _, cmd: _) {
+    prj.add_test(
+        "IsolatedFloor.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract IsolatedFloorTest is Test {
+    address constant TARGET = address(0xBEEF1);
+
+    function setUp() public {
+        vm.etch(TARGET, hex"00");
+    }
+
+    function test_calldata_floor_with_sufficient_gas() public {
+        checkCalldataFloor(100_000);
+    }
+
+    function test_calldata_floor_with_tight_gas() public {
+        checkCalldataFloor(1_000);
+    }
+
+    function checkCalldataFloor(uint256 gasLimit) internal {
+        bytes memory data = new bytes(1_000);
+        for (uint256 i; i < data.length; ++i) data[i] = 0x01;
+        (bool success,) = TARGET.call{gas: gasLimit}(data);
+        assertTrue(success);
+        assertEq(vm.snapshotGasLastCall("calldataFloor"), 61_000);
+    }
+}
+"#,
+    );
+    for (network, hardfork) in [
+        ("ethereum", "prague"),
+        #[cfg(feature = "monad")]
+        ("monad", "monad:MonadTen"),
+    ] {
+        prj.update_config(|config| {
+            config.evm_version = EvmVersion::Prague;
+            config.hardfork = Some(hardfork.parse().unwrap());
+            config.isolate = true;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--network", network, "--mc", "IsolatedFloorTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/IsolatedFloor.t.sol:IsolatedFloorTest
+[PASS] test_calldata_floor_with_sufficient_gas() ([GAS])
+[PASS] test_calldata_floor_with_tight_gas() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[cfg(feature = "monad")]
+#[forgetest_init]
+async fn monad_storage_warmth_survives_fork_switch(prj: _, cmd: _) {
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_monad()).await;
+    prj.add_test(
+        "MonadStorageWarmth.t.sol",
+        include_str!("../../fixtures/MonadStorageWarmth.t.sol"),
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.hardfork = Some("monad:MonadTen".parse().unwrap());
+            config.isolate = isolate;
+        });
+        cmd.forge_fuse().env("MONAD_WARMTH_RPC", handle.http_endpoint());
+        cmd.args(["test", "--network", "monad", "--mc", "MonadForkStorageWarmthTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadStorageWarmth.t.sol:MonadForkStorageWarmthTest
+[PASS] test_fork_switch_retains_persistent_page_warmth() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
