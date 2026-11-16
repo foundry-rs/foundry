@@ -1998,7 +1998,7 @@ pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz"
 ///
 /// See [Warning::DeprecatedKey]
 pub const DEPRECATIONS: &[(&str, &str)] =
-    &[("cancun", "evm_version = Cancun"), ("deny_warnings", "deny = warnings")];
+    &[("cancun", "evm_version = \"cancun\""), ("deny_warnings", "deny = \"warnings\"")];
 
 impl Config {
     /// The default profile: "default"
@@ -2034,15 +2034,15 @@ impl Config {
     ];
 
     /// Keys that `FOUNDRY_` prefixed environment variables don't set directly.
-    pub const FOUNDRY_ENV_IGNORED: &'static [&'static str] =
+    pub(crate) const FOUNDRY_ENV_IGNORED: &'static [&'static str] =
         &["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"];
 
     /// Keys that `DAPP_` prefixed environment variables don't set directly.
-    pub const DAPP_ENV_IGNORED: &'static [&'static str] =
+    pub(crate) const DAPP_ENV_IGNORED: &'static [&'static str] =
         &["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"];
 
     /// Keys that `DAPP_TEST_` prefixed environment variables don't set directly.
-    pub const DAPP_TEST_ENV_IGNORED: &'static [&'static str] =
+    pub(crate) const DAPP_TEST_ENV_IGNORED: &'static [&'static str] =
         &["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"];
 
     /// Maps the name of a `FOUNDRY_` environment variable, without its prefix, to the config key
@@ -10238,7 +10238,7 @@ mod tests {
                 cfg.warnings.iter().any(|w| matches!(
                     w,
                     crate::Warning::DeprecatedKey { old, new }
-                    if old == "deny_warnings" && new == "deny = warnings"
+                    if old == "deny_warnings" && new == "deny = \"warnings\""
                 )),
                 "Expected deprecated key warning for inactive profile, got: {:?}",
                 cfg.warnings
@@ -10262,7 +10262,7 @@ mod tests {
                 cfg.warnings.iter().any(|w| matches!(
                     w,
                     crate::Warning::DeprecatedKey { old, new }
-                    if old == "cancun" && new == "evm_version = Cancun"
+                    if old == "cancun" && new == "evm_version = \"cancun\""
                 )),
                 "Expected deprecated profile-name warning, got: {:?}",
                 cfg.warnings

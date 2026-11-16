@@ -9,10 +9,10 @@ use heck::{ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToUppe
 use serde::Serialize;
 use serde_json::Value;
 use std::{
-    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 use syn::{
     Attribute, Expr, ExprLit, Fields, GenericArgument, Item, Lit, Meta, PathArguments, Type,
@@ -33,7 +33,32 @@ const SPECIAL_ENV: &[(&str, &[&str])] = &[
 ];
 
 /// Environment variables read by providers other than the prefixed ones, and the keys they set.
-const OTHER_ENV: &[(&str, &str)] = &[("ETHERSCAN_API_KEY", "etherscan_api_key")];
+const OTHER_ENV: &[(&str, &str)] = &[
+    ("ETHERSCAN_API_KEY", "etherscan_api_key"),
+    ("FOUNDRY_SOLC_VERSION", "solc"),
+    ("DAPP_SOLC_VERSION", "solc"),
+];
+
+/// Legacy names that the providers rewrite to a key, rather than serde aliases.
+const OTHER_ALIASES: &[(&str, &str)] = &[("solc_version", "solc")];
+
+/// Deprecated keys that the providers warn about outside [`DEPRECATIONS`], and their replacements.
+const OTHER_DEPRECATIONS: &[(&str, &str)] = &[("labels", "tracing.labels")];
+
+/// User-facing types of fields with a `deserialize_with` or `with` helper, or `None` when the
+/// field's Rust type already describes what the helper accepts.
+const DESERIALIZERS: &[(&str, Option<&str>)] = &[
+    ("deserialize_fuzz_runs", None),
+    ("deserialize_lcov_version", None),
+    ("deserialize_stringified_percent", Some("integer or numeric string")),
+    ("deserialize_u64_or_max", Some("integer, numeric string, or \"max\"")),
+    ("deserialize_u64_to_u256", Some("integer or string")),
+    ("deserialize_usize_or_max", Some("integer, numeric string, or \"max\"")),
+    ("display_from_str_opt", None),
+    ("from_opt_glob", None),
+    ("from_str_lowercase", None),
+    ("serde_regex", None),
+];
 
 /// User-facing types and accepted values of this crate's types with custom `Deserialize` impls,
 /// whose Rust shape doesn't describe what they accept.
@@ -41,6 +66,7 @@ const CUSTOM_TYPES: &[(&str, &str, &[&str])] = &[
     ("CachedChains", "\"all\", \"none\", or array of chain names or IDs", &[]),
     ("CachedEndpoints", "\"all\", \"remote\", or string (regular expression)", &[]),
     ("DenyLevel", "string or boolean", &["never", "warnings", "notes"]),
+    ("GasLimit", "integer, numeric string, or \"max\"", &[]),
     ("InvariantWorkers", "\"auto\" or integer", &[]),
     ("Severity", "string", &["high", "medium", "low", "info", "gas", "code-size"]),
 ];
@@ -62,13 +88,14 @@ const EXTERNAL_TYPES: &[(&str, &str)] = &[
     ("PathBuf", "string (path)"),
     ("RegexWrapper", "string (regular expression)"),
     ("Regex", "string (regular expression)"),
+    ("RelativeRemapping", "string"),
     ("RevertStrings", "string"),
     ("SolcReq", "string (version or path)"),
     ("SoldeerConfig", "table"),
     ("SoldeerDependencyConfig", "table"),
     ("SolidityErrorCode", "string or integer"),
     ("String", "string"),
-    ("U256", "integer"),
+    ("U256", "integer or string"),
     ("Url", "string (URL)"),
     ("Version", "string (version)"),
     ("VyperOptimizationLevel", "string"),
@@ -125,8 +152,7 @@ struct Definitions {
 }
 
 impl Definitions {
-    fn load(dir: &Path) -> Self {
-        let mut this = Self::default();
+    fn load(&mut self, dir: &Path) {
         for entry in walkdir::WalkDir::new(dir) {
             let entry = entry.unwrap();
             if entry.path().extension().is_none_or(|ext| ext != "rs") {
@@ -134,9 +160,8 @@ impl Definitions {
             }
             let file = syn::parse_file(&fs::read_to_string(entry.path()).unwrap())
                 .unwrap_or_else(|e| panic!("failed to parse {}: {e}", entry.path().display()));
-            this.collect(file.items);
+            self.collect(file.items);
         }
-        this
     }
 
     fn collect(&mut self, items: Vec<Item>) {
@@ -164,11 +189,13 @@ impl Definitions {
 struct SerdeAttrs {
     skip: bool,
     skip_serializing: bool,
+    skip_serializing_if: bool,
     transparent: bool,
     flatten: bool,
     rename: Option<String>,
     rename_all: Option<String>,
     aliases: Vec<String>,
+    deserialize_with: Option<String>,
 }
 
 impl SerdeAttrs {
@@ -184,11 +211,13 @@ impl SerdeAttrs {
                 match name.as_str() {
                     "skip" | "skip_deserializing" => this.skip = true,
                     "skip_serializing" => this.skip_serializing = true,
+                    "skip_serializing_if" => this.skip_serializing_if = true,
                     "transparent" => this.transparent = true,
                     "flatten" => this.flatten = true,
                     "rename" => this.rename = string_value(&meta),
                     "rename_all" => this.rename_all = string_value(&meta),
                     "alias" => this.aliases.extend(string_value(&meta)),
+                    "deserialize_with" | "with" => this.deserialize_with = string_value(&meta),
                     _ => {}
                 }
             }
@@ -197,12 +226,16 @@ impl SerdeAttrs {
     }
 }
 
+fn lit_str(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => Some(s.value()),
+        _ => None,
+    }
+}
+
 fn string_value(meta: &Meta) -> Option<String> {
     match meta {
-        Meta::NameValue(nv) => match &nv.value {
-            Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => Some(s.value()),
-            _ => None,
-        },
+        Meta::NameValue(nv) => lit_str(&nv.value),
         // `rename(deserialize = "..")`.
         Meta::List(list) => {
             let metas = list.parse_args_with(Punctuated::<Meta, Comma>::parse_terminated).ok()?;
@@ -228,10 +261,7 @@ fn cfg_feature(attrs: &[Attribute]) -> Option<String> {
         if !nv.path.is_ident("feature") {
             return None;
         }
-        match nv.value {
-            Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => Some(s.value()),
-            _ => None,
-        }
+        lit_str(&nv.value)
     })
 }
 
@@ -268,17 +298,17 @@ fn docs(attrs: &[Attribute]) -> String {
         .iter()
         .filter(|attr| attr.path().is_ident("doc"))
         .filter_map(|attr| match &attr.meta {
-            Meta::NameValue(nv) => match &nv.value {
-                Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => Some(s.value()),
-                _ => None,
-            },
+            Meta::NameValue(nv) => lit_str(&nv.value),
             _ => None,
         })
         .map(|line| line.strip_prefix(' ').map(str::to_string).unwrap_or(line))
         .collect::<Vec<_>>();
     let text = lines.join("\n");
-    let intra_doc = regex::Regex::new(r"\[([^\]]+)\]\(([^)]*)\)").unwrap();
-    let text = intra_doc.replace_all(&text, |caps: &regex::Captures<'_>| {
+    static INTRA_DOC: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\[([^\]]+)\]\(([^)]*)\)").unwrap());
+    static BARE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\[(\x60[^\x60\]]+\x60)\]([^(\[]|$)").unwrap());
+    let text = INTRA_DOC.replace_all(&text, |caps: &regex::Captures<'_>| {
         let target = &caps[2];
         if target.contains("://") || target.starts_with('/') || target.starts_with('#') {
             caps[0].to_string()
@@ -286,13 +316,7 @@ fn docs(attrs: &[Attribute]) -> String {
             caps[1].to_string()
         }
     });
-    let bare = regex::Regex::new(r"\[(\x60[^\x60\]]+\x60)\](?:[^(\[]|$)").unwrap();
-    let text = bare.replace_all(&text, |caps: &regex::Captures<'_>| {
-        let whole = &caps[0];
-        let tail = &whole[caps[1].len() + 2..];
-        format!("{}{tail}", &caps[1])
-    });
-    text.trim().to_string()
+    BARE.replace_all(&text, "${1}${2}").trim().to_string()
 }
 
 /// The last path segment of a type and its generic arguments.
@@ -324,8 +348,6 @@ struct Generator {
     defs: Definitions,
     defaults: Value,
     out: Vec<Setting>,
-    /// Types with custom `Deserialize` impls that need an entry in [`CUSTOM_TYPES`].
-    missing_types: RefCell<BTreeSet<String>>,
 }
 
 impl Generator {
@@ -355,9 +377,10 @@ impl Generator {
                     return ty.to_string();
                 }
                 if let Some(item) = self.defs.enums.get(&name) {
-                    if !derives(&item.attrs, "Deserialize") {
-                        self.missing_types.borrow_mut().insert(name);
-                    }
+                    assert!(
+                        derives(&item.attrs, "Deserialize"),
+                        "add the accepted forms of `{name}` to CUSTOM_TYPES"
+                    );
                     return "string".to_string();
                 }
                 if let Some(item) = self.defs.structs.get(&name) {
@@ -414,6 +437,7 @@ impl Generator {
                 features.insert(value.clone(), feature);
             }
             values.push(value);
+            values.extend(attrs.aliases);
         }
         (values, features)
     }
@@ -473,27 +497,66 @@ impl Generator {
                 .map(|section| section.to_string());
             let deprecated = DEPRECATIONS
                 .iter()
+                .chain(OTHER_DEPRECATIONS)
                 .find(|(old, _)| prefix.is_empty() && *old == path[0])
                 .map(|(_, new)| new.to_string());
 
-            let mut ty = self.type_name(&field.ty);
+            let mut ty = match &attrs.deserialize_with {
+                Some(helper) => {
+                    let name = helper.rsplit("::").next().unwrap();
+                    let (_, ty) = DESERIALIZERS
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .unwrap_or_else(|| panic!("add `{name}` of `{key}` to DESERIALIZERS"));
+                    ty.map_or_else(|| self.type_name(&field.ty), ToString::to_string)
+                }
+                None => self.type_name(&field.ty),
+            };
             let (values, value_features) = self.enum_values(&field.ty);
             if ty == "table" && default.is_some_and(Value::is_array) {
                 ty = "array of table".to_string();
             }
+            // A table's default is the defaults of its keys.
+            let mut default =
+                default.filter(|value| !value.is_null() && children.is_none()).map(toml_value);
+            // Empty collections that `skip_serializing_if` left out.
+            if default.is_none() && children.is_none() && attrs.skip_serializing_if {
+                if ty.starts_with("array of") {
+                    default = Some("[]".to_string());
+                } else if ty == "table"
+                    && segment(&field.ty).is_none_or(|(name, _)| name != "Option")
+                {
+                    default = Some("{}".to_string());
+                }
+            }
+            let mut env = env_vars(&path, section.is_some(), children.is_some());
+            // The environment providers lowercase keys, so only lowercase aliases are reachable.
+            for alias in attrs.aliases.iter().filter(|alias| alias.to_lowercase() == **alias) {
+                let mut alias_path = prefix.to_vec();
+                alias_path.push(alias.clone());
+                for var in env_vars(&alias_path, section.is_some(), children.is_some()) {
+                    if !env.contains(&var) {
+                        env.push(var);
+                    }
+                }
+            }
+            let mut aliases = attrs.aliases;
+            aliases.extend(
+                OTHER_ALIASES
+                    .iter()
+                    .filter(|(_, target)| prefix.is_empty() && *target == key)
+                    .map(|(alias, _)| alias.to_string()),
+            );
             self.out.push(Setting {
-                env: env_vars(&path, section.is_some(), children.is_some()),
+                env,
                 key,
                 section,
                 ty,
                 table: children.is_some(),
-                // A table's default is the defaults of its keys.
-                default: default
-                    .filter(|value| !value.is_null() && children.is_none())
-                    .map(toml_value),
+                default,
                 values,
                 value_features,
-                aliases: attrs.aliases,
+                aliases,
                 deprecated,
                 description: docs(&field.attrs),
             });
@@ -555,8 +618,11 @@ fn toml_value(value: &Value) -> String {
         }
         Value::Object(map) if map.is_empty() => "{}".to_string(),
         Value::Object(map) => {
+            // Sorted, so the output doesn't depend on `serde_json/preserve_order`.
             let entries = map
                 .iter()
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
                 .filter(|(_, value)| !value.is_null())
                 .map(|(key, value)| {
                     let key =
@@ -575,26 +641,15 @@ fn toml_value(value: &Value) -> String {
 
 fn generate() -> String {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut defs = Definitions::default();
     // Flattened network settings are defined in `foundry-evm-networks`.
-    let mut defs = Definitions::load(&root.join("src"));
-    let networks = Definitions::load(&root.join("../evm/networks/src"));
-    for (name, item) in networks.structs {
-        defs.structs.entry(name).or_insert(item);
-    }
-    for (name, item) in networks.enums {
-        defs.enums.entry(name).or_insert(item);
+    for dir in ["src", "../evm/networks/src"] {
+        defs.load(&root.join(dir));
     }
     let config = defs.structs.get("Config").expect("Config struct").clone();
     let defaults = serde_json::to_value(Config::default()).unwrap();
-    let mut generator =
-        Generator { defs, defaults, out: Vec::new(), missing_types: Default::default() };
+    let mut generator = Generator { defs, defaults, out: Vec::new() };
     generator.walk(&config, &[], false);
-
-    assert!(
-        generator.missing_types.borrow().is_empty(),
-        "add the accepted forms of these custom-deserialized types to CUSTOM_TYPES: {:?}",
-        generator.missing_types
-    );
 
     let mut seen = BTreeSet::new();
     let mut undocumented = Vec::new();
@@ -603,6 +658,11 @@ fn generate() -> String {
         if setting.description.is_empty() {
             undocumented.push(setting.key.as_str());
         }
+        assert!(
+            !setting.ty.contains("value"),
+            "add the type of `{}` to EXTERNAL_TYPES or CUSTOM_TYPES",
+            setting.key
+        );
     }
     assert!(
         undocumented.is_empty(),

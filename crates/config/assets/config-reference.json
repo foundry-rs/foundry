@@ -77,7 +77,7 @@
     {
       "key": "remappings",
       "section": null,
-      "type": "array of value",
+      "type": "array of string",
       "table": false,
       "default": "[]",
       "env": [
@@ -337,10 +337,15 @@
       "type": "string (version or path)",
       "table": false,
       "default": null,
+      "aliases": [
+        "solc_version"
+      ],
       "env": [
         "FOUNDRY_SOLC",
         "DAPP_SOLC",
-        "DAPP_TEST_SOLC"
+        "DAPP_TEST_SOLC",
+        "FOUNDRY_SOLC_VERSION",
+        "DAPP_SOLC_VERSION"
       ],
       "description": "The Solidity compiler to use for the whole project, instead of detecting versions per file.\n\nThe value can be:\n\n- an exact version, such as `\"0.8.28\"`, which is installed if it's missing (unless\n  `offline` is set, in which case the build fails);\n- `\"solar:<version>\"`, which pins an exact [Solar](https://github.com/paradigmxyz/solar)\n  release, 0.2.0 or later without pre-release or build metadata;\n- a path to a local compiler binary, or the name of an executable on `PATH`.\n\n```toml\n[profile.default]\nsolc = \"0.8.28\"\n# solc = \"solar:0.3.0\"\n# solc = \"custom-solc\"\n```\n\nVersion requirements such as `\"^0.8.0\"` are not supported. When set, version auto-detection\nis off and `auto_detect_solc` is ignored.\n\nA Solar release is used from `~/.foundry/solar/<version>`. If it's missing, Forge downloads\nit from the Solar GitHub release, checks it against the release's SHA-256 checksum file and\nthe version it reports, and installs it there. Releases are published for macOS, x86_64\nLinux, aarch64 Linux with glibc, and x86_64 Windows; on other platforms, set `solc` to the\npath of a `solar` binary instead.\n\nThe legacy key `solc_version` is still accepted and is used only when `solc` is not set.\nThe `FOUNDRY_SOLC_VERSION` environment variable overrides both, and `--use` overrides it\nfor one invocation (accepting the same values, plus a `solc:` prefix)."
     },
@@ -546,7 +551,7 @@
       "section": "etherscan",
       "type": "table",
       "table": false,
-      "default": null,
+      "default": "{}",
       "description": "Named Etherscan (or compatible block explorer) configurations.\n\nEach key is an alias and each value is a table with:\n\n- `key` (required): the API key. May contain `${VAR}` placeholders, resolved from the\n  environment when the entry is used.\n- `chain`: the chain name or EIP-155 chain ID. When omitted, the alias itself is parsed as\n  a chain name, so `mainnet` or `optimism` need no `chain`.\n- `url`: the explorer API URL. May contain `${VAR}` placeholders. When omitted, the chain's\n  known Etherscan URL is used.\n\nEvery entry needs a `url` or a chain (explicit or derived from the alias). Foundry picks\nthe entry named by `etherscan_api_key` or by an `eth_rpc_url` alias, otherwise the first\nentry whose chain matches the current chain. An entry that cannot be resolved, such as one\nwith an unset variable or an unknown chain, can make chain lookups fail, so keep every\nentry valid.\n\nThe table can be written at the top level as `[etherscan]` or inside a profile.\n\n```toml\n[etherscan]\nmainnet = { key = \"${ETHERSCAN_API_KEY}\" }\nmainnet2 = { key = \"ABCDEFG\", chain = \"mainnet\" }\noptimism = { key = \"1234567\" }\nunknown_chain = { key = \"ABCDEFG\", url = \"https://api.example.com/api\" }\n```"
     },
     {
@@ -617,7 +622,7 @@
         "DAPP_DENY_WARNINGS",
         "DAPP_TEST_DENY_WARNINGS"
       ],
-      "deprecated": "deny = warnings",
+      "deprecated": "deny = \"warnings\"",
       "description": "Deprecated: use `deny = \"warnings\"` instead.\n\n`deny_warnings = true` is read as `deny = \"warnings\"` and `false` as `deny = \"never\"`,\nunless `deny` is also set in the same profile, in which case `deny` wins. The\n`--deny-warnings` flag is deprecated in the same way in favor of `--deny warnings`."
     },
     {
@@ -829,7 +834,7 @@
     {
       "key": "fuzz.seed",
       "section": "fuzz",
-      "type": "integer",
+      "type": "integer or string",
       "table": false,
       "default": null,
       "env": [
@@ -840,7 +845,7 @@
     {
       "key": "fuzz.dictionary_weight",
       "section": "fuzz",
-      "type": "integer",
+      "type": "integer or numeric string",
       "table": false,
       "default": "40",
       "env": [
@@ -884,7 +889,7 @@
     {
       "key": "fuzz.max_fuzz_dictionary_addresses",
       "section": "fuzz",
-      "type": "integer",
+      "type": "integer, numeric string, or \"max\"",
       "table": false,
       "default": "15728640",
       "env": [
@@ -895,7 +900,7 @@
     {
       "key": "fuzz.max_fuzz_dictionary_values",
       "section": "fuzz",
-      "type": "integer",
+      "type": "integer, numeric string, or \"max\"",
       "table": false,
       "default": "9830400",
       "env": [
@@ -906,7 +911,7 @@
     {
       "key": "fuzz.max_fuzz_dictionary_literals",
       "section": "fuzz",
-      "type": "integer",
+      "type": "integer, numeric string, or \"max\"",
       "table": false,
       "default": "6553600",
       "env": [
@@ -1060,7 +1065,7 @@
     {
       "key": "fuzz.corpus_random_sequence_weight",
       "section": "fuzz",
-      "type": "integer",
+      "type": "integer or numeric string",
       "table": false,
       "default": "10",
       "env": [
@@ -1071,7 +1076,7 @@
     {
       "key": "fuzz.payable_value_weight",
       "section": "fuzz",
-      "type": "integer",
+      "type": "integer or numeric string",
       "table": false,
       "default": "0",
       "env": [
@@ -1239,7 +1244,8 @@
       "default": "\"fixed\"",
       "values": [
         "fixed",
-        "random"
+        "random",
+        "uniform"
       ],
       "env": [
         "FOUNDRY_INVARIANT_DEPTH_MODE"
@@ -1282,7 +1288,7 @@
     {
       "key": "invariant.dictionary_weight",
       "section": "invariant",
-      "type": "integer",
+      "type": "integer or numeric string",
       "table": false,
       "default": "80",
       "env": [
@@ -1326,7 +1332,7 @@
     {
       "key": "invariant.max_fuzz_dictionary_addresses",
       "section": "invariant",
-      "type": "integer",
+      "type": "integer, numeric string, or \"max\"",
       "table": false,
       "default": "15728640",
       "env": [
@@ -1337,7 +1343,7 @@
     {
       "key": "invariant.max_fuzz_dictionary_values",
       "section": "invariant",
-      "type": "integer",
+      "type": "integer, numeric string, or \"max\"",
       "table": false,
       "default": "9830400",
       "env": [
@@ -1348,7 +1354,7 @@
     {
       "key": "invariant.max_fuzz_dictionary_literals",
       "section": "invariant",
-      "type": "integer",
+      "type": "integer, numeric string, or \"max\"",
       "table": false,
       "default": "6553600",
       "env": [
@@ -1524,7 +1530,7 @@
     {
       "key": "invariant.corpus_random_sequence_weight",
       "section": "invariant",
-      "type": "integer",
+      "type": "integer or numeric string",
       "table": false,
       "default": "10",
       "env": [
@@ -1535,7 +1541,7 @@
     {
       "key": "invariant.payable_value_weight",
       "section": "invariant",
-      "type": "integer",
+      "type": "integer or numeric string",
       "table": false,
       "default": "15",
       "env": [
@@ -1809,7 +1815,7 @@
       "section": "symbolic",
       "type": "array of integer",
       "table": false,
-      "default": null,
+      "default": "[]",
       "env": [
         "FOUNDRY_SYMBOLIC_FRONTIER_IDS"
       ],
@@ -1820,7 +1826,7 @@
       "section": "symbolic",
       "type": "array of integer",
       "table": false,
-      "default": null,
+      "default": "[]",
       "env": [
         "FOUNDRY_SYMBOLIC_FRONTIER_PCS"
       ],
@@ -1831,7 +1837,7 @@
       "section": "symbolic",
       "type": "array of string",
       "table": false,
-      "default": null,
+      "default": "[]",
       "env": [
         "FOUNDRY_SYMBOLIC_FRONTIER_SELECTORS"
       ],
@@ -1864,7 +1870,7 @@
       "section": "symbolic",
       "type": "array of string",
       "table": false,
-      "default": null,
+      "default": "[]",
       "env": [
         "FOUNDRY_SYMBOLIC_SOLVER_PORTFOLIO"
       ],
@@ -2011,7 +2017,7 @@
       "section": "symbolic",
       "type": "table",
       "table": false,
-      "default": null,
+      "default": "{}",
       "env": [
         "FOUNDRY_SYMBOLIC_DYNAMIC_LENGTHS"
       ],
@@ -2022,7 +2028,7 @@
       "section": "symbolic",
       "type": "array of integer",
       "table": false,
-      "default": null,
+      "default": "[]",
       "env": [
         "FOUNDRY_SYMBOLIC_DEFAULT_ARRAY_LENGTHS"
       ],
@@ -2033,7 +2039,7 @@
       "section": "symbolic",
       "type": "array of integer",
       "table": false,
-      "default": null,
+      "default": "[]",
       "env": [
         "FOUNDRY_SYMBOLIC_DEFAULT_BYTES_LENGTHS"
       ],
@@ -2299,7 +2305,7 @@
       "section": "tracing",
       "type": "table",
       "table": false,
-      "default": null,
+      "default": "{}",
       "env": [
         "FOUNDRY_TRACING_LABELS"
       ],
@@ -2468,7 +2474,7 @@
     {
       "key": "initial_balance",
       "section": null,
-      "type": "integer",
+      "type": "integer or string",
       "table": false,
       "default": "\"0xffffffffffffffffffffffff\"",
       "env": [
@@ -2481,7 +2487,7 @@
     {
       "key": "block_number",
       "section": null,
-      "type": "integer",
+      "type": "integer or string",
       "table": false,
       "default": "1",
       "env": [
@@ -2532,14 +2538,17 @@
       "env": [
         "FOUNDRY_CHAIN_ID",
         "DAPP_CHAIN_ID",
-        "DAPP_TEST_CHAIN_ID"
+        "DAPP_TEST_CHAIN_ID",
+        "FOUNDRY_CHAIN",
+        "DAPP_CHAIN",
+        "DAPP_TEST_CHAIN"
       ],
       "description": "The chain Foundry targets, as a chain name or EIP-155 chain ID.\n\nAccepts a name such as `\"mainnet\"` or `\"sepolia\"`, or a number such as `1`. It sets the\n`chainid` value during EVM execution: when unset, local execution uses 31337 and forks use\nthe chain ID reported by the RPC, and when set it overrides the fork's chain ID. Commands\nalso use it to choose the block explorer settings and API key from `[etherscan]`, and\n`cast` commands use it as the transaction chain. The key can also be written as `chain`.\nThe `--chain` (`--chain-id`) flag overrides it.\n\n```toml\n[profile.default]\nchain_id = \"sepolia\"\n```"
     },
     {
       "key": "gas_limit",
       "section": null,
-      "type": "integer",
+      "type": "integer, numeric string, or \"max\"",
       "table": false,
       "default": "1073741824",
       "env": [
@@ -2604,7 +2613,7 @@
     {
       "key": "block_timestamp",
       "section": null,
-      "type": "integer",
+      "type": "integer or string",
       "table": false,
       "default": "1",
       "env": [
@@ -2644,7 +2653,7 @@
     {
       "key": "block_gas_limit",
       "section": null,
-      "type": "integer",
+      "type": "integer, numeric string, or \"max\"",
       "table": false,
       "default": null,
       "env": [
@@ -2852,7 +2861,7 @@
       "section": "rpc_endpoints",
       "type": "table",
       "table": false,
-      "default": null,
+      "default": "{}",
       "description": "Named RPC endpoints that can be referenced by alias.\n\nAliases work in `eth_rpc_url`, in `--rpc-url`/`--fork-url`, and in cheatcodes such as\n`vm.createFork`, `vm.createSelectFork`, `vm.rpcUrl` and `vm.rpcUrls`. The table can be\nwritten at the top level as `[rpc_endpoints]` or inside a profile.\n\nEach value is either a URL string or a table with:\n\n- `endpoint` (alias `url`): the endpoint URL.\n- `endpoints`: an array of URLs, instead of `endpoint`. `anvil --fork-url <alias>`\n  load-balances across all of them with failover; other users take the first.\n- `auth`: a value sent as the `Authorization` header, such as `\"Bearer <token>\"`, to forks\n  created by cheatcodes and to `chisel` forks.\n- `retries`: number of retries for forks created by cheatcodes, overriding\n  `--fork-retries`.\n- `retry_backoff`: initial retry backoff in milliseconds for forks created by cheatcodes,\n  overriding `--fork-retry-backoff`.\n- `compute_units_per_second`: assumed compute units per second for forks created by\n  cheatcodes, used only when the run sets none.\n\nExactly one of `endpoint` and `endpoints` is required. URLs and `auth` may contain `${VAR}`\nplaceholders, which are resolved from the environment when the endpoint is used, so an\nunset variable only fails where that endpoint is needed.\n\n```toml\n[rpc_endpoints]\noptimism = \"https://optimism.example.com/v2/${API_KEY}\"\nmainnet = \"${RPC_MAINNET}\"\nfallback = { endpoints = [\"${MAINNET_RPC_URL}\", \"${FALLBACK_RPC_URL}\"], retries = 5 }\nprivate = { endpoint = \"https://rpc.example.com\", auth = \"Bearer ${RPC_TOKEN}\" }\n```"
     },
     {
@@ -3026,6 +3035,7 @@
       "default": "\"attributes_first\"",
       "values": [
         "params_always",
+        "params_first",
         "params_first_multi",
         "attributes_first",
         "all",
@@ -3497,7 +3507,8 @@
       "section": "labels",
       "type": "table",
       "table": false,
-      "default": null,
+      "default": "{}",
+      "deprecated": "tracing.labels",
       "description": "Deprecated: use `tracing.labels` instead.\n\nAddress labels shown in traces. Foundry still reads a top-level `[labels]` table and a\nprofile-level `labels` table, merges them into `tracing.labels`, where existing\n`tracing.labels` entries win for duplicate addresses, and prints a deprecation warning.\n\n```toml\n[profile.default.tracing.labels]\n\"0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045\" = \"vitalik.eth\"\n```"
     },
     {
@@ -3656,7 +3667,7 @@
       "section": null,
       "type": "array of table",
       "table": false,
-      "default": null,
+      "default": "[]",
       "env": [
         "FOUNDRY_EXTERNAL_COMPILERS",
         "DAPP_EXTERNAL_COMPILERS",
@@ -3711,7 +3722,7 @@
       "section": null,
       "type": "array of string",
       "table": false,
-      "default": null,
+      "default": "[]",
       "env": [
         "FOUNDRY_EXTRA_ARGS",
         "DAPP_EXTRA_ARGS",
