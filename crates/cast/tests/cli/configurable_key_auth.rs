@@ -9,7 +9,7 @@ use anvil::NodeConfig;
 use foundry_cli::utils::parse_json;
 use foundry_common::tempo::configurable_account::single_owner_account;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
-use foundry_test_utils::{TestCommand, util::OutputExt};
+use foundry_test_utils::{TestCommand, assert_data_eq, snapbox::IntoData, util::OutputExt};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::{
     TempoTxEnvelope,
@@ -284,7 +284,7 @@ Error: configurable account owners approve with their own keys, not a Tempo acce
 /// `0x05` signature that a keychain signature wraps for the EOA.
 #[casttest]
 async fn tempo_t14_keychain_authorizes_configurable_account_as_access_key(cmd: _) {
-    let (_, handle) =
+    let (api, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
     let rpc = handle.http_endpoint();
     let root = handle.dev_wallets().next().unwrap();
@@ -335,16 +335,17 @@ Error: browser key authorization signing does not support the configurable key t
     let fee_token = PATH_USD_ADDRESS.to_string();
     let call =
         [&fee_token, "approve(address,uint256)", &Address::repeat_byte(0x44).to_string(), "1"];
-    let access_args = [
-        "--tempo.configurable-access-key".to_string(),
-        account.to_string(),
-        "--private-key".into(),
-        hex::encode_prefixed(owner.to_bytes()),
-        "--rpc-url".into(),
-        rpc,
-        "--tempo.fee-token".into(),
-        fee_token.clone(),
+    let account_address = account.to_string();
+    let owner_key = hex::encode_prefixed(owner.to_bytes());
+    let access_key = [
+        "--tempo.configurable-access-key",
+        &account_address,
+        "--rpc-url",
+        &rpc,
+        "--tempo.fee-token",
+        &fee_token,
     ];
+    let access_args = [&access_key[..], &["--private-key", &owner_key]].concat();
     let root_address = root.address().to_string();
     let from = ["--from", root_address.as_str()];
     let rejected = [
@@ -394,31 +395,97 @@ Error: an access key cannot manage the keys of the account it signs for
     assert_eq!(keychain.user_address, root.address());
     assert!(!keychain.is_legacy());
     assert_eq!(keychain.key_id(&signed.signature_hash()).unwrap(), account);
+    assert_eq!(keychain.signature.as_configurable_account().unwrap().config().version, 0);
 
-    // The estimate models the keychain-wrapped quorum exactly.
-    let estimate = cmd
+    // The owners bind their approvals to the account's configuration version, 1 after the
+    // account adds an owner. Root's own access key in the Tempo Accounts store never signs in
+    // place of the configurable access key, even without a wallet option. In both cases the
+    // estimate models the keychain-wrapped quorum exactly.
+    api.anvil_deal_tip20(account, PATH_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+    cmd.cast_fuse()
+        .args(["wallet", "owners", "add", &account_address])
+        .args([&Address::repeat_byte(0x66).to_string(), "--private-key", &owner_key])
+        .args(["--rpc-url", &rpc, "--tempo.fee-token", &fee_token])
+        .assert_success();
+    let root_key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x77)).unwrap();
+    let authorization = cmd
         .cast_fuse()
-        .arg("estimate")
-        .args(call)
-        .args(from)
-        .args(&access_args)
+        .args(["key-authorization", "sign", &root_key.address().to_string()])
+        .args(["--chain-id", &CHAIN_ID.to_string(), "--private-key"])
+        .arg(hex::encode_prefixed(root.to_bytes()))
         .assert_success()
         .get_output()
         .stdout_lossy();
-    cmd.cast_fuse()
-        .arg("send")
-        .args(call)
-        .args(from)
-        .args(&access_args)
-        .arg("--json")
-        .assert_json_stdout(format!(
-            r#"{{
+    let tempo_home = tempfile::tempdir().unwrap();
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.args(["tempo", "import-access-key", "--account", &root_address])
+        .args(["--access-key", &hex::encode_prefixed(root_key.to_bytes())])
+        .args(["--authorization", authorization.trim()])
+        .assert_success();
+
+    let owner_signer = format!("private-key://{owner_key}");
+    // Each send approves a new amount, so that no send costs less than its estimate.
+    let wallets =
+        [(["--private-key", owner_key.as_str()], "2"), (["--tempo.owner", &owner_signer], "3")];
+    for (wallet, amount) in wallets {
+        let access_args = [&access_key[..], &wallet].concat();
+        let call = [call[0], call[1], call[2], amount];
+        cmd.cast_fuse();
+        cmd.env("TEMPO_HOME", tempo_home.path());
+        let estimate = cmd
+            .arg("estimate")
+            .args(call)
+            .args(from)
+            .args(&access_args)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        cmd.cast_fuse();
+        cmd.env("TEMPO_HOME", tempo_home.path());
+        let receipt = cmd
+            .arg("send")
+            .args(call)
+            .args(from)
+            .args(&access_args)
+            .arg("--json")
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert_data_eq!(
+            receipt.trim().is_json(),
+            format!(
+                r#"{{
   "status": "0x1",
   "from": "{:#x}",
   "gasUsed": "{:#x}",
   "...": "{{...}}"
 }}"#,
-            root.address(),
-            estimate.trim().parse::<u64>().unwrap()
-        ));
+                root.address(),
+                estimate.trim().parse::<u64>().unwrap()
+            )
+            .is_json()
+            .unordered()
+        );
+        let hash = parse_json::<serde_json::Value>(receipt.trim()).unwrap()["transactionHash"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let raw = cmd
+            .cast_fuse()
+            .args(["tx", &hash, "--raw", "--rpc-url", &rpc])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let TempoTxEnvelope::AA(sent) =
+            TempoTxEnvelope::decode_2718_exact(&hex::decode(raw.trim()).unwrap()).unwrap()
+        else {
+            panic!("expected a Tempo transaction");
+        };
+        let keychain = sent.signature().as_keychain().expect("a keychain signature");
+        assert_eq!(keychain.key_id(&sent.signature_hash()).unwrap(), account);
+        assert_eq!(keychain.signature.as_configurable_account().unwrap().config().version, 1);
+    }
 }
