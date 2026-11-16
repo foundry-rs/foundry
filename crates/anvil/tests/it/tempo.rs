@@ -53,6 +53,7 @@ use commonware_cryptography::bls12381::primitives::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::{RetryProvider, redact_url},
+    tempo::configurable_account::abi_owners,
 };
 use foundry_evm_core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
@@ -105,9 +106,9 @@ use tempo_primitives::{
     transaction::{
         CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, Call, ConfigurableAccountConfig,
         ConfigurableAccountOwner, ConfigurableAccountSignature, FEE_PAYER_SIGNATURE_MARKER,
-        KeyAuthorization, KeychainSignature, PrimitiveSignature,
-        SIGNATURE_TYPE_CONFIGURABLE_ACCOUNT, SignatureType, TEMPO_GAS_PRICE_SCALING_FACTOR,
-        TokenLimit, calc_gas_balance_spending, configurable_account_digest,
+        KeyAuthorization, KeychainSignature, PrimitiveSignature, SignatureType,
+        TEMPO_GAS_PRICE_SCALING_FACTOR, TokenLimit, calc_gas_balance_spending,
+        configurable_account_digest,
     },
 };
 use tokio::sync::Notify;
@@ -3866,17 +3867,20 @@ fn configurable_account_config(
     ConfigurableAccountConfig { salt, version, threshold, owners }
 }
 
-fn abi_owners(
-    config: &ConfigurableAccountConfig,
-) -> Vec<IConfigurableAccount::ConfigurableAccountOwner> {
-    config
-        .owners
-        .iter()
-        .map(|owner| IConfigurableAccount::ConfigurableAccountOwner {
-            owner: owner.owner,
-            weight: owner.weight,
-        })
-        .collect()
+/// A no-op call for the Tempo transactions in these tests.
+const fn noop() -> Call {
+    Call { to: TxKind::Call(Address::repeat_byte(0x73)), value: U256::ZERO, input: Bytes::new() }
+}
+
+/// Funds `account` with AlphaUSD for its fees.
+async fn deal(provider: &RetryProvider, account: Address) {
+    provider
+        .raw_request::<_, ()>(
+            "anvil_dealTIP20".into(),
+            (account, ALPHA_USD, U256::from(1_000_000_000_000u64)),
+        )
+        .await
+        .unwrap();
 }
 
 fn configurable_account_call(call: impl SolCall) -> Call {
@@ -3975,44 +3979,24 @@ async fn test_tempo_t14_configurable_account_lifecycle() {
     let (_api, handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
     let provider = handle.http_provider();
-    let observer = Address::repeat_byte(0x73);
-    let noop = Call { to: TxKind::Call(observer), value: U256::ZERO, input: Bytes::new() };
 
     // Derivation needs no state: the account is unregistered and has no code until its first
     // transaction.
-    let account = TestConfigurableAccount::fixture();
-    assert_eq!(account.address, VIEM_CA_ACCOUNT);
+    let config = TestConfigurableAccount::fixture().config;
     let registry = IConfigurableAccount::new(CONFIGURABLE_ACCOUNT_ADDRESS, &provider);
     assert_eq!(
         registry
-            .deriveAccount(
-                account.config.salt,
-                account.config.threshold,
-                abi_owners(&account.config)
-            )
+            .deriveAccount(config.salt, config.threshold, abi_owners(&config))
             .call()
             .await
             .unwrap(),
         VIEM_CA_ACCOUNT
     );
-    assert_eq!(config_commitment(&provider, account.address).await, B256::ZERO);
-    assert!(provider.get_code_at(account.address).await.unwrap().is_empty());
-    provider
-        .raw_request::<_, ()>(
-            "anvil_dealTIP20".into(),
-            (account.address, ALPHA_USD, U256::from(1_000_000_000_000u64)),
-        )
-        .await
-        .unwrap();
+    assert_eq!(config_commitment(&provider, VIEM_CA_ACCOUNT).await, B256::ZERO);
+    assert!(provider.get_code_at(VIEM_CA_ACCOUNT).await.unwrap().is_empty());
 
     // The first transaction carries the version-zero quorum and registers the account.
-    let tx = configurable_account_tx(&provider, 0, vec![noop.clone()]).await;
-    let signature = account.sign(&tx).await;
-    assert_eq!(signature.to_bytes()[0], SIGNATURE_TYPE_CONFIGURABLE_ACCOUNT);
-    let receipt = send_signed_tempo_tx(&provider, tx, signature).await.unwrap();
-    assert!(receipt.status(), "registration should succeed: {receipt:?}");
-    assert_eq!(receipt.from, VIEM_CA_ACCOUNT);
-    assert_eq!(config_commitment(&provider, account.address).await, VIEM_CA_COMMITMENT_V0);
+    let account = register_fixture_account(&provider).await;
     assert_eq!(provider.get_transaction_count(account.address).await.unwrap(), 1);
 
     // Registration installs the account shim, which answers ERC-1271 for the current owners.
@@ -4055,7 +4039,7 @@ async fn test_tempo_t14_configurable_account_lifecycle() {
     assert_eq!(updated.owners, abi_owners(&rotated.config));
 
     // The retired version-zero quorum no longer authorizes, and key `0x44..44` alone now does.
-    let tx = configurable_account_tx(&provider, 2, vec![noop.clone()]).await;
+    let tx = configurable_account_tx(&provider, 2, vec![noop()]).await;
     let signature = account.sign(&tx).await;
     let error = send_signed_tempo_tx(&provider, tx.clone(), signature).await.unwrap_err();
     assert!(
@@ -4072,13 +4056,7 @@ async fn test_tempo_t14_configurable_account_lifecycle() {
     // A single-key account migrates in place, keeping its address.
     let root = seeded_key(0x33);
     let upgraded = TestConfigurableAccount::upgraded(root.address(), vec![seeded_key(0x44)]);
-    provider
-        .raw_request::<_, ()>(
-            "anvil_dealTIP20".into(),
-            (root.address(), ALPHA_USD, U256::from(1_000_000_000_000u64)),
-        )
-        .await
-        .unwrap();
+    deal(&provider, root.address()).await;
     let tx = configurable_account_tx(&provider, 0, vec![upgraded.upgrade_call()]).await;
     let signature = root.sign_hash(&tx.signature_hash()).await.unwrap();
     let receipt = send_signed_tempo_tx(&provider, tx, signature.into()).await.unwrap();
@@ -4095,7 +4073,7 @@ async fn test_tempo_t14_configurable_account_lifecycle() {
     assert_eq!(event.salt, VIEM_UPGRADE_SALT);
 
     // The root key is retired (TIP-1113), and the new owner signs for the same address.
-    let tx = configurable_account_tx(&provider, 1, vec![noop]).await;
+    let tx = configurable_account_tx(&provider, 1, vec![noop()]).await;
     let signature = root.sign_hash(&tx.signature_hash()).await.unwrap();
     let error = send_signed_tempo_tx(&provider, tx.clone(), signature.into()).await.unwrap_err();
     assert!(
@@ -4115,22 +4093,12 @@ async fn test_tempo_t14_configurable_account_lifecycle() {
 /// asserts that the node reports its configuration commitment in the account extension.
 async fn register_fixture_account(provider: &RetryProvider) -> TestConfigurableAccount {
     let account = TestConfigurableAccount::fixture();
-    provider
-        .raw_request::<_, ()>(
-            "anvil_dealTIP20".into(),
-            (account.address, ALPHA_USD, U256::from(1_000_000_000_000u64)),
-        )
-        .await
-        .unwrap();
-    let noop = Call {
-        to: TxKind::Call(Address::repeat_byte(0x73)),
-        value: U256::ZERO,
-        input: Bytes::new(),
-    };
-    let tx = configurable_account_tx(provider, 0, vec![noop]).await;
+    deal(provider, account.address).await;
+    let tx = configurable_account_tx(provider, 0, vec![noop()]).await;
     let signature = account.sign(&tx).await;
     let receipt = send_signed_tempo_tx(provider, tx, signature).await.unwrap();
     assert!(receipt.status(), "registration should succeed: {receipt:?}");
+    assert_eq!(receipt.from, account.address);
     assert_eq!(config_commitment(provider, account.address).await, VIEM_CA_COMMITMENT_V0);
     for method in ["eth_getAccount", "eth_getAccountInfo"] {
         assert_eq!(account_extension(provider, method, account.address).await, VIEM_CA_EXTENSION);
@@ -4168,12 +4136,7 @@ async fn assert_registered_account_continues(
     assert!(receipt.status(), "updateConfig should succeed: {receipt:?}");
     assert_eq!(config_commitment(provider, account.address).await, VIEM_CA_COMMITMENT_V1);
 
-    let noop = Call {
-        to: TxKind::Call(Address::repeat_byte(0x73)),
-        value: U256::ZERO,
-        input: Bytes::new(),
-    };
-    let tx = configurable_account_tx(provider, 2, vec![noop]).await;
+    let tx = configurable_account_tx(provider, 2, vec![noop()]).await;
     let signature = rotated.sign(&tx).await;
     let receipt = send_signed_tempo_tx(provider, tx, signature).await.unwrap();
     assert!(receipt.status(), "the rotated owner should authorize: {receipt:?}");
@@ -4230,15 +4193,6 @@ async fn test_tempo_t14_channel_reserve_rejects_retired_voucher_signers() {
     let account = TestConfigurableAccount::fixture();
     let root = seeded_key(0x33);
     let upgraded = TestConfigurableAccount::upgraded(root.address(), vec![seeded_key(0x44)]);
-    for signer in [account.address, root.address()] {
-        provider
-            .raw_request::<_, ()>(
-                "anvil_dealTIP20".into(),
-                (signer, ALPHA_USD, U256::from(1_000_000_000_000u64)),
-            )
-            .await
-            .unwrap();
-    }
     let open = |signer: Address, salt: u8| Call {
         to: TxKind::Call(TIP20_CHANNEL_RESERVE_ADDRESS),
         value: U256::ZERO,
@@ -4282,10 +4236,8 @@ async fn test_tempo_t14_channel_reserve_rejects_retired_voucher_signers() {
     );
 
     // Register the configurable account and upgrade the single-key account.
-    let noop = Call { to: TxKind::Call(payee), value: U256::ZERO, input: Bytes::new() };
-    let tx = configurable_account_tx(&provider, 0, vec![noop]).await;
-    let signature = account.sign(&tx).await;
-    assert!(send_signed_tempo_tx(&provider, tx, signature).await.unwrap().status());
+    register_fixture_account(&provider).await;
+    deal(&provider, root.address()).await;
     let tx = configurable_account_tx(&provider, 0, vec![upgraded.upgrade_call()]).await;
     let signature = root.sign_hash(&tx.signature_hash()).await.unwrap();
     assert!(send_signed_tempo_tx(&provider, tx, signature.into()).await.unwrap().status());
@@ -6905,11 +6857,7 @@ async fn test_tempo_t14_sponsored_estimate_stays_within_block_gas_limit() {
         inner: TransactionRequest::default().from(from),
         fee_token: Some(PATH_USD),
         nonce_key: Some(U256::ZERO),
-        calls: vec![Call {
-            to: TxKind::Call(address!("0x7373737373737373737373737373737373737373")),
-            value: U256::ZERO,
-            input: Bytes::new(),
-        }],
+        calls: vec![noop()],
         ..Default::default()
     };
     let estimate = async |gas_limit: Option<u64>, sponsored: bool| {

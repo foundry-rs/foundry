@@ -52,7 +52,9 @@ use foundry_common::{
     shell,
     tempo::{
         TempoSponsor, active_tempo_hardfork,
-        configurable_account::{ConfigurableAccountSigner, detect_configurable_account},
+        configurable_account::{
+            ConfigurableAccountSigner, detect_configurable_account, reaches_threshold,
+        },
         mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token,
     },
 };
@@ -982,16 +984,15 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     // Owners that are not local approve the account's transactions elsewhere.
                     match account {
                         Some((account, config, keys)) => {
-                            match OfflineOwners::new(account, config.clone(), keys.clone()) {
-                                Some(owners) => {
-                                    offline_owners.insert(scope, owners);
-                                }
-                                None => {
-                                    configurable_accounts.insert(
-                                        scope,
-                                        ConfigurableAccountSigner::new(account, config, keys, "")?,
-                                    );
-                                }
+                            let local = keys.iter().map(|key| key.address()).collect::<Vec<_>>();
+                            if reaches_threshold(&config, &local) {
+                                configurable_accounts.insert(
+                                    scope,
+                                    ConfigurableAccountSigner::new(account, config, keys, "")?,
+                                );
+                            } else {
+                                offline_owners
+                                    .insert(scope, OfflineOwners { account, config, keys });
                             }
                         }
                         None if missing => missing_scopes.push(scope),

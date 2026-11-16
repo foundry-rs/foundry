@@ -864,10 +864,6 @@ const MAX_MOCK_WEBAUTHN_DATA_LEN: usize = 8192;
 /// without its r, s and public key coordinates.
 const MAX_OWNER_WEBAUTHN_DATA_LEN: usize = MAX_WEBAUTHN_SIGNATURE_LENGTH - 4 * size_of::<B256>();
 
-/// Error text for a configurable account call simulated without its configuration witness.
-const MISSING_CONFIGURATION_WITNESS: &str =
-    "configurable account simulation requires a configuration witness";
-
 /// Creates the mock signature a Tempo node simulates a request with, from its key type hints.
 ///
 /// Returns `None` for a configurable account, whose owner quorum a primitive placeholder cannot
@@ -3580,7 +3576,7 @@ impl<N: Network> Backend<N> {
             )
             .ok_or_else(|| {
                 BlockchainError::InvalidTransactionRequest(
-                    MISSING_CONFIGURATION_WITNESS.to_string(),
+                    "configurable account simulation requires a configuration witness".into(),
                 )
             })?,
         };
