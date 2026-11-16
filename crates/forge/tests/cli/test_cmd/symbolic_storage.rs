@@ -977,6 +977,74 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// A constant slot below `2^128` read in assembly is a fixed slot, not a folded nested mapping
+// entry, so it is not searched against the layout's nested mappings and many candidate keys.
+#[forgetest_init]
+fn symbolic_small_constant_slot_skips_folded_mapping_search(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_small_constant_slot_skips_folded_mapping_search");
+
+    let branches: String =
+        (0..256).map(|i| format!("        if (x == {}) return {i};\n", 1000 + i)).collect();
+    prj.add_test(
+        "SymbolicSmallConstantSlot.t.sol",
+        &format!(
+            r#"
+contract ConstantSlotCounter {{
+    struct Buckets {{
+        mapping(uint256 => uint256) a;
+        mapping(uint256 => uint256) b;
+        mapping(uint256 => uint256) c;
+        mapping(uint256 => uint256) d;
+    }}
+
+    mapping(uint256 => Buckets) buckets;
+
+    function add(uint256 amount) external {{
+        assembly {{
+            sstore(0x05345cdf77eb68f44c, add(sload(0x05345cdf77eb68f44c), amount))
+        }}
+    }}
+
+    function total() external view returns (uint256 value) {{
+        assembly {{
+            value := sload(0x05345cdf77eb68f44c)
+        }}
+    }}
+
+    function index(uint256 x) external pure returns (uint256) {{
+{branches}        return type(uint256).max;
+    }}
+}}
+
+contract SymbolicSmallConstantSlot {{
+    ConstantSlotCounter counter = new ConstantSlotCounter();
+
+    function checkAddSetsTotal(uint256 amount) public {{
+        counter.add(amount);
+        assert(counter.total() == amount);
+    }}
+
+    function checkAddChangesTotal(uint256 amount) public {{
+        counter.add(amount);
+        assert(counter.total() != amount);
+    }}
+}}
+"#
+        ),
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicSmallConstantSlot"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicSmallConstantSlot.t.sol:SymbolicSmallConstantSlot
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkAddChangesTotal(uint256) ([METRICS])
+[PASS] checkAddSetsTotal(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 // A build without storage layouts after an edit keeps the cached symbolic profile, so the next
 // symbolic run must recompile the artifacts it wrote without layouts.
 #[forgetest_init]
