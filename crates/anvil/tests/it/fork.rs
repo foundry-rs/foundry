@@ -4625,9 +4625,12 @@ async fn test_fork_get_account_and_proof_read_uncached_state() {
     for block in [BlockId::number(BLOCK_NUMBER + 1), BlockId::latest(), BlockId::pending()] {
         let account = provider.get_account(weth).block_id(block).await.unwrap();
         assert_eq!((account.balance, account.nonce, account.code_hash), expected);
-        let proof = provider.get_proof(weth, vec![B256::ZERO]).block_id(block).await.unwrap();
+        // Slot 99 is unused by WETH, so its proof must be an exclusion proof.
+        let keys = vec![B256::ZERO, B256::with_last_byte(99)];
+        let proof = provider.get_proof(weth, keys).block_id(block).await.unwrap();
         assert_eq!((proof.balance, proof.nonce, proof.code_hash), expected);
         assert_eq!(proof.storage_proof[0].value, slot);
+        assert_eq!(proof.storage_proof[1].value, U256::ZERO);
         assert_storage_proofs(&proof);
     }
 
