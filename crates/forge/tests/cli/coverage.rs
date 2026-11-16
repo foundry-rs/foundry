@@ -3875,6 +3875,8 @@ contract GuardTest {
 "#,
     );
     let solar = prj.ensure_foundry_bin("solar");
+    // Solc falls through into a loop head that the loop's back edge also targets, so its hits
+    // would count iterations and `spin` has no path hits. Solar's layout counts them.
     assert_lcov(
         cmd.arg("coverage"),
         str![[r#"
