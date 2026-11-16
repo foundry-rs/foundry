@@ -88,7 +88,6 @@ pub fn find_anchors(
                             // placed it.
                             let swapped = kind == Some(BranchKind::Require)
                                 && index.taken_fails(&anchors, anchor_loc);
-                            // Swapping the paths gives the failing side path 0.
                             select_branch(anchors, path_id ^ u32::from(swapped))
                         },
                     )
