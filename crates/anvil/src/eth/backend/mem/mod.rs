@@ -10964,11 +10964,7 @@ pub(crate) fn transaction_build_with_block_hash(
                 fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
                 fields.insert(String::from("nonce"), serde_json::to_value("0x0").unwrap());
 
-                let inner = UnknownTypedTransaction {
-                    ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
-                    fields,
-                    memo: Default::default(),
-                };
+                let inner = UnknownTypedTransaction::new(AnyTxType(DEPOSIT_TX_TYPE_ID), fields);
 
                 let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
                     hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
@@ -11014,11 +11010,10 @@ pub(crate) fn transaction_build_with_block_hash(
         }
         let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
             hash: eth_transaction.hash(),
-            inner: UnknownTypedTransaction {
-                ty: AnyTxType(base_common_consensus::EIP8130_TX_TYPE_ID),
+            inner: UnknownTypedTransaction::new(
+                AnyTxType(base_common_consensus::EIP8130_TX_TYPE_ID),
                 fields,
-                memo: Default::default(),
-            },
+            ),
         });
         return build_rpc_transaction(envelope, from, block, info, None);
     }
@@ -11030,11 +11025,10 @@ pub(crate) fn transaction_build_with_block_hash(
         fields.remove("hash");
         let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
             hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
-            inner: UnknownTypedTransaction {
-                ty: AnyTxType(foundry_primitives::CIP64_TX_TYPE),
+            inner: UnknownTypedTransaction::new(
+                AnyTxType(foundry_primitives::CIP64_TX_TYPE),
                 fields,
-                memo: Default::default(),
-            },
+            ),
         });
         let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
         let effective_gas_price = block.map(|_| eth_transaction.effective_gas_price(base_fee));
@@ -11048,11 +11042,7 @@ pub(crate) fn transaction_build_with_block_hash(
         match maybe_tempo_fields {
             Ok(mut fields) => {
                 fields.remove("hash");
-                let inner = UnknownTypedTransaction {
-                    ty: AnyTxType(TEMPO_TX_TYPE_ID),
-                    fields,
-                    memo: Default::default(),
-                };
+                let inner = UnknownTypedTransaction::new(AnyTxType(TEMPO_TX_TYPE_ID), fields);
 
                 let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
                     hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
