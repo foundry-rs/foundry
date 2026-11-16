@@ -222,11 +222,14 @@ impl SymbolicExecutor {
         data: ExpectedRevertData,
         reverter: Option<SymExpr>,
         count: u64,
+        name: &str,
     ) -> CheatcodeOutcome {
-        if state.expected_revert.is_some() {
+        if state.expected_revert.is_some() || state.outer_expected_revert {
             return CheatcodeOutcome::Revert(error_string_return_data(
                 &mut self.cx,
-                "you must call another function prior to expecting a second revert",
+                &format!(
+                    "vm.{name}: you must call another function prior to expecting a second revert"
+                ),
             ));
         }
         state.expected_revert = Some(ExpectedRevert::new(data, reverter, count));
@@ -1216,7 +1219,8 @@ impl SymbolicExecutor {
                 if count == 0 {
                     return Err(SymbolicError::Unsupported("symbolic vm.expectRevert count 0"));
                 }
-                Ok(self.set_expected_revert(state, data, reverter, count))
+                let name = if partial { "expectPartialRevert" } else { "expectRevert" };
+                Ok(self.set_expected_revert(state, data, reverter, count, name))
             }
             expectEmitAnonymous_0Call::SELECTOR
             | expectEmitAnonymous_1Call::SELECTOR

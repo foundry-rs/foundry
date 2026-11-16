@@ -46,6 +46,10 @@ pub(crate) struct PathState {
     /// Backward jumps taken per destination and return addresses on the stack.
     pub(crate) loop_jumps: HashMap<(usize, Vec<usize>), u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
+    /// Whether a calling frame has a pending `vm.expectRevert`, which Forge tracks globally, so
+    /// this frame cannot set another. Storage hook callbacks start without it, as Forge sets the
+    /// pending expectation aside while they run.
+    pub(crate) outer_expected_revert: bool,
     /// Account of the first call, or reverting CREATE, that failed in or below this frame since
     /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
     pub(crate) first_failed_callee: Option<Address>,
@@ -136,6 +140,7 @@ impl PathState {
             needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
+            outer_expected_revert: false,
             first_failed_callee: None,
             first_reverted_callee: None,
             assertion_failed: false,
@@ -310,6 +315,7 @@ impl PathState {
         // semantics unless the callee sets its own prank.
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
+        child.outer_expected_revert = self.outer_expected_revert || self.expected_revert.is_some();
         child.expected_revert = None;
         child.first_failed_callee = None;
         child.first_reverted_callee = None;
@@ -331,6 +337,7 @@ impl PathState {
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
         let mut child = self.child(frame);
         child.storage_hook_active = true;
+        child.outer_expected_revert = false;
         child.recorded_logs = None;
         child.access_record = None;
         child.expected_emit = None;
