@@ -1477,7 +1477,6 @@ mod tests {
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
         spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_after,
-        spawn_rpc_proxy_rejecting_require_canonical,
     };
 
     #[cfg(feature = "base")]
@@ -2487,9 +2486,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn fork_preflight_reads_send_hash_objects_without_canonical_flag() {
         let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let endpoint = spawn_rpc_proxy_rejecting_require_canonical(handle.http_endpoint()).await;
         let (endpoint, code_requests) =
-            spawn_rpc_proxy_recording_method(endpoint, "eth_getCode").await;
+            spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getCode").await;
         let (endpoint, nonce_requests) =
             spawn_rpc_proxy_recording_method(endpoint, "eth_getTransactionCount").await;
         let evm_opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
@@ -2499,8 +2497,6 @@ mod tests {
         evm_opts.can_use_create2_deployer_at(Some(&fork)).await.unwrap();
         assert_eq!(evm_opts.transaction_count_at_fork(sender, &fork).await.unwrap(), 0);
 
-        // A bare hash string would also pass this proxy but breaks Moonbeam, so pin the object
-        // form.
         let expected = serde_json::json!({ "blockHash": fork.hash() });
         for requests in [code_requests, nonce_requests] {
             let requests = requests.lock().unwrap();
