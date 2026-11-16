@@ -10705,12 +10705,12 @@ contract CaOfflineScript is Script {
              {account} on chain 31337 await approvals from its owners, with threshold \
              2:\n{transactions}\n\nOwners of {account} that have not approved every transaction: \
              {} (weight 1), {} (weight 1)\n\nEach owner signs every digest without hashing it \
-             again, with `cast wallet sign --no-hash <DIGEST>` and their wallet options, or with a \
-             passkey: a WebAuthn assertion whose challenge is the digest, saved as JSON with the \
-             credential's public key. Then send the transactions by running the same command with \
-             `--resume` instead of `--broadcast`, adding `--tempo.owner-signature <SIGNATURE>` for \
-             each approval. Approvals are kept once given, so they can be collected over several \
-             runs.\n",
+             again, with `cast wallet sign --no-hash <DIGEST>` and their wallet options \
+             (`--p256 --private-key <KEY>` for a raw P-256 owner), or with a passkey: a WebAuthn \
+             assertion whose challenge is the digest, saved as JSON with the credential's public \
+             key. Then send the transactions by running the same command with `--resume` instead \
+             of `--broadcast`, adding `--tempo.owner-signature <SIGNATURE>` for each approval. \
+             Approvals are kept once given, so they can be collected over several runs.\n",
             missing[0], missing[1]
         )
     };

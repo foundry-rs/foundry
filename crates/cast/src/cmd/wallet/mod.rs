@@ -1,7 +1,7 @@
 use crate::cmd::{confirm_continue, rpc_provider};
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{Address, Signature, U256, hex};
+use alloy_primitives::{Address, B256, Signature, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::Authorization;
 use alloy_signer::Signer;
@@ -22,7 +22,8 @@ use foundry_common::{
     fs::canonicalize_path,
     sh_println, shell,
     tempo::configurable_account::{
-        LINKED_ACCOUNT_SUFFIX, ensure_link_available, link_keystore, unlink_keystore,
+        LINKED_ACCOUNT_SUFFIX, ca_error, ensure_link_available, link_keystore, parse_p256_key,
+        sign_p256, unlink_keystore,
     },
 };
 use foundry_config::Config;
@@ -32,6 +33,7 @@ use serde_json::{Value, json};
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 use yansi::Paint;
 
@@ -196,6 +198,7 @@ pub enum WalletSubcommands {
     /// - cast wallet sign "hello" --account dev
     /// - cast wallet sign "hello" --private-key $PK
     /// - cast wallet sign --data --from-file typed_data.json --ledger
+    /// - cast wallet sign --no-hash --p256 $DIGEST --private-key $P256_KEY
     #[command(verbatim_doc_comment, visible_alias = "s")]
     Sign {
         /// The message, typed data, or hash to sign.
@@ -224,6 +227,20 @@ pub enum WalletSubcommands {
         /// Treat the message as a raw 32-byte hash and sign it directly without hashing it again.
         #[arg(long, conflicts_with = "data")]
         no_hash: bool,
+
+        /// Sign the hash with a raw P-256 private key, from `--private-key` or `--interactive`,
+        /// and print a Tempo P-256 signature. A P-256 owner of a configurable account approves
+        /// the digest from `cast mktx --raw-unsigned --tempo.digest` this way, for `cast wallet
+        /// assemble`. Requires `--no-hash`.
+        #[arg(
+            long,
+            requires = "no_hash",
+            conflicts_with_all = [
+                "browser", "ledger", "trezor", "mnemonic", "keystore_path",
+                "keystore_account_name", "aws", "gcp", "turnkey",
+            ]
+        )]
+        p256: bool,
 
         #[command(flatten)]
         wallet: WalletOpts,
@@ -640,34 +657,48 @@ impl WalletSubcommands {
                 };
                 print_scalar(hex::encode_prefixed(wallet.public_key()))?;
             }
-            Self::Sign { message, data, from_file, no_hash, wallet, browser } => {
+            Self::Sign { message, data, from_file, no_hash, p256, wallet, browser } => {
                 if browser.browser && no_hash {
                     eyre::bail!("Raw hash signing is not supported with a browser wallet");
                 }
 
                 let typed_data = data.then(|| parse_typed_data(&message, from_file)).transpose()?;
 
-                let (sig, address) =
-                    if let Some(browser) = browser.run::<alloy_network::Ethereum>().await? {
-                        let sig = if let Some(typed_data) = &typed_data {
-                            browser.sign_dynamic_typed_data(typed_data).await?
-                        } else {
-                            browser.sign_message(&hex_str_to_bytes(&message)?).await?
-                        };
-                        (sig, browser.address())
-                    } else {
-                        let wallet = wallet.signer().await?;
-                        let sig = if let Some(typed_data) = &typed_data {
-                            wallet.sign_dynamic_typed_data(typed_data).await?
-                        } else if no_hash {
-                            wallet.sign_hash(&hex::decode(&message)?[..].try_into()?).await?
-                        } else {
-                            wallet.sign_message(&hex_str_to_bytes(&message)?).await?
-                        };
-                        (sig, wallet.address())
+                let (signature, address) = if p256 {
+                    let private_key = match wallet.raw.private_key {
+                        _ if wallet.raw.interactive => {
+                            rpassword::prompt_password("Enter P-256 private key: ")?
+                        }
+                        Some(private_key) => private_key,
+                        None => eyre::bail!(
+                            "--p256 signs with a raw P-256 private key; pass it with \
+                             --private-key or --interactive"
+                        ),
                     };
+                    let hash = B256::from_str(&message).wrap_err("invalid 32-byte hash")?;
+                    let sig = sign_p256(&parse_p256_key(&private_key)?, &hash)?;
+                    let address = sig.recover_signer(&hash).map_err(ca_error)?;
+                    (sig.to_bytes().to_vec(), address)
+                } else if let Some(browser) = browser.run::<alloy_network::Ethereum>().await? {
+                    let sig = if let Some(typed_data) = &typed_data {
+                        browser.sign_dynamic_typed_data(typed_data).await?
+                    } else {
+                        browser.sign_message(&hex_str_to_bytes(&message)?).await?
+                    };
+                    (sig.as_bytes().to_vec(), browser.address())
+                } else {
+                    let wallet = wallet.signer().await?;
+                    let sig = if let Some(typed_data) = &typed_data {
+                        wallet.sign_dynamic_typed_data(typed_data).await?
+                    } else if no_hash {
+                        wallet.sign_hash(&hex::decode(&message)?[..].try_into()?).await?
+                    } else {
+                        wallet.sign_message(&hex_str_to_bytes(&message)?).await?
+                    };
+                    (sig.as_bytes().to_vec(), wallet.address())
+                };
 
-                let signature = hex::encode(sig.as_bytes());
+                let signature = hex::encode(signature);
                 if shell::verbosity() == 0 {
                     print_scalar(format!("0x{signature}"))?;
                 } else if shell::is_json() {
@@ -1562,7 +1593,6 @@ fn touch_id_enrollment_failure(
 mod tests {
     use super::*;
     use alloy_primitives::address;
-    use std::str::FromStr;
 
     fn sidecar_json(version: u32, policy: &str, se_key: &str, sealed_password: &str) -> String {
         json!({

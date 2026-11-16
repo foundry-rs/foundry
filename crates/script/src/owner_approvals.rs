@@ -799,8 +799,8 @@ where
     }
     lines.push(
         "\nEach owner signs every digest without hashing it again, with `cast wallet sign \
-         --no-hash <DIGEST>` and their wallet options, or with a passkey: a WebAuthn assertion \
-         whose challenge is the digest, saved as JSON with the credential's public key. Then send \
+         --no-hash <DIGEST>` and their wallet options (`--p256 --private-key <KEY>` for a raw \
+         P-256 owner), or with a passkey: a WebAuthn assertion whose challenge is the digest, saved as JSON with the credential's public key. Then send \
          the transactions by running the same command with `--resume` instead of `--broadcast`, \
          adding `--tempo.owner-signature <SIGNATURE>` for each approval. Approvals are kept once \
          given, so they can be collected over several runs."
