@@ -119,6 +119,8 @@ impl SlotInfo {
                     None
                 }
             }
+            // A dynamic array's own slot holds its length; the elements live at keccak256(slot).
+            DynSolType::Array(_) => DynSolType::Uint(256).abi_decode(&value.0).ok(),
             _ => {
                 // Decode based on the actual type
                 actual_type.abi_decode(&value.0).ok()
@@ -618,8 +620,12 @@ impl SlotIdentifier {
         {
             let member_type_info = self.storage_layout.types.get(&first_member.storage_type)?;
 
-            // Check if we have a single-slot struct (all members have slot "0")
-            let is_single_slot = members.iter().all(|m| m.slot == "0");
+            // A struct fits in one slot by its size: a sole member at slot "0" can still span
+            // several slots (e.g. `struct AddressSet { Set _inner; }`).
+            let is_single_slot = storage_type
+                .number_of_bytes
+                .parse::<u64>()
+                .map_or_else(|_| members.iter().all(|m| m.slot == "0"), |bytes| bytes <= 32);
 
             if is_single_slot {
                 // Build member info for single-slot struct
@@ -1682,5 +1688,51 @@ mod tests {
         for slot in [2, 3] {
             assert!(identifier.identify(&B256::from(U256::from(slot)), None).is_none());
         }
+    }
+
+    /// OpenZeppelin's `EnumerableSet.AddressSet`: a struct whose sole member, at slot "0", is a
+    /// two-slot struct holding a dynamic array and a mapping.
+    #[test]
+    fn descends_into_a_struct_whose_sole_member_spans_several_slots() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "set", "offset": 0, "slot": "0", "type": "t_struct(AddressSet)" }
+            ],
+            "types": {
+                "t_struct(AddressSet)": {
+                    "encoding": "inplace", "label": "struct EnumerableSet.AddressSet", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 2, "contract": "C", "label": "_inner", "offset": 0, "slot": "0", "type": "t_struct(Set)" }
+                    ]
+                },
+                "t_struct(Set)": {
+                    "encoding": "inplace", "label": "struct EnumerableSet.Set", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 3, "contract": "C", "label": "_values", "offset": 0, "slot": "0", "type": "t_array(t_bytes32)dyn_storage" },
+                        { "astId": 4, "contract": "C", "label": "_positions", "offset": 0, "slot": "1", "type": "t_mapping(t_bytes32,t_uint256)" }
+                    ]
+                },
+                "t_array(t_bytes32)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "bytes32[]", "numberOfBytes": "32", "base": "t_bytes32"
+                },
+                "t_mapping(t_bytes32,t_uint256)": {
+                    "encoding": "mapping", "label": "mapping(bytes32 => uint256)", "numberOfBytes": "32",
+                    "key": "t_bytes32", "value": "t_uint256"
+                },
+                "t_bytes32": { "encoding": "inplace", "label": "bytes32", "numberOfBytes": "32" },
+                "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+
+        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+        assert_eq!(info.label, "set._inner._values");
+        assert_eq!(info.slot_type.label, "bytes32[]");
+        // The array's own slot holds its length.
+        info.decode_values(B256::ZERO, B256::from(U256::from(1)));
+        let decoded = info.decoded.unwrap();
+        assert_eq!(format_token_raw(&decoded.previous_value), "0");
+        assert_eq!(format_token_raw(&decoded.new_value), "1");
     }
 }
