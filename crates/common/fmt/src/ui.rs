@@ -1808,18 +1808,6 @@ yParity              0"
     }
 
     #[test]
-    fn test_pretty_tx_attr_gas_price_eip1559() {
-        // Mainnet tx 0x236f0ae4...c885: `gasPrice` is the price paid, below `maxFeePerGas`.
-        let tx = r#"{"blockHash":"0x94b1ee0c6f34bf555689361709ec1013e6106815bec78e9439c4b9c2c0601274","blockNumber":"0x192f769","from":"0x8bfc3e2cd47f66fd8c2ed867956df6d5c3c55205","gas":"0x5208","gasPrice":"0x62c8862","maxFeePerGas":"0x7018d4f","maxPriorityFeePerGas":"0x84db0f","hash":"0x236f0ae44623be852a90278456a0b47f3f768648abe9661e49b0ed3adc63c885","input":"0x","nonce":"0x7","to":"0x307576dd4f73f91bb8c4a2edb762938e8e067d31","transactionIndex":"0x7","value":"0x237d0e3bd0c200","type":"0x2","accessList":[],"chainId":"0x1","v":"0x1","r":"0x466177edfc4ed59d060a0dfa1a9efef23ba2feee4a5fbaca53c317e287cfcb35","s":"0x24985e434af12672ae1add1d7f0e5ddeaff7a81ec54dc4645620b6d6ecf60447","yParity":"0x1"}"#;
-        let mut tx: Transaction = serde_json::from_str(tx).unwrap();
-        assert_eq!(Some("103581794".to_string()), get_pretty_tx_attr::<Ethereum>(&tx, "gasPrice"));
-
-        // A pending dynamic-fee transaction has no price paid yet, so it reports its fee cap.
-        tx.effective_gas_price = None;
-        assert_eq!(Some("117542223".to_string()), get_pretty_tx_attr::<Ethereum>(&tx, "gasPrice"));
-    }
-
-    #[test]
     fn test_pretty_tx_attr() {
         let block = r#"{"number":"0x3","hash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","parentHash":"0x689c70c080ca22bc0e681694fa803c1aba16a69c8b6368fed5311d279eb9de90","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionsRoot":"0x7270c1c4440180f2bd5215809ee3d545df042b67329499e1ab97eb759d31610d","stateRoot":"0x29f32984517a7d25607da485b23cefabfd443751422ca7e603395e1de9bc8a4b","receiptsRoot":"0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2","miner":"0x0000000000000000000000000000000000000000","difficulty":"0x0","totalDifficulty":"0x0","extraData":"0x","size":"0x3e8","gasLimit":"0x6691b7","gasUsed":"0x5208","timestamp":"0x5ecedbb9","transactions":[{"hash":"0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067","nonce":"0x2","blockHash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","blockNumber":"0x3","transactionIndex":"0x0","from":"0xfdcedc3bfca10ecb0890337fbdd1977aba84807a","to":"0xdca8ce283150ab773bcbeb8d38289bdb5661de1e","value":"0x0","gas":"0x15f90","gasPrice":"0x4a817c800","input":"0x","v":"0x25","r":"0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88","s":"0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"}],"uncles":[]}"#;
         let block: Block = serde_json::from_str(block).unwrap();
@@ -1863,6 +1851,15 @@ yParity              0"
         );
         assert_eq!(Some("27".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "v"));
         assert_eq!(Some("0".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "value"));
+
+        // Mainnet tx 0x236f0ae4...c885: `gasPrice` is the price paid, below `maxFeePerGas`.
+        let tx = r#"{"blockHash":"0x94b1ee0c6f34bf555689361709ec1013e6106815bec78e9439c4b9c2c0601274","blockNumber":"0x192f769","from":"0x8bfc3e2cd47f66fd8c2ed867956df6d5c3c55205","gas":"0x5208","gasPrice":"0x62c8862","maxFeePerGas":"0x7018d4f","maxPriorityFeePerGas":"0x84db0f","hash":"0x236f0ae44623be852a90278456a0b47f3f768648abe9661e49b0ed3adc63c885","input":"0x","nonce":"0x7","to":"0x307576dd4f73f91bb8c4a2edb762938e8e067d31","transactionIndex":"0x7","value":"0x237d0e3bd0c200","type":"0x2","accessList":[],"chainId":"0x1","v":"0x1","r":"0x466177edfc4ed59d060a0dfa1a9efef23ba2feee4a5fbaca53c317e287cfcb35","s":"0x24985e434af12672ae1add1d7f0e5ddeaff7a81ec54dc4645620b6d6ecf60447","yParity":"0x1"}"#;
+        let mut tx: Transaction = serde_json::from_str(tx).unwrap();
+        assert_eq!(Some("103581794".to_string()), get_pretty_tx_attr::<Ethereum>(&tx, "gasPrice"));
+
+        // A pending dynamic-fee transaction has no price paid yet, so it reports its fee cap.
+        tx.effective_gas_price = None;
+        assert_eq!(Some("117542223".to_string()), get_pretty_tx_attr::<Ethereum>(&tx, "gasPrice"));
     }
 
     #[test]
