@@ -1651,19 +1651,22 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Record called accounts if `startStateDiffRecording` has been called
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
-            // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
+            // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code. This reads the recorded
+            // account (the callee), which for `DELEGATECALL` and `CALLCODE` is the code account,
+            // not the executing context `call.destination` whose balance and nonce change.
             let evm = interp.host();
-            let (initialized, old_balance, old_nonce) = match evm.state_mut().account(&target) {
-                Ok(mut account) => {
-                    account.warm();
-                    (
-                        account.get().is_some_and(|info| !info.is_empty()),
-                        account.balance(),
-                        account.nonce(),
-                    )
-                }
-                Err(_) => (false, U256::ZERO, 0),
-            };
+            let (initialized, old_balance, old_nonce) =
+                match evm.state_mut().account(&call.call_target) {
+                    Ok(mut account) => {
+                        account.warm();
+                        (
+                            account.get().is_some_and(|info| !info.is_empty()),
+                            account.balance(),
+                            account.nonce(),
+                        )
+                    }
+                    Err(_) => (false, U256::ZERO, 0),
+                };
             // Fork switches and `vm.chainId` take effect before the execution version changes.
             let chain_id = self
                 .env_overrides
@@ -2566,7 +2569,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // called at, there may not be any pending
                     // calls to update if execution has percolated up to a higher depth.
                     if call_access.depth == curr_depth as u64
-                        && let Ok(mut account) = interp.host().state_mut().account(&target)
+                        && let Ok(mut account) =
+                            interp.host().state_mut().account(&call.call_target)
                     {
                         debug_assert!(access_is_call(call_access.kind));
                         account.warm();
