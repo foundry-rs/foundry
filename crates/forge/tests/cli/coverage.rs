@@ -3784,89 +3784,10 @@ end_of_record
     );
 }
 
-// An assembly condition owns its own jump, not those of the branches and loops in its body.
+// Path 0 of a Yul `if` is the side that enters its body, and the `if` owns its own jump, not those
+// of the branches and loops in its body, with solc and with solar, whose layouts differ.
 #[forgetest]
-fn yul_nested_if_lcov(prj: _, cmd: _) {
-    prj.add_source(
-        "Nested.sol",
-        r#"
-contract Nested {
-    uint256 public stored;
-
-    function nested(uint256 a, uint256 b) external {
-        assembly {
-            if a {
-                if b { sstore(stored.slot, 1) }
-            }
-        }
-    }
-
-    function looped(uint256 a, uint256 n) external {
-        assembly {
-            if a {
-                for { let i := 0 } lt(i, n) { i := add(i, 1) } { sstore(stored.slot, i) }
-            }
-        }
-    }
-}
-"#,
-    );
-    prj.add_test(
-        "Nested.t.sol",
-        r#"
-import "../src/Nested.sol";
-contract NestedTest {
-    function testPaths() public {
-        Nested n = new Nested();
-        n.nested(1, 1);
-        n.nested(1, 0);
-        n.nested(0, 1);
-        n.nested(0, 0);
-        n.nested(0, 0);
-        n.looped(1, 3);
-        n.looped(1, 0);
-        n.looped(0, 5);
-    }
-}
-"#,
-    );
-    assert_lcov(
-        cmd.arg("coverage"),
-        str![[r#"
-TN:
-SF:src/Nested.sol
-DA:7,5
-FN:7,Nested.nested
-FNDA:5,Nested.nested
-DA:9,5
-BRDA:9,0,0,2
-BRDA:9,0,1,3
-DA:10,2
-BRDA:10,1,0,1
-BRDA:10,1,1,1
-DA:15,3
-FN:15,Nested.looped
-FNDA:3,Nested.looped
-DA:17,3
-BRDA:17,2,0,2
-BRDA:17,2,1,1
-DA:18,5
-FNF:2
-FNH:2
-LF:6
-LH:6
-BRF:6
-BRH:6
-end_of_record
-
-"#]],
-    );
-}
-
-// Solar lays out a Yul `if` with the body at either jump side, and its `if`s nest. Path 0 is the
-// side that enters the body, and an `if` reports its own jump, whatever the compiler does.
-#[forgetest]
-fn yul_if_solar_lcov(prj: _, cmd: _) {
+fn yul_if_paths_solc_and_solar_lcov(prj: _, cmd: _) {
     prj.add_source(
         "Guard.sol",
         r#"
@@ -3899,6 +3820,22 @@ contract Guard {
             }
         }
     }
+
+    function looped(uint256 a, uint256 n) external {
+        assembly {
+            if a {
+                for { let i := 0 } lt(i, n) { i := add(i, 1) } { sstore(stored.slot, i) }
+            }
+        }
+    }
+
+    function spin(uint256 a, uint256 n) external pure returns (uint256 i) {
+        assembly {
+            if a {
+                for {} lt(i, n) {} { i := add(i, 1) }
+            }
+        }
+    }
 }
 "#,
     );
@@ -3925,13 +3862,21 @@ contract GuardTest {
         guard.nested(0, 1);
         guard.nested(0, 0);
         guard.nested(0, 0);
+        guard.looped(1, 3);
+        guard.looped(1, 0);
+        guard.looped(0, 5);
+        guard.spin(1, 3);
+        guard.spin(1, 2);
+        guard.spin(0, 5);
+        guard.spin(0, 5);
+        guard.spin(0, 5);
     }
 }
 "#,
     );
     let solar = prj.ensure_foundry_bin("solar");
     assert_lcov(
-        cmd.args(["coverage", "--use"]).arg(solar),
+        cmd.arg("coverage"),
         str![[r#"
 TN:
 SF:src/Guard.sol
@@ -3966,12 +3911,86 @@ BRDA:28,3,1,3
 DA:29,2
 BRDA:29,4,0,1
 BRDA:29,4,1,1
-FNF:5
-FNH:5
-LF:11
-LH:11
-BRF:10
-BRH:10
+DA:34,3
+FN:34,Guard.looped
+FNDA:3,Guard.looped
+DA:36,3
+BRDA:36,5,0,2
+BRDA:36,5,1,1
+DA:37,5
+DA:42,5
+FN:42,Guard.spin
+FNDA:5,Guard.spin
+DA:44,5
+BRDA:44,6,0,0
+BRDA:44,6,1,0
+DA:45,7
+FNF:7
+FNH:7
+LF:17
+LH:17
+BRF:14
+BRH:12
+end_of_record
+
+"#]],
+    );
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").arg("--use").arg(solar),
+        str![[r#"
+TN:
+SF:src/Guard.sol
+DA:7,4
+FN:7,Guard.reverting
+FNDA:4,Guard.reverting
+DA:8,4
+BRDA:8,0,0,1
+BRDA:8,0,1,3
+DA:11,4
+FN:11,Guard.storing
+FNDA:4,Guard.storing
+DA:13,4
+BRDA:13,1,0,3
+BRDA:13,1,1,1
+DA:17,3
+FN:17,Guard.leaving
+FNDA:3,Guard.leaving
+DA:19,3
+FN:19,Guard.f
+FNDA:3,Guard.f
+DA:20,3
+BRDA:20,2,0,2
+BRDA:20,2,1,1
+DA:22,3
+DA:26,5
+FN:26,Guard.nested
+FNDA:5,Guard.nested
+DA:28,5
+BRDA:28,3,0,2
+BRDA:28,3,1,3
+DA:29,2
+BRDA:29,4,0,1
+BRDA:29,4,1,1
+DA:34,3
+FN:34,Guard.looped
+FNDA:3,Guard.looped
+DA:36,3
+BRDA:36,5,0,2
+BRDA:36,5,1,1
+DA:37,5
+DA:42,5
+FN:42,Guard.spin
+FNDA:5,Guard.spin
+DA:44,5
+BRDA:44,6,0,2
+BRDA:44,6,1,3
+DA:45,7
+FNF:7
+FNH:7
+LF:17
+LH:16
+BRF:14
+BRH:14
 end_of_record
 
 "#]],

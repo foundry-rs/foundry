@@ -93,7 +93,11 @@ pub fn find_anchors(
                         Some(BranchKind::YulIf(body)) => Some(body),
                         _ => None,
                     };
-                    index.branch(item_id, anchor_loc, exact, body).map(|anchors| {
+                    index.branch(item_id, anchor_loc, exact, body).and_then(|anchors| {
+                        ensure!(
+                            body.is_none() || !index.fallthrough_is_shared(&anchors),
+                            "fallthrough is shared with other jumps: {anchor_loc}"
+                        );
                         // Path 0 is the failing side of a `require` and the body of a Yul `if`,
                         // wherever the compiler placed it.
                         let swapped = match kind {
@@ -103,7 +107,7 @@ pub fn find_anchors(
                             }
                             _ => false,
                         };
-                        select_branch(anchors, path_id, swapped)
+                        Ok(select_branch(anchors, path_id, swapped))
                     })
                 }
                 _ => index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)),
@@ -158,6 +162,8 @@ struct AnchorIndex<'a> {
     branches: Vec<(usize, usize, &'a [u8])>,
     /// Straight-line instruction ranges ending in REVERT or INVALID, ordered by start.
     reverting_runs: Vec<Range<usize>>,
+    /// The destinations of `PUSH target; JUMP` and `PUSH target; JUMPI` pairs.
+    static_jump_targets: FxHashSet<u32>,
 }
 
 impl<'a> AnchorIndex<'a> {
@@ -172,7 +178,9 @@ impl<'a> AnchorIndex<'a> {
         let mut branches = Vec::new();
         let mut reverting_runs = Vec::new();
         let mut run_start = 0;
+        let mut static_jump_targets = FxHashSet::default();
         let mut prev = opcode::STOP;
+        let mut push = None;
         for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
             pcs.push(pc as u32);
             match inst.opcode.get() {
@@ -190,6 +198,15 @@ impl<'a> AnchorIndex<'a> {
                 | opcode::SELFDESTRUCT => run_start = ic + 1,
                 _ => {}
             }
+            if let Some(target) =
+                push.filter(|_| matches!(inst.opcode.get(), opcode::JUMP | opcode::JUMPI))
+            {
+                static_jump_targets.insert(target);
+            }
+            push = (opcode::PUSH1..=opcode::PUSH32)
+                .contains(&inst.opcode.get())
+                .then(|| jump_destination(inst.immediate).ok())
+                .flatten();
             prev = inst.opcode.get();
             if (opcode::PUSH1..=opcode::PUSH32).contains(&inst.opcode.get()) {
                 // Stop where the source map ends.
@@ -202,7 +219,16 @@ impl<'a> AnchorIndex<'a> {
                 }
             }
         }
-        Self { bytecode, source_map, pcs, ic_pc_map, entries, branches, reverting_runs }
+        Self {
+            bytecode,
+            source_map,
+            pcs,
+            ic_pc_map,
+            entries,
+            branches,
+            reverting_runs,
+            static_jump_targets,
+        }
     }
 
     /// Finds the first opcode in the source range, preferring code outside a failure stub.
@@ -311,6 +337,15 @@ impl<'a> AnchorIndex<'a> {
         false
     }
 
+    /// Returns whether the fallthrough of a branch starts at a `JUMPDEST` that other jumps also
+    /// target, such as a loop head. Its hits then count those entries too, and so would both
+    /// paths, which are derived from the fallthrough's hits.
+    fn fallthrough_is_shared(&self, (fallthrough, _): &(ItemAnchor, ItemAnchor)) -> bool {
+        let pc = fallthrough.instruction;
+        self.bytecode.get(pc as usize) == Some(&opcode::JUMPDEST)
+            && self.static_jump_targets.contains(&pc)
+    }
+
     /// Finds the fallthrough and taken anchors of a branch.
     ///
     /// `exact` matches only the jump mapped to exactly `loc`, so ternaries skip nested decisions.
@@ -416,7 +451,6 @@ mod tests {
         let source_map = sourcemap::parse(source_map).unwrap();
         let ic_pc_map = IcPcMap::new(bytecode);
         let anchors = find_anchors(bytecode, &source_map, &ic_pc_map, &analysis);
-        assert_eq!(anchors.anchors.len(), starts.len() * 2);
         anchors
             .anchors
             .iter()
@@ -632,6 +666,43 @@ mod tests {
         ] {
             assert_eq!(branch_anchors(&bytecode, &[(10, kind.clone())], source_map), expected);
         }
+    }
+
+    #[test]
+    fn yul_if_skips_a_shared_fallthrough() {
+        // An `if` whose body starts at a loop head. The `if` spans bytes 10..30 and its body
+        // 22..30. The jump at pc 8 either returns to the head, which the `if` falls into, or
+        // leaves the loop.
+        let kind = BranchKind::YulIf(SourceLocation {
+            source_id: 0,
+            contract_name: "T".into(),
+            bytes: 22..30,
+            lines: 1..2,
+        });
+        let bytecode = |back_edge| {
+            [
+                opcode::PUSH1,
+                0,
+                opcode::PUSH1,
+                11,
+                opcode::JUMPI,
+                opcode::JUMPDEST,
+                opcode::PUSH1,
+                0,
+                opcode::PUSH1,
+                back_edge,
+                opcode::JUMP,
+                opcode::JUMPDEST,
+                opcode::STOP,
+            ]
+        };
+        let source_map = "12:5:0;;;25:2:0;;;;;;50:5:0;";
+        // The loop head also counts the loop's iterations, so the `if` gets no anchors.
+        assert_eq!(branch_anchors(&bytecode(5), &[(10, kind.clone())], source_map), []);
+        assert_eq!(
+            branch_anchors(&bytecode(11), &[(10, kind)], source_map),
+            [(5, None), (11, Some(4))]
+        );
     }
 
     #[test]
