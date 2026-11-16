@@ -198,7 +198,8 @@ pub enum KeychainSubcommand {
         /// Authorize a T6 admin access key via `authorizeAdminKey` (key-management only).
         ///
         /// Admin keys may authorize/revoke other keys but cannot carry an expiry, spending limits,
-        /// or call scopes. The account is the signing (precompile caller) account.
+        /// or call scopes. The account is the signing (precompile caller) account. Not supported
+        /// on T14 or later, where TIP-1137 retires admin keys.
         #[arg(long)]
         admin: bool,
 
@@ -512,7 +513,8 @@ pub struct KeyAuthorizationArgs {
     ///
     /// Admin keys may authorize/revoke other keys but cannot carry an expiry, spending limits, or
     /// call scopes, and require a bound account (`--account` for `encode`, signer-derived for
-    /// `sign`).
+    /// `sign`). Tempo nodes reject admin key authorizations on T14 or later, where TIP-1137
+    /// retires admin keys.
     #[arg(long)]
     admin: bool,
 }
@@ -2552,12 +2554,14 @@ async fn run_authorize(
 
     // T6 admin keys are key-management only and use a dedicated precompile entrypoint.
     if admin {
-        require_hardfork(
-            &provider,
-            TempoHardfork::T6,
-            "--admin requires a Tempo T6-capable AccountKeychain RPC",
-        )
-        .await?;
+        let hardfork = active_tempo_hardfork(&provider).await?;
+        eyre::ensure!(hardfork.is_t6(), "--admin requires a Tempo T6-capable AccountKeychain RPC");
+        // From T14 the precompile rejects `authorizeAdminKey` with a bare `InvalidKeyId()`.
+        eyre::ensure!(
+            !hardfork.is_t14(),
+            "--admin is not supported on Tempo T14 or later: TIP-1137 retires admin keys; \
+             authorize a regular access key without --admin instead"
+        );
         // u64::MAX is the no-expiry default; anything else is an explicit expiry admin keys reject.
         eyre::ensure!(expiry == u64::MAX, "--admin cannot be combined with an explicit --expiry");
         eyre::ensure!(
