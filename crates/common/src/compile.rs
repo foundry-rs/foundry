@@ -1670,6 +1670,11 @@ mod tests {
         ] {
             assert_eq!(std::fs::read_to_string(temp.path().join(path)).unwrap(), expected);
         }
+
+        let source = temp.path().join("Example/contracts/Example.sol");
+        std::fs::write(&source, "stale source").unwrap();
+        write_etherscan_sources(&metadata, temp.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(source).unwrap(), "source");
     }
 
     #[cfg(unix)]
@@ -1798,6 +1803,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "requires NTFS 8.3 name creation"]
     fn etherscan_sources_reject_hidden_short_name_aliases() {
         let temp = tempfile::tempdir().unwrap();
         // Force a different short-name suffix when 8.3 names are enabled.
@@ -1814,10 +1820,7 @@ mod tests {
         assert!(output.status.success());
         let short_path = String::from_utf8(output.stdout).unwrap();
         let name = Path::new(short_path.trim()).file_name().unwrap().to_str().unwrap();
-        if name.starts_with('.') {
-            // This volume does not generate 8.3 aliases.
-            return;
-        }
+        assert!(!name.starts_with('.'), "enable NTFS 8.3 name creation to run this regression");
         let metadata =
             explorer_metadata(name, &[("config", "replacement"), ("config.sol", "companion")]);
         let err = write_etherscan_sources(&[metadata], temp.path()).unwrap_err();
