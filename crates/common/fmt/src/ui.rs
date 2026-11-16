@@ -1009,6 +1009,11 @@ pub trait UIfmtReceiptExt {
     fn logs_pretty(&self) -> String;
     fn logs_bloom_pretty(&self) -> String;
     fn tx_type_pretty(&self) -> String;
+
+    /// Returns a network-specific field that is not part of the standard receipt.
+    fn other_field_pretty(&self, _key: &str) -> Option<String> {
+        None
+    }
 }
 
 fn receipt_logs_pretty<T: TxReceipt>(receipt: &TransactionReceipt<T>) -> String
@@ -1062,6 +1067,10 @@ impl UIfmtReceiptExt for AnyTransactionReceipt {
 
     fn tx_type_pretty(&self) -> String {
         self.inner.inner.r#type.to_string()
+    }
+
+    fn other_field_pretty(&self, key: &str) -> Option<String> {
+        self.other.get(key).map(|value| EthValue::from(value.clone()).pretty())
     }
 }
 
@@ -1155,7 +1164,7 @@ where
         }
         "v" => Some(v),
         "value" => Some(TxTrait::value(transaction).pretty()),
-        _ => None,
+        other => receipt.other_field_pretty(other),
     }
 }
 
@@ -1304,7 +1313,7 @@ fn fmt_timestamp(timestamp: u64) -> String {
 mod tests {
 
     use super::*;
-    use alloy_network::Ethereum;
+    use alloy_network::{AnyNetwork, Ethereum};
     use alloy_primitives::{B256, address, bytes};
     use alloy_rpc_types::Authorization;
     use similar_asserts::assert_eq;
@@ -2006,6 +2015,12 @@ l1GasUsed            1600
 "#;
 
         assert_eq!(formatted.trim(), expected.trim());
+
+        assert_eq!(
+            Some("350739202003".to_string()),
+            get_pretty_receipt_attr::<AnyNetwork>(&receipt, "l1Fee")
+        );
+        assert_eq!(None, get_pretty_receipt_attr::<AnyNetwork>(&receipt, "l2Fee"));
     }
 
     #[test]
