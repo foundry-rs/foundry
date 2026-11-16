@@ -156,8 +156,10 @@ impl<'a> AnchorIndex<'a> {
         let mut branches = Vec::new();
         let mut reverting_runs = Vec::new();
         let mut jumps = Vec::new();
-        let mut address_pushes = Vec::new();
+        // `(value, push instruction, feeds a jump)` for every push of at most four bytes.
+        let mut pushes = Vec::new();
         let mut falls_through = Vec::new();
+        let mut opcodes = Vec::new();
         // `(pc, instruction)` of every `JUMPDEST`.
         let mut jumpdests = Vec::new();
         // Instructions that end a straight-line run, and `(JUMPI, static target pc)` pairs.
@@ -169,6 +171,7 @@ impl<'a> AnchorIndex<'a> {
         let mut prev = opcode::STOP;
         let mut prev_target = None;
         for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
+            opcodes.push(inst.opcode.get());
             falls_through.push(!matches!(
                 prev,
                 opcode::JUMP
@@ -227,22 +230,44 @@ impl<'a> AnchorIndex<'a> {
                 }
                 if inst.immediate.len() <= 4 {
                     let target = inst.immediate.iter().fold(0, |acc, &byte| acc << 8 | byte as u32);
-                    address_pushes.push((target, ic));
-                    if matches!(jump, Some(opcode::JUMP | opcode::JUMPI)) {
+                    let feeds_jump = matches!(jump, Some(opcode::JUMP | opcode::JUMPI));
+                    pushes.push((target, ic, feeds_jump));
+                    if feeds_jump {
                         jumps.push((target, ic));
                     }
                 }
             }
         }
         jumps.sort_unstable();
-        address_pushes.retain(|&(target, _)| {
-            jumpdests.binary_search_by_key(&(target as usize), |&(pc, _)| pc).is_ok()
-        });
-        address_pushes.sort_unstable();
         let jumpdest_at = |pc: Option<usize>| {
             pc.and_then(|pc| jumpdests.binary_search_by_key(&pc, |&(pc, _)| pc).ok())
                 .map(|i| jumpdests[i].1)
         };
+        // A push of a `JUMPDEST` address is a jump or a return address when it feeds a jump, or
+        // when the code after it reaches a `JUMP` or `JUMPI` before it halts, as a call does. Other
+        // pushes are constants.
+        let mut reaches_jump = vec![false; opcodes.len()];
+        let mut next = false;
+        for (ic, &op) in opcodes.iter().enumerate().rev() {
+            next = match op {
+                opcode::JUMP | opcode::JUMPI => true,
+                opcode::STOP
+                | opcode::RETURN
+                | opcode::REVERT
+                | opcode::INVALID
+                | opcode::SELFDESTRUCT => false,
+                _ => next,
+            };
+            reaches_jump[ic] = next;
+        }
+        let mut address_pushes = pushes
+            .into_iter()
+            .filter(|&(target, ic, feeds_jump)| {
+                jumpdest_at(Some(target as usize)).is_some() && (feeds_jump || reaches_jump[ic])
+            })
+            .map(|(target, ic, _)| (target, ic))
+            .collect::<Vec<_>>();
+        address_pushes.sort_unstable();
         // A run that jumps to a failure stub, such as a panic helper call, is a failure stub too.
         let failing_jump_runs = jump_runs
             .into_iter()
@@ -614,7 +639,8 @@ mod tests {
                 "0:100:0;;15:5:0;;0:100:0;12:3:0;",
                 6,
             ),
-            // A return address pushed from inside does not make the earlier block an entry.
+            // A return address pushed from inside, before a call, does not make the earlier
+            // block an entry.
             (
                 vec![
                     opcode::PUSH1,
@@ -625,10 +651,34 @@ mod tests {
                     opcode::JUMPDEST,
                     opcode::PUSH1,
                     3,
+                    opcode::PUSH1,
+                    5,
+                    opcode::JUMP,
+                ],
+                "0:100:0;;15:5:0;;0:100:0;12:3:0;;;",
+                6,
+            ),
+            // A constant that equals a `JUMPDEST` address, but is not a jump or return address, is
+            // not a way in: the dynamically entered block stays the anchor.
+            (
+                vec![
+                    opcode::PUSH0,
+                    opcode::CALLDATALOAD,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH1,
+                    3,
+                    opcode::PUSH0,
+                    opcode::MSTORE,
+                    opcode::PUSH1,
+                    0x20,
+                    opcode::PUSH0,
+                    opcode::RETURN,
+                    opcode::JUMPDEST,
                     opcode::STOP,
                 ],
-                "0:100:0;;15:5:0;;0:100:0;12:3:0;",
-                6,
+                "0:100:0;;;15:5:0;;;;;;;;;;",
+                3,
             ),
             // The entry is jumped to from outside.
             (
@@ -716,7 +766,7 @@ mod tests {
                     opcode::JUMPDEST,
                     opcode::PUSH1,
                     3,
-                    opcode::STOP,
+                    opcode::JUMP,
                 ],
                 "0:100:0;;15:5:0;-1:-1:-1;12:3:0;;",
                 5,
