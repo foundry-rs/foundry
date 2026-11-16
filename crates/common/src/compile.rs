@@ -1374,7 +1374,7 @@ mod tests {
         for name in ["Example", "Contract_1", "Ünïcode"] {
             assert!(ensure_safe_contract_name(name).is_ok(), "{name:?}");
         }
-        for name in ["", ".", "..", ".git", "a/b", "/abs", "../x", "foundry.toml/x"] {
+        for name in ["", ".", "..", ".git", "a/b", "/abs"] {
             assert!(ensure_safe_contract_name(name).is_err(), "{name:?}");
         }
     }

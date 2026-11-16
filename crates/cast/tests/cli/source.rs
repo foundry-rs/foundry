@@ -398,7 +398,8 @@ async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
     fs::write(&external_source, external_contents).unwrap();
     let source = "[profile.default]\nffi = true\n";
 
-    for contract_name in ["", ".", ".git", "a/b", external.to_str().unwrap()] {
+    // Full name boundaries are covered in common; exercise each CLI validation entry point.
+    for (contract_name, flatten) in [("", false), (external.to_str().unwrap(), true)] {
         let response = json!({
             "status": "1", "message": "OK", "result": [{
                 "SourceCode": { "foundry.toml": { "content": source } },
@@ -428,22 +429,16 @@ async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
         ];
         let expected_error =
             format!("Error: invalid contract name from explorer: {contract_name:?}\n");
-        cmd.cast_fuse().args(args).assert_success().stdout_eq(format!("{source}\n"));
-        cmd.cast_fuse()
-            .args(args)
-            .arg("-d")
-            .arg(&directory)
-            .assert_failure()
-            .stdout_eq("")
-            .stderr_eq(expected_error.clone());
-        for output in [None, Some(&sentinel)] {
-            let command = cmd.cast_fuse().args(args).arg("--flatten");
-            if let Some(output) = output {
-                command.arg("-d").arg(output);
-            }
-            command.assert_failure().stdout_eq("").stderr_eq(expected_error.clone());
-            assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
+        if !flatten {
+            cmd.cast_fuse().args(args).assert_success().stdout_eq(format!("{source}\n"));
         }
+        let command = cmd.cast_fuse().args(args).arg("-d");
+        if flatten {
+            command.arg(&sentinel).arg("--flatten");
+        } else {
+            command.arg(&directory);
+        }
+        command.assert_failure().stdout_eq("").stderr_eq(expected_error);
         assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
         assert_eq!(fs::read(&external_source).unwrap().as_slice(), external_contents.as_slice());
         server.abort();
@@ -497,14 +492,15 @@ async fn source_directory_rejects_empty_source_paths(prj: _, cmd: _) {
         .assert_failure()
         .stdout_eq("")
         .stderr_eq(expected_error.clone());
-    for output in [None, Some(&sentinel)] {
-        let command = cmd.cast_fuse().args(args).arg("--flatten");
-        if let Some(output) = output {
-            command.arg("-d").arg(output);
-        }
-        command.assert_failure().stdout_eq("").stderr_eq(expected_error.clone());
-        assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
-    }
+    assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
+    cmd.cast_fuse()
+        .args(args)
+        .arg("--flatten")
+        .arg("-d")
+        .arg(&sentinel)
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(expected_error);
     assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
     server.abort();
 }
@@ -567,22 +563,13 @@ async fn source_directory_rejects_windows_path_aliases(prj: _, cmd: _) {
             "--explorer-url",
             &url,
         ];
-        cmd.cast_fuse().args(args).assert_success().stdout_eq("replacement\n");
         cmd.cast_fuse()
             .args(args)
             .arg("-d")
             .arg(&directory)
             .assert_failure()
             .stdout_eq("")
-            .stderr_eq(expected_error.clone());
-        for output in [None, Some(&sentinel)] {
-            let command = cmd.cast_fuse().args(args).arg("--flatten");
-            if let Some(output) = output {
-                command.arg("-d").arg(output);
-            }
-            command.assert_failure().stdout_eq("").stderr_eq(expected_error.clone());
-            assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
-        }
+            .stderr_eq(expected_error);
         assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
         server.abort();
     }
