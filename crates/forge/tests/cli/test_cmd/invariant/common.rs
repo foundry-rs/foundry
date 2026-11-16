@@ -4511,6 +4511,50 @@ contract HostAfterInvariantTest is GateTest {
         vm.assertFalse(big && gate.x() > 0, "big input");
     }
 }
+
+contract StepHandler {
+    uint256 public count;
+    uint256 public first;
+    function step(uint256 x) external {
+        if (count == 0) first = x;
+        count++;
+    }
+}
+
+abstract contract StepTest is Test {
+    StepHandler handler;
+    function setUp() public {
+        handler = new StepHandler();
+        targetContract(address(handler));
+    }
+}
+
+// The check between the calls sets the variable for the campaign's large first input, and the
+// final check reads it, so smaller inputs would pass.
+contract IntermediateHostTest is StepTest {
+    function invariant_intermediate() public {
+        if (handler.count() == 1) {
+            vm.setEnv("FOUNDRY_TEST_INVARIANT_INTERMEDIATE", handler.first() >= 1000 ? "true" : "false");
+        }
+        if (handler.count() >= 2) {
+            require(!vm.envOr("FOUNDRY_TEST_INVARIANT_INTERMEDIATE", false), "intermediate host state");
+        }
+    }
+}
+
+// The check between the calls sets the variable only for a small first input, which then fails
+// another way.
+contract IntermediateSmallHostTest is StepTest {
+    function invariant_intermediate_small() public {
+        if (handler.count() == 1 && handler.first() < 1000) {
+            vm.setEnv("FOUNDRY_TEST_INVARIANT_INTERMEDIATE_SMALL", "true");
+        }
+        if (handler.count() >= 2) {
+            require(!vm.envOr("FOUNDRY_TEST_INVARIANT_INTERMEDIATE_SMALL", false), "small");
+            revert("two calls");
+        }
+    }
+}
 "#,
     );
 
@@ -4559,6 +4603,33 @@ contract HostAfterInvariantTest is GateTest {
 		sender=[..] calldata=set(uint256) args=[580941973555059668566857299413718168208629078518665098370115901368133 [5.809e68]]
 ...
 "#]]);
+
+    // Replays run the invariant checks between calls too. The original stays when the campaign's
+    // checks had effects outside the EVM, and minimized inputs must not give them such effects.
+    prj.update_config(|config| config.invariant.depth = 2);
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "IntermediateHostTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: intermediate host state]
+	[Sequence] (original: 2, shrunk: 2)
+		sender=[..] calldata=step(uint256) args=[580941973555059668566857299413718168208629078518665098370115901368133 [5.809e68]]
+		sender=[..] calldata=step(uint256) args=[183512565837085403808314893199340347154721310622419012939817433120674 [1.835e68]]
+...
+"#]]);
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "IntermediateSmallHostTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: two calls]
+	[Sequence] (original: 2, shrunk: 2)
+		sender=[..] calldata=step(uint256) args=[1000]
+		sender=[..] calldata=step(uint256) args=[0]
+...
+"#]]);
+    prj.update_config(|config| config.invariant.depth = 1);
 
     // The final check of the minimized sequence fails another way, so the original stays.
     prj.update_config(|config| config.invariant.shrink_run_limit = 1);

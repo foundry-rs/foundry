@@ -1684,29 +1684,43 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if let Some(deadline) = replay.shrink_deadline {
             executor.inspector_mut().set_execution_deadline(self.tcfg.early_exit.clone(), deadline);
         }
-        let mut candidates = CandidateReplay::new(
-            &mut executor,
-            replay.invariant_contract.address,
-            replay.target_invariant.selector().into(),
-            CheckSequenceOptions {
-                accumulate_warp_roll: false,
-                fail_on_revert: replay.invariant_config.fail_on_revert,
-                expect_assertion_failure: replay.assertion_failure,
-                call_after_invariant: replay.invariant_contract.call_after_invariant,
-                rd: Some(self.revert_decoder()),
-            },
-            campaign_site,
+        let mut checked_executor = executor.clone();
+        let candidate_replay = |executor, between_calls| {
+            CandidateReplay::new(
+                executor,
+                replay.invariant_contract.address,
+                replay.target_invariant.selector().into(),
+                CheckSequenceOptions {
+                    accumulate_warp_roll: false,
+                    fail_on_revert: replay.invariant_config.fail_on_revert,
+                    expect_assertion_failure: replay.assertion_failure,
+                    call_after_invariant: replay.invariant_contract.call_after_invariant,
+                    rd: Some(self.revert_decoder()),
+                },
+                campaign_site,
+                between_calls,
+            )
+        };
+        let mut candidates = candidate_replay(&mut executor, Vec::new());
+        // The campaign checks every invariant between calls, and these checks can have effects
+        // outside the EVM too. Replaying them costs a call per invariant and sequence call, so
+        // only the original and the candidates that preserve the failure without them replay them.
+        let mut checked = candidate_replay(
+            &mut checked_executor,
+            (0..replay.invariant_contract.invariant_fns.len())
+                .map(|idx| replay.invariant_contract.invariant_calldata(idx))
+                .collect(),
         );
         let replay_sequence = |candidates: &mut CandidateReplay<'_, FEN>,
                                calls: &[SymbolicCounterexampleCall]| {
             let txes = calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect();
             candidates.check(txes).ok().filter(|outcome| !outcome.success)
         };
-        let expected = replay_sequence(&mut candidates, &original_calls);
+        let expected = replay_sequence(&mut checked, &original_calls);
         // A replay that skipped effects outside the EVM, such as `vm.setEnv` or `vm.unixTime`, can
         // read state the campaign left behind, fail elsewhere, or pass, so only call removal
         // applies, as without minimization.
-        if candidates.skipped_host_effects {
+        if checked.skipped_host_effects {
             return SequenceMinimization::RemoveCalls;
         }
         let Some(expected) = expected else {
@@ -1731,7 +1745,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return SequenceMinimization::KeepOriginal;
         }
         let mut replay_candidate = |candidate: &[SymbolicCounterexampleCall]| {
-            replay_sequence(&mut candidates, candidate)
+            let actual = replay_sequence(&mut candidates, candidate)
+                .filter(|actual| same_sequence_failure(actual, &expected))?;
+            // With one call and one invariant, the checked replay skips the checks before the first
+            // call and the invariant's own check before the final checks, so it would repeat this
+            // one.
+            if candidate.len() == 1 && replay.invariant_contract.invariant_fns.len() == 1 {
+                return Some(actual);
+            }
+            replay_sequence(&mut checked, candidate)
                 .filter(|actual| same_sequence_failure(actual, &expected))
         };
         let deadline = replay.shrink_deadline;
