@@ -530,7 +530,7 @@ const SCOPE_PREFIX: &str = "erc7201(";
 /// Separator between a scoped type ID's namespace and the ID itself.
 const SCOPE_SEPARATOR: &str = ")::";
 
-/// Returns the type ID as the compiler wrote it, without the namespace scope [`scope_layout`] adds.
+/// Returns the type ID as the compiler wrote it, without the namespace scope `scope_layout` adds.
 ///
 /// IDs that are not scoped are returned as is.
 pub fn unscoped_type_id(id: &str) -> &str {
