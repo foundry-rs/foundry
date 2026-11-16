@@ -4,6 +4,7 @@ use crate::{
     Chain, Config, NamedChain,
     resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate},
 };
+use alloy_primitives::hex;
 use figment::{
     Error, Metadata, Profile, Provider,
     providers::Env,
@@ -15,6 +16,7 @@ use std::{
     collections::BTreeMap,
     fmt,
     ops::{Deref, DerefMut},
+    path::PathBuf,
     time::Duration,
 };
 
@@ -330,7 +332,9 @@ impl ResolvedEtherscanConfig {
     }
 
     /// Returns the corresponding `foundry_block_explorers::Client`, configured with the `api_url`,
-    /// `api_key` and cache
+    /// `api_key` and cache.
+    ///
+    /// Responses are cached for 24 hours under [`Self::explorer_cache_dir`].
     pub fn into_client(
         self,
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
@@ -349,10 +353,8 @@ impl ResolvedEtherscanConfig {
         no_proxy: bool,
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
     {
-        let Self { api_url, browser_url, key: api_key, chain } = self;
-
-        let chain = chain.unwrap_or_default();
-        let cache = Config::foundry_etherscan_chain_cache_dir(chain);
+        let cache = self.explorer_cache_dir();
+        let Self { api_url, browser_url, key: api_key, .. } = self;
 
         if let Some(cache_path) = &cache {
             // we also create the `sources` sub dir here
@@ -381,6 +383,31 @@ impl ResolvedEtherscanConfig {
             client_builder = client_builder.with_url(&api_url)?;
         }
         client_builder.build()
+    }
+
+    /// Returns the directory to cache responses from this explorer's endpoint in.
+    ///
+    /// A config that names its chain is cached under that chain's directory, which is what every
+    /// chain-bound lookup reads. A config without a chain can point at any endpoint, so its
+    /// responses are keyed by the endpoint instead: the explorer crate derives cache file names
+    /// from the contract address alone, and putting such responses under a chain's directory would
+    /// serve them to that chain's lookups of the same address.
+    fn explorer_cache_dir(&self) -> Option<PathBuf> {
+        if let Some(chain) = self.chain {
+            return Config::foundry_etherscan_chain_cache_dir(chain);
+        }
+
+        // Keep the host readable, and disambiguate endpoints on the same host, e.g. different
+        // ports or `?chainid=` query parameters.
+        let endpoint =
+            self.api_url.split_once("://").map_or(self.api_url.as_str(), |(_, rest)| rest);
+        let label = endpoint
+            .split_once('/')
+            .map_or(endpoint, |(authority, _)| authority)
+            .replace(|c: char| !c.is_ascii_alphanumeric() && !matches!(c, '.' | '-' | '_'), "_");
+        let digest = alloy_primitives::keccak256(self.api_url.as_bytes());
+        let digest = hex::encode(&digest[..4]);
+        Some(Config::foundry_etherscan_cache_dir()?.join(format!("endpoint-{label}-{digest}")))
     }
 }
 
@@ -595,6 +622,65 @@ mod tests {
         assert!(
             config.is_err(),
             "Should fail: chains without default Etherscan URLs require custom URL"
+        );
+    }
+
+    #[test]
+    fn chainless_explorer_is_not_cached_under_mainnet() {
+        // Responses are cached by address alone, so a chain-less entry cached under mainnet
+        // would answer mainnet lookups of the same address with another endpoint's data.
+        let etherscan = EtherscanConfig {
+            chain: None,
+            url: Some("https://api.mychain.example/api".to_string()),
+            key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+        };
+        let config = etherscan.resolve(Some("mychain")).unwrap();
+        assert_eq!(config.chain, None);
+
+        let dir = config.explorer_cache_dir().unwrap();
+        assert_ne!(
+            dir,
+            Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap(),
+            "chain-less entries must not share mainnet's cache directory"
+        );
+        assert!(dir.file_name().unwrap().to_string_lossy().starts_with("endpoint-"));
+    }
+
+    #[test]
+    fn chainless_explorers_get_distinct_cache_dirs() {
+        let cache_dir = |url: &str| {
+            EtherscanConfig {
+                chain: None,
+                url: Some(url.to_string()),
+                key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+            }
+            .resolve(Some("mychain"))
+            .unwrap()
+            .explorer_cache_dir()
+            .unwrap()
+        };
+
+        // Same host, different endpoints.
+        let first = cache_dir("https://api.example.com/api?chainid=1");
+        let second = cache_dir("https://api.example.com/api?chainid=2");
+        assert_ne!(first, second);
+        // Stable across calls, so repeated lookups hit the same cache.
+        assert_eq!(first, cache_dir("https://api.example.com/api?chainid=1"));
+        assert_ne!(first, cache_dir("http://127.0.0.1:8545"));
+    }
+
+    #[test]
+    fn chained_configs_keep_caching_under_their_chain() {
+        let config = EtherscanConfig {
+            chain: Some(Mainnet.into()),
+            url: None,
+            key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+        }
+        .resolve(None)
+        .unwrap();
+        assert_eq!(
+            config.explorer_cache_dir().unwrap(),
+            Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap()
         );
     }
 }
