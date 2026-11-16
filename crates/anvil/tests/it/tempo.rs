@@ -9253,7 +9253,12 @@ async fn tempo_consensus_fork_infers_epoch_length_from_chain_config() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_genesis_contract_nonces() {
-    let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let (api, handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_hardfork(Some(TempoHardfork::T14.into()))
+            .with_no_mining(true),
+    )
+    .await;
     let provider = handle.http_provider();
 
     for reset in [false, true] {
