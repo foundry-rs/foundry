@@ -1054,9 +1054,10 @@ fn password_or_prompt(password: Option<String>, prompt: &str) -> Result<String> 
 
 /// Resolves the directory for `cast wallet new`.
 ///
-/// A missing bare name is rewritten into `account_name` and stored in the default keystore
-/// directory, matching `cast wallet import <name>`. Path-like values and resolution failures
-/// other than `NotFound` still error.
+/// A bare name that does not exist relative to the current directory is rewritten into
+/// `account_name` and stored in the default keystore directory, matching
+/// `cast wallet import <name>`. Path-like values and probe failures other than `NotFound` still
+/// error.
 fn resolve_new_dir(path: String, account_name: &mut Option<String>) -> Result<PathBuf> {
     // Probe the relative path instead of canonicalizing it: canonicalization also resolves the
     // current directory, which fails with `EPERM`/`EACCES` when one of its ancestors is not
