@@ -47,7 +47,7 @@ use rand::Rng;
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
-    path::Path,
+    path::{Component, Path},
     str::FromStr,
 };
 
@@ -1747,7 +1747,7 @@ fn inner_value_snapshot<FEN: FoundryEvmNetwork>(
     name: Option<String>,
     value: String,
 ) -> Result {
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value);
 
@@ -1760,7 +1760,7 @@ fn inner_last_gas_snapshot<FEN: FoundryEvmNetwork>(
     name: Option<String>,
     value: u64,
 ) -> Result {
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value.to_string());
 
@@ -1777,7 +1777,7 @@ fn inner_start_gas_snapshot<FEN: FoundryEvmNetwork>(
         bail!("gas snapshot was already started with group: {group} and name: {name}");
     }
 
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_metering.gas_records.push(GasRecord {
         group: group.clone(),
@@ -1849,12 +1849,29 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
     ccx: &CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
     name: Option<String>,
-) -> (String, String) {
-    let group = group.unwrap_or_else(|| {
-        ccx.state.core.config.running_artifact.clone().expect("expected running contract").name
-    });
+) -> Result<(String, String)> {
+    let group = match group {
+        Some(group) => {
+            ensure!(
+                is_valid_snapshot_group(&group),
+                "invalid snapshot group name `{group}`: group must be a plain file name"
+            );
+            group
+        }
+        None => {
+            ccx.state.core.config.running_artifact.clone().expect("expected running contract").name
+        }
+    };
     let name = name.unwrap_or_else(|| "default".to_string());
-    (group, name)
+    Ok((group, name))
+}
+
+/// Returns whether `group` is a single normal path component, so that the `{group}.json` snapshot
+/// file cannot escape the configured snapshots directory.
+fn is_valid_snapshot_group(group: &str) -> bool {
+    let mut components = Path::new(group).components();
+    matches!(components.next(), Some(Component::Normal(name)) if name == group)
+        && components.next().is_none()
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
@@ -2620,5 +2637,15 @@ mod tests {
             "- state diff:\n\
 @ 0x0000000000000000000000000000000000000000000000000000000000000000 (data, (bool,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000001\n    paused (bool): false → false\n"
         );
+    }
+
+    #[test]
+    fn validates_snapshot_groups() {
+        for group in ["Group", "a.b", "group with spaces", "..hidden"] {
+            assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
+        }
+        for group in ["", ".", "..", "../settings", "a/b", "./a", "/tmp/settings", "a/", "a/."] {
+            assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
     }
 }

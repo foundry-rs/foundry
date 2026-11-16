@@ -413,7 +413,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             }
         };
 
-        let gas_used = result.tx_gas_used();
+        let gas_used = result.ext.charged_gas;
         self.gas_used += gas_used;
         if self.is_cancun {
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
@@ -658,7 +658,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                     if gas_config.is_cancun {
                         blob_gas_used = blob_gas_used.saturating_add(declared_blob_gas);
                     }
-                    let gas_used = result.tx_gas_used();
+                    let gas_used = result.ext.charged_gas;
                     if result.stop.is_out_of_gas() {
                         warn!(target: "backend", "[{:?}] executed with out of gas", pool_tx.hash());
                     }
@@ -722,7 +722,7 @@ pub(crate) fn transaction_info(
         exit: result.stop,
         out: (!result.stop.is_halt()).then(|| result.output.clone()),
         nonce,
-        gas_used: result.tx_gas_used(),
+        gas_used: result.ext.charged_gas,
     }
 }
 

@@ -105,6 +105,137 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 "#]]);
 }
 
+// Tests that an `afterInvariant` counterexample holds only the calls the run executed, and that an
+// empty one is still persisted for replay.
+#[forgetest]
+fn invariant_after_invariant_excludes_unexecuted_call(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.shrink_run_limit = 0;
+    });
+    prj.add_test(
+        "InvariantAfterInvariantCalls.t.sol",
+        r#"
+contract Counter {
+    uint256 public count;
+
+    function inc() external {
+        count++;
+    }
+}
+
+contract InvariantAfterInvariantCallsTest {
+    Counter counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function afterInvariant() public view {
+        require(counter.count() % 3 != 0, "bad count");
+    }
+
+    function invariant_ok() public view {}
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: bad count]
+	[Sequence] (original: 3, shrunk: 3)
+		sender=[..] addr=[test/InvariantAfterInvariantCalls.t.sol:Counter][..] calldata=inc() args=[]
+		sender=[..] addr=[test/InvariantAfterInvariantCalls.t.sol:Counter][..] calldata=inc() args=[]
+		sender=[..] addr=[test/InvariantAfterInvariantCalls.t.sol:Counter][..] calldata=inc() args=[]
+ invariant_ok() (runs: 1, calls: 3, reverts: 0)
+...
+"#]]);
+
+    std::fs::remove_dir_all(prj.root().join("cache/invariant")).unwrap();
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 0;
+    });
+    let empty_sequence = str![[r#"
+...
+[FAIL: bad count]
+	[Sequence] (original: 0, shrunk: 0)
+...
+"#]];
+    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(empty_sequence.clone());
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mt", "invariant_ok"])
+        .assert_failure()
+        .stdout_eq(empty_sequence);
+}
+
+// Tests that an empty `afterInvariant` counterexample is persisted after the anchor already broke,
+// including when the hook reverts with an error the campaign cannot decode.
+#[forgetest]
+fn invariant_after_invariant_empty_sequence_after_anchor_failure(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 4;
+    });
+    prj.add_test(
+        "InvariantAnchorThenHook.t.sol",
+        r#"
+contract Counter {
+    uint256 public count;
+
+    function inc() external {
+        count++;
+    }
+}
+
+contract Helper {
+    error BadCount(uint256);
+
+    function check() external pure {
+        revert BadCount(7);
+    }
+}
+
+contract InvariantAnchorThenHookTest {
+    Counter counter;
+    Helper helper;
+
+    function setUp() public {
+        counter = new Counter();
+        helper = new Helper();
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(counter);
+    }
+
+    // Breaks in run 1, so the hook only runs in run 2.
+    function invariant_a() public view {
+        require(counter.count() == 0, "a broken");
+    }
+
+    function invariant_b() public view {}
+
+    function afterInvariant() public view {
+        helper.check();
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure();
+    cmd.forge_fuse().args(["fuzz", "replay", "--mt", "invariant_a"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: BadCount(7)]
+	[Sequence] (original: 0, shrunk: 0)
+...
+"#]],
+    );
+}
+
 #[forgetest_init]
 fn invariant_assume(prj: _, cmd: _) {
     prj.update_config(|config| {

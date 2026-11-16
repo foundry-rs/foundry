@@ -204,7 +204,12 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::constant(&mut self.cx, address))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child, unmet_expected_revert } => {
+                JoinedCallOutcome::Success { mut parent, child, mut unmet_expected_revert } => {
+                    // Like Forge's `create_end`, a CREATE settles a `vm.expectRevert` that
+                    // internal mode leaves pending after a successful call.
+                    if parent.expected_revert.take().is_some() {
+                        unmet_expected_revert = Some("next call did not revert as expected");
+                    }
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     let runtime = &child.frame.return_data;
                     parent.world = child.world;

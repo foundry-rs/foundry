@@ -1,5 +1,6 @@
 //! Cheatcode information, extracted from the syntactic and semantic analysis of the sources.
 
+use alloy_primitives::map::HashSet;
 use foundry_common::fmt::{StructDefinitions, TypeDefMap};
 use solar::sema::{self, Compiler, Gcx, hir};
 use std::sync::{Arc, OnceLock};
@@ -76,12 +77,14 @@ impl CheatcodeAnalysis {
 struct StructDefinitionResolver<'gcx> {
     gcx: Gcx<'gcx>,
     struct_defs: TypeDefMap,
+    /// Structs whose resolution has started. A struct can hold itself through a dynamic array.
+    visited: HashSet<hir::StructId>,
 }
 
 impl<'gcx> StructDefinitionResolver<'gcx> {
     /// Constructs a new generator.
-    pub const fn new(gcx: Gcx<'gcx>) -> Self {
-        Self { gcx, struct_defs: TypeDefMap::new() }
+    pub fn new(gcx: Gcx<'gcx>) -> Self {
+        Self { gcx, struct_defs: TypeDefMap::new(), visited: HashSet::default() }
     }
 
     /// Processes the HIR to generate all the struct definitions.
@@ -100,7 +103,7 @@ impl<'gcx> StructDefinitionResolver<'gcx> {
     /// The recursive core of the generator. Resolves a single struct and adds it to the cache.
     fn resolve_struct_definition(&mut self, id: hir::StructId) -> Result<(), AnalysisError> {
         let qualified_name = self.get_fully_qualified_name(id);
-        if self.struct_defs.contains_key(&qualified_name) {
+        if !self.visited.insert(id) || self.struct_defs.contains_key(&qualified_name) {
             return Ok(());
         }
 

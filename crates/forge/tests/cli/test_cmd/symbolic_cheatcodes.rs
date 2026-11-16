@@ -8,6 +8,9 @@ use foundry_test_utils::{forgetest_init, rpc, snapbox::IntoData, str, util::Outp
 
 use crate::skip_unless_z3;
 
+#[cfg(unix)]
+use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
 #[forgetest_init]
 fn symbolic_cheatcodes_accept_symbolic_address_targets(prj: _, cmd: _) {
     if !z3_available() {
@@ -1465,6 +1468,23 @@ contract SymbolicEnvCryptoConsole is Test {
         assertTrue(ok);
     }
 
+    // Like Forge, array elements are trimmed, an empty first element gives an empty array, and
+    // values go through its lenient parser.
+    function checkEnvParsing() public view {
+        string[] memory spaced = vm.envString("FOUNDRY_SYMBOLIC_ENV_SPACED_STRINGS", ",");
+        assertEq(spaced.length, 2);
+        assertEq(spaced[1], "beta");
+        assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_SPACED_UINTS", ",")[1], 2);
+        assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_EMPTY", ",").length, 0);
+        assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_LEADING_EMPTY", ",").length, 0);
+        assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINTS", "").length, 0);
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_EMPTY", ",", new uint256[](2)).length, 0);
+        assertTrue(vm.envBool("FOUNDRY_SYMBOLIC_ENV_MIXED_BOOL"));
+        assertTrue(vm.envOr("FOUNDRY_SYMBOLIC_ENV_MIXED_BOOL", false));
+        assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_QUOTED"), "hello");
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_QUOTED", string("default")), "hello");
+    }
+
     function checkKeyUtilities() public {
         address keyAddress = vm.addr(1);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, keccak256("foundry-symbolic"));
@@ -1546,6 +1566,11 @@ contract SymbolicEnvCryptoConsole is Test {
     cmd.env("FOUNDRY_SYMBOLIC_ENV_UINTS", "1,2,3");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_STRINGS", "alpha,beta");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_BYTES_ARRAY", "12,cafe");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_SPACED_STRINGS", "alpha, beta");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_SPACED_UINTS", "1, 2");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_LEADING_EMPTY", " ,alpha");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_MIXED_BOOL", "tRuE");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_QUOTED", "\"hello\"");
 
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
@@ -1556,20 +1581,81 @@ contract SymbolicEnvCryptoConsole is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
+Ran 7 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
 [PASS] checkBase64Utilities() ([METRICS])
 [PASS] checkEnvCryptoConsole(uint256) ([METRICS])
+[PASS] checkEnvParsing() ([METRICS])
 [PASS] checkFoundryVersion() ([METRICS])
 [PASS] checkKeyUtilities() ([METRICS])
 [PASS] checkParseToStringUtilities() ([METRICS])
 [PASS] checkStringUtilities() ([METRICS])
-Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+}
+
+// Like Forge, `envOr` only falls back to its default when the variable is not set, so a value
+// that is not valid unicode is not replaced by the default.
+#[cfg(unix)]
+#[forgetest_init]
+fn symbolic_vm_env_or_rejects_non_unicode(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_env_or_rejects_non_unicode");
+
+    prj.add_test(
+        "SymbolicEnvNonUnicode.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicEnvNonUnicode is Test {
+    string constant KEY = "FOUNDRY_SYMBOLIC_ENV_NON_UNICODE";
+
+    function checkEnvExists() public view {
+        assertFalse(vm.envExists(KEY));
+    }
+
+    function checkEnvOrBool() public view {
+        vm.envOr(KEY, true);
+    }
+
+    function checkEnvOrUint() public view {
+        vm.envOr(KEY, uint256(7));
+    }
+
+    function checkEnvOrString() public view {
+        vm.envOr(KEY, string("default"));
+    }
+
+    function checkEnvOrBytes() public view {
+        vm.envOr(KEY, bytes("default"));
+    }
+
+    function checkEnvOrArray() public view {
+        vm.envOr(KEY, ",", new uint256[](0));
+    }
+}
+"#,
+    );
+
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_NON_UNICODE", OsStr::from_bytes(b"\xff"));
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicEnvNonUnicode"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicEnvNonUnicode.t.sol:SymbolicEnvNonUnicode
+[PASS] checkEnvExists() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrArray() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrBool() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrBytes() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrString() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrUint() ([METRICS])
+Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -4159,6 +4245,135 @@ contract DoubleExpectRevert is Test {
 Ran 1 test for test/DoubleExpectRevert.t.sol:DoubleExpectRevert
 [FAIL: call didn't revert at a lower depth than cheatcode call depth; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDoubleExpectRevert(uint256) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Like Forge, a pending `vm.expectRevert` stays pending during the next call, so frames below it
+// cannot set another, while storage hook callbacks run with it set aside.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_nested_registration_is_rejected(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_nested_registration_is_rejected");
+
+    prj.add_test(
+        "NestedExpectRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract NestedReverter {
+    function fail() external pure {
+        revert("x");
+    }
+}
+
+contract NestedCreated {}
+
+contract NestedHookedStore {
+    uint256 value;
+
+    function store() external {
+        value = 1;
+        revert("zzz");
+    }
+}
+
+contract NestedExpectRevert is Test {
+    NestedReverter reverter;
+    NestedHookedStore hooked;
+
+    function setUp() public {
+        reverter = new NestedReverter();
+        hooked = new NestedHookedStore();
+    }
+
+    function expectThenRevert() external {
+        vm.expectRevert(bytes("x"));
+        reverter.fail();
+        revert("zzz");
+    }
+
+    function expectThenReturn() external {
+        vm.expectRevert(bytes("x"));
+        reverter.fail();
+    }
+
+    function expectPartialThenReturn() external {
+        vm.expectPartialRevert(bytes4(0x08c379a0));
+        reverter.fail();
+    }
+
+    function callExpectThenReturn() external {
+        this.expectThenReturn();
+    }
+
+    function catchExpectRevert() external {
+        try vm.expectRevert(bytes("x")) {} catch {}
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32) external {
+        vm.expectRevert(bytes("x"));
+    }
+
+    function checkNestedExpectRevertMismatch() public {
+        vm.expectRevert(bytes("zzz"));
+        this.expectThenRevert();
+    }
+
+    function checkNestedExpectRevertTwoLevels() public {
+        vm.expectRevert(
+            bytes("vm.expectRevert: you must call another function prior to expecting a second revert")
+        );
+        this.callExpectThenReturn();
+    }
+
+    function checkNestedExpectPartialRevert() public {
+        vm.expectRevert(
+            bytes(
+                "vm.expectPartialRevert: you must call another function prior to expecting a second revert"
+            )
+        );
+        this.expectPartialThenReturn();
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkNestedExpectRevertCaughtInternal() public {
+        vm.expectRevert(bytes("x"));
+        this.catchExpectRevert();
+        reverter.fail();
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkNestedExpectRevertCreateInternal() public {
+        vm.expectRevert(bytes("x"));
+        new NestedCreated();
+        reverter.fail();
+    }
+
+    function checkNestedExpectRevertInStorageHook() public {
+        StorageHookVm(address(vm)).registerSstoreHook(address(hooked), this.onStore.selector);
+        vm.expectRevert(bytes("zzz"));
+        hooked.store();
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkNested"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/NestedExpectRevert.t.sol:NestedExpectRevert
+[PASS] checkNestedExpectPartialRevert() ([METRICS])
+[PASS] checkNestedExpectRevertCaughtInternal() ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedExpectRevertCreateInternal() ([METRICS])
+[PASS] checkNestedExpectRevertInStorageHook() ([METRICS])
+[FAIL: Error != expected error: vm.expectRevert: you must call another function prior to expecting a second revert != zzz; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedExpectRevertMismatch() ([METRICS])
+[PASS] checkNestedExpectRevertTwoLevels() ([METRICS])
+Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
