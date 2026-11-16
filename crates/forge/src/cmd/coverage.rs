@@ -289,8 +289,9 @@ impl CoverageArgs {
         let ir_minimum = settings.ir_minimum;
         let mut project = config.ephemeral_project()?;
         // A contended or unavailable cache retains ephemeral compilation. Keep the lock until
-        // artifacts and build contexts have been loaded or published together. Instrumented
-        // builds are not cached: their coverage maps are compiler output, not artifacts.
+        // artifacts and build contexts have been loaded or published together. Instrumented builds
+        // are not cached: the compiler's coverage map is not persisted in the artifact cache, so a
+        // warm cache would reuse bytecode without a map and report no coverage.
         let cache = (config.cache && !config.deny.warnings() && !settings.instrumented)
             .then(|| config.coverage_cache_path())
             .flatten()
