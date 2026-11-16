@@ -54,15 +54,10 @@ pub fn find_anchors(
 ) -> ItemAnchors {
     let mut anchors = ItemAnchors::default();
     let index = AnchorIndex::new(bytecode, source_map, ic_pc_map);
-    // Path 0 is the fallthrough and path 1 the jump target, unless `swapped`. The jump target
-    // counts the jump's executions minus its fallthrough's.
-    let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id, swapped| {
-        let jump = Some(fallthrough.instruction - 1);
-        match (path_id, swapped) {
-            (0, false) | (1, true) => (fallthrough, None),
-            (1, false) | (0, true) => (taken, jump),
-            _ => panic!("too many path IDs for branch"),
-        }
+    let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id| match path_id {
+        0 => (fallthrough, None),
+        1 => (taken, Some(fallthrough.instruction - 1)),
+        _ => panic!("too many path IDs for branch"),
     };
     let mut seen_sources = FxHashSet::default();
     source_map
@@ -82,7 +77,7 @@ pub fn find_anchors(
                     index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)).or_else(|_| {
                         index
                             .branch(item_id, &item.loc, false)
-                            .map(|anchors| select_branch(anchors, 1, false))
+                            .map(|anchors| select_branch(anchors, 1))
                     })
                 }
                 CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
@@ -93,7 +88,8 @@ pub fn find_anchors(
                             // placed it.
                             let swapped = kind == Some(BranchKind::Require)
                                 && index.taken_fails(&anchors, anchor_loc);
-                            select_branch(anchors, path_id, swapped)
+                            // Swapping the paths gives the failing side path 0.
+                            select_branch(anchors, path_id ^ u32::from(swapped))
                         },
                     )
                 }
@@ -330,11 +326,7 @@ impl<'a> AnchorIndex<'a> {
         while self.pcs.get(ic).is_some_and(|&p| self.bytecode[p as usize] == opcode::JUMPDEST) {
             ic += 1;
         }
-        self.source_map.get(ic).is_some_and(|element| {
-            element.index() == Some(loc.source_id as u32)
-                && element.offset() >= loc.bytes.start
-                && element.offset() + element.length() <= loc.bytes.end
-        })
+        self.source_map.get(ic).is_some_and(|element| is_within_source_span(element, loc))
     }
 
     /// Returns whether the code at `pc` reverts without another conditional branch or other halt.
@@ -655,6 +647,8 @@ mod tests {
             (&solc[..], "10:20:0;;;;;;50:13:0;;;", [(5, None), (7, Some(4))]),
             // Both sides start inside the span, as for `require(c, E(1)); assembly { invalid() }`.
             (&solc[..], "10:20:0;;;;;;;;;", [(5, None), (7, Some(4))]),
+            // An element that starts inside the span but extends past it is not inside.
+            (&solc[..], "10:20:0;;;15:40:0;;;50:13:0;;;", [(7, Some(4)), (5, None)]),
             (&solar[..], "10:20:0;;;50:5:0;-1:-1:-1;10:20:0;", [(6, Some(4)), (5, None)]),
         ] {
             assert_eq!(require_anchors(bytecode, &[10], source_map), expected);
