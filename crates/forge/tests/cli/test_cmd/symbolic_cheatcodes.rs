@@ -8,6 +8,9 @@ use foundry_test_utils::{forgetest_init, rpc, snapbox::IntoData, str, util::Outp
 
 use crate::skip_unless_z3;
 
+#[cfg(unix)]
+use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
 #[forgetest_init]
 fn symbolic_cheatcodes_accept_symbolic_address_targets(prj: _, cmd: _) {
     if !z3_available() {
@@ -1465,6 +1468,23 @@ contract SymbolicEnvCryptoConsole is Test {
         assertTrue(ok);
     }
 
+    // Like Forge, array elements are trimmed, an empty first element gives an empty array, and
+    // values go through its lenient parser.
+    function checkEnvParsing() public view {
+        string[] memory spaced = vm.envString("FOUNDRY_SYMBOLIC_ENV_SPACED_STRINGS", ",");
+        assertEq(spaced.length, 2);
+        assertEq(spaced[1], "beta");
+        assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_SPACED_UINTS", ",")[1], 2);
+        assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_EMPTY", ",").length, 0);
+        assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_LEADING_EMPTY", ",").length, 0);
+        assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINTS", "").length, 0);
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_EMPTY", ",", new uint256[](2)).length, 0);
+        assertTrue(vm.envBool("FOUNDRY_SYMBOLIC_ENV_MIXED_BOOL"));
+        assertTrue(vm.envOr("FOUNDRY_SYMBOLIC_ENV_MIXED_BOOL", false));
+        assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_QUOTED"), "hello");
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_QUOTED", string("default")), "hello");
+    }
+
     function checkKeyUtilities() public {
         address keyAddress = vm.addr(1);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, keccak256("foundry-symbolic"));
@@ -1546,6 +1566,11 @@ contract SymbolicEnvCryptoConsole is Test {
     cmd.env("FOUNDRY_SYMBOLIC_ENV_UINTS", "1,2,3");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_STRINGS", "alpha,beta");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_BYTES_ARRAY", "12,cafe");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_SPACED_STRINGS", "alpha, beta");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_SPACED_UINTS", "1, 2");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_LEADING_EMPTY", " ,alpha");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_MIXED_BOOL", "tRuE");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_QUOTED", "\"hello\"");
 
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
@@ -1556,20 +1581,81 @@ contract SymbolicEnvCryptoConsole is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
+Ran 7 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
 [PASS] checkBase64Utilities() ([METRICS])
 [PASS] checkEnvCryptoConsole(uint256) ([METRICS])
+[PASS] checkEnvParsing() ([METRICS])
 [PASS] checkFoundryVersion() ([METRICS])
 [PASS] checkKeyUtilities() ([METRICS])
 [PASS] checkParseToStringUtilities() ([METRICS])
 [PASS] checkStringUtilities() ([METRICS])
-Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+}
+
+// Like Forge, `envOr` only falls back to its default when the variable is not set, so a value
+// that is not valid unicode is not replaced by the default.
+#[cfg(unix)]
+#[forgetest_init]
+fn symbolic_vm_env_or_rejects_non_unicode(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_env_or_rejects_non_unicode");
+
+    prj.add_test(
+        "SymbolicEnvNonUnicode.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicEnvNonUnicode is Test {
+    string constant KEY = "FOUNDRY_SYMBOLIC_ENV_NON_UNICODE";
+
+    function checkEnvExists() public view {
+        assertFalse(vm.envExists(KEY));
+    }
+
+    function checkEnvOrBool() public view {
+        vm.envOr(KEY, true);
+    }
+
+    function checkEnvOrUint() public view {
+        vm.envOr(KEY, uint256(7));
+    }
+
+    function checkEnvOrString() public view {
+        vm.envOr(KEY, string("default"));
+    }
+
+    function checkEnvOrBytes() public view {
+        vm.envOr(KEY, bytes("default"));
+    }
+
+    function checkEnvOrArray() public view {
+        vm.envOr(KEY, ",", new uint256[](0));
+    }
+}
+"#,
+    );
+
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_NON_UNICODE", OsStr::from_bytes(b"\xff"));
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicEnvNonUnicode"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicEnvNonUnicode.t.sol:SymbolicEnvNonUnicode
+[PASS] checkEnvExists() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrArray() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrBool() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrBytes() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrString() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrUint() ([METRICS])
+Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
