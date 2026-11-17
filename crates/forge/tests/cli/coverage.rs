@@ -3947,6 +3947,26 @@ contract Guard {
         }
     }
 
+    function scan(bytes memory hay, uint256 needle, uint256 h) external pure returns (uint256 found) {
+        assembly {
+            let end := add(add(hay, 0x20), mload(hay))
+            let i := add(hay, 0x20)
+            for {} lt(i, end) {} {
+                if iszero(eq(byte(0, mload(i)), needle)) {
+                    if h {
+                        if iszero(eq(byte(0, mload(add(i, 1))), h)) {
+                            mstore(0x00, i)
+                            i := add(i, 1)
+                            continue
+                        }
+                    }
+                    found := add(found, 100)
+                }
+                i := add(i, 1)
+            }
+        }
+    }
+
     function spin(uint256 a, uint256 n) external pure returns (uint256 i) {
         assembly {
             if a {
@@ -3985,6 +4005,11 @@ contract GuardTest {
         guard.spin(0, 5);
         guard.spin(0, 5);
         guard.spin(0, 5);
+        guard.scan(hex"0102030201", 2, 0);
+        guard.scan(hex"0102030201", 2, 1);
+        guard.scan(hex"0102030201", 2, 3);
+        guard.scan(hex"0303", 2, 3);
+        guard.scan(hex"0202", 2, 3);
     }
 }
 "#,
@@ -4025,18 +4050,38 @@ DA:29,2
 BRDA:29,4,0,1
 BRDA:29,4,1,1
 DA:34,5
-FN:34,Guard.spin
-FNDA:5,Guard.spin
+FN:34,Guard.scan
+FNDA:5,Guard.scan
 DA:36,5
-BRDA:36,5,0,2
-BRDA:36,5,1,3
-DA:37,7
-FNF:6
-FNH:6
-LF:14
-LH:14
-BRF:12
-BRH:12
+DA:37,5
+DA:38,24
+DA:39,19
+BRDA:39,5,0,11
+BRDA:39,5,1,8
+DA:40,11
+BRDA:40,6,0,8
+BRDA:40,6,1,3
+DA:41,8
+BRDA:41,7,0,7
+BRDA:41,7,1,1
+DA:42,7
+DA:43,7
+DA:44,7
+DA:47,4
+DA:49,12
+DA:54,5
+FN:54,Guard.spin
+FNDA:5,Guard.spin
+DA:56,5
+BRDA:56,8,0,2
+BRDA:56,8,1,3
+DA:57,7
+FNF:7
+FNH:7
+LF:26
+LH:26
+BRF:18
+BRH:18
 end_of_record
 
 "#]];

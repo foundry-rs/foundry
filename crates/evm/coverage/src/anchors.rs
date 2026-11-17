@@ -92,7 +92,7 @@ pub fn find_anchors(
                     };
                     index.branch(item_id, anchor_loc, exact, body).and_then(|anchors| {
                         let entries = if body.is_some() {
-                            index.fallthrough_entries(&anchors)?
+                            index.fallthrough_entries(&anchors).unwrap_or_default()
                         } else {
                             vec![]
                         };
@@ -464,14 +464,16 @@ impl<'a> AnchorIndex<'a> {
             .any(|&(_, push)| !is_within_source_span(&self.source_map[push], loc))
     }
 
-    /// Returns the `JUMP`s that enter the fallthrough of a branch from elsewhere, such as the back
-    /// edge of a loop whose head the branch falls into. Their executions are not the fallthrough's,
-    /// but the hits of the fallthrough count them. Fails when a conditional jump also enters it,
-    /// since the hits cannot tell how many of its executions did.
+    /// Returns the jumps that enter the fallthrough of a branch from elsewhere, as `(pc,
+    /// conditional)`, such as the back edge of a loop whose head the branch falls into, or a
+    /// `continue` that jumps to the code after the `if`. Their executions are not the
+    /// fallthrough's, but its hits count them. Fails when the entries cannot be told apart: the
+    /// branch's own jump targets the fallthrough, or a conditional jump's own fallthrough is a
+    /// `JUMPDEST` that others can enter. The branch then keeps its anchors without a discount.
     fn fallthrough_entries(
         &self,
         (fallthrough, _): &(ItemAnchor, ItemAnchor),
-    ) -> eyre::Result<Vec<u32>> {
+    ) -> eyre::Result<Vec<(u32, bool)>> {
         let pc = fallthrough.instruction;
         if self.bytecode.get(pc as usize) != Some(&opcode::JUMPDEST) {
             return Ok(Vec::new());
@@ -481,12 +483,15 @@ impl<'a> AnchorIndex<'a> {
             .iter()
             .take_while(|&&(target, _)| target == pc)
             .map(|&(_, push)| {
-                let jump = self.pcs.get(push + 1).copied();
+                let jump = self.pcs.get(push + 1).copied().unwrap_or_default();
+                let conditional = self.bytecode[jump as usize] == opcode::JUMPI;
                 ensure!(
-                    jump.is_some_and(|jump| self.bytecode[jump as usize] == opcode::JUMP),
-                    "fallthrough is entered by a conditional jump"
+                    jump != pc - 1
+                        && (!conditional
+                            || self.bytecode.get(jump as usize + 1) != Some(&opcode::JUMPDEST)),
+                    "fallthrough entries cannot be told apart"
                 );
-                Ok(jump.unwrap_or_default())
+                Ok((jump, conditional))
             })
             .collect()
     }
@@ -905,14 +910,79 @@ mod tests {
             [5, 11]
         );
         assert_eq!(anchors.jumps.get(&1), Some(&4));
-        assert_eq!(anchors.entries.get(&0), Some(&vec![10]));
-        assert_eq!(anchors.entries.get(&1), Some(&vec![10]));
-        // A conditional jump back to the head cannot be separated, so the `if` has no anchors.
-        assert!(find(bytecode(5, opcode::JUMPI)).anchors.is_empty());
+        assert_eq!(anchors.entries.get(&0), Some(&vec![(10, false)]));
+        assert_eq!(anchors.entries.get(&1), Some(&vec![(10, false)]));
+        // A conditional jump back to the head counts its taken executions, unless its own
+        // fallthrough is a `JUMPDEST`, which others can enter.
+        let anchors = find(bytecode(5, opcode::JUMPI));
+        assert_eq!(anchors.anchors.len(), 2);
+        assert!(anchors.entries.is_empty());
+        let conditional = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            12,
+            opcode::JUMPI,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            5,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let anchors = find_branch_anchors(&conditional, &[(10, kind.clone())], source_map);
+        assert_eq!(anchors.entries.get(&0), Some(&vec![(10, true)]));
         // A jump elsewhere leaves the fallthrough unshared.
         let anchors = find(bytecode(11, opcode::JUMP));
         assert_eq!(anchors.anchors.len(), 2);
         assert!(anchors.entries.is_empty());
+    }
+
+    #[test]
+    fn yul_if_body_at_the_jump_target_with_a_shared_skip_label() {
+        // Solar's layout of `if c { ...; if d { break } continue }`. The body is the jump target,
+        // behind a `JUMPDEST` mapped to the whole `if` (bytes 10..30, its body 22..30). The skip
+        // side is an unmapped `JUMPDEST` that the body's own conditional jump also targets.
+        let bytecode = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            9,
+            opcode::JUMPI,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            0,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::DUP1,
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            5,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::STOP,
+        ];
+        let kind = BranchKind::YulIf(SourceLocation {
+            source_id: 0,
+            contract_name: "T".into(),
+            bytes: 22..30,
+            lines: 1..2,
+        });
+        let source_map = "12:5:0;;;-1:-1:-1;50:5:0;;10:20:0;25:2:0;;;;;";
+        let anchors = find_branch_anchors(&bytecode, &[(10, kind)], source_map);
+        // Path 0 is the jump target, which counts the jump's executions minus the skip side's,
+        // and the skip side's hits discount the entries of the body's own jump.
+        assert_eq!(
+            anchors.anchors.iter().map(|anchor| anchor.instruction).collect::<Vec<_>>(),
+            [9, 5]
+        );
+        assert_eq!(anchors.jumps.get(&0), Some(&4));
+        assert_eq!(anchors.entries.get(&0), Some(&vec![(15, true)]));
+        assert_eq!(anchors.entries.get(&1), Some(&vec![(15, true)]));
     }
 
     #[test]
