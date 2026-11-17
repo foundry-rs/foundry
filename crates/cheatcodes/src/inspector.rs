@@ -1658,7 +1658,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let (initialized, old_balance, old_nonce) =
                 match evm.state_mut().account(&call.call_target) {
                     Ok(mut account) => {
-                        account.warm();
+                        // A `vm.mockFunction` target is never accessed by the EVM, so keep it cold.
+                        if call.call_target == call.destination {
+                            account.warm();
+                        }
                         (
                             account.get().is_some_and(|info| !info.is_empty()),
                             account.balance(),
@@ -2573,7 +2576,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             interp.host().state_mut().account(&call.call_target)
                     {
                         debug_assert!(access_is_call(call_access.kind));
-                        account.warm();
+                        if call.call_target == call.destination {
+                            account.warm();
+                        }
                         call_access.newBalance = account.balance();
                         call_access.newNonce = account.nonce();
                     }
