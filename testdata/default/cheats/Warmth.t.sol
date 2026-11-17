@@ -172,6 +172,9 @@ contract CheatcodeWarmthTest is Test {
         vm.mockFunction(address(target), address(mock), abi.encodeWithSignature("x()"));
         vm.startStateDiffRecording();
         target.x();
+        // A delegatecall records the callee, here the mock.
+        (bool success,) = address(target).delegatecall(abi.encodeWithSignature("x()"));
+        vm.assertTrue(success, "delegatecall");
         vm.stopAndReturnStateDiff();
         vm.assertFalse(isWarm(address(mock)), "mockFunction target");
     }

@@ -318,6 +318,30 @@ contract RecordAccountAccessesTest is Test {
         );
     }
 
+    /// @notice A `vm.mockFunction` redirect runs the mock's code in the target's context, so the
+    ///         call's nonce and balance changes are the target's.
+    function testCreateInMockedFunction() public {
+        Factory target = new Factory();
+        Factory mock = new Factory();
+        vm.mockFunction(address(target), address(mock), abi.encodeCall(Factory.deploy, (2)));
+        vm.deal(address(target), 2);
+
+        vm.startStateDiffRecording();
+        target.deploy(2);
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+
+        assertEq(vm.getNonce(address(target)), 3);
+        assertEq(vm.getNonce(address(mock)), 1);
+        assertEq(address(target).balance, 0);
+
+        assertEq(called.length, 3, "incorrect length");
+        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call), "incorrect kind");
+        assertEq(called[0].oldNonce, 1, "incorrect oldNonce");
+        assertEq(called[0].newNonce, 3, "incorrect newNonce");
+        assertEq(called[0].oldBalance, 2, "incorrect oldBalance");
+        assertEq(called[0].newBalance, 0, "incorrect newBalance");
+    }
+
     /// @notice Test normal, non-nested storage accesses
     function testStorageAccesses() public {
         StorageAccessor one = test1;
