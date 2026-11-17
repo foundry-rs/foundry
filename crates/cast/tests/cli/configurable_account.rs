@@ -18,7 +18,7 @@ use foundry_test_utils::{TestCommand, assert_data_eq, util::OutputExt};
 use p256::ecdsa::{SigningKey, signature::Signer as _};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
-use tempo_contracts::precompiles::ITIP20;
+use tempo_contracts::precompiles::{ITIP20, PATH_USD_ADDRESS};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::{
     TempoTxEnvelope,
@@ -968,4 +968,97 @@ linked (Local)
     // Before T14 the keystore sends from its key.
     assert_data_eq!(send(&t13.http_endpoint(), &keystore), paying);
     assert_eq!(last_receipt(&t13.http_provider()).await["from"], serde_json::json!(owner));
+}
+
+/// `cast tempo zone deposit` from a configurable account approves the portal and calls its
+/// `deposit` on Tempo L1 with `0x05` signatures from the account, as `cast send` does, while a
+/// plain key keeps sending secp256k1 transactions. The portal is a stub that returns the secp256k1
+/// generator as its encryption key.
+#[casttest]
+async fn tempo_t14_zone_deposit_from_configurable_account(cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = two_of_three();
+    let eoa = handle.dev_wallets().next().unwrap();
+    for address in [account, eoa.address()] {
+        for token in [ALPHA_USD_ADDRESS, PATH_USD_ADDRESS] {
+            api.anvil_deal_tip20(address, token, U256::from(1_000_000_000_000u64)).await.unwrap();
+        }
+    }
+    // `mstore(0, Gx)`, `mstore(0x20, 2)`, `return(0, 0x60)`: `(x, yParity, keyIndex 0)`.
+    let portal = Address::repeat_byte(0x50);
+    let code = hex::decode(
+        "7f79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798600052600260205260606000f3",
+    )
+    .unwrap();
+    api.anvil_set_code(portal, code.into()).await.unwrap();
+
+    let deposit = ["tempo", "zone", "deposit", "--portal", &portal.to_string()];
+    let common = ["--amount", "1000", "--approve", "--rpc-url", &rpc];
+    let last_tx = || async {
+        let block = provider.get_block_number().await.unwrap();
+        let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let raw = provider
+            .raw_request::<_, alloy_primitives::Bytes>(
+                "eth_getRawTransactionByHash".into(),
+                (receipts.last().unwrap().transaction_hash(),),
+            )
+            .await
+            .unwrap();
+        TempoTxEnvelope::decode_2718_exact(&raw).unwrap()
+    };
+    let allowance = |owner: Address| {
+        let provider = provider.clone();
+        async move {
+            let call = ITIP20::allowanceCall { owner, spender: portal };
+            let output = provider
+                .raw_request::<_, alloy_primitives::Bytes>(
+                    "eth_call".into(),
+                    (serde_json::json!({
+                        "to": PATH_USD_ADDRESS,
+                        "data": alloy_primitives::Bytes::from(call.abi_encode()),
+                    }),),
+                )
+                .await
+                .unwrap();
+            U256::from_be_slice(&output)
+        }
+    };
+
+    cmd.cast_fuse()
+        .args(deposit)
+        .args(["--from", &account.to_string(), "--private-key", &private_key(&keys[0])])
+        .args(["--tempo.owner", &format!("private-key://{}", private_key(&keys[1]))])
+        .args(["--tempo.config", &config])
+        .args(common)
+        .assert_success()
+        .stderr_eq(format!(
+            "Sending as Tempo configurable account {account}\nApproving 1000 for {portal}\n\
+             Deposit submitted on L1; zone processing is asynchronous.\n"
+        ));
+    let receipt = last_receipt(&provider).await;
+    assert_eq!(receipt["from"], serde_json::json!(account));
+    assert_eq!(receipt["to"], serde_json::json!(portal));
+    let TempoTxEnvelope::AA(signed) = last_tx().await else {
+        panic!("expected a Tempo transaction");
+    };
+    assert_eq!(signed.signature().as_configurable_account().unwrap().signatures().len(), 2);
+    // The account, not an owner key, approved the portal.
+    assert_eq!(allowance(account).await, U256::from(1000));
+    assert_eq!(allowance(keys[0].address()).await, U256::ZERO);
+
+    cmd.cast_fuse()
+        .args(deposit)
+        .args(["--private-key", &private_key(&eoa)])
+        .args(common)
+        .assert_success()
+        .stderr_eq(format!(
+            "Approving 1000 for {portal}\nDeposit submitted on L1; zone processing is \
+             asynchronous.\n"
+        ));
+    assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(eoa.address()));
+    // As before configurable accounts, the key sends a plain secp256k1 transaction.
+    assert!(!matches!(last_tx().await, TempoTxEnvelope::AA(_)));
 }
