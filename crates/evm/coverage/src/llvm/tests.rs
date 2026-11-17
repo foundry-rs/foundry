@@ -188,6 +188,11 @@ fn assert_llvm_agrees(source: &str, build: &InstrumentedBuild) {
 
 /// Asserts the same for function records, which may combine several builds.
 pub(crate) fn assert_inputs_agree(source: &str, inputs: Vec<FunctionInput>) {
+    assert_inputs_agree_in("src/C.sol", source, inputs);
+}
+
+/// Asserts the same for a source at `path`, such as `src/B.sol`.
+pub(crate) fn assert_inputs_agree_in(path: &str, source: &str, inputs: Vec<FunctionInput>) {
     let object = CoverageObject::new(&inputs).unwrap();
     let mapping = CoverageMapping::new(inputs);
     let ours_text = export_json(&mapping);
@@ -196,7 +201,7 @@ pub(crate) fn assert_inputs_agree(source: &str, inputs: Vec<FunctionInput>) {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("src/C.sol"), source).unwrap();
+    std::fs::write(dir.join(path), source).unwrap();
     std::fs::write(dir.join("coverage.proftext"), &object.proftext).unwrap();
     std::fs::write(dir.join("coverage.covmap.o"), &object.object).unwrap();
 

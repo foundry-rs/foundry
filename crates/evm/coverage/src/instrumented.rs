@@ -84,6 +84,17 @@ impl InstrumentedSource {
         start..end
     }
 
+    /// The contracts with a test function.
+    fn test_contracts(&self) -> Vec<&str> {
+        self.coverage
+            .functions
+            .iter()
+            .map(|function| parse_name(&function.name))
+            .filter(|(_, function)| function.is_any_test())
+            .filter_map(|(contract, _)| contract)
+            .collect()
+    }
+
     /// The path with `/` separators, as the coverage mapping names the file.
     pub fn filename(&self) -> String {
         self.path.to_string_lossy().replace('\\', "/")
@@ -292,25 +303,78 @@ impl InstrumentedBuild {
 
     /// The function records for the LLVM coverage mapping, with their profile counters and MC/DC
     /// bitmap. A function record needs one of the reportable sources to define it.
+    ///
+    /// The records of test functions and of unreportable sources are left out, but not the
+    /// modifiers they apply: a modifier record takes the code regions of those expansions.
     pub fn function_inputs(&self) -> Vec<FunctionInput> {
+        let donors = self.expansion_donors();
         let mut inputs = Vec::new();
-        for source in self.sources.values().filter(|source| source.reportable) {
-            let test_contracts = source
-                .coverage
-                .functions
-                .iter()
-                .map(|function| parse_name(&function.name))
-                .filter(|(_, function)| function.is_any_test())
-                .filter_map(|(contract, _)| contract)
-                .collect::<Vec<_>>();
-            for function in &source.coverage.functions {
-                if parse_name(&function.name).0.is_some_and(|c| test_contracts.contains(&c)) {
+        for (&id, source) in self.sources.iter().filter(|(_, source)| source.reportable) {
+            let test_contracts = source.test_contracts();
+            for (index, function) in source.coverage.functions.iter().enumerate() {
+                if is_test_contract(function, &test_contracts) {
                     continue;
                 }
-                inputs.extend(self.function_input(function));
+                inputs.extend(match donors.get(&(id, index)) {
+                    Some(donors) => self.function_input(&with_expansions(function, donors)),
+                    None => self.function_input(function),
+                });
             }
         }
         inputs
+    }
+
+    /// The expansions of reportable modifiers in the records that the report leaves out, by the
+    /// source and index of the modifier's record: the record that expands, and the index of the
+    /// expanded file in its file table.
+    ///
+    /// The modifier's record is the one without counters of its own whose first region starts
+    /// where the first region of the expanded file does.
+    fn expansion_donors(&self) -> FxHashMap<(u32, usize), Vec<(&FunctionCoverage, u32)>> {
+        let mut donors = FxHashMap::<_, Vec<_>>::default();
+        for source in self.sources.values() {
+            let test_contracts = source.test_contracts();
+            for function in &source.coverage.functions {
+                if source.reportable && !is_test_contract(function, &test_contracts) {
+                    continue;
+                }
+                for region in &function.regions {
+                    let Region::Expansion { expanded_file, .. } = *region else { continue };
+                    let Some(&target_id) = function.files.get(expanded_file as usize) else {
+                        continue;
+                    };
+                    let Some(target) = self.sources.get(&target_id).filter(|s| s.reportable) else {
+                        continue;
+                    };
+                    let first = function
+                        .regions
+                        .iter()
+                        .filter(|region| region.file() == expanded_file)
+                        .map(Region::start)
+                        .min();
+                    let target_tests = target.test_contracts();
+                    let modifier = target.coverage.functions.iter().position(|candidate| {
+                        candidate.counters[1] == 0
+                            && !is_test_contract(candidate, &target_tests)
+                            && candidate.files.first() == Some(&target_id)
+                            && candidate
+                                .regions
+                                .iter()
+                                .filter(|region| region.file() == 0)
+                                .map(Region::start)
+                                .min()
+                                == first
+                    });
+                    if let Some(modifier) = modifier {
+                        donors
+                            .entry((target_id, modifier))
+                            .or_default()
+                            .push((function, expanded_file));
+                    }
+                }
+            }
+        }
+        donors
     }
 
     /// Builds a function record for the LLVM coverage mapping.
@@ -455,18 +519,7 @@ impl InstrumentedBuild {
             .map(|counter| self.hits(counter))
             .collect();
 
-        // Sort like LLVM's writer: by file, location, kind, and wider regions first.
-        let kind_key = |kind: RegionKind| match kind {
-            RegionKind::McdcDecision => 2 * RegionKind::Expansion as u32 - 1,
-            kind => 2 * kind as u32,
-        };
-        mapped.sort_by(|(lhs, _), (rhs, _)| {
-            lhs.file
-                .cmp(&rhs.file)
-                .then(lhs.start.cmp(&rhs.start))
-                .then(kind_key(lhs.kind).cmp(&kind_key(rhs.kind)))
-                .then(rhs.end.cmp(&lhs.end))
-        });
+        mapped.sort_by(|(lhs, _), (rhs, _)| lhs.writer_order(rhs));
 
         // A decision that cannot be laid out, or a bitmap that a text profile cannot hold, costs
         // the record its MC/DC regions but not its branch coverage.
@@ -618,6 +671,61 @@ impl ExpressionBuilder<'_> {
         self.built.insert((id, subtract), index);
         Counter::Expression(index)
     }
+}
+
+/// Whether the function belongs to a test contract: one with a test function.
+fn is_test_contract(function: &FunctionCoverage, test_contracts: &[&str]) -> bool {
+    parse_name(&function.name).0.is_some_and(|contract| test_contracts.contains(&contract))
+}
+
+/// The modifier's record with the code regions that the expansions of the donors take from the
+/// expanded file at the given index of their file tables. The regions count what the donors'
+/// counters count, so the modifier's record counts the hits of every expansion.
+///
+/// The record keeps its own region over the modifier's header, which counts the sum of the
+/// expansions, and the regions of the expansions start after it: the header stays the first region
+/// of the record, which gives the record its count and line.
+fn with_expansions(
+    modifier: &FunctionCoverage,
+    donors: &[(&FunctionCoverage, u32)],
+) -> FunctionCoverage {
+    let mut record = modifier.clone();
+    let header_end = modifier
+        .regions
+        .iter()
+        .filter(|region| region.file() == 0)
+        .min_by_key(|region| region.start())
+        .map_or(0, |region| region.start() + region.len());
+    // The region from `start`, or none if it ends before `header_end`.
+    let after_header = |start: u32, len: u32| {
+        let from = start.max(header_end);
+        (from < start + len).then_some((from, start + len - from))
+    };
+    for &(donor, file) in donors {
+        let offset = record.expressions.len() as u32;
+        let shift = |tagged: u32| match TaggedCounter::decode(tagged) {
+            TaggedCounter::Subtract(id) => TaggedCounter::Subtract(id + offset).encode(),
+            TaggedCounter::Add(id) => TaggedCounter::Add(id + offset).encode(),
+            _ => tagged,
+        };
+        record
+            .expressions
+            .extend(donor.expressions.iter().map(|[lhs, rhs]| [shift(*lhs), shift(*rhs)]));
+        for region in donor.regions.iter().filter(|region| region.file() == file) {
+            let Some((start, len)) = after_header(region.start(), region.len()) else { continue };
+            record.regions.push(match *region {
+                Region::Code { count, .. } => {
+                    Region::Code { file: 0, start, len, count: shift(count) }
+                }
+                Region::Gap { count, .. } => {
+                    Region::Gap { file: 0, start, len, count: shift(count) }
+                }
+                Region::Skipped { .. } => Region::Skipped { file: 0, start, len },
+                _ => continue,
+            });
+        }
+    }
+    record
 }
 
 /// Splits a PGO name `path:Contract.function(args)` into the contract and the function name.
@@ -835,6 +943,110 @@ mod tests {
         assert_eq!(modifier_count("b", "a", build_without_expansions()), 3);
         // Two builds that expand it add up.
         assert_eq!(modifier_count("a", "b", build()), 6);
+    }
+
+    const MODIFIER_SOURCE: &str = "contract B {
+    uint x;
+    modifier a() {
+        if (x != 1) {
+            x += 1;
+        }
+        _;
+    }
+}
+";
+    const TEST_SOURCE: &str = "contract T is B { function test_a() public a {} }\n";
+
+    /// A build where a modifier of a reportable source is applied only by a test function of
+    /// another source.
+    fn modifier_build(test_hits: u32, caller_hits: u32) -> InstrumentedBuild {
+        let at = |text: &str, needle: &str| {
+            let start = text.find(needle).unwrap();
+            (start, needle.len())
+        };
+        let (header, whole) = (
+            at(MODIFIER_SOURCE, "modifier a()"),
+            at(
+                MODIFIER_SOURCE,
+                "modifier a() {\n        if (x != 1) {\n            x += 1;\n        }\n        _;\n    }",
+            ),
+        );
+        let (inner, rest) = (at(MODIFIER_SOURCE, "x += 1;"), at(MODIFIER_SOURCE, "_;"));
+        let (test_body, call) = (at(TEST_SOURCE, "{}"), at(TEST_SOURCE, "a {"));
+        let counter = |id: u32| id << 2 | 1;
+        let source = |text: &str, path: &str, reportable, functions: serde_json::Value| {
+            InstrumentedSource::new(
+                path.into(),
+                text.to_string(),
+                reportable,
+                serde_json::from_value(json!({"version": 2, "functions": functions})).unwrap(),
+            )
+        };
+        // The modifier counts the entries of its expansions, which are in the test's record.
+        let modifier = source(
+            MODIFIER_SOURCE,
+            "src/B.sol",
+            true,
+            json!([{
+                "name": "src/B.sol:B.a()", "hash": "0x11", "counters": [10, 0], "files": [0],
+                "regions": [[0, 0, header.0, header.1, counter(21)]],
+            }]),
+        );
+        let test = source(
+            TEST_SOURCE,
+            "test/T.t.sol",
+            false,
+            json!([{
+                "name": "test/T.t.sol:T.test_a()", "hash": "0x22", "counters": [20, 1],
+                "files": [1, 0],
+                "regions": [
+                    [0, 0, test_body.0, test_body.1, counter(20)],
+                    [1, 0, call.0, 1, counter(21), 1],
+                    [0, 1, whole.0, whole.1, counter(21)],
+                    [0, 1, inner.0, inner.1, counter(22)],
+                    [0, 1, rest.0, rest.1, counter(21)],
+                ],
+            }]),
+        );
+        let mut build = InstrumentedBuild::new(BTreeMap::from([(0, modifier), (1, test)]));
+        build.add_hits(
+            [(20, test_hits), (21, test_hits), (22, caller_hits)].into_iter(),
+            std::iter::empty(),
+            &[],
+        );
+        build
+    }
+
+    #[test]
+    fn a_modifier_counts_the_expansions_in_records_the_report_leaves_out() {
+        let mut report = CoverageReport::default();
+        report.add_source("b".into(), 0, "src/B.sol".into());
+        report.add_instrumented_build("b".into(), modifier_build(2, 1));
+        report.finalize_instrumented();
+
+        // The test function's record is left out, and the modifier's lines count its expansion:
+        // the header and the body.
+        assert_eq!(
+            report.llvm_lcov(),
+            "SF:src/B.sol
+FN:3,B.a()
+FNDA:2,B.a()
+FNF:1
+FNH:1
+DA:3,2
+DA:4,2
+DA:5,2
+DA:6,2
+DA:7,2
+DA:8,2
+BRF:0
+BRH:0
+LF:6
+LH:6
+end_of_record
+"
+        );
+        llvm::tests::assert_inputs_agree_in("src/B.sol", MODIFIER_SOURCE, report.llvm_inputs());
     }
 
     #[test]

@@ -113,6 +113,19 @@ pub struct MappingRegion {
     pub end: LineCol,
 }
 
+impl MappingRegion {
+    /// The order of LLVM's writer: by file, location, kind, and wider regions first.
+    pub fn writer_order(&self, other: &Self) -> std::cmp::Ordering {
+        let kind_key = |kind: RegionKind| match kind {
+            RegionKind::McdcDecision => 2 * RegionKind::Expansion as u32 - 1,
+            kind => 2 * kind as u32,
+        };
+        (self.file, self.start, kind_key(self.kind))
+            .cmp(&(other.file, other.start, kind_key(other.kind)))
+            .then(other.end.cmp(&self.end))
+    }
+}
+
 /// A function record as stored in the coverage mapping, with its profile data.
 #[derive(Clone, Debug)]
 pub struct FunctionInput {
@@ -439,39 +452,69 @@ fn is_expansion(region: &CountedRegion, file: u32) -> bool {
 }
 
 /// Merges two records of the same function without counters of its own, which were built with
-/// different expansions and so differ in their counters and hash. Each region's count is the sum
-/// of its counts in both. Returns `None` unless the records have the same regions.
+/// different expansions and so differ in their counters, hash, and the regions they take from the
+/// expansions. A region that both have takes the sum of its counts, and a code, gap, or skipped
+/// region that only one has stays. Returns `None` if the other regions differ.
 pub fn merge_summed(a: &FunctionInput, b: &FunctionInput) -> Option<FunctionInput> {
-    let same = |x: &MappingRegion, y: &MappingRegion| {
-        (x.kind, x.file, x.expanded_file, x.start, x.end, x.mcdc)
-            == (y.kind, y.file, y.expanded_file, y.start, y.end, y.mcdc)
+    let key = |r: &MappingRegion| (r.kind, r.file, r.expanded_file, r.start, r.end, r.mcdc);
+    let from_expansions = |r: &MappingRegion| {
+        matches!(r.kind, RegionKind::Code | RegionKind::Gap | RegionKind::Skipped)
     };
     if a.filenames != b.filenames
-        || a.regions.len() != b.regions.len()
         || a.bitmap.len() != b.bitmap.len()
-        || a.regions.iter().any(|region| region.kind == RegionKind::Expansion)
-        || !a.regions.iter().zip(&b.regions).all(|(x, y)| same(x, y))
+        || a.regions.iter().chain(&b.regions).any(|region| region.kind == RegionKind::Expansion)
     {
         return None;
     }
-    let mut counts = Vec::new();
-    let mut sum = |x: Counter, y: Counter| {
-        if x.is_zero() && y.is_zero() {
-            return Counter::Zero;
-        }
-        let value = |counter, input: &FunctionInput| {
-            evaluate(counter, &input.expressions, &input.counts).unwrap_or(0).max(0) as u64
-        };
-        counts.push(value(x, a).saturating_add(value(y, b)));
-        Counter::Counter(counts.len() as u32 - 1)
-    };
-    let mut regions = a.regions.clone();
-    for (region, other) in regions.iter_mut().zip(&b.regions) {
-        region.count = sum(region.count, other.count);
-        if region.kind.is_branch() {
-            region.false_count = sum(region.false_count, other.false_count);
+    let mut pairs = vec![None; a.regions.len()];
+    let mut paired = vec![false; b.regions.len()];
+    for (index, region) in a.regions.iter().enumerate() {
+        let other = (0..b.regions.len()).find(|&j| !paired[j] && key(region) == key(&b.regions[j]));
+        if let Some(other) = other {
+            pairs[index] = Some(other);
+            paired[other] = true;
         }
     }
+    let lone = a.regions.iter().zip(&pairs).filter(|(_, pair)| pair.is_none());
+    let lone_b = b.regions.iter().zip(&paired).filter(|(_, paired)| !**paired);
+    if lone.into_iter().any(|(region, _)| !from_expansions(region))
+        || lone_b.clone().any(|(region, _)| !from_expansions(region))
+    {
+        return None;
+    }
+
+    let mut counts = Vec::new();
+    let mut sum = |x: Option<(Counter, &FunctionInput)>, y: Option<(Counter, &FunctionInput)>| {
+        if x.is_none_or(|(counter, _)| counter.is_zero())
+            && y.is_none_or(|(counter, _)| counter.is_zero())
+        {
+            return Counter::Zero;
+        }
+        let value = |side: Option<(Counter, &FunctionInput)>| {
+            side.map_or(0, |(counter, input)| {
+                evaluate(counter, &input.expressions, &input.counts).unwrap_or(0).max(0) as u64
+            })
+        };
+        counts.push(value(x).saturating_add(value(y)));
+        Counter::Counter(counts.len() as u32 - 1)
+    };
+    let mut regions = Vec::with_capacity(a.regions.len());
+    for (region, pair) in a.regions.iter().zip(&pairs) {
+        let other = pair.map(|index| &b.regions[index]);
+        let mut merged = *region;
+        merged.count = sum(Some((region.count, a)), other.map(|o| (o.count, b)));
+        if region.kind.is_branch() {
+            merged.false_count =
+                sum(Some((region.false_count, a)), other.map(|o| (o.false_count, b)));
+        }
+        regions.push(merged);
+    }
+    for (region, _) in lone_b {
+        let mut merged = *region;
+        merged.count = sum(None, Some((region.count, b)));
+        regions.push(merged);
+    }
+    regions.sort_by(MappingRegion::writer_order);
     Some(FunctionInput {
         name: a.name.clone(),
         hash: a.hash,
