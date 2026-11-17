@@ -1763,6 +1763,7 @@ impl TestArgs {
                 compiler.files(files.iter().cloned()).compile(&project)
             };
             let mut output = compile(&files);
+            let mut reresolved = false;
             // A build without storage layouts keeps a cached profile that requested them, so its
             // artifacts are reused here without layouts. Delete them so they are recompiled.
             // Artifacts of sources without contracts never have layouts, and their AST has no
@@ -1810,6 +1811,21 @@ impl TestArgs {
                     sources.into_iter().map(move |(path, _)| (path, version.clone(), profile))
                 })
                 .collect::<HashSet<_>>();
+                // Resolving the roots again can pick another compiler version than the compilation
+                // that produced the output, such as one it installed. The recompile would not
+                // rewrite stale artifacts of the old version, so recompile once with the new
+                // versions instead of deleting them.
+                if !reresolved
+                    && stale.iter().any(|(source, file)| {
+                        !scope
+                            .iter()
+                            .any(|(path, version, _)| path == *source && *version == file.version)
+                    })
+                {
+                    reresolved = true;
+                    output = compile(&roots);
+                    continue;
+                }
                 stale.retain(|(source, file)| {
                     scope.contains(&(
                         (*source).clone(),
