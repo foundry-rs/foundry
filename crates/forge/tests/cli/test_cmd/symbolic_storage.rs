@@ -808,6 +808,170 @@ Suite result: FAILED. 3 passed; 6 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// Each solver model takes the `assert(false)` branch with a nonzero unwritten balance, but the
+// concrete replay reads zero and runs out of gas in a loop, at the SSTORE sentry, or while
+// expanding memory. The engine does not model gas, so those halts do not confirm the model and
+// the run must report incomplete. A replay that failed a soft assertion before running out of
+// gas still confirms it, and so does a modeled memory-limit halt that replays as out of gas at the
+// same instruction, but not one whose replay runs out of gas elsewhere or within the limit.
+#[forgetest_init]
+fn symbolic_replay_out_of_gas_is_incomplete(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_replay_out_of_gas_is_incomplete");
+
+    prj.add_test(
+        "SymbolicReplayOutOfGas.t.sol",
+        r#"
+contract SymbolicReplayOutOfGas {
+    mapping(address => uint256) balanceOf;
+
+    function checkReplayOutOfGas(address owner) public view {
+        if (balanceOf[owner] == 0) {
+            uint256 acc;
+            for (uint256 i; i < 5000; i++) {
+                acc += i;
+            }
+            require(acc != 1);
+            return;
+        }
+        assert(false);
+    }
+
+    function checkReplayOutOfGasBeforeMemoryHalt(address owner) public view {
+        if (balanceOf[owner] == 0) {
+            uint256 acc;
+            for (uint256 i; i < 5000; i++) {
+                acc += i;
+            }
+            require(acc != 1);
+            return;
+        }
+        assembly {
+            mstore(0x10000000000, 1)
+        }
+    }
+
+    function checkReplayOutOfGasAtMemoryHalt(address owner) public view {
+        uint256 offset = balanceOf[owner] == 0 ? 0x100000 : 0x10000000000;
+        assembly {
+            mstore(offset, 1)
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicReplayGasHalts.t.sol",
+        r#"
+interface Vm {
+    function assertTrue(bool condition) external pure;
+}
+
+contract SymbolicReplayGasHalts {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    mapping(address => uint256) balanceOf;
+    uint256 counter;
+
+    function checkReplaySstoreOutOfGas(address owner) public {
+        if (balanceOf[owner] == 0) {
+            for (uint256 i; i < 5000; i++) {
+                counter = i + 1;
+            }
+            return;
+        }
+        assert(false);
+    }
+
+    function checkReplayMemoryOutOfGas(address owner) public view {
+        if (balanceOf[owner] == 0) {
+            assembly {
+                mstore(0x100000, 1)
+            }
+            return;
+        }
+        assert(false);
+    }
+
+    /// forge-config: default.assertions_revert = false
+    function checkSoftAssertThenOutOfGas(uint256 x) public pure {
+        vm.assertTrue(x != 7);
+        assembly {
+            mstore(0x100000, 1)
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicReplayOutOfGas",
+        "--gas-limit",
+        "300000",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicReplayOutOfGas.t.sol:SymbolicReplayOutOfGas
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplayOutOfGas(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplayOutOfGasAtMemoryHalt(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplayOutOfGasBeforeMemoryHalt(address) ([METRICS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicReplayGasHalts",
+        "--gas-limit",
+        "300000",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicReplayGasHalts.t.sol:SymbolicReplayGasHalts
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplayMemoryOutOfGas(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplaySstoreOutOfGas(address) ([METRICS])
+[FAIL: EvmError: MemoryOOG; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[7]] checkSoftAssertThenOutOfGas(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Concrete execution charges copy gas before it checks `memory_limit`, so the modeled
+    // memory-limit halt replays as out of gas and still confirms and minimizes the model.
+    prj.add_test(
+        "SymbolicReplayMemoryLimit.t.sol",
+        r#"
+contract SymbolicReplayMemoryLimit {
+    function checkNewBytes(uint256 n) public pure {
+        bytes memory b = new bytes(n);
+        assert(b.length == n);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicReplayMemoryLimit",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicReplayMemoryLimit.t.sol:SymbolicReplayMemoryLimit
+[FAIL: EvmError: OutOfGas; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[11453013985 [1.145e10]]] checkNewBytes(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 // A build without storage layouts after an edit keeps the cached symbolic profile, so the next
 // symbolic run must recompile the artifacts it wrote without layouts.
 #[forgetest_init]
