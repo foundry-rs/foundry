@@ -5835,18 +5835,10 @@ where
         sender: Address,
     ) -> Result<FoundryTxEnvelope, BlockchainError> {
         if let FoundryTypedTx::Tempo(tempo) = &tx {
-            // The database is released before a fork lookup, which can take many RPC requests.
-            let commitment =
-                self.configurable_account_commitment(&**self.db.read().await, sender)?;
-            if let Some(commitment) = commitment {
-                let config = match self.configurable_account_config(sender, commitment) {
-                    Some(config) => config,
-                    None => {
-                        let fork = self.configuration_fork(sender, commitment)?;
-                        forked_configurable_account_config(&fork, sender, commitment).await?
-                    }
-                };
-                let signature = placeholder_configurable_account_signature(sender, config)?;
+            self.prefetch_impersonated_configurable_accounts([Some(sender)]).await;
+            if let Some(signature) =
+                self.impersonated_configurable_account_signature(&**self.db.read().await, sender)?
+            {
                 let signature = TempoSignature::ConfigurableAccount(signature);
                 return Ok(FoundryTxEnvelope::Tempo(tempo.clone().into_signed(signature)));
             }
