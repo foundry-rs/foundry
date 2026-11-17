@@ -109,7 +109,7 @@ fn parse_src(src: &str) -> Option<Range<u32>> {
     let mut parts = src.split(':');
     let start = parts.next()?.parse::<u32>().ok()?;
     let length = parts.next()?.parse::<u32>().ok()?;
-    Some(start..start + length)
+    Some(start..start.saturating_add(length))
 }
 
 #[cfg(test)]

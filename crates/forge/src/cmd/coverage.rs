@@ -616,6 +616,7 @@ impl CoverageArgs {
         let mut sources = BTreeMap::<&Path, String>::new();
         let mut items_by_build = BTreeMap::<&str, (Vec<_>, Vec<_>)>::new();
         let mut report = CoverageReport::default();
+        let mut any_coverage = false;
         for (build_id, build) in output.builds() {
             for (source_id, path) in &build.source_id_to_path {
                 let rel = path.strip_prefix(&project_paths.root).unwrap_or(path);
@@ -632,13 +633,13 @@ impl CoverageArgs {
                 {
                     continue;
                 }
+                // A supported compiler emits a map for every source, empty for a code-less one, so
+                // skip a source without a map rather than aborting; a build with no map at all
+                // means the compiler does not instrument, which is reported after the loop.
                 let Some(coverage) = build.coverage.get(source_id) else {
-                    eyre::bail!(
-                        "the compiler returned no coverage map for {}; \
-                         `--instrumented` requires a Solar version with `-Zinstrument-coverage`",
-                        rel.display()
-                    );
+                    continue;
                 };
+                any_coverage = true;
                 let source = match sources.get(rel) {
                     Some(source) => source,
                     None => {
@@ -655,6 +656,12 @@ impl CoverageArgs {
                     counts,
                 );
             }
+        }
+        if !any_coverage {
+            eyre::bail!(
+                "the compiler returned no coverage maps; \
+                 `--instrumented` requires a Solar version with `-Zinstrument-coverage`"
+            );
         }
         for (build_id, (items, counts)) in items_by_build {
             report.add_instrumented_items(build_id.to_string(), items, counts);
