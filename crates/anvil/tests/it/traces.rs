@@ -2547,6 +2547,7 @@ async fn test_trace_filter() {
 
     // Test default block ranges: omitted bounds both default to latest.
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: None,
         to_block: None,
         from_address: vec![],
@@ -2577,6 +2578,7 @@ async fn test_trace_filter() {
 
     // Test filtering by address
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(provider.get_block_number().await.unwrap()),
         to_block: None,
         from_address: vec![from_two],
@@ -2609,6 +2611,7 @@ async fn test_trace_filter() {
 
     // Test TraceActions
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(provider.get_block_number().await.unwrap()),
         to_block: None,
         from_address: vec![from, contract_addr],
@@ -2636,6 +2639,7 @@ async fn test_trace_filter() {
     // Test Range Error
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(latest),
         to_block: Some(latest + 301),
         from_address: vec![],
@@ -2651,6 +2655,7 @@ async fn test_trace_filter() {
     // Test same from and to block is valid
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(latest),
         to_block: Some(latest),
         from_address: vec![],
@@ -2666,6 +2671,7 @@ async fn test_trace_filter() {
     // Test invalid block range
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(latest + 10),
         to_block: Some(latest),
         from_address: vec![],
@@ -2680,6 +2686,7 @@ async fn test_trace_filter() {
 
     // Test after and count
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(provider.get_block_number().await.unwrap()),
         to_block: None,
         from_address: vec![],

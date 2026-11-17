@@ -4974,3 +4974,111 @@ contract AContractTest {
         .assert_success();
     assert_data_eq!(Data::read_from(&prj.root().join("crlf-gaps.json"), None), expected);
 }
+
+// Dynamic test linking rewrites `new Child()` in test helpers before compilation, so source maps
+// refer to the rewritten text. Items after the rewrite must still anchor to their own code.
+#[forgetest]
+fn dynamic_test_linking_source_edits(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Child.sol",
+        r#"
+contract Child {
+    uint256 public value;
+
+    constructor(uint256 _value) {
+        value = _value;
+    }
+}
+    "#,
+    );
+    prj.add_test(
+        "Factory.sol",
+        r#"
+import {Child} from "../src/Child.sol";
+
+contract Factory {
+    function make(uint256 n) public returns (uint256 total) {
+        Child child = new Child(1);
+        total = child.value();
+        if (n > 1) {
+            total += n;
+        } else {
+            total += 100;
+        }
+        total += 1;
+    }
+
+    function skipped() public pure returns (uint256 x) {
+        x = 5;
+    }
+}
+    "#,
+    );
+    prj.add_test(
+        "Factory.t.sol",
+        r#"
+import "../src/test.sol";
+import {Factory} from "./Factory.sol";
+
+contract FactoryTest is DSTest {
+    function testMake() public {
+        Factory factory = new Factory();
+        assertEq(factory.make(2), 4);
+    }
+}
+    "#,
+    );
+
+    let solar = prj.ensure_foundry_bin("solar");
+    for solar in [None, Some(&solar)] {
+        let cmd = cmd.forge_fuse();
+        cmd.arg("coverage");
+        if let Some(solar) = solar {
+            cmd.arg("--use").arg(solar);
+        }
+        assert_lcov(
+            cmd,
+            str![[r#"
+TN:
+SF:src/Child.sol
+DA:7,1
+FN:7,Child.constructor
+FNDA:1,Child.constructor
+DA:8,1
+FNF:1
+FNH:1
+LF:2
+LH:2
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:test/Factory.sol
+DA:7,1
+FN:7,Factory.make
+FNDA:1,Factory.make
+DA:8,1
+DA:9,1
+DA:10,1
+BRDA:10,0,0,1
+BRDA:10,0,1,0
+DA:11,1
+DA:13,0
+DA:15,1
+DA:18,0
+FN:18,Factory.skipped
+FNDA:0,Factory.skipped
+DA:19,0
+FNF:2
+FNH:1
+LF:9
+LH:6
+BRF:2
+BRH:1
+end_of_record
+
+"#]],
+        );
+    }
+}

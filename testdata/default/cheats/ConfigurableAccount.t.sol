@@ -65,10 +65,6 @@ contract ConfigurableAccountTest is Test {
         cfg.owners[4] = Vm.ConfigurableAccountOwner(ALICE, 1);
     }
 
-    function key(Vm.OwnerKeyType keyType, uint256 privateKey) internal pure returns (Vm.OwnerKey memory) {
-        return Vm.OwnerKey(keyType, privateKey);
-    }
-
     function p256Owner(uint256 privateKey) internal pure returns (address) {
         (uint256 x, uint256 y) = vm.publicKeyP256(privateKey);
         return address(uint160(uint256(keccak256(abi.encode(x, y)))));
@@ -85,15 +81,6 @@ contract ConfigurableAccountTest is Test {
 
     function testDeriveConfigurableAccount() public {
         assertEq(vm.deriveConfigurableAccount(config()), ACCOUNT);
-    }
-
-    function testDeriveConfigurableAccountRejectsUnsortedOwners() public {
-        Vm.ConfigurableAccountConfig memory cfg = config();
-        (cfg.owners[0], cfg.owners[1]) = (cfg.owners[1], cfg.owners[0]);
-        vm._expectCheatcodeRevert(
-            "vm.deriveConfigurableAccount: configurable account owners must be strictly ascending"
-        );
-        vm.deriveConfigurableAccount(cfg);
     }
 
     function testConfigurableAccountDigest() public {
@@ -130,15 +117,15 @@ contract ConfigurableAccountTest is Test {
 
     function testSignConfigurableAccountMixedOwners() public {
         Vm.OwnerKey[] memory keys = new Vm.OwnerKey[](2);
-        keys[0] = key(Vm.OwnerKeyType.P256, P256_PK);
-        keys[1] = key(Vm.OwnerKeyType.WebAuthn, WEBAUTHN_PK);
+        keys[0] = Vm.OwnerKey(Vm.OwnerKeyType.P256, P256_PK);
+        keys[1] = Vm.OwnerKey(Vm.OwnerKeyType.WebAuthn, WEBAUTHN_PK);
         assertEq(vm.signConfigurableAccount(keys, ACCOUNT, config(), INNER), MIXED_SIGNATURE);
     }
 
     function testSignKeychainConfigurableAccount() public {
         Vm.OwnerKey[] memory keys = new Vm.OwnerKey[](2);
-        keys[0] = key(Vm.OwnerKeyType.Secp256k1, ALICE_PK);
-        keys[1] = key(Vm.OwnerKeyType.WebAuthn, WEBAUTHN_PK);
+        keys[0] = Vm.OwnerKey(Vm.OwnerKeyType.Secp256k1, ALICE_PK);
+        keys[1] = Vm.OwnerKey(Vm.OwnerKeyType.WebAuthn, WEBAUTHN_PK);
         assertEq(vm.signKeychainConfigurableAccount(keys, ACCOUNT, config(), ROOT, INNER), KEYCHAIN_SIGNATURE);
     }
 
@@ -172,9 +159,14 @@ contract ConfigurableAccountTest is Test {
         );
     }
 
-    function testSignConfigurableAccountRejectsUnsortedOwners() public {
+    function testRejectsUnsortedOwners() public {
         Vm.ConfigurableAccountConfig memory cfg = config();
         (cfg.owners[0], cfg.owners[4]) = (cfg.owners[4], cfg.owners[0]);
+        vm._expectCheatcodeRevert(
+            "vm.deriveConfigurableAccount: configurable account owners must be strictly ascending"
+        );
+        vm.deriveConfigurableAccount(cfg);
+
         uint256[] memory keys = new uint256[](2);
         keys[0] = ALICE_PK;
         keys[1] = BOB_PK;
@@ -182,42 +174,26 @@ contract ConfigurableAccountTest is Test {
         vm.signConfigurableAccount(keys, ACCOUNT, cfg, INNER);
     }
 
-    function testSignConfigurableAccountRejectsConfigOfOtherAccount() public {
+    function testSignRejectsConfigOfOtherAccount() public {
         // A new salt derives another account, so version zero no longer matches `ACCOUNT`.
         Vm.ConfigurableAccountConfig memory cfg = config();
         cfg.salt = bytes32(uint256(0x5b));
+        string memory mismatch = string.concat(
+            ": configurable account config with version 0 derives ",
+            vm.toString(vm.deriveConfigurableAccount(cfg)),
+            ", not 0xA44c73b3e3d1C015bC17a3be952dd701D6c6E876"
+        );
         uint256[] memory keys = new uint256[](2);
         keys[0] = ALICE_PK;
         keys[1] = BOB_PK;
-        vm._expectCheatcodeRevert(
-            bytes(
-                string.concat(
-                    "vm.signConfigurableAccount: configurable account config with version 0 derives ",
-                    vm.toString(vm.deriveConfigurableAccount(cfg)),
-                    ", not 0xA44c73b3e3d1C015bC17a3be952dd701D6c6E876"
-                )
-            )
-        );
+        vm._expectCheatcodeRevert(bytes(string.concat("vm.signConfigurableAccount", mismatch)));
         vm.signConfigurableAccount(keys, ACCOUNT, cfg, INNER);
-    }
 
-    function testSignKeychainConfigurableAccountRejectsConfigOfOtherAccount() public {
-        // New owner weights derive another account, so version zero no longer matches `ACCOUNT`.
-        Vm.ConfigurableAccountConfig memory cfg = config();
-        cfg.owners[0].weight += 1;
-        Vm.OwnerKey[] memory keys = new Vm.OwnerKey[](2);
-        keys[0] = key(Vm.OwnerKeyType.Secp256k1, ALICE_PK);
-        keys[1] = key(Vm.OwnerKeyType.WebAuthn, WEBAUTHN_PK);
-        vm._expectCheatcodeRevert(
-            bytes(
-                string.concat(
-                    "vm.signKeychainConfigurableAccount: configurable account config with version 0 derives ",
-                    vm.toString(vm.deriveConfigurableAccount(cfg)),
-                    ", not 0xA44c73b3e3d1C015bC17a3be952dd701D6c6E876"
-                )
-            )
-        );
-        vm.signKeychainConfigurableAccount(keys, ACCOUNT, cfg, ROOT, INNER);
+        Vm.OwnerKey[] memory ownerKeys = new Vm.OwnerKey[](2);
+        ownerKeys[0] = Vm.OwnerKey(Vm.OwnerKeyType.Secp256k1, ALICE_PK);
+        ownerKeys[1] = Vm.OwnerKey(Vm.OwnerKeyType.WebAuthn, WEBAUTHN_PK);
+        vm._expectCheatcodeRevert(bytes(string.concat("vm.signKeychainConfigurableAccount", mismatch)));
+        vm.signKeychainConfigurableAccount(ownerKeys, ACCOUNT, cfg, ROOT, INNER);
     }
 
     function testSignConfigurableAccountRejectsNonOwner() public {
