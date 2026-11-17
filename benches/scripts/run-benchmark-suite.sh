@@ -6,8 +6,6 @@ join_repositories() {
   printf '%s' "$*"
 }
 
-# Morpho's testBorrowUnauthorized can fuzz an authorized ONBEHALF/BORROWER pair,
-# where the borrow correctly succeeds, so it fails at random.
 CI_TEST_REPOSITORIES=$(join_repositories \
   "morpho-org/morpho-blue:9cf6d5b844625ba108e36d1cf911f5d2faf7c136 --nmt testBorrowUnauthorized" \
   "tempoxyz/tempo/crates/zones/contracts:4f7c995d49ba735b96cb0a6afddd9235d27c88f1" \
