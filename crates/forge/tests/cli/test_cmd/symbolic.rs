@@ -8678,3 +8678,51 @@ contract SymbolicBoundedComplementTest {
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
 }
+
+#[forgetest_init]
+fn symbolic_proves_bounded_remainder_arithmetic(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_bounded_remainder_arithmetic");
+
+    prj.add_test(
+        "SymbolicBoundedRemainder.t.sol",
+        r#"
+contract SymbolicBoundedRemainderTest {
+    // `x % d < 2**128`, so the checked add cannot overflow.
+    function checkBoundedRemainderAdd(uint256 x, uint128 d, uint128 b) public pure {
+        if (d == 0) return;
+        assert(x % d + b >= b);
+    }
+
+    // `x % d <= x` is reached at `x = 2**128 - 1`, `d = 2**128`.
+    function checkRemainderBelowDividendMax(uint128 x, uint256 d) public pure {
+        uint256 r;
+        assembly {
+            r := mod(x, d)
+        }
+        assert(r < type(uint128).max);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicBoundedRemainder"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkBoundedRemainderAdd(uint256,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkRemainderBelowDividendMax(uint128,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+    }
+}
