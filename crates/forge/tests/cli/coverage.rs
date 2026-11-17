@@ -685,6 +685,112 @@ contract AContractTest is DSTest {
 "#]]);
 }
 
+// A custom-error require whose success path reaches `INVALID` keeps path 0 as the failing side.
+#[forgetest]
+fn require_custom_error_then_invalid_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    error TooLarge(uint256 x);
+
+    function check(uint256 x) external pure {
+        require(x < 100, TooLarge(1));
+        assembly { invalid() }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        address(guard).call(abi.encodeCall(guard.check, (1)));
+        address(guard).call(abi.encodeCall(guard.check, (2)));
+        address(guard).call(abi.encodeCall(guard.check, (100)));
+    }
+}
+"#,
+    );
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Guard.sol
+DA:7,3
+FN:7,Guard.check
+FNDA:3,Guard.check
+DA:8,3
+BRDA:8,0,0,1
+BRDA:8,0,1,2
+DA:9,2
+FNF:1
+FNH:1
+LF:3
+LH:3
+BRF:2
+BRH:2
+end_of_record
+
+"#]],
+    );
+}
+
+// The failing side of a require is path 0 with solc and with solar, whose layout differs.
+#[forgetest]
+fn require_paths_solc_and_solar_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    function req(uint256 a) external pure returns (uint256) {
+        require(a < 100);
+        return a + 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        guard.req(1);
+        guard.req(2);
+        guard.req(3);
+    }
+}
+"#,
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    let report = str![[r#"
+TN:
+SF:src/Guard.sol
+DA:5,3
+FN:5,Guard.req
+FNDA:3,Guard.req
+DA:6,3
+BRDA:6,0,0,0
+BRDA:6,0,1,3
+DA:7,3
+FNF:1
+FNH:1
+LF:3
+LH:3
+BRF:2
+BRH:1
+end_of_record
+
+"#]];
+    assert_lcov(cmd.arg("coverage"), report.clone());
+    assert_lcov(cmd.forge_fuse().arg("coverage").arg("--use").arg(solar), report);
+}
+
 #[forgetest]
 fn line_hit_not_doubled(prj: _, cmd: _) {
     prj.insert_ds_test();
@@ -2112,6 +2218,65 @@ contract AContractTest is DSTest {
 "#]]);
 }
 
+// Path 0 of a ternary is its false arm and path 1 its true arm, whichever side of the jump the
+// compiler puts each on. solc's legacy pipeline jumps to the true arm, while `--ir-minimum` and
+// Solar jump to the false arm of some ternaries.
+#[forgetest]
+fn ternary_paths_follow_arms(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function clamp(uint256 x) external pure returns (uint256) {
+        return x > 99 ? 5 : 4;
+    }
+
+    function sub(uint256 a, uint256 b, uint256 c) external pure returns (uint256) {
+        return a + b > c ? a + b - c : 0;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external view {
+        a.clamp(100);
+        a.sub(1, 1, 5);
+    }
+}
+"#,
+    );
+
+    // `clamp` takes its true arm only and `sub` its false arm only.
+    let expected = str![[r#"
+...
+BRDA:6,0,0,0
+BRDA:6,0,1,1
+...
+BRDA:10,1,0,1
+BRDA:10,1,1,0
+...
+"#]];
+    assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").args(["--no-isolate", "--ir-minimum"]),
+        expected.clone(),
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").arg("--no-isolate").arg("--use").arg(&solar),
+        expected,
+    );
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();
@@ -2699,6 +2864,132 @@ contract AContract {
 |-------------------+-------------+--------------+------------+-------------|
 | Total             | 0.00% (0/5) | 0.00% (0/4)  | N/A (0/0)  | 0.00% (0/1) |
 ╰-------------------+-------------+--------------+------------+-------------╯
+
+"#]]);
+}
+
+// `--keep-optimizer` keeps the optimizer, which folds away the always-true `x == x` condition.
+#[forgetest]
+fn keep_optimizer(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public y;
+
+    function f(uint256 x) public {
+        if (x == x) {
+            y = 2;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_f() public {
+        new AContract().f(1);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--optimize"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+
+    // The Solar compiler folds the condition away as well.
+    let solar = prj.ensure_foundry_bin("solar");
+    cmd.forge_fuse().arg("coverage").arg("--use").arg(&solar).assert_success().stdout_eq(str![[
+        r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#
+    ]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--optimize", "--use"])
+        .arg(&solar)
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--ir-minimum"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: `ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.coverage.keep_optimizer = true;
+        config.optimizer = Some(true);
+    });
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.coverage.keep_optimizer = false;
+        config.coverage.ir_minimum = true;
+    });
+    cmd.forge_fuse().args(["coverage", "--keep-optimizer"]).assert_failure().stderr_eq(str![[r#"
+Error: `ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled
 
 "#]]);
 }
@@ -4788,6 +5079,114 @@ contract AContractTest {
         .args(["coverage", "--report=gaps", "--report-file", "crlf-gaps.json"])
         .assert_success();
     assert_data_eq!(Data::read_from(&prj.root().join("crlf-gaps.json"), None), expected);
+}
+
+// Dynamic test linking rewrites `new Child()` in test helpers before compilation, so source maps
+// refer to the rewritten text. Items after the rewrite must still anchor to their own code.
+#[forgetest]
+fn dynamic_test_linking_source_edits(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Child.sol",
+        r#"
+contract Child {
+    uint256 public value;
+
+    constructor(uint256 _value) {
+        value = _value;
+    }
+}
+    "#,
+    );
+    prj.add_test(
+        "Factory.sol",
+        r#"
+import {Child} from "../src/Child.sol";
+
+contract Factory {
+    function make(uint256 n) public returns (uint256 total) {
+        Child child = new Child(1);
+        total = child.value();
+        if (n > 1) {
+            total += n;
+        } else {
+            total += 100;
+        }
+        total += 1;
+    }
+
+    function skipped() public pure returns (uint256 x) {
+        x = 5;
+    }
+}
+    "#,
+    );
+    prj.add_test(
+        "Factory.t.sol",
+        r#"
+import "../src/test.sol";
+import {Factory} from "./Factory.sol";
+
+contract FactoryTest is DSTest {
+    function testMake() public {
+        Factory factory = new Factory();
+        assertEq(factory.make(2), 4);
+    }
+}
+    "#,
+    );
+
+    let solar = prj.ensure_foundry_bin("solar");
+    for solar in [None, Some(&solar)] {
+        let cmd = cmd.forge_fuse();
+        cmd.arg("coverage");
+        if let Some(solar) = solar {
+            cmd.arg("--use").arg(solar);
+        }
+        assert_lcov(
+            cmd,
+            str![[r#"
+TN:
+SF:src/Child.sol
+DA:7,1
+FN:7,Child.constructor
+FNDA:1,Child.constructor
+DA:8,1
+FNF:1
+FNH:1
+LF:2
+LH:2
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:test/Factory.sol
+DA:7,1
+FN:7,Factory.make
+FNDA:1,Factory.make
+DA:8,1
+DA:9,1
+DA:10,1
+BRDA:10,0,0,1
+BRDA:10,0,1,0
+DA:11,1
+DA:13,0
+DA:15,1
+DA:18,0
+FN:18,Factory.skipped
+FNDA:0,Factory.skipped
+DA:19,0
+FNF:2
+FNH:1
+LF:9
+LH:6
+BRF:2
+BRH:1
+end_of_record
+
+"#]],
+        );
+    }
 }
 
 // `--instrumented` needs Solar, which instruments the code it generates.

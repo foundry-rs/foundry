@@ -551,7 +551,7 @@ pub struct CallOutcome {
     pub exit: InstrStop,
     /// Return or revert data.
     pub output: Bytes,
-    /// Gas used by the transaction.
+    /// Gas consumed by the call, including calldata floors and refunds.
     pub gas_used: u128,
     /// State changes of the call.
     pub state: PendingState,
@@ -863,10 +863,6 @@ const MAX_MOCK_WEBAUTHN_DATA_LEN: usize = 8192;
 /// Largest `WebAuthn` data a mock configurable account owner approval models: the signature
 /// without its r, s and public key coordinates.
 const MAX_OWNER_WEBAUTHN_DATA_LEN: usize = MAX_WEBAUTHN_SIGNATURE_LENGTH - 4 * size_of::<B256>();
-
-/// Error text for a configurable account call simulated without its configuration witness.
-const MISSING_CONFIGURATION_WITNESS: &str =
-    "configurable account simulation requires a configuration witness";
 
 /// Creates the mock signature a Tempo node simulates a request with, from its key type hints.
 ///
@@ -3580,7 +3576,7 @@ impl<N: Network> Backend<N> {
             )
             .ok_or_else(|| {
                 BlockchainError::InvalidTransactionRequest(
-                    MISSING_CONFIGURATION_WITNESS.to_string(),
+                    "configurable account simulation requires a configuration witness".into(),
                 )
             })?,
         };
@@ -8092,7 +8088,10 @@ where
                 (return_state_or_throw_err(Some(db))?, true)
             } else {
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                (return_state_or_throw_err(write_guard.get_on_disk_state(&hash))?, false)
+                let state = write_guard.get_on_disk_state(&hash);
+                // Structurally shared states stay whole in the secondary tier.
+                let replace_accounts = state.is_some_and(|state| state.is_persistent());
+                (return_state_or_throw_err(state)?, replace_accounts)
             }
         };
 
@@ -8181,7 +8180,7 @@ where
                 .hashes
                 .iter()
                 .filter(|(num, _)| **num >= min_block)
-                .map(|(&num, &hash)| (num, hash))
+                .map(|(&num, &hash)| (U256::from(num), hash))
                 .collect()
         };
 
@@ -8199,10 +8198,10 @@ where
             }
         }
 
-        // Restore block hashes from blockchain storage (now unwound, contains only valid blocks).
-        for (block_num, hash) in block_hashes {
-            db.insert_block_hash(U256::from(block_num), hash);
-        }
+        // Replace the cached block hashes with those from blockchain storage (now unwound, contains
+        // only valid blocks). Inserting them one by one is not enough: the fork database keeps its
+        // cached hashes across `clear`, so its pre-rollback head would evict the restored ones.
+        db.set_block_hashes(block_hashes);
         publish();
 
         Ok(())
@@ -9209,6 +9208,7 @@ impl Backend<FoundryNetwork> {
                 let mut coinbase_balance_before_tx = initial_coinbase;
                 let mut coinbase_balance_after_tx = initial_coinbase;
                 let mut total_gas_used = 0u64;
+                let mut total_charged_gas = 0u64;
                 let mut total_gas_fees = U256::ZERO;
                 let mut bundle_hash = alloy_primitives::Keccak256::new();
                 let mut results = Vec::with_capacity(transactions.len());
@@ -9231,8 +9231,10 @@ impl Backend<FoundryNetwork> {
 
                     let gas_price = tx.effective_tip_per_gas(base_fee).unwrap_or_default();
                     let gas_used = result.tx_gas_used();
-                    let gas_fees = U256::from(gas_used) * U256::from(gas_price);
+                    let charged_gas = result.ext.charged_gas;
+                    let gas_fees = U256::from(charged_gas) * U256::from(gas_price);
                     total_gas_used += gas_used;
+                    total_charged_gas += charged_gas;
                     total_gas_fees += gas_fees;
 
                     coinbase_balance_after_tx = state
@@ -9265,8 +9267,9 @@ impl Backend<FoundryNetwork> {
 
                 let coinbase_diff = coinbase_balance_after_tx.saturating_sub(initial_coinbase);
                 let eth_sent_to_coinbase = coinbase_diff.saturating_sub(total_gas_fees);
+                // The coinbase is paid for charged gas, which can exceed consumption.
                 let bundle_gas_price =
-                    coinbase_diff.checked_div(U256::from(total_gas_used)).unwrap_or_default();
+                    coinbase_diff.checked_div(U256::from(total_charged_gas)).unwrap_or_default();
 
                 Ok(EthCallBundleResponse {
                     bundle_hash: bundle_hash.finalize(),
@@ -10957,11 +10960,7 @@ pub(crate) fn transaction_build_with_block_hash(
                 fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
                 fields.insert(String::from("nonce"), serde_json::to_value("0x0").unwrap());
 
-                let inner = UnknownTypedTransaction {
-                    ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
-                    fields,
-                    memo: Default::default(),
-                };
+                let inner = UnknownTypedTransaction::new(AnyTxType(DEPOSIT_TX_TYPE_ID), fields);
 
                 let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
                     hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
@@ -11007,11 +11006,10 @@ pub(crate) fn transaction_build_with_block_hash(
         }
         let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
             hash: eth_transaction.hash(),
-            inner: UnknownTypedTransaction {
-                ty: AnyTxType(base_common_consensus::EIP8130_TX_TYPE_ID),
+            inner: UnknownTypedTransaction::new(
+                AnyTxType(base_common_consensus::EIP8130_TX_TYPE_ID),
                 fields,
-                memo: Default::default(),
-            },
+            ),
         });
         return build_rpc_transaction(envelope, from, block, info, None);
     }
@@ -11023,11 +11021,10 @@ pub(crate) fn transaction_build_with_block_hash(
         fields.remove("hash");
         let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
             hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
-            inner: UnknownTypedTransaction {
-                ty: AnyTxType(foundry_primitives::CIP64_TX_TYPE),
+            inner: UnknownTypedTransaction::new(
+                AnyTxType(foundry_primitives::CIP64_TX_TYPE),
                 fields,
-                memo: Default::default(),
-            },
+            ),
         });
         let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
         let effective_gas_price = block.map(|_| eth_transaction.effective_gas_price(base_fee));
@@ -11041,11 +11038,7 @@ pub(crate) fn transaction_build_with_block_hash(
         match maybe_tempo_fields {
             Ok(mut fields) => {
                 fields.remove("hash");
-                let inner = UnknownTypedTransaction {
-                    ty: AnyTxType(TEMPO_TX_TYPE_ID),
-                    fields,
-                    memo: Default::default(),
-                };
+                let inner = UnknownTypedTransaction::new(AnyTxType(TEMPO_TX_TYPE_ID), fields);
 
                 let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
                     hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),

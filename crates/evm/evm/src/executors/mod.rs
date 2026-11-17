@@ -1408,7 +1408,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub has_state_snapshot_failure: bool,
     /// The raw result of the call.
     pub result: Bytes,
-    /// The gas used for the call
+    /// Gas consumed by the call, including intrinsic gas, calldata floors and refunds.
+    /// Excludes unused gas a network may charge.
     pub gas_used: u64,
     /// Refunded gas
     pub gas_refunded: u64,
@@ -2102,7 +2103,7 @@ mod tests {
     use alloy_eips::eip4788::SYSTEM_ADDRESS;
     use alloy_primitives::{address, bytes};
     use alloy_rpc_types::TransactionRequest;
-    use evm2::SpecId;
+    use evm2::{OpcodeSet, SpecId, interpreter::opcode::OpCode};
     use foundry_cheatcodes::{
         CheatsConfig,
         Vm::{
@@ -2118,7 +2119,9 @@ mod tests {
         evm::TempoEvmNetwork,
         opts::EvmOpts,
     };
-    use foundry_evm_traces::InternalTraceMode;
+    use foundry_evm_traces::{
+        InternalTraceMode, StackSnapshotType, TracingInspector, TracingInspectorConfig,
+    };
     use std::{sync::mpsc, thread};
 
     #[cfg(feature = "monad")]
@@ -2628,7 +2631,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             error.root_cause().to_string(),
-            "invalid Monad protocol system transaction: gas limit must be zero, got 100000"
+            "invalid Monad protocol transaction: gas limit must be zero, got 100000"
         );
         assert_eq!(executor.get_nonce(system).unwrap(), 3);
     }
@@ -2900,6 +2903,59 @@ mod tests {
     }
 
     #[test]
+    fn filtered_tracer_pairs_steps_across_nested_calls_stepped_by_other_hooks() {
+        let env = default_env::<EthEvmNetwork>();
+        let mut executor = ExecutorBuilder::<EthEvmNetwork>::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config()))
+            .gas_limit(1 << 20)
+            .build(
+                env,
+                TransactionRequest::default(),
+                Backend::spawn(None, env).unwrap(),
+                NetworkConfigs::default(),
+            );
+        let (outer, middle, inner) =
+            (Address::repeat_byte(0x11), Address::repeat_byte(0x22), Address::repeat_byte(0x33));
+        // The outer contract calls the middle one: PUSH0 x5; PUSH20 middle; GAS; CALL; STOP.
+        let mut outer_code = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x73];
+        outer_code.extend_from_slice(middle.as_slice());
+        outer_code.extend_from_slice(&[0x5a, 0xf1, 0x00]);
+        // The middle contract skips a jump, makes a successful static call, then reverts:
+        // PUSH0; PUSH0; JUMPI; PUSH0 x4; PUSH20 inner; GAS; STATICCALL; PUSH0; PUSH0; REVERT.
+        let mut middle_code = vec![0x5f, 0x5f, 0x57, 0x5f, 0x5f, 0x5f, 0x5f, 0x73];
+        middle_code.extend_from_slice(inner.as_slice());
+        middle_code.extend_from_slice(&[0x5a, 0xfa, 0x5f, 0x5f, 0xfd]);
+        executor.set_code(outer, Bytecode::new_raw(outer_code.into())).unwrap();
+        executor.set_code(middle, Bytecode::new_raw(middle_code.into())).unwrap();
+        executor.set_code(inner, Bytecode::new_raw(Bytes::from_static(&[0x00]))).unwrap();
+
+        // The tracer steps only CALL, while the failure identity makes the cheatcodes step
+        // everything and the edge coverage steps JUMPI. So the STATICCALL is stepped by the
+        // cheatcodes alone, and the JUMPI by the cheatcodes and the edge coverage.
+        let mut config =
+            TracingInspectorConfig::none().steps().set_stack_snapshots(StackSnapshotType::Pushes);
+        config.record_opcodes_filter =
+            Some([OpCode::CALL.get()].into_iter().collect::<OpcodeSet>());
+        executor.inspector_mut().set_tracer(Some(Box::new(TracingInspector::new(config))));
+        executor.inspector_mut().collect_failure_identity(true);
+        executor.inspector_mut().collect_edge_coverage(true);
+
+        let result = executor.call_raw(CALLER, outer, Bytes::new(), U256::ZERO).unwrap();
+        let arena = result.traces.unwrap().arena;
+        let steps = arena
+            .nodes()
+            .iter()
+            .flat_map(|node| node.trace.steps.iter().map(move |step| (node.trace.address, step)))
+            .collect::<Vec<_>>();
+        assert_eq!(steps.len(), 1);
+        let (address, call) = steps[0];
+        assert_eq!(address, outer);
+        assert_eq!(call.op, OpCode::CALL);
+        // The outer CALL pushes 0, since the middle contract reverted.
+        assert_eq!(call.push_stack.as_deref(), Some(&[U256::ZERO][..]));
+    }
+
+    #[test]
     fn gas_price_opcode_reads_configured_gas_price() {
         let mut env = default_env::<EthEvmNetwork>();
         env.set_chain_id(1);
@@ -3062,6 +3118,40 @@ mod tests {
             executor.commit(&mut restored);
             assert_eq!(executor.is_raw_call_mut_success(target, &mut restored), legacy);
         }
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn monad_simulation_reports_consumption_for_success_revert_and_halt() {
+        let target = Address::repeat_byte(0x11);
+        for limit in [100_000, 1_000_000] {
+            let mut executor = test_executor::<MonadEvmNetwork>(
+                ExecutorBuilder::default().gas_limit(limit),
+                NetworkConfigs::with_monad(),
+            );
+            for (code, stop, gas_used) in [
+                (bytes!("00"), InstrStop::Stop, 21_000),
+                (bytes!("5f5ffd"), InstrStop::Revert, 21_004),
+                (bytes!("fe"), InstrStop::InvalidFEOpcode, limit),
+            ] {
+                executor.set_code(target, Bytecode::new_raw(code)).unwrap();
+                let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+                assert_eq!(result.exit_reason, Some(stop));
+                assert_eq!(result.gas_used, gas_used);
+                assert_eq!(result.gas_refunded, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn simulation_retains_enabled_calldata_floor() {
+        let executor =
+            eth_executor(ExecutorBuilder::default().spec_id(SpecId::PRAGUE).gas_limit(100_000));
+        let result = executor
+            .call_raw(CALLER, Address::repeat_byte(0x11), vec![1; 1_000].into(), U256::ZERO)
+            .unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.gas_used, 61_000);
     }
 
     /// Returns code that forwards its calldata to `target` `calls` times and bubbles the error of

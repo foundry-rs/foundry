@@ -449,13 +449,12 @@ pub fn quorum(owners: &[ConfigurableAccountOwner], threshold: u8, largest: bool)
 /// Tells whether owners among `keys` can approve for an account with `config`, as
 /// [`ConfigurableAccountSigner::new`] selects them.
 pub fn reaches_threshold(config: &ConfigurableAccountConfig, keys: &[Address]) -> bool {
-    let mut local = config
+    let local = config
         .owners
         .iter()
         .filter(|owner| keys.contains(&owner.owner))
-        .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
+        .cloned()
         .collect::<Vec<_>>();
-    local.sort_by_key(|owner| owner.owner);
     !quorum(&local, config.threshold, false).is_empty()
 }
 
@@ -488,12 +487,11 @@ pub fn combine_approvals(
         by_owner.insert(owner, approval);
     }
 
-    let approvers = by_owner
-        .keys()
-        .map(|&owner| ConfigurableAccountOwner {
-            owner,
-            weight: config.owner_weight(owner).unwrap_or_default(),
-        })
+    let approvers = config
+        .owners
+        .iter()
+        .filter(|owner| by_owner.contains_key(&owner.owner))
+        .cloned()
         .collect::<Vec<_>>();
     let selected = quorum(&approvers, config.threshold, false);
     if selected.is_empty() {
@@ -560,7 +558,18 @@ fn parse_webauthn_assertion(json: &Value) -> Result<PrimitiveSignature> {
         if name == "clientDataJSON" && value.starts_with('{') {
             return Ok(value.as_bytes().to_vec());
         }
-        decode_binary(value).wrap_err_with(|| format!("invalid `{name}`"))
+        // 0x-prefixed hex, or base64url with or without padding.
+        let decoded = if value.starts_with("0x") {
+            hex::decode(value).map_err(eyre::Report::from)
+        } else {
+            const BASE64URL: GeneralPurpose = GeneralPurpose::new(
+                &URL_SAFE,
+                GeneralPurposeConfig::new()
+                    .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+            );
+            BASE64URL.decode(value).map_err(eyre::Report::from)
+        };
+        decoded.wrap_err_with(|| format!("invalid `{name}`"))
     };
 
     let public_key = field("publicKey")?;
@@ -591,18 +600,6 @@ fn parse_webauthn_assertion(json: &Value) -> Result<PrimitiveSignature> {
         pub_key_y: B256::from_slice(&point[32..]),
         webauthn_data: Bytes::from(webauthn_data),
     }))
-}
-
-/// Decodes 0x-prefixed hex or base64url, with or without padding.
-fn decode_binary(value: &str) -> Result<Vec<u8>> {
-    if value.starts_with("0x") {
-        return Ok(hex::decode(value)?);
-    }
-    const BASE64URL: GeneralPurpose = GeneralPurpose::new(
-        &URL_SAFE,
-        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
-    );
-    Ok(BASE64URL.decode(value)?)
 }
 
 /// A configuration as `cast wallet owners --json` prints it, and as `forge script` saves it for
@@ -781,17 +778,12 @@ impl ConfigurableAccountSigner {
         keys: impl IntoIterator<Item = ConfigurableAccountOwnerKey>,
         hint: &str,
     ) -> Result<Self> {
-        let mut keys = keys
-            .into_iter()
-            .filter(|key| config.owner_weight(key.address()).is_some())
-            .map(|key| (key.address(), key))
-            .collect::<BTreeMap<_, _>>();
-        let local = keys
-            .keys()
-            .map(|&owner| ConfigurableAccountOwner {
-                owner,
-                weight: config.owner_weight(owner).unwrap_or_default(),
-            })
+        let mut keys = keys.into_iter().map(|key| (key.address(), key)).collect::<BTreeMap<_, _>>();
+        let local = config
+            .owners
+            .iter()
+            .filter(|owner| keys.contains_key(&owner.owner))
+            .cloned()
             .collect::<Vec<_>>();
         // The fewest local owners that the node accepts, as `combine_approvals` selects them.
         let selected = quorum(&local, config.threshold, false);
@@ -862,7 +854,7 @@ impl ConfigurableAccountSigner {
                 self.account
             );
         }
-        let tx = request.build_aa().map_err(|err| eyre::eyre!("{err}"))?;
+        let tx = request.build_aa().map_err(ca_error)?;
         let inner = tx.signature_hash();
         let digest = configurable_account_digest(inner, self.account, self.config.version);
         let mut approvals = Vec::with_capacity(self.owners.len());
@@ -1316,6 +1308,8 @@ mod tests {
             ConfigurableAccountOwnerKey::from(WalletSigner::Local(key.clone()))
         };
 
+        let addresses = keys.iter().map(|key| key.address()).collect::<Vec<_>>();
+        assert!(reaches_threshold(&config, &addresses));
         let signer =
             ConfigurableAccountSigner::new(account, config.clone(), keys.iter().map(wallet), "")
                 .unwrap();
@@ -1324,9 +1318,11 @@ mod tests {
             [heavy]
         );
 
-        // Nine weight-one owners reach the threshold of nine only past the limit.
+        // Nine weight-one owners reach the threshold of nine only past the limit, so `forge
+        // script` saves their transactions for offline owners.
         let mut config = config;
         config.owners.last_mut().unwrap().weight = 1;
+        assert!(!reaches_threshold(&config, &addresses));
         let owners = config.owners.iter().map(|owner| owner.owner.to_string()).collect::<Vec<_>>();
         let err = ConfigurableAccountSigner::new(
             account,

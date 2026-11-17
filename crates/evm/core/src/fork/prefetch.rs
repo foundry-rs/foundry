@@ -15,7 +15,7 @@ use crate::{
     precompiles::P256_VERIFY,
 };
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, Bytes, U256, map::B256HashMap};
+use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, map::B256HashMap};
 use alloy_rpc_types::{TransactionRequest, state::StateOverride};
 use evm2::{bytecode::Bytecode, evm::Cache};
 use foundry_config::Config;
@@ -220,8 +220,11 @@ pub(crate) fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverr
 
 /// Simulates a call on the fork's endpoint and prefetches the state it touches, see
 /// [`SharedBackend::prefetch_access_list`]. With `overrides`, the `local` state over the fork goes
-/// along as overrides; without, a call into a local-only account is skipped. Calls to precompiles,
-/// up to `P256VERIFY` at `0x100`, the cheatcode contract and the console are skipped.
+/// along as overrides.
+///
+/// Calls to precompiles up to `P256VERIFY` at `0x100`, to the cheatcode contract and to the console
+/// are skipped. A call sent without overrides is skipped when the fork loaded its target without
+/// code. It is also skipped when `local` holds its target but the fork never loaded it.
 pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
     backend: &SharedBackend<N, B>,
     caller: Address,
@@ -248,9 +251,14 @@ pub(crate) fn prefetch_call<N: Network, B: ForkBlockEnv>(
         return;
     }
     let overrides = local.filter(|_| overrides).and_then(|local| state_override(&remote, local));
-    // An account the context holds but never loaded from the endpoint was created locally, so the
-    // endpoint can only simulate a call into it with the local state as overrides.
-    if overrides.is_none() && local_account.is_some() && remote_code.is_none() {
+    // Without overrides, the endpoint runs its own code at the target. A target the fork loaded
+    // without code, such as a contract created on the fork, runs no code there. A native
+    // precompile without code runs no opcodes, so the endpoint lists none of its reads either. A
+    // target the context holds but the fork never loaded, such as a contract created before the
+    // fork was selected, is unknown there.
+    if overrides.is_none()
+        && remote_code.map_or(local_account.is_some(), |remote| remote == KECCAK256_EMPTY)
+    {
         return;
     }
     backend.prefetch_access_list(tx, overrides, code_hash);

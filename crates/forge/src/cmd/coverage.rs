@@ -24,7 +24,11 @@ use foundry_common::{
 use foundry_compilers::{
     Artifact, ArtifactId, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     VYPER_EXTENSIONS,
-    artifacts::{CompactBytecode, CompactDeployedBytecode, Source, sourcemap::SourceMap},
+    artifacts::{
+        CompactBytecode, CompactDeployedBytecode, Source,
+        sourcemap::{self, SourceMap},
+    },
+    buildinfo::SourceEdit,
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         Language,
@@ -44,6 +48,7 @@ use semver::Version;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -108,6 +113,14 @@ pub struct CoverageArgs {
     #[arg(long, conflicts_with = "ir_minimum")]
     instrumented: bool,
 
+    /// Keep the project's optimizer and viaIR settings instead of disabling them.
+    ///
+    /// Optimized builds can miss or merge coverage items. Cannot be combined with
+    /// `--ir-minimum`, including when either is enabled in config, where it can only be turned
+    /// off. Falls back to the `[profile.<name>.coverage] keep_optimizer` config value.
+    #[arg(long)]
+    keep_optimizer: bool,
+
     /// The path to output the report.
     ///
     /// Used only when a single file report is requested. If not specified, the
@@ -143,6 +156,8 @@ struct CoverageSettings {
     ir_minimum: bool,
     /// Whether to count coverage with compiler instrumentation.
     instrumented: bool,
+    /// Whether to keep the project's optimizer and viaIR settings.
+    keep_optimizer: bool,
     /// The path to output a single file report to.
     report_file: Option<PathBuf>,
     /// Whether to include dependency sources in the coverage report.
@@ -198,7 +213,13 @@ impl CoverageSettings {
 
 impl CoverageArgs {
     pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
-        self.test.ensure_coverage_mode_compatible()
+        self.test.ensure_coverage_mode_compatible()?;
+        let settings = self.resolve(&self.load_config_no_warnings()?.coverage);
+        eyre::ensure!(
+            !(settings.ir_minimum && settings.keep_optimizer),
+            "`ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled"
+        );
+        Ok(())
     }
 
     pub async fn run(self) -> Result<()> {
@@ -271,6 +292,7 @@ impl CoverageArgs {
                 .unwrap_or_else(|| config.lcov_version.clone()),
             ir_minimum: self.ir_minimum || config.ir_minimum,
             instrumented: self.instrumented,
+            keep_optimizer: self.keep_optimizer || config.keep_optimizer,
             report_file: self.report_file.clone().or_else(|| config.report_file.clone()),
             include_libs: self.include_libs || config.include_libs,
             exclude_tests: self.exclude_tests || config.exclude_tests,
@@ -286,7 +308,6 @@ impl CoverageArgs {
         filter: &ProjectPathsAwareFilter,
         settings: &CoverageSettings,
     ) -> Result<(Project, ProjectCompileOutput)> {
-        let ir_minimum = settings.ir_minimum;
         let mut project = config.ephemeral_project()?;
         // A contended or unavailable cache retains ephemeral compilation. Keep the lock until
         // artifacts and build contexts have been loaded or published together. Source-map and
@@ -345,13 +366,18 @@ impl CoverageArgs {
                 let solar = settings.solc.settings.solar.get_or_insert_default();
                 solar.unstable.push("instrument-coverage".into());
             }
-        } else if ir_minimum {
+        } else if settings.ir_minimum {
             sh_warn!(
                 "`--ir-minimum` enables `viaIR` with minimum optimization, \
                  which can result in inaccurate source mappings.\n\
                  Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
                  Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
                  See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep"
+            )?;
+        } else if settings.keep_optimizer {
+            sh_warn!(
+                "`--keep-optimizer` keeps the optimizer and `viaIR` settings, so coverage can miss \
+                 or merge items that the optimizer removes or combines."
             )?;
         } else {
             sh_warn!(
@@ -362,8 +388,8 @@ impl CoverageArgs {
             )?;
         }
 
-        if !settings.instrumented {
-            config.disable_optimizations(&mut project, ir_minimum);
+        if !settings.instrumented && !settings.keep_optimizer {
+            config.disable_optimizations(&mut project, settings.ir_minimum);
         }
 
         let files = (filter.args().path_pattern.is_some()
@@ -550,12 +576,17 @@ impl CoverageArgs {
         }
 
         // Get source maps and bytecodes.
+        let source_edits = output
+            .builds()
+            .map(|(build_id, build)| (build_id.as_str(), &build.source_edits))
+            .collect::<HashMap<_, _>>();
         let artifacts: Vec<ArtifactData> = output
             .artifact_ids()
             .par_bridge() // This parses source maps, so we want to run it in parallel.
             .filter_map(|(id, artifact)| {
                 let source_id = report.get_source_id(&id.build_id, &id.source)?;
-                ArtifactData::new(&id, source_id, artifact)
+                let edits = source_edits.get(id.build_id.as_str()).copied();
+                ArtifactData::new(&id, source_id, artifact, edits)
             })
             .collect();
 
@@ -875,7 +906,12 @@ pub struct ArtifactData {
 }
 
 impl ArtifactData {
-    pub fn new(id: &ArtifactId, source_id: usize, artifact: &impl Artifact) -> Option<Self> {
+    pub fn new(
+        id: &ArtifactId,
+        source_id: usize,
+        artifact: &impl Artifact,
+        source_edits: Option<&BTreeMap<u32, Vec<SourceEdit>>>,
+    ) -> Option<Self> {
         let abi = artifact.get_abi();
         let function_selectors = abi
             .as_ref()
@@ -894,13 +930,13 @@ impl ArtifactData {
                 contract_name: id.name.as_str().into(),
             },
             creation: BytecodeData::new(
-                artifact.get_source_map()?.ok()?,
+                to_original_source_map(artifact.get_source_map()?.ok()?, source_edits),
                 artifact
                     .get_bytecode()
                     .and_then(|bytecode| dummy_link_bytecode(bytecode.into_owned()))?,
             ),
             deployed: BytecodeData::new(
-                artifact.get_source_map_deployed()?.ok()?,
+                to_original_source_map(artifact.get_source_map_deployed()?.ok()?, source_edits),
                 artifact
                     .get_deployed_bytecode()
                     .and_then(|bytecode| dummy_link_deployed_bytecode(bytecode.into_owned()))?,
@@ -910,6 +946,62 @@ impl ArtifactData {
             fallback_payable,
         })
     }
+}
+
+/// Maps the ranges of a source map from the sources the compiler read back to the sources on
+/// disk, which coverage items refer to.
+///
+/// Preprocessing, such as dynamic test linking, rewrites sources before compilation, so the
+/// compiler reports offsets in the edited text. A range inside a replacement maps to the whole
+/// replaced range.
+fn to_original_source_map(
+    mut source_map: SourceMap,
+    source_edits: Option<&BTreeMap<u32, Vec<SourceEdit>>>,
+) -> SourceMap {
+    let Some(source_edits) = source_edits else { return source_map };
+    for element in &mut source_map {
+        let Some(edits) = element.index().and_then(|source| source_edits.get(&source)) else {
+            continue;
+        };
+        let offset = element.offset() as usize;
+        let length = element.length() as usize;
+        let (start, end) = original_range(edits, offset..offset + length);
+        if (start, end) == (offset, offset + length) {
+            continue;
+        }
+        // Source maps have no setters, so rebuild the element from its textual form.
+        let mapped = format!(
+            "{start}:{}:{}:{}:{}",
+            end - start,
+            element.index_i32(),
+            element.jump(),
+            element.modifier_depth()
+        );
+        *element = sourcemap::parse(&mapped)
+            .ok()
+            .and_then(|map| map.into_iter().next())
+            .expect("source element should round-trip through its textual form");
+    }
+    source_map
+}
+
+/// Maps a byte range of an edited source back to the original source.
+///
+/// `edits` must be sorted by start offset.
+fn original_range(edits: &[SourceEdit], range: Range<usize>) -> (usize, usize) {
+    let start = SourceEdit::original_offset(edits, range.start);
+    let mut shift = 0isize;
+    for edit in edits {
+        let edited_start = edit.start.saturating_add_signed(shift);
+        if range.end <= edited_start {
+            break;
+        }
+        if range.end < edited_start + edit.len {
+            return (start, edit.end);
+        }
+        shift += edit.len as isize - (edit.end - edit.start) as isize;
+    }
+    (start, range.end.saturating_add_signed(-shift).max(start))
 }
 
 pub struct BytecodeData {
@@ -977,5 +1069,64 @@ mod tests {
         let settings = args.resolve(&config);
 
         assert_eq!(settings.lcov_version, Version::new(2, 0, 0));
+    }
+
+    #[test]
+    fn maps_edited_ranges_to_original() {
+        // "new C()" at 10..17 grows to 30 bytes, 50..60 is removed, and 5 bytes are inserted at
+        // 100.
+        let edits = [
+            SourceEdit { start: 10, end: 17, len: 30 },
+            SourceEdit { start: 50, end: 60, len: 0 },
+            SourceEdit { start: 100, end: 100, len: 5 },
+        ];
+        for (edited, original) in [
+            // Before the first edit.
+            (0..10, (0, 10)),
+            // The replacement itself, and ranges inside it, map to the replaced range.
+            (10..40, (10, 17)),
+            (15..20, (10, 17)),
+            (39..40, (10, 17)),
+            // A range that straddles one boundary of the replacement.
+            (5..20, (5, 17)),
+            (20..45, (10, 22)),
+            // Containing the replacement.
+            (5..45, (5, 22)),
+            // After the replacement, before and around the removal.
+            (40..43, (17, 20)),
+            (43..90, (20, 77)),
+            (90..95, (77, 82)),
+            // Around the insertion, which starts at 113 in the edited source.
+            (110..113, (97, 100)),
+            (113..118, (100, 100)),
+            (115..116, (100, 100)),
+            (118..120, (100, 102)),
+            // Empty ranges.
+            (10..10, (10, 10)),
+            (40..40, (17, 17)),
+            (12..12, (10, 17)),
+        ] {
+            assert_eq!(original_range(&edits, edited.clone()), original, "{edited:?}");
+        }
+        assert_eq!(original_range(&[], 7..9), (7, 9));
+    }
+
+    #[test]
+    fn converts_source_map_per_source() {
+        let edits = BTreeMap::from([(1, vec![SourceEdit { start: 10, end: 17, len: 30 }])]);
+        let map = sourcemap::parse(
+            "0:5:1:-:0;45:3:1:i:2;12:2:1:o:1;45:3:0:-:0;-1:0:-1:-:0;40:0:1:-:0;12:0:1:o:0",
+        )
+        .unwrap();
+        // Elements of unedited sources and without a source are unchanged.
+        assert_eq!(to_original_source_map(map.clone(), None), map);
+        let converted = to_original_source_map(map, Some(&edits));
+        assert_eq!(
+            converted,
+            sourcemap::parse(
+                "0:5:1:-:0;22:3:1:i:2;10:7:1:o:1;45:3:0:-:0;-1:0:-1:-:0;17:0:1:-:0;10:7:1:o:0"
+            )
+            .unwrap()
+        );
     }
 }

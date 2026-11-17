@@ -176,7 +176,7 @@ pub fn eth_envelope_from_any_rpc(
                     Some(NamedChain::Celo | NamedChain::CeloSepolia)
                 ) =>
         {
-            let mut fields = unknown.inner.fields.clone();
+            let mut fields = unknown.inner.fields().clone();
             fields.insert("hash".into(), serde_json::to_value(unknown.hash)?);
             let signed = fields
                 .deserialize_into::<Signed<TxEip1559>>()

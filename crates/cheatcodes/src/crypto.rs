@@ -1,6 +1,6 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
-use crate::{Cheatcode, CheatcodesCore, Result, Vm::*};
+use crate::{Cheatcode, CheatcodesCore, Error, Result, Vm::*};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
@@ -104,9 +104,7 @@ impl Cheatcode for signKeychainAdminCall {
 impl Cheatcode for deriveConfigurableAccountCall {
     fn apply_context_free(&self) -> Result {
         let Self { config } = self;
-        let account =
-            tempo_account_config(config).derive_account().map_err(|err| fmt_err!("{err}"))?;
-        Ok(account.abi_encode())
+        Ok(tempo_account_config(config).derive_account().map_err(Error::display)?.abi_encode())
     }
 }
 
@@ -133,7 +131,7 @@ impl Cheatcode for encodeConfigurableAccountSignatureCall {
             tempo_account_config(config),
             approvals,
         )
-        .map_err(|err| fmt_err!("{err}"))?;
+        .map_err(Error::display)?;
         Ok(TempoSignature::ConfigurableAccount(signature).to_bytes().abi_encode())
     }
 }
@@ -493,10 +491,10 @@ fn sign_configurable_account(
 ) -> Result<ConfigurableAccountSignature> {
     let config = tempo_account_config(config);
     // Owner lookups below assume a valid, sorted owner list.
-    config.validate_for_account(account).map_err(|err| fmt_err!("{err}"))?;
+    config.validate_for_account(account).map_err(Error::display)?;
     // An unchanged account still has its initial config, which must derive its address.
     if config.version == 0 {
-        let derived = config.derive_account().map_err(|err| fmt_err!("{err}"))?;
+        let derived = config.derive_account().map_err(Error::display)?;
         ensure!(
             derived == account,
             "configurable account config with version 0 derives {derived}, not {account}"
@@ -512,16 +510,15 @@ fn sign_configurable_account(
         by_owner.entry(owner).or_insert(key);
     }
 
-    let owners = by_owner
-        .keys()
-        .map(|&owner| TempoAccountOwner {
-            owner,
-            weight: config.owner_weight(owner).unwrap_or_default(),
-        })
+    let owners = config
+        .owners
+        .iter()
+        .filter(|owner| by_owner.contains_key(&owner.owner))
+        .cloned()
         .collect::<Vec<_>>();
     let selected = quorum(&owners, config.threshold, false);
-    let threshold = u16::from(config.threshold);
     if selected.is_empty() {
+        let threshold = u16::from(config.threshold);
         let weight = owners.iter().map(|owner| u16::from(owner.weight)).sum::<u16>();
         ensure!(
             weight < threshold,
@@ -539,8 +536,7 @@ fn sign_configurable_account(
         .iter()
         .map(|owner| sign_owner_approval(by_owner[owner], &digest))
         .collect::<Result<Vec<_>>>()?;
-    ConfigurableAccountSignature::try_new(account, config, approvals)
-        .map_err(|err| fmt_err!("{err}"))
+    ConfigurableAccountSignature::try_new(account, config, approvals).map_err(Error::display)
 }
 
 /// Returns the owner address of `key`.
@@ -563,20 +559,13 @@ fn p256_public_key(key: &P256SigningKey) -> (B256, B256) {
 
 /// Signs `digest` with an owner key as a Tempo primitive signature.
 fn sign_owner_approval(key: &OwnerKey, digest: &B256) -> Result<PrimitiveSignature> {
-    let sign_low_s = |key: &P256SigningKey, message: &[u8]| -> Result<(B256, B256)> {
-        let signature: P256Signature = key.sign_prehash(message)?;
-        // Tempo only accepts low-s P-256 signatures.
-        let signature = signature.normalize_s().unwrap_or(signature);
-        let (r, s) = signature.split_bytes();
-        Ok((B256::from_slice(&r), B256::from_slice(&s)))
-    };
     match key.keyType {
         OwnerKeyType::Secp256k1 => {
             Ok(PrimitiveSignature::Secp256k1(sign(&key.privateKey, digest)?))
         }
         OwnerKeyType::P256 => {
             let signing_key = parse_private_key_p256(&key.privateKey)?;
-            let (r, s) = sign_low_s(&signing_key, digest.as_slice())?;
+            let (r, s) = sign_p256_low_s(&signing_key, digest.as_slice())?;
             let (pub_key_x, pub_key_y) = p256_public_key(&signing_key);
             Ok(PrimitiveSignature::P256(P256SignatureWithPreHash {
                 r,
@@ -598,7 +587,7 @@ fn sign_owner_approval(key: &OwnerKey, digest: &B256) -> Result<PrimitiveSignatu
             let message = Sha256::new()
                 .chain_update(&webauthn_data)
                 .chain_update(Sha256::digest(&client_data));
-            let (r, s) = sign_low_s(&signing_key, &message.finalize())?;
+            let (r, s) = sign_p256_low_s(&signing_key, &message.finalize())?;
             let (pub_key_x, pub_key_y) = p256_public_key(&signing_key);
             webauthn_data.extend_from_slice(client_data.as_bytes());
             Ok(PrimitiveSignature::WebAuthn(WebAuthnSignature {
@@ -699,8 +688,9 @@ fn sign_with_wallet(
     digest: &B256,
 ) -> Result<alloy_primitives::Signature> {
     let mut wallets = state.wallets().inner.lock();
-    let maybe_provided_sender = wallets.provided_sender;
-    let sender_owner = wallets.sender_owner;
+    // A sender without a key of its own signs with its owner's key.
+    let default_signer =
+        wallets.provided_sender.map(|sender| wallets.sender_owner.unwrap_or(sender));
     let signers = wallets.multi_wallet.signers()?;
     if signers.is_empty() {
         bail!("no wallets available");
@@ -708,8 +698,8 @@ fn sign_with_wallet(
 
     let signer = if let Some(signer) = signer {
         signer
-    } else if let Some(provided_sender) = maybe_provided_sender {
-        sender_owner.unwrap_or(provided_sender)
+    } else if let Some(default_signer) = default_signer {
+        default_signer
     } else if signers.len() == 1 {
         *signers.keys().next().unwrap()
     } else {
@@ -728,13 +718,15 @@ fn sign_with_wallet(
 }
 
 fn sign_p256(private_key: &U256, digest: &B256) -> Result {
-    let signing_key = parse_private_key_p256(private_key)?;
-    let signature: P256Signature = signing_key.sign_prehash(digest.as_slice())?;
-    let signature = signature.normalize_s().unwrap_or(signature);
-    let r_bytes: [u8; 32] = signature.r().to_bytes().into();
-    let s_bytes: [u8; 32] = signature.s().to_bytes().into();
+    Ok(sign_p256_low_s(&parse_private_key_p256(private_key)?, digest.as_slice())?.abi_encode())
+}
 
-    Ok((r_bytes, s_bytes).abi_encode())
+/// Signs the prehash `message` with `key`, returning a low-s `(r, s)`, as Tempo requires.
+fn sign_p256_low_s(key: &P256SigningKey, message: &[u8]) -> Result<(B256, B256)> {
+    let signature: P256Signature = key.sign_prehash(message)?;
+    let signature = signature.normalize_s().unwrap_or(signature);
+    let (r, s) = signature.split_bytes();
+    Ok((B256::from_slice(&r), B256::from_slice(&s)))
 }
 
 fn parse_affine_point(x: &U256, y: &U256, name: &str) -> Result<AffinePoint> {

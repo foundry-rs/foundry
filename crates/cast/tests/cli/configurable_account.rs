@@ -75,26 +75,9 @@ fn passkey_assertion(key: &SigningKey, challenge: B256) -> serde_json::Value {
     })
 }
 
-fn passkey_owner(key: &SigningKey) -> Address {
-    let point = key.verifying_key().to_encoded_point(false);
-    derive_p256_address(
-        &B256::from_slice(point.x().unwrap()),
-        &B256::from_slice(point.y().unwrap()),
-    )
-}
-
-/// Runs `cast wallet new` with `args` and returns its stdout and stderr.
-fn wallet_new(cmd: &mut TestCommand, args: &[&str]) -> (String, String) {
-    wallet_new_with_env(cmd, args, &[])
-}
-
-/// Runs `cast wallet new` with `args` and the environment `env`.
-/// `ETH_RPC_URL` and `CHAIN` are cleared unless `env` sets them.
-fn wallet_new_with_env(
-    cmd: &mut TestCommand,
-    args: &[&str],
-    env: &[(&str, &str)],
-) -> (String, String) {
+/// Runs `cast wallet new` with `args` and the environment `env`, and returns its stdout and
+/// stderr. `ETH_RPC_URL` and `CHAIN` are cleared unless `env` sets them.
+fn wallet_new(cmd: &mut TestCommand, args: &[&str], env: &[(&str, &str)]) -> (String, String) {
     cmd.cast_fuse().args(["wallet", "new"]).args(args);
     cmd.unset_env("ETH_RPC_URL");
     cmd.unset_env("CHAIN");
@@ -116,15 +99,9 @@ async fn tempo_t14_wallet_new_defaults_to_configurable_account(prj: _, cmd: _) {
     let (_t13_api, t13) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T13.into()))).await;
     let (_eth_api, eth) = anvil::spawn(NodeConfig::test()).await;
-    let t14_rpc = t14.http_endpoint();
+    let (t14_rpc, t13_rpc, eth_rpc) =
+        (t14.http_endpoint(), t13.http_endpoint(), eth.http_endpoint());
 
-    let assert_eoa = |stdout: &str| {
-        let [address, key] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
-            panic!("expected an EOA record, got {stdout}");
-        };
-        let signer = PrivateKeySigner::from_str(key).unwrap();
-        assert_eq!(Address::from_str(address).unwrap(), signer.address());
-    };
     let assert_account = |stdout: &str| {
         let [account, key, owner] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
             panic!("expected a configurable account record, got {stdout}");
@@ -134,94 +111,68 @@ async fn tempo_t14_wallet_new_defaults_to_configurable_account(prj: _, cmd: _) {
         assert_eq!(Address::from_str(account).unwrap(), single_owner_account(owner).unwrap());
     };
 
-    // The default on a T14 Tempo RPC is a configurable account.
-    let (stdout, stderr) = wallet_new(&mut cmd, &["--rpc-url", &t14_rpc]);
-    assert_account(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
+    // A T14 Tempo RPC, given or from `ETH_RPC_URL`, creates a configurable account, by default or
+    // with `--configurable-account`.
+    let accounts = [
+        (vec!["--rpc-url", t14_rpc.as_str()], vec![]),
+        (vec!["--configurable-account", "--rpc-url", t14_rpc.as_str()], vec![]),
+        (vec!["--configurable-account"], vec![("ETH_RPC_URL", t14_rpc.as_str())]),
+    ];
+    for (args, env) in accounts {
+        let (stdout, stderr) = wallet_new(&mut cmd, &args, &env);
+        assert_account(&stdout);
+        assert_data_eq!(
+            stderr,
+            str![[r#"
 Successfully created new Tempo configurable account.
 Address:     [..]
 Owner key:   [..]
 Private key: [..]
 
 "#]]
-    );
+        );
+    }
 
-    // No Tempo signal: a plain key, without consulting any RPC. Only `--configurable-account`
-    // says why.
-    let (stdout, stderr) = wallet_new(&mut cmd, &[]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-    let (stdout, stderr) = wallet_new(&mut cmd, &["--configurable-account"]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA.
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // A Tempo RPC with T14 active.
-    let (stdout, stderr) = wallet_new(&mut cmd, &["--configurable-account", "--rpc-url", &t14_rpc]);
-    assert_account(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Successfully created new Tempo configurable account.
-Address:     [..]
-Owner key:   [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // A `CHAIN` that is not a chain, such as one an app's `.env` sets, does not break key
-    // generation, but it is still a Tempo signal for `--configurable-account`.
-    let (stdout, _) = wallet_new_with_env(&mut cmd, &[], &[("CHAIN", "local")]);
-    assert_eoa(&stdout);
-    let (stdout, stderr) =
-        wallet_new_with_env(&mut cmd, &["--configurable-account"], &[("CHAIN", "4217")]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Tempo T14 is not active on chain tempo; creating an EOA.
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // A non-Tempo `CHAIN` creates a plain key before a T14 Tempo RPC is asked, as `--chain` does.
-    let (stdout, stderr) = wallet_new_with_env(
-        &mut cmd,
-        &["--configurable-account", "--rpc-url", &t14_rpc],
-        &[("CHAIN", "1")],
-    );
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
+    // Otherwise a plain key is created, and only `--configurable-account` says why. Without a
+    // Tempo signal no RPC is consulted. A `CHAIN` that is not a chain, such as one an app's `.env`
+    // sets, does not break key generation, and a non-Tempo `CHAIN` creates a plain key before a
+    // T14 Tempo RPC is asked, as `--chain` does. The compiled schedule does not activate T14 on
+    // Tempo mainnet yet.
+    let no_signal =
+        "No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA.\n";
+    let mainnet = "Tempo T14 is not active on chain tempo; creating an EOA.\n";
+    let eoas = [
+        (vec![], vec![], ""),
+        (vec!["--configurable-account"], vec![], no_signal),
+        (vec![], vec![("CHAIN", "local")], "...\n"),
+        (vec!["--configurable-account"], vec![("CHAIN", "4217")], mainnet),
+        (vec!["--configurable-account", "--rpc-url", t14_rpc.as_str()], vec![("CHAIN", "1")], ""),
+        (vec!["--rpc-url", t14_rpc.as_str(), "--eoa"], vec![], ""),
+        (vec!["--rpc-url", t13_rpc.as_str()], vec![], ""),
+        (vec!["--rpc-url", eth_rpc.as_str()], vec![], ""),
+        (vec!["--chain", "1"], vec![], ""),
+        (
+            vec!["--configurable-account", "--rpc-url", t13_rpc.as_str()],
+            vec![],
+            "Tempo T14 is not active on the RPC chain; creating an EOA.\n",
+        ),
+        (vec!["--configurable-account", "--rpc-url", eth_rpc.as_str()], vec![], no_signal),
+        (vec!["--configurable-account", "--chain", "4217"], vec![], mainnet),
+    ];
+    for (args, env, reason) in eoas {
+        let (stdout, stderr) = wallet_new(&mut cmd, &args, &env);
+        let [address, key] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
+            panic!("expected an EOA record for {args:?}, got {stdout}");
+        };
+        let signer = PrivateKeySigner::from_str(key).unwrap();
+        assert_eq!(Address::from_str(address).unwrap(), signer.address());
+        assert_data_eq!(
+            stderr,
+            format!(
+                "{reason}Successfully created new keypair.\nAddress:     [..]\nPrivate key: [..]\n"
+            )
+        );
+    }
 
     // An explicit `--chain` is still validated.
     cmd.cast_fuse().args(["wallet", "new", "--chain", "locla"]);
@@ -255,83 +206,7 @@ Error: invalid CHAIN: environment variable was not valid unicode: [..]
 "#]]);
     }
 
-    // `--eoa` opts out on a T14 Tempo RPC.
-    let (stdout, stderr) = wallet_new(&mut cmd, &["--rpc-url", &t14_rpc, "--eoa"]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // A Tempo RPC before T14, a non-Tempo RPC and a non-Tempo chain create a plain key; only
-    // `--configurable-account` says why.
-    for args in [
-        &["--rpc-url", &t13.http_endpoint()][..],
-        &["--rpc-url", &eth.http_endpoint()],
-        &["--chain", "1"],
-    ] {
-        let (stdout, stderr) = wallet_new(&mut cmd, args);
-        assert_eoa(&stdout);
-        assert_data_eq!(
-            stderr,
-            str![[r#"
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-        );
-    }
-    let (stdout, stderr) =
-        wallet_new(&mut cmd, &["--configurable-account", "--rpc-url", &t13.http_endpoint()]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Tempo T14 is not active on the RPC chain; creating an EOA.
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-    let (stdout, stderr) =
-        wallet_new(&mut cmd, &["--configurable-account", "--rpc-url", &eth.http_endpoint()]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA.
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // The compiled schedule does not activate T14 on Tempo mainnet yet.
-    let (stdout, stderr) = wallet_new(&mut cmd, &["--configurable-account", "--chain", "4217"]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Tempo T14 is not active on chain tempo; creating an EOA.
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // `ETH_RPC_URL` and `foundry.toml` are Tempo signals too.
-    let (stdout, _) =
-        wallet_new_with_env(&mut cmd, &["--configurable-account"], &[("ETH_RPC_URL", &t14_rpc)]);
-    assert_account(&stdout);
+    // `foundry.toml` is a Tempo signal too.
     std::fs::write(
         prj.root().join("foundry.toml"),
         format!("[profile.default]\neth_rpc_url = \"{t14_rpc}\"\n"),
@@ -343,7 +218,7 @@ Private key: [..]
 
     // JSON names the account `address` and adds its owner key.
     let (stdout, _) =
-        wallet_new(&mut cmd, &["--json", "--configurable-account", "--rpc-url", &t14_rpc]);
+        wallet_new(&mut cmd, &["--json", "--configurable-account", "--rpc-url", &t14_rpc], &[]);
     let record = &json_data(&stdout)[0];
     let owner = Address::from_str(record["owner"].as_str().unwrap()).unwrap();
     assert_eq!(
@@ -405,7 +280,11 @@ Error: [..] is not registered yet, so its owners and the gas of its registration
 
     // The first transaction registers the 1-of-1 account and adds the passkey at threshold 2.
     let passkey = SigningKey::from_slice(&[0x22; 32]).unwrap();
-    let passkey_owner = passkey_owner(&passkey);
+    let point = passkey.verifying_key().to_encoded_point(false);
+    let passkey_owner = derive_p256_address(
+        &B256::from_slice(point.x().unwrap()),
+        &B256::from_slice(point.y().unwrap()),
+    );
     cmd.cast_fuse()
         .args(["wallet", "owners", "add", &account, &passkey_owner.to_string()])
         .args(["--threshold", "2", "--private-key", &key, "--rpc-url", &rpc])
@@ -927,8 +806,10 @@ async fn tempo_t14_send_from_linked_keystore(prj: _, cmd: _) {
 
     // The link is not listed as an account.
     cmd.cast_fuse().env("HOME", home);
-    cmd.args(["wallet", "list"]);
-    assert_eq!(cmd.assert_success().get_output().stdout_lossy(), "linked (Local)\n");
+    cmd.args(["wallet", "list"]).assert_success().stdout_eq(str![[r#"
+linked (Local)
+
+"#]]);
 
     for address in [account, owner] {
         for api in [&api, &t13_api] {

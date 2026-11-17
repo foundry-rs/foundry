@@ -624,6 +624,31 @@ async fn keychain_authorize_admin_then_is_admin(cmd: _) {
     assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
 }
 
+// On-chain (T14): TIP-1137 retires admin keys, so `--admin` fails before sending.
+#[casttest]
+async fn keychain_authorize_admin_rejected_on_t14(cmd: _) {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR2,
+            "--admin",
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: --admin is not supported on Tempo T14 or later: TIP-1137 retires admin keys; authorize a regular access key without --admin instead
+
+"#]]);
+}
+
 // On-chain: authorize a regular access key, then use the real `cast send` binary to sign,
 // broadcast, and mine an account transaction with it.
 #[casttest]

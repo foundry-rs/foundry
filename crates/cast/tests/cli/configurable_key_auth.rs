@@ -6,28 +6,16 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
 use foundry_cli::utils::parse_json;
+use foundry_common::tempo::configurable_account::single_owner_account;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, util::OutputExt};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::transaction::{
-    ConfigurableAccountConfig, ConfigurableAccountOwner, KeyAuthorization, SignatureType,
-    SignedKeyAuthorization, configurable_account_digest,
+    KeyAuthorization, SignatureType, SignedKeyAuthorization, configurable_account_digest,
 };
 
 /// Anvil's Tempo chain ID.
 const CHAIN_ID: u64 = 31337;
-
-/// The account that a 1-of-1, salt-0 configuration of `owner` derives.
-fn single_owner_account(owner: Address) -> Address {
-    ConfigurableAccountConfig {
-        salt: B256::ZERO,
-        version: 0,
-        threshold: 1,
-        owners: vec![ConfigurableAccountOwner { owner, weight: 1 }],
-    }
-    .derive_account()
-    .unwrap()
-}
 
 /// Returns whether `key` is an active access key of `account`.
 fn is_provisioned(cmd: &mut TestCommand, rpc: &str, account: Address, key: Address) -> bool {
@@ -56,7 +44,7 @@ async fn tempo_t14_configurable_account_authorizes_access_keys(cmd: _) {
     let [first, second] =
         [0x11, 0x22].map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
     let first_key = hex::encode_prefixed(first.to_bytes());
-    let account = single_owner_account(first.address());
+    let account = single_owner_account(first.address()).unwrap();
     api.anvil_deal_tip20(account, PATH_USD_ADDRESS, U256::from(1_000_000_000_000u64))
         .await
         .unwrap();
@@ -74,15 +62,15 @@ async fn tempo_t14_configurable_account_authorizes_access_keys(cmd: _) {
     ];
 
     // A selected session must not fall back to the owner key.
-    let stderr = cmd
-        .cast_fuse()
+    cmd.cast_fuse()
         .args(["keychain", "authorize", &onchain_key.address().to_string()])
         .args(&send_args)
         .args(["--tempo.session", &B256::repeat_byte(0x55).to_string()])
         .assert_failure()
-        .get_output()
-        .stderr_lossy();
-    assert!(stderr.contains("Tempo Accounts sessions cannot sign"), "{stderr}");
+        .stderr_eq(str![[r#"
+Error: configurable account owners approve with their own keys; Tempo Accounts sessions cannot sign for them
+
+"#]]);
     assert!(!is_provisioned(&mut cmd, &rpc, account, onchain_key.address()));
 
     // The account's first transaction registers it and authorizes the key.
@@ -97,69 +85,109 @@ async fn tempo_t14_configurable_account_authorizes_access_keys(cmd: _) {
         .args(["--threshold", "2", "--private-key", &first_key, "--rpc-url", &rpc])
         .args(["--tempo.fee-token", &fee_token])
         .assert_success();
-    let stderr = cmd
-        .cast_fuse()
+    let mut owners = [first.address(), second.address()];
+    owners.sort();
+    cmd.cast_fuse()
         .args(["keychain", "authorize", &inline_key.address().to_string()])
         .args(&send_args)
         .assert_failure()
-        .get_output()
-        .stderr_lossy();
-    assert!(stderr.contains("reach weight 1"), "{stderr}");
+        .stderr_eq(format!(
+            "Error: {account} is a Tempo configurable account that needs owner weight 2, but the \
+             local owner keys {} reach weight 1. Its owners are {} (weight 1), {} (weight 1). Pass \
+             the other owner keys with --tempo.owner, or have each owner sign the digest from \
+             `cast mktx --raw-unsigned --tempo.digest` with `cast wallet sign --no-hash` and \
+             combine the signatures with `cast wallet assemble`.\n",
+            first.address(),
+            owners[0],
+            owners[1],
+        ));
 
     // With `--tempo.owner`, both owners approve locally. A lane has its own nonce, which differs
-    // from the account's protocol nonce after its first two transactions.
+    // from the account's protocol nonce, 2 after its first two transactions: the lane's first
+    // transaction takes 0 and its next 1. Expiring nonce mode overrides the lane: its nonce is the
+    // discriminator, 0 by default, not the lane's counter, which is then 2.
     let second_owner = format!("private-key://{}", hex::encode_prefixed(second.to_bytes()));
     let lanes = tempfile::tempdir().unwrap();
     let lanes_file = lanes.path().join("tempo.lanes.toml");
     std::fs::write(&lanes_file, "grants = 7\n").unwrap();
-    let lane_key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x35)).unwrap();
-    cmd.cast_fuse()
-        .args(["keychain", "authorize", &lane_key.address().to_string()])
-        .args(&send_args)
-        .args(["--tempo.owner", &second_owner, "--tempo.lane", "grants"])
-        .args(["--tempo.lanes-file", lanes_file.to_str().unwrap()])
-        .assert_success();
-    assert!(is_provisioned(&mut cmd, &rpc, account, lane_key.address()));
-
-    // Expiring nonce mode overrides the lane: its nonce is the discriminator, 0 by default, not
-    // the lane's counter, which is now 1.
-    let expiring_key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x36)).unwrap();
-    let receipt = cmd
-        .cast_fuse()
-        .args(["keychain", "authorize", &expiring_key.address().to_string()])
-        .args(&send_args)
-        .args(["--tempo.owner", &second_owner, "--tempo.lane", "grants"])
-        .args(["--tempo.lanes-file", lanes_file.to_str().unwrap(), "--tempo.expires", "60"])
-        .arg("--json")
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    let receipt = parse_json::<serde_json::Value>(receipt.trim()).unwrap();
-    let hash = receipt["transactionHash"].as_str().unwrap().to_owned();
-    let sent = cmd
-        .cast_fuse()
-        .args(["tx", &hash, "--rpc-url", &rpc, "--json"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    let sent = parse_json::<serde_json::Value>(sent.trim()).unwrap();
-    assert_eq!(sent["data"]["nonce"], "0x0", "{sent}");
-    assert_eq!(sent["data"]["nonceKey"], format!("{:#x}", U256::MAX), "{sent}");
-    assert!(is_provisioned(&mut cmd, &rpc, account, expiring_key.address()));
+    let cases: [(u8, &[&str], _); 3] = [
+        (
+            0x35,
+            &[],
+            str![[r#"
+{
+  "success": true,
+  "data": {
+    "nonce": "0x0",
+    "nonceKey": "0x7",
+    "...": "{...}"
+  },
+  "...": "{...}"
+}
+"#]],
+        ),
+        (
+            0x37,
+            &[],
+            str![[r#"
+{
+  "success": true,
+  "data": {
+    "nonce": "0x1",
+    "nonceKey": "0x7",
+    "...": "{...}"
+  },
+  "...": "{...}"
+}
+"#]],
+        ),
+        (
+            0x36,
+            &["--tempo.expires", "60"],
+            str![[r#"
+{
+  "success": true,
+  "data": {
+    "nonce": "0x0",
+    "nonceKey": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "...": "{...}"
+  },
+  "...": "{...}"
+}
+"#]],
+        ),
+    ];
+    for (byte, extra, sent) in cases {
+        let key = PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap();
+        let receipt = cmd
+            .cast_fuse()
+            .args(["keychain", "authorize", &key.address().to_string()])
+            .args(&send_args)
+            .args(["--tempo.owner", &second_owner, "--tempo.lane", "grants"])
+            .args(["--tempo.lanes-file", lanes_file.to_str().unwrap(), "--json"])
+            .args(extra)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let receipt = parse_json::<serde_json::Value>(receipt.trim()).unwrap();
+        let hash = receipt["transactionHash"].as_str().unwrap().to_owned();
+        cmd.cast_fuse().args(["tx", &hash, "--rpc-url", &rpc, "--json"]).assert_json_stdout(sent);
+        assert!(is_provisioned(&mut cmd, &rpc, account, key.address()));
+    }
 
     // A selected access key is rejected even when the owners reach the threshold without it.
     let first_owner = format!("private-key://{first_key}");
-    let stderr = cmd
-        .cast_fuse()
+    cmd.cast_fuse()
         .args(["keychain", "authorize", &inline_key.address().to_string()])
         .args(["--tempo.configurable-account", &account.to_string(), "--rpc-url", &rpc])
         .args(["--tempo.owner", &first_owner, "--tempo.owner", &second_owner])
         .args(["--tempo.access-key", &hex::encode_prefixed(onchain_key.to_bytes())])
         .args(["--tempo.root-account", &account.to_string(), "--tempo.fee-token", &fee_token])
         .assert_failure()
-        .get_output()
-        .stderr_lossy();
-    assert!(stderr.contains("not a Tempo access key"), "{stderr}");
+        .stderr_eq(str![[r#"
+Error: configurable account owners approve with their own keys, not a Tempo access key
+
+"#]]);
     assert!(!is_provisioned(&mut cmd, &rpc, account, inline_key.address()));
 
     // The second owner approves the owner digest of the account-bound authorization elsewhere.
@@ -192,15 +220,18 @@ async fn tempo_t14_configurable_account_authorizes_access_keys(cmd: _) {
 
     // Offline, only the account's onchain commitment ties a version-1 configuration to it, so
     // `inspect` names no signer.
-    let inspect = cmd
-        .cast_fuse()
+    cmd.cast_fuse()
         .args(["key-authorization", "inspect", &signed, "--account", &account.to_string()])
         .arg("--json")
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    let inspect = parse_json::<serde_json::Value>(inspect.trim()).unwrap();
-    assert_eq!(inspect["signer"], serde_json::Value::Null, "{inspect}");
+        .assert_json_stdout(str![[r#"
+{
+  "signed": true,
+  "signer": null,
+  "chain_id": 31337,
+  "is_admin": false,
+  "...": "{...}"
+}
+"#]]);
 
     // The inline key sends a transaction for the account with the authorization attached.
     let tempo_home = tempfile::tempdir().unwrap();
@@ -251,7 +282,7 @@ async fn tempo_t14_keychain_authorizes_configurable_account_as_access_key(cmd: _
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
     let rpc = handle.http_endpoint();
     let root = handle.dev_wallets().next().unwrap();
-    let account = single_owner_account(Address::repeat_byte(0x11));
+    let account = single_owner_account(Address::repeat_byte(0x11)).unwrap();
 
     cmd.cast_fuse()
         .args([
@@ -266,31 +297,29 @@ async fn tempo_t14_keychain_authorizes_configurable_account_as_access_key(cmd: _
         ])
         .assert_success();
 
-    let check = cmd
-        .cast_fuse()
-        .args([
-            "keychain",
-            "check",
-            &root.address().to_string(),
-            &account.to_string(),
-            "--rpc-url",
-            &rpc,
-            "--json",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    let check = parse_json::<serde_json::Value>(check.trim()).unwrap();
-    assert_eq!(check["data"]["provisioned"], true, "{check}");
-    assert_eq!(check["data"]["signatureType"], "configurableaccount", "{check}");
+    cmd.cast_fuse()
+        .args(["keychain", "check", &root.address().to_string(), &account.to_string()])
+        .args(["--rpc-url", &rpc, "--json"])
+        .assert_json_stdout(str![[r#"
+{
+  "success": true,
+  "data": {
+    "provisioned": true,
+    "signatureType": "configurableaccount",
+    "is_revoked": false,
+    "...": "{...}"
+  },
+  "...": "{...}"
+}
+"#]]);
 
     // The browser wallet cannot serialize this key type yet, so the browser flow never starts.
-    let stderr = cmd
-        .cast_fuse()
+    cmd.cast_fuse()
         .args(["key-authorization", "sign", &account.to_string(), "--key-type", "configurable"])
         .args(["--chain-id", &CHAIN_ID.to_string(), "--browser"])
         .assert_failure()
-        .get_output()
-        .stderr_lossy();
-    assert!(stderr.contains("does not support the configurable key type"), "{stderr}");
+        .stderr_eq(str![[r#"
+Error: browser key authorization signing does not support the configurable key type yet
+
+"#]]);
 }
