@@ -14,7 +14,10 @@ use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
     utils::{LoadConfig, parse_ether_value},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::{
+    FoundryTransactionBuilder, provider::ProviderBuilder,
+    tempo::configurable_account::prepare_request,
+};
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::{str::FromStr, sync::Arc};
@@ -193,12 +196,7 @@ impl EstimateArgs {
             .raw();
         if let Some((account, simulation)) = simulation {
             sender = account.into();
-            // A `0x05` signature only signs Tempo transactions.
-            let tx = builder.tx_mut();
-            if tx.nonce_key().is_none() {
-                tx.set_nonce_key(U256::ZERO);
-            }
-            tx.set_configurable_account_simulation(simulation);
+            prepare_request::<N>(builder.tx_mut(), account, simulation);
         }
         let Some(tx) = confirm_and_build(builder, sender, force, None, true).await? else {
             return Ok(());
