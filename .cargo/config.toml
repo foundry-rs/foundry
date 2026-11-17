@@ -3,6 +3,11 @@ cheats = "test -p foundry-cheatcodes-spec --features schema tests::"
 test-debugger = "test -p forge --test cli manual_debug_setup -- --include-ignored --nocapture"
 bless-lints = "test -p forge --test ui -- --bless"
 
+# Keep `smolgen` from rerunning build scripts on every commit and from embedding the build time.
+# Builds that ship set `VERGEN_IDEMPOTENT=0` in the environment, which takes precedence.
+[env]
+VERGEN_IDEMPOTENT = "1"
+
 # Increase the stack size to 10MB for Windows targets, which is in line with Linux
 # (whereas default for Windows is 1MB).
 [target.x86_64-pc-windows-msvc]

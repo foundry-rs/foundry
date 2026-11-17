@@ -46,6 +46,8 @@ ARG TAG_NAME="dev"
 ENV TAG_NAME=$TAG_NAME
 ARG VERGEN_GIT_SHA="ffffffffffffffffffffffffffffffffffffffff"
 ENV VERGEN_GIT_SHA=$VERGEN_GIT_SHA
+# Embed the real build timestamp, overriding `VERGEN_IDEMPOTENT` in `.cargo/config.toml`.
+ENV VERGEN_IDEMPOTENT=0
 
 # Build the project.
 COPY . .
