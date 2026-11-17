@@ -3,7 +3,7 @@
 //! This module provides functionality to identify and decode storage slots based on
 //! Solidity storage layout information from the compiler.
 
-use crate::mapping_slots::MappingSlots;
+use crate::{mapping_slots::MappingSlots, namespaced_storage::unscoped_type_id};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{B256, U256, hex, keccak256, map::B256Map};
 use foundry_common_fmt::format_token_raw;
@@ -1099,7 +1099,8 @@ const UDVT_TYPE_PREFIX: &str = "t_userDefinedValueType(";
 /// unsigned bits, not their original signed, address, bool or fixed-bytes values. Mapping keys
 /// retain the full encoded key word, whose padding can differ from compact storage.
 fn resolve_sol_type(id: &str, storage_type: &StorageType) -> Option<DynSolType> {
-    if id.starts_with(UDVT_TYPE_PREFIX) {
+    // ERC-7201 namespaces scope their type IDs.
+    if unscoped_type_id(id).starts_with(UDVT_TYPE_PREFIX) {
         let bytes = storage_type.number_of_bytes.parse::<usize>().ok()?;
         return (1..=32).contains(&bytes).then(|| DynSolType::Uint(bytes * 8));
     }
@@ -1595,88 +1596,96 @@ mod tests {
 
     /// User-defined value types as solc lays them out: a file-level one labeled by its name, a
     /// library one by `Library.Name`, both 12 bytes (`uint96`).
-    fn udvt_layout() -> SlotIdentifier {
+    ///
+    /// Every type ID is prefixed by `scope`, as ERC-7201 namespaces scope theirs.
+    fn udvt_layout(scope: &str) -> SlotIdentifier {
+        let t = |id: &str| format!("{scope}{id}");
         let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
             "storage": [
-                { "astId": 1, "contract": "C", "label": "config", "offset": 0, "slot": "0", "type": "t_struct(Config)" },
-                { "astId": 2, "contract": "C", "label": "ids", "offset": 0, "slot": "2", "type": "t_array(t_userDefinedValueType(FileId)10)3_storage" },
-                { "astId": 3, "contract": "C", "label": "byId", "offset": 0, "slot": "4", "type": "t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)" }
+                { "astId": 1, "contract": "C", "label": "config", "offset": 0, "slot": "0", "type": t("t_struct(Config)") },
+                { "astId": 2, "contract": "C", "label": "ids", "offset": 0, "slot": "2", "type": t("t_array(t_userDefinedValueType(FileId)10)3_storage") },
+                { "astId": 3, "contract": "C", "label": "byId", "offset": 0, "slot": "4", "type": t("t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)") }
             ],
             "types": {
-                "t_struct(Config)": {
+                t("t_struct(Config)"): {
                     "encoding": "inplace", "label": "struct C.Config", "numberOfBytes": "64",
                     "members": [
-                        { "astId": 4, "contract": "C", "label": "owner", "offset": 0, "slot": "0", "type": "t_address" },
-                        { "astId": 5, "contract": "C", "label": "fileId", "offset": 20, "slot": "0", "type": "t_userDefinedValueType(FileId)10" },
-                        { "astId": 6, "contract": "C", "label": "libId", "offset": 0, "slot": "1", "type": "t_userDefinedValueType(LibId)11" }
+                        { "astId": 4, "contract": "C", "label": "owner", "offset": 0, "slot": "0", "type": t("t_address") },
+                        { "astId": 5, "contract": "C", "label": "fileId", "offset": 20, "slot": "0", "type": t("t_userDefinedValueType(FileId)10") },
+                        { "astId": 6, "contract": "C", "label": "libId", "offset": 0, "slot": "1", "type": t("t_userDefinedValueType(LibId)11") }
                     ]
                 },
-                "t_array(t_userDefinedValueType(FileId)10)3_storage": {
+                t("t_array(t_userDefinedValueType(FileId)10)3_storage"): {
                     "encoding": "inplace", "label": "FileId[3]", "numberOfBytes": "64",
-                    "base": "t_userDefinedValueType(FileId)10"
+                    "base": t("t_userDefinedValueType(FileId)10")
                 },
-                "t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)": {
+                t("t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)"): {
                     "encoding": "mapping", "label": "mapping(FileId => L.LibId)", "numberOfBytes": "32",
-                    "key": "t_userDefinedValueType(FileId)10", "value": "t_userDefinedValueType(LibId)11"
+                    "key": t("t_userDefinedValueType(FileId)10"), "value": t("t_userDefinedValueType(LibId)11")
                 },
-                "t_userDefinedValueType(FileId)10": { "encoding": "inplace", "label": "FileId", "numberOfBytes": "12" },
-                "t_userDefinedValueType(LibId)11": { "encoding": "inplace", "label": "L.LibId", "numberOfBytes": "12" },
-                "t_address": { "encoding": "inplace", "label": "address", "numberOfBytes": "20" }
+                t("t_userDefinedValueType(FileId)10"): { "encoding": "inplace", "label": "FileId", "numberOfBytes": "12" },
+                t("t_userDefinedValueType(LibId)11"): { "encoding": "inplace", "label": "L.LibId", "numberOfBytes": "12" },
+                t("t_address"): { "encoding": "inplace", "label": "address", "numberOfBytes": "20" }
             }
         }))
         .unwrap();
         SlotIdentifier::new(Arc::new(layout))
     }
 
+    /// Unscoped type IDs, and IDs scoped the way [`crate::namespaced_storage`] scopes a namespace.
+    const SCOPES: [&str; 2] = ["", "erc7201(example.udvt)::"];
+
     /// Wider than a byte, which a `Library.Name` label used to be parsed as.
     const ID: u64 = 0x0102_0304_0506;
 
     #[test]
     fn decodes_user_defined_value_type_members() {
-        let identifier = udvt_layout();
+        for scope in SCOPES {
+            let identifier = udvt_layout(scope);
+            let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+            assert_eq!(info.label, "config.owner, config.fileId");
+            info.decode_values(B256::ZERO, B256::from(U256::from(ID) << 160 | U256::from(0x1234)));
+            assert_eq!(
+                decoded(&info),
+                [
+                    (
+                        "config.owner",
+                        "0x0000000000000000000000000000000000000000".to_string(),
+                        "0x0000000000000000000000000000000000001234".to_string()
+                    ),
+                    ("config.fileId", "0".to_string(), ID.to_string())
+                ]
+            );
 
-        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
-        assert_eq!(info.label, "config.owner, config.fileId");
-        info.decode_values(B256::ZERO, B256::from(U256::from(ID) << 160 | U256::from(0x1234)));
-        assert_eq!(
-            decoded(&info),
-            [
-                (
-                    "config.owner",
-                    "0x0000000000000000000000000000000000000000".to_string(),
-                    "0x0000000000000000000000000000000000001234".to_string()
-                ),
-                ("config.fileId", "0".to_string(), ID.to_string())
-            ]
-        );
-
-        let mut info = identifier.identify(&B256::from(U256::from(1)), None).unwrap();
-        assert_eq!(info.label, "config.libId");
-        assert_eq!(info.slot_type.label, "L.LibId");
-        info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
-        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+            let mut info = identifier.identify(&B256::from(U256::from(1)), None).unwrap();
+            assert_eq!(info.label, "config.libId");
+            assert_eq!(info.slot_type.label, "L.LibId");
+            info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
+            assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+        }
     }
 
     #[test]
     fn resolves_mappings_of_user_defined_value_types() {
-        let identifier = udvt_layout();
+        for scope in SCOPES {
+            let identifier = udvt_layout(scope);
+            let mut slots = MappingSlots::default();
+            let key = B256::from(U256::from(ID));
+            let parent = B256::from(U256::from(4));
+            let entry = keccak256([key.0, parent.0].concat());
+            slots.record_hash(entry, key, parent);
+            slots.insert(entry);
 
-        let mut slots = MappingSlots::default();
-        let key = B256::from(U256::from(ID));
-        let parent = B256::from(U256::from(4));
-        let entry = keccak256([key.0, parent.0].concat());
-        slots.record_hash(entry, key, parent);
-        slots.insert(entry);
-
-        let mut info = identifier.identify(&entry, Some(&slots)).unwrap();
-        assert_eq!(info.label, format!("byId[{ID}]"));
-        info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
-        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+            let mut info = identifier.identify(&entry, Some(&slots)).unwrap();
+            assert_eq!(info.label, format!("byId[{ID}]"));
+            info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
+            assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+        }
     }
 
     #[test]
     fn leaves_unresolved_packed_udvt_arrays_unidentified() {
-        let identifier = udvt_layout();
+        let identifier = udvt_layout("");
         // Resolving FileId[3] to uint96[3] would feed packed words into a decoder that treats
         // slots as elements, giving both incorrect values and incorrect indices.
         for slot in [2, 3] {
