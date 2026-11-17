@@ -580,12 +580,14 @@ impl FuzzDictionary {
                         let value_word = B256::from(value);
                         // A dynamic array's slot, also as an element of a fixed array, holds its
                         // length, which no parameter samples by the array type, so keep it untyped.
+                        // So is a slot packing several values, which is no sample of one of them.
                         self.identify_storage_slot(key, slot).filter(|slot_info| {
                             let mut ty = &slot_info.slot_type.dyn_sol_type;
                             while let DynSolType::FixedArray(inner, _) = ty {
                                 ty = inner;
                             }
                             !matches!(ty, DynSolType::Array(_))
+                                && slot_info.members.is_none()
                                 && slot_info.decode(value_word).is_some()
                         })
                     });
