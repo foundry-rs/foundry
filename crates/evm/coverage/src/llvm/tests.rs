@@ -165,15 +165,22 @@ fn run(program: &str, dir: &std::path::Path, args: &[&str]) -> String {
 /// Without LLVM's tools installed there is nothing to compare against, and the test passes.
 #[test]
 fn llvm_tools_read_the_coverage_mapping() {
-    let inputs = build().function_inputs();
-    assert_eq!(inputs.len(), 6);
+    let build = build();
+    assert_eq!(build.function_inputs().len(), 6);
+    assert_llvm_agrees(SOURCE, &build);
+}
+
+/// Asserts that `llvm-cov export` over the coverage object of the build equals the JSON of the
+/// build's coverage mapping, with every installed LLVM version.
+fn assert_llvm_agrees(source: &str, build: &InstrumentedBuild) {
+    let inputs = build.function_inputs();
     let object = CoverageObject::new(&inputs).unwrap();
     let ours = export_json(&CoverageMapping::new(inputs));
 
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("src/C.sol"), SOURCE).unwrap();
+    std::fs::write(dir.join("src/C.sol"), source).unwrap();
     std::fs::write(dir.join("coverage.proftext"), &object.proftext).unwrap();
     std::fs::write(dir.join("coverage.covmap.o"), &object.object).unwrap();
 
@@ -193,6 +200,92 @@ fn llvm_tools_read_the_coverage_mapping() {
             panic!("llvm-cov {version}: {difference}");
         }
     }
+}
+
+const GAP_SOURCE: &str = "\
+contract G {
+    uint x;
+
+    function f(uint a) public {
+        if (a > 1) {
+            x = 1;
+        } else {
+            x = 2;
+        }
+
+        // keep
+        x = 3;
+    }
+}
+";
+
+/// A function with gap regions between its statements and skipped regions over a blank line, a
+/// comment, and a lone closing brace, as Solar emits them.
+fn gap_build() -> InstrumentedBuild {
+    let at = |needle: &str| {
+        let start = GAP_SOURCE.find(needle).unwrap();
+        (start, needle.len())
+    };
+    let region = |kind: i64, needle: &str, rest: &[i64]| {
+        let (start, len) = at(needle);
+        let mut region = vec![kind, 0, start as i64, len as i64];
+        region.extend(rest);
+        json!(region)
+    };
+    // The text between the end of `from` and the start of `to`.
+    let between = |kind: i64, from: &str, to: &str, rest: &[i64]| {
+        let (start, len) = at(from);
+        let end = GAP_SOURCE.find(to).unwrap();
+        let start = start + len;
+        let mut region = vec![kind, 0, start as i64, (end - start) as i64];
+        region.extend(rest);
+        json!(region)
+    };
+    let body = "function f(uint a) public {";
+    let (body_start, _) = at(body);
+    let body_end = GAP_SOURCE.rfind("    }\n}").unwrap() + "    }".len();
+    // Counter 1 is the entry and counter 2 the `if` block, so expression 0, 1 - 2, is the `else`.
+    let coverage = serde_json::from_value(json!({
+        "version": 2,
+        "functions": [{
+            "name": "src/C.sol:G.f(uint256)", "hash": "0x7", "counters": [1, 2], "files": [0],
+            "expressions": [[c(1), c(2)]],
+            "regions": [
+                [0, 0, body_start, body_end - body_start, c(1)],
+                region(4, "a > 1", &[c(2), sub(0)]),
+                region(0, "{\n            x = 1;\n        }", &[c(2)]),
+                between(3, "x = 1;\n        }", "{\n            x = 2;", &[sub(0)]),
+                region(0, "{\n            x = 2;\n        }", &[sub(0)]),
+                between(3, "x = 2;\n        }", "x = 3;", &[c(1)]),
+                region(2, "\n\n        // keep", &[]),
+                region(0, "x = 3;", &[c(1)]),
+            ],
+        }]
+    }))
+    .unwrap();
+    let source =
+        InstrumentedSource::new("src/C.sol".into(), GAP_SOURCE.to_string(), true, coverage);
+    let mut build = InstrumentedBuild::new(BTreeMap::from([(0, source)]));
+    build.add_hits([(1, 3), (2, 1)].into_iter(), std::iter::empty(), &[]);
+    build
+}
+
+#[test]
+fn gap_and_skipped_regions_follow_llvm_cov() {
+    let build = gap_build();
+    assert_llvm_agrees(GAP_SOURCE, &build);
+
+    // `llvm-cov export` agrees with these lines above. A gap never starts a line's count, and a
+    // line that starts a skipped region, like the blank line and the comment, is not mapped.
+    let mapping = CoverageMapping::new(build.function_inputs());
+    let lines = mapping
+        .coverage_for_file("src/C.sol")
+        .line_stats()
+        .into_iter()
+        .filter(|stats| stats.mapped)
+        .map(|stats| (stats.line, stats.execution_count))
+        .collect::<Vec<_>>();
+    assert_eq!(lines, [(4, 3), (5, 3), (6, 1), (7, 2), (8, 2), (12, 3), (13, 3)]);
 }
 
 /// Makes integer-valued floats integers and rounds the others, so that numbers compare by value:

@@ -181,7 +181,9 @@ fn encode_mapping(
             uleb(&mut out, u64::from(region.start.0 - previous_line));
             uleb(&mut out, region.start.1.into());
             uleb(&mut out, u64::from(region.end.0 - region.start.0));
-            uleb(&mut out, region.end.1.into());
+            // The high bit of a gap region's end column marks it.
+            let gap_bit = if region.kind == RegionKind::Gap { 1 << 31 } else { 0 };
+            uleb(&mut out, u64::from(region.end.1 | gap_bit));
             previous_line = region.start.0;
         }
         index += count;

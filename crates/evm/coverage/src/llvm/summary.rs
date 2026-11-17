@@ -46,7 +46,7 @@ pub struct DataSummary {
 }
 
 impl DataSummary {
-    fn add(&mut self, other: &Self) {
+    const fn add(&mut self, other: &Self) {
         self.regions.add(other.regions);
         self.lines.add(other.lines);
         self.branches.add(other.branches);
@@ -76,7 +76,7 @@ pub struct FileSummary {
 
 impl FileSummary {
     /// Adds the summary of another file.
-    pub fn add(&mut self, other: &Self) {
+    pub const fn add(&mut self, other: &Self) {
         self.data.add(&other.data);
         self.functions.add(other.functions);
         self.instantiations.add(other.instantiations);

@@ -362,6 +362,9 @@ impl InstrumentedBuild {
                 Region::Skipped { .. } => {
                     (RegionKind::Skipped, Counter::Zero, Counter::Zero, McdcParams::None, 0)
                 }
+                Region::Gap { count, .. } => {
+                    (RegionKind::Gap, builder.counter(count), Counter::Zero, McdcParams::None, 0)
+                }
                 Region::Branch { true_count, false_count, .. } => (
                     RegionKind::Branch,
                     builder.counter(true_count),
