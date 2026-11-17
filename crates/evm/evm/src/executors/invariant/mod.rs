@@ -1079,6 +1079,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &invariant_contract,
             &invariant_test.test_data.failures,
         );
+        let broken_initially = invariant_test.test_data.failures.broken_invariants();
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();
@@ -1115,6 +1116,16 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             } else {
                 snapshots.start(&mut invariant_test.test_data.branch_runner, &executor)
             };
+            // The calls of a run are not checked for the invariants already broken, but a run
+            // resumed from a snapshot carries calls of earlier runs, which may have been checked
+            // for any invariant that broke after the initial checks, so only those broken
+            // initially are left out.
+            let unchecked_invariants = if start.prefix.is_empty() {
+                invariant_test.test_data.failures.broken_invariants()
+            } else {
+                broken_initially.clone()
+            };
+            invariant_test.test_data.failures.start_run(unchecked_invariants);
             // Corpus entries replay from the post-setUp state, so a resumed run makes fresh calls.
             let sequence_plan = if let Some(candidate) = candidate {
                 corpus_manager
