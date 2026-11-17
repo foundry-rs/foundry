@@ -411,6 +411,12 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
             {
                 normalize_cmp_for_solver(cx, SymCmpOp::Ule, right.clone(), left.clone())
             }
+            // The mirror: `!(y <= ~x) => ~x < y`, so both negations share one canonical form.
+            SymBoolExprKind::Cmp(SymCmpOp::Ule, left, right)
+                if matches!(right.kind(), SymExprKind::Not(_)) =>
+            {
+                normalize_cmp_for_solver(cx, SymCmpOp::Ult, right.clone(), left.clone())
+            }
             _ => expr,
         },
         SymBoolExprKind::Cmp(op, left, right) => {
