@@ -373,6 +373,16 @@ contract SymbolicCreateEip3541 is Test {
         checkMockProgress(address(0x1002), true);
     }
 
+    function checkRejectedPrefixKeepsConstructorExpectRevertError() public {
+        // The constructor's unmet `vm.expectRevert` error is the CREATE's revert data.
+        try new ExpectRevertThenReject() {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256(abi.encodeWithSignature(
+                "CheatcodeError(string)", "call didn't revert at a lower depth than cheatcode call depth")));
+        }
+    }
+
     uint256 marker;
 
     function mark() external {
@@ -536,8 +546,8 @@ contract SymbolicCreateEip3541 is Test {
         bytes memory callData = abi.encodeCall(IMockSequenceTarget.value, ());
         vm.mockCall(target, callData, abi.encode(uint256(1)));
         vm.expectCall(target, callData);
-        bytes memory rejectedRuntime = hex"ef";
-        vm.expectRevert(rejectedRuntime);
+        // Like Forge, a CREATE whose runtime is rejected fails with no data.
+        vm.expectRevert(bytes(""));
         if (useCreate2) {
             new ConsumeMockThenReject{salt: bytes32(uint256(2))}(IMockSequenceTarget(target));
         } else {
@@ -614,6 +624,18 @@ contract ConsumeMockThenReject {
         require(target.value() == 1);
         assembly ("memory-safe") {
             mstore(0, shl(248, 0xef))
+            return(0, 1)
+        }
+    }
+}
+
+contract ExpectRevertThenReject {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    constructor() {
+        vm.expectRevert();
+        assembly ("memory-safe") {
+            mstore8(0, 0xef)
             return(0, 1)
         }
     }

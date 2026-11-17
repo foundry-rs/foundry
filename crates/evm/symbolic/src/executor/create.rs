@@ -194,15 +194,12 @@ impl SymbolicExecutor {
             let failed_callee = matches!(outcome.status, CallStatus::Revert).then_some(created);
             let runtime = &outcome.state.frame.return_data;
             let spec_id = executor.spec_id;
-            let mut rejected_runtime = false;
-            if matches!(outcome.status, CallStatus::Success) {
-                if runtime_exceeds_code_size_limit(executor.max_code_size, spec_id, runtime) {
-                    outcome.status = CallStatus::Revert;
-                    outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
-                } else if runtime_has_rejected_prefix(&mut self.cx, spec_id, runtime)? {
-                    outcome.status = CallStatus::Revert;
-                    rejected_runtime = true;
-                }
+            if matches!(outcome.status, CallStatus::Success)
+                && (runtime_exceeds_code_size_limit(executor.max_code_size, spec_id, runtime)
+                    || runtime_has_rejected_prefix(&mut self.cx, spec_id, runtime)?)
+            {
+                outcome.status = CallStatus::Revert;
+                outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
             }
             if !matches!(outcome.status, CallStatus::Success)
                 && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
@@ -265,10 +262,7 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
-                    parent.return_data = SymReturnData::empty(&mut self.cx);
-                    if !rejected_runtime {
-                        parent.return_data = child.frame.return_data;
-                    }
+                    parent.return_data = child.frame.return_data;
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
