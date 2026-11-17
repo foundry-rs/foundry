@@ -228,8 +228,9 @@ Error: invalid CHAIN: environment variable was not valid unicode: [..]
 }
 
 /// A new account adds a passkey owner, then its owners sign on separate machines:
-/// `mktx --raw-unsigned --tempo.digest`, `wallet sign --no-hash` and a browser WebAuthn assertion,
-/// `wallet assemble`, then `publish`.
+/// `mktx --raw-unsigned --tempo.digest`, `wallet sign --no-hash` and either a browser WebAuthn
+/// assertion or `wallet sign --no-hash --p256` with the passkey's raw key, `wallet assemble`, then
+/// `publish`.
 #[casttest]
 async fn tempo_t14_wallet_configurable_account_multi_party_flow(prj: _, cmd: _) {
     let (api, handle) =
@@ -322,61 +323,117 @@ Error: [..] is not registered yet, so its owners and the gas of its registration
         .stderr_eq(str![[r#"
 Error: the wallet [..] has weight 1 in [..], which requires 2. Collect the owners' approvals instead:
   cast mktx 0xAACC000000000000000000000000000000000000 [..] --from [..] --raw-unsigned --tempo.digest
-then `cast wallet sign --no-hash <DIGEST>` on each owner's machine, `cast wallet assemble`, and `cast publish`
+then `cast wallet sign --no-hash <DIGEST>` (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet assemble`, and `cast publish`
 
 "#]]);
 
-    // The multi-party flow.
-    let stdout = cmd
-        .cast_fuse()
-        .args(["mktx", &target, "--from", &account, "--raw-unsigned", "--tempo.digest"])
-        .args(["--rpc-url", &rpc, "--tempo.fee-token", &fee_token])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    let [unsigned, digest] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
-        panic!("expected the unsigned transaction and the digest, got {stdout}");
-    };
-    let digest = B256::from_str(digest).unwrap();
+    // The multi-party flow, once with the passkey's browser assertion and once with its raw
+    // P-256 key: the owner address is the same, signing with `wallet sign --no-hash --p256`.
+    for p256 in [false, true] {
+        let stdout = cmd
+            .cast_fuse()
+            .args(["mktx", &target, "--from", &account, "--raw-unsigned", "--tempo.digest"])
+            .args(["--rpc-url", &rpc, "--tempo.fee-token", &fee_token])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let [unsigned, digest] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
+            panic!("expected the unsigned transaction and the digest, got {stdout}");
+        };
+        let digest = B256::from_str(digest).unwrap();
 
-    let owner_signature = cmd
-        .cast_fuse()
-        .args(["wallet", "sign", "--no-hash", &digest.to_string(), "--private-key", &key])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    let assertion = prj.root().join("passkey-assertion.json");
-    std::fs::write(&assertion, passkey_assertion(&passkey, digest).to_string()).unwrap();
-
-    // An approval of another digest is rejected.
-    let wrong = passkey_assertion(&passkey, B256::repeat_byte(1)).to_string();
-    cmd.cast_fuse()
-        .args(["wallet", "assemble", unsigned, owner_signature.trim(), &wrong])
-        .args(["--from", &account, "--rpc-url", &rpc])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Error: signature 2 does not verify against the owner digest [..]; owners sign it with `cast wallet sign --no-hash [..]`
+        let owner_signature = cmd
+            .cast_fuse()
+            .args(["wallet", "sign", "--no-hash", &digest.to_string(), "--private-key", &key])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let approval = if p256 {
+            // A default keystore from the environment does not get in the way of the raw key.
+            cmd.cast_fuse()
+                .args(["wallet", "sign", "--no-hash", "--p256", &digest.to_string()])
+                .args(["--private-key", &hex::encode_prefixed(passkey.to_bytes())]);
+            cmd.env("ETH_KEYSTORE_ACCOUNT", "dev");
+            cmd.assert_success().get_output().stdout_lossy().trim().to_string()
+        } else {
+            // An approval of another digest is rejected.
+            let wrong = passkey_assertion(&passkey, B256::repeat_byte(1)).to_string();
+            cmd.cast_fuse()
+                .args(["wallet", "assemble", unsigned, owner_signature.trim(), &wrong])
+                .args(["--from", &account, "--rpc-url", &rpc])
+                .assert_failure()
+                .stderr_eq(str![[r#"
+Error: signature 2 does not verify against the owner digest [..]; owners sign it with `cast wallet sign --no-hash [..]`, adding `--p256` for a raw P-256 owner
 
 "#]]);
+            let assertion = prj.root().join("passkey-assertion.json");
+            std::fs::write(&assertion, passkey_assertion(&passkey, digest).to_string()).unwrap();
+            assertion.to_string_lossy().into_owned()
+        };
 
-    let raw = cmd
-        .cast_fuse()
-        .args(["wallet", "assemble", unsigned, owner_signature.trim()])
-        .arg(&assertion)
-        .args(["--from", &account, "--rpc-url", &rpc])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(raw.trim().starts_with("0x76"), "{raw}");
-    cmd.cast_fuse().args(["publish", raw.trim(), "--rpc-url", &rpc]).assert_success();
+        let raw = cmd
+            .cast_fuse()
+            .args(["wallet", "assemble", unsigned, owner_signature.trim(), &approval])
+            .args(["--from", &account, "--rpc-url", &rpc])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert!(raw.trim().starts_with("0x76"), "{raw}");
+        cmd.cast_fuse().args(["publish", raw.trim(), "--rpc-url", &rpc]).assert_success();
 
-    let block = provider.get_block_number().await.unwrap();
-    let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
-    assert_eq!(receipts.last().unwrap().from(), Address::from_str(&account).unwrap());
-    // Without the owners' key types, the estimate covers two maximum-size WebAuthn approvals,
-    // which one secp256k1 approval and one passkey assertion stay below.
-    let (gas_limit, gas_used) = last_tx_gas(&provider).await;
-    assert!(gas_used < gas_limit, "{gas_used} >= {gas_limit}");
+        let block = provider.get_block_number().await.unwrap();
+        let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        assert_eq!(receipts.last().unwrap().from(), Address::from_str(&account).unwrap());
+        // Without the owners' key types, the estimate covers two maximum-size WebAuthn
+        // approvals, which one secp256k1 approval and one passkey or P-256 approval stay below.
+        let (gas_limit, gas_used) = last_tx_gas(&provider).await;
+        assert!(gas_used < gas_limit, "{gas_used} >= {gas_limit}");
+    }
+
+    // `--p256` needs `--no-hash` and a raw P-256 key, not another signer.
+    let hash = B256::ZERO.to_string();
+    let p256_errors = [
+        (
+            vec!["--p256", hash.as_str(), "--private-key", key.as_str()],
+            str![[r#"
+error: the following required arguments were not provided:
+  --no-hash
+
+Usage: cast wallet sign --no-hash --p256 [..]<MESSAGE>
+
+For more information, try '--help'.
+
+"#]],
+        ),
+        (
+            vec!["--no-hash", "--p256", hash.as_str(), "--ledger"],
+            str![[r#"
+error: the argument '--p256' cannot be used with '--ledger'
+
+Usage: cast wallet sign --no-hash --p256 [..]<MESSAGE>
+
+For more information, try '--help'.
+
+"#]],
+        ),
+        (
+            vec!["--no-hash", "--p256", hash.as_str()],
+            str![[r#"
+Error: --p256 signs with a raw P-256 private key; pass it with --private-key or --interactive
+
+"#]],
+        ),
+        (
+            vec!["--no-hash", "--p256", hash.as_str(), "--private-key", "0x1234"],
+            str![[r#"
+Error: invalid P-256 private key: expected a 32-byte hex scalar
+
+"#]],
+        ),
+    ];
+    for (args, stderr) in p256_errors {
+        cmd.cast_fuse().args(["wallet", "sign"]).args(args).assert_failure().stderr_eq(stderr);
+    }
 }
 
 /// `owners remove` and `owners threshold` send `updateConfig` signed by an owner that reaches the
@@ -443,7 +500,7 @@ async fn tempo_t14_wallet_owners_remove_and_threshold(cmd: _) {
         .stderr_eq(str![[r#"
 Error: the wallet 0x77952Ce83Ca3cad9F7AdcFabeDA85Bd2F1f52008 has weight 1 in 0xC114fe44bdC44dDE8b76b033D0C49ab350a80B20, which requires 3. Collect the owners' approvals instead:
   cast mktx 0xAACC000000000000000000000000000000000000 [..] --from 0xC114fe44bdC44dDE8b76b033D0C49ab350a80B20 --raw-unsigned --tempo.digest
-then `cast wallet sign --no-hash <DIGEST>` on each owner's machine, `cast wallet assemble`, and `cast publish`
+then `cast wallet sign --no-hash <DIGEST>` (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet assemble`, and `cast publish`
 
 "#]]);
 }

@@ -28,6 +28,7 @@ use base64::{
 };
 use eyre::{Context, Result};
 use foundry_wallets::WalletSigner;
+use p256::ecdsa::signature::hazmat::PrehashSigner;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -57,7 +58,7 @@ use tempo_primitives::{
         ConfigurableAccountConfig, ConfigurableAccountOwner, ConfigurableAccountSignature,
         KeychainSignature, MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature,
         TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction, configurable_account_digest,
-        tt_signature::WebAuthnSignature,
+        tt_signature::{P256SignatureWithPreHash, WebAuthnSignature},
     },
 };
 
@@ -478,7 +479,7 @@ pub fn combine_approvals(
         let owner = approval.recover_signer(&digest).map_err(|_| {
             eyre::eyre!(
                 "signature {} does not verify against the owner digest {digest}; owners sign it \
-                 with `cast wallet sign --no-hash {digest}`",
+                 with `cast wallet sign --no-hash {digest}`, adding `--p256` for a raw P-256 owner",
                 index + 1
             )
         })?;
@@ -602,6 +603,50 @@ fn parse_webauthn_assertion(json: &Value) -> Result<PrimitiveSignature> {
         pub_key_x: B256::from_slice(&point[..32]),
         pub_key_y: B256::from_slice(&point[32..]),
         webauthn_data: Bytes::from(webauthn_data),
+    }))
+}
+
+/// Parses a hex P-256 private key.
+pub fn parse_p256_key(private_key: &str) -> Result<p256::ecdsa::SigningKey> {
+    hex::decode(private_key.trim())
+        .ok()
+        .filter(|key| key.len() == 32)
+        .and_then(|key| p256::ecdsa::SigningKey::from_slice(&key).ok())
+        .ok_or_else(|| eyre::eyre!("invalid P-256 private key: expected a 32-byte hex scalar"))
+}
+
+/// Signs the prehash `message` with the P-256 `key` and returns a low-s `(r, s)`, which Tempo's
+/// verifier requires and about half of raw ECDSA signatures are not.
+pub fn sign_p256_low_s(
+    key: &p256::ecdsa::SigningKey,
+    message: &[u8],
+) -> Result<(B256, B256), p256::ecdsa::Error> {
+    let signature: p256::ecdsa::Signature = key.sign_prehash(message)?;
+    let signature = signature.normalize_s().unwrap_or(signature);
+    let (r, s) = signature.split_bytes();
+    Ok((B256::from_slice(&r), B256::from_slice(&s)))
+}
+
+/// Returns the affine coordinates of the public key of the P-256 `key`.
+pub fn p256_public_key(key: &p256::ecdsa::SigningKey) -> (B256, B256) {
+    let point = key.verifying_key().to_encoded_point(false);
+    (B256::from_slice(point.x().unwrap()), B256::from_slice(point.y().unwrap()))
+}
+
+/// Signs `digest` with the P-256 `key` as the `0x01` approval of a raw P-256 owner. The signature
+/// covers `digest` itself, without the SHA-256 pre-hash of WebCrypto keys.
+pub fn sign_p256(
+    key: &p256::ecdsa::SigningKey,
+    digest: &B256,
+) -> Result<PrimitiveSignature, p256::ecdsa::Error> {
+    let (r, s) = sign_p256_low_s(key, digest.as_slice())?;
+    let (pub_key_x, pub_key_y) = p256_public_key(key);
+    Ok(PrimitiveSignature::P256(P256SignatureWithPreHash {
+        r,
+        s,
+        pub_key_x,
+        pub_key_y,
+        pre_hash: false,
     }))
 }
 
@@ -989,7 +1034,7 @@ pub fn linked_account(keystore: &Path) -> Result<Option<(Address, Address)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{address, b256, keccak256};
     use alloy_provider::{ProviderBuilder as AlloyProviderBuilder, mock::Asserter};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
@@ -1080,6 +1125,21 @@ mod tests {
             panic!("expected a WebAuthn signature");
         };
         assert_eq!((signature.r, signature.s), (r, s));
+    }
+
+    /// P-256 approvals cover the digest itself and stay low-s, which Tempo's verifier requires
+    /// and about half of raw ECDSA signatures are not.
+    #[test]
+    fn p256_approvals_recover_the_owner() {
+        let key = p256::ecdsa::SigningKey::from_slice(&[0x22; 32]).unwrap();
+        for byte in 0..16 {
+            let digest = keccak256([byte]);
+            let signature = sign_p256(&key, &digest).unwrap();
+            assert!(matches!(&signature, PrimitiveSignature::P256(p256) if !p256.pre_hash));
+            assert_eq!(signature.recover_signer(&digest).unwrap(), PASSKEY_OWNER);
+        }
+        assert!(parse_p256_key("0x1234").is_err());
+        assert!(parse_p256_key(&format!("0x{}", "22".repeat(32))).is_ok());
     }
 
     /// The worst-case quorum is the largest one the node accepts: in address order it reaches the

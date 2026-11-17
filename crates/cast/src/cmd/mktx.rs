@@ -338,7 +338,10 @@ impl MakeTxArgs {
                 }));
             }
             sh_status!("Owner digest: {digest}")?;
-            sh_status!("Each owner signs it with `cast wallet sign --no-hash {digest}`")?;
+            sh_status!(
+                "Each owner signs it with `cast wallet sign --no-hash {digest}`, adding `--p256` \
+                 for a raw P-256 owner"
+            )?;
             sh_println!("{raw}\t{digest}")?;
             return Ok(());
         }
