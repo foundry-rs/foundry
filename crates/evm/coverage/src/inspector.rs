@@ -4,13 +4,16 @@ use evm2::{
     EvmTypesHost, Inspector, InspectorConfig, OpcodeSet,
     interpreter::{Interpreter, Message, MessageResult},
 };
-use foundry_evm_core::{edgecov::COVERAGE, utils::opcodes};
+use foundry_evm_core::{
+    edgecov::{COVERAGE, coverage_counter},
+    utils::opcodes,
+};
 use std::ptr::NonNull;
 
 /// Inspector implementation for collecting coverage information.
 ///
 /// By default, it counts the hits of every program counter. With [`Self::counters`], it counts the
-/// hits of the counters of compiler-instrumented `PUSHn <counter>; COVERAGE` probes instead, keyed
+/// hits of the counters of compiler-instrumented `COVERAGE; PUSHn <counter>` probes instead, keyed
 /// by counter rather than program counter.
 #[derive(Clone, Debug)]
 pub struct LineCoverageCollector {
@@ -62,10 +65,9 @@ impl<T: EvmTypesHost> Inspector<T> for LineCoverageCollector {
 
     fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         if self.counters {
-            // The probe pops its counter, so read it before the instruction runs.
             if interp.opcode() == COVERAGE
                 && let Some(counter) =
-                    interp.stack().peek(0).and_then(|counter| u32::try_from(counter).ok())
+                    coverage_counter(interp.original_bytecode_slice(), interp.pc())
             {
                 self.get_or_insert_map(interp).record_counter(counter);
             }

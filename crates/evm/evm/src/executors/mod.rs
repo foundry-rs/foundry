@@ -2119,6 +2119,7 @@ mod tests {
         evm::TempoEvmNetwork,
         opts::EvmOpts,
     };
+    use foundry_evm_coverage::LineCoverageCollector;
     use foundry_evm_traces::{
         InternalTraceMode, StackSnapshotType, TracingInspector, TracingInspectorConfig,
     };
@@ -2350,6 +2351,27 @@ mod tests {
         let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(result.exit_reason, Some(InstrStop::Stop));
         assert!(!matches!(result.edge_coverage, Some(EdgeCoverage::Instrumented(_))));
+    }
+
+    /// Runtime code that hits coverage counter 5, then stops.
+    const COVERAGE_CODE: &[u8] = &[
+        0xc2, 0x61, 0x00, 0x05, // COVERAGE; PUSH2 5
+        0x00, // STOP
+    ];
+
+    #[test]
+    fn coverage_probe_costs_no_gas() {
+        // No gas is left after the intrinsic cost, so a probe that ran its push would run out.
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(21_000));
+        executor.inspector_mut().enable_edgecov_opcode(true);
+        executor.inspector_mut().collect_line_coverage(Some(LineCoverageCollector::counters()));
+        let target = Address::repeat_byte(0x41);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(COVERAGE_CODE))).unwrap();
+
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        let hits = result.line_coverage.unwrap();
+        assert_eq!(hits.values().flat_map(|map| map.iter()).collect::<Vec<_>>(), [(5, 1)]);
     }
 
     /// Runtime code with each comparison opcode once, then a loop whose `EQ` site runs 11 times.

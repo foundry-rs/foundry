@@ -3,17 +3,20 @@
 //!
 //! Coverage builds of a compiler emit `PUSHn <id>; EDGECOV` on every control-flow edge and
 //! `PUSHn <site << 8 | cmp opcode>; CMPLOG` right before every `EQ`, `LT`, `GT`, `SLT` and `SGT`.
-//! Source coverage builds, such as Solar's `-Zinstrument-coverage`, emit `PUSHn <counter>;
-//! COVERAGE` where a function, statement, or branch starts. The opcodes are otherwise undefined.
+//! Source coverage builds, such as Solar's `-Zinstrument-coverage`, emit `COVERAGE; PUSHn
+//! <counter>` where a function, statement, or branch starts. The opcodes are otherwise undefined.
 //! Foundry's EVMs carry them in their opcode tables, but they fail as undefined opcodes unless an
 //! [`EdgeCovGuard`] is alive on the thread.
 //!
-//! While it is, `EDGECOV` pops the edge ID and bumps its AFL NeverZero hit counter, `CMPLOG`
-//! pops its tag and records the two words below it, the operands of the comparison that follows,
-//! and `COVERAGE` pops its counter, which the line coverage inspector reads before it executes.
-//! All refund the 3 gas of the `PUSH` the compiler emits before them, so a probe costs no gas
+//! While it is, `EDGECOV` pops the edge ID and bumps its AFL NeverZero hit counter, and `CMPLOG`
+//! pops its tag and records the two words below it, the operands of the comparison that follows.
+//! Both refund the 3 gas of the `PUSH` the compiler emits before them, so a probe costs no gas
 //! once it ran. Hits and operands are kept per thread in dense tables indexed by ID, and taken
 //! once the call ends.
+//!
+//! `COVERAGE` skips the push after it, whose counter the line coverage inspector reads with
+//! [`coverage_counter`]. The push never runs, so a probe costs no gas or stack at any point, and
+//! JUMPDEST analysis still sees a whole push.
 
 use alloy_primitives::{Address, U256};
 use evm2::{
@@ -266,17 +269,34 @@ fn cmplog(cx: _) -> Result {
     })
 }
 
-/// The `COVERAGE` instruction: pops the counter and refunds the `PUSH` gas.
-#[instruction(dynamic_gas, no_stack_preamble)]
+/// The `COVERAGE` instruction: skips the `PUSHn <counter>` after it.
+#[instruction(no_stack_preamble)]
 fn coverage(cx: _) -> Result {
     with_state(|state| {
         if state.depth == 0 {
             return Err(InstrStop::OpcodeNotFound);
         }
-        stack.pop()?;
-        cx.gas.erase_cost(PUSH_GAS);
+        // SAFETY: Legacy bytecode is padded with 33 zero bytes, which covers the byte after the
+        // last opcode and the immediate of a push that starts in the code.
+        let push = unsafe { cx.pc.read_bytes_offset_unchecked(1, 1)[0] };
+        if !(op::PUSH1..=op::PUSH32).contains(&push) {
+            return Err(InstrStop::InvalidImmediateEncoding);
+        }
+        // The dispatch then steps over the `COVERAGE` byte.
+        unsafe { cx.pc.advance_unchecked(usize::from(push - op::PUSH0) + 1) };
         Ok(())
     })
+}
+
+/// Returns the counter of the `COVERAGE; PUSHn <counter>` probe at `pc` of `code`.
+pub fn coverage_counter(code: &[u8], pc: usize) -> Option<u32> {
+    let push = *code.get(pc + 1)?;
+    if !(op::PUSH1..=op::PUSH32).contains(&push) {
+        return None;
+    }
+    let start = pc + 2;
+    let counter = code.get(start..start + usize::from(push - op::PUSH0))?;
+    u32::try_from(U256::from_be_slice(counter)).ok()
 }
 
 /// Adds the `EDGECOV`, `CMPLOG`, and `COVERAGE` instructions to `config`.
