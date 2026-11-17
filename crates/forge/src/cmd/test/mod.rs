@@ -89,7 +89,7 @@ use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc::channel},
     time::{Duration, Instant},
 };
@@ -3747,9 +3747,6 @@ fn gas_snapshot_path(root: &Path, group: &str) -> Result<PathBuf> {
     let path = root.join(&relative);
     let mut current = root.to_path_buf();
     for component in relative.components() {
-        let Component::Normal(component) = component else {
-            bail!("invalid snapshot group name `{group}`");
-        };
         current.push(component);
         match std::fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() => {

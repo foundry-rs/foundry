@@ -3017,7 +3017,9 @@ contract {name} is DSTest {{
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testSnapshotValue() public {{
-        vm.snapshotValue("Shared", "{name}", {value});
+        vm.snapshotValue("nested/Shared", "{name}", {value});
+        vm.snapshotValue("other/Shared", "value", 2);
+        vm.snapshotValue("nested/Shared.v1", "value", 3);
     }}
 }}
 "#
@@ -3028,8 +3030,31 @@ contract {name} is DSTest {{
     prj.add_source("BetaTest.sol", &test_contract("BetaTest", 1));
     cmd.args(["test", "-j1"]).assert_success();
 
-    let snapshot_path = prj.root().join("snapshots/Shared.json");
+    let snapshot_path = prj.root().join("snapshots/nested/Shared.json");
+    assert_data_eq!(
+        fs::read_to_string(&snapshot_path).unwrap(),
+        str![[r#"{
+  "AlphaTest": "1",
+  "BetaTest": "1"
+}"#]]
+    );
+    assert_data_eq!(
+        fs::read_to_string(prj.root().join("snapshots/other/Shared.json")).unwrap(),
+        str![[r#"{
+  "value": "2"
+}"#]]
+    );
+    assert_data_eq!(
+        fs::read_to_string(prj.root().join("snapshots/nested/Shared.v1.json")).unwrap(),
+        str![[r#"{
+  "value": "3"
+}"#]]
+    );
     let previous_snapshot = fs::read(&snapshot_path).unwrap();
+
+    cmd.forge_fuse()
+        .args(["test", "-j1", "--gas-snapshot-check=true", "--gas-snapshot-emit=false"])
+        .assert_success();
 
     // With a single thread `AlphaTest` finishes first, so the changed value is only seen after
     // another suite already contributed to the same group.
@@ -3053,83 +3078,13 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]])
         .stderr_eq(str![[r#"
 
-[Shared] Failed to match snapshots:
+[nested/Shared] Failed to match snapshots:
 - [BetaTest] 1 → 2
 
 Error: Snapshots differ from previous run
 
 "#]]);
     assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
-}
-
-#[forgetest]
-fn test_gas_snapshot_nested_groups(prj: _, cmd: _) {
-    prj.insert_ds_test();
-
-    let test_contract = |value: u32| {
-        format!(
-            r#"
-import "./test.sol";
-
-interface Vm {{
-    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
-}}
-
-contract NestedSnapshotTest is DSTest {{
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
-    function testSnapshotValue() public {{
-        vm.snapshotValue("core/someContract", "value", 1);
-        vm.snapshotValue("periphery/someContract", "value", {value});
-        vm.snapshotValue("core/someContract.v1", "value", 3);
-    }}
-}}
-"#
-        )
-    };
-
-    prj.add_source("NestedSnapshotTest.sol", &test_contract(2));
-    cmd.args(["test"]).assert_success();
-
-    let core = prj.root().join("snapshots/core/someContract.json");
-    let periphery = prj.root().join("snapshots/periphery/someContract.json");
-    let dotted = prj.root().join("snapshots/core/someContract.v1.json");
-    assert_data_eq!(
-        fs::read_to_string(&core).unwrap(),
-        str![[r#"{
-  "value": "1"
-}"#]]
-    );
-    assert_data_eq!(
-        fs::read_to_string(&periphery).unwrap(),
-        str![[r#"{
-  "value": "2"
-}"#]]
-    );
-    assert_data_eq!(
-        fs::read_to_string(&dotted).unwrap(),
-        str![[r#"{
-  "value": "3"
-}"#]]
-    );
-    let previous_snapshot = fs::read(&periphery).unwrap();
-
-    cmd.forge_fuse()
-        .args(["test", "--gas-snapshot-check=true", "--gas-snapshot-emit=false"])
-        .assert_success();
-
-    prj.add_source("NestedSnapshotTest.sol", &test_contract(4));
-    cmd.forge_fuse().args(["test", "--gas-snapshot-check=true"]).assert_failure().stderr_eq(str![
-        [r#"
-
-[periphery/someContract] Failed to match snapshots:
-- [value] 2 → 4
-
-Error: Snapshots differ from previous run
-
-"#]
-    ]);
-    assert_eq!(fs::read(&periphery).unwrap(), previous_snapshot);
 }
 
 #[cfg(unix)]
