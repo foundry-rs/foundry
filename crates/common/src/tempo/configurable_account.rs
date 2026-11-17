@@ -820,11 +820,8 @@ impl ConfigurableAccountSigner {
         }
     }
 
-    /// Signs a filled request with the owners' approvals.
-    ///
-    /// As an access key of `parent`, the owners approve the keychain V2 hash
-    /// `keccak256(0x04 || tx_hash || parent)`, as Tempo and viem do, and the `0x05` signature is
-    /// wrapped in a keychain signature for `parent`.
+    /// Signs a filled request with the owners' approvals of its signature hash, as
+    /// [`Self::sign_hash`] does.
     pub async fn sign_request(&self, request: TempoTransactionRequest) -> Result<TempoTxEnvelope> {
         if let Some(from) = request.from() {
             match self.parent {
@@ -842,26 +839,37 @@ impl ConfigurableAccountSigner {
             }
         }
         let tx = request.build_aa().map_err(ca_error)?;
+        let signature = self.sign_hash(tx.signature_hash()).await?;
+        Ok(TempoTxEnvelope::AA(tx.into_signed(signature)))
+    }
+
+    /// Signs `hash`, such as a transaction or zone RPC token digest, with the owners' approvals of
+    /// `configurable_account_digest(hash, account, version)`: a `0x05` signature that recovers the
+    /// account.
+    ///
+    /// As an access key of `parent`, the owners approve the keychain V2 hash
+    /// `keccak256(0x04 || hash || parent)` instead, as Tempo and viem do, and the `0x05` signature
+    /// is wrapped in a keychain signature for `parent`.
+    pub async fn sign_hash(&self, hash: B256) -> Result<TempoSignature> {
         let inner = match self.parent {
-            Some(parent) => KeychainSignature::signing_hash(tx.signature_hash(), parent),
-            None => tx.signature_hash(),
+            Some(parent) => KeychainSignature::signing_hash(hash, parent),
+            None => hash,
         };
         let digest = configurable_account_digest(inner, self.account, self.config.version);
         let mut approvals = Vec::with_capacity(self.owners.len());
         for owner in &self.owners {
             approvals.push(owner.sign(&digest).await.wrap_err_with(|| {
-                format!("owner {} failed to approve the transaction", owner.address())
+                format!("owner {} failed to approve for {}", owner.address(), self.account)
             })?);
         }
         let signature =
             ConfigurableAccountSignature::try_new(self.account, self.config.clone(), approvals)
                 .map_err(ca_error)?;
         signature.verify_approvals(inner).map_err(ca_error)?;
-        let signature = match self.parent {
+        Ok(match self.parent {
             Some(parent) => TempoSignature::Keychain(KeychainSignature::new(parent, signature)),
             None => TempoSignature::ConfigurableAccount(signature),
-        };
-        Ok(TempoTxEnvelope::AA(tx.into_signed(signature)))
+        })
     }
 }
 
