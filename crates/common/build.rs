@@ -38,8 +38,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out_dir = PathBuf::from(env_var("OUT_DIR"));
     let profile = out_dir.components().rev().nth(3).unwrap().as_os_str().to_str().unwrap();
 
+    // Under `VERGEN_IDEMPOTENT` (or on any error), `smolgen` emits a placeholder instead of a real
+    // RFC3339 timestamp so that builds are reproducible and fresh worktrees share cache keys. Treat
+    // any value that is not a timestamp as unknown rather than failing the build.
     let build_timestamp = env_var("VERGEN_BUILD_TIMESTAMP");
-    let build_timestamp_unix = DateTime::parse_from_rfc3339(&build_timestamp)?.timestamp();
+    let (build_timestamp, build_timestamp_unix) =
+        match DateTime::parse_from_rfc3339(&build_timestamp) {
+            Ok(timestamp) => (build_timestamp, timestamp.timestamp()),
+            Err(_) => ("unknown".to_string(), 0),
+        };
 
     // The SemVer compatible version information for Foundry.
     // - The latest version from Cargo.toml.
