@@ -93,30 +93,6 @@ async fn send_owner_signed(
     Ok(receipt.gas_used)
 }
 
-/// A derived account that registers with its first transaction, and a primitive account that
-/// upgrades in place to two of three owners. Each has sent one transaction.
-async fn configured_accounts(provider: &RetryProvider) -> [TestConfigurableAccount; 2] {
-    let registered = quorum_accounts().remove(1);
-    deal(provider, registered.address).await;
-    send_owner_signed(provider, &registered, 0, CONFIGURABLE_ACCOUNT_GAS).await.unwrap();
-
-    let root = seeded_key(0x54);
-    let (a, b, c) = (seeded_key(0x55), seeded_key(0x56), seeded_key(0x57));
-    let salt = keccak256([CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, root.address().as_slice()].concat());
-    let upgraded = TestConfigurableAccount {
-        address: root.address(),
-        config: weighted_config(salt, 1, 2, &[(&a, 1), (&b, 1), (&c, 1)]),
-        keys: vec![a, b],
-    };
-    deal(provider, root.address()).await;
-    let tx = configurable_account_tx(provider, 0, vec![upgraded.upgrade_call()]).await;
-    let signature = root.sign_hash(&tx.signature_hash()).await.unwrap();
-    let receipt = send_signed_tempo_tx(provider, tx, signature.into()).await.unwrap();
-    assert!(receipt.status(), "upgradeAccount should succeed: {receipt:?}");
-
-    [registered, upgraded]
-}
-
 /// Impersonates `account` and sends its no-op at `nonce`, which must carry a placeholder `0x05`
 /// signature over the account's configuration. Without a `gas_limit`, the transaction is estimated
 /// first and must use the gas it is estimated at. Returns its gas used.
@@ -236,44 +212,57 @@ async fn test_tempo_t14_configurable_account_simulation_rejects_invalid_quorum()
 /// An impersonated configurable account, registered or upgraded, sends under a placeholder
 /// `0x05` signature instead of failing on its retired root key, and the transaction uses the
 /// gas it is estimated at and the gas its owners' signed transaction uses.
+///
+/// On a fork of that node, whose blocks hold none of the configuration events, both accounts
+/// sign with the configuration their events on the forked chain announce. The registered account
+/// sends with a gas limit and the upgraded one is estimated first, so each path looks the
+/// configuration up on the forked chain.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_tempo_t14_impersonate_configurable_account() {
-    let (_api, handle) =
-        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+async fn test_tempo_t14_impersonate_configurable_account_and_fork() {
+    let config = || NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()));
+    let (_api, handle) = spawn(config()).await;
     let provider = handle.http_provider();
 
-    for account in configured_accounts(&provider).await {
+    // A derived account registers with its first transaction.
+    let registered = quorum_accounts().remove(1);
+    deal(&provider, registered.address).await;
+    send_owner_signed(&provider, &registered, 0, CONFIGURABLE_ACCOUNT_GAS).await.unwrap();
+
+    // A primitive account upgrades in place to two of three owners.
+    let root = seeded_key(0x54);
+    let (a, b, c) = (seeded_key(0x55), seeded_key(0x56), seeded_key(0x57));
+    let salt = keccak256([CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, root.address().as_slice()].concat());
+    let upgraded = TestConfigurableAccount {
+        address: root.address(),
+        config: weighted_config(salt, 1, 2, &[(&a, 1), (&b, 1), (&c, 1)]),
+        keys: vec![a, b],
+    };
+    deal(&provider, root.address()).await;
+    let tx = configurable_account_tx(&provider, 0, vec![upgraded.upgrade_call()]).await;
+    let signature = root.sign_hash(&tx.signature_hash()).await.unwrap();
+    let receipt = send_signed_tempo_tx(&provider, tx, signature.into()).await.unwrap();
+    assert!(receipt.status(), "upgradeAccount should succeed: {receipt:?}");
+
+    for account in [&registered, &upgraded] {
         let address = account.address;
         let mut simulated = request(address, 1);
-        simulated["configurableAccountSimulation"] = witness(&account, Some("secp256k1"));
+        simulated["configurableAccountSimulation"] = witness(account, Some("secp256k1"));
         let witnessed = estimate(&provider, simulated).await.unwrap();
-        let signed = send_owner_signed(&provider, &account, 1, witnessed).await.unwrap();
+        let signed = send_owner_signed(&provider, account, 1, witnessed).await.unwrap();
 
-        assert_eq!(send_impersonated(&provider, &account, 2, None).await, signed);
+        assert_eq!(send_impersonated(&provider, account, 2, None).await, signed);
         assert_eq!(provider.get_transaction_count(address).await.unwrap(), 3);
     }
-}
 
-/// On a fork, an impersonated configurable account that was registered or upgraded on the remote
-/// chain sends under the placeholder quorum of the configuration its remote events announce. The
-/// registered account sends with a gas limit and the upgraded one is estimated first, so each
-/// path looks the configuration up on the remote chain.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_tempo_t14_fork_impersonate_configurable_account() {
-    let config = || NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()));
-    let (_origin_api, origin) = spawn(config()).await;
-    let accounts = configured_accounts(&origin.http_provider()).await;
-
-    let (_api, handle) = spawn(
-        config().with_no_storage_caching(true).with_eth_rpc_url(Some(origin.http_endpoint())),
+    let (_fork_api, fork) = spawn(
+        config().with_no_storage_caching(true).with_eth_rpc_url(Some(handle.http_endpoint())),
     )
     .await;
-    let provider = handle.http_provider();
-    let [registered, upgraded] = accounts;
-    send_impersonated(&provider, &registered, 1, Some(CONFIGURABLE_ACCOUNT_GAS)).await;
-    send_impersonated(&provider, &upgraded, 1, None).await;
+    let provider = fork.http_provider();
+    send_impersonated(&provider, &registered, 3, Some(CONFIGURABLE_ACCOUNT_GAS)).await;
+    send_impersonated(&provider, &upgraded, 3, None).await;
     for account in [registered, upgraded] {
-        assert_eq!(provider.get_transaction_count(account.address).await.unwrap(), 2);
+        assert_eq!(provider.get_transaction_count(account.address).await.unwrap(), 4);
     }
 }
 

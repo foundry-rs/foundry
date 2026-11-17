@@ -4224,6 +4224,7 @@ impl<N: Network> Backend<N> {
             return Ok(fork.trace_call(request, trace_types, resolved).await?);
         }
 
+        self.prefetch_impersonated_configurable_accounts([request.from]).await;
         self.with_database_at_and_context(Some(block_request), |state, block, mut monad_context| {
             let mut inspector =
                 TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
@@ -4351,6 +4352,8 @@ impl<N: Network> Backend<N> {
     where
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
+        let senders = calls.iter().map(|(request, _)| request.from).collect::<Vec<_>>();
+        self.prefetch_impersonated_configurable_accounts(senders).await;
         self.with_database_at_and_context(block_request, |state, block_env, mut monad_context| {
             let mut cache_db = CacheDB::new(&*state);
             let mut results = Vec::with_capacity(calls.len());
@@ -5851,6 +5854,31 @@ where
         Ok(tx.into_impersonated())
     }
 
+    /// Looks up on the forked chain the configurations of the impersonated configurable accounts
+    /// among `senders`, ahead of simulating their requests, so that the simulation does not scan
+    /// the forked chain while it holds the database.
+    ///
+    /// Failures are left for the simulation to report, since a request with its own witness or
+    /// key does not need the configuration.
+    pub(crate) async fn prefetch_impersonated_configurable_accounts(
+        &self,
+        senders: impl IntoIterator<Item = Option<Address>>,
+    ) {
+        let Some(fork) = self.get_fork() else { return };
+        for sender in senders.into_iter().flatten() {
+            if !self.cheats.is_impersonated(sender) {
+                continue;
+            }
+            let commitment = self.configurable_account_commitment(&**self.db.read().await, sender);
+            if let Ok(Some(commitment)) = commitment
+                && self.configurable_account_config(sender, commitment).is_none()
+                && let Err(error) = fork.configurable_account_config(sender, commitment).await
+            {
+                debug!(target: "backend", %sender, %error, "failed to prefetch configurable account configuration");
+            }
+        }
+    }
+
     /// Returns the placeholder owner quorum that the impersonated configurable account `account`
     /// signs with in `state`, or `None` when it has no configuration commitment.
     ///
@@ -5868,7 +5896,9 @@ where
             Some(config) => config,
             None => {
                 let fork = self.configuration_fork(account, commitment)?;
-                // Fork state reads already block here, so the fork lookup does too.
+                // Callers prefetch the configuration before they take the database, so this only
+                // scans the forked chain when that failed or the state's commitment differs. Fork
+                // state reads already block here.
                 tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current()
                         .block_on(forked_configurable_account_config(&fork, account, commitment))
@@ -7152,6 +7182,7 @@ where
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         overrides: EvmOverrides,
     ) -> Result<CallOutcome, BlockchainError> {
+        self.prefetch_impersonated_configurable_accounts([request.from]).await;
         self.with_database_at_and_context(block_request, |state, mut block, monad_context| {
             let block_number = block.number;
             let outcome = {
@@ -7183,6 +7214,7 @@ where
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
+        self.prefetch_impersonated_configurable_accounts([request.from]).await;
         let GethDebugTracingCallOptions {
             tracing_options,
             block_overrides,
@@ -9365,6 +9397,12 @@ impl Backend<FoundryNetwork> {
             )));
         }
 
+        let senders = bundles
+            .iter()
+            .flat_map(|bundle| &bundle.transactions)
+            .map(|request| request.from)
+            .collect::<Vec<_>>();
+        self.prefetch_impersonated_configurable_accounts(senders).await;
         self.with_database_at_and_context(
             block_request,
             |state, mut block_env, mut monad_context| {
@@ -9451,6 +9489,13 @@ impl Backend<FoundryNetwork> {
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         block_interval: u64,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
+        let senders = request
+            .block_state_calls
+            .iter()
+            .flat_map(|block| &block.calls)
+            .map(|call| call.from)
+            .collect::<Vec<_>>();
+        self.prefetch_impersonated_configurable_accounts(senders).await;
         let simulate_at = |state: Box<dyn MaybeFullDatabase + '_>,
                            base_block_env: BlockEnv,
                            base_number,
