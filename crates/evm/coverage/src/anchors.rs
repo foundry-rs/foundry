@@ -1,7 +1,7 @@
 use super::{
     CoverageItemKind, ExecutionAnchor, ExecutionAnchorKind, ItemAnchor, ItemAnchors, SourceLocation,
 };
-use crate::analysis::{BranchKind, EmptySpecialFunctionKind, SourceAnalysis, TernaryArms};
+use crate::analysis::{BranchKind, EmptySpecialFunctionKind, IfArms, SourceAnalysis, TernaryArms};
 use alloy_primitives::map::rustc_hash::FxHashSet;
 use evm2::interpreter::op as opcode;
 use eyre::ensure;
@@ -59,8 +59,8 @@ pub fn find_anchors(
     let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id, swapped| {
         let jump = Some(fallthrough.instruction - 1);
         match (path_id, swapped) {
-            (0, false) | (1, true) => (fallthrough, None),
-            (1, false) | (0, true) => (taken, jump),
+            (0, false) | (1, true) => (fallthrough, None, Vec::new()),
+            (1, false) | (0, true) => (taken, jump, Vec::new()),
             _ => panic!("too many path IDs for branch"),
         }
     };
@@ -75,15 +75,32 @@ pub fn find_anchors(
                 return None;
             }
             let anchor_loc = item.anchor_loc.as_ref().unwrap_or(&item.loc);
+            if let CoverageItemKind::Branch { branch_id, path_id, .. } = item.kind
+                && let Some(BranchKind::If(arms)) =
+                    analysis.branch_kind(item.loc.source_id as u32, branch_id)
+            {
+                let arm = if path_id == 0 { Some(&arms.then_arm) } else { arms.else_arm.as_ref() };
+                // The first instruction of an arm with code anchors it. Without code, only the
+                // jump's edge can count it, and when that is ambiguous the arm stays unanchored
+                // instead of taking an instruction that runs with the jump, such as its target.
+                if !arm.is_some_and(|arm| index.has_own_code(arm)) {
+                    let edge = index.if_edge(item_id, path_id, &item.loc, arms);
+                    if edge.is_some() || arm.is_some() {
+                        return edge;
+                    }
+                }
+            }
             match item.kind {
                 CoverageItemKind::Branch { path_id: 1, is_first_opcode: true, .. }
                     if item.anchor_loc.is_some() =>
                 {
-                    index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)).or_else(|_| {
-                        index
-                            .branch(item_id, &item.loc, false)
-                            .map(|anchors| select_branch(anchors, 1, false))
-                    })
+                    index.simple(item_id, anchor_loc).map(|anchor| (anchor, None, vec![])).or_else(
+                        |_| {
+                            index
+                                .branch(item_id, &item.loc, false)
+                                .map(|anchors| select_branch(anchors, 1, false))
+                        },
+                    )
                 }
                 CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
                     let kind = analysis.branch_kind(item.loc.source_id as u32, branch_id);
@@ -99,22 +116,25 @@ pub fn find_anchors(
                                 Some(BranchKind::Ternary(arms)) => {
                                     index.true_arm_falls_through(&anchors, arms)
                                 }
-                                None => false,
+                                None | Some(BranchKind::If(_)) => false,
                             };
                             select_branch(anchors, path_id, swapped)
                         })
                 }
                 CoverageItemKind::Function { .. } => {
-                    index.function(item_id, anchor_loc).map(|anchor| (anchor, None))
+                    index.function(item_id, anchor_loc).map(|anchor| (anchor, None, vec![]))
                 }
-                _ => index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)),
+                _ => index.simple(item_id, anchor_loc).map(|anchor| (anchor, None, vec![])),
             }
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
             .ok()
         })
-        .for_each(|(anchor, jump)| {
+        .for_each(|(anchor, jump, entries)| {
             if let Some(jump) = jump {
                 anchors.jumps.insert(anchors.anchors.len(), jump);
+            }
+            if !entries.is_empty() {
+                anchors.entries.insert(anchors.anchors.len(), entries);
             }
             anchors.anchors.push(anchor);
         });
@@ -143,8 +163,8 @@ pub fn find_execution_anchors(
         .collect()
 }
 
-/// The most static jumps `AnchorIndex::fails` follows.
-const MAX_FAILURE_HOPS: usize = 8;
+/// The most static jumps `AnchorIndex::trace` follows.
+const MAX_TRACE_HOPS: usize = 8;
 
 /// Source map and branch lookups precomputed once per bytecode.
 struct AnchorIndex<'a> {
@@ -167,6 +187,9 @@ struct AnchorIndex<'a> {
     fallen_into: Vec<(usize, usize)>,
     /// `(target pc, push instruction)` for every push that feeds a `JUMP` or `JUMPI`, sorted.
     jumps: Vec<(u32, usize)>,
+    /// The immediate of every push of at most four bytes, sorted. A `JUMPDEST` whose address is
+    /// not in it cannot be entered by a static or dynamic jump.
+    pushed: Vec<u32>,
 }
 
 impl<'a> AnchorIndex<'a> {
@@ -181,6 +204,7 @@ impl<'a> AnchorIndex<'a> {
         let mut branches = Vec::new();
         let mut reverting_runs = Vec::new();
         let mut jumps = Vec::new();
+        let mut pushed = Vec::new();
         // `(pc, instruction)` of every `JUMPDEST`.
         let mut jumpdests = Vec::new();
         // Instructions that end a straight-line run, and `(JUMPI, static target pc)` pairs.
@@ -240,13 +264,17 @@ impl<'a> AnchorIndex<'a> {
                 if jump == Some(opcode::JUMPI) {
                     branches.push((ic, next_pc, inst.immediate));
                 }
-                if matches!(jump, Some(opcode::JUMP | opcode::JUMPI)) && inst.immediate.len() <= 4 {
+                if inst.immediate.len() <= 4 {
                     let target = inst.immediate.iter().fold(0, |acc, &byte| acc << 8 | byte as u32);
-                    jumps.push((target, ic));
+                    pushed.push(target);
+                    if matches!(jump, Some(opcode::JUMP | opcode::JUMPI)) {
+                        jumps.push((target, ic));
+                    }
                 }
             }
         }
         jumps.sort_unstable();
+        pushed.sort_unstable();
         let jumpdest_at = |pc: Option<usize>| {
             pc.and_then(|pc| jumpdests.binary_search_by_key(&pc, |&(pc, _)| pc).ok())
                 .map(|i| jumpdests[i].1)
@@ -285,11 +313,15 @@ impl<'a> AnchorIndex<'a> {
             reverting_runs,
             fallen_into,
             jumps,
+            pushed,
         }
     }
 
-    /// Finds the first opcode in the source range, preferring code outside a failure stub.
-    fn simple(&self, item_id: u32, loc: &SourceLocation) -> eyre::Result<ItemAnchor> {
+    /// Returns the instructions whose source elements start in the byte range of `loc`.
+    fn instructions_starting_in(
+        &self,
+        loc: &SourceLocation,
+    ) -> impl Iterator<Item = usize> + Clone {
         let source = loc.source_id as i32;
         let start = self
             .entries
@@ -297,9 +329,13 @@ impl<'a> AnchorIndex<'a> {
         let end = self.entries.partition_point(|&(id, offset, _)| {
             (id, offset) <= (source, loc.bytes.start + loc.len())
         });
-        let candidates = self.entries[start..end]
-            .iter()
-            .map(|&(_, _, instruction)| instruction)
+        self.entries[start..end].iter().map(|&(_, _, instruction)| instruction)
+    }
+
+    /// Finds the first opcode in the source range, preferring code outside a failure stub.
+    fn simple(&self, item_id: u32, loc: &SourceLocation) -> eyre::Result<ItemAnchor> {
+        let candidates = self
+            .instructions_starting_in(loc)
             .filter(|&instruction| is_in_source_range(&self.source_map[instruction], loc));
         // Cold validation stubs can precede the statement's main code in the bytecode.
         // A revert statement itself may have only failure-path candidates, so retain the fallback.
@@ -337,39 +373,20 @@ impl<'a> AnchorIndex<'a> {
         while self.pcs.get(ic).is_some_and(|&p| self.bytecode[p as usize] == opcode::JUMPDEST) {
             ic += 1;
         }
+        self.maps_inside(ic, loc)
+    }
+
+    /// Returns whether the instruction `ic` is mapped inside `loc`.
+    fn maps_inside(&self, ic: usize, loc: &SourceLocation) -> bool {
         self.source_map.get(ic).is_some_and(|element| is_within_source_span(element, loc))
     }
 
     /// Returns whether the code at `pc` reverts without another conditional branch or other halt.
     ///
     /// Follows static `PUSH target; JUMP` hops, which compilers use to share revert blocks.
-    fn fails(&self, mut pc: u32) -> bool {
-        // Bounds a cycle of static jumps.
-        'hops: for _ in 0..MAX_FAILURE_HOPS {
-            let code = self.bytecode.get(pc as usize..).unwrap_or_default();
-            let mut push = None;
-            for inst in InstIter::new(code) {
-                match inst.opcode.get() {
-                    opcode::REVERT | opcode::INVALID => return true,
-                    opcode::JUMP => {
-                        let Some(target) = push else { return false };
-                        pc = target;
-                        continue 'hops;
-                    }
-                    opcode::JUMPI | opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT => {
-                        return false;
-                    }
-                    op => {
-                        push = (opcode::PUSH1..=opcode::PUSH32)
-                            .contains(&op)
-                            .then(|| jump_destination(inst.immediate).ok())
-                            .flatten();
-                    }
-                }
-            }
-            return false;
-        }
-        false
+    fn fails(&self, pc: u32) -> bool {
+        let last = self.trace(pc).last().map(|&ic| self.bytecode[self.pcs[ic] as usize]);
+        matches!(last, Some(opcode::REVERT | opcode::INVALID))
     }
 
     /// Returns whether the true arm of a ternary is the fallthrough of its jump.
@@ -478,6 +495,38 @@ impl<'a> AnchorIndex<'a> {
             .any(|&(_, push)| !is_within_source_span(&self.source_map[push], loc))
     }
 
+    /// Returns the jumps that enter the fallthrough of a branch from elsewhere, as `(pc,
+    /// conditional)`, such as the back edge of a loop whose head the branch falls into, or a
+    /// `continue` that jumps to the code after the `if`. Their executions are not the
+    /// fallthrough's, but its hits count them. Fails when the entries cannot be told apart: the
+    /// branch's own jump targets the fallthrough, or a conditional jump's own fallthrough is a
+    /// `JUMPDEST` that others can enter. The branch then keeps its anchors without a discount.
+    fn fallthrough_entries(
+        &self,
+        (fallthrough, _): &(ItemAnchor, ItemAnchor),
+    ) -> eyre::Result<Vec<(u32, bool)>> {
+        let pc = fallthrough.instruction;
+        if self.bytecode.get(pc as usize) != Some(&opcode::JUMPDEST) {
+            return Ok(Vec::new());
+        }
+        let start = self.jumps.partition_point(|&(target, _)| target < pc);
+        self.jumps[start..]
+            .iter()
+            .take_while(|&&(target, _)| target == pc)
+            .map(|&(_, push)| {
+                let jump = self.pcs.get(push + 1).copied().unwrap_or_default();
+                let conditional = self.bytecode[jump as usize] == opcode::JUMPI;
+                ensure!(
+                    jump != pc - 1
+                        && (!conditional
+                            || self.bytecode.get(jump as usize + 1) != Some(&opcode::JUMPDEST)),
+                    "fallthrough entries cannot be told apart"
+                );
+                Ok((jump, conditional))
+            })
+            .collect()
+    }
+
     /// Finds the fallthrough and taken anchors of a branch.
     ///
     /// `exact` matches only the jump mapped to exactly `loc`, so ternaries skip nested decisions.
@@ -508,6 +557,163 @@ impl<'a> AnchorIndex<'a> {
             }
         }
         anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
+    }
+
+    /// Finds the anchor that counts the entries into an arm of an `if` that has no code of its
+    /// own, from the edge of the conditional jump that enters it, as `gcov` counts arcs.
+    ///
+    /// The `if`'s jump is the only one mapped inside the statement but outside its arms, which
+    /// hold the jumps of nested branches. Fails when the side that enters the arm is ambiguous
+    /// (see [`Self::then_is_taken`]), or when the fallthrough can be entered other than by falling
+    /// through, so that its hits do not split the jump's.
+    fn if_edge(
+        &self,
+        item_id: u32,
+        path_id: u32,
+        loc: &SourceLocation,
+        arms: &IfArms,
+    ) -> Option<(ItemAnchor, Option<u32>, Vec<(u32, bool)>)> {
+        let mut jumps = self.branches.iter().filter(|&&(ic, ..)| {
+            self.source_map.get(ic + 1).is_some_and(|jump| {
+                is_within_source_span(jump, loc)
+                    && !is_within_source_span(jump, &arms.then_arm)
+                    && arms.else_arm.as_ref().is_none_or(|arm| !is_within_source_span(jump, arm))
+            })
+        });
+        let &(_, jump, immediate) = jumps.next()?;
+        if jumps.next().is_some() {
+            return None;
+        }
+        let anchors = ItemAnchor::from_branch(item_id, jump, immediate).ok()?;
+        let (fallthrough, taken) = &anchors;
+        let pc = fallthrough.instruction;
+        let entered = |pushes: &[u32]| {
+            pushes.partition_point(|&target| target <= pc)
+                - pushes.partition_point(|&target| target < pc)
+        };
+        let static_entries = self.jumps.partition_point(|&(target, _)| target <= pc)
+            - self.jumps.partition_point(|&(target, _)| target < pc);
+        if self.bytecode.get(pc as usize).is_none() || entered(&self.pushed) != static_entries {
+            return None;
+        }
+        let entries = self.fallthrough_entries(&anchors).ok()?;
+        let arm_is_taken = self.then_is_taken(loc, pc, taken.instruction, arms)? ^ (path_id == 1);
+        Some(if arm_is_taken {
+            (taken.clone(), Some(jump as u32), entries)
+        } else {
+            (fallthrough.clone(), None, entries)
+        })
+    }
+
+    /// Returns whether the taken side of an `if`'s jump enters its then arm, or `None` when the
+    /// sides cannot be told apart.
+    ///
+    /// The code that each side runs alone, before it joins the other's, decides when an arm has
+    /// code there. An arm without code is entered by the side that does not reach the code after
+    /// the `if`, such as the loop exit of a `break` or the increment of a `continue`, but only when
+    /// the sides never meet and the other side does not reach code after the `if` either: a side
+    /// that carries a value into the join point, as with `if (c) { x = 2; }`, meets the other
+    /// side's code.
+    fn then_is_taken(
+        &self,
+        loc: &SourceLocation,
+        fallthrough: u32,
+        taken: u32,
+        arms: &IfArms,
+    ) -> Option<bool> {
+        let (fallthrough, taken) = (self.trace(fallthrough), self.trace(taken));
+        let shared = |ic: &usize| fallthrough.contains(ic) && taken.contains(ic);
+        let alone = |trace: &[usize]| trace.iter().copied().take_while(|ic| !shared(ic)).count();
+        let (fallthrough_alone, taken_alone) =
+            (&fallthrough[..alone(&fallthrough)], &taken[..alone(&taken)]);
+        let taken_enters = |arm: &SourceLocation| {
+            let holds = |trace: &[usize]| trace.iter().any(|&ic| self.maps_inside(ic, arm));
+            match (holds(fallthrough_alone), holds(taken_alone)) {
+                (false, true) => Some(true),
+                (true, false) => Some(false),
+                _ => None,
+            }
+        };
+        let then_taken = taken_enters(&arms.then_arm);
+        let else_taken = arms.else_arm.as_ref().and_then(taken_enters).map(|taken| !taken);
+        match (then_taken, else_taken) {
+            (Some(then), Some(other)) if then != other => return None,
+            (Some(taken), _) | (None, Some(taken)) => return Some(taken),
+            (None, None) => {}
+        }
+        let meet = fallthrough.len() > fallthrough_alone.len();
+        if arms.else_arm.is_some() || self.has_own_code(&arms.then_arm) || meet {
+            return None;
+        }
+        let starts_after = |trace: &[usize]| {
+            trace
+                .iter()
+                .find(|&&ic| self.bytecode[self.pcs[ic] as usize] != opcode::JUMPDEST)
+                .is_some_and(|&ic| self.is_after(ic, loc))
+        };
+        let reaches_after = |trace: &[usize]| trace.iter().any(|&ic| self.is_after(ic, loc));
+        match (starts_after(&fallthrough), starts_after(&taken)) {
+            (true, false) if !reaches_after(&taken) => Some(true),
+            (false, true) if !reaches_after(&fallthrough) => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Returns the instructions that run from `pc` up to the first conditional jump, dynamic jump,
+    /// or halt, following static `PUSH target; JUMP` hops.
+    fn trace(&self, pc: u32) -> Vec<usize> {
+        let mut trace = Vec::new();
+        let mut next = self.pcs.binary_search(&pc).ok();
+        // Bounds a cycle of static jumps.
+        for _ in 0..MAX_TRACE_HOPS {
+            let mut push = None;
+            while let Some(ic) = next {
+                let Some(&pc) = self.pcs.get(ic) else { return trace };
+                trace.push(ic);
+                next = Some(ic + 1);
+                match self.bytecode[pc as usize] {
+                    opcode::JUMP => {
+                        next = push.and_then(|target| self.pcs.binary_search(&target).ok());
+                        break;
+                    }
+                    opcode::JUMPI
+                    | opcode::STOP
+                    | opcode::RETURN
+                    | opcode::REVERT
+                    | opcode::INVALID
+                    | opcode::SELFDESTRUCT => return trace,
+                    op @ opcode::PUSH1..=opcode::PUSH4 => {
+                        let immediate = &self.bytecode[pc as usize + 1..];
+                        let len = (op - opcode::PUSH0) as usize;
+                        push = jump_destination(&immediate[..len]).ok();
+                    }
+                    _ => push = None,
+                }
+            }
+            if next.is_none() {
+                break;
+            }
+        }
+        trace
+    }
+
+    /// Returns whether the instruction `ic` is mapped to code of the same source that starts after
+    /// `loc`.
+    fn is_after(&self, ic: usize, loc: &SourceLocation) -> bool {
+        self.source_map.get(ic).is_some_and(|element| {
+            element.index_i32() == loc.source_id as i32
+                && element.offset() >= loc.bytes.start + loc.len()
+        })
+    }
+
+    /// Returns whether an instruction mapped inside `loc` runs only when `loc` does. The pushes
+    /// that feed a conditional jump do not: they run with the jump, even when its target is the
+    /// body of a `break` or `continue`.
+    fn has_own_code(&self, loc: &SourceLocation) -> bool {
+        self.instructions_starting_in(loc).any(|ic| {
+            self.maps_inside(ic, loc)
+                && self.branches.binary_search_by_key(&ic, |&(ic, ..)| ic).is_err()
+        })
     }
 }
 
@@ -1172,5 +1378,185 @@ mod tests {
         let ic_pc_map = IcPcMap::new(&bytecode);
         let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
         assert_eq!(index.function(0, &loc).unwrap().instruction, 0);
+    }
+
+    /// Returns the `(instruction, jump)` of the anchors for the paths of an `if` spanning bytes
+    /// 10..70, with its then arm at 40..60 and, if given, its else arm at 61..69.
+    fn if_anchors(bytecode: &[u8], source_map: &str, else_arm: bool) -> Vec<(u32, Option<u32>)> {
+        let anchors = find_if_anchors(bytecode, source_map, else_arm);
+        (0..anchors.anchors.len())
+            .map(|i| (anchors.anchors[i].instruction, anchors.jumps.get(&i).copied()))
+            .collect()
+    }
+
+    fn find_if_anchors(bytecode: &[u8], source_map: &str, else_arm: bool) -> ItemAnchors {
+        let arms =
+            IfArms { then_arm: location(40..60), else_arm: else_arm.then(|| location(61..69)) };
+        let items = (0..2 - u32::from(!else_arm))
+            .map(|path_id| CoverageItem {
+                kind: CoverageItemKind::Branch { branch_id: 0, path_id, is_first_opcode: true },
+                loc: location(10..70),
+                anchor_loc: Some(if path_id == 0 {
+                    arms.then_arm.clone()
+                } else {
+                    arms.else_arm.clone().unwrap()
+                }),
+                hits: 0,
+            })
+            .collect();
+        let analysis = SourceAnalysis::for_test(items, vec![(0, BranchKind::If(arms))]);
+        let source_map = sourcemap::parse(source_map).unwrap();
+        let ic_pc_map = IcPcMap::new(bytecode);
+        find_anchors(bytecode, &source_map, &ic_pc_map, &analysis)
+    }
+
+    #[test]
+    fn if_arms_without_code_count_the_jump_edge() {
+        // `cond; PUSH exit; JUMPI`, then the code after the `if` and, at `exit`, an epilogue. The
+        // `if` is mapped to 10..70, its condition to 12..15, the code after it to 80..85, and the
+        // epilogue to the enclosing function, as with a `break` that leaves a loop.
+        let after_then_exit = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::RETURN,
+        ];
+        // The same code with the epilogue first, as when the compiler jumps over it.
+        let exit_then_after = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::RETURN,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::STOP,
+        ];
+        // The arm is the taken edge: its count is the jump's minus the fallthrough's.
+        let taken = [(8, Some(4))];
+        // The arm is the fallthrough edge: its count is the hits of the instruction after the jump.
+        let fallthrough = [(5, None)];
+        for (bytecode, source_map, expected) in [
+            (&after_then_exit[..], "12:3:0;;10:60:0;80:5:0;;;0:100:0;;", &taken[..]),
+            // A jump target push mapped inside the arm runs with the jump, so it is not the arm's.
+            (&after_then_exit[..], "12:3:0;45:5:0;10:60:0;80:5:0;;;0:100:0;;", &taken),
+            (&exit_then_after[..], "12:3:0;;10:60:0;0:100:0;;;80:5:0;;", &fallthrough),
+            // The arm continues a loop at code mapped before the `if`.
+            (&after_then_exit[..], "12:3:0;;10:60:0;80:5:0;;;5:3:0;;", &taken),
+            // Both sides reach code outside the `if`, so nothing tells the arm from the skip.
+            (&after_then_exit[..], "12:3:0;;10:60:0;80:5:0;;;85:5:0;;", &[]),
+            // The arm has code of its own, which anchors it as before.
+            (&exit_then_after[..], "12:3:0;;10:60:0;45:5:0;;;80:5:0;;", &fallthrough),
+        ] {
+            assert_eq!(if_anchors(bytecode, source_map, false), expected, "{source_map}");
+        }
+    }
+
+    #[test]
+    fn if_edges_follow_the_arm_with_code() {
+        // An else arm with code tells the sides apart, so the then arm without code is the other.
+        let bytecode = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::STOP,
+        ];
+        // Path 0 counts the jump's edge and path 1 anchors on the code of its own.
+        assert_eq!(
+            if_anchors(&bytecode, "12:3:0;;10:60:0;63:3:0;;;80:5:0;;", true),
+            [(8, Some(4)), (5, None)]
+        );
+        // The else arm is the taken side, so path 0 is the fallthrough.
+        assert_eq!(
+            if_anchors(&bytecode, "12:3:0;;10:60:0;80:5:0;;;63:3:0;;", true),
+            [(5, None), (8, None)]
+        );
+        // An arm with code on each side decides nothing alone, so nothing is guessed for it.
+        assert_eq!(if_anchors(&bytecode, "12:3:0;;10:60:0;63:3:0;;;63:3:0;;", true), [(5, None)]);
+    }
+
+    #[test]
+    fn if_edges_are_not_guessed_when_ambiguous() {
+        // The skip side runs code that is mapped to the function, and joins the other side's
+        // code, as with `if (c) { x = 2; }` when the constant feeds the join point.
+        let joined = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            6,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::STOP,
+        ];
+        assert!(if_anchors(&joined, "12:3:0;;10:60:0;0:100:0;10:60:0;80:5:0;;", false).is_empty());
+
+        // The fallthrough is a `JUMPDEST` that other code can enter. A static jump to it is
+        // discounted from its hits, but a push of its address that no jump consumes, such as a
+        // return address, may enter it any number of times.
+        let entered = |entry: &[u8]| {
+            let mut bytecode = vec![
+                opcode::PUSH1,
+                0,
+                opcode::PUSH1,
+                8,
+                opcode::JUMPI,
+                opcode::JUMPDEST,
+                opcode::PUSH0,
+                opcode::RETURN,
+                opcode::JUMPDEST,
+                opcode::PUSH0,
+                opcode::STOP,
+            ];
+            bytecode.extend_from_slice(entry);
+            let source_map =
+                format!("12:3:0;;10:60:0;0:100:0;;;80:5:0;;;{}", ";".repeat(entry.len()));
+            let anchors = find_if_anchors(&bytecode, &source_map, false);
+            (anchors.anchors.len(), anchors.entries.get(&0).cloned())
+        };
+        assert_eq!(entered(&[]), (1, None));
+        // `PUSH1 5; JUMP` at pc 11 and 13.
+        assert_eq!(entered(&[opcode::PUSH1, 5, opcode::JUMP]), (1, Some(vec![(13, false)])));
+        assert_eq!(entered(&[opcode::PUSH1, 5, opcode::POP]), (0, None));
+
+        // A second jump inside the `if` and outside its arms, as in `if (a && b)`, may enter the
+        // arm too.
+        let and = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            13,
+            opcode::JUMPI,
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            13,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::RETURN,
+        ];
+        assert!(if_anchors(&and, "12:3:0;;12:3:0;;;10:60:0;80:5:0;;;0:100:0;;", false).is_empty());
     }
 }

@@ -55,6 +55,17 @@ pub(crate) enum BranchKind {
     Require,
     /// A ternary expression. Its jumps must match the exact expression span.
     Ternary(TernaryArms),
+    /// An `if` statement. Path 0 enters the then arm and path 1 the else arm.
+    If(IfArms),
+}
+
+/// The source spans of the arms of an `if` statement.
+#[derive(Clone, Debug)]
+pub(crate) struct IfArms {
+    /// The statement executed when the condition holds.
+    pub(crate) then_arm: SourceLocation,
+    /// The statement executed when it does not, if it has statements.
+    pub(crate) else_arm: Option<SourceLocation>,
 }
 
 /// The source spans of the arms of a ternary expression.
@@ -357,6 +368,7 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     // Report the branch at the condition, but count hits in the true body.
                     // Line coverage uses the reported span so it also sees false conditions.
                     let anchor_loc = self.source_location_for(then_stmt.span);
+                    let mut arms = IfArms { then_arm: anchor_loc.clone(), else_arm: None };
                     self.push_item_kind(
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
                         stmt.span,
@@ -366,12 +378,14 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                         let is_first_opcode = stmt_has_statements(else_stmt);
                         let anchor_loc =
                             is_first_opcode.then(|| self.source_location_for(else_stmt.span));
+                        arms.else_arm.clone_from(&anchor_loc);
                         self.push_item_kind(
                             CoverageItemKind::Branch { branch_id, path_id: 1, is_first_opcode },
                             stmt.span,
                         )
                         .anchor_loc = anchor_loc;
                     }
+                    self.branch_kinds.push((branch_id, BranchKind::If(arms)));
                 }
             }
 
