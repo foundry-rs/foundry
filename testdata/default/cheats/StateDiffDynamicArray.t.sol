@@ -20,6 +20,7 @@ contract DynamicArrays {
     Holder internal holder;
     mapping(address => uint256[]) public byOwner;
     uint256[][] public nested;
+    Item[][] internal grid;
 
     function pushNums() public {
         nums.push(7);
@@ -48,6 +49,11 @@ contract DynamicArrays {
     function pushNested() public {
         nested.push();
         nested[0].push(5);
+    }
+
+    function pushGrid() public {
+        grid.push();
+        grid[grid.length - 1].push(Item(3, address(0x9abc)));
     }
 }
 
@@ -164,6 +170,28 @@ contract StateDiffDynamicArrayTest is Test {
 
         assertTrue(vm.contains(json, '"label":"nested[0][0]","type":"uint256","offset":0'));
         assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"5"}'));
+    }
+
+    function testStructArrayInDynamicArray() public {
+        vm.startStateDiffRecording();
+        arrays.pushGrid();
+        string memory json = vm.getStateDiffJson();
+
+        assertTrue(
+            vm.contains(
+                json,
+                '"label":"grid[0]","type":"struct DynamicArrays.Item[]","offset":0,"slot":"75276140696391174450305814049576319106646922510300487059720162673006384432776","decoded":{"previousValue":"0","newValue":"1"}'
+            )
+        );
+        assertTrue(vm.contains(json, '"label":"grid[0][0].a","type":"uint256","offset":0'));
+        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"3"}'));
+        assertTrue(vm.contains(json, '"label":"grid[0][0].b","type":"address","offset":0'));
+        assertTrue(
+            vm.contains(
+                json,
+                '"decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000009ABc"}'
+            )
+        );
     }
 
     function testNamespacedEnumerableSet() public {

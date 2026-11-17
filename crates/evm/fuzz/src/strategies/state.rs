@@ -578,8 +578,16 @@ impl FuzzDictionary {
                     let slot_info = slot_identifier_key.and_then(|key| {
                         let slot = B256::from(*slot);
                         let value_word = B256::from(value);
-                        self.identify_storage_slot(key, slot)
-                            .filter(|slot_info| slot_info.decode(value_word).is_some())
+                        // A dynamic array's slot, also as an element of a fixed array, holds its
+                        // length, which no parameter samples by the array type, so keep it untyped.
+                        self.identify_storage_slot(key, slot).filter(|slot_info| {
+                            let mut ty = &slot_info.slot_type.dyn_sol_type;
+                            while let DynSolType::FixedArray(inner, _) = ty {
+                                ty = inner;
+                            }
+                            !matches!(ty, DynSolType::Array(_))
+                                && slot_info.decode(value_word).is_some()
+                        })
                     });
                     self.insert_storage_value(slot, &value, slot_info.as_deref());
                 }
@@ -973,6 +981,7 @@ mod tests {
     use super::*;
     use crate::strategies::LiteralMaps;
     use alloy_json_abi::{Event, JsonAbi};
+    use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
     use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
 
     fn account_with_code(raw: &'static [u8]) -> AccountInfo {
@@ -1312,6 +1321,88 @@ mod tests {
             assert!(samples.contains(&Address::repeat_byte(i).into_word()));
         }
         assert!(dictionary.samples(&DynSolType::Uint(256)).is_none_or(|s| s.is_empty()));
+    }
+
+    #[test]
+    fn dynamic_array_lengths_stay_untyped_storage_values() {
+        let storage = |label: &str, slot: &str, ty: &str| Storage {
+            ast_id: 1,
+            contract: "C".into(),
+            label: label.into(),
+            offset: 0,
+            slot: slot.into(),
+            storage_type: ty.into(),
+        };
+        let ty = |encoding: &str, label: &str, bytes: &str, base: Option<&str>| StorageType {
+            encoding: encoding.into(),
+            key: None,
+            label: label.into(),
+            number_of_bytes: bytes.into(),
+            value: None,
+            other: base.map(|base| ("base".to_string(), base.into())).into_iter().collect(),
+        };
+        let layout = StorageLayout {
+            storage: vec![
+                storage("nums", "0", "t_array(t_uint256)dyn_storage"),
+                storage("x", "1", "t_uint256"),
+                storage("pairs", "2", "t_array(t_array(t_uint256)dyn_storage)2_storage"),
+                storage("grid", "4", "t_array(t_array(t_struct(Item))dyn_storage)dyn_storage"),
+            ],
+            types: [
+                (
+                    "t_array(t_uint256)dyn_storage".into(),
+                    ty("dynamic_array", "uint256[]", "32", Some("t_uint256")),
+                ),
+                ("t_uint256".into(), ty("inplace", "uint256", "32", None)),
+                (
+                    "t_array(t_array(t_uint256)dyn_storage)2_storage".into(),
+                    ty("inplace", "uint256[][2]", "64", Some("t_array(t_uint256)dyn_storage")),
+                ),
+                (
+                    "t_array(t_array(t_struct(Item))dyn_storage)dyn_storage".into(),
+                    ty(
+                        "dynamic_array",
+                        "struct C.Item[][]",
+                        "32",
+                        Some("t_array(t_struct(Item))dyn_storage"),
+                    ),
+                ),
+                (
+                    "t_array(t_struct(Item))dyn_storage".into(),
+                    ty("dynamic_array", "struct C.Item[]", "32", Some("t_struct(Item)")),
+                ),
+            ]
+            .into(),
+        };
+        let address = Address::repeat_byte(0x42);
+        let mut contract = TargetedContract::new("C".into(), JsonAbi::default());
+        contract.storage_layout = Some(Arc::new(layout));
+        let mut targets = TargetedContracts::new();
+        targets.insert(address, contract);
+
+        // `nums`, `x`, `pairs[1]` and `grid[0]`.
+        let grid_0 = U256::from_be_bytes(keccak256(B256::from(U256::from(4))).0);
+        let mut state = evm2::evm::PendingState::default();
+        state.insert_account(address, None, Some(AccountInfo::default()));
+        for (slot, value) in [(U256::ZERO, 5), (U256::ONE, 7), (U256::from(3), 9), (grid_0, 12)] {
+            state.insert_storage(address, slot, U256::ZERO, U256::from(value));
+        }
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.insert_new_state_values(state.account_changes(), &targets);
+
+        // Lengths and their neighbours are sampled for any parameter, like other words.
+        for length in [4, 5, 6, 8, 9, 10, 11, 12, 13] {
+            assert!(dictionary.values().contains(&B256::from(U256::from(length))), "{length}");
+        }
+        // The account itself is an address sample; storage adds only `x`.
+        assert!(
+            dictionary
+                .sample_values
+                .keys()
+                .all(|ty| matches!(ty, DynSolType::Address | DynSolType::Uint(256)))
+        );
+        let uints = dictionary.samples(&DynSolType::Uint(256)).unwrap();
+        assert_eq!(uints.iter().copied().collect::<Vec<_>>(), [B256::from(U256::from(7))]);
     }
 
     #[test]

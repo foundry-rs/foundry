@@ -650,7 +650,8 @@ impl SlotIdentifier {
         let element_start = data_start + U256::from(index * element_slots);
         let element_label = format!("{label}[{index}]");
 
-        if is_struct(&element_type.label) {
+        // An array of structs is labeled `struct S[]` too, but has no members.
+        if element_type.other.contains_key("members") {
             return self.handle_struct(
                 &element_label,
                 element_type,
@@ -685,8 +686,15 @@ impl SlotIdentifier {
             label: element_label,
             slot_type: StorageTypeInfo {
                 label: element_type.label.clone(),
-                // An element without an ABI equivalent (e.g. an array of structs) is shown raw.
-                dyn_sol_type: element.cloned().unwrap_or(DynSolType::FixedBytes(32)),
+                // An element without an ABI equivalent is shown raw, except that an array of
+                // structs is still an array whose slot holds its length.
+                dyn_sol_type: element.cloned().unwrap_or_else(|| {
+                    if element_type.encoding == ENCODING_DYN_ARRAY {
+                        DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))
+                    } else {
+                        DynSolType::FixedBytes(32)
+                    }
+                }),
             },
             offset: 0,
             slot: slot_str.to_string(),
@@ -2165,7 +2173,8 @@ mod tests {
                 { "astId": 12, "contract": "C", "label": "wrapped", "offset": 0, "slot": "8", "type": "t_struct(Wrapper)" },
                 { "astId": 14, "contract": "C", "label": "pairs", "offset": 0, "slot": "10", "type": "t_array(t_array(t_uint128)2_storage)dyn_storage" },
                 { "astId": 15, "contract": "C", "label": "fns", "offset": 0, "slot": "11", "type": "t_array(t_function_internal_nonpayable()returns())dyn_storage" },
-                { "astId": 16, "contract": "C", "label": "wide", "offset": 0, "slot": "12", "type": "t_array(t_array(t_uint256)2_storage)dyn_storage" }
+                { "astId": 16, "contract": "C", "label": "wide", "offset": 0, "slot": "12", "type": "t_array(t_array(t_uint256)2_storage)dyn_storage" },
+                { "astId": 17, "contract": "C", "label": "grid", "offset": 0, "slot": "13", "type": "t_array(t_array(t_struct(Item))dyn_storage)dyn_storage" }
             ],
             "types": {
                 "t_array(t_uint256)dyn_storage": {
@@ -2215,6 +2224,9 @@ mod tests {
                 },
                 "t_array(t_array(t_uint256)2_storage)dyn_storage": {
                     "encoding": "dynamic_array", "label": "uint256[2][]", "numberOfBytes": "32", "base": "t_array(t_uint256)2_storage"
+                },
+                "t_array(t_array(t_struct(Item))dyn_storage)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "struct C.Item[][]", "numberOfBytes": "32", "base": "t_array(t_struct(Item))dyn_storage"
                 },
                 "t_array(t_uint256)2_storage": {
                     "encoding": "inplace", "label": "uint256[2]", "numberOfBytes": "64", "base": "t_uint256"
@@ -2320,6 +2332,22 @@ mod tests {
         assert_eq!(
             (info.label.as_str(), info.slot_type.label.as_str()),
             ("nested[1][2]", "uint256")
+        );
+
+        // `grid[1]` is an array of structs, labeled like a struct but holding a length.
+        let inner = U256::from_be_bytes(element(U256::from(13), 1).0);
+        let mut info = identifier.identify(&B256::from(inner), None).unwrap();
+        assert_eq!(
+            (info.label.as_str(), info.slot_type.label.as_str()),
+            ("grid[1]", "struct C.Item[]")
+        );
+        info.decode_values(B256::ZERO, B256::from(U256::from(1)));
+        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), "1");
+        slots.record_word_hash(keccak256(B256::from(inner)), B256::from(inner));
+        let info = identifier.identify(&element(inner, 3), Some(&slots)).unwrap();
+        assert_eq!(
+            (info.label.as_str(), info.slot_type.label.as_str()),
+            ("grid[1][1].b", "address")
         );
     }
 
