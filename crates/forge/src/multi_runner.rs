@@ -43,7 +43,7 @@ use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError, Resol
 use rayon::prelude::*;
 use std::{
     borrow::{Borrow, Cow},
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     ops::{Deref, DerefMut},
     path::PathBuf,
     sync::{Arc, Mutex, mpsc},
@@ -913,9 +913,24 @@ impl MultiContractRunnerBuilder {
         })?;
 
         // Create known contracts from linked contracts and storage layout information (if any),
-        // including ERC-7201 namespaces.
+        // including ERC-7201 namespaces. A filtered build can keep cached artifacts of other
+        // compiler profiles without layouts, so they take the layout of the same contract from
+        // another profile, which only differs in AST ids.
+        let contract_key = |id: &ArtifactId| {
+            (id.source.clone(), id.version.clone(), id.name.split('.').next().unwrap().to_owned())
+        };
+        let layouts = output
+            .artifact_ids()
+            .filter_map(|(id, artifact)| {
+                Some((contract_key(&id), artifact.storage_layout.as_ref()?))
+            })
+            .collect::<HashMap<_, _>>();
         let storage_layouts = output.artifact_ids().filter_map(|(id, artifact)| {
-            artifact.storage_layout.as_ref().map(|layout| (artifact_id(id), layout.clone()))
+            let layout = artifact
+                .storage_layout
+                .as_ref()
+                .or_else(|| layouts.get(&contract_key(&id)).copied())?;
+            Some((artifact_id(id), layout.clone()))
         });
         let storage_layouts =
             namespaced_storage::extend_storage_layouts(&mut analysis, root, storage_layouts);
