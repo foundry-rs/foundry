@@ -814,7 +814,13 @@ impl MultiContractRunnerBuilder {
         let root = &self.config.root;
         let coverage_artifacts = self
             .line_coverage
-            .then(|| self.config.coverage_cache_path())
+            .then(|| {
+                if self.coverage_counters {
+                    self.config.instrumented_coverage_cache_path()
+                } else {
+                    self.config.coverage_cache_path()
+                }
+            })
             .flatten()
             .map(|path| path.join("artifacts"));
         let artifact_id = |mut id: ArtifactId| {

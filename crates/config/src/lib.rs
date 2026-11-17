@@ -1644,9 +1644,13 @@ impl Config {
     ) -> Result<Vec<String>, SolcError> {
         let mut warnings = Vec::new();
 
-        if let Some(coverage_cache) = self.coverage_cache_path()
-            && coverage_cache.exists()
+        for coverage_cache in [self.coverage_cache_path(), self.instrumented_coverage_cache_path()]
+            .into_iter()
+            .flatten()
         {
+            if !coverage_cache.exists() {
+                continue;
+            }
             let result = Self::lock_coverage_cache(&coverage_cache)
                 .and_then(|_lock| fs::remove_dir_all(&coverage_cache));
             if let Err(err) = result
@@ -1715,6 +1719,11 @@ impl Config {
     /// Returns the coverage cache directory when it does not overlap project data.
     pub fn coverage_cache_path(&self) -> Option<PathBuf> {
         self.coverage_cache_path_leaf("coverage")
+    }
+
+    /// Returns the instrumented coverage cache directory when it does not overlap project data.
+    pub fn instrumented_coverage_cache_path(&self) -> Option<PathBuf> {
+        self.coverage_cache_path_leaf("coverage-instrumented")
     }
 
     /// Returns the coverage cache directory named `leaf` under the cache path, when it does not

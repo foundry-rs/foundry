@@ -314,9 +314,14 @@ impl CoverageArgs {
         // instrumented coverage build different bytecode, so each caches under its own directory.
         // The artifact cache does not carry the compiler's coverage map, so `prepare_instrumented`
         // persists it beside the cached artifacts and reloads it on a warm hit.
-        let cache_leaf = if settings.instrumented { "coverage-instrumented" } else { "coverage" };
         let cache = (config.cache && !config.deny.warnings())
-            .then(|| config.coverage_cache_path_leaf(cache_leaf))
+            .then(|| {
+                if settings.instrumented {
+                    config.instrumented_coverage_cache_path()
+                } else {
+                    config.coverage_cache_path()
+                }
+            })
             .flatten()
             .and_then(|path| {
                 fs::create_dir_all(path.parent()?).ok()?;
@@ -677,7 +682,11 @@ impl CoverageArgs {
                 let source = match sources.get(rel) {
                     Some(source) => source,
                     None => {
-                        let read = fs::read_to_string(project_paths.root.join(rel))?;
+                        // Read like the compiler, which normalizes line endings, so the map's
+                        // byte offsets match.
+                        let read = Arc::unwrap_or_clone(
+                            Source::read(&project_paths.root.join(rel))?.content,
+                        );
                         sources.entry(rel).or_insert(read)
                     }
                 };

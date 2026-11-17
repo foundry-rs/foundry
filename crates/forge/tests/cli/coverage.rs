@@ -4652,8 +4652,13 @@ No files changed, compilation skipped
 No files changed, compilation skipped
 ...
 "#]]);
+    // `--instrumented` caches under its own leaf, which `clean` removes too.
+    let instrumented = prj.root().join("custom-cache/coverage-instrumented");
+    fs::create_dir_all(&instrumented).unwrap();
+    fs::write(instrumented.join(Config::COVERAGE_CACHE_MARKER), "").unwrap();
     cmd.forge_fuse().arg("clean").assert_success();
     assert!(!cache.exists());
+    assert!(!instrumented.exists());
     prj.update_config(|config| config.cache = false);
     cmd.forge_fuse().arg("coverage").assert_success();
     assert!(!cache.exists());
