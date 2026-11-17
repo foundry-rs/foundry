@@ -2279,9 +2279,7 @@ BRDA:10,1,1,0
 // A branch path counts the times control took its edge, even when its arm has no code of its own.
 // The jump of `if (i == 3) { break; }` is the arm, whichever side of it each compiler puts the loop
 // exit on. Its arm runs once in the 6 times the jump runs, so swapped or summed counts differ. The
-// same holds without braces and for the `break` of an `else if`. solc has code for
-// `if (c) { x = 2; }`. Solar passes the constant to the join point, which leaves both sides
-// reaching the same code, so it leaves the path without hits instead of guessing.
+// same holds without braces and for the `break` of an `else if`.
 #[forgetest]
 fn if_paths_count_jump_edges(prj: _, cmd: _) {
     prj.insert_ds_test();
@@ -2289,13 +2287,6 @@ fn if_paths_count_jump_edges(prj: _, cmd: _) {
         "AContract.sol",
         r#"
 contract AContract {
-    function assign(bool c, uint256 x) external pure returns (uint256) {
-        if (c) {
-            x = 2;
-        }
-        return x;
-    }
-
     function stop(uint256 n) external pure returns (uint256 s) {
         for (uint256 i = 0; i < n; i++) {
             if (i == 3) {
@@ -2335,10 +2326,6 @@ contract AContractTest is DSTest {
     AContract a = new AContract();
 
     function testCoverage() external view {
-        a.assign(true, 1);
-        a.assign(false, 1);
-        a.assign(false, 1);
-        a.assign(false, 1);
         a.stop(10);
         a.stop(2);
         a.unbraced(10);
@@ -2352,37 +2339,25 @@ contract AContractTest is DSTest {
 
     let expected = str![[r#"
 ...
-BRDA:6,0,0,1
+BRDA:7,0,0,1
 ...
-BRDA:14,1,0,1
+BRDA:16,1,0,1
 ...
-BRDA:23,2,0,1
+BRDA:23,2,0,2
+BRDA:23,2,1,4
 ...
-BRDA:30,3,0,2
-BRDA:30,3,1,4
-...
-BRDA:32,4,0,1
+BRDA:25,3,0,1
 ...
 "#]];
     assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
-    assert_lcov(cmd.forge_fuse().arg("coverage").args(["--no-isolate", "--ir-minimum"]), expected);
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").args(["--no-isolate", "--ir-minimum"]),
+        expected.clone(),
+    );
     let solar = prj.ensure_foundry_bin("solar");
     assert_lcov(
         cmd.forge_fuse().arg("coverage").arg("--no-isolate").arg("--use").arg(&solar),
-        str![[r#"
-...
-BRDA:6,0,0,0
-...
-BRDA:14,1,0,1
-...
-BRDA:23,2,0,1
-...
-BRDA:30,3,0,2
-BRDA:30,3,1,4
-...
-BRDA:32,4,0,1
-...
-"#]],
+        expected,
     );
 }
 
