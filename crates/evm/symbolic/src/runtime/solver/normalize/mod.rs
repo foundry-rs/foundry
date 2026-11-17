@@ -440,6 +440,13 @@ fn normalize_cmp_for_solver(
     {
         return normalized;
     }
+    if op == SymCmpOp::Eq
+        && let Some((a, b)) =
+            mul_high_operands(&left, &right).or_else(|| mul_high_operands(&right, &left))
+    {
+        let high = SymExpr::binop(cx, SymBinOp::MulHigh, a.clone(), b.clone());
+        return SymBoolExpr::eq_word_const(cx, &high, U256::ZERO);
+    }
     if op == SymCmpOp::Eq {
         for (quotient, expected) in [(&left, &right), (&right, &left)] {
             if let Some((denominator, value)) =
@@ -1600,12 +1607,14 @@ fn normalize_expr_node_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
         SymExprKind::Ite(cond, left, right) => {
             normalize_ite_expr_for_solver(cx, cond.clone(), left.clone(), right.clone())
         }
-        SymExprKind::BinOp(SymBinOp::Sub, _, _) => match mul_high_operands(&expr) {
-            Some((left, right)) => {
-                SymExpr::binop(cx, SymBinOp::MulHigh, left.clone(), right.clone())
+        SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) => {
+            match mul_high_operands(minuend, subtrahend) {
+                Some((left, right)) => {
+                    SymExpr::binop(cx, SymBinOp::MulHigh, left.clone(), right.clone())
+                }
+                None => expr,
             }
-            None => expr,
-        },
+        }
         _ => expr,
     }
 }
