@@ -1,5 +1,5 @@
 use super::{CoverageItem, CoverageItemKind, SourceLocation};
-use alloy_primitives::map::{HashMap, HashSet};
+use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
@@ -33,8 +33,8 @@ struct SourceVisitor<'gcx> {
     items: Vec<CoverageItem>,
 
     all_lines: Vec<u32>,
-    /// Branch IDs whose jumps must match the exact ternary expression span.
-    ternary_branches: Vec<u32>,
+    /// Branch IDs whose jumps must match the exact ternary expression span, with their arms.
+    ternary_branches: Vec<(u32, TernaryArms)>,
     /// Deferred function-call spans, each paired with the contract scope active where the call
     /// was collected, so scope travels with the span to the delayed HIR resolution pass.
     function_calls: Vec<(Span, Arc<str>)>,
@@ -46,6 +46,15 @@ struct SourceVisitorCheckpoint {
     all_lines: usize,
     function_calls: usize,
     ternary_branches: usize,
+}
+
+/// The source spans of the arms of a ternary expression.
+#[derive(Clone, Debug)]
+pub(crate) struct TernaryArms {
+    /// The expression evaluated when the condition holds.
+    pub(crate) true_arm: SourceLocation,
+    /// The expression evaluated when the condition does not hold.
+    pub(crate) false_arm: SourceLocation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -503,10 +512,15 @@ impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_> {
     type BreakValue = Never;
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
-        if matches!(expr.kind, ExprKind::Ternary(..)) {
+        if let ExprKind::Ternary(_, true_arm, false_arm) = &expr.kind {
             let branch_id = self.0.next_branch_id();
-            self.0.ternary_branches.push(branch_id);
-            // Ternary path 0 is the false arm (fallthrough); path 1 is the true arm (jump target).
+            let arms = TernaryArms {
+                true_arm: self.0.source_location_for(true_arm.span),
+                false_arm: self.0.source_location_for(false_arm.span),
+            };
+            self.0.ternary_branches.push((branch_id, arms));
+            // Ternary path 0 is the false arm and path 1 the true arm. Which side of the jump each
+            // is on depends on the compiler.
             for path_id in 0..2 {
                 self.0.push_item_kind(
                     CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false },
@@ -569,8 +583,9 @@ fn stmt_has_statements(stmt: &ast::Stmt<'_>) -> bool {
 pub struct SourceAnalysis {
     /// All the coverage items.
     all_items: Vec<CoverageItem>,
-    /// Source and branch IDs requiring exact decision-node source-map matching.
-    ternary_branches: HashSet<(u32, u32)>,
+    /// Source and branch IDs requiring exact decision-node source-map matching, with the arms of
+    /// the ternary.
+    ternary_branches: HashMap<(u32, u32), TernaryArms>,
     /// Source ID to `(offset, len)` into `all_items`.
     map: Vec<(u32, u32)>,
     /// Empty receive and fallback items keyed by coverage item ID.
@@ -659,9 +674,10 @@ impl SourceAnalysis {
         let len = max_idx + 1;
         let mut all_items = Vec::new();
         let mut map = vec![(u32::MAX, 0); len as usize];
-        let mut ternary_branches = HashSet::default();
+        let mut ternary_branches = HashMap::default();
         for (idx, items, branches) in sourced_items {
-            ternary_branches.extend(branches.into_iter().map(|branch| (idx, branch)));
+            ternary_branches
+                .extend(branches.into_iter().map(|(branch, arms)| ((idx, branch), arms)));
             // Assumes that all `idx` items are consecutive, guaranteed by the sort above.
             let idx = idx as usize;
             if map[idx].0 == u32::MAX {
@@ -704,8 +720,8 @@ impl SourceAnalysis {
         })
     }
 
-    pub(crate) fn is_ternary_branch(&self, source_id: u32, branch_id: u32) -> bool {
-        self.ternary_branches.contains(&(source_id, branch_id))
+    pub(crate) fn ternary_arms(&self, source_id: u32, branch_id: u32) -> Option<&TernaryArms> {
+        self.ternary_branches.get(&(source_id, branch_id))
     }
 
     /// Returns all the coverage items.
@@ -760,6 +776,17 @@ impl SourceAnalysis {
             .into_iter()
             .flatten()
             .copied()
+    }
+
+    /// Creates an analysis of source 0 from `items`, with the given ternary arms by branch ID.
+    #[cfg(test)]
+    pub(crate) fn for_test(items: Vec<CoverageItem>, ternaries: Vec<(u32, TernaryArms)>) -> Self {
+        Self {
+            map: vec![(0, items.len() as u32)],
+            all_items: items,
+            ternary_branches: ternaries.into_iter().map(|(id, arms)| ((0, id), arms)).collect(),
+            ..Default::default()
+        }
     }
 }
 

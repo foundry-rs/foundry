@@ -2112,6 +2112,65 @@ contract AContractTest is DSTest {
 "#]]);
 }
 
+// Path 0 of a ternary is its false arm and path 1 its true arm, whichever side of the jump the
+// compiler puts each on. solc's legacy pipeline jumps to the true arm, while `--ir-minimum` and
+// Solar jump to the false arm of some ternaries.
+#[forgetest]
+fn ternary_paths_follow_arms(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function clamp(uint256 x) external pure returns (uint256) {
+        return x > 99 ? 5 : 4;
+    }
+
+    function sub(uint256 a, uint256 b, uint256 c) external pure returns (uint256) {
+        return a + b > c ? a + b - c : 0;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external view {
+        a.clamp(100);
+        a.sub(1, 1, 5);
+    }
+}
+"#,
+    );
+
+    // `clamp` takes its true arm only and `sub` its false arm only.
+    let expected = str![[r#"
+...
+BRDA:6,0,0,0
+BRDA:6,0,1,1
+...
+BRDA:10,1,0,1
+BRDA:10,1,1,0
+...
+"#]];
+    assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").args(["--no-isolate", "--ir-minimum"]),
+        expected.clone(),
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").arg("--no-isolate").arg("--use").arg(&solar),
+        expected,
+    );
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();

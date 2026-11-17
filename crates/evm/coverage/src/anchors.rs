@@ -1,7 +1,7 @@
 use super::{
     CoverageItemKind, ExecutionAnchor, ExecutionAnchorKind, ItemAnchor, ItemAnchors, SourceLocation,
 };
-use crate::analysis::{EmptySpecialFunctionKind, SourceAnalysis};
+use crate::analysis::{EmptySpecialFunctionKind, SourceAnalysis, TernaryArms};
 use alloy_primitives::map::rustc_hash::FxHashSet;
 use evm2::interpreter::op as opcode;
 use eyre::ensure;
@@ -49,10 +49,15 @@ pub fn find_anchors(
 ) -> ItemAnchors {
     let mut anchors = ItemAnchors::default();
     let index = AnchorIndex::new(bytecode, source_map, ic_pc_map);
-    let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id| match path_id {
-        0 => (fallthrough, None),
-        1 => (taken, Some(fallthrough.instruction - 1)),
-        _ => panic!("too many path IDs for branch"),
+    // Path 0 is the fallthrough and path 1 the jump target, unless `swapped`. The jump target
+    // counts the jump's executions minus its fallthrough's.
+    let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id, swapped| {
+        let jump = Some(fallthrough.instruction - 1);
+        match (path_id, swapped) {
+            (0, false) | (1, true) => (fallthrough, None),
+            (1, false) | (0, true) => (taken, jump),
+            _ => panic!("too many path IDs for branch"),
+        }
     };
     let mut seen_sources = FxHashSet::default();
     source_map
@@ -72,14 +77,17 @@ pub fn find_anchors(
                     index.simple(item_id, anchor_loc).map(|anchor| (anchor, None)).or_else(|_| {
                         index
                             .branch(item_id, &item.loc, false)
-                            .map(|anchors| select_branch(anchors, 1))
+                            .map(|anchors| select_branch(anchors, 1, false))
                     })
                 }
                 CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
-                    let exact = analysis.is_ternary_branch(item.loc.source_id as u32, branch_id);
-                    index
-                        .branch(item_id, anchor_loc, exact)
-                        .map(|anchors| select_branch(anchors, path_id))
+                    let arms = analysis.ternary_arms(item.loc.source_id as u32, branch_id);
+                    index.branch(item_id, anchor_loc, arms.is_some()).map(|anchors| {
+                        // The false arm of a ternary is path 0, wherever the compiler placed it.
+                        let swapped =
+                            arms.is_some_and(|arms| index.true_arm_falls_through(&anchors, arms));
+                        select_branch(anchors, path_id, swapped)
+                    })
                 }
                 CoverageItemKind::Function { .. } => {
                     index.function(item_id, anchor_loc).map(|anchor| (anchor, None))
@@ -122,7 +130,10 @@ pub fn find_execution_anchors(
 
 /// Source map and branch lookups precomputed once per bytecode.
 struct AnchorIndex<'a> {
+    bytecode: &'a [u8],
     source_map: &'a SourceMap,
+    /// The program counter of every instruction, by instruction counter.
+    pcs: Vec<u32>,
     ic_pc_map: &'a IcPcMap,
     /// `(source id, offset, instruction)`, sorted for source range lookups.
     entries: Vec<(i32, u32, usize)>,
@@ -148,6 +159,7 @@ impl<'a> AnchorIndex<'a> {
             .map(|(instruction, element)| (element.index_i32(), element.offset(), instruction))
             .collect::<Vec<_>>();
         entries.sort_unstable();
+        let mut pcs = Vec::new();
         let mut branches = Vec::new();
         let mut reverting_runs = Vec::new();
         let mut jumps = Vec::new();
@@ -162,6 +174,7 @@ impl<'a> AnchorIndex<'a> {
         let mut prev = opcode::STOP;
         let mut prev_target = None;
         for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
+            pcs.push(pc as u32);
             match inst.opcode.get() {
                 opcode::JUMPDEST => jumpdests.push((pc, ic)),
                 opcode::JUMPI => conditional_jumps.push((ic, prev_target)),
@@ -244,7 +257,17 @@ impl<'a> AnchorIndex<'a> {
                 (run_start < ic).then_some((ic, run_start))
             })
             .collect();
-        Self { source_map, ic_pc_map, entries, branches, reverting_runs, fallen_into, jumps }
+        Self {
+            bytecode,
+            source_map,
+            pcs,
+            ic_pc_map,
+            entries,
+            branches,
+            reverting_runs,
+            fallen_into,
+            jumps,
+        }
     }
 
     /// Finds the first opcode in the source range, preferring code outside a failure stub.
@@ -268,6 +291,55 @@ impl<'a> AnchorIndex<'a> {
             .min()
             .or_else(|| candidates.min());
         ItemAnchor::from_instruction(instruction, self.ic_pc_map, item_id, loc)
+    }
+
+    /// Returns whether the true arm of a ternary is the fallthrough of its jump.
+    ///
+    /// A successor with code mapped inside one arm's span is that arm, because the arms carry their
+    /// own spans while the join point carries the enclosing expression's. An arm without code, such
+    /// as a literal already on the stack, has no successor of its own, so the other arm decides.
+    /// If neither arm has code, or the successors give conflicting answers, the positional default
+    /// stays: the true arm is the jump target.
+    fn true_arm_falls_through(
+        &self,
+        (fallthrough, taken): &(ItemAnchor, ItemAnchor),
+        arms: &TernaryArms,
+    ) -> bool {
+        let holds = |pc, arm| self.block_maps_inside(pc, arm);
+        let true_fallthrough = holds(fallthrough.instruction, &arms.true_arm);
+        let true_taken = holds(taken.instruction, &arms.true_arm);
+        let false_fallthrough = holds(fallthrough.instruction, &arms.false_arm);
+        let false_taken = holds(taken.instruction, &arms.false_arm);
+        let falls_through =
+            (true_fallthrough && !true_taken) || (false_taken && !false_fallthrough);
+        let is_taken = (true_taken && !true_fallthrough) || (false_fallthrough && !false_taken);
+        falls_through && !is_taken
+    }
+
+    /// Returns whether an instruction of the block at `pc` is mapped inside `loc`. The block runs
+    /// to the first jump or halt, so it covers the entry code of an arm, which can start with
+    /// instructions mapped to the enclosing expression. An arm that falls into the join point
+    /// also scans the code after it, which is mapped outside both arms.
+    fn block_maps_inside(&self, pc: u32, loc: &SourceLocation) -> bool {
+        let Ok(start) = self.pcs.binary_search(&pc) else { return false };
+        for (ic, &next) in self.pcs.iter().enumerate().skip(start) {
+            if self.source_map.get(ic).is_some_and(|element| is_within_source_span(element, loc)) {
+                return true;
+            }
+            if matches!(
+                self.bytecode[next as usize],
+                opcode::JUMP
+                    | opcode::JUMPI
+                    | opcode::STOP
+                    | opcode::RETURN
+                    | opcode::REVERT
+                    | opcode::INVALID
+                    | opcode::SELFDESTRUCT
+            ) {
+                break;
+            }
+        }
+        false
     }
 
     /// Finds the entry of a function.
@@ -396,7 +468,84 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CoverageItem;
     use foundry_compilers::artifacts::sourcemap;
+
+    fn location(bytes: Range<u32>) -> SourceLocation {
+        SourceLocation { source_id: 0, contract_name: "T".into(), bytes, lines: 1..2 }
+    }
+
+    /// Returns the `(instruction, jump)` of the anchors for the two paths of a ternary spanning
+    /// bytes 10..50, with its true arm at 20..30 and its false arm at 35..45.
+    fn ternary_anchors(bytecode: &[u8], source_map: &str) -> Vec<(u32, Option<u32>)> {
+        let items = (0..2)
+            .map(|path_id| CoverageItem {
+                kind: CoverageItemKind::Branch { branch_id: 0, path_id, is_first_opcode: false },
+                loc: location(10..50),
+                anchor_loc: None,
+                hits: 0,
+            })
+            .collect();
+        let arms = TernaryArms { true_arm: location(20..30), false_arm: location(35..45) };
+        let analysis = SourceAnalysis::for_test(items, vec![(0, arms)]);
+        let source_map = sourcemap::parse(source_map).unwrap();
+        let ic_pc_map = IcPcMap::new(bytecode);
+        let anchors = find_anchors(bytecode, &source_map, &ic_pc_map, &analysis);
+        (0..anchors.anchors.len())
+            .map(|i| (anchors.anchors[i].instruction, anchors.jumps.get(&i).copied()))
+            .collect()
+    }
+
+    #[test]
+    fn ternary_paths_follow_the_arms() {
+        // `cond; PUSH dest; JUMPI`, then the code of the fallthrough arm, then `dest`, which holds
+        // the code of the jump target arm.
+        let bytecode = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            0,
+            opcode::POP,
+            opcode::STOP,
+        ];
+        // Path 0 is the false arm and path 1 the true arm. `(pc, jump)` is the fallthrough for
+        // `(5, None)` and the jump target for `(8, Some(4))`.
+        let false_falls_through = [(5, None), (8, Some(4))];
+        let true_falls_through = [(8, Some(4)), (5, None)];
+        // The jump `10:40` is mapped exactly to the ternary, and the cond to `12:3`.
+        // The arms' first instructions map to the enclosing `0:100`, as with solc via-IR, which
+        // jumps over the arms' setup code: only a later instruction maps inside the arm.
+        for (source_map, expected) in [
+            // The true arm is the jump target, as with solc's legacy pipeline.
+            ("12:3:0;;10:40:0;36:3:0;;0:100:0;-1:-1:-1;22:3:0;;", false_falls_through),
+            // The true arm falls through.
+            ("12:3:0;;10:40:0;22:3:0;;0:100:0;-1:-1:-1;36:3:0;;", true_falls_through),
+            // Only the entry code of an arm maps inside it, after a first instruction outside it.
+            ("12:3:0;;10:40:0;0:100:0;22:3:0;0:100:0;-1:-1:-1;36:3:0;;", true_falls_through),
+            // The false arm has no code, as with a literal already on the stack: the fallthrough
+            // reaches the join point, so the true arm is the jump target.
+            ("12:3:0;;10:40:0;0:100:0;;0:100:0;-1:-1:-1;22:3:0;;", false_falls_through),
+            // The same polarity, with the code of the arm that has code on the other side.
+            ("12:3:0;;10:40:0;22:3:0;;0:100:0;-1:-1:-1;0:100:0;;", true_falls_through),
+            // The true arm has no code and the false arm is the jump target.
+            ("12:3:0;;10:40:0;0:100:0;;0:100:0;-1:-1:-1;36:3:0;;", true_falls_through),
+            // The true arm has no code and the false arm falls through.
+            ("12:3:0;;10:40:0;36:3:0;;0:100:0;-1:-1:-1;0:100:0;;", false_falls_through),
+            // Neither arm has code, so the positional default stays.
+            ("12:3:0;;10:40:0;0:100:0;;0:100:0;-1:-1:-1;0:100:0;;", false_falls_through),
+            // Both successors map inside the same arm, so the positional default stays.
+            ("12:3:0;;10:40:0;22:3:0;;0:100:0;-1:-1:-1;22:3:0;;", false_falls_through),
+        ] {
+            assert_eq!(ternary_anchors(&bytecode, source_map), expected, "{source_map}");
+        }
+    }
 
     #[test]
     fn ternary_anchor_rejects_missing_node_mapping() {
