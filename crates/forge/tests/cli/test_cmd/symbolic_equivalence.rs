@@ -361,7 +361,7 @@ fn equivalence_reads_calldata_past_its_end_as_zero(cmd: _) {
 }
 
 #[forgetest]
-fn equivalence_compares_modulo_gas_on_request(cmd: _) {
+fn equivalence_compares_modulo_gas_on_request(prj: _, cmd: _) {
     skip_unless_z3!("equivalence_compares_modulo_gas_on_request");
     // mstore(x, mload(x)) for x = calldataload(0) runs out of gas for a large x, where stop
     // doesn't.
@@ -374,6 +374,47 @@ fn equivalence_compares_modulo_gas_on_request(cmd: _) {
     assert!(out.contains("code-a: ran out of gas"), "{out}");
     cmd.forge_fuse()
         .args(["equivalence", "--code-a", touch_memory, "--code-b", "0x00", "--ignore-out-of-gas"])
+        .assert_success();
+
+    // EIP-3860 halts `create(0, type(uint256).max, size)` for initcode above the limit before
+    // the out-of-range offset runs out of gas, so the halt still counts modulo gas.
+    prj.update_config(|config| config.code_size_limit = Some(24_576));
+    let create_at = |size: &str| {
+        format!(
+            "0x61{size}7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5ff000"
+        )
+    };
+    cmd.forge_fuse()
+        .args(["equivalence", "--code-a", &create_at("c000"), "--code-b", "0x00"])
+        .arg("--ignore-out-of-gas")
+        .assert_success();
+    cmd.forge_fuse()
+        .args(["equivalence", "--code-a", &create_at("c001"), "--code-b", "0x00"])
+        .arg("--ignore-out-of-gas")
+        .assert_failure()
+        .stdout_eq(str![[r#"
+Not equivalent: the contracts differ on calldata 0x
+  sender 0x0000000000000000000000000000000000000000, value 0, block 0, timestamp 0
+  code-a: reverted with no data
+  code-b: returned no data
+Explored [..]
+
+"#]]);
+    // The same create with a symbolic size above the limit, `calldataload(0) > 0xc000`.
+    let symbolic_create = "0x5f358061c00010600b57005b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5ff000";
+    cmd.forge_fuse()
+        .args(["equivalence", "--code-a", symbolic_create, "--code-b", "0x00"])
+        .arg("--ignore-out-of-gas")
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: equivalence check incomplete (Stuck): unsupported symbolic execution feature: symbolic CREATE initcode size beyond the EIP-3860 limit
+
+"#]]);
+    // A size beyond 64 bits runs out of gas before the limit check, `calldataload(0) > 2^64`.
+    let out_of_gas_create = "0x5f35806801000000000000000010601257005b5f5ff000";
+    cmd.forge_fuse()
+        .args(["equivalence", "--code-a", out_of_gas_create, "--code-b", "0x00"])
+        .arg("--ignore-out-of-gas")
         .assert_success();
 }
 

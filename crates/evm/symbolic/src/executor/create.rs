@@ -16,6 +16,38 @@ impl SymbolicExecutor {
 
         let offset = state.stack.peek(1)?.clone();
         let size = state.stack.peek(2)?.clone();
+        // EIP-3860: like revm, initcode above the limit halts the creating frame before the
+        // offset converts or memory expands, so the memory guard cannot drop that halt as out of
+        // gas.
+        match state.constrained_usize_checked(&mut self.cx, &size) {
+            Some(Ok(size)) if size > executor.max_initcode_size => {
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                return Ok(StepOutcome::ExceptionalHalt);
+            }
+            // A symbolic size that may exceed the limit reports incomplete. A size beyond the host
+            // word runs out of gas before the limit check.
+            None if executor.max_initcode_size < usize::MAX => {
+                let mut over_limit = state.constraints.clone();
+                over_limit.push(SymBoolExpr::cmp_word_const(
+                    &mut self.cx,
+                    SymCmpOp::Ugt,
+                    &size,
+                    U256::from(executor.max_initcode_size),
+                ));
+                over_limit.push(SymBoolExpr::cmp_word_const(
+                    &mut self.cx,
+                    SymCmpOp::Ule,
+                    &size,
+                    U256::from(usize::MAX),
+                ));
+                if self.is_sat_with_state(state, &over_limit)? {
+                    return Err(SymbolicError::Unsupported(
+                        "symbolic CREATE initcode size beyond the EIP-3860 limit",
+                    ));
+                }
+            }
+            _ => {}
+        }
         if let Some(outcome) = self.guard_memory_range(executor, state, worklist, &offset, &size)? {
             return Ok(outcome);
         }
@@ -24,28 +56,19 @@ impl SymbolicExecutor {
         let offset = state.stack.pop()?;
         let size = state.stack.pop()?;
         let size = match state.constrained_usize_checked(&mut self.cx, &size) {
-            // EIP-3860: initcode above the limit halts the creating frame.
-            Some(Ok(size)) if size > executor.max_initcode_size => {
-                state.return_data = SymReturnData::empty(&mut self.cx);
-                return Ok(StepOutcome::ExceptionalHalt);
-            }
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 return Ok(StepOutcome::Revert);
             }
             None => {
-                // A symbolic size that may exceed the initcode limit reports incomplete.
-                let (max_limit, reason) =
-                    if executor.max_initcode_size <= self.config.max_calldata_bytes as usize {
-                        (
-                            executor.max_initcode_size,
-                            "symbolic CREATE initcode size beyond the EIP-3860 limit",
-                        )
-                    } else {
-                        (self.config.max_calldata_bytes as usize, "symbolic CREATE initcode size")
-                    };
-                let max_size = self.solver_upper_bound_usize(state, &size, max_limit, reason)?;
+                let max_limit = self.config.max_calldata_bytes as usize;
+                let max_size = self.solver_upper_bound_usize(
+                    state,
+                    &size,
+                    max_limit,
+                    "symbolic CREATE initcode size",
+                )?;
                 BoundedCopySize::Symbolic { size, max_size }
             }
         };
