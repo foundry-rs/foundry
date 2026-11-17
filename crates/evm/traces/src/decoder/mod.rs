@@ -39,10 +39,10 @@ use foundry_evm_networks::{
 use itertools::Itertools;
 use std::{borrow::Cow, collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
-    CURRENT_COMMITTEE_ADDRESS, IAccountKeychain, IAddressRegistry, ICurrentCommittee, IFeeManager,
-    INonce, IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, IStorageCredits, ITIP20,
-    ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry, IValidatorConfig, PATH_USD_ADDRESS,
-    RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    CURRENT_COMMITTEE_ADDRESS, IAccountKeychain, IAddressRegistry, IConfigurableAccount,
+    ICurrentCommittee, IFeeManager, INonce, IReceivePolicyGuard, ISignatureVerifier,
+    IStablecoinDEX, IStorageCredits, ITIP20, ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry,
+    IValidatorConfig, PATH_USD_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
 
 #[cfg(feature = "base")]
@@ -418,6 +418,7 @@ impl CallTraceDecoder {
             ITIP20ChannelReserve::abi::contract(),
             ISignatureVerifier::abi::contract(),
             IReceivePolicyGuard::abi::contract(),
+            IConfigurableAccount::abi::contract(),
         ];
         let mut labels = HashMap::from_iter([
             (CHEATCODE_ADDRESS, "VM".to_string()),
@@ -471,7 +472,17 @@ impl CallTraceDecoder {
             .chain(ITIP20ChannelReserve::abi::functions().into_values())
             .chain(ISignatureVerifier::abi::functions().into_values())
             .chain(IReceivePolicyGuard::abi::functions().into_values())
+            .chain(IConfigurableAccount::abi::functions().into_values())
             .flatten()
+            // The configurable account shim runs at every registered account's address, so its
+            // functions cannot be scoped to one address. Its Tempo binding has no JSON ABI.
+            .chain(
+                [
+                    "function isValidSignature(bytes32 hash, bytes signature) external view returns (bytes4)",
+                    "function onERC721Received(address operator, address from, uint256 tokenId, bytes data) external view returns (bytes4)",
+                ]
+                .map(|function| Function::parse(function).unwrap()),
+            )
             .map(|func| (func.selector(), vec![func]))
             .collect();
 
@@ -489,6 +500,7 @@ impl CallTraceDecoder {
             .chain(ITIP20ChannelReserve::abi::events().into_values())
             .chain(ISignatureVerifier::abi::events().into_values())
             .chain(IReceivePolicyGuard::abi::events().into_values())
+            .chain(IConfigurableAccount::abi::events().into_values())
             .flatten()
             .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
             .collect();
@@ -1960,9 +1972,9 @@ mod tests {
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::{abi::Vm, precompiles::P256_VERIFY, tempo::TEMPO_PRECOMPILE_ADDRESSES};
     use tempo_contracts::precompiles::{
-        ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,
-        TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
-        VALIDATOR_CONFIG_V2_ADDRESS,
+        ACCOUNT_KEYCHAIN_ADDRESS, CONFIGURABLE_ACCOUNT_ADDRESS, IConfigurableAccountShim,
+        SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+        TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
     };
 
     #[cfg(feature = "base")]
@@ -4070,6 +4082,14 @@ mod tests {
         );
         assert_eq!(t7_labels.get(&STORAGE_CREDITS_ADDRESS), Some(&"StorageCredits".to_string()));
 
+        assert!(
+            !labels_for_hardfork(TempoHardfork::T13).contains_key(&CONFIGURABLE_ACCOUNT_ADDRESS)
+        );
+        assert_eq!(
+            labels_for_hardfork(TempoHardfork::T14).get(&CONFIGURABLE_ACCOUNT_ADDRESS),
+            Some(&"ConfigurableAccount".to_string())
+        );
+
         let ethereum_labels = CallTraceDecoderBuilder::new()
             .with_execution_network(NetworkVariant::Ethereum)
             .with_chain_id(Some(4217))
@@ -4560,6 +4580,134 @@ mod tests {
         let receipt = params.iter().find(|(name, _)| name == "receipt").unwrap();
         assert!(!receipt.1.contains("ClaimReceiptV1"));
         assert!(receipt.1.starts_with("0x"));
+    }
+
+    #[tokio::test]
+    async fn test_t14_configurable_account_decode() {
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_hardfork(Some(TempoHardfork::T14.into()))
+            .build();
+        let account = address!("0x0000000000000000000000000000000000000abc");
+        let owner = address!("0x0000000000000000000000000000000000000def");
+        let owners = vec![IConfigurableAccount::ConfigurableAccountOwner { owner, weight: 2 }];
+        let hash = B256::repeat_byte(0x22);
+
+        let update = IConfigurableAccount::updateConfigCall {
+            current: IConfigurableAccount::ConfigurableAccountConfig {
+                salt: B256::ZERO,
+                version: 3,
+                threshold: 1,
+                owners: owners.clone(),
+            },
+            threshold: 2,
+            owners: owners.clone(),
+        };
+        let decoded = decoder
+            .decode_function(&CallTrace {
+                address: CONFIGURABLE_ACCOUNT_ADDRESS,
+                data: update.abi_encode().into(),
+                output: IConfigurableAccount::UnauthorizedConfigurableAccountCaller {}
+                    .abi_encode()
+                    .into(),
+                status: Some(InstrStop::Revert),
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(decoded.label.as_deref(), Some("ConfigurableAccount"));
+        let call_data = decoded.call_data.expect("updateConfig should decode");
+        assert_eq!(
+            call_data.signature,
+            "updateConfig((bytes32,uint64,uint8,(address,uint8)[]),uint8,(address,uint8)[])"
+        );
+        assert_eq!(
+            call_data.args,
+            [
+                format!("(0x{}, 3, 1, [({owner}, 2)])", "0".repeat(64)),
+                "2".to_string(),
+                format!("[({owner}, 2)]"),
+            ]
+        );
+        assert_eq!(decoded.return_data.as_deref(), Some("UnauthorizedConfigurableAccountCaller()"));
+
+        // The shim runs at the account's own address, not at the precompile.
+        let decoded = decoder
+            .decode_function(&CallTrace {
+                address: account,
+                data: IConfigurableAccountShim::isValidSignatureCall {
+                    hash,
+                    signature: vec![0x05, 0xaa].into(),
+                }
+                .abi_encode()
+                .into(),
+                output: IConfigurableAccountShim::isValidSignatureCall::abi_encode_returns(
+                    &IConfigurableAccountShim::isValidSignatureCall::SELECTOR.into(),
+                )
+                .into(),
+                success: true,
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(decoded.label, None);
+        let call_data = decoded.call_data.expect("isValidSignature should decode");
+        assert_eq!(call_data.signature, "isValidSignature(bytes32,bytes)");
+        assert_eq!(call_data.args, [hash.to_string(), "0x05aa".to_string()]);
+        assert_eq!(decoded.return_data.as_deref(), Some("0x1626ba7e"));
+
+        let decoded = decoder
+            .decode_function(&CallTrace {
+                address: SIGNATURE_VERIFIER_ADDRESS,
+                data: ISignatureVerifier::verifyConfigurableAccountCall {
+                    account,
+                    hash,
+                    signature: vec![0x05].into(),
+                }
+                .abi_encode()
+                .into(),
+                output: true.abi_encode().into(),
+                success: true,
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(decoded.label.as_deref(), Some("SignatureVerifier"));
+        assert_eq!(
+            decoded.call_data.expect("verifyConfigurableAccount should decode").signature,
+            "verifyConfigurableAccount(address,bytes32,bytes)"
+        );
+        assert_eq!(decoded.return_data.as_deref(), Some("true"));
+
+        let events = [
+            (
+                IConfigurableAccount::ConfigurableAccountConfigUpdated {
+                    account,
+                    salt: B256::ZERO,
+                    version: 4,
+                    threshold: 2,
+                    owners: owners.clone(),
+                }
+                .encode_log_data(),
+                "ConfigurableAccountConfigUpdated",
+            ),
+            (
+                IConfigurableAccount::AccountUpgraded {
+                    account,
+                    commitment: B256::repeat_byte(0x33),
+                    salt: B256::ZERO,
+                    threshold: 2,
+                    owners,
+                }
+                .encode_log_data(),
+                "AccountUpgraded",
+            ),
+        ];
+        for (log, name) in events {
+            let decoded =
+                decoder.decode_event_with_address(CONFIGURABLE_ACCOUNT_ADDRESS, &log).await;
+            assert_eq!(decoded.name.as_deref(), Some(name));
+            let params = decoded.params.expect("event params should decode");
+            assert_eq!(params[0], ("account".to_string(), account.to_string()));
+            assert_eq!(params.last().unwrap(), &("owners".to_string(), format!("[({owner}, 2)]")));
+        }
     }
 
     #[test]
