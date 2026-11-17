@@ -31,10 +31,12 @@ contract GetFoundryVersionTest is Test {
         // Validate commit hash (should be exactly 10 characters)
         require(bytes(commitHash).length == 10, "Invalid commit hash length");
 
-        // Validate UNIX timestamp (numeric)
+        // Validate UNIX timestamp (numeric). Idempotent builds (VERGEN_IDEMPOTENT) report 0.
         uint256 buildUnixTimestamp = vm.parseUint(timestamp);
         uint256 minimumAcceptableTimestamp = 1700000000; // Adjust as needed
-        require(buildUnixTimestamp >= minimumAcceptableTimestamp, "Build timestamp is too old");
+        require(
+            buildUnixTimestamp == 0 || buildUnixTimestamp >= minimumAcceptableTimestamp, "Build timestamp is too old"
+        );
 
         // Validate build profile (e.g., "debug" or "release")
         require(bytes(buildType).length > 0, "Build type is empty");
