@@ -34,7 +34,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_trie::{Nibbles, proof::verify_proof};
+use alloy_trie::{EMPTY_ROOT_HASH, Nibbles, proof::verify_proof};
 use anvil::{
     EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory,
     eth::{
@@ -4332,7 +4332,7 @@ async fn test_memory_reset_restores_selected_blob_schedule_in_both_directions() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_get_account() {
-    let (_api, handle) = spawn(fork_config()).await;
+    let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     let accounts = handle.dev_accounts().collect::<Vec<_>>();
@@ -4347,6 +4347,23 @@ async fn test_fork_get_account() {
 
     assert_eq!(alice_acc_init.balance, alice_bal);
     assert_eq!(alice_acc_init.nonce, alice_nonce);
+
+    // WETH has fork state that was never touched locally.
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let balance = provider.get_balance(weth).await.unwrap();
+    let nonce = provider.get_transaction_count(weth).await.unwrap();
+    let code_hash = keccak256(provider.get_code_at(weth).await.unwrap());
+    let slot = provider.get_storage_at(weth, U256::ZERO).await.unwrap();
+    assert!(!balance.is_zero());
+    assert!(!slot.is_zero());
+    let expected = (balance, nonce, code_hash);
+
+    let fork_proof = provider.get_proof(weth, vec![]).number(init_block).await.unwrap();
+    let fork_root = fork_proof.storage_hash;
+    assert_ne!(fork_root, EMPTY_ROOT_HASH);
+    let account = provider.get_account(weth).await.unwrap();
+    assert_eq!((account.balance, account.nonce, account.code_hash), expected);
+    assert_eq!(account.storage_root, fork_root);
 
     let tx = TransactionRequest::default().from(alice).to(bob).value(U256::from(142));
 
@@ -4369,32 +4386,15 @@ async fn test_fork_get_account() {
     let alice_acc_prev_block = provider.get_account(alice).number(init_block).await.unwrap();
 
     assert_eq!(alice_acc_init, alice_acc_prev_block);
-}
+    let alice_acc_pending = provider.get_account(alice).block_id(BlockId::pending()).await.unwrap();
+    assert_eq!(alice_acc, alice_acc_pending);
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_fork_get_account_and_proof_read_uncached_state() {
-    let (api, handle) = spawn(fork_config()).await;
-    let provider = handle.http_provider();
-
-    // WETH has fork state that was never touched locally.
-    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let balance = provider.get_balance(weth).await.unwrap();
-    let nonce = provider.get_transaction_count(weth).await.unwrap();
-    let code_hash = keccak256(provider.get_code_at(weth).await.unwrap());
-    let slot = provider.get_storage_at(weth, U256::ZERO).await.unwrap();
-    assert!(!balance.is_zero());
-    assert!(!slot.is_zero());
-    let expected = (balance, nonce, code_hash);
-
-    let account = provider.get_account(weth).await.unwrap();
-    assert_eq!((account.balance, account.nonce, account.code_hash), expected);
-
-    // Proofs at the fork block are delegated, so mine past it to exercise the local path.
+    // Retain a post-fork historical state as well as the current head.
     api.mine_one().await.unwrap();
-    api.mine_one().await.unwrap();
-    for block in [BlockId::number(BLOCK_NUMBER + 1), BlockId::latest(), BlockId::pending()] {
+    for block in [BlockId::number(init_block + 1), BlockId::latest(), BlockId::pending()] {
         let account = provider.get_account(weth).block_id(block).await.unwrap();
         assert_eq!((account.balance, account.nonce, account.code_hash), expected);
+        assert_eq!(account.storage_root, fork_root);
         // Slot 99 is unused by WETH, so its proof must be an exclusion proof.
         let keys = vec![B256::ZERO, B256::with_last_byte(99)];
         let proof = provider.get_proof(weth, keys).block_id(block).await.unwrap();
