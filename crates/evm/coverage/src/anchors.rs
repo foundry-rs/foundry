@@ -88,10 +88,7 @@ pub fn find_anchors(
                 // jump's edge can count it, and when that is ambiguous the arm stays unanchored
                 // instead of taking an instruction that runs with the jump, such as its target.
                 if !arm.is_some_and(|arm| index.has_own_code(arm)) {
-                    let edge = index.if_edge(item_id, path_id, &item.loc, arms);
-                    if edge.is_some() || arm.is_some() {
-                        return edge;
-                    }
+                    return index.if_edge(item_id, path_id, &item.loc, arms);
                 }
             }
             match item.kind {
@@ -392,7 +389,7 @@ impl<'a> AnchorIndex<'a> {
         }
     }
 
-    /// Returns whether the jump's own target push is mapped inside `loc`, as when a body that is
+    /// Returns whether the jump's own target push is mapped to `loc`, as when a body that is
     /// only a `break`, `continue`, or `leave` becomes the conditional jump itself.
     fn jump_is_body(
         &self,
@@ -400,7 +397,7 @@ impl<'a> AnchorIndex<'a> {
         loc: &SourceLocation,
     ) -> bool {
         let jump = self.pcs.binary_search(&(fallthrough.instruction - 1)).ok();
-        jump.is_some_and(|jump| self.maps_inside(jump - 1, loc))
+        jump.is_some_and(|jump| self.starts_in_range(jump - 1, loc))
     }
 
     /// Returns whether the first instruction at `pc` after any `JUMPDEST`s is mapped inside `loc`.
@@ -617,17 +614,26 @@ impl<'a> AnchorIndex<'a> {
         loc: &SourceLocation,
         arms: &IfArms,
     ) -> Option<EdgeAnchor> {
-        let mut jumps = self.branches.iter().filter(|&&(ic, ..)| {
-            self.source_map.get(ic + 1).is_some_and(|jump| {
-                is_within_source_span(jump, loc)
-                    && !is_within_source_span(jump, &arms.then_arm)
-                    && arms.else_arm.as_ref().is_none_or(|arm| !is_within_source_span(jump, arm))
+        // The statement's span ends before the `;` that a jump's source element can include.
+        let mut jumps = self
+            .branches
+            .iter()
+            .filter(|&&(ic, ..)| {
+                self.source_map.get(ic + 1).is_some_and(|jump| {
+                    is_in_source_range(jump, loc)
+                        && !is_in_source_range(jump, &arms.then_arm)
+                        && arms.else_arm.as_ref().is_none_or(|arm| !is_in_source_range(jump, arm))
+                })
             })
-        });
-        let &(_, jump, immediate) = jumps.next()?;
-        if jumps.next().is_some() {
-            return None;
+            .collect::<Vec<_>>();
+        // A jump to a failure, such as an overflow check in the condition, cannot enter an arm,
+        // unless it is the only jump, as when the arm is a shared `revert`.
+        if jumps.len() > 1 {
+            jumps.retain(|&&(_, _, immediate)| {
+                jump_destination(immediate).is_ok_and(|target| !self.fails(target))
+            });
         }
+        let &[&(_, jump, immediate)] = jumps.as_slice() else { return None };
         let anchors = ItemAnchor::from_branch(item_id, jump, immediate).ok()?;
         let (fallthrough, taken) = &anchors;
         let pc = fallthrough.instruction;
@@ -637,7 +643,8 @@ impl<'a> AnchorIndex<'a> {
         };
         let static_entries = self.jumps.partition_point(|&(target, _)| target <= pc)
             - self.jumps.partition_point(|&(target, _)| target < pc);
-        if self.bytecode.get(pc as usize).is_none() || entered(&self.pushed) != static_entries {
+        let op = self.bytecode.get(pc as usize)?;
+        if *op == opcode::JUMPDEST && entered(&self.pushed) != static_entries {
             return None;
         }
         let entries = self.fallthrough_entries(&anchors).ok()?;
@@ -1754,6 +1761,9 @@ mod tests {
             // A jump target push mapped inside the arm runs with the jump, so it is not the arm's.
             (&after_then_exit[..], "12:3:0;45:5:0;10:60:0;80:5:0;;;0:100:0;;", &taken),
             (&exit_then_after[..], "12:3:0;;10:60:0;0:100:0;;;80:5:0;;", &fallthrough),
+            // The jump's element can run one byte past the span of an `if` without braces, which
+            // ends before the `;`.
+            (&after_then_exit[..], "12:3:0;;10:61:0;80:5:0;;;0:100:0;;", &taken),
             // The arm continues a loop at code mapped before the `if`.
             (&after_then_exit[..], "12:3:0;;10:60:0;80:5:0;;;5:3:0;;", &taken),
             // The push is the arm even when both sides reach code after the `if`.
@@ -1886,5 +1896,33 @@ mod tests {
             opcode::RETURN,
         ];
         assert!(if_anchors(&and, "12:3:0;;12:3:0;;;10:60:0;80:5:0;;;0:100:0;;", false).is_empty());
+
+        // A jump to a failure in the condition, such as an overflow check, cannot enter the arm.
+        let checked = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            16,
+            opcode::JUMPI,
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            13,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::RETURN,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        assert_eq!(
+            if_anchors(&checked, "12:3:0;;12:3:0;;;10:60:0;80:5:0;;;0:100:0;;;0:100:0;;;", false),
+            [(13, Some(9))]
+        );
     }
 }

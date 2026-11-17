@@ -385,10 +385,8 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     // Report the branch at the condition, but count hits in the true body.
                     // Line coverage uses the reported span so it also sees false conditions.
                     let anchor_loc = self.source_location_for(then_stmt.span);
-                    let after = self
-                        .stmts_after_if
-                        .get(&stmt.span)
-                        .map(|&span| self.source_location_for(span));
+                    let after_span = self.stmts_after_if.get(&stmt.span).copied();
+                    let after = after_span.map(|span| self.source_location_for(span));
                     let mut arms = IfArms { then_arm: anchor_loc.clone(), else_arm: None, after };
                     self.push_item_kind(
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
@@ -396,6 +394,10 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     )
                     .anchor_loc = Some(anchor_loc);
                     if let Some(else_stmt) = else_stmt {
+                        // An `else if` continues with the statement after the outer `if`.
+                        if let Some(span) = after_span {
+                            self.stmts_after_if.insert(else_stmt.span, span);
+                        }
                         let is_first_opcode = stmt_has_statements(else_stmt);
                         let anchor_loc =
                             is_first_opcode.then(|| self.source_location_for(else_stmt.span));
