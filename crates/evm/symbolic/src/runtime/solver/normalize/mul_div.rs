@@ -366,7 +366,7 @@ fn is_inverse_shift(expr: &SymExpr, twos: &SymExpr) -> bool {
 }
 
 /// Returns `(n, d)` for `n / d`, also in the `ite(d == 0, 0, n / d)` form of the EVM `DIV`.
-fn word_division_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
+pub(super) fn word_division_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
     let division = match expr.kind() {
         SymExprKind::Ite(condition, zero, division) if zero.as_const() == Some(U256::ZERO) => {
             let (_, denominator) = division.udiv_operands()?;

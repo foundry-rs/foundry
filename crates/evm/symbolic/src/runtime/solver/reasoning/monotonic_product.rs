@@ -3,12 +3,14 @@ use super::*;
 type LessThanFacts<'a> = HashSet<(&'a SymExpr, &'a SymExpr)>;
 type LessOrEqualFacts<'a> = HashSet<(&'a SymExpr, &'a SymExpr)>;
 type PositiveFacts<'a> = HashSet<&'a SymExpr>;
+type ZeroFacts<'a> = HashSet<&'a SymExpr>;
 
 #[derive(Default)]
 struct OrderFacts<'a> {
     less_than: LessThanFacts<'a>,
     less_or_equal: LessOrEqualFacts<'a>,
     positive: PositiveFacts<'a>,
+    zero: ZeroFacts<'a>,
 }
 
 /// Returns whether normalized monotonic product facts make constraints unsatisfiable.
@@ -116,6 +118,9 @@ fn collect_order_facts<'a>(expr: &'a SymBoolExpr, facts: &mut OrderFacts<'a>) {
         SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
             facts.less_or_equal.insert((left, right));
             facts.less_or_equal.insert((right, left));
+            if let Some(value) = expr.zero_check_operand() {
+                facts.zero.insert(value);
+            }
         }
         SymBoolExprKind::Not(value) => {
             if let Some(expr) = nonzero_expr(value) {
@@ -190,6 +195,11 @@ fn wide_term_lower_bound<'a>(
     if let Some((small, large)) = less_or_equal_comparison(constraint) {
         return is_wide_term(large).then(|| Some((large, bounds.word_range(small)?.0))).flatten();
     }
+    if let SymBoolExprKind::Cmp(SymCmpOp::Eq, large, value) = constraint.kind()
+        && is_wide_term(large)
+    {
+        return value.as_const().map(|value| (large, value));
+    }
     let SymBoolExprKind::Not(value) = constraint.kind() else { return None };
     let value = match value.kind() {
         SymBoolExprKind::And(terms) => {
@@ -214,6 +224,7 @@ fn wide_term_below<'a>(
 ) -> bool {
     let below = |term: &SymExpr| bounds.word_range(term).is_some_and(|(_, upper)| upper < lower);
     below(large)
+        || (lower == U256::MAX && successor_below_exact_quotient(large, facts, bounds))
         || constraints.iter().any(|constraint| {
             constraint
                 .visit_exprs(&mut |term| {
@@ -293,18 +304,169 @@ fn expr_less_or_equal<'a>(
         {
             wide_product_less_or_equal(left_a, left_b, right_a, right_b, facts, bounds)
         }
+        // Equal full products have equal low words, such as `q * d` and `x * y` for the quotient
+        // `q` of `x * y / d` with no remainder.
+        (
+            SymExprKind::BinOp(SymBinOp::Mul, left_a, left_b),
+            SymExprKind::BinOp(SymBinOp::Mul, right_a, right_b),
+        ) if is_quotient_product(left_a, left_b, right_a, right_b, bounds)
+            || is_quotient_product(right_a, right_b, left_a, left_b, bounds) =>
+        {
+            wide_product_less_or_equal(left_a, left_b, right_a, right_b, facts, bounds)
+                && wide_product_less_or_equal(right_a, right_b, left_a, left_b, facts, bounds)
+        }
         (
             SymExprKind::BinOp(SymBinOp::MulHigh, left_a, left_b),
             SymExprKind::BinOp(SymBinOp::MulHigh, right_a, right_b),
         ) => wide_product_less_or_equal(left_a, left_b, right_a, right_b, facts, bounds),
-        _ if let Some((left_a, left_b, left_den)) = quotient_operands(left, bounds)
-            && let Some((right_a, right_b, right_den)) = quotient_operands(right, bounds)
-            && left_den == right_den =>
+        // `left <= round(a * b / d) <= round'(a' * b' / d) <= right`.
+        _ if let Some(upper) = quotient_upper_bound(left, facts, bounds)
+            && let Some(lower) = quotient_lower_bound(right, facts, bounds) =>
         {
-            quotient_fits(right, facts)
-                && wide_product_less_or_equal(left_a, left_b, right_a, right_b, facts, bounds)
+            rounded_quotients_ordered(upper, lower, facts, bounds)
         }
         _ => false,
+    }
+}
+
+/// Rounding of `x * y / d` over the integers, where every rounding of `x * y / 0` is zero as in
+/// the EVM. `Floor <= Ceil`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Rounding {
+    Floor,
+    Ceil,
+}
+
+/// `(x, y, d, rounding)` for the rounded quotient `rounding(x * y / d)`.
+type RoundedQuotient<'a> = (&'a SymExpr, &'a SymExpr, &'a SymExpr, Rounding);
+
+/// Returns a rounded quotient that `expr` is at most.
+///
+/// These bounds follow from the Euclidean relation `x * y == q * d + r` with
+/// `q = floor(x * y / d)` and `r = mulmod(x, y, d) < d`, so `ceil(x * y / d)` is `q + (r != 0)`.
+fn quotient_upper_bound<'a>(
+    expr: &'a SymExpr,
+    facts: &OrderFacts<'a>,
+    bounds: &ConstraintContext,
+) -> Option<RoundedQuotient<'a>> {
+    // A truncated quotient is still at most `floor(x * y / d)`.
+    if let Some((x, y, denominator)) = quotient_operands(expr, bounds) {
+        return Some((x, y, denominator, Rounding::Floor));
+    }
+    // Wrapping only lowers `q + 1`.
+    successor_upper_bound(increment_operand(expr)?, facts, bounds)
+}
+
+/// Returns `ceil(x * y / d)` when the quotient `q` of `x * y / d` has a nonzero remainder, so that
+/// `q + 1 <= floor(x * y / d) + 1 == ceil(x * y / d)` over the integers.
+fn successor_upper_bound<'a>(
+    quotient: &'a SymExpr,
+    facts: &OrderFacts<'a>,
+    bounds: &ConstraintContext,
+) -> Option<RoundedQuotient<'a>> {
+    let (x, y, denominator) = quotient_operands(quotient, bounds)?;
+    if has_remainder(x, y, denominator, facts) != Some(true) {
+        return None;
+    }
+    Some((x, y, denominator, Rounding::Ceil))
+}
+
+/// Returns whether `round(a * b / d) <= round'(a' * b' / d)`, which holds for the same divisor
+/// once `round <= round'` and `a * b <= a' * b'`.
+fn rounded_quotients_ordered<'a>(
+    (left_a, left_b, left_den, left_rounding): RoundedQuotient<'a>,
+    (right_a, right_b, right_den, right_rounding): RoundedQuotient<'a>,
+    facts: &OrderFacts<'a>,
+    bounds: &ConstraintContext,
+) -> bool {
+    left_den == right_den
+        && left_rounding <= right_rounding
+        && wide_product_less_or_equal(left_a, left_b, right_a, right_b, facts, bounds)
+}
+
+/// Returns whether `quotient + 1 <= MAX`, because it is at most `ceil(x * y / d)` for a product
+/// that `d` divides with a quotient that fits a word.
+///
+/// This refutes the overflow check of a rounded-up quotient once the path has computed an exact
+/// quotient of a product at least as large, whose own term is not part of the query, as in
+/// `mulDivRoundingUp(x1, y, d) <= mulDivRoundingUp(x2, y, d)` when only `x1 * y` has a remainder.
+fn successor_below_exact_quotient<'a>(
+    quotient: &'a SymExpr,
+    facts: &OrderFacts<'a>,
+    bounds: &ConstraintContext,
+) -> bool {
+    successor_upper_bound(quotient, facts, bounds).is_some_and(|upper| {
+        facts.zero.iter().any(|remainder| {
+            matches!(
+                remainder.kind(),
+                SymExprKind::TernOp(SymTernOp::MulMod, x, y, denominator)
+                    if (product_quotient_fits(x, y, denominator, facts)
+                        || bounds.mul_cannot_overflow_256(x, y))
+                        && rounded_quotients_ordered(
+                            upper,
+                            (x, y, denominator, Rounding::Ceil),
+                            facts,
+                            bounds,
+                        )
+            )
+        })
+    })
+}
+
+/// Returns a rounded quotient that `expr` is at least.
+fn quotient_lower_bound<'a>(
+    expr: &'a SymExpr,
+    facts: &OrderFacts<'a>,
+    bounds: &ConstraintContext,
+) -> Option<RoundedQuotient<'a>> {
+    // A quotient that fits is `floor(x * y / d)`, which is also the ceiling when `r == 0`.
+    if let Some((x, y, denominator)) = quotient_operands(expr, bounds) {
+        if !quotient_fits(expr, facts) {
+            return None;
+        }
+        let exact = has_remainder(x, y, denominator, facts) == Some(false);
+        return Some((x, y, denominator, if exact { Rounding::Ceil } else { Rounding::Floor }));
+    }
+    // `q + 1 == floor(x * y / d) + 1 >= ceil(x * y / d)` when the increment does not wrap.
+    let quotient = increment_operand(expr)?;
+    let (x, y, denominator) = quotient_operands(quotient, bounds)?;
+    let below_max = bounds.word_range(quotient).is_some_and(|(_, max)| max < U256::MAX)
+        // A word division `x * y / d` reaches `MAX` only for `d == 1`, which leaves no remainder.
+        || (matches!(quotient.kind(), SymExprKind::BinOp(SymBinOp::UDiv, ..))
+            && has_remainder(x, y, denominator, facts) == Some(true));
+    (quotient_fits(quotient, facts) && below_max).then_some((x, y, denominator, Rounding::Ceil))
+}
+
+/// Returns whether the facts assert `mulmod(x, y, d) != 0`, or `false` when they assert it is zero.
+fn has_remainder(
+    x: &SymExpr,
+    y: &SymExpr,
+    denominator: &SymExpr,
+    facts: &OrderFacts<'_>,
+) -> Option<bool> {
+    let is_remainder = |expr: &&SymExpr| {
+        matches!(
+            expr.kind(),
+            SymExprKind::TernOp(SymTernOp::MulMod, a, b, modulus)
+                if modulus == denominator && same_factors(a, b, x, y)
+        )
+    };
+    if facts.positive.iter().any(is_remainder) {
+        Some(true)
+    } else if facts.zero.iter().any(is_remainder) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Returns `q` for `q + 1`.
+fn increment_operand(expr: &SymExpr) -> Option<&SymExpr> {
+    match expr.kind() {
+        SymExprKind::BinOp(SymBinOp::Add, value, one) if one.as_const() == Some(U256::ONE) => {
+            Some(value)
+        }
+        _ => None,
     }
 }
 
@@ -318,12 +480,18 @@ fn wide_product_less_or_equal<'a>(
     bounds: &ConstraintContext,
 ) -> bool {
     product_less_or_equal_known(left_a, left_b, right_a, right_b, facts, bounds)
-        || [(left_a, left_b), (left_b, left_a)].into_iter().any(|(quotient, divisor)| {
-            // `floor(x * y / d) * d <= x * y`.
-            quotient_operands(quotient, bounds).is_some_and(|(x, y, denominator)| {
-                denominator == divisor
-                    && ((x == right_a && y == right_b) || (x == right_b && y == right_a))
-            })
+        // `floor(x * y / d) * d <= x * y`.
+        || is_quotient_product(left_a, left_b, right_a, right_b, bounds)
+        || [(right_a, right_b), (right_b, right_a)].into_iter().any(|(quotient, divisor)| {
+            // `x * y <= ceil(x * y / d) * d` for `d != 0`.
+            quotient_lower_bound(quotient, facts, bounds).is_some_and(
+                |(x, y, denominator, rounding)| {
+                    rounding == Rounding::Ceil
+                        && denominator == divisor
+                        && same_factors(x, y, left_a, left_b)
+                        && bounds.word_range(denominator).is_some_and(|(min, _)| !min.is_zero())
+                },
+            )
         })
 }
 
@@ -347,20 +515,49 @@ fn quotient_operands<'a>(
 /// Returns whether a quotient is known not to be truncated to a word.
 fn quotient_fits(expr: &SymExpr, facts: &OrderFacts<'_>) -> bool {
     match expr.kind() {
-        SymExprKind::TernOp(SymTernOp::MulDiv, left, right, denominator) => facts
-            .less_than
-            .iter()
-            .any(|(high, bound)| *bound == denominator && is_mul_high_of(high, left, right)),
+        SymExprKind::TernOp(SymTernOp::MulDiv, left, right, denominator) => {
+            product_quotient_fits(left, right, denominator, facts)
+        }
         _ => true,
     }
+}
+
+/// Returns whether the facts assert `mul_high(x, y) < d`, so `x * y / d` fits a word.
+fn product_quotient_fits(
+    x: &SymExpr,
+    y: &SymExpr,
+    denominator: &SymExpr,
+    facts: &OrderFacts<'_>,
+) -> bool {
+    facts.less_than.iter().any(|(high, bound)| *bound == denominator && is_mul_high_of(high, x, y))
+}
+
+/// Returns whether `a * b` is `q * d` for a quotient `q` of `x * y / d`, where `(x, y)` are the
+/// factors of the other product.
+fn is_quotient_product(
+    a: &SymExpr,
+    b: &SymExpr,
+    x: &SymExpr,
+    y: &SymExpr,
+    bounds: &ConstraintContext,
+) -> bool {
+    [(a, b), (b, a)].into_iter().any(|(quotient, divisor)| {
+        quotient_operands(quotient, bounds).is_some_and(|(left, right, denominator)| {
+            denominator == divisor && same_factors(left, right, x, y)
+        })
+    })
 }
 
 fn is_mul_high_of(expr: &SymExpr, left: &SymExpr, right: &SymExpr) -> bool {
     matches!(
         expr.kind(),
-        SymExprKind::BinOp(SymBinOp::MulHigh, a, b)
-            if (a == left && b == right) || (a == right && b == left)
+        SymExprKind::BinOp(SymBinOp::MulHigh, a, b) if same_factors(a, b, left, right)
     )
+}
+
+/// Returns whether `{a, b}` and `{x, y}` are the same factors in either order.
+fn same_factors(a: &SymExpr, b: &SymExpr, x: &SymExpr, y: &SymExpr) -> bool {
+    (a == x && b == y) || (a == y && b == x)
 }
 
 fn product_less_or_equal_known<'a>(

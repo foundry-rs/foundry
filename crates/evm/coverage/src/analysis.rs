@@ -1,5 +1,5 @@
 use super::{CoverageItem, CoverageItemKind, SourceLocation};
-use alloy_primitives::map::{HashMap, HashSet};
+use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
@@ -33,19 +33,65 @@ struct SourceVisitor<'gcx> {
     items: Vec<CoverageItem>,
 
     all_lines: Vec<u32>,
-    /// Branch IDs whose jumps must match the exact ternary expression span.
-    ternary_branches: Vec<u32>,
+    /// Branch IDs whose anchors need more than their source span, with their kind.
+    branch_kinds: Vec<(u32, BranchKind)>,
     /// Deferred function-call spans, each paired with the contract scope active where the call
     /// was collected, so scope travels with the span to the delayed HIR resolution pass.
     function_calls: Vec<(Span, Arc<str>)>,
     function_call_scopes: FxHashMap<Span, Arc<str>>,
+    /// The span of the statement that follows each `if` statement in its block.
+    stmts_after_if: FxHashMap<Span, Span>,
+    /// The coverage source ID of every HIR source.
+    hir_source_ids: Arc<HashMap<hir::SourceId, u32>>,
+    /// The byte range of every call by name and the functions it can call, as `(range,
+    /// callees)`.
+    callees: Vec<(Range<u32>, Vec<SourceLocation>)>,
 }
 
 struct SourceVisitorCheckpoint {
     items: usize,
     all_lines: usize,
     function_calls: usize,
-    ternary_branches: usize,
+    branch_kinds: usize,
+}
+
+/// The kind of a branch whose anchors depend on more than its source span.
+#[derive(Clone, Debug)]
+pub(crate) enum BranchKind {
+    /// A `require` call. Path 0 is the failing side and path 1 the passing side.
+    Require,
+    /// A ternary expression. Its jumps must match the exact expression span.
+    Ternary(TernaryArms),
+    /// An `if` statement. Path 0 enters the then arm and path 1 the else arm.
+    If(IfArms),
+    /// A Yul `if` with the given body. Path 0 enters the body and path 1 skips it.
+    YulIf(SourceLocation),
+}
+
+/// The source spans of the arms of an `if` statement.
+#[derive(Clone, Debug)]
+pub(crate) struct IfArms {
+    /// The statement executed when the condition holds.
+    pub(crate) then_arm: SourceLocation,
+    /// The statement executed when it does not, if it has statements.
+    pub(crate) else_arm: Option<SourceLocation>,
+    /// The next statement of the enclosing block, which control reaches when the `if` does not
+    /// leave it.
+    pub(crate) after: Option<SourceLocation>,
+    /// The functions that the then arm calls by name. A compiler can inline their code, which the
+    /// source map attributes to them and not to the arm.
+    pub(crate) then_callees: Vec<SourceLocation>,
+    /// The functions that the else arm calls by name.
+    pub(crate) else_callees: Vec<SourceLocation>,
+}
+
+/// The source spans of the arms of a ternary expression.
+#[derive(Clone, Debug)]
+pub(crate) struct TernaryArms {
+    /// The expression evaluated when the condition holds.
+    pub(crate) true_arm: SourceLocation,
+    /// The expression evaluated when the condition does not hold.
+    pub(crate) false_arm: SourceLocation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,16 +112,8 @@ struct ResolvedEmptySpecialFunction {
 
 fn resolve_empty_special_functions(
     gcx: Gcx<'_>,
-    data: &SourceFiles,
+    hir_source_ids: &HashMap<hir::SourceId, u32>,
 ) -> Vec<ResolvedEmptySpecialFunction> {
-    let hir_source_ids = data
-        .sources
-        .iter()
-        .map(|(&source_id, path)| {
-            let (hir_source_id, _) = gcx.get_hir_source(path).unwrap();
-            (hir_source_id, source_id)
-        })
-        .collect::<HashMap<_, _>>();
     let mut resolved = Vec::new();
     for contract_id in gcx.hir.contract_ids() {
         let contract = gcx.hir.contract(contract_id);
@@ -115,16 +153,23 @@ fn resolve_empty_special_functions(
 }
 
 impl<'gcx> SourceVisitor<'gcx> {
-    fn new(source_id: u32, gcx: Gcx<'gcx>) -> Self {
+    fn new(
+        source_id: u32,
+        gcx: Gcx<'gcx>,
+        hir_source_ids: Arc<HashMap<hir::SourceId, u32>>,
+    ) -> Self {
         Self {
             source_id,
             gcx,
             contract_name: Arc::default(),
             branch_id: 0,
-            ternary_branches: Default::default(),
+            branch_kinds: Default::default(),
             all_lines: Default::default(),
             function_calls: Default::default(),
             function_call_scopes: Default::default(),
+            stmts_after_if: Default::default(),
+            hir_source_ids,
+            callees: Default::default(),
             items: Default::default(),
         }
     }
@@ -134,17 +179,16 @@ impl<'gcx> SourceVisitor<'gcx> {
             items: self.items.len(),
             all_lines: self.all_lines.len(),
             function_calls: self.function_calls.len(),
-            ternary_branches: self.ternary_branches.len(),
+            branch_kinds: self.branch_kinds.len(),
         }
     }
 
     fn restore_checkpoint(&mut self, checkpoint: SourceVisitorCheckpoint) {
-        let SourceVisitorCheckpoint { items, all_lines, function_calls, ternary_branches } =
-            checkpoint;
+        let SourceVisitorCheckpoint { items, all_lines, function_calls, branch_kinds } = checkpoint;
         self.items.truncate(items);
         self.all_lines.truncate(all_lines);
         self.function_calls.truncate(function_calls);
-        self.ternary_branches.truncate(ternary_branches);
+        self.branch_kinds.truncate(branch_kinds);
     }
 
     fn visit_contract<'ast>(&mut self, contract: &'ast ast::ItemContract<'ast>) {
@@ -188,6 +232,33 @@ impl<'gcx> SourceVisitor<'gcx> {
     fn resolve_function_calls(&mut self, hir_source_id: hir::SourceId) {
         self.function_call_scopes = self.function_calls.iter().cloned().collect();
         let _ = hir::Visit::visit_nested_source(self, hir_source_id);
+        self.callees.sort_unstable_by_key(|(range, _)| range.start);
+        let callees = std::mem::take(&mut self.callees);
+        let callees_in = |arm: &SourceLocation| {
+            let start = callees.partition_point(|(range, _)| range.start < arm.bytes.start);
+            let mut found = callees[start..]
+                .iter()
+                .take_while(|(range, _)| range.start < arm.bytes.end)
+                .filter(|(range, _)| range.end <= arm.bytes.end)
+                .flat_map(|(_, callees)| callees.iter().cloned())
+                // A recursive call names a function that holds the whole `if`, so its code says
+                // nothing about the arm.
+                .filter(|callee| {
+                    callee.source_id != arm.source_id
+                        || callee.bytes.start > arm.bytes.start
+                        || arm.bytes.end > callee.bytes.end
+                })
+                .collect::<Vec<_>>();
+            found.sort_by_key(|callee| (callee.source_id, callee.bytes.start, callee.bytes.end));
+            found.dedup_by_key(|callee| (callee.source_id, callee.bytes.clone()));
+            found
+        };
+        for (_, kind) in &mut self.branch_kinds {
+            if let BranchKind::If(arms) = kind {
+                arms.then_callees = callees_in(&arms.then_arm);
+                arms.else_callees = arms.else_arm.as_ref().map(callees_in).unwrap_or_default();
+            }
+        }
     }
 
     fn sort(&mut self) {
@@ -241,6 +312,10 @@ impl<'gcx> SourceVisitor<'gcx> {
     }
 
     fn source_location_for(&self, span: Span) -> SourceLocation {
+        self.location(span, self.source_id, self.contract_name.clone())
+    }
+
+    fn location(&self, span: Span, source_id: u32, contract_name: Arc<str>) -> SourceLocation {
         let files = self.gcx.sess.source_map().files();
         let source = files.span_to_source(span).unwrap();
         let mut bytes = source.data;
@@ -256,10 +331,33 @@ impl<'gcx> SourceVisitor<'gcx> {
         let first = source.file.lookup_line(RelativeBytePos::from_usize(bytes.start)).unwrap();
         let last = source.file.lookup_line(RelativeBytePos::from_usize(bytes.end)).unwrap();
         SourceLocation {
-            source_id: self.source_id as usize,
-            contract_name: self.contract_name.clone(),
+            source_id: source_id as usize,
+            contract_name,
             bytes: bytes.start as u32..bytes.end as u32,
             lines: first as u32 + 1..last as u32 + 2,
+        }
+    }
+
+    /// Records the functions that a call by name can run, from the functions its callee names
+    /// resolve to. An overloaded name resolves to every overload.
+    fn push_callees(&mut self, call: &hir::Expr<'_>, callee: &hir::Expr<'_>) {
+        let hir::ExprKind::Ident(res) = &callee.peel_parens().kind else { return };
+        let callees = res
+            .iter()
+            .filter_map(|res| match res {
+                hir::Res::Item(hir::ItemId::Function(id)) => Some(self.gcx.hir.function(*id)),
+                _ => None,
+            })
+            .filter(|function| function.body.is_some())
+            .filter_map(|function| {
+                let &source_id = self.hir_source_ids.get(&function.source)?;
+                let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
+                Some(self.location(function.span, source_id, contract.unwrap_or_default().into()))
+            })
+            .collect::<Vec<_>>();
+        if !callees.is_empty() {
+            let bytes = self.gcx.sess.source_map().span_to_source(call.span).unwrap().data;
+            self.callees.push((bytes.start as u32..bytes.end as u32, callees));
         }
     }
 
@@ -319,6 +417,15 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
         ControlFlow::Continue(())
     }
 
+    fn visit_block(&mut self, block: &'ast ast::Block<'ast>) -> ControlFlow<Self::BreakValue> {
+        for stmts in block.windows(2) {
+            if matches!(stmts[0].kind, StmtKind::If(..)) {
+                self.stmts_after_if.insert(stmts[0].span, stmts[1].span);
+            }
+        }
+        self.walk_block(block)
+    }
+
     fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
         match &stmt.kind {
             StmtKind::Break | StmtKind::Continue | StmtKind::Emit(..) | StmtKind::Revert(..) => {
@@ -340,21 +447,36 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     // Report the branch at the condition, but count hits in the true body.
                     // Line coverage uses the reported span so it also sees false conditions.
                     let anchor_loc = self.source_location_for(then_stmt.span);
+                    let after_span = self.stmts_after_if.get(&stmt.span).copied();
+                    let after = after_span.map(|span| self.source_location_for(span));
+                    let mut arms = IfArms {
+                        then_arm: anchor_loc.clone(),
+                        else_arm: None,
+                        after,
+                        then_callees: Vec::new(),
+                        else_callees: Vec::new(),
+                    };
                     self.push_item_kind(
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
                         stmt.span,
                     )
                     .anchor_loc = Some(anchor_loc);
                     if let Some(else_stmt) = else_stmt {
+                        // An `else if` continues with the statement after the outer `if`.
+                        if let Some(span) = after_span {
+                            self.stmts_after_if.insert(else_stmt.span, span);
+                        }
                         let is_first_opcode = stmt_has_statements(else_stmt);
                         let anchor_loc =
                             is_first_opcode.then(|| self.source_location_for(else_stmt.span));
+                        arms.else_arm.clone_from(&anchor_loc);
                         self.push_item_kind(
                             CoverageItemKind::Branch { branch_id, path_id: 1, is_first_opcode },
                             stmt.span,
                         )
                         .anchor_loc = anchor_loc;
                     }
+                    self.branch_kinds.push((branch_id, BranchKind::If(arms)));
                 }
             }
 
@@ -413,6 +535,7 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     // Asserts should not be considered branches: <https://github.com/foundry-rs/foundry/issues/9460>.
                     if ident.as_str() == "require" {
                         let branch_id = self.next_branch_id();
+                        self.branch_kinds.push((branch_id, BranchKind::Require));
                         self.push_item_kind(
                             CoverageItemKind::Branch {
                                 branch_id,
@@ -451,8 +574,10 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 // Don't walk assignments.
                 return ControlFlow::Continue(());
             }
-            StmtKind::If(..) => {
+            StmtKind::If(_, body) => {
                 let branch_id = self.next_branch_id();
+                let body = self.source_location_for(body.span);
+                self.branch_kinds.push((branch_id, BranchKind::YulIf(body)));
                 // Track both outcomes, including the implicit path that skips the body.
                 for path_id in 0..2 {
                     self.push_item_kind(
@@ -503,10 +628,15 @@ impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_> {
     type BreakValue = Never;
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
-        if matches!(expr.kind, ExprKind::Ternary(..)) {
+        if let ExprKind::Ternary(_, true_arm, false_arm) = &expr.kind {
             let branch_id = self.0.next_branch_id();
-            self.0.ternary_branches.push(branch_id);
-            // Ternary path 0 is the false arm (fallthrough); path 1 is the true arm (jump target).
+            let arms = TernaryArms {
+                true_arm: self.0.source_location_for(true_arm.span),
+                false_arm: self.0.source_location_for(false_arm.span),
+            };
+            self.0.branch_kinds.push((branch_id, BranchKind::Ternary(arms)));
+            // Ternary path 0 is the false arm and path 1 the true arm. Which side of the jump each
+            // is on depends on the compiler.
             for path_id in 0..2 {
                 self.0.push_item_kind(
                     CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false },
@@ -535,6 +665,7 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
             let prev = std::mem::replace(&mut self.contract_name, scope);
             self.push_stmt(expr.span);
             self.contract_name = prev;
+            self.push_callees(expr, lhs);
         }
         self.walk_expr(expr)
     }
@@ -569,8 +700,8 @@ fn stmt_has_statements(stmt: &ast::Stmt<'_>) -> bool {
 pub struct SourceAnalysis {
     /// All the coverage items.
     all_items: Vec<CoverageItem>,
-    /// Source and branch IDs requiring exact decision-node source-map matching.
-    ternary_branches: HashSet<(u32, u32)>,
+    /// Kinds of the branches that need special anchoring, by source and branch ID.
+    branch_kinds: HashMap<(u32, u32), BranchKind>,
     /// Source ID to `(offset, len)` into `all_items`.
     map: Vec<(u32, u32)>,
     /// Empty receive and fallback items keyed by coverage item ID.
@@ -597,8 +728,17 @@ impl SourceAnalysis {
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
         let mut resolved_empty_special_functions = Vec::new();
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
+            let hir_source_ids = Arc::new(
+                data.sources
+                    .iter()
+                    .map(|(&source_id, path)| {
+                        let (hir_source_id, _) = compiler.gcx().get_hir_source(path).unwrap();
+                        (hir_source_id, source_id)
+                    })
+                    .collect::<HashMap<_, _>>(),
+            );
             resolved_empty_special_functions =
-                resolve_empty_special_functions(compiler.gcx(), data);
+                resolve_empty_special_functions(compiler.gcx(), &hir_source_ids);
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -608,7 +748,8 @@ impl SourceAnalysis {
                     let ast = source.ast.as_ref().unwrap();
                     let (hir_source_id, _) = compiler.gcx().get_hir_source(path).unwrap();
 
-                    let mut visitor = SourceVisitor::new(source_id, compiler.gcx());
+                    let mut visitor =
+                        SourceVisitor::new(source_id, compiler.gcx(), hir_source_ids.clone());
                     for item in ast.items.iter() {
                         match &item.kind {
                             // Contracts: walk their functions, dropping test contracts.
@@ -648,7 +789,7 @@ impl SourceAnalysis {
                         visitor.push_lines();
                         visitor.sort();
                     }
-                    (source_id, visitor.items, visitor.ternary_branches)
+                    (source_id, visitor.items, visitor.branch_kinds)
                 })
                 .collect::<Vec<_>>()
         });
@@ -659,9 +800,9 @@ impl SourceAnalysis {
         let len = max_idx + 1;
         let mut all_items = Vec::new();
         let mut map = vec![(u32::MAX, 0); len as usize];
-        let mut ternary_branches = HashSet::default();
+        let mut branch_kinds = HashMap::default();
         for (idx, items, branches) in sourced_items {
-            ternary_branches.extend(branches.into_iter().map(|branch| (idx, branch)));
+            branch_kinds.extend(branches.into_iter().map(|(branch, kind)| ((idx, branch), kind)));
             // Assumes that all `idx` items are consecutive, guaranteed by the sort above.
             let idx = idx as usize;
             if map[idx].0 == u32::MAX {
@@ -698,14 +839,14 @@ impl SourceAnalysis {
         Ok(Self {
             all_items,
             map,
-            ternary_branches,
+            branch_kinds,
             empty_special_functions,
             contract_empty_special_functions,
         })
     }
 
-    pub(crate) fn is_ternary_branch(&self, source_id: u32, branch_id: u32) -> bool {
-        self.ternary_branches.contains(&(source_id, branch_id))
+    pub(crate) fn branch_kind(&self, source_id: u32, branch_id: u32) -> Option<&BranchKind> {
+        self.branch_kinds.get(&(source_id, branch_id))
     }
 
     /// Returns all the coverage items.
@@ -760,6 +901,17 @@ impl SourceAnalysis {
             .into_iter()
             .flatten()
             .copied()
+    }
+
+    /// Creates an analysis of source 0 from `items`, with the given branch kinds by branch ID.
+    #[cfg(test)]
+    pub(crate) fn for_test(items: Vec<CoverageItem>, branch_kinds: Vec<(u32, BranchKind)>) -> Self {
+        Self {
+            map: vec![(0, items.len() as u32)],
+            all_items: items,
+            branch_kinds: branch_kinds.into_iter().map(|(id, kind)| ((0, id), kind)).collect(),
+            ..Default::default()
+        }
     }
 }
 

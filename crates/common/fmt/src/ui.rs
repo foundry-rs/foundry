@@ -1,5 +1,6 @@
 //! Helper trait and functions to format Ethereum types.
 
+use crate::configurable_account::ConfigurableAccountSignatureDetails;
 use alloy_consensus::{
     BlockHeader, Eip658Value, Signed, Transaction as TxTrait, TxEip1559, TxEip2930, TxEip4844,
     TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, TxReceipt, Typed2718,
@@ -667,6 +668,13 @@ impl UIfmt for TempoSignature {
 
 impl UIfmt for AASigned {
     fn pretty(&self) -> String {
+        // A configurable account signature serializes as its opaque RLP encoding, so it is shown
+        // decoded instead.
+        let signature =
+            match ConfigurableAccountSignatureDetails::from_tx(self.tx(), self.signature()) {
+                Some(details) => details.pretty(),
+                None => self.signature().pretty(),
+            };
         format!(
             "
 hash                 {}
@@ -676,7 +684,7 @@ tempoSignature       {}",
             self.hash().pretty(),
             self.tx().ty(),
             self.tx().pretty().trim_start(),
-            self.signature().pretty(),
+            signature,
         )
     }
 }
@@ -735,15 +743,27 @@ impl UIfmt for AnyTxEnvelope {
         match self {
             Self::Ethereum(envelop) => envelop.pretty(),
             Self::Unknown(tx) => {
+                // Tempo transactions reach here when not fetched as Tempo, with their
+                // configurable account signature as opaque RLP among the fields.
+                let details = serde_json::to_value(tx.inner.fields())
+                    .ok()
+                    .and_then(|fields| ConfigurableAccountSignatureDetails::from_json(&fields));
+                let mut fields = tx.inner.fields().clone();
+                if details.is_some() {
+                    fields.remove("signature");
+                }
                 format!(
                     "
 hash                 {}
 type               {:#x}
-{}
+{}{}
                     ",
                     tx.hash.pretty(),
                     tx.ty(),
-                    tx.inner.fields.pretty().trim_start(),
+                    fields.pretty().trim_start(),
+                    details
+                        .map(|details| format!("tempoSignature       {}\n", details.pretty()))
+                        .unwrap_or_default(),
                 )
             }
         }

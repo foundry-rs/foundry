@@ -43,7 +43,7 @@ if [[ -n "${PRIVATE_KEY:-}" ]]; then
   printf "\naddress: %s\n" "$ADDR"
 else
   echo -e "\n=== CREATE AND FUND ADDRESS ==="
-  wallet_json="$(cast wallet new --json)"
+  wallet_json="$(cast wallet new --eoa --json)"
   ADDR="$(wallet_json_field "$wallet_json" address)"
   PK="$(wallet_json_field "$wallet_json" private_key)"
 

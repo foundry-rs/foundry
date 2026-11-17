@@ -5,6 +5,7 @@ use crate::{
     utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702, TxEnvelope};
+use alloy_dyn_abi::DynSolValue;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync,
@@ -10533,7 +10534,6 @@ contract UpgradeScript is Script {{
             new IConfigurableAccount.ConfigurableAccountOwner[](1);
         owners[0] = IConfigurableAccount.ConfigurableAccountOwner({owner}, 1);
         vm.startBroadcast();
-        // A low-level call: the precompile has no code for Solidity's code size check.
         (bool ok,) = address(0xAACC000000000000000000000000000000000000).call(
             abi.encodeCall(IConfigurableAccount.upgradeAccount, (1, owners))
         );
@@ -11428,9 +11428,24 @@ contract CaChecksScript is Script {
     )
     .await;
 
-    let update_config = &keccak256(
-        "updateConfig((bytes32,uint64,uint8,(address,uint8)[]),uint8,(address,uint8)[])",
-    )[..4];
+    // Complete calldata, since `forge script` decodes the arguments of known precompile calls.
+    let update_config = [
+        &keccak256(
+            "updateConfig((bytes32,uint64,uint8,(address,uint8)[]),uint8,(address,uint8)[])",
+        )[..4],
+        &DynSolValue::Tuple(vec![
+            DynSolValue::Tuple(vec![
+                DynSolValue::FixedBytes(B256::ZERO, 32),
+                DynSolValue::Uint(U256::ZERO, 64),
+                DynSolValue::Uint(U256::from(1), 8),
+                DynSolValue::Array(vec![]),
+            ]),
+            DynSolValue::Uint(U256::from(1), 8),
+            DynSolValue::Array(vec![]),
+        ])
+        .abi_encode_params(),
+    ]
+    .concat();
     let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
     let account_arg = account.to_string();
     let cases = [
@@ -11475,7 +11490,7 @@ contract CaChecksScript is Script {
         (
             upstream.as_str(),
             address!("0xAACC000000000000000000000000000000000000"),
-            update_config.to_vec(),
+            update_config,
             1,
             vec![],
             format!(

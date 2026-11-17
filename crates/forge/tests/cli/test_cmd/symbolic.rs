@@ -8150,7 +8150,10 @@ contract SymbolicSqrt {
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A
 // five-step inverse is wrong for large odd denominators, and without the high-word guard the
-// quotient wraps; neither may be rewritten into a false proof.
+// quotient wraps; neither may be rewritten into a false proof. Rounding up is monotone, bounds the
+// product from above, and exceeds the floor by at most one. Claims that it is at most the floor
+// of a larger product, at least the floor plus one, strictly above the product, or above it in
+// low words alone must still reach counterexamples.
 #[forgetest_init]
 fn symbolic_proves_full_precision_mul_div(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_full_precision_mul_div");
@@ -8433,10 +8436,80 @@ contract FullPrecisionMulDivTest {
         assert(FixedPointMathLib.fullMulDivUp(x, y, d) == FixedPointMathLib.fullMulDiv(x, y, d));
     }
 
+    function proveV4RoundingUpMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FullMath.mulDivRoundingUp(x1, y, d) <= FullMath.mulDivRoundingUp(x2, y, d));
+    }
+
+    function proveV4RoundingUpCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        assertCeiling(FullMath.mulDivRoundingUp(x, y, d), x, y, d);
+    }
+
+    function proveV4RoundingUpWithinOne(uint256 x, uint256 y, uint256 d) external pure {
+        uint256 up = FullMath.mulDivRoundingUp(x, y, d);
+        uint256 down = FullMath.mulDiv(x, y, d);
+        unchecked {
+            assert(up - down <= 1);
+        }
+    }
+
+    function proveV4RoundingUpBelowFloor(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FullMath.mulDivRoundingUp(x1, y, d) <= FullMath.mulDiv(x2, y, d));
+    }
+
+    function proveSoladyRoundingUpMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FixedPointMathLib.fullMulDivUp(x1, y, d) <= FixedPointMathLib.fullMulDivUp(x2, y, d));
+    }
+
+    function proveSoladyRoundingUpCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        assertCeiling(FixedPointMathLib.fullMulDivUp(x, y, d), x, y, d);
+    }
+
+    function proveSoladyRoundingUpWithinOne(uint256 x, uint256 y, uint256 d) external pure {
+        uint256 up = FixedPointMathLib.fullMulDivUp(x, y, d);
+        uint256 down = FixedPointMathLib.fullMulDiv(x, y, d);
+        unchecked {
+            assert(up - down <= 1);
+        }
+    }
+
+    function proveV4FloorSuccessorBelowRoundingUp(uint256 x1, uint256 x2, uint256 y, uint256 d)
+        external
+        pure
+    {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FullMath.mulDiv(x1, y, d) + 1 <= FullMath.mulDivRoundingUp(x2, y, d));
+    }
+
+    function proveV4RoundingUpLowWordCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        uint256 up = FullMath.mulDivRoundingUp(x, y, d);
+        unchecked {
+            assert(up * d >= x * y);
+        }
+    }
+
+    function proveSoladyRoundingUpStrictCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        (uint256 zdHi, uint256 zdLo) = mul512(FixedPointMathLib.fullMulDivUp(x, y, d), d);
+        (uint256 xyHi, uint256 xyLo) = mul512(x, y);
+        assert(zdHi > xyHi || (zdHi == xyHi && zdLo > xyLo));
+    }
+
     function assertFloor(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
         (uint256 zdHi, uint256 zdLo) = mul512(z, d);
         (uint256 xyHi, uint256 xyLo) = mul512(x, y);
         assert(zdHi < xyHi || (zdHi == xyHi && zdLo <= xyLo));
+    }
+
+    function assertCeiling(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
+        (uint256 zdHi, uint256 zdLo) = mul512(z, d);
+        (uint256 xyHi, uint256 xyLo) = mul512(x, y);
+        assert(zdHi > xyHi || (zdHi == xyHi && zdLo >= xyLo));
     }
 
     function high(uint256 a, uint256 b) internal pure returns (uint256 hi) {
@@ -8477,6 +8550,12 @@ contract FullPrecisionMulDivTest {
             ("proveSoladyFloor", "uint256,uint256,uint256"),
             ("proveSoladyRoundsUpRemainder", "uint256,uint256,uint256"),
             ("proveSoladyRoundingUpIdentity", "uint256,uint256"),
+            ("proveV4RoundingUpMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveV4RoundingUpCeiling", "uint256,uint256,uint256"),
+            ("proveV4RoundingUpWithinOne", "uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpCeiling", "uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpWithinOne", "uint256,uint256,uint256"),
         ] {
             let result = json_test_result(&output, &format!("{name}({args})"));
             assert_eq!(result["symbolic"]["status"], "pass", "{name}, optimized={optimized}");
@@ -8486,6 +8565,10 @@ contract FullPrecisionMulDivTest {
             ("proveSoladyRoundingUpIsFloor", "uint256,uint256,uint256"),
             ("proveFiveStepIdentity", "uint256,uint256"),
             ("proveUnguardedMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveV4RoundingUpBelowFloor", "uint256,uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpStrictCeiling", "uint256,uint256,uint256"),
+            ("proveV4FloorSuccessorBelowRoundingUp", "uint256,uint256,uint256,uint256"),
+            ("proveV4RoundingUpLowWordCeiling", "uint256,uint256,uint256"),
         ] {
             let result = json_test_result(&output, &format!("{name}({args})"));
             assert_eq!(
@@ -8494,5 +8577,55 @@ contract FullPrecisionMulDivTest {
             );
             assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{name}");
         }
+    }
+}
+
+#[forgetest_init]
+fn symbolic_proves_checked_mul_of_symbolic_quotient(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_checked_mul_of_symbolic_quotient");
+
+    prj.add_test(
+        "SymbolicQuotientMul.t.sol",
+        r#"
+contract SymbolicQuotientMulTest {
+    function quotientMul(uint256 a, uint256 d, uint256 k) external pure returns (uint256) {
+        return a / d * k;
+    }
+
+    // `a / d * k` fits in 192 bits, so its checked multiply cannot overflow.
+    function checkBoundedQuotientMul(uint128 a, uint128 d, uint64 k) public view {
+        if (d == 0) return;
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.quotientMul, (a, d, k)));
+        assert(ok);
+    }
+
+    function checkWideQuotientMul(uint256 a, uint256 d, uint256 k) public view {
+        if (d == 0) return;
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.quotientMul, (a, d, k)));
+        assert(ok);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicQuotientMul"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkBoundedQuotientMul(uint128,uint128,uint64)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkWideQuotientMul(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
 }

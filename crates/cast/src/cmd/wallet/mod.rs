@@ -7,7 +7,7 @@ use alloy_rpc_types::Authorization;
 use alloy_signer::Signer;
 use alloy_signer_local::{
     MnemonicBuilder, PrivateKeySigner,
-    coins_bip39::{English, Entropy, Mnemonic},
+    coins_bip39::{English, Entropy, Mnemonic, WordCount},
 };
 use clap::Parser;
 use eyre::{Context, Result};
@@ -28,7 +28,7 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, RawWalletOpts, WalletOpts, WalletSigner};
-use rand_08::thread_rng;
+use rand_08::{RngCore, thread_rng};
 use serde_json::{Value, json};
 use std::{
     ffi::OsString,
@@ -536,10 +536,13 @@ impl WalletSubcommands {
             }
             Self::NewMnemonic { words, accounts, entropy } => {
                 let phrase = if let Some(entropy) = entropy {
-                    let entropy = Entropy::from_slice(hex::decode(entropy)?)?;
+                    let entropy = Entropy::from_slice(&hex::decode(entropy)?)?;
                     Mnemonic::<English>::new_from_entropy(entropy).to_phrase()
                 } else {
-                    Mnemonic::<English>::new_with_count(&mut thread_rng(), words)?.to_phrase()
+                    let mut entropy = vec![0u8; WordCount::try_from(words)?.entropy_bytes()];
+                    thread_rng().fill_bytes(&mut entropy);
+                    Mnemonic::<English>::new_from_entropy(Entropy::from_slice(&entropy)?)
+                        .to_phrase()
                 };
 
                 let format_json = shell::is_json();
@@ -559,7 +562,7 @@ impl WalletSubcommands {
 
                 if !format_json {
                     sh_println!("{}", "Successfully generated a new mnemonic.".green())?;
-                    sh_println!("Phrase:\n{phrase}")?;
+                    sh_println!("Phrase:\n{}", phrase.as_str())?;
                     sh_println!("\nAccounts:")?;
                 }
 
@@ -586,7 +589,9 @@ impl WalletSubcommands {
                 }
 
                 if format_json {
-                    print_json_success(json!({ "mnemonic": phrase, "accounts": accounts }))?;
+                    print_json_success(
+                        json!({ "mnemonic": phrase.as_str(), "accounts": accounts }),
+                    )?;
                 }
             }
             Self::Vanity(cmd) => {

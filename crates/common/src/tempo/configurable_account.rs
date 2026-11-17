@@ -56,11 +56,13 @@ use tempo_primitives::{
     SignatureType, TempoTxEnvelope,
     transaction::{
         ConfigurableAccountConfig, ConfigurableAccountOwner, ConfigurableAccountSignature,
-        MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature, TEMPO_TX_TYPE_ID, TempoSignature,
-        TempoTransaction, configurable_account_digest,
+        KeychainSignature, MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature,
+        TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction, configurable_account_digest,
         tt_signature::{P256SignatureWithPreHash, WebAuthnSignature},
     },
 };
+
+pub use foundry_common_fmt::ConfigJson;
 
 /// Blocks per `eth_getLogs` request when a configuration lookup starts. The window is halved
 /// whenever the RPC rejects a request, which covers providers that cap the block range or the
@@ -648,54 +650,6 @@ pub fn sign_p256(
     }))
 }
 
-/// A configuration as `cast wallet owners --json` prints it, and as `forge script` saves it for
-/// owners on other machines.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConfigJson {
-    salt: B256,
-    version: u64,
-    threshold: u8,
-    owners: Vec<OwnerJson>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct OwnerJson {
-    owner: Address,
-    weight: u8,
-}
-
-impl From<&ConfigurableAccountConfig> for ConfigJson {
-    fn from(config: &ConfigurableAccountConfig) -> Self {
-        Self {
-            salt: config.salt,
-            version: config.version,
-            threshold: config.threshold,
-            owners: config
-                .owners
-                .iter()
-                .map(|owner| OwnerJson { owner: owner.owner, weight: owner.weight })
-                .collect(),
-        }
-    }
-}
-
-impl TryFrom<ConfigJson> for ConfigurableAccountConfig {
-    type Error = eyre::Report;
-
-    /// Sorts the owners by address and validates the configuration.
-    fn try_from(json: ConfigJson) -> Result<Self> {
-        let ConfigJson { salt, version, threshold, owners } = json;
-        let mut owners = owners
-            .into_iter()
-            .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
-            .collect::<Vec<_>>();
-        owners.sort_by_key(|owner| owner.owner);
-        let config = Self { salt, version, threshold, owners };
-        config.validate().map_err(|err| eyre::eyre!("invalid configuration: {err}"))?;
-        Ok(config)
-    }
-}
-
 /// Parses a configuration given as JSON, or as the path of a JSON file: `salt`, `version`,
 /// `threshold` and `owners` (each an `owner` and a `weight`), as `cast wallet owners --json`
 /// prints it, with or without its JSON envelope.
@@ -802,13 +756,16 @@ pub fn stored_owner_keys(
     })
 }
 
-/// Signs the transactions of a configurable account with `0x05` signatures from local owner keys.
+/// Signs the transactions of a configurable account with `0x05` signatures from local owner keys,
+/// or, as an access key of another account (TIP-1111), with keychain V2 signatures that wrap them.
 #[derive(Clone, Debug)]
 pub struct ConfigurableAccountSigner {
     account: Address,
     config: ConfigurableAccountConfig,
     /// The approving owners, sorted by address, whose weight reaches the threshold.
     owners: Vec<ConfigurableAccountOwnerKey>,
+    /// The account that the configurable account signs for as an access key, if any.
+    parent: Option<Address>,
 }
 
 impl ConfigurableAccountSigner {
@@ -862,12 +819,25 @@ impl ConfigurableAccountSigner {
             );
         }
         let owners = selected.iter().filter_map(|owner| keys.remove(owner)).collect();
-        Ok(Self { account, config, owners })
+        Ok(Self { account, config, owners, parent: None })
+    }
+
+    /// Signs as an access key of `parent`, which authorized the account with key type
+    /// `configurable` (TIP-1111).
+    pub const fn with_parent(mut self, parent: Address) -> Self {
+        self.parent = Some(parent);
+        self
     }
 
     /// The configurable account.
     pub const fn account(&self) -> Address {
         self.account
+    }
+
+    /// The transaction sender: the account the access key signs for, else the configurable
+    /// account itself.
+    pub fn sender(&self) -> Address {
+        self.parent.unwrap_or(self.account)
     }
 
     /// The account's current configuration.
@@ -882,26 +852,45 @@ impl ConfigurableAccountSigner {
         simulation_spec(self.account, &self.config, &approvals)
     }
 
-    /// Makes `tx` a Tempo transaction from the account, whose gas estimate models the owners'
-    /// approvals.
+    /// Makes `tx` a Tempo transaction from the sender, whose gas estimate models the owners'
+    /// approvals. As an access key, the account is the request's `keyId`, so the node models its
+    /// quorum inside a keychain signature.
     pub fn prepare_request<N: Network>(&self, tx: &mut N::TransactionRequest)
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        prepare_request::<N>(tx, self.account, self.simulation_spec());
+        prepare_request::<N>(tx, self.sender(), self.simulation_spec());
+        if self.parent.is_some() {
+            tx.set_key_id(self.account);
+        }
     }
 
     /// Signs a filled request with the owners' approvals.
+    ///
+    /// As an access key of `parent`, the owners approve the keychain V2 hash
+    /// `keccak256(0x04 || tx_hash || parent)`, as Tempo and viem do, and the `0x05` signature is
+    /// wrapped in a keychain signature for `parent`.
     pub async fn sign_request(&self, request: TempoTransactionRequest) -> Result<TempoTxEnvelope> {
         if let Some(from) = request.from() {
-            eyre::ensure!(
-                from == self.account,
-                "transaction sender {from} is not the configurable account {}",
-                self.account
-            );
+            match self.parent {
+                Some(parent) => eyre::ensure!(
+                    from == parent,
+                    "transaction sender {from} is not {parent}, which the configurable access key \
+                     {} signs for",
+                    self.account
+                ),
+                None => eyre::ensure!(
+                    from == self.account,
+                    "transaction sender {from} is not the configurable account {}",
+                    self.account
+                ),
+            }
         }
         let tx = request.build_aa().map_err(ca_error)?;
-        let inner = tx.signature_hash();
+        let inner = match self.parent {
+            Some(parent) => KeychainSignature::signing_hash(tx.signature_hash(), parent),
+            None => tx.signature_hash(),
+        };
         let digest = configurable_account_digest(inner, self.account, self.config.version);
         let mut approvals = Vec::with_capacity(self.owners.len());
         for owner in &self.owners {
@@ -913,7 +902,11 @@ impl ConfigurableAccountSigner {
             ConfigurableAccountSignature::try_new(self.account, self.config.clone(), approvals)
                 .map_err(ca_error)?;
         signature.verify_approvals(inner).map_err(ca_error)?;
-        Ok(TempoTxEnvelope::AA(tx.into_signed(TempoSignature::ConfigurableAccount(signature))))
+        let signature = match self.parent {
+            Some(parent) => TempoSignature::Keychain(KeychainSignature::new(parent, signature)),
+            None => TempoSignature::ConfigurableAccount(signature),
+        };
+        Ok(TempoTxEnvelope::AA(tx.into_signed(signature)))
     }
 }
 
