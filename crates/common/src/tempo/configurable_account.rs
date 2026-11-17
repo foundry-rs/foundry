@@ -246,7 +246,7 @@ async fn config_for_commitment<P: Provider<TempoNetwork>>(
 
 /// Scans the configurable account precompile's logs backwards from `block` for the latest
 /// configuration event of `account`, which must match `commitment`.
-async fn config_from_logs<P: Provider<TempoNetwork>>(
+pub async fn config_from_logs<N: Network, P: Provider<N>>(
     provider: &P,
     account: Address,
     commitment: B256,

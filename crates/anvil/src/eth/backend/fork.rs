@@ -41,7 +41,10 @@ use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, StateContext};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
-use foundry_common::provider::{RetryProvider, is_rpc_method_not_found};
+use foundry_common::{
+    provider::{RetryProvider, is_rpc_method_not_found},
+    tempo::configurable_account::config_from_logs,
+};
 use foundry_evm_core::{
     backend::account_fetch_policy_for_source,
     fork::{cache_bal, validate_bal},
@@ -55,6 +58,7 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
 use std::{num::NonZeroU64, sync::Arc, time::Duration};
+use tempo_primitives::transaction::ConfigurableAccountConfig;
 use tokio::sync::RwLock as AsyncRwLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -796,6 +800,25 @@ impl<N: Network> ClientFork<N> {
         storage.hashes.insert(block_number, hash);
         storage.blocks.insert(hash, block.clone());
     }
+
+    /// Returns the configuration of the Tempo configurable account `account` that `commitment`
+    /// names, from the latest configuration event of `account` at or before the fork block.
+    pub async fn configurable_account_config(
+        &self,
+        account: Address,
+        commitment: B256,
+    ) -> eyre::Result<ConfigurableAccountConfig> {
+        let key = (account, commitment);
+        if let Some(config) = self.storage_read().configurable_account_configs.get(&key).cloned() {
+            return Ok(config);
+        }
+
+        let config =
+            config_from_logs(&*self.provider(), account, commitment, self.block_number()).await?;
+
+        self.storage_write().configurable_account_configs.insert(key, config.clone());
+        Ok(config)
+    }
 }
 
 impl ClientFork {
@@ -1095,6 +1118,7 @@ pub struct ForkedStorage<N: Network = AnyNetwork> {
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<FoundryTxReceipt>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
+    pub configurable_account_configs: HashMap<(Address, B256), ConfigurableAccountConfig>,
 }
 
 impl<N: Network> Default for ForkedStorage<N> {
@@ -1112,6 +1136,7 @@ impl<N: Network> Default for ForkedStorage<N> {
             block_traces: Default::default(),
             block_receipts: Default::default(),
             code_at: Default::default(),
+            configurable_account_configs: Default::default(),
         }
     }
 }
