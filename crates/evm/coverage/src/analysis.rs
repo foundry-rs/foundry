@@ -241,6 +241,13 @@ impl<'gcx> SourceVisitor<'gcx> {
                 .take_while(|(range, _)| range.start < arm.bytes.end)
                 .filter(|(range, _)| range.end <= arm.bytes.end)
                 .flat_map(|(_, callees)| callees.iter().cloned())
+                // A recursive call names a function that holds the whole `if`, so its code says
+                // nothing about the arm.
+                .filter(|callee| {
+                    callee.source_id != arm.source_id
+                        || callee.bytes.start > arm.bytes.start
+                        || arm.bytes.end > callee.bytes.end
+                })
                 .collect::<Vec<_>>();
             found.sort_by_key(|callee| (callee.source_id, callee.bytes.start, callee.bytes.end));
             found.dedup_by_key(|callee| (callee.source_id, callee.bytes.clone()));
