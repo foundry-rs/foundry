@@ -981,6 +981,52 @@ fn mock_configurable_account_signature(
         .map_err(|e| invalid(&e))
 }
 
+/// Returns the placeholder owner quorum that the impersonated configurable account `account`
+/// with `config` signs with.
+///
+/// The quorum approves with the first owners that reach the threshold. Its zero secp256k1
+/// approvals stand in for owner keys Anvil does not hold, so the transaction executes in
+/// simulation, which skips owner recovery like impersonation skips the sender's.
+fn placeholder_configurable_account_signature(
+    account: Address,
+    config: ConfigurableAccountConfig,
+) -> Result<ConfigurableAccountSignature, BlockchainError> {
+    // Approvals carry no owner, so only their number matters: the fewest that reach the
+    // threshold, which the heaviest owners give.
+    let mut weights = config.owners.iter().map(|owner| u16::from(owner.weight)).collect::<Vec<_>>();
+    weights.sort_unstable_by(|a, b| b.cmp(a));
+    let mut weight = 0;
+    let approvals = weights
+        .iter()
+        .take_while(|owner| {
+            let below = weight < u16::from(config.threshold);
+            weight += **owner;
+            below
+        })
+        .count();
+    let signatures =
+        vec![mock_primitive_signature(PrimitiveSignatureType::Secp256k1, None, 0); approvals];
+    ConfigurableAccountSignature::try_new(account, config, signatures)
+        .map_err(|err| BlockchainError::Message(err.to_string()))
+}
+
+/// Returns the configuration of `account` that `commitment` names, from the chain `fork` forks at
+/// or before the fork block, for an account whose configuration events predate the fork.
+async fn forked_configurable_account_config(
+    fork: &ClientFork,
+    account: Address,
+    commitment: B256,
+) -> Result<ConfigurableAccountConfig, BlockchainError> {
+    fork.configurable_account_config(account, commitment).await.map_err(|err| {
+        BlockchainError::Message(format!(
+            "cannot impersonate configurable account {account}: no configuration event in this \
+             node's blocks matches its commitment, and the forked chain up to block {} does not \
+             give it: {err:#}",
+            fork.block_number()
+        ))
+    })
+}
+
 /// Returns the configurable account signatures of a simulated Tempo request, as a Tempo node
 /// builds them.
 ///
@@ -4178,6 +4224,7 @@ impl<N: Network> Backend<N> {
             return Ok(fork.trace_call(request, trace_types, resolved).await?);
         }
 
+        self.prefetch_impersonated_configurable_accounts([request.from]).await;
         self.with_database_at_and_context(Some(block_request), |state, block, mut monad_context| {
             let mut inspector =
                 TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
@@ -4305,6 +4352,8 @@ impl<N: Network> Backend<N> {
     where
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
+        let senders = calls.iter().map(|(request, _)| request.from).collect::<Vec<_>>();
+        self.prefetch_impersonated_configurable_accounts(senders).await;
         self.with_database_at_and_context(block_request, |state, block_env, mut monad_context| {
             let mut cache_db = CacheDB::new(&*state);
             let mut results = Vec::with_capacity(calls.len());
@@ -5785,62 +5834,101 @@ where
         tx: FoundryTypedTx,
         sender: Address,
     ) -> Result<FoundryTxEnvelope, BlockchainError> {
-        if let FoundryTypedTx::Tempo(tempo) = &tx
-            && let Some(signature) =
+        if let FoundryTypedTx::Tempo(tempo) = &tx {
+            self.prefetch_impersonated_configurable_accounts([Some(sender)]).await;
+            if let Some(signature) =
                 self.impersonated_configurable_account_signature(&**self.db.read().await, sender)?
-        {
-            let signature = TempoSignature::ConfigurableAccount(signature);
-            return Ok(FoundryTxEnvelope::Tempo(tempo.clone().into_signed(signature)));
+            {
+                let signature = TempoSignature::ConfigurableAccount(signature);
+                return Ok(FoundryTxEnvelope::Tempo(tempo.clone().into_signed(signature)));
+            }
         }
         Ok(tx.into_impersonated())
+    }
+
+    /// Looks up on the forked chain the configurations of the impersonated configurable accounts
+    /// among `senders`, ahead of simulating their requests, so that the simulation does not scan
+    /// the forked chain while it holds the database.
+    ///
+    /// Failures are left for the simulation to report, since a request with its own witness or
+    /// key does not need the configuration.
+    pub(crate) async fn prefetch_impersonated_configurable_accounts(
+        &self,
+        senders: impl IntoIterator<Item = Option<Address>>,
+    ) {
+        let Some(fork) = self.get_fork() else { return };
+        for sender in senders.into_iter().flatten() {
+            if !self.cheats.is_impersonated(sender) {
+                continue;
+            }
+            let commitment = self.configurable_account_commitment(&**self.db.read().await, sender);
+            if let Ok(Some(commitment)) = commitment
+                && self.configurable_account_config(sender, commitment).is_none()
+                && let Err(error) = fork.configurable_account_config(sender, commitment).await
+            {
+                debug!(target: "backend", %sender, %error, "failed to prefetch configurable account configuration");
+            }
+        }
     }
 
     /// Returns the placeholder owner quorum that the impersonated configurable account `account`
     /// signs with in `state`, or `None` when it has no configuration commitment.
     ///
-    /// The quorum approves with the first owners that reach the threshold of the configuration
-    /// the commitment names, recovered from the configuration events in this node's blocks. Its
-    /// zero secp256k1 approvals stand in for owner keys Anvil does not hold, so the transaction
-    /// executes in simulation, which skips owner recovery like impersonation skips the sender's.
+    /// The configuration the commitment names is recovered from the configuration events in this
+    /// node's blocks or, on a fork, from the latest one at or before the fork block.
     fn impersonated_configurable_account_signature(
         &self,
         state: &dyn DatabaseRef,
         account: Address,
     ) -> Result<Option<ConfigurableAccountSignature>, BlockchainError> {
+        let Some(commitment) = self.configurable_account_commitment(state, account)? else {
+            return Ok(None);
+        };
+        let config = match self.configurable_account_config(account, commitment) {
+            Some(config) => config,
+            None => {
+                let fork = self.configuration_fork(account, commitment)?;
+                // Callers prefetch the configuration before they take the database, so this only
+                // scans the forked chain when that failed or the state's commitment differs. Fork
+                // state reads already block here.
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(forked_configurable_account_config(&fork, account, commitment))
+                })?
+            }
+        };
+        placeholder_configurable_account_signature(account, config).map(Some)
+    }
+
+    /// Returns the configuration commitment of the Tempo account `account` in `state`, or `None`
+    /// when it has none.
+    fn configurable_account_commitment(
+        &self,
+        state: &dyn DatabaseRef,
+        account: Address,
+    ) -> Result<Option<B256>, BlockchainError> {
         if !self.is_tempo() {
             return Ok(None);
         }
         let Some(info) = state.basic_ref(account)? else { return Ok(None) };
         let commitment = account_config_commitment(&info, self.tempo_hardfork())
             .map_err(|err| BlockchainError::Message(err.to_string()))?;
-        if commitment.is_zero() {
-            return Ok(None);
-        }
-        let config = self.configurable_account_config(account, commitment).ok_or_else(|| {
+        Ok((!commitment.is_zero()).then_some(commitment))
+    }
+
+    /// Returns the fork on which to look up the configuration of `account` that `commitment`
+    /// names, when no configuration event in this node's blocks matches it.
+    fn configuration_fork(
+        &self,
+        account: Address,
+        commitment: B256,
+    ) -> Result<ClientFork, BlockchainError> {
+        self.get_fork().ok_or_else(|| {
             BlockchainError::Message(format!(
                 "cannot impersonate configurable account {account}: no configuration event in \
                  this node's blocks matches its commitment {commitment}"
             ))
-        })?;
-        // Approvals carry no owner, so only their number matters: the fewest that reach the
-        // threshold, which the heaviest owners give.
-        let mut weights =
-            config.owners.iter().map(|owner| u16::from(owner.weight)).collect::<Vec<_>>();
-        weights.sort_unstable_by(|a, b| b.cmp(a));
-        let mut weight = 0;
-        let approvals = weights
-            .iter()
-            .take_while(|owner| {
-                let below = weight < u16::from(config.threshold);
-                weight += **owner;
-                below
-            })
-            .count();
-        let signatures =
-            vec![mock_primitive_signature(PrimitiveSignatureType::Secp256k1, None, 0); approvals];
-        ConfigurableAccountSignature::try_new(account, config, signatures)
-            .map(Some)
-            .map_err(|err| BlockchainError::Message(err.to_string()))
+        })
     }
 
     /// Returns the configuration of `account` that `commitment` names, from the
@@ -7086,6 +7174,7 @@ where
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         overrides: EvmOverrides,
     ) -> Result<CallOutcome, BlockchainError> {
+        self.prefetch_impersonated_configurable_accounts([request.from]).await;
         self.with_database_at_and_context(block_request, |state, mut block, monad_context| {
             let block_number = block.number;
             let outcome = {
@@ -7117,6 +7206,7 @@ where
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
+        self.prefetch_impersonated_configurable_accounts([request.from]).await;
         let GethDebugTracingCallOptions {
             tracing_options,
             block_overrides,
@@ -9306,6 +9396,12 @@ impl Backend<FoundryNetwork> {
             )));
         }
 
+        let senders = bundles
+            .iter()
+            .flat_map(|bundle| &bundle.transactions)
+            .map(|request| request.from)
+            .collect::<Vec<_>>();
+        self.prefetch_impersonated_configurable_accounts(senders).await;
         self.with_database_at_and_context(
             block_request,
             |state, mut block_env, mut monad_context| {
@@ -9392,6 +9488,13 @@ impl Backend<FoundryNetwork> {
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         block_interval: u64,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
+        let senders = request
+            .block_state_calls
+            .iter()
+            .flat_map(|block| &block.calls)
+            .map(|call| call.from)
+            .collect::<Vec<_>>();
+        self.prefetch_impersonated_configurable_accounts(senders).await;
         let simulate_at = |state: Box<dyn MaybeFullDatabase + '_>,
                            base_block_env: BlockEnv,
                            base_number,
