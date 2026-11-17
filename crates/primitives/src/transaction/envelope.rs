@@ -438,7 +438,7 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
             },
             AnyTxEnvelope::Unknown(tx) => {
                 if tx.ty() == CIP64_TX_TYPE {
-                    let mut fields = tx.inner.fields;
+                    let mut fields = tx.inner.into_fields();
                     fields.insert("hash".into(), serde_json::to_value(tx.hash).unwrap());
                     return fields
                         .deserialize_into::<Signed<TxCip64>>()
@@ -446,7 +446,7 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                         .map_err(|err| ConversionError::Custom(err.to_string()));
                 }
                 if tx.ty() == TEMPO_TX_TYPE_ID {
-                    let mut fields = tx.inner.fields;
+                    let mut fields = tx.inner.into_fields();
                     fields.insert("hash".into(), serde_json::to_value(tx.hash).unwrap());
                     let tempo_tx = fields.deserialize_into::<AASigned>().map_err(|e| {
                         ConversionError::Custom(format!("Failed to deserialize tempo tx: {e}"))
@@ -459,14 +459,16 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                     let mut tx = tx;
                     if tx.ty() == DEPOSIT_TX_TYPE_ID {
                         tx.inner
-                            .fields
+                            .fields_mut()
                             .insert("from".to_string(), serde_json::to_value(from).unwrap());
                         let deposit =
-                            tx.inner.fields.deserialize_into::<TxDeposit>().map_err(|err| {
-                                ConversionError::Custom(format!(
-                                    "Failed to deserialize deposit transaction: {err}"
-                                ))
-                            })?;
+                            tx.inner.into_fields().deserialize_into::<TxDeposit>().map_err(
+                                |err| {
+                                    ConversionError::Custom(format!(
+                                        "Failed to deserialize deposit transaction: {err}"
+                                    ))
+                                },
+                            )?;
                         return Ok(Self::Deposit(Sealed::new(deposit)));
                     }
                     let tx_type = tx.ty();
@@ -481,14 +483,16 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                     // Try to convert to deposit transaction
                     if tx.ty() == DEPOSIT_TX_TYPE_ID {
                         tx.inner
-                            .fields
+                            .fields_mut()
                             .insert("from".to_string(), serde_json::to_value(from).unwrap());
                         let deposit_tx =
-                            tx.inner.fields.deserialize_into::<TxDeposit>().map_err(|e| {
-                                ConversionError::Custom(format!(
-                                    "Failed to deserialize deposit tx: {e}"
-                                ))
-                            })?;
+                            tx.inner.into_fields().deserialize_into::<TxDeposit>().map_err(
+                                |e| {
+                                    ConversionError::Custom(format!(
+                                        "Failed to deserialize deposit tx: {e}"
+                                    ))
+                                },
+                            )?;
 
                         return Ok(Self::Deposit(Sealed::new(deposit_tx)));
                     }
@@ -498,7 +502,7 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                         // `TxPostExec`'s own serde form expects the payload fields instead.
                         let input = tx
                             .inner
-                            .fields
+                            .fields()
                             .get_deserialized::<Bytes>("input")
                             .ok_or_else(|| {
                                 ConversionError::Custom(

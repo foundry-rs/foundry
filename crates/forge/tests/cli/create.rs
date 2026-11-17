@@ -747,7 +747,8 @@ Error: deployment transaction failed (receipt status 0): [..]
 
 /// `forge create` deploys from a 2-of-3 Tempo configurable account, signed by two local owners:
 /// the first deployment registers the account with `--tempo.config`, and a later one detects it
-/// from the chain. The estimate models both approvals, and one owner alone fails clearly.
+/// from the chain. The estimate models both approvals, and one owner alone fails clearly. A
+/// keystore that `cast wallet new` linked to a configurable account deploys from the account.
 #[forgetest_init]
 async fn create_from_tempo_configurable_account(prj: _, cmd: _) {
     prj.initialize_default_contracts();
@@ -815,25 +816,15 @@ async fn create_from_tempo_configurable_account(prj: _, cmd: _) {
          {high} (weight 1). forge create needs the owner keys locally: pass the other owners with \
          --tempo.owner, or keep them in the Tempo Accounts store.\n"
     ));
-}
 
-/// On T14, `forge create` with a keystore that `cast wallet new` linked to a configurable account
-/// deploys from the account, and `--eoa` deploys from the key.
-#[forgetest_init]
-async fn create_from_tempo_linked_keystore(prj: _, cmd: _) {
-    prj.initialize_default_contracts();
-    let (api, handle) =
-        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
-    let rpc = handle.http_endpoint();
-    let provider = handle.http_provider();
+    // With a keystore that `cast wallet new` linked to a configurable account, `forge create`
+    // deploys from the account, and `--eoa` deploys from the key.
     let (keystore, account, owner) = tempo_linked_keystore(prj.root());
     for address in [account, owner] {
         api.anvil_deal_tip20(address, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
             .await
             .unwrap();
     }
-    let contract = format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}");
-    let fee_token = ALPHA_USD_ADDRESS.to_string();
     for (extra, deployer) in [(&[][..], account), (&["--eoa"][..], owner)] {
         cmd.forge_fuse()
             .args(["create", &contract, "--broadcast", "--rpc-url", &rpc])

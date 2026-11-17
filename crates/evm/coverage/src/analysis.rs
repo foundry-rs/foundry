@@ -49,12 +49,21 @@ struct SourceVisitorCheckpoint {
 }
 
 /// The kind of a branch whose anchors depend on more than its source span.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) enum BranchKind {
     /// A `require` call. Path 0 is the failing side and path 1 the passing side.
     Require,
     /// A ternary expression. Its jumps must match the exact expression span.
-    Ternary,
+    Ternary(TernaryArms),
+}
+
+/// The source spans of the arms of a ternary expression.
+#[derive(Clone, Debug)]
+pub(crate) struct TernaryArms {
+    /// The expression evaluated when the condition holds.
+    pub(crate) true_arm: SourceLocation,
+    /// The expression evaluated when the condition does not hold.
+    pub(crate) false_arm: SourceLocation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -512,10 +521,15 @@ impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_> {
     type BreakValue = Never;
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
-        if matches!(expr.kind, ExprKind::Ternary(..)) {
+        if let ExprKind::Ternary(_, true_arm, false_arm) = &expr.kind {
             let branch_id = self.0.next_branch_id();
-            self.0.branch_kinds.push((branch_id, BranchKind::Ternary));
-            // Ternary path 0 is the false arm (fallthrough); path 1 is the true arm (jump target).
+            let arms = TernaryArms {
+                true_arm: self.0.source_location_for(true_arm.span),
+                false_arm: self.0.source_location_for(false_arm.span),
+            };
+            self.0.branch_kinds.push((branch_id, BranchKind::Ternary(arms)));
+            // Ternary path 0 is the false arm and path 1 the true arm. Which side of the jump each
+            // is on depends on the compiler.
             for path_id in 0..2 {
                 self.0.push_item_kind(
                     CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false },
@@ -713,8 +727,8 @@ impl SourceAnalysis {
         })
     }
 
-    pub(crate) fn branch_kind(&self, source_id: u32, branch_id: u32) -> Option<BranchKind> {
-        self.branch_kinds.get(&(source_id, branch_id)).copied()
+    pub(crate) fn branch_kind(&self, source_id: u32, branch_id: u32) -> Option<&BranchKind> {
+        self.branch_kinds.get(&(source_id, branch_id))
     }
 
     /// Returns all the coverage items.
@@ -771,13 +785,13 @@ impl SourceAnalysis {
             .copied()
     }
 
-    /// Creates an analysis of source 0 from `items`, with the given branch kinds.
+    /// Creates an analysis of source 0 from `items`, with the given branch kinds by branch ID.
     #[cfg(test)]
-    pub(crate) fn for_test(items: Vec<CoverageItem>, branch_kinds: &[(u32, BranchKind)]) -> Self {
+    pub(crate) fn for_test(items: Vec<CoverageItem>, branch_kinds: Vec<(u32, BranchKind)>) -> Self {
         Self {
             map: vec![(0, items.len() as u32)],
             all_items: items,
-            branch_kinds: branch_kinds.iter().map(|&(branch, kind)| ((0, branch), kind)).collect(),
+            branch_kinds: branch_kinds.into_iter().map(|(id, kind)| ((0, id), kind)).collect(),
             ..Default::default()
         }
     }
