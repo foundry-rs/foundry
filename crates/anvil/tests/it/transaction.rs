@@ -1348,35 +1348,7 @@ async fn test_tx_receipt() {
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     assert!(tx.to.is_some());
 
-    let greeter_deploy = Greeter::deploy_builder(provider.clone(), "Hello World!".to_string());
-    let greeter_calldata = greeter_deploy.calldata();
-
-    let tx = TransactionRequest::default()
-        .from(wallet.address())
-        .with_input(greeter_calldata.to_owned());
-
-    let tx = WithOtherFields::new(tx);
-    let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-
-    // `to` field is none if it's a contract creation transaction: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_gettransactionreceipt
-    assert!(tx.to.is_none());
-    assert!(tx.contract_address.is_some());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_receipt_block_timestamp_is_quantity() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
-
-    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(1));
-    let receipt = provider
-        .send_transaction(WithOtherFields::new(tx))
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
-    let block_number = U64::from(receipt.block_number.unwrap());
+    let block_number = U64::from(tx.block_number.unwrap());
 
     let block = provider
         .raw_request::<_, serde_json::Value>("eth_getBlockByNumber".into(), (block_number, false))
@@ -1385,7 +1357,7 @@ async fn test_receipt_block_timestamp_is_quantity() {
     let receipt = provider
         .raw_request::<_, serde_json::Value>(
             "eth_getTransactionReceipt".into(),
-            (receipt.transaction_hash,),
+            (tx.transaction_hash,),
         )
         .await
         .unwrap();
@@ -1401,6 +1373,20 @@ async fn test_receipt_block_timestamp_is_quantity() {
     let timestamp = serde_json::from_value::<U64>(block["timestamp"].clone()).unwrap();
     let receipt = serde_json::from_value::<FoundryTxReceipt>(receipt).unwrap();
     assert_eq!(receipt.block_timestamp(), Some(timestamp.to()));
+
+    let greeter_deploy = Greeter::deploy_builder(provider.clone(), "Hello World!".to_string());
+    let greeter_calldata = greeter_deploy.calldata();
+
+    let tx = TransactionRequest::default()
+        .from(wallet.address())
+        .with_input(greeter_calldata.to_owned());
+
+    let tx = WithOtherFields::new(tx);
+    let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    // `to` field is none if it's a contract creation transaction: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_gettransactionreceipt
+    assert!(tx.to.is_none());
+    assert!(tx.contract_address.is_some());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/12837>
