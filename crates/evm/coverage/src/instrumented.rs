@@ -519,11 +519,15 @@ impl InstrumentedBuild {
             if positions.is_none() {
                 tracing::warn!(
                     function = function.name,
-                    decision = decision.id,
+                    decision = ?decision.runtime_ids().collect::<Vec<_>>(),
                     "the MC/DC test vectors of the map are not those of its condition graph"
                 );
             }
-            for &vector in self.mcdc.get(&decision.id).into_iter().flatten() {
+            // The vectors that any of the decision's runtime IDs executed.
+            let vectors_run = decision
+                .runtime_ids()
+                .flat_map(|id| self.mcdc.get(&id).into_iter().flatten().copied());
+            for vector in vectors_run {
                 let position = match &positions {
                     Some(positions) => positions.get(vector as usize).copied(),
                     None => Some(vector as usize),

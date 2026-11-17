@@ -288,6 +288,110 @@ fn gap_and_skipped_regions_follow_llvm_cov() {
     assert_eq!(lines, [(4, 3), (5, 3), (6, 1), (7, 2), (8, 2), (12, 3), (13, 3)]);
 }
 
+const MODIFIER_SOURCE: &str = "\
+contract M {
+    uint x;
+    modifier m(uint a, uint b) { require(a > 1 && b > 2); _; }
+    function f(uint a, uint b) public m(a, b) { x = 1; }
+    function g(uint a, uint b) public m(a, b) { x = 2; }
+}
+";
+
+/// Two functions that run one modifier with a decision, and the modifier's own record, which sums
+/// their counters: its header counts the entries, and its branch and MC/DC regions hold the sums.
+fn modifier_build() -> InstrumentedBuild {
+    let at = |needle: &str| {
+        let start = MODIFIER_SOURCE.find(needle).unwrap();
+        (start as i64, needle.len() as i64)
+    };
+    let region = |kind: i64, file: i64, needle: &str, rest: &[i64]| {
+        let (start, len) = at(needle);
+        let mut region = vec![kind, file, start, len];
+        region.extend(rest);
+        json!(region)
+    };
+    let mcdc_branches = |file: i64, (true_a, false_a, true_b, false_b): (i64, i64, i64, i64)| {
+        [
+            region(6, file, "a > 1", &[true_a, false_a, 0, -1, 1]),
+            region(6, file, "b > 2", &[true_b, false_b, 1, -1, -1]),
+        ]
+    };
+    let user = |name: &str, hash: &str, first: u32, call: &str, body: &str| {
+        let c = |i: u32| c(first + i);
+        // Counters: the entry, the modifier body, `a > 1` and `b > 2` held, and `_;`. Expressions
+        // 0 and 1 are the false sides of the two conditions.
+        let [a, b] = mcdc_branches(1, (c(2), sub(0), c(3), sub(1)));
+        json!({
+            "name": name, "hash": hash, "counters": [first, 5], "files": [0, 0],
+            "expressions": [[c(1), c(2)], [c(2), c(3)]],
+            "regions": [
+                region(0, 0, body, &[c(0)]),
+                [1, 0, at(call).0, at(call).1, c(1), 1],
+                region(0, 0, &format!("{{ x = {}; }}", if first == 1 { 1 } else { 2 }), &[c(4)]),
+                region(0, 1, "{ require(a > 1 && b > 2); _; }", &[c(1)]),
+                region(5, 1, "a > 1 && b > 2", &[0]),
+                a, b,
+                region(0, 1, "_;", &[c(4)]),
+            ],
+            "decisions": [{"id": 10 + first / 6, "conditions": 2, "vectors": ["F-F", "TFF", "TTT"]}],
+        })
+    };
+    let own_b = mcdc_branches(0, (add(1), sub(3), add(2), sub(4)));
+    // Counters 2 and 7 are the modifier bodies, 3 and 8 `a > 1`, and 4 and 9 `b > 2`.
+    let coverage = serde_json::from_value(json!({
+        "version": 2,
+        "functions": [
+            user(
+                "src/C.sol:M.f(uint256,uint256)", "0x1", 1, "m(a, b) {",
+                "function f(uint a, uint b) public m(a, b) { x = 1; }",
+            ),
+            user(
+                "src/C.sol:M.g(uint256,uint256)", "0x2", 6, "m(a, b) {",
+                "function g(uint a, uint b) public m(a, b) { x = 2; }",
+            ),
+            {
+                "name": "src/C.sol:M.m(uint256,uint256)", "hash": "0x3", "counters": [20, 0],
+                "files": [0],
+                "expressions": [[c(2), c(7)], [c(3), c(8)], [c(4), c(9)], [add(0), add(1)],
+                    [add(1), add(2)]],
+                "regions": [
+                    region(0, 0, "modifier m(uint a, uint b) ", &[add(0)]),
+                    region(5, 0, "a > 1 && b > 2", &[0]),
+                    own_b[0], own_b[1],
+                ],
+                "decisions": [{"expansions": [10, 11], "conditions": 2,
+                    "vectors": ["F-F", "TFF", "TTT"]}],
+            },
+        ]
+    }))
+    .unwrap();
+    let source =
+        InstrumentedSource::new("src/C.sol".into(), MODIFIER_SOURCE.to_string(), true, coverage);
+    let mut build = InstrumentedBuild::new(BTreeMap::from([(0, source)]));
+    // `f` ran three times, `a > 1` held twice and `b > 2` once, and `g` once with both.
+    let counters =
+        [(1, 3), (2, 3), (3, 2), (4, 1), (5, 1), (6, 1), (7, 1), (8, 1), (9, 1), (10, 1)];
+    // `f` ran all three vectors, `g` only `TTT`.
+    let vectors = [(10, 0), (10, 1), (10, 2), (11, 2)];
+    build.add_hits(counters.into_iter(), vectors.into_iter(), &[]);
+    build
+}
+
+#[test]
+fn a_modifier_record_sums_the_decisions_of_its_expansions() {
+    let build = modifier_build();
+    assert_llvm_agrees(MODIFIER_SOURCE, &build);
+
+    // The modifier's record reports every vector that one of its expansions executed.
+    let inputs = build.function_inputs();
+    let modifier =
+        inputs.iter().find(|input| input.name.ends_with("M.m(uint256,uint256)")).unwrap();
+    assert_eq!(modifier.bitmap, [0b111]);
+    let user = |name: &str| inputs.iter().find(|input| input.name.contains(name)).unwrap();
+    assert_eq!(user("M.f(").bitmap, [0b111]);
+    assert_eq!(user("M.g(").bitmap, [0b100]);
+}
+
 /// Makes integer-valued floats integers and rounds the others, so that numbers compare by value:
 /// `serde_json` does not parse floats exactly.
 fn normalize(value: Value) -> Value {
