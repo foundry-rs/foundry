@@ -170,6 +170,16 @@ fn llvm_tools_read_the_coverage_mapping() {
     assert_llvm_agrees(SOURCE, &build);
 }
 
+/// A function that never ran has branches that no side of was taken: LCOV prints `-` for them.
+#[test]
+fn branches_of_code_that_never_ran_print_a_dash() {
+    let source = InstrumentedSource::new("src/C.sol".into(), SOURCE.to_string(), true, coverage());
+    let build = InstrumentedBuild::new(BTreeMap::from([(0, source)]));
+    let lcov = export_lcov(&CoverageMapping::new(build.function_inputs()));
+    assert!(lcov.contains("BRDA:4,0,0,-\nBRDA:4,0,1,-\n"), "{lcov}");
+    assert_llvm_agrees(SOURCE, &build);
+}
+
 /// Asserts that `llvm-cov export` over the coverage object of the build equals the JSON of the
 /// build's coverage mapping, with every installed LLVM version.
 fn assert_llvm_agrees(source: &str, build: &InstrumentedBuild) {
@@ -200,6 +210,18 @@ fn assert_llvm_agrees(source: &str, build: &InstrumentedBuild) {
         if version == "23" {
             assert_eq!(exported, ours_text, "llvm-cov {version}");
         }
+        let lcov = run(
+            &cov,
+            dir,
+            &[
+                "export",
+                "-format=lcov",
+                "--instr-profile",
+                "coverage.profdata",
+                "coverage.covmap.o",
+            ],
+        );
+        assert_eq!(lcov, export_lcov(&CoverageMapping::new(build.function_inputs())), "{cov}");
         let theirs: Value = serde_json::from_str(&exported).unwrap();
         if let Some(difference) = diff(&normalize(ours.clone()), &normalize(theirs), "") {
             panic!("llvm-cov {version}: {difference}");

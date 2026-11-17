@@ -227,6 +227,11 @@ impl CoverageReport {
             .collect()
     }
 
+    /// The LCOV tracefile of the instrumented builds, as `llvm-cov export -format=lcov` prints it.
+    pub fn llvm_lcov(&self) -> String {
+        llvm::export_lcov(&llvm::CoverageMapping::new(self.llvm_inputs()))
+    }
+
     /// Sets the counter aliases of a code object of an instrumented build.
     pub fn add_coverage_aliases(
         &mut self,

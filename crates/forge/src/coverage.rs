@@ -175,27 +175,17 @@ impl CoverageReporter for LcovReporter {
     fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
         let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
 
-        // An instrumented build counts the lines, functions, and branches of each file like
-        // `llvm-cov`, and reports the lines `llvm-cov` maps.
-        let instrumented = report.is_instrumented();
-        let llvm_summaries = report.llvm_file_summaries().into_iter().collect::<BTreeMap<_, _>>();
+        // An instrumented build writes the tracefile that `llvm-cov export -format=lcov` prints.
+        if report.is_instrumented() {
+            out.write_all(report.llvm_lcov().as_bytes())?;
+            out.flush()?;
+            sh_println!("Wrote LCOV report.")?;
+            return Ok(());
+        }
 
         let mut fn_index = 0usize;
         for (path, items) in report.items_by_file() {
-            let summary = if let Some(llvm) = llvm_summaries.get(path) {
-                CoverageSummary {
-                    line_count: llvm.data.lines.total,
-                    line_hits: llvm.data.lines.covered,
-                    statement_count: llvm.data.regions.total,
-                    statement_hits: llvm.data.regions.covered,
-                    branch_count: llvm.data.branches.total,
-                    branch_hits: llvm.data.branches.covered,
-                    function_count: llvm.functions.total,
-                    function_hits: llvm.functions.covered,
-                }
-            } else {
-                CoverageSummary::from_items(&items)
-            };
+            let summary = CoverageSummary::from_items(&items);
 
             writeln!(out, "TN:")?;
             writeln!(out, "SF:{}", path.display())?;
@@ -204,9 +194,7 @@ impl CoverageReporter for LcovReporter {
             // Track both which lines have been recorded and the max hits per line.
             let mut line_hits: HashMap<u32, u32> = HashMap::default();
             for item in &items {
-                if matches!(item.kind, CoverageItemKind::Line)
-                    || (!instrumented && matches!(item.kind, CoverageItemKind::Statement))
-                {
+                if matches!(item.kind, CoverageItemKind::Line | CoverageItemKind::Statement) {
                     let line = item.loc.lines.start;
                     line_hits
                         .entry(line)
@@ -247,8 +235,7 @@ impl CoverageReporter for LcovReporter {
                     }
                     // Add lines / statement hits only once.
                     CoverageItemKind::Line | CoverageItemKind::Statement
-                        if (!instrumented || matches!(item.kind, CoverageItemKind::Line))
-                            && recorded_lines.insert(line) =>
+                        if recorded_lines.insert(line) =>
                     {
                         writeln!(out, "DA:{line},{}", line_hits[&line])?;
                     }
@@ -944,30 +931,31 @@ mod tests {
         assert_eq!(&fs::read(dir.join("coverage.covmap.o")).unwrap()[..4], b"\x7fELF");
         let lcov = fs::read_to_string(dir.join("lcov.info")).unwrap();
 
-        // Line 6 counts the three calls: `llvm-cov` takes the larger of the count a line starts
-        // with, from the function around it, and the counts of the regions that start on it.
+        // The tracefile of `llvm-cov export -format=lcov`: signature names, no `TN`, and the
+        // branches numbered by pair and side within their line. Line 6 counts the three calls:
+        // `llvm-cov` takes the larger of the count a line starts with, from the function around
+        // it, and the counts of the regions that start on it.
         assert_eq!(
             lcov,
-            "TN:
-SF:src/C.sol
+            "SF:src/C.sol
+FN:2,C.f(uint256,uint256)
+FNDA:3,C.f(uint256,uint256)
+FNF:1
+FNH:1
 DA:2,3
-FN:2,C.f
-FNDA:3,C.f
 DA:3,3
-BRDA:3,0,0,2
-BRDA:3,0,1,1
-BRDA:3,1,0,1
-BRDA:3,1,1,1
 DA:4,1
 DA:5,1
 DA:6,3
 DA:7,3
-FNF:1
-FNH:1
-LF:6
-LH:6
+BRDA:3,0,0,2
+BRDA:3,0,1,1
+BRDA:3,1,2,1
+BRDA:3,1,3,1
 BRF:4
 BRH:4
+LF:6
+LH:6
 end_of_record
 "
         );
