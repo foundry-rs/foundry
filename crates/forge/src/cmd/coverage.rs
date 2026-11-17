@@ -616,8 +616,13 @@ impl CoverageArgs {
         let mut sources = BTreeMap::<&Path, String>::new();
         let mut items_by_build = BTreeMap::<&str, (Vec<_>, Vec<_>)>::new();
         let mut report = CoverageReport::default();
+        // A supported compiler emits a map for every source, empty for a code-less one; a build
+        // with no map at all means the compiler does not instrument. Track this across all sources,
+        // before the lib and test filters, so an unsupported compiler is told apart from a run that
+        // happens to filter every source out.
         let mut any_coverage = false;
         for (build_id, build) in output.builds() {
+            any_coverage |= !build.coverage.is_empty();
             for (source_id, path) in &build.source_id_to_path {
                 let rel = path.strip_prefix(&project_paths.root).unwrap_or(path);
                 report.add_source(build_id.clone(), *source_id as usize, rel.to_path_buf());
@@ -633,13 +638,11 @@ impl CoverageArgs {
                 {
                     continue;
                 }
-                // A supported compiler emits a map for every source, empty for a code-less one, so
-                // skip a source without a map rather than aborting; a build with no map at all
-                // means the compiler does not instrument, which is reported after the loop.
+                // Skip a source without a map rather than aborting; the unsupported-compiler case
+                // is handled by `any_coverage` after the loop.
                 let Some(coverage) = build.coverage.get(source_id) else {
                     continue;
                 };
-                any_coverage = true;
                 let source = match sources.get(rel) {
                     Some(source) => source,
                     None => {
