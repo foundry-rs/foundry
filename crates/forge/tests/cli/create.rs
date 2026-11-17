@@ -462,6 +462,20 @@ async fn create_rejects_tempo_access_key_before_broadcast(prj: _, cmd: _) {
     assert!(stderr.contains("Tempo access-key transactions cannot use CREATE"), "{stderr}");
 }
 
+// Tempo rejects keychain transactions whose first call is a CREATE, so a configurable access key
+// cannot deploy.
+#[forgetest]
+async fn create_rejects_configurable_access_key(cmd: _) {
+    cmd.args(["create", "src/Counter.sol:Counter", "--rpc-url", "http://127.0.0.1:1"])
+        .args(["--tempo.configurable-access-key", "0x1111111111111111111111111111111111111111"])
+        .args(["--from", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--broadcast"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: --tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE
+
+"#]]);
+}
+
 // tests that we can deploy the template contract
 #[forgetest_init]
 async fn can_create_using_unlocked(prj: _, cmd: _) {

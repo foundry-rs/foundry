@@ -2549,7 +2549,8 @@ async fn run_authorize(
     // TIP-1137 deprecates admin keys from T14, the hardfork that adds configurable accounts.
     eyre::ensure!(
         !(admin && tx_opts.tempo.has_configurable_account_options()),
-        "--admin cannot be combined with --tempo.configurable-account"
+        "--admin cannot be combined with --tempo.configurable-account or \
+         --tempo.configurable-access-key"
     );
 
     // T6 admin keys are key-management only and use a dedicated precompile entrypoint.

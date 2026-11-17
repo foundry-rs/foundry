@@ -128,6 +128,10 @@ pub(crate) async fn send_keychain_tx_as_configurable_account(
         "--sponsor-url and --tempo.print-sponsor-hash are not supported for configurable accounts"
     );
     eyre::ensure!(
+        tx.tempo.configurable_access_key.is_none(),
+        "an access key cannot manage the keys of the account it signs for"
+    );
+    eyre::ensure!(
         !send_tx.browser.browser,
         "browser wallets cannot approve as a configurable account owner"
     );
