@@ -7885,21 +7885,36 @@ where
             .await?
     }
 
+    /// Returns the account, using the fork root when it has no local account entry.
+    /// Local entries use a root covering only their locally known storage.
     pub async fn get_account_at_block(
         &self,
         address: Address,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
     ) -> Result<TrieAccount, BlockchainError> {
-        self.with_database_at(block_request, |block_db, _| {
-            let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            let storage_root =
-                db.get(&address).map_or(EMPTY_ROOT_HASH, |account| storage_root(&account.storage));
-            // Read through the database so fork state not yet cached locally resolves.
-            let info = block_db.basic_ref(address)?.unwrap_or_default();
-            Ok(TrieAccount::new(info.nonce, info.balance, storage_root, info.code_hash)
-                .with_extension(AccountExtension::copy_from_slice(&info.extension)))
-        })
-        .await?
+        let (info, storage_root, fork) = self
+            .with_database_at(block_request, |block_db, _| -> Result<_, BlockchainError> {
+                let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                let storage_root = db.get(&address).map(|account| storage_root(&account.storage));
+                let info = block_db.basic_ref(address)?.unwrap_or_default();
+                let fork = if storage_root.is_none() {
+                    self.get_fork().map(|fork| {
+                        let block = fork.block_number();
+                        (fork, block)
+                    })
+                } else {
+                    None
+                };
+                Ok((info, storage_root, fork))
+            })
+            .await??;
+        let storage_root = match (storage_root, fork) {
+            (Some(root), _) => root,
+            (None, Some((fork, block))) => fork.get_account(address, block).await?.storage_root,
+            (None, None) => EMPTY_ROOT_HASH,
+        };
+        Ok(TrieAccount::new(info.nonce, info.balance, storage_root, info.code_hash)
+            .with_extension(AccountExtension::copy_from_slice(&info.extension)))
     }
 
     pub async fn get_account_info_at_block(
