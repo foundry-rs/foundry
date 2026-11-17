@@ -321,9 +321,10 @@ const CAST_OWNERS_HINT: &str = "Pass the other owner keys with --tempo.owner, or
      sign the digest from `cast mktx --raw-unsigned --tempo.digest` with \
      `cast wallet sign --no-hash` and combine the signatures with `cast wallet assemble`.";
 
-/// How a Cast command tells the owners of a configurable access key that are not local how to
-/// sign: its keychain signature cannot be assembled from signatures made elsewhere.
-const CAST_ACCESS_KEY_OWNERS_HINT: &str =
+/// How a Cast command tells the owners of a configurable account that are not local how to sign
+/// when its signature cannot be assembled from signatures made elsewhere: for a configurable
+/// access key's keychain signature, and for zone commands.
+pub(crate) const CAST_LOCAL_OWNERS_HINT: &str =
     "Pass the other owner keys with --tempo.owner, or keep them in the Tempo Accounts store.";
 
 /// Detects a Tempo configurable account sender and selects its local owners, taking `signer` when
@@ -351,7 +352,7 @@ where
         return Ok(None);
     }
     let hint = if tempo.configurable_access_key.is_some() {
-        CAST_ACCESS_KEY_OWNERS_HINT
+        CAST_LOCAL_OWNERS_HINT
     } else {
         CAST_OWNERS_HINT
     };

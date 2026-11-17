@@ -1,7 +1,11 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
 use evm2::interpreter::gas::CALL_STIPEND;
-use foundry_evm::{core::backend::GLOBAL_FAIL_SLOT, inspectors::cheatcodes::ExpectedCallType};
+use foundry_common::contracts::ContractsByArtifact;
+use foundry_evm::{
+    core::backend::GLOBAL_FAIL_SLOT,
+    inspectors::cheatcodes::{Error, ExpectedCallType, expect_revert_mismatch},
+};
 use std::collections::BTreeSet;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
@@ -58,6 +62,8 @@ pub(crate) struct PathState {
     pub(crate) first_reverted_callee: Option<Address>,
     /// Assertion cheatcodes set this even when their revert is caught by the handler.
     pub(crate) assertion_failed: bool,
+    /// Pc of the memory access beyond `memory_limit` or the host word that halted this path.
+    pub(crate) memory_halt_pc: Option<usize>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -144,6 +150,7 @@ impl PathState {
             first_failed_callee: None,
             first_reverted_callee: None,
             assertion_failed: false,
+            memory_halt_pc: None,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
@@ -1445,12 +1452,15 @@ pub(crate) struct ExpectedRevert {
     reverter: Option<SymExpr>,
     count: u64,
     remaining: u64,
+    /// Whether a frame ran below the frame that set the expectation without consuming it, which
+    /// passes Forge's `max_depth > depth` check when that frame reverts.
+    deeper_frame_ran: bool,
 }
 
 impl ExpectedRevert {
     pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, count: u64) -> Self {
         let count = count.max(1);
-        Self { data, reverter, count, remaining: count }
+        Self { data, reverter, count, remaining: count, deeper_frame_ran: false }
     }
 
     pub(crate) const fn has_reverter(&self) -> bool {
@@ -1541,6 +1551,42 @@ impl ExpectedRevert {
             }
         }
         Some(SymBoolExpr::and(cx, conditions))
+    }
+
+    /// Returns the error Forge reverts with when a revert of `retdata`, first failing in
+    /// `reverted_by`, does not meet this expectation, or `None` when it does or the expectation
+    /// is symbolic.
+    pub(crate) fn mismatch_error(
+        &self,
+        reverted_by: Option<Address>,
+        retdata: &Bytes,
+        known_contracts: &Option<ContractsByArtifact>,
+    ) -> Option<Error> {
+        let (reason, partial_match) = match &self.data {
+            ExpectedRevertData::Any => (None, false),
+            ExpectedRevertData::Prefix(data) => (Some(data.as_concrete_slice()?), true),
+            ExpectedRevertData::Exact(data) => (Some(data.as_concrete_slice()?), false),
+        };
+        let reverter = match &self.reverter {
+            Some(reverter) => Some(word_to_address(reverter.as_const()?)),
+            None => None,
+        };
+        expect_revert_mismatch(
+            reason,
+            partial_match,
+            reverter,
+            reverted_by,
+            retdata,
+            known_contracts,
+        )
+    }
+
+    pub(crate) const fn mark_deeper_frame_ran(&mut self) {
+        self.deeper_frame_ran = true;
+    }
+
+    pub(crate) const fn deeper_frame_ran(&self) -> bool {
+        self.deeper_frame_ran
     }
 }
 

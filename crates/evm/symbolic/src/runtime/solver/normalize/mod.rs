@@ -1468,6 +1468,11 @@ impl ConstraintContext {
     ) -> Option<WordInterval> {
         match expr.kind() {
             SymExprKind::Const(value) => Some(WordInterval::exact(*value)),
+            // `~x == MAX - x`, which reverses unsigned order.
+            SymExprKind::Not(value) => {
+                let value = self.interval_cached(value, intervals, remaining)?;
+                Some(WordInterval { min: !value.max, max: !value.min })
+            }
             SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 let mask = left.as_const().or_else(|| right.as_const())?;
                 Some(WordInterval { min: U256::ZERO, max: mask })
