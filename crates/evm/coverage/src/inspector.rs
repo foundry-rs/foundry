@@ -61,19 +61,18 @@ impl<T: EvmTypesHost> Inspector<T> for LineCoverageCollector {
     }
 
     fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        let key = if self.counters {
+        if self.counters {
             // The probe pops its counter, so read it before the instruction runs.
-            if interp.opcode() != COVERAGE {
-                return;
+            if interp.opcode() == COVERAGE
+                && let Some(counter) =
+                    interp.stack().peek(0).and_then(|counter| u32::try_from(counter).ok())
+            {
+                self.get_or_insert_map(interp).record_counter(counter);
             }
-            match interp.stack().peek(0).and_then(|counter| usize::try_from(counter).ok()) {
-                Some(counter) if counter <= MAX_COUNTER => counter,
-                _ => return,
-            }
-        } else {
-            interp.pc()
-        };
-        self.get_or_insert_map(interp).record(key);
+            return;
+        }
+        let pc = interp.pc();
+        self.get_or_insert_map(interp).record(pc);
     }
 
     fn create_end(
@@ -92,10 +91,6 @@ impl<T: EvmTypesHost> Inspector<T> for LineCoverageCollector {
 
 /// The instructions at which the inspector counts instrumentation counters.
 const COVERAGE_OPCODES: OpcodeSet = opcodes([COVERAGE]);
-
-/// The largest counter that is recorded. Counters are dense from 1, so anything above this is
-/// malformed instrumentation and is ignored instead of growing the hit maps without bound.
-const MAX_COUNTER: usize = 1 << 24;
 
 impl LineCoverageCollector {
     /// Creates a collector that counts the hits of compiler-instrumented coverage counters.

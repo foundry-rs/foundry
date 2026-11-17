@@ -106,22 +106,34 @@ pub fn source_items(
         }
     }
 
-    // line => (first byte, item)
-    let mut lines = BTreeMap::<u32, (u32, usize)>::new();
+    // line => ((is decision, first byte), item, count): a function or statement on the line takes
+    // precedence over a decision.
+    let mut lines = BTreeMap::<u32, ((bool, u32), usize, CoverageCount)>::new();
     for (index, item) in items.iter().enumerate().skip(start) {
-        if !matches!(item.kind, CoverageItemKind::Function { .. } | CoverageItemKind::Statement) {
-            continue;
+        let (is_decision, count) = match item.kind {
+            CoverageItemKind::Function { .. } | CoverageItemKind::Statement => {
+                (false, counts[index].clone())
+            }
+            // A line with only decisions on it, such as a ternary continuing a statement from
+            // the line above, counts the evaluations of its first decision: the minuend of the
+            // difference that gives its other path.
+            CoverageItemKind::Branch { .. } => {
+                let CoverageCount::Difference { sub } = &counts[index] else { continue };
+                let Some(&decision) = sub.first() else { continue };
+                (true, CoverageCount::Counter(decision))
+            }
+            CoverageItemKind::Line => continue,
+        };
+        let rank = (is_decision, item.loc.bytes.start);
+        let line = lines.entry(item.loc.lines.start).or_insert((rank, index, count.clone()));
+        if rank < line.0 {
+            *line = (rank, index, count);
         }
-        let first = (item.loc.bytes.start, index);
-        lines
-            .entry(item.loc.lines.start)
-            .and_modify(|line| *line = (*line).min(first))
-            .or_insert(first);
     }
-    for (_, index) in lines.into_values() {
+    for (_, index, count) in lines.into_values() {
         let loc = items[index].loc.clone();
         items.push(CoverageItem { kind: CoverageItemKind::Line, loc, anchor_loc: None, hits: 0 });
-        counts.push(counts[index].clone());
+        counts.push(count);
     }
 }
 
@@ -144,7 +156,7 @@ mod tests {
             "functions": [
                 {"name": "f", "contract": "C", "src": "15:31:0", "count": 1,
                  "statements": [{"src": "35:4:0", "count": 2}, {"src": "40:4:0", "count": 3}],
-                 "branches": [{"src": "35:9:0", "paths": [3, {"sub": [2, 3]}]}]},
+                 "branches": [{"src": "35:9:0", "paths": [3, {"sub": [4, 3]}]}]},
                 {"name": "testF", "contract": "T", "src": "0:1:0", "count": 4},
             ],
             "contracts": [
@@ -176,10 +188,13 @@ mod tests {
                 "statement 3..4 35..39 6",
                 "statement 3..4 40..44 4",
                 "branch 3..4 35..44 4",
-                "branch 3..4 35..44 2",
+                "branch 3..4 35..44 5",
                 "branch 1..2 2..5 1",
                 "branch 1..2 2..5 9",
+                // Only a decision on line 1: its evaluations, counter 1.
+                "line 1..2 2..5 10",
                 "line 2..5 15..46 10",
+                // A statement and a decision on line 3: the statement.
                 "line 3..4 35..39 6",
             ]
         );

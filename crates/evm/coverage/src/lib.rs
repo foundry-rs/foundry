@@ -464,6 +464,16 @@ impl HitMap {
         }
     }
 
+    /// Records a hit of a compiler-instrumented counter, visible at once.
+    ///
+    /// Counter IDs are numbered across a whole build, so a bytecode's few counters are recorded
+    /// sparsely instead of in `pending`, which would span every lower ID.
+    #[inline]
+    pub(crate) fn record_counter(&mut self, counter: u32) {
+        let hits = self.hits.entry(counter).or_default();
+        *hits = hits.saturating_add(1);
+    }
+
     /// Grows `pending` to include `pc`.
     #[cold]
     #[inline(never)]
@@ -1036,5 +1046,15 @@ mod tests {
         hit_map.record(0);
         hit_map.flush();
         assert_eq!(hit_map.iter().collect::<Vec<_>>(), [(0, u32::MAX)]);
+    }
+
+    #[test]
+    fn counters_record_sparsely() {
+        let mut hit_map = HitMap::new(Bytes::from_static(&[0]));
+        hit_map.record_counter(1 << 30);
+        hit_map.record_counter(1 << 30);
+        assert_eq!(hit_map.pending.capacity(), 0);
+        hit_map.flush();
+        assert_eq!(hit_map.iter().collect::<Vec<_>>(), [(1 << 30, 2)]);
     }
 }
