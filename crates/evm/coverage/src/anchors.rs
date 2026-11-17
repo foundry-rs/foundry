@@ -36,6 +36,10 @@ impl ItemAnchor {
     }
 }
 
+/// An anchor with the conditional jump whose taken edge it counts and the jumps that enter the
+/// fallthrough from elsewhere, as in [`ItemAnchors::jumps`] and [`ItemAnchors::entries`].
+type EdgeAnchor = (ItemAnchor, Option<u32>, Vec<(u32, bool)>);
+
 /// Decodes a push immediate as a program counter.
 fn jump_destination(immediate: &[u8]) -> eyre::Result<u32> {
     // We do not support program counters bigger than u32.
@@ -612,7 +616,7 @@ impl<'a> AnchorIndex<'a> {
         path_id: u32,
         loc: &SourceLocation,
         arms: &IfArms,
-    ) -> Option<(ItemAnchor, Option<u32>, Vec<(u32, bool)>)> {
+    ) -> Option<EdgeAnchor> {
         let mut jumps = self.branches.iter().filter(|&&(ic, ..)| {
             self.source_map.get(ic + 1).is_some_and(|jump| {
                 is_within_source_span(jump, loc)
