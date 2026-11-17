@@ -774,6 +774,50 @@ fn skip_test_and_script_project_lints(prj: _, cmd: _) {
     cmd.args(["lint", "--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq("");
 }
 
+// <https://github.com/foundry-rs/foundry/issues/17992>
+#[forgetest]
+fn warns_when_named_path_is_test_or_script(prj: _, cmd: _) {
+    let test = prj.add_test("ContractWithLints", CONTRACT);
+    let script = prj.add_script("ContractWithLints", CONTRACT);
+    let source = prj.add_source("ContractWithLints", CONTRACT);
+
+    let warning = str![[r#"
+Warning: test and script files are only checked by `unsafe-cheatcode` and `environment-read-across-mutation`; all other lints are skipped for files under the configured `test` and `script` directories
+
+"#]];
+    cmd.arg("lint").arg(&test).assert_success().stderr_eq(warning.clone());
+    cmd.forge_fuse().arg("lint").arg(&script).assert_success().stderr_eq(warning.clone());
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "incorrect-shift"])
+        .arg(prj.root().join("script"))
+        .assert_success()
+        .stderr_eq(warning);
+
+    // Nothing is skipped when only lints that apply to tests and scripts are selected.
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "unsafe-cheatcode"])
+        .arg(&script)
+        .assert_success()
+        .stderr_eq("");
+
+    // Named sources are linted as usual, without the warning.
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "incorrect-shift"])
+        .arg(&source)
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning[incorrect-shift]: the order of args in a shift operation is incorrect
+   [FILE]:13:30
+   │
+13 │         assembly { result := shr(result, 8) }
+   │                              ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
+
+
+"#]]);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/16662>
 #[forgetest]
 fn skip_reentrancy_events_for_expect_emit(prj: _, cmd: _) {
