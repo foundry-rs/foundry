@@ -3969,6 +3969,268 @@ end_of_record
     );
 }
 
+// Path 0 of a Yul `if` is the side that enters its body, and the `if` owns its own jump, not those
+// of the branches and loops in its body, with solc and with solar, whose layouts differ.
+#[forgetest]
+fn yul_if_paths_solc_and_solar_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    uint256 public stored;
+
+    function reverting(uint256 a) external pure {
+        assembly { if iszero(a) { revert(0, 0) } }
+    }
+
+    function storing(uint256 a) external {
+        assembly {
+            if lt(a, 100) { sstore(stored.slot, a) sstore(add(stored.slot, 1), a) }
+        }
+    }
+
+    function leaving(uint256 a) external pure returns (uint256 r) {
+        assembly {
+            function f(x) -> y {
+                if lt(x, 5) { y := 1 leave }
+            }
+            r := f(a)
+        }
+    }
+
+    function nested(uint256 a, uint256 b) external {
+        assembly {
+            if a {
+                if b { sstore(stored.slot, 1) }
+            }
+        }
+    }
+
+    function scan(bytes memory hay, uint256 needle, uint256 h) external pure returns (uint256 found) {
+        assembly {
+            let end := add(add(hay, 0x20), mload(hay))
+            let i := add(hay, 0x20)
+            for {} lt(i, end) {} {
+                if iszero(eq(byte(0, mload(i)), needle)) {
+                    if h {
+                        if iszero(eq(byte(0, mload(add(i, 1))), h)) {
+                            mstore(0x00, i)
+                            i := add(i, 1)
+                            continue
+                        }
+                    }
+                    found := add(found, 100)
+                }
+                i := add(i, 1)
+            }
+        }
+    }
+
+    function spin(uint256 a, uint256 n) external pure returns (uint256 i) {
+        assembly {
+            if a {
+                for {} lt(i, n) {} { i := add(i, 1) }
+            }
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        guard.reverting(5);
+        guard.reverting(6);
+        guard.reverting(7);
+        try guard.reverting(0) {} catch {}
+        guard.storing(1);
+        guard.storing(2);
+        guard.storing(3);
+        guard.storing(200);
+        guard.leaving(1);
+        guard.leaving(2);
+        guard.leaving(9);
+        guard.nested(1, 1);
+        guard.nested(1, 0);
+        guard.nested(0, 1);
+        guard.nested(0, 0);
+        guard.nested(0, 0);
+        guard.spin(1, 3);
+        guard.spin(1, 2);
+        guard.spin(0, 5);
+        guard.spin(0, 5);
+        guard.spin(0, 5);
+        guard.scan(hex"0102030201", 2, 0);
+        guard.scan(hex"0102030201", 2, 1);
+        guard.scan(hex"0102030201", 2, 3);
+        guard.scan(hex"0303", 2, 3);
+        guard.scan(hex"0202", 2, 3);
+    }
+}
+"#,
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    let report = str![[r#"
+TN:
+SF:src/Guard.sol
+DA:7,4
+FN:7,Guard.reverting
+FNDA:4,Guard.reverting
+DA:8,4
+BRDA:8,0,0,1
+BRDA:8,0,1,3
+DA:11,4
+FN:11,Guard.storing
+FNDA:4,Guard.storing
+DA:13,4
+BRDA:13,1,0,3
+BRDA:13,1,1,1
+DA:17,3
+FN:17,Guard.leaving
+FNDA:3,Guard.leaving
+DA:19,3
+FN:19,Guard.f
+FNDA:3,Guard.f
+DA:20,3
+BRDA:20,2,0,2
+BRDA:20,2,1,1
+DA:22,3
+DA:26,5
+FN:26,Guard.nested
+FNDA:5,Guard.nested
+DA:28,5
+BRDA:28,3,0,2
+BRDA:28,3,1,3
+DA:29,2
+BRDA:29,4,0,1
+BRDA:29,4,1,1
+DA:34,5
+FN:34,Guard.scan
+FNDA:5,Guard.scan
+DA:36,5
+DA:37,5
+DA:38,24
+DA:39,19
+BRDA:39,5,0,11
+BRDA:39,5,1,8
+DA:40,11
+BRDA:40,6,0,8
+BRDA:40,6,1,3
+DA:41,8
+BRDA:41,7,0,7
+BRDA:41,7,1,1
+DA:42,7
+DA:43,7
+DA:44,7
+DA:47,4
+DA:49,12
+DA:54,5
+FN:54,Guard.spin
+FNDA:5,Guard.spin
+DA:56,5
+BRDA:56,8,0,2
+BRDA:56,8,1,3
+DA:57,7
+FNF:7
+FNH:7
+LF:26
+LH:26
+BRF:18
+BRH:18
+end_of_record
+
+"#]];
+    assert_lcov(cmd.arg("coverage"), report.clone());
+    assert_lcov(cmd.forge_fuse().arg("coverage").arg("--use").arg(solar), report);
+}
+
+// A Yul `if` whose body is only a `continue` or a `leave` is the conditional jump itself, and path
+// 0 still enters the body.
+#[forgetest]
+fn yul_if_jump_body_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    uint256 public stored;
+
+    function skip(uint256 n) external {
+        assembly {
+            for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                if eq(i, 2) { continue }
+                sstore(stored.slot, i)
+            }
+        }
+    }
+
+    function early(uint256 x) external pure returns (uint256 r) {
+        assembly {
+            function f(a) -> y {
+                if lt(a, 5) { leave }
+                y := 3
+            }
+            r := f(x)
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        guard.skip(4);
+        guard.skip(1);
+        guard.early(1);
+        guard.early(9);
+        guard.early(9);
+    }
+}
+"#,
+    );
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Guard.sol
+DA:7,2
+FN:7,Guard.skip
+FNDA:2,Guard.skip
+DA:9,7
+DA:10,5
+BRDA:10,0,0,1
+BRDA:10,0,1,4
+DA:11,4
+DA:16,3
+FN:16,Guard.early
+FNDA:3,Guard.early
+DA:18,3
+FN:18,Guard.f
+FNDA:3,Guard.f
+DA:19,3
+BRDA:19,1,0,1
+BRDA:19,1,1,2
+DA:20,2
+DA:22,3
+FNF:3
+FNH:3
+LF:9
+LH:9
+BRF:4
+BRH:4
+end_of_record
+
+"#]],
+    );
+}
+
 // Test that coverage files are written even when tests fail.
 #[forgetest]
 fn coverage_with_failing_tests(prj: _, cmd: _) {
