@@ -15,9 +15,9 @@ use std::{collections::BTreeMap, ops::Range, sync::Arc};
 /// Appends the coverage items of one source's coverage map to `items`, and their counter
 /// expressions to `counts`.
 ///
-/// Like source-map coverage, it skips the functions of contracts that define tests, gives every
-/// branch of the source an ID in source order, disambiguates overloaded functions, and reports each
-/// line where a function or statement starts with the hits of the first one on it.
+/// Like source-map coverage, it skips the functions and decisions of contracts that define tests,
+/// gives every branch of the source its own ID, disambiguates overloaded functions, and reports
+/// each line where a function or statement starts with the hits of the first one on it.
 pub fn source_items(
     source_id: usize,
     source: &str,
@@ -84,6 +84,27 @@ pub fn source_items(
             branch_id += 1;
         }
     }
+    // Decisions in state variable initializers and inheritance arguments, outside any function.
+    for contract in &coverage.contracts {
+        if test_contracts.contains(&contract.name.as_str()) {
+            continue;
+        }
+        let contract_name = Arc::<str>::from(contract.name.as_str());
+        for branch in &contract.branches {
+            for (path_id, count) in branch.paths.iter().enumerate() {
+                if let Some(loc) = location(&contract_name, &branch.src) {
+                    let kind = CoverageItemKind::Branch {
+                        branch_id,
+                        path_id: path_id as u32,
+                        is_first_opcode: false,
+                    };
+                    items.push(CoverageItem { kind, loc, anchor_loc: None, hits: 0 });
+                    counts.push(count.clone());
+                }
+            }
+            branch_id += 1;
+        }
+    }
 
     // line => (first byte, item)
     let mut lines = BTreeMap::<u32, (u32, usize)>::new();
@@ -125,6 +146,10 @@ mod tests {
                  "statements": [{"src": "35:4:0", "count": 2}, {"src": "40:4:0", "count": 3}],
                  "branches": [{"src": "35:9:0", "paths": [3, {"sub": [2, 3]}]}]},
                 {"name": "testF", "contract": "T", "src": "0:1:0", "count": 4},
+            ],
+            "contracts": [
+                {"name": "C", "branches": [{"src": "2:3:0", "paths": [{"sub": [1, 4]}, 4]}]},
+                {"name": "T", "branches": [{"src": "0:1:0", "paths": [1, 2]}]},
             ]
         }))
         .unwrap();
@@ -152,6 +177,8 @@ mod tests {
                 "statement 3..4 40..44 4",
                 "branch 3..4 35..44 4",
                 "branch 3..4 35..44 2",
+                "branch 1..2 2..5 1",
+                "branch 1..2 2..5 9",
                 "line 2..5 15..46 10",
                 "line 3..4 35..39 6",
             ]
