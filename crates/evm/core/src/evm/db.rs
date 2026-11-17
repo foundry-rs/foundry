@@ -123,9 +123,10 @@ impl ForkCode {
     /// Returns the fork cache's `account` as an evm2 account.
     pub fn account(&self, account: foundry_fork_db::AccountInfo) -> AccountInfo {
         let code = account.code.map(|code| self.bytecode(account.code_hash, code));
-        let mut info = AccountInfo::new(account.balance, account.nonce, account.code_hash, code);
-        info.extension = account.extension.into();
-        info
+        AccountInfo {
+            extension: account.extension.into(),
+            ..AccountInfo::new(account.balance, account.nonce, account.code_hash, code)
+        }
     }
 
     /// Returns the bytecode of `code`, whose hash is `code_hash`.

@@ -24,7 +24,11 @@ use foundry_common::{
 use foundry_compilers::{
     Artifact, ArtifactId, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     VYPER_EXTENSIONS,
-    artifacts::{CompactBytecode, CompactDeployedBytecode, Source, sourcemap::SourceMap},
+    artifacts::{
+        CompactBytecode, CompactDeployedBytecode, Source,
+        sourcemap::{self, SourceMap},
+    },
+    buildinfo::SourceEdit,
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         Language,
@@ -43,6 +47,7 @@ use semver::Version;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -530,12 +535,17 @@ impl CoverageArgs {
         }
 
         // Get source maps and bytecodes.
+        let source_edits = output
+            .builds()
+            .map(|(build_id, build)| (build_id.as_str(), &build.source_edits))
+            .collect::<HashMap<_, _>>();
         let artifacts: Vec<ArtifactData> = output
             .artifact_ids()
             .par_bridge() // This parses source maps, so we want to run it in parallel.
             .filter_map(|(id, artifact)| {
                 let source_id = report.get_source_id(&id.build_id, &id.source)?;
-                ArtifactData::new(&id, source_id, artifact)
+                let edits = source_edits.get(id.build_id.as_str()).copied();
+                ArtifactData::new(&id, source_id, artifact, edits)
             })
             .collect();
 
@@ -783,7 +793,12 @@ pub struct ArtifactData {
 }
 
 impl ArtifactData {
-    pub fn new(id: &ArtifactId, source_id: usize, artifact: &impl Artifact) -> Option<Self> {
+    pub fn new(
+        id: &ArtifactId,
+        source_id: usize,
+        artifact: &impl Artifact,
+        source_edits: Option<&BTreeMap<u32, Vec<SourceEdit>>>,
+    ) -> Option<Self> {
         let abi = artifact.get_abi();
         let function_selectors = abi
             .as_ref()
@@ -802,13 +817,13 @@ impl ArtifactData {
                 contract_name: id.name.as_str().into(),
             },
             creation: BytecodeData::new(
-                artifact.get_source_map()?.ok()?,
+                to_original_source_map(artifact.get_source_map()?.ok()?, source_edits),
                 artifact
                     .get_bytecode()
                     .and_then(|bytecode| dummy_link_bytecode(bytecode.into_owned()))?,
             ),
             deployed: BytecodeData::new(
-                artifact.get_source_map_deployed()?.ok()?,
+                to_original_source_map(artifact.get_source_map_deployed()?.ok()?, source_edits),
                 artifact
                     .get_deployed_bytecode()
                     .and_then(|bytecode| dummy_link_deployed_bytecode(bytecode.into_owned()))?,
@@ -818,6 +833,62 @@ impl ArtifactData {
             fallback_payable,
         })
     }
+}
+
+/// Maps the ranges of a source map from the sources the compiler read back to the sources on
+/// disk, which coverage items refer to.
+///
+/// Preprocessing, such as dynamic test linking, rewrites sources before compilation, so the
+/// compiler reports offsets in the edited text. A range inside a replacement maps to the whole
+/// replaced range.
+fn to_original_source_map(
+    mut source_map: SourceMap,
+    source_edits: Option<&BTreeMap<u32, Vec<SourceEdit>>>,
+) -> SourceMap {
+    let Some(source_edits) = source_edits else { return source_map };
+    for element in &mut source_map {
+        let Some(edits) = element.index().and_then(|source| source_edits.get(&source)) else {
+            continue;
+        };
+        let offset = element.offset() as usize;
+        let length = element.length() as usize;
+        let (start, end) = original_range(edits, offset..offset + length);
+        if (start, end) == (offset, offset + length) {
+            continue;
+        }
+        // Source maps have no setters, so rebuild the element from its textual form.
+        let mapped = format!(
+            "{start}:{}:{}:{}:{}",
+            end - start,
+            element.index_i32(),
+            element.jump(),
+            element.modifier_depth()
+        );
+        *element = sourcemap::parse(&mapped)
+            .ok()
+            .and_then(|map| map.into_iter().next())
+            .expect("source element should round-trip through its textual form");
+    }
+    source_map
+}
+
+/// Maps a byte range of an edited source back to the original source.
+///
+/// `edits` must be sorted by start offset.
+fn original_range(edits: &[SourceEdit], range: Range<usize>) -> (usize, usize) {
+    let start = SourceEdit::original_offset(edits, range.start);
+    let mut shift = 0isize;
+    for edit in edits {
+        let edited_start = edit.start.saturating_add_signed(shift);
+        if range.end <= edited_start {
+            break;
+        }
+        if range.end < edited_start + edit.len {
+            return (start, edit.end);
+        }
+        shift += edit.len as isize - (edit.end - edit.start) as isize;
+    }
+    (start, range.end.saturating_add_signed(-shift).max(start))
 }
 
 pub struct BytecodeData {
@@ -885,5 +956,64 @@ mod tests {
         let settings = args.resolve(&config);
 
         assert_eq!(settings.lcov_version, Version::new(2, 0, 0));
+    }
+
+    #[test]
+    fn maps_edited_ranges_to_original() {
+        // "new C()" at 10..17 grows to 30 bytes, 50..60 is removed, and 5 bytes are inserted at
+        // 100.
+        let edits = [
+            SourceEdit { start: 10, end: 17, len: 30 },
+            SourceEdit { start: 50, end: 60, len: 0 },
+            SourceEdit { start: 100, end: 100, len: 5 },
+        ];
+        for (edited, original) in [
+            // Before the first edit.
+            (0..10, (0, 10)),
+            // The replacement itself, and ranges inside it, map to the replaced range.
+            (10..40, (10, 17)),
+            (15..20, (10, 17)),
+            (39..40, (10, 17)),
+            // A range that straddles one boundary of the replacement.
+            (5..20, (5, 17)),
+            (20..45, (10, 22)),
+            // Containing the replacement.
+            (5..45, (5, 22)),
+            // After the replacement, before and around the removal.
+            (40..43, (17, 20)),
+            (43..90, (20, 77)),
+            (90..95, (77, 82)),
+            // Around the insertion, which starts at 113 in the edited source.
+            (110..113, (97, 100)),
+            (113..118, (100, 100)),
+            (115..116, (100, 100)),
+            (118..120, (100, 102)),
+            // Empty ranges.
+            (10..10, (10, 10)),
+            (40..40, (17, 17)),
+            (12..12, (10, 17)),
+        ] {
+            assert_eq!(original_range(&edits, edited.clone()), original, "{edited:?}");
+        }
+        assert_eq!(original_range(&[], 7..9), (7, 9));
+    }
+
+    #[test]
+    fn converts_source_map_per_source() {
+        let edits = BTreeMap::from([(1, vec![SourceEdit { start: 10, end: 17, len: 30 }])]);
+        let map = sourcemap::parse(
+            "0:5:1:-:0;45:3:1:i:2;12:2:1:o:1;45:3:0:-:0;-1:0:-1:-:0;40:0:1:-:0;12:0:1:o:0",
+        )
+        .unwrap();
+        // Elements of unedited sources and without a source are unchanged.
+        assert_eq!(to_original_source_map(map.clone(), None), map);
+        let converted = to_original_source_map(map, Some(&edits));
+        assert_eq!(
+            converted,
+            sourcemap::parse(
+                "0:5:1:-:0;22:3:1:i:2;10:7:1:o:1;45:3:0:-:0;-1:0:-1:-:0;17:0:1:-:0;10:7:1:o:0"
+            )
+            .unwrap()
+        );
     }
 }
