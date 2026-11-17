@@ -61,6 +61,10 @@ static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> =
 static DEFAULT_LINT_SPECIFIC_CONFIG: LazyLock<LintSpecificConfig> =
     LazyLock::new(LintSpecificConfig::default);
 
+/// IDs of the lints that also run on files under the configured test and script directories.
+pub const TEST_AND_SCRIPT_LINTS: &[&str] =
+    &["unsafe-cheatcode", "environment-read-across-mutation"];
+
 struct OwnedLintPolicy {
     inline: Option<Arc<InlineConfig<Vec<String>>>>,
     active: Arc<Vec<&'static str>>,
@@ -133,10 +137,7 @@ impl ForgeLintSuite {
                 self.include_lint(**lint)
                     && path.is_none_or(|path| {
                         !self.path_config.is_test_or_script(path)
-                            || matches!(
-                                lint.id,
-                                "unsafe-cheatcode" | "environment-read-across-mutation"
-                            )
+                            || TEST_AND_SCRIPT_LINTS.contains(&lint.id)
                     })
             })
             .map(|lint| lint.id)
