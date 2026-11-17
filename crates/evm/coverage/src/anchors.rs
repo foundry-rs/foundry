@@ -90,7 +90,7 @@ pub fn find_anchors(
                         Some(BranchKind::YulIf(body)) => Some(body),
                         _ => None,
                     };
-                    index.branch(item_id, anchor_loc, exact, body).and_then(|anchors| {
+                    index.branch(item_id, anchor_loc, exact, body).map(|anchors| {
                         let entries = if body.is_some() {
                             index.fallthrough_entries(&anchors).unwrap_or_default()
                         } else {
@@ -107,7 +107,7 @@ pub fn find_anchors(
                         };
                         let (anchor, jump, _) =
                             select_branch(anchors, path_id ^ u32::from(swapped));
-                        Ok((anchor, jump, entries))
+                        (anchor, jump, entries)
                     })
                 }
                 CoverageItemKind::Function { .. } => {
