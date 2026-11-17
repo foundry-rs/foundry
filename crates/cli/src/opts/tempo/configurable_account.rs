@@ -24,6 +24,7 @@ impl TempoOpts {
     /// Returns whether the configurable account options select the sender.
     pub const fn has_configurable_account_options(&self) -> bool {
         self.configurable_account.is_some()
+            || self.configurable_access_key.is_some()
             || self.configurable_account_config.is_some()
             || !self.owners.is_empty()
     }
@@ -62,6 +63,9 @@ impl TempoOpts {
     /// are taken from `signer`, `--tempo.owner` and the Tempo Accounts store. Fails with `hint`
     /// when the local owners do not reach the threshold.
     ///
+    /// With `--tempo.configurable-access-key`, that account signs as an access key of `--from`
+    /// instead (see [`ConfigurableAccountSigner::with_parent`]).
+    ///
     /// Returns `None`, and leaves `signer` in place, for a sender that is not a configurable
     /// account, and before T14.
     pub async fn configurable_account_signer(
@@ -88,12 +92,19 @@ impl TempoOpts {
             *signer = signers.into_iter().next().and_then(Arc::into_inner);
             return Ok(None);
         };
-        ConfigurableAccountSigner::new(account, config, keys, hint).map(Some)
+        let account = ConfigurableAccountSigner::new(account, config, keys, hint)?;
+        Ok(Some(match self.configurable_access_key.and(wallet.from) {
+            Some(parent) => account.with_parent(parent),
+            None => account,
+        }))
     }
 
     /// Detects a configurable account sender as [`Self::configurable_account_signer`] does, at
     /// `block`, and returns the account, its configuration there and all its local owner keys,
     /// which may not reach the threshold.
+    ///
+    /// With `--tempo.configurable-access-key`, the returned account is that access key, and
+    /// `from` is the account it signs for, which must be given.
     pub async fn configurable_account_owners<P: Provider<TempoNetwork>>(
         &self,
         provider: &P,
@@ -103,6 +114,19 @@ impl TempoOpts {
         block: BlockId,
     ) -> Result<Option<(Address, ConfigurableAccountConfig, Vec<ConfigurableAccountOwnerKey>)>>
     {
+        let from = match self.configurable_access_key {
+            Some(key) => {
+                let parent = from.ok_or_else(|| {
+                    eyre::eyre!(
+                        "--tempo.configurable-access-key needs the account it signs for: pass \
+                         --from"
+                    )
+                })?;
+                eyre::ensure!(parent != key, "a configurable account cannot be its own access key");
+                Some(key)
+            }
+            None => from,
+        };
         if let (Some(account), Some(from)) = (self.configurable_account, from) {
             eyre::ensure!(
                 account == from,
