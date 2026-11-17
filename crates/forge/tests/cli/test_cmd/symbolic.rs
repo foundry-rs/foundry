@@ -8664,6 +8664,23 @@ contract SymbolicBoundedComplementTest {
         }
         assert(r < type(uint128).max);
     }
+
+    // `d - x % d <= d`, so rounding `x` up to a multiple of `d` cannot overflow.
+    function checkRoundUp(uint128 x, uint128 d) public pure {
+        if (d == 0) return;
+        uint256 r = x % d;
+        uint256 y = r == 0 ? x : uint256(x) + (d - r);
+        assert(y >= x);
+    }
+
+    // `x % e` can exceed `d`, so the unchecked subtraction can wrap.
+    function checkOtherDivisorSub(uint256 x, uint128 d, uint128 e) public pure {
+        uint256 s;
+        unchecked {
+            s = d - x % e;
+        }
+        assert(s <= type(uint128).max);
+    }
 }
 "#,
     );
@@ -8700,6 +8717,17 @@ contract SymbolicBoundedComplementTest {
         );
 
         let result = json_test_result(&output, "checkRemainderBelowDividendMax(uint128,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkRoundUp(uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkOtherDivisorSub(uint256,uint128,uint128)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
