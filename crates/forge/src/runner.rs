@@ -1244,6 +1244,8 @@ struct SequenceReplay<'a> {
     assertion_failure: bool,
     storage: &'a [SymbolicStorageAssignment],
     campaign_failure: Option<(CheckSequenceFailureSite, &'a RawFailure)>,
+    /// Invariants that the campaign did not check after any call of the failing sequence.
+    unchecked_invariants: &'a [String],
     /// When shrinking the failure must stop, for a timed campaign.
     shrink_deadline: Option<Instant>,
 }
@@ -1699,15 +1701,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 },
                 campaign_site,
                 between_calls,
+                replay.invariant_config.check_interval != 0,
             )
         };
         let mut candidates = candidate_replay(&mut executor, Vec::new());
-        // The campaign checks every invariant between calls, and these checks can have effects
-        // outside the EVM too. Replaying them costs a call per invariant and sequence call, so
-        // only the original and the candidates that preserve the failure without them replay them.
+        // The campaign checks every invariant between calls, unless its `check_interval` is 0, and
+        // after the last call, and these checks can have effects outside the EVM too. Replaying
+        // them costs a call per invariant and sequence call, so only the original and the
+        // candidates that preserve the failure without them replay them. Invariants that the
+        // campaign did not check after any call of the sequence are left out. The replay also runs
+        // checks the campaign skips, such as after every call for any other interval, after
+        // reverted calls, and of invariants that broke during the sequence, which can only reject
+        // more candidates or leave the original to call removal.
         let mut checked = candidate_replay(
             &mut checked_executor,
             (0..replay.invariant_contract.invariant_fns.len())
+                .filter(|&idx| {
+                    let name = &replay.invariant_contract.invariant_fns[idx].0.name;
+                    !replay.unchecked_invariants.contains(name)
+                })
                 .map(|idx| replay.invariant_contract.invariant_calldata(idx))
                 .collect(),
         );
@@ -4665,6 +4677,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         assertion_failure: false,
                         storage: &storage,
                         campaign_failure: None,
+                        unchecked_invariants: &[],
                         shrink_deadline: None,
                     };
                     let replayed = self
@@ -5124,6 +5137,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 .campaign_failure
                                 .as_ref()
                                 .map(|(site, failure)| (*site, failure)),
+                            unchecked_invariants: &case_data.unchecked_invariants,
                             shrink_deadline: invariant_result.shrink_deadline,
                         },
                         calls,

@@ -4555,6 +4555,38 @@ contract IntermediateSmallHostTest is StepTest {
         }
     }
 }
+
+// With `check_interval = 0` the campaign checks only after the last call, so only the effect of
+// the other invariant's last check limits minimization.
+contract IntervalHostTest is StepTest {
+    function invariant_a_other() public {
+        if (handler.count() == 1 && handler.first() < 1000) {
+            vm.setEnv("FOUNDRY_TEST_INVARIANT_INTERVAL_BETWEEN", "true");
+        }
+        if (handler.count() == 2 && handler.first() < 10) {
+            vm.setEnv("FOUNDRY_TEST_INVARIANT_INTERVAL_LAST", "true");
+        }
+    }
+    function invariant_b_target() public view {
+        require(handler.count() < 2, "two calls");
+    }
+}
+
+// The campaign stops checking an invariant once it breaks, here in the initial state, so its later
+// `vm.setEnv` must not leave the target to call removal, which would report the target's reason
+// for the second call alone, which fails another way.
+contract BrokenHostTest is StepTest {
+    function invariant_a_broken() public {
+        if (handler.count() == 0) revert("initially broken");
+        vm.setEnv("FOUNDRY_TEST_INVARIANT_BROKEN_HOST", "true");
+    }
+    function invariant_b_target() public view {
+        if (handler.count() >= 2) revert("target failure");
+        if (handler.count() == 1 && handler.first() % 2 == 0 && handler.first() != 0) {
+            revert("different failure");
+        }
+    }
+}
 "#,
     );
 
@@ -4626,6 +4658,30 @@ contract IntermediateSmallHostTest is StepTest {
 [FAIL: two calls]
 	[Sequence] (original: 2, shrunk: 2)
 		sender=[..] calldata=step(uint256) args=[1000]
+		sender=[..] calldata=step(uint256) args=[0]
+...
+"#]]);
+    prj.update_config(|config| config.invariant.check_interval = 0);
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "IntervalHostTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: two calls] invariant_b_target
+	[Sequence] (original: 2, shrunk: 2)
+		sender=[..] calldata=step(uint256) args=[10]
+		sender=[..] calldata=step(uint256) args=[0]
+...
+"#]]);
+    prj.update_config(|config| config.invariant.check_interval = 1);
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "BrokenHostTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: target failure] invariant_b_target
+	[Sequence] (original: 2, shrunk: 2)
+		sender=[..] calldata=step(uint256) args=[0]
 		sender=[..] calldata=step(uint256) args=[0]
 ...
 "#]]);

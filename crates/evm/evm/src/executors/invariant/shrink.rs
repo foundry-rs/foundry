@@ -623,6 +623,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
             calldata: calldata.clone(),
             identify: None,
             between_calls: Vec::new(),
+            checks_between_calls: false,
         },
     );
     let shrinker = run_shrink_loop(
@@ -710,6 +711,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
         calldata,
         identify: None,
         between_calls: Vec::new(),
+        checks_between_calls: false,
     };
     PrefixReplay::new(&executor, calls, policy).check(sequence, 0)
 }
@@ -722,9 +724,9 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
 /// records its identity and provenance: the last call for a sequence call, or the final checks.
 ///
 /// The campaign also checks the invariants between calls, and those checks can have such effects
-/// as well. With `between_calls`, the replay runs these checks between calls and, unless the
-/// failure is at a sequence call, before the final checks, so that skipping their effects leaves
-/// the failure unidentified too.
+/// as well. With `between_calls`, the replay runs these checks between calls, unless
+/// `checks_between_calls` is false, and before the final checks, unless the failure is at a
+/// sequence call, so that skipping their effects leaves the failure unidentified too.
 pub struct CandidateReplay<'a, FEN: FoundryEvmNetwork> {
     replay: PrefixReplay<'a, FEN, CheckSequencePolicy<'a>>,
     /// Whether the latest replay skipped a cheatcode with effects outside the EVM.
@@ -739,6 +741,7 @@ impl<'a, FEN: FoundryEvmNetwork> CandidateReplay<'a, FEN> {
         options: CheckSequenceOptions<'a>,
         site: CheckSequenceFailureSite,
         between_calls: Vec<Bytes>,
+        checks_between_calls: bool,
     ) -> Self {
         executor.inspector_mut().collect_failure_identity(true);
         executor.inspector_mut().pause_failure_identity(true);
@@ -748,6 +751,7 @@ impl<'a, FEN: FoundryEvmNetwork> CandidateReplay<'a, FEN> {
             calldata,
             identify: Some(site),
             between_calls,
+            checks_between_calls,
         };
         Self { replay: PrefixReplay::new(executor, &[], policy), skipped_host_effects: false }
     }
@@ -980,6 +984,9 @@ struct CheckSequencePolicy<'a> {
     /// Calldata of the invariant checks run between calls and before the final checks, see
     /// [`CandidateReplay`].
     between_calls: Vec<Bytes>,
+    /// Whether `between_calls` run between calls as well as before the final checks, as in a
+    /// campaign whose `check_interval` is not 0.
+    checks_between_calls: bool,
 }
 
 impl CheckSequencePolicy<'_> {
@@ -1020,7 +1027,7 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
     ) -> eyre::Result<()> {
         // The checks before the first call see the same state for every candidate, which the
         // campaign checked as well.
-        if sequence.first() != Some(&idx) {
+        if self.checks_between_calls && sequence.first() != Some(&idx) {
             self.check_between_calls(executor, false)?;
         }
         if matches!(self.identify, Some(CheckSequenceFailureSite::SequenceCall { .. }))

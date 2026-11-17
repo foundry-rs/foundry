@@ -540,6 +540,7 @@ mod tests {
             fork_block_number: None,
             campaign_failure: None,
             after_invariant: false,
+            unchecked_invariants: Vec::new(),
         })
     }
 
