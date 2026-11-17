@@ -506,7 +506,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision", "unbounded_depth"] }
 shlex = "2"
 similar-asserts = "2.0"
-smolgen = { version = "0.1.1", features = ["build", "gitcl"] }
+smolgen = { version = "0.1.2", features = ["build", "gitcl"] }
 soldb-core = "0.4.6"
 soldb-debugger = "0.4.6"
 soldb-ethdebug = "0.4.6"
@@ -590,9 +590,6 @@ solar-compiler = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" 
 solar-cli = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 solar-lsp = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
-
-# TODO: Replace with a smolgen release that includes https://github.com/alloy-rs/smolgen/pull/2.
-smolgen = { git = "https://github.com/alloy-rs/smolgen", rev = "99abe6c759b5674db76d10ba2ea07fbb7490d57b" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "b178bd8ace2720f9ff6e6a795d34f7308be576cd" }
