@@ -8579,3 +8579,53 @@ contract FullPrecisionMulDivTest {
         }
     }
 }
+
+#[forgetest_init]
+fn symbolic_proves_checked_mul_of_symbolic_quotient(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_checked_mul_of_symbolic_quotient");
+
+    prj.add_test(
+        "SymbolicQuotientMul.t.sol",
+        r#"
+contract SymbolicQuotientMulTest {
+    function quotientMul(uint256 a, uint256 d, uint256 k) external pure returns (uint256) {
+        return a / d * k;
+    }
+
+    // `a / d * k` fits in 192 bits, so its checked multiply cannot overflow.
+    function checkBoundedQuotientMul(uint128 a, uint128 d, uint64 k) public view {
+        if (d == 0) return;
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.quotientMul, (a, d, k)));
+        assert(ok);
+    }
+
+    function checkWideQuotientMul(uint256 a, uint256 d, uint256 k) public view {
+        if (d == 0) return;
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.quotientMul, (a, d, k)));
+        assert(ok);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicQuotientMul"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkBoundedQuotientMul(uint128,uint128,uint64)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkWideQuotientMul(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+    }
+}
