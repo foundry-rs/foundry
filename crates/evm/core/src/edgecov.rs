@@ -14,14 +14,25 @@
 //! once it ran. Hits and operands are kept per thread in dense tables indexed by ID, and taken
 //! once the call ends.
 //!
-//! `COVERAGE` skips the push after it, whose counter the line coverage inspector reads with
-//! [`coverage_counter`]. The push never runs, so a probe costs no gas or stack at any point, and
-//! JUMPDEST analysis still sees a whole push.
+//! `COVERAGE` skips the push after it, so a probe costs no gas or stack at any point, and JUMPDEST
+//! analysis still sees a whole push. It reads the push itself. A plain probe, with a counter ID
+//! below `2^31`, counts a hit of that counter in the table of the executing code, and an MC/DC
+//! probe, with bit 31 set, drives the decision stack that records which test vectors of a
+//! decision ran. The tables are per code object, keyed by code hash, and taken with
+//! [`take_coverage`] once the call ends. With edge recording on, plain probes also feed the edge
+//! hits, and code that carries probes no longer records its `EDGECOV` hits.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{
+    Address, B256, Bytes, U256,
+    map::{
+        B256HashMap,
+        rustc_hash::{FxHashMap, FxHashSet},
+    },
+};
 use evm2::{
     EvmConfig, EvmTypesHost, ExecutionConfig, OpcodeConfig, SpecId, Version,
-    interpreter::{InstrStop, op},
+    bytecode::Bytecode,
+    interpreter::{InstrStop, InterpreterState, op},
 };
 use evm2_macros::instruction;
 use std::{cell::UnsafeCell, marker::PhantomData};
@@ -34,6 +45,13 @@ const CMPLOG: u8 = 0xC1;
 
 /// The `COVERAGE` opcode byte.
 pub const COVERAGE: u8 = 0xC2;
+
+/// Set in the value of an MC/DC probe, whose other bits hold the operation, decision, and
+/// increment.
+const MCDC_FLAG: u32 = 1 << 31;
+
+/// The most code hashes the cache of which code carries probes holds before it starts over.
+const MAX_PROBE_CACHE: usize = 1 << 16;
 
 /// Gas of the `PUSHn` that precedes every `EDGECOV` or `CMPLOG`, refunded by the instruction.
 const PUSH_GAS: u64 = 3;
@@ -156,6 +174,7 @@ struct State {
     cmp_log: bool,
     hits: EdgeHits,
     cmps: SiteCmpLog,
+    coverage: CoverageState,
 }
 
 thread_local! {
@@ -167,6 +186,7 @@ thread_local! {
             cmp_log: false,
             hits: EdgeHits { counts: Vec::new(), touched: Vec::new() },
             cmps: SiteCmpLog { log: Vec::new(), counts: Vec::new(), touched: Vec::new() },
+            coverage: CoverageState::new(),
         })
     };
 }
@@ -178,7 +198,8 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
 }
 
 /// Executes the instrumentation opcodes on this thread while alive, recording edge hits when
-/// `edges` is set and comparison operands when `cmp_log` is set.
+/// `edges` is set, comparison operands when `cmp_log` is set, and the hits of `COVERAGE` probes
+/// per code object when `counting` is set.
 #[derive(Debug)]
 pub struct EdgeCovGuard(());
 
@@ -186,13 +207,15 @@ impl EdgeCovGuard {
     /// Enables the opcodes, and on the outermost guard clears the hits and operands of the
     /// previous call. A nested guard keeps the outer guard's recording settings and tables, so it
     /// does not reset another transaction's hits.
-    pub fn new(edges: bool, cmp_log: bool) -> Self {
+    pub fn new(edges: bool, cmp_log: bool, counting: bool) -> Self {
         with_state(|state| {
             if state.depth == 0 {
                 state.edges = edges;
                 state.cmp_log = cmp_log;
                 state.hits.take();
                 state.cmps.take();
+                state.coverage.take();
+                state.coverage.counting = counting;
             }
             state.depth += 1;
         });
@@ -216,12 +239,18 @@ pub fn take_cmp_log() -> Vec<CmpOperands> {
     with_state(|state| state.cmps.take())
 }
 
+/// Takes this thread's `COVERAGE` hits of the code objects that ran, by code hash.
+pub fn take_coverage() -> Vec<(B256, CodeCoverage)> {
+    with_state(|state| state.coverage.take())
+}
+
 /// Converts a probe's ID word, ignoring the reserved ID 0 and IDs above [`MAX_EDGE_ID`].
 fn probe_id(word: U256) -> Option<u32> {
     u32::try_from(word).ok().filter(|id| (1..=MAX_EDGE_ID).contains(id))
 }
 
-/// The `EDGECOV` instruction: pops the edge ID, records the hit and refunds the `PUSH` gas.
+/// The `EDGECOV` instruction: pops the edge ID, records the hit and refunds the `PUSH` gas. Code
+/// that carries `COVERAGE` probes feeds the edge hits through them instead.
 #[instruction(dynamic_gas, no_stack_preamble)]
 fn edgecov(cx: _) -> Result {
     with_state(|state| {
@@ -232,6 +261,7 @@ fn edgecov(cx: _) -> Result {
         cx.gas.erase_cost(PUSH_GAS);
         if state.edges
             && let Some(id) = probe_id(id)
+            && !state.coverage.executing(&*cx.state).has_probes
         {
             state.hits.record(id);
         }
@@ -269,7 +299,8 @@ fn cmplog(cx: _) -> Result {
     })
 }
 
-/// The `COVERAGE` instruction: skips the `PUSHn <counter>` after it.
+/// The `COVERAGE` instruction: reads the `PUSHn <value>` after it, counts the probe, and skips the
+/// push.
 #[instruction(no_stack_preamble)]
 fn coverage(cx: _) -> Result {
     with_state(|state| {
@@ -282,21 +313,265 @@ fn coverage(cx: _) -> Result {
         if !(op::PUSH1..=op::PUSH32).contains(&push) {
             return Err(InstrStop::InvalidImmediateEncoding);
         }
+        let len = usize::from(push - op::PUSH0);
+        if (state.coverage.counting || state.edges)
+            // The values of valid probes fit in four bytes.
+            && len <= 4
+        {
+            // SAFETY: As above, the immediate is in the padded bytecode.
+            let immediate = unsafe { cx.pc.read_bytes_offset_unchecked(2, len) };
+            let value = immediate.iter().fold(0u32, |value, &byte| value << 8 | u32::from(byte));
+            state.probe(&*cx.state, value);
+        }
         // The dispatch then steps over the `COVERAGE` byte.
-        unsafe { cx.pc.advance_unchecked(usize::from(push - op::PUSH0) + 1) };
+        unsafe { cx.pc.advance_unchecked(len + 1) };
         Ok(())
     })
 }
 
-/// Returns the counter of the `COVERAGE; PUSHn <counter>` probe at `pc` of `code`.
-pub fn coverage_counter(code: &[u8], pc: usize) -> Option<u32> {
-    let push = *code.get(pc + 1)?;
-    if !(op::PUSH1..=op::PUSH32).contains(&push) {
-        return None;
+impl State {
+    /// Handles a `COVERAGE` probe with value `value` in the executing code.
+    #[inline]
+    fn probe<T: EvmTypesHost>(&mut self, state: &InterpreterState<'_, '_, T>, value: u32) {
+        if value & MCDC_FLAG != 0 {
+            if self.coverage.counting {
+                self.coverage.mcdc(state, value);
+            }
+            return;
+        }
+        if self.coverage.counting {
+            self.coverage.hit(state, value);
+        }
+        if self.edges && (1..=MAX_EDGE_ID).contains(&value) {
+            self.hits.record(value);
+        }
     }
-    let start = pc + 2;
-    let counter = code.get(start..start + usize::from(push - op::PUSH0))?;
-    u32::try_from(U256::from_be_slice(counter)).ok()
+}
+
+/// The hits of one code object.
+#[derive(Debug)]
+struct CodeHits {
+    /// The code. It keeps the allocation alive, so that its address identifies it.
+    _code: Bytecode,
+    bytecode: Bytes,
+    counters: FxHashMap<u32, u32>,
+    mcdc: FxHashSet<(u32, u32)>,
+}
+
+/// The counter hits and executed MC/DC test vectors of one code object.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CodeCoverage {
+    /// The code.
+    pub bytecode: Bytes,
+    /// The hits of each counter that ran.
+    pub counters: Vec<(u32, u32)>,
+    /// The executed test vectors as `(decision ID, test vector index)`.
+    pub mcdc: Vec<(u32, u32)>,
+}
+
+/// The code a probe ran in last.
+#[derive(Clone, Copy, Debug)]
+struct Executing {
+    /// The address of the code's bytes.
+    ptr: *const u8,
+    hash: B256,
+    /// Whether the code carries `COVERAGE` probes.
+    has_probes: bool,
+    /// The index of the code's table, once it has one.
+    table: Option<usize>,
+}
+
+/// An MC/DC decision in progress.
+#[derive(Clone, Copy, Debug)]
+struct McdcEntry {
+    depth: u16,
+    decision: u32,
+    index: u32,
+}
+
+/// This thread's `COVERAGE` state.
+#[derive(Debug)]
+struct CoverageState {
+    /// Whether probes count hits per code object.
+    counting: bool,
+    executing: Executing,
+    /// The code `executing` points into, kept alive so that no other code takes its address.
+    pinned: Bytecode,
+    tables: Vec<CodeHits>,
+    maps: Option<Box<CodeMaps>>,
+    /// The decisions in progress, innermost last.
+    mcdc: Vec<McdcEntry>,
+}
+
+/// Lookups by code hash.
+#[derive(Debug, Default)]
+struct CodeMaps {
+    /// The index of each code object's table.
+    table_of: B256HashMap<usize>,
+    /// Whether the code with a hash carries probes. It outlives the calls, as scanning the code
+    /// for probes takes longer than a short call.
+    has_probes: B256HashMap<bool>,
+}
+
+impl CoverageState {
+    const fn new() -> Self {
+        Self {
+            counting: false,
+            executing: Executing {
+                ptr: std::ptr::null(),
+                hash: B256::ZERO,
+                has_probes: false,
+                table: None,
+            },
+            pinned: Bytecode::new(),
+            tables: Vec::new(),
+            maps: None,
+            mcdc: Vec::new(),
+        }
+    }
+
+    /// Returns the code that runs in `state`, switching to it when it changed.
+    #[inline]
+    fn executing<T: EvmTypesHost>(
+        &mut self,
+        state: &InterpreterState<'_, '_, T>,
+    ) -> &mut Executing {
+        if self.executing.ptr != state.bytecode().as_ptr() {
+            self.switch(state);
+        }
+        &mut self.executing
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn switch<T: EvmTypesHost>(&mut self, state: &InterpreterState<'_, '_, T>) {
+        let code = &state.message().code;
+        let hash = code.hash_slow();
+        let maps = self.maps.get_or_insert_default();
+        if maps.has_probes.len() >= MAX_PROBE_CACHE {
+            maps.has_probes.clear();
+        }
+        let has_probes = *maps
+            .has_probes
+            .entry(hash)
+            .or_insert_with(|| carries_probes(code.original_byte_slice()));
+        self.executing = Executing {
+            ptr: state.bytecode().as_ptr(),
+            hash,
+            has_probes,
+            table: maps.table_of.get(&hash).copied(),
+        };
+        self.pinned = code.clone();
+    }
+
+    /// The table of the executing code, created on first use.
+    #[inline]
+    fn table<T: EvmTypesHost>(&mut self, state: &InterpreterState<'_, '_, T>) -> &mut CodeHits {
+        let executing = self.executing(state);
+        let index = match executing.table {
+            Some(index) => index,
+            None => self.new_table(),
+        };
+        &mut self.tables[index]
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn new_table(&mut self) -> usize {
+        let index = self.tables.len();
+        self.tables.push(CodeHits {
+            _code: self.pinned.clone(),
+            bytecode: self.pinned.original_bytes(),
+            counters: FxHashMap::default(),
+            mcdc: FxHashSet::default(),
+        });
+        self.maps.get_or_insert_default().table_of.insert(self.executing.hash, index);
+        self.executing.table = Some(index);
+        index
+    }
+
+    /// Counts a hit of a counter in the executing code.
+    #[inline]
+    fn hit<T: EvmTypesHost>(&mut self, state: &InterpreterState<'_, '_, T>, counter: u32) {
+        let hits = self.table(state).counters.entry(counter).or_default();
+        *hits = hits.saturating_add(1);
+    }
+
+    /// Handles an MC/DC probe: bits 30 and 29 hold the operation, bits 28 to 8 the decision, and
+    /// bits 7 to 0 the increment of an `add`.
+    fn mcdc<T: EvmTypesHost>(&mut self, state: &InterpreterState<'_, '_, T>, value: u32) {
+        let depth = state.message().depth;
+        // The frames of the entries deeper than this one exited or reverted.
+        while self.mcdc.last().is_some_and(|entry| entry.depth > depth) {
+            self.mcdc.pop();
+        }
+        let decision = value >> 8 & 0x1f_ffff;
+        match value >> 29 & 3 {
+            // Begin.
+            0 => self.mcdc.push(McdcEntry { depth, decision, index: 0 }),
+            // Add.
+            1 => {
+                if let Some(entry) = self.mcdc.iter_mut().rev().find(|e| e.decision == decision) {
+                    entry.index = entry.index.saturating_add(value & 0xff);
+                }
+            }
+            // End: the decision completed, so its test vector counts. An unfinished decision
+            // leaves nothing.
+            2 => {
+                if let Some(position) = self.mcdc.iter().rposition(|e| e.decision == decision) {
+                    let entry = self.mcdc[position];
+                    self.mcdc.truncate(position);
+                    self.table(state).mcdc.insert((decision, entry.index));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Takes the hits of the code objects, and forgets the code that ran.
+    fn take(&mut self) -> Vec<(B256, CodeCoverage)> {
+        let hashes = self
+            .maps
+            .as_mut()
+            .map(|maps| {
+                maps.table_of.drain().map(|(hash, index)| (index, hash)).collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut tables = std::mem::take(&mut self.tables).into_iter().map(Some).collect::<Vec<_>>();
+        let hits = hashes
+            .into_iter()
+            .filter_map(|(index, hash)| {
+                let table = tables[index].take()?;
+                let hits = CodeCoverage {
+                    bytecode: table.bytecode,
+                    counters: table.counters.into_iter().collect(),
+                    mcdc: table.mcdc.into_iter().collect(),
+                };
+                Some((hash, hits))
+            })
+            .collect();
+        self.executing =
+            Executing { ptr: std::ptr::null(), hash: B256::ZERO, has_probes: false, table: None };
+        self.pinned = Bytecode::new();
+        self.mcdc.clear();
+        hits
+    }
+}
+
+/// Returns whether the code has a `COVERAGE` opcode, outside the data of a push.
+fn carries_probes(code: &[u8]) -> bool {
+    let mut pc = 0;
+    while let Some(&opcode) = code.get(pc) {
+        if opcode == COVERAGE {
+            return true;
+        }
+        pc += if (op::PUSH1..=op::PUSH32).contains(&opcode) {
+            usize::from(opcode - op::PUSH0) + 1
+        } else {
+            1
+        };
+    }
+    false
 }
 
 /// Adds the `EDGECOV`, `CMPLOG`, and `COVERAGE` instructions to `config`.
@@ -340,7 +615,7 @@ mod tests {
     use tempo_evm::TempoEvmFactory;
 
     fn hits(ids: &[u32]) -> Vec<InstrumentedEdgeHit> {
-        let _guard = EdgeCovGuard::new(true, false);
+        let _guard = EdgeCovGuard::new(true, false, false);
         with_state(|state| {
             for &id in ids {
                 if let Some(id) = probe_id(U256::from(id)) {

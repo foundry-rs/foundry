@@ -76,8 +76,8 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// - Some(true) for realtime console.log-ing.
     /// - Some(false) for log collection.
     pub logs: Option<bool>,
-    /// The line coverage collector, if line coverage info should be collected.
-    pub line_coverage: Option<LineCoverageCollector>,
+    /// Whether line coverage info should be collected.
+    pub line_coverage: Option<bool>,
     /// Whether to print all opcode traces into the console. Useful for debugging the EVM.
     pub print: Option<bool>,
     /// The chisel state inspector.
@@ -184,10 +184,10 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
-    /// Set the line coverage collector, if line coverage info should be collected.
+    /// Set whether to collect line coverage information.
     #[inline]
-    pub fn line_coverage(mut self, collector: Option<LineCoverageCollector>) -> Self {
-        self.line_coverage = collector;
+    pub const fn line_coverage(mut self, yes: bool) -> Self {
+        self.line_coverage = Some(yes);
         self
     }
 
@@ -286,7 +286,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         if let Some(chisel_state) = chisel_state {
             stack.set_chisel(chisel_state);
         }
-        stack.collect_line_coverage(line_coverage);
+        stack.collect_line_coverage(line_coverage.unwrap_or(false));
         stack.collect_logs(logs);
         stack.print(print.unwrap_or(false));
         stack.tracing_requirements(trace_requirements);
@@ -474,6 +474,8 @@ pub struct InspectorStackInner {
     /// Whether to collect comparison operands from `CMPLOG` probes instead of the cmp-log
     /// inspector.
     pub instrumented_cmp_log: bool,
+    /// Whether to collect the hits of `COVERAGE` probes as the call's line coverage.
+    pub coverage_counters: bool,
     pub enable_isolation: bool,
     /// Whether calls into fork contracts prefetch the remote state they are about to read, see
     /// [`Backend::prefetch_call`](foundry_evm_core::backend::Backend::prefetch_call).
@@ -835,10 +837,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.refresh_static_step_end_dispatch();
     }
 
-    /// Set the line coverage collector, or disable line coverage.
+    /// Set whether to enable the line coverage collector.
     #[inline]
-    pub fn collect_line_coverage(&mut self, collector: Option<LineCoverageCollector>) {
-        self.line_coverage = collector.map(Box::new);
+    pub fn collect_line_coverage(&mut self, yes: bool) {
+        self.line_coverage = yes.then(Default::default);
         self.refresh_static_step_dispatch();
     }
 
@@ -881,6 +883,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub const fn enable_edgecov_opcode(&mut self, yes: bool) {
         self.inner.edgecov_opcode = yes;
+    }
+
+    /// Set whether to collect the hits of the compiler-instrumented `COVERAGE` probes as line
+    /// coverage, which runs those probes.
+    #[inline]
+    pub const fn collect_coverage_counters(&mut self, yes: bool) {
+        self.inner.coverage_counters = yes;
+        self.inner.edgecov_opcode |= yes;
     }
 
     /// Drops the inspectors that only feed fuzz guidance: edge coverage, the fuzzer value

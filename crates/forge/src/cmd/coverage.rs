@@ -4,10 +4,11 @@ use super::{
 };
 use crate::coverage::{
     BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
-    CoverageSummaryReporter, DebugReporter, GapsReporter, ItemAnchors, LcovReporter,
+    CoverageSummaryReporter, DebugReporter, GapsReporter, ItemAnchors, LcovReporter, LlvmReporter,
     ResolvedHitMap, ResolvedHitMaps,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::{find_anchors, find_execution_anchors},
+    instrumented::{InstrumentedBuild, InstrumentedSource},
 };
 use alloy_json_abi::StateMutability;
 use alloy_primitives::{
@@ -113,6 +114,16 @@ pub struct CoverageArgs {
     #[arg(long, conflicts_with = "ir_minimum")]
     instrumented: bool,
 
+    /// Measure modified condition/decision coverage (MC/DC) of the decisions with at least two
+    /// conditions.
+    ///
+    /// Requires `--instrumented`. Solar instruments each such decision with extra probes, and
+    /// the report counts the conditions that an independence pair of executed test vectors
+    /// covers, as `llvm-cov` does. A decision with more than 256 test vectors keeps plain branch
+    /// coverage.
+    #[arg(long, requires = "instrumented")]
+    mcdc: bool,
+
     /// Keep the project's optimizer and viaIR settings instead of disabling them.
     ///
     /// Optimized builds can miss or merge coverage items. Cannot be combined with
@@ -156,6 +167,8 @@ struct CoverageSettings {
     ir_minimum: bool,
     /// Whether to count coverage with compiler instrumentation.
     instrumented: bool,
+    /// Whether to measure MC/DC of instrumented decisions.
+    mcdc: bool,
     /// Whether to keep the project's optimizer and viaIR settings.
     keep_optimizer: bool,
     /// The path to output a single file report to.
@@ -202,6 +215,7 @@ impl CoverageSettings {
                 ))),
                 CoverageReportKind::Debug => Some(Box::new(DebugReporter)),
                 CoverageReportKind::Attribution => None,
+                CoverageReportKind::Llvm => Some(Box::new(LlvmReporter::new(root.to_path_buf()))),
                 CoverageReportKind::Gaps => {
                     let path = self.report_path(root, "coverage-gaps.json");
                     Some(Box::new(GapsReporter::new(root.to_path_buf(), path)))
@@ -218,6 +232,10 @@ impl CoverageArgs {
         eyre::ensure!(
             !(settings.ir_minimum && settings.keep_optimizer),
             "`ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled"
+        );
+        eyre::ensure!(
+            settings.instrumented || !settings.report.contains(&CoverageReportKind::Llvm),
+            "`--report llvm` requires `--instrumented`"
         );
         Ok(())
     }
@@ -292,6 +310,7 @@ impl CoverageArgs {
                 .unwrap_or_else(|| config.lcov_version.clone()),
             ir_minimum: self.ir_minimum || config.ir_minimum,
             instrumented: self.instrumented,
+            mcdc: self.mcdc,
             keep_optimizer: self.keep_optimizer || config.keep_optimizer,
             report_file: self.report_file.clone().or_else(|| config.report_file.clone()),
             include_libs: self.include_libs || config.include_libs,
@@ -365,11 +384,20 @@ impl CoverageArgs {
             }
             // Standard JSON takes output-changing flags only from its input, so every compiler
             // profile needs the flag.
-            for settings in std::iter::once(&mut project.settings)
+            for profile in std::iter::once(&mut project.settings)
                 .chain(project.additional_settings.values_mut())
             {
-                let solar = settings.solc.settings.solar.get_or_insert_default();
+                // Solar lists the counters it dropped only when asked for them.
+                for selection in
+                    ["evm.bytecode.coverageAliases", "evm.deployedBytecode.coverageAliases"]
+                {
+                    profile.solc.settings.push_output_selection(selection);
+                }
+                let solar = profile.solc.settings.solar.get_or_insert_default();
                 solar.unstable.push("instrument-coverage".into());
+                if settings.mcdc {
+                    solar.unstable.push("coverage-mcdc".into());
+                }
             }
         } else if settings.ir_minimum {
             sh_warn!(
@@ -649,8 +677,7 @@ impl CoverageArgs {
         // The coverage map is per-source compiler output that the compiler caches in the build
         // info, which a warm hit reloads along with the source list, so both are read from the same
         // place and survive caching without recompiling.
-        let mut sources = BTreeMap::<&Path, String>::new();
-        let mut items_by_build = BTreeMap::<&str, (Vec<_>, Vec<_>)>::new();
+        let mut texts = BTreeMap::<&Path, String>::new();
         let mut report = CoverageReport::default();
         // A supported compiler emits a map for every source, empty for a code-less one; a build
         // with no map at all means the compiler does not instrument. Track this across all sources,
@@ -659,6 +686,7 @@ impl CoverageArgs {
         let mut any_coverage = false;
         for (build_id, build) in output.builds() {
             any_coverage |= !build.coverage.is_empty();
+            let mut sources = BTreeMap::new();
             for (source_id, path) in &build.source_id_to_path {
                 let rel = path.strip_prefix(&project_paths.root).unwrap_or(path);
                 report.add_source(build_id.clone(), *source_id as usize, rel.to_path_buf());
@@ -669,45 +697,44 @@ impl CoverageArgs {
                 {
                     continue;
                 }
-                if (!settings.include_libs && project_paths.has_library_ancestor(rel))
-                    || (settings.exclude_tests && project_paths.is_test(rel))
-                {
-                    continue;
-                }
                 // Skip a source without a map rather than aborting; the unsupported-compiler case
                 // is handled by `any_coverage` after the loop.
                 let Some(coverage) = build.coverage.get(source_id) else {
                     continue;
                 };
-                let source = match sources.get(rel) {
-                    Some(source) => source,
+                // A library or test source that the report leaves out still maps the regions of
+                // the modifiers that sources in the report expand from it.
+                let reportable = !((!settings.include_libs
+                    && project_paths.has_library_ancestor(rel))
+                    || (settings.exclude_tests && project_paths.is_test(rel)));
+                let text = match texts.get(rel) {
+                    Some(text) => text,
                     None => {
                         // Read like the compiler, which normalizes line endings, so the map's
                         // byte offsets match.
                         let read = Arc::unwrap_or_clone(
                             Source::read(&project_paths.root.join(rel))?.content,
                         );
-                        sources.entry(rel).or_insert(read)
+                        texts.entry(rel).or_insert(read)
                     }
                 };
-                let (items, counts) = items_by_build.entry(build_id.as_str()).or_default();
-                crate::coverage::instrumented::source_items(
-                    *source_id as usize,
-                    source,
-                    coverage,
-                    items,
-                    counts,
+                sources.insert(
+                    *source_id,
+                    InstrumentedSource::new(
+                        rel.to_path_buf(),
+                        text.clone(),
+                        reportable,
+                        coverage.clone(),
+                    ),
                 );
             }
+            report.add_instrumented_build(build_id.clone(), InstrumentedBuild::new(sources));
         }
         if !any_coverage {
             eyre::bail!(
                 "the compiler returned no coverage maps; \
                  `--instrumented` requires a Solar version with `-Zinstrument-coverage`"
             );
-        }
-        for (build_id, (items, counts)) in items_by_build {
-            report.add_instrumented_items(build_id.to_string(), items, counts);
         }
         Ok(report)
     }
@@ -748,6 +775,25 @@ impl CoverageArgs {
         .build();
         let mut resolved_hit_maps = ResolvedHitMaps::default();
         let mut unresolved_hit_maps = HashSet::<B256>::default();
+        // The counters that the compiler dropped, by artifact: creation and runtime code.
+        let aliases = if report.is_instrumented() {
+            output
+                .artifact_ids()
+                .map(|(id, artifact)| {
+                    let creation = artifact
+                        .get_bytecode()
+                        .map(|code| code.coverage_aliases.clone())
+                        .unwrap_or_default();
+                    let runtime = artifact
+                        .get_deployed_bytecode()
+                        .and_then(|code| code.bytecode.as_ref().map(|c| c.coverage_aliases.clone()))
+                        .unwrap_or_default();
+                    ((id.build_id, id.source, id.name), (creation, runtime))
+                })
+                .collect::<HashMap<_, _>>()
+        } else {
+            HashMap::default()
+        };
 
         // Add hit data to the coverage report
         for suite in outcome.results.values() {
@@ -814,6 +860,18 @@ impl CoverageArgs {
                         contract_name: artifact_id.name.as_str().into(),
                     };
 
+                    if let Some((creation, runtime)) = aliases.get(&(
+                        artifact_id.build_id.clone(),
+                        artifact_id.source.clone(),
+                        artifact_id.name.clone(),
+                    )) {
+                        let aliases = if is_deployed_code { runtime } else { creation };
+                        report.add_coverage_aliases(
+                            contract_id.clone(),
+                            is_deployed_code,
+                            aliases.clone(),
+                        );
+                    }
                     report.add_hit_map(&contract_id, map, is_deployed_code)?;
 
                     resolved_hit_maps
@@ -847,6 +905,8 @@ impl CoverageArgs {
                 !set.is_match(path)
             });
         }
+
+        report.finalize_instrumented();
 
         // Output final reports.
         Self::report(reporters, &report)?;

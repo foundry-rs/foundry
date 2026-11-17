@@ -33,7 +33,7 @@ use foundry_evm::{
         BaseCounterExample, BasicTxDetails,
         strategies::{EnumBounds, LiteralsDictionary},
     },
-    inspectors::{CheatsConfig, EdgeIndexMap, LineCoverageCollector},
+    inspectors::{CheatsConfig, EdgeIndexMap},
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements},
 };
@@ -560,9 +560,12 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             cheatcodes.core.config = Arc::new(config);
         }
         inspector.tracing_requirements(self.trace_requirements());
-        inspector.collect_line_coverage(self.line_coverage_collector());
+        // Instrumented builds count their coverage in the `COVERAGE` opcode, so no inspector steps
+        // the code.
+        inspector.collect_line_coverage(self.line_coverage && !self.coverage_counters);
         inspector.enable_isolation(self.isolation);
         inspector.enable_edgecov_opcode(self.edgecov_opcode());
+        inspector.collect_coverage_counters(self.line_coverage && self.coverage_counters);
         inspector.fork_prefetch(self.evm_opts.fork_prefetch);
         executor.set_spec_id(self.spec_id);
         executor.set_legacy_assertions(self.config.legacy_assertions);
@@ -593,7 +596,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
                     .logs(self.config.live_logs)
                     .cheatcodes(cheats_config)
                     .trace_requirements(self.trace_requirements())
-                    .line_coverage(self.line_coverage_collector())
+                    .line_coverage(self.line_coverage && !self.coverage_counters)
                     .enable_isolation(self.isolation)
                     .fork_prefetch(self.evm_opts.fork_prefetch)
                     .create2_deployer(self.evm_opts.create2_deployer)
@@ -605,6 +608,9 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             .build(self.evm_env, self.tx.clone(), db, self.evm_opts.networks);
         executor.inspector_mut().enable_edgecov_opcode(self.edgecov_opcode());
         executor
+            .inspector_mut()
+            .collect_coverage_counters(self.line_coverage && self.coverage_counters);
+        executor
     }
 
     /// Whether test executors run the compiler-instrumented `EDGECOV`, `CMPLOG`, and `COVERAGE`
@@ -614,17 +620,6 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         self.coverage_counters
             || self.config.fuzz.corpus.collect_instrumented_edges()
             || self.config.invariant.corpus.collect_instrumented_edges()
-    }
-
-    /// Returns the line coverage collector, if line coverage is collected.
-    fn line_coverage_collector(&self) -> Option<LineCoverageCollector> {
-        self.line_coverage.then(|| {
-            if self.coverage_counters {
-                LineCoverageCollector::counters()
-            } else {
-                LineCoverageCollector::default()
-            }
-        })
     }
 
     fn trace_requirements(&self) -> TraceRequirements {

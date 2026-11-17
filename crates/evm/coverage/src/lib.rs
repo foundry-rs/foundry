@@ -17,7 +17,8 @@ use alloy_primitives::{
 };
 use analysis::SourceAnalysis;
 use eyre::Result;
-use foundry_compilers::artifacts::{CoverageCount, sourcemap::SourceMap};
+use foundry_compilers::artifacts::{CoverageAlias, sourcemap::SourceMap};
+use instrumented::{InstrumentedBuild, ItemCount};
 use semver::Version;
 use std::{
     collections::BTreeMap,
@@ -31,6 +32,7 @@ use std::{
 pub mod analysis;
 pub mod anchors;
 pub mod instrumented;
+pub mod llvm;
 
 mod edge;
 pub use edge::{
@@ -63,9 +65,19 @@ pub struct CoverageReport {
     pub bytecode_hits: HashMap<ContractId, HitMap>,
     /// The bytecode -> source mappings.
     pub source_maps: HashMap<ContractId, (SourceMap, SourceMap)>,
-    /// The counter expressions of the items of compiler-instrumented builds, by build ID and item
-    /// ID. The hit maps of these builds count counters instead of program counters.
-    counters: HashMap<String, Vec<CoverageCount>>,
+    /// The compiler-instrumented builds by build ID. The hit maps of these builds count counters
+    /// instead of program counters.
+    instrumented: HashMap<String, InstrumentedBuildReport>,
+    /// The counter aliases of the code objects of instrumented builds.
+    aliases: HashMap<(ContractId, bool), Vec<CoverageAlias>>,
+}
+
+/// An instrumented build with the count of each of its items, by item ID. An item that counts
+/// nothing of its own, such as a line, has none.
+#[derive(Clone, Debug)]
+struct InstrumentedBuildReport {
+    build: InstrumentedBuild,
+    counts: Vec<Option<ItemCount>>,
 }
 
 impl CoverageReport {
@@ -98,17 +110,112 @@ impl CoverageReport {
         self.analyses.insert(build_id, analysis);
     }
 
-    /// Adds the items of a compiler-instrumented build with the counter expression of each, as
-    /// built by [`instrumented::source_items`].
-    pub fn add_instrumented_items(
-        &mut self,
-        build_id: String,
-        items: Vec<CoverageItem>,
-        counts: Vec<CoverageCount>,
-    ) {
-        debug_assert_eq!(items.len(), counts.len());
+    /// Adds a compiler-instrumented build. Its items count the hits that
+    /// [`add_hit_map`](Self::add_hit_map) adds to the build, once
+    /// [`finalize_instrumented`](Self::finalize_instrumented) evaluates them.
+    pub fn add_instrumented_build(&mut self, build_id: String, build: InstrumentedBuild) {
+        let (items, counts) = build.items();
         self.analyses.insert(build_id.clone(), SourceAnalysis::from_items(items));
-        self.counters.insert(build_id, counts);
+        let counts = counts.into_iter().map(Some).collect();
+        self.instrumented.insert(build_id, InstrumentedBuildReport { build, counts });
+    }
+
+    /// Sets the hits of the items of the instrumented builds from the hit maps added so far, and
+    /// adds their line items, which follow `llvm-cov`'s line rules.
+    pub fn finalize_instrumented(&mut self) {
+        let mapping = llvm::CoverageMapping::new(self.llvm_inputs());
+        for (build_id, report) in &mut self.instrumented {
+            let Some(analysis) = self.analyses.get(build_id) else { continue };
+            let mut items = Vec::new();
+            let mut counts = Vec::new();
+            for source_items in analysis
+                .all_items()
+                .iter()
+                .zip(&report.counts)
+                .collect::<Vec<_>>()
+                .chunk_by(|a, b| a.0.loc.source_id == b.0.loc.source_id)
+            {
+                let source_id = source_items[0].0.loc.source_id;
+                for &(item, count) in source_items {
+                    // Lines are rebuilt below, so that finalizing twice adds none twice.
+                    if matches!(item.kind, CoverageItemKind::Line) {
+                        continue;
+                    }
+                    let mut item = item.clone();
+                    item.hits = count.map_or(0, |count| report.build.total_item_hits(count));
+                    items.push(item);
+                    counts.push(*count);
+                }
+                let Some(source) = report.build.sources.get(&(source_id as u32)) else { continue };
+                let stats = mapping.coverage_for_file(&source.filename()).line_stats_from(1);
+                for stats in stats.into_iter().filter(|stats| stats.mapped) {
+                    let loc = SourceLocation {
+                        source_id,
+                        contract_name: Arc::from(""),
+                        bytes: source.line_bytes(stats.line),
+                        lines: stats.line..stats.line + 1,
+                    };
+                    let hits = u32::try_from(stats.execution_count).unwrap_or(u32::MAX);
+                    items.push(CoverageItem {
+                        kind: CoverageItemKind::Line,
+                        loc,
+                        anchor_loc: None,
+                        hits,
+                    });
+                    counts.push(None);
+                }
+            }
+            self.analyses.insert(build_id.clone(), SourceAnalysis::from_items(items));
+            report.counts = counts;
+        }
+    }
+
+    /// The function records of the instrumented builds for the LLVM coverage mapping, with their
+    /// counters, in the order of the builds' IDs. A function that two builds both define is
+    /// listed once.
+    pub fn llvm_inputs(&self) -> Vec<llvm::FunctionInput> {
+        let mut builds = self.instrumented.iter().collect::<Vec<_>>();
+        builds.sort_by_key(|(build_id, _)| *build_id);
+        let mut names = FxHashSet::default();
+        let mut inputs = builds
+            .into_iter()
+            .flat_map(|(_, report)| report.build.function_inputs())
+            .filter(|input| names.insert(input.name.clone()))
+            .collect::<Vec<_>>();
+        inputs.sort_by(|a, b| (&a.filenames[0], &a.name).cmp(&(&b.filenames[0], &b.name)));
+        inputs
+    }
+
+    /// The `llvm-cov` summary of each source file of the instrumented builds, by path.
+    pub fn llvm_file_summaries(&self) -> Vec<(PathBuf, llvm::FileSummary)> {
+        let mapping = llvm::CoverageMapping::new(self.llvm_inputs());
+        mapping
+            .unique_source_files()
+            .into_iter()
+            .map(|filename| (PathBuf::from(filename), llvm::FileSummary::new(&mapping, filename)))
+            .collect()
+    }
+
+    /// Sets the counter aliases of a code object of an instrumented build.
+    pub fn add_coverage_aliases(
+        &mut self,
+        contract_id: ContractId,
+        is_deployed_code: bool,
+        aliases: Vec<CoverageAlias>,
+    ) {
+        if !aliases.is_empty() {
+            self.aliases.insert((contract_id, is_deployed_code), aliases);
+        }
+    }
+
+    /// Returns whether the report holds compiler-instrumented builds.
+    pub fn is_instrumented(&self) -> bool {
+        !self.instrumented.is_empty()
+    }
+
+    /// Returns the instrumented builds.
+    pub fn instrumented_builds(&self) -> impl Iterator<Item = (&str, &InstrumentedBuild)> {
+        self.instrumented.iter().map(|(id, report)| (id.as_str(), &report.build))
     }
 
     /// Add anchors to this report.
@@ -186,15 +293,12 @@ impl CoverageReport {
         hit_map: &HitMap,
         is_deployed_code: bool,
     ) -> Result<()> {
-        if let Some(counts) = self.counters.get(&contract_id.build_id) {
-            let items = self
-                .analyses
-                .get_mut(&contract_id.build_id)
-                .expect("instrumented build has items")
-                .all_items_mut();
-            for (item, count) in items.iter_mut().zip(counts) {
-                item.hits = item.hits.saturating_add(counter_hits(count, hit_map));
-            }
+        if let Some(report) = self.instrumented.get_mut(&contract_id.build_id) {
+            let aliases = self
+                .aliases
+                .get(&(contract_id.clone(), is_deployed_code))
+                .map_or(&[][..], Vec::as_slice);
+            report.build.add_hits(hit_map.counters(), hit_map.mcdc_vectors(), aliases);
             return Ok(());
         }
 
@@ -240,12 +344,22 @@ impl CoverageReport {
         hit_map: &HitMap,
         is_deployed_code: bool,
     ) -> Vec<(&'a CoverageItem, u32)> {
-        if let Some(counts) = self.counters.get(&contract_id.build_id) {
-            let items = self.analyses[&contract_id.build_id].all_items();
-            return items
+        if let Some(report) = self.instrumented.get(&contract_id.build_id) {
+            let aliases = self
+                .aliases
+                .get(&(contract_id.clone(), is_deployed_code))
+                .map_or(&[][..], Vec::as_slice);
+            let mut counters = hit_map.counters().collect::<FxHashMap<_, _>>();
+            for &[dropped, kept] in aliases {
+                let hits = counters.get(&kept).copied().unwrap_or(0);
+                counters.insert(dropped, hits);
+            }
+            let hits = |counter| counters.get(&counter).map_or(0, |&hits| u64::from(hits));
+            return self.analyses[&contract_id.build_id]
+                .all_items()
                 .iter()
-                .zip(counts)
-                .map(|(item, count)| (item, counter_hits(count, hit_map)))
+                .zip(&report.counts)
+                .filter_map(|(item, &count)| Some((item, report.build.item_hits(count?, &hits))))
                 .filter(|&(_, hits)| hits > 0)
                 .collect();
         }
@@ -288,6 +402,13 @@ impl CoverageReport {
         });
 
         let source_paths = &self.source_paths;
+        for (build_id, report) in &mut self.instrumented {
+            for (source_id, source) in &mut report.build.sources {
+                source.reportable &= source_paths
+                    .get(build_id)
+                    .is_some_and(|paths| paths.contains_key(&(*source_id as usize)));
+            }
+        }
         self.source_paths_to_ids.retain(|build_id, paths| {
             paths.retain(|_, source_id| {
                 source_paths.get(build_id).is_some_and(|paths| paths.contains_key(source_id))
@@ -295,12 +416,6 @@ impl CoverageReport {
             !paths.is_empty()
         });
     }
-}
-
-/// Evaluates a counter expression with the counter hits of a hit map.
-fn counter_hits(count: &CoverageCount, hit_map: &HitMap) -> u32 {
-    let hits = count.eval(|counter| hit_map.get(counter).map_or(0, |hits| hits.get().into()));
-    u32::try_from(hits).unwrap_or(u32::MAX)
 }
 
 /// A collection of [`HitMap`]s.
@@ -403,6 +518,9 @@ pub struct HitMap {
     /// Program counters hit in `pending`.
     pcs: Vec<u32>,
     bytecode: Bytes,
+    /// The executed test vectors of the MC/DC decisions of a compiler-instrumented code object:
+    /// `(decision ID, test vector index)`.
+    mcdc: FxHashSet<(u32, u32)>,
     creations: u32,
     empty_calls: CallHits,
     short_calls: CallHits,
@@ -418,6 +536,7 @@ impl HitMap {
             hits: Default::default(),
             pending: Vec::new(),
             pcs: Vec::new(),
+            mcdc: Default::default(),
             creations: 0,
             empty_calls: Default::default(),
             short_calls: Default::default(),
@@ -464,14 +583,32 @@ impl HitMap {
         }
     }
 
-    /// Records a hit of a compiler-instrumented counter, visible at once.
+    /// Creates the hit map of a compiler-instrumented code object from the hits of its counters
+    /// and the test vectors its MC/DC decisions executed.
     ///
-    /// Counter IDs are numbered across a whole build, so a bytecode's few counters are recorded
-    /// sparsely instead of in `pending`, which would span every lower ID.
+    /// The hit map counts counters instead of program counters.
+    pub fn from_counters(
+        bytecode: Bytes,
+        counters: impl IntoIterator<Item = (u32, u32)>,
+        mcdc: impl IntoIterator<Item = (u32, u32)>,
+    ) -> Self {
+        let mut map = Self::new(bytecode);
+        map.hits.extend(counters);
+        map.mcdc.extend(mcdc);
+        map
+    }
+
+    /// Returns an iterator over the hits of the counters of a compiler-instrumented code object.
     #[inline]
-    pub(crate) fn record_counter(&mut self, counter: u32) {
-        let hits = self.hits.entry(counter).or_default();
-        *hits = hits.saturating_add(1);
+    pub fn counters(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.iter()
+    }
+
+    /// Returns an iterator over the executed MC/DC test vectors of a compiler-instrumented code
+    /// object, as `(decision ID, test vector index)`.
+    #[inline]
+    pub fn mcdc_vectors(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.mcdc.iter().copied()
     }
 
     /// Grows `pending` to include `pc`.
@@ -525,6 +662,7 @@ impl HitMap {
         for (pc, hits) in other.iter() {
             self.hits(pc, hits);
         }
+        self.mcdc.extend(&other.mcdc);
         self.creations += other.creations;
         self.empty_calls.merge(other.empty_calls);
         self.short_calls.merge(other.short_calls);
@@ -1049,12 +1187,15 @@ mod tests {
     }
 
     #[test]
-    fn counters_record_sparsely() {
-        let mut hit_map = HitMap::new(Bytes::from_static(&[0]));
-        hit_map.record_counter(1 << 30);
-        hit_map.record_counter(1 << 30);
-        assert_eq!(hit_map.pending.capacity(), 0);
-        hit_map.flush();
-        assert_eq!(hit_map.iter().collect::<Vec<_>>(), [(1 << 30, 2)]);
+    fn counter_hit_maps_merge_hits_and_test_vectors() {
+        let mut hit_map = HitMap::from_counters(Bytes::from_static(&[0]), [(7, 2)], [(1, 0)]);
+        let other = HitMap::from_counters(Bytes::from_static(&[0]), [(7, 3), (9, 1)], [(1, 2)]);
+        hit_map.merge(&other);
+        let mut counters = hit_map.counters().collect::<Vec<_>>();
+        counters.sort_unstable();
+        assert_eq!(counters, [(7, 5), (9, 1)]);
+        let mut vectors = hit_map.mcdc_vectors().collect::<Vec<_>>();
+        vectors.sort_unstable();
+        assert_eq!(vectors, [(1, 0), (1, 2)]);
     }
 }

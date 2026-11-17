@@ -5203,3 +5203,24 @@ Error: `--instrumented` requires Solar as the compiler; set `solc = "/path/to/so
 
 "#]]);
 }
+
+// `--mcdc` instruments decisions, so it needs `--instrumented`.
+#[forgetest]
+fn mcdc_requires_instrumented(prj: _, cmd: _) {
+    prj.add_source("Counter.sol", "contract Counter {}");
+    cmd.args(["coverage", "--mcdc"]).assert_failure().stderr_eq(str![[r#"
+error: the following required arguments were not provided:
+  --instrumented
+...
+"#]]);
+}
+
+// The LLVM report writes the coverage of compiler counters, so it needs `--instrumented`.
+#[forgetest]
+fn llvm_report_requires_instrumented(prj: _, cmd: _) {
+    prj.add_source("Counter.sol", "contract Counter {}");
+    cmd.args(["coverage", "--report", "llvm"]).assert_failure().stderr_eq(str![[r#"
+Error: `--report llvm` requires `--instrumented`
+
+"#]]);
+}

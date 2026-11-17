@@ -42,7 +42,7 @@ use foundry_evm_core::{
         TransactionRequestFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
     },
 };
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMap, HitMaps};
 use foundry_evm_fuzz::ObservedCall;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
@@ -1251,6 +1251,7 @@ fn execute<FEN: FoundryEvmNetwork>(
     let edgecov_opcode = stack.inner.edgecov_opcode;
     let instrumented_edges = stack.inner.instrumented_edges;
     let instrumented_cmp_log = stack.inner.instrumented_cmp_log;
+    let coverage_counters = stack.inner.coverage_counters;
     let mut evm = backend.backend().create_evm();
     install_env::<FEN>(backend.backend(), &mut evm, env);
     match ext {
@@ -1260,8 +1261,9 @@ fn execute<FEN: FoundryEvmNetwork>(
     let executed = {
         let _guard = (sancov_edges || sancov_trace_cmp)
             .then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
-        let _edgecov =
-            edgecov_opcode.then(|| EdgeCovGuard::new(instrumented_edges, instrumented_cmp_log));
+        let _edgecov = edgecov_opcode.then(|| {
+            EdgeCovGuard::new(instrumented_edges, instrumented_cmp_log, coverage_counters)
+        });
         evm.set_inspector(stack.as_inspector(&mut *backend));
         evm.transact(tx).map(|executed| executed.detach())
     };
@@ -1829,6 +1831,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     let sancov_trace_cmp = inspector.inner.sancov_trace_cmp;
     let instrumented_edges = inspector.inner.instrumented_edges;
     let instrumented_cmp_log = inspector.inner.instrumented_cmp_log;
+    let coverage_counters = inspector.inner.coverage_counters;
     let observed_calls = inspector
         .inner
         .fuzzer
@@ -1840,7 +1843,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         mut logs,
         labels,
         traces,
-        line_coverage,
+        mut line_coverage,
         mut edge_coverage,
         mut evm_cmp_values,
         mut cheatcodes,
@@ -1862,6 +1865,13 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     }
     if instrumented_cmp_log {
         evm_cmp_values = Some(edgecov::take_cmp_log()).filter(|cmps| !cmps.is_empty());
+    }
+    // The probes count the hits of each code object themselves, so no inspector steps the code.
+    if coverage_counters {
+        let hit_maps = edgecov::take_coverage().into_iter().map(|(code_hash, code)| {
+            (code_hash, HitMap::from_counters(code.bytecode, code.counters, code.mcdc))
+        });
+        line_coverage = Some(HitMaps(hit_maps.collect()));
     }
 
     let transactions = cheatcodes
@@ -2119,7 +2129,6 @@ mod tests {
         evm::TempoEvmNetwork,
         opts::EvmOpts,
     };
-    use foundry_evm_coverage::LineCoverageCollector;
     use foundry_evm_traces::{
         InternalTraceMode, StackSnapshotType, TracingInspector, TracingInspectorConfig,
     };
@@ -2353,25 +2362,157 @@ mod tests {
         assert!(!matches!(result.edge_coverage, Some(EdgeCoverage::Instrumented(_))));
     }
 
-    /// Runtime code that hits coverage counter 5, then stops.
+    /// Runtime code that hits coverage counter 5 twice and counter 7 once, then stops.
     const COVERAGE_CODE: &[u8] = &[
+        0xc2, 0x61, 0x00, 0x05, // COVERAGE; PUSH2 5
+        0xc2, 0x60, 0x07, // COVERAGE; PUSH1 7
         0xc2, 0x61, 0x00, 0x05, // COVERAGE; PUSH2 5
         0x00, // STOP
     ];
 
+    /// An executor that counts the hits of `COVERAGE` probes as line coverage.
+    fn coverage_executor(gas_limit: u64) -> Executor<EthEvmNetwork> {
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(gas_limit));
+        executor.inspector_mut().collect_coverage_counters(true);
+        executor
+    }
+
+    /// The counter hits and MC/DC vectors of a code object.
+    type CodeHits = (Vec<(u32, u32)>, Vec<(u32, u32)>);
+
+    /// The counter hits and MC/DC vectors that the call recorded for the code `code`.
+    fn coverage_of(result: &RawCallResult, code: &[u8]) -> CodeHits {
+        let hits = result.line_coverage.as_ref().unwrap();
+        let map = hits.get(&alloy_primitives::keccak256(code)).expect("code ran");
+        assert_eq!(map.bytecode().as_ref(), code);
+        let (mut counters, mut vectors) =
+            (map.counters().collect::<Vec<_>>(), map.mcdc_vectors().collect::<Vec<_>>());
+        counters.sort_unstable();
+        vectors.sort_unstable();
+        (counters, vectors)
+    }
+
     #[test]
-    fn coverage_probe_costs_no_gas() {
+    fn coverage_probes_count_hits_and_cost_no_gas() {
         // No gas is left after the intrinsic cost, so a probe that ran its push would run out.
-        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(21_000));
-        executor.inspector_mut().enable_edgecov_opcode(true);
-        executor.inspector_mut().collect_line_coverage(Some(LineCoverageCollector::counters()));
+        let mut executor = coverage_executor(21_000);
         let target = Address::repeat_byte(0x41);
         executor.set_code(target, Bytecode::new_raw(Bytes::from_static(COVERAGE_CODE))).unwrap();
 
         let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(result.exit_reason, Some(InstrStop::Stop));
-        let hits = result.line_coverage.unwrap();
-        assert_eq!(hits.values().flat_map(|map| map.iter()).collect::<Vec<_>>(), [(5, 1)]);
+        assert_eq!(coverage_of(&result, COVERAGE_CODE), ([(5, 2), (7, 1)].to_vec(), Vec::new()));
+
+        // The hits of a call are not the hits of the next one.
+        let again = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(coverage_of(&again, COVERAGE_CODE).0, [(5, 2), (7, 1)]);
+    }
+
+    #[test]
+    fn coverage_probes_keep_the_hits_of_each_code_object_apart() {
+        // `a` runs counter 3, calls `b`, which runs counter 3 twice, and runs counter 3 again.
+        let b_code: &[u8] = &[0xc2, 0x60, 0x03, 0xc2, 0x60, 0x03, 0x00];
+        let b = Address::repeat_byte(0x43);
+        let mut a_code = vec![0xc2, 0x60, 0x03];
+        a_code.extend([0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73]);
+        a_code.extend(b);
+        a_code.extend([0x5a, 0xf1, 0x50, 0xc2, 0x60, 0x03, 0x00]);
+        let mut executor = coverage_executor(1 << 20);
+        let a = Address::repeat_byte(0x42);
+        executor.set_code(a, Bytecode::new_raw(Bytes::from(a_code.clone()))).unwrap();
+        executor.set_code(b, Bytecode::new_raw(Bytes::from_static(b_code))).unwrap();
+
+        let result = executor.call_raw(CALLER, a, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(coverage_of(&result, &a_code).0, [(3, 2)]);
+        assert_eq!(coverage_of(&result, b_code).0, [(3, 2)]);
+    }
+
+    /// An MC/DC probe: `op` is 0 for begin, 1 for add, and 2 for end.
+    fn mcdc(op: u32, decision: u32, increment: u32) -> [u8; 6] {
+        let value = 1 << 31 | op << 29 | decision << 8 | increment;
+        let [a, b, c, d] = value.to_be_bytes();
+        [0xc2, 0x63, a, b, c, d]
+    }
+
+    #[test]
+    fn mcdc_probes_record_the_vectors_of_completed_decisions() {
+        // Decision 3 completes with index 1 + 2, decision 4 never ends, and decision 5 ends twice
+        // with different indices.
+        let code = [
+            mcdc(0, 3, 0).as_slice(),
+            &mcdc(1, 3, 1),
+            &mcdc(1, 3, 2),
+            &mcdc(2, 3, 0),
+            &mcdc(0, 4, 0),
+            &mcdc(1, 4, 1),
+            &mcdc(0, 5, 0),
+            &mcdc(2, 5, 0),
+            &mcdc(0, 5, 0),
+            &mcdc(1, 5, 7),
+            &mcdc(2, 5, 0),
+            &[0x00],
+        ]
+        .concat();
+        let mut executor = coverage_executor(1 << 20);
+        let target = Address::repeat_byte(0x44);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from(code.clone()))).unwrap();
+
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        let (counters, vectors) = coverage_of(&result, &code);
+        assert!(counters.is_empty());
+        assert_eq!(vectors, [(3, 3), (5, 0), (5, 7)]);
+    }
+
+    #[test]
+    fn mcdc_probes_drop_the_decisions_of_frames_that_reverted() {
+        // `b` starts decision 8 and reverts. The decision that `a` runs, with the same ID, must
+        // not add to `b`'s unfinished one.
+        let b_code = [mcdc(0, 8, 0).as_slice(), &mcdc(1, 8, 1), &[0x60, 0, 0x60, 0, 0xfd]].concat();
+        let b = Address::repeat_byte(0x46);
+        let mut a_code = [mcdc(0, 8, 0).as_slice(), &mcdc(1, 8, 4)].concat();
+        a_code.extend([0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73]);
+        a_code.extend(b);
+        a_code.extend([0x5a, 0xf1, 0x50]);
+        a_code.extend(mcdc(1, 8, 2));
+        a_code.extend(mcdc(2, 8, 0));
+        a_code.push(0x00);
+        let mut executor = coverage_executor(1 << 20);
+        let a = Address::repeat_byte(0x45);
+        executor.set_code(a, Bytecode::new_raw(Bytes::from(a_code.clone()))).unwrap();
+        executor.set_code(b, Bytecode::new_raw(Bytes::from(b_code.clone()))).unwrap();
+
+        let result = executor.call_raw(CALLER, a, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(coverage_of(&result, &a_code).1, [(8, 6)]);
+        // The reverted decision recorded nothing.
+        let hits = result.line_coverage.as_ref().unwrap();
+        assert!(!hits.contains_key(&alloy_primitives::keccak256(&b_code)));
+    }
+
+    #[test]
+    fn coverage_probes_feed_the_fuzzer_edges_instead_of_edgecov() {
+        // Edge 9 is in code with probes, so its `EDGECOV` is ignored. Probe 4 runs twice.
+        let probed: &[u8] = &[
+            0xc2, 0x60, 0x04, // COVERAGE; PUSH1 4
+            0x60, 0x09, 0xc0, // PUSH1 9; EDGECOV
+            0xc2, 0x60, 0x04, // COVERAGE; PUSH1 4
+            0x00,
+        ];
+        let plain: &[u8] = &[0x60, 0x09, 0xc0, 0x00];
+        let mut executor = edgecov_executor(true, true);
+        let (probed_target, plain_target) =
+            (Address::repeat_byte(0x47), Address::repeat_byte(0x48));
+        executor.set_code(probed_target, Bytecode::new_raw(Bytes::from_static(probed))).unwrap();
+        executor.set_code(plain_target, Bytecode::new_raw(Bytes::from_static(plain))).unwrap();
+
+        let result = executor.call_raw(CALLER, probed_target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(instrumented_hits(&result), [(4, 2)]);
+        // Code without probes keeps its `EDGECOV` hits.
+        let result = executor.call_raw(CALLER, plain_target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(instrumented_hits(&result), [(9, 1)]);
     }
 
     /// Runtime code with each comparison opcode once, then a loop whose `EQ` site runs 11 times.

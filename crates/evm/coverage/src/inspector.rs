@@ -1,25 +1,14 @@
 use crate::{CallData, HitMap, HitMaps};
 use alloy_primitives::B256;
 use evm2::{
-    EvmTypesHost, Inspector, InspectorConfig, OpcodeSet,
+    EvmTypesHost, Inspector,
     interpreter::{Interpreter, Message, MessageResult},
-};
-use foundry_evm_core::{
-    edgecov::{COVERAGE, coverage_counter},
-    utils::opcodes,
 };
 use std::ptr::NonNull;
 
 /// Inspector implementation for collecting coverage information.
-///
-/// By default, it counts the hits of every program counter. With [`Self::counters`], it counts the
-/// hits of the counters of compiler-instrumented `COVERAGE; PUSHn <counter>` probes instead, keyed
-/// by counter rather than program counter.
 #[derive(Clone, Debug)]
 pub struct LineCoverageCollector {
-    /// Whether to count instrumentation counters instead of program counters.
-    counters: bool,
-
     // NOTE: `current_map` is always a valid reference into `maps`.
     // It is accessed only through `get_or_insert_map` which guarantees that it's valid.
     // Both of these fields are unsafe to access directly outside of `*insert_map`.
@@ -36,7 +25,6 @@ unsafe impl Sync for LineCoverageCollector {}
 impl Default for LineCoverageCollector {
     fn default() -> Self {
         Self {
-            counters: false,
             current_map: NonNull::dangling(),
             current_hash: B256::ZERO,
             maps: Default::default(),
@@ -45,14 +33,6 @@ impl Default for LineCoverageCollector {
 }
 
 impl<T: EvmTypesHost> Inspector<T> for LineCoverageCollector {
-    fn inspector_config(&self) -> InspectorConfig {
-        if self.counters {
-            InspectorConfig::new().with_steps(COVERAGE_OPCODES)
-        } else {
-            InspectorConfig::new()
-        }
-    }
-
     fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         let message = interp.message();
         let call = (!message.kind.is_create())
@@ -64,15 +44,6 @@ impl<T: EvmTypesHost> Inspector<T> for LineCoverageCollector {
     }
 
     fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        if self.counters {
-            if interp.opcode() == COVERAGE
-                && let Some(counter) =
-                    coverage_counter(interp.original_bytecode_slice(), interp.pc())
-            {
-                self.get_or_insert_map(interp).record_counter(counter);
-            }
-            return;
-        }
         let pc = interp.pc();
         self.get_or_insert_map(interp).record(pc);
     }
@@ -91,15 +62,7 @@ impl<T: EvmTypesHost> Inspector<T> for LineCoverageCollector {
     }
 }
 
-/// The instructions at which the inspector counts instrumentation counters.
-const COVERAGE_OPCODES: OpcodeSet = opcodes([COVERAGE]);
-
 impl LineCoverageCollector {
-    /// Creates a collector that counts the hits of compiler-instrumented coverage counters.
-    pub fn counters() -> Self {
-        Self { counters: true, ..Default::default() }
-    }
-
     /// Finish collecting coverage information and return the [`HitMaps`].
     pub fn finish(mut self) -> HitMaps {
         self.maps.values_mut().for_each(HitMap::flush);
