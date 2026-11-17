@@ -585,9 +585,10 @@ impl<'a> AnchorIndex<'a> {
 
     /// Returns whether every known way into `instruction` comes from an instruction mapped inside
     /// `loc`, and there is at least one. The known ways in are falling through and a push of its
-    /// address, which is a static jump or a return address. Unmapped instructions, such as the
-    /// `JUMPDEST` that a compiler puts before a loop body, belong to the block they lead, so the
-    /// ways into that block count.
+    /// address, which is a static jump or a return address. A push takes the source element
+    /// given by [`Self::push_element`]. Unmapped instructions, such as the `JUMPDEST` that a
+    /// compiler puts before a loop body, belong to the block they lead, so the ways into that block
+    /// count.
     fn is_entered_only_from_inside(&self, instruction: usize, loc: &SourceLocation) -> bool {
         let inside = |element: &SourceElement| is_in_source_range(element, loc);
         let (mut any, mut all) = (false, true);
@@ -595,11 +596,13 @@ impl<'a> AnchorIndex<'a> {
         loop {
             if let Some(pc) = self.ic_pc_map.get(ic as u32) {
                 let start = self.address_pushes.partition_point(|&(target, _)| target < pc);
-                for &(_, push) in
-                    self.address_pushes[start..].iter().take_while(|&&(target, _)| target == pc)
+                for element in self.address_pushes[start..]
+                    .iter()
+                    .take_while(|&&(target, _)| target == pc)
+                    .filter_map(|&(_, push)| self.push_element(push))
                 {
                     any = true;
-                    all &= self.source_map.get(push).is_some_and(inside);
+                    all &= inside(element);
                 }
             }
             let Some(prev) = ic.checked_sub(1) else {
@@ -628,7 +631,26 @@ impl<'a> AnchorIndex<'a> {
         self.jumps[start..]
             .iter()
             .take_while(|&&(target, _)| target == pc)
-            .any(|&(_, push)| !is_within_source_span(&self.source_map[push], loc))
+            .filter_map(|&(_, push)| self.push_element(push))
+            .any(|element| !is_within_source_span(element, loc))
+    }
+
+    /// Returns the source element that places the push `push`. An unmapped push, such as the
+    /// jump out of an `if` arm, belongs to the code it sits in, so it takes the element of the
+    /// nearest mapped instruction that falls through into it. A push with no such instruction has
+    /// no place and gives no evidence.
+    fn push_element(&self, push: usize) -> Option<&SourceElement> {
+        let mut ic = push;
+        loop {
+            let element = self.source_map.get(ic)?;
+            if element.index().is_some() {
+                return Some(element);
+            }
+            if !self.falls_through.get(ic).copied().unwrap_or(false) {
+                return None;
+            }
+            ic -= 1;
+        }
     }
 
     /// Returns the jumps that enter the fallthrough of a branch from elsewhere, as `(pc,
@@ -2033,6 +2055,41 @@ mod tests {
                 "0:100:0;;15:5:0;;12:3:0;;;0:100:0;;",
                 3,
             ),
+            // An unmapped push belongs to the code it follows, so a join that only an unmapped
+            // `PUSH; JUMP` out of the item's own code reaches is not an entry.
+            (
+                vec![
+                    opcode::PUSH1,
+                    5,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "0:100:0;;15:5:0;;16:4:0;12:3:0;-1:-1:-1;",
+                5,
+            ),
+            // The same push after code outside the item is a way in from outside.
+            (
+                vec![
+                    opcode::PUSH1,
+                    5,
+                    opcode::JUMP,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "0:100:0;;15:5:0;;16:4:0;0:100:0;-1:-1:-1;",
+                3,
+            ),
             // A push from outside to an unmapped `JUMPDEST` makes the block it leads an entry.
             (
                 vec![
@@ -2107,6 +2164,8 @@ mod tests {
             ("15:5:0;;;10:5:0;;0:100:0;", 0),
             // The only jump is inside the function, so the JUMPDEST is its exit.
             ("15:5:0;;;10:20:0;;12:3:0;", 0),
+            // An unmapped jump with no mapped code falling into it gives no evidence of a call.
+            ("15:5:0;;;10:20:0;;;-1:-1:-1;", 0),
         ] {
             let source_map = sourcemap::parse(source_map).unwrap();
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
@@ -2149,6 +2208,43 @@ mod tests {
                 ],
                 "10:20:0;;;;;;12:3:0;;0:100:0;",
                 4,
+            ),
+            // An unmapped jump belongs to the code it follows: inside the function it is not a
+            // call from outside, so the lowest instruction stays the anchor.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "15:5:0;;;10:20:0;;;12:3:0;;-1:-1:-1;",
+                0,
+            ),
+            // After code outside the function it is a call from outside.
+            (
+                vec![
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::STOP,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH1,
+                    3,
+                    opcode::JUMP,
+                ],
+                "15:5:0;;;10:20:0;;;0:100:0;;-1:-1:-1;",
+                3,
             ),
             // A public function's ABI wrapper (jumped to by the dispatcher) falls into its body
             // (jumped to by internal calls), which is the anchor that runs on both paths.
