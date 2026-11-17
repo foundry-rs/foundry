@@ -37,6 +37,8 @@ jobs:
         with:
           toolchain: stable
       - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
+      - name: Install Linux system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
         with:
           tool: nextest
