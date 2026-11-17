@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn eip1967_slots() {
-        let slot = |id: &str| B256::from(U256::from_be_bytes(keccak256(id).0) - U256::from(1));
+        let slot = |id: &str| B256::from(Into::<U256>::into(keccak256(id)) - U256::ONE);
         assert_eq!(slot("eip1967.proxy.implementation"), EIP1967_IMPLEMENTATION_SLOT);
         assert_eq!(slot("eip1967.proxy.admin"), EIP1967_ADMIN_SLOT);
         assert_eq!(slot("eip1967.proxy.beacon"), EIP1967_BEACON_SLOT);

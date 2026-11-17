@@ -564,6 +564,8 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 // Proxy storage written by both the proxy's own code and its implementations decodes each slot
 // with the layout of the code that wrote it last, even for proxies created during the recording.
 // Libraries write with their caller's layout under both the legacy and the IR pipeline.
+// The EIP-1967 slots, which no layout covers, are labeled on any account, even one without an
+// artifact.
 #[forgetest_init]
 fn state_diff_decodes_proxy_storage_by_writer(prj: _, cmd: _) {
     prj.add_test(
@@ -644,6 +646,15 @@ contract ERC1967Proxy {
             returndatacopy(0, 0, returndatasize())
             if iszero(success) { revert(0, returndatasize()) }
             return(0, returndatasize())
+        }
+    }
+}
+
+contract AdminBeaconProxy {
+    constructor(address admin, address beacon) {
+        assembly {
+            sstore(0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103, admin)
+            sstore(0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50, beacon)
         }
     }
 }
@@ -760,6 +771,27 @@ contract StateDiffProxyTest is Test {
         LegacyImplementation(address(proxy)).setValue(3);
         console.log(vm.getStateDiff());
     }
+
+    function test_adminAndBeaconSlots() public {
+        vm.startStateDiffRecording();
+        new AdminBeaconProxy(address(0xA11CE), address(0xBEAC0));
+        console.log(vm.getStateDiff());
+    }
+
+    function test_proxyWithoutArtifact() public {
+        // Init code that stores 0x1234 in the implementation slot and deploys empty code.
+        bytes memory initCode = abi.encodePacked(
+            hex"611234",
+            hex"7f",
+            bytes32(0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc),
+            hex"5500"
+        );
+        vm.startStateDiffRecording();
+        assembly {
+            pop(create(0, add(initCode, 0x20), mload(initCode)))
+        }
+        console.log(vm.getStateDiff());
+    }
 }
 "#,
     );
@@ -771,7 +803,23 @@ contract StateDiffProxyTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 4 tests for test/StateDiffProxy.t.sol:StateDiffProxyTest
+Ran 6 tests for test/StateDiffProxy.t.sol:StateDiffProxyTest
+[PASS] test_adminAndBeaconSlots() ([GAS])
+Logs:
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  contract: test/StateDiffProxy.t.sol:AdminBeaconProxy
+  - nonce diff: 0 → 1
+  - state diff:
+  @ 0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50 (eip1967.proxy.beacon, address): 0x0000000000000000000000000000000000000000 → 0x00000000000000000000000000000000000bEaC0
+  @ 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103 (eip1967.proxy.admin, address): 0x0000000000000000000000000000000000000000 → 0x00000000000000000000000000000000000A11cE
+  
+  0xE86B47DcD42382015973832c1531d484c8Fb1E80
+  - nonce diff: 0 → 1
+  
+
 [PASS] test_createdProxy() ([GAS])
 Logs:
   0x2e234DAe75C793f67A35089C9d99245E1C58470b
@@ -786,7 +834,7 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xE86B47DcD42382015973832c1531d484c8Fb1E80
   contract: test/StateDiffProxy.t.sol:MintLib
   - nonce diff: 0 → 1
   
@@ -796,7 +844,7 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xE86B47DcD42382015973832c1531d484c8Fb1E80
   - nonce diff: 0 → 1
   
   0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
@@ -817,7 +865,21 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xE86B47DcD42382015973832c1531d484c8Fb1E80
+  - nonce diff: 0 → 1
+  
+
+[PASS] test_proxyWithoutArtifact() ([GAS])
+Logs:
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  - nonce diff: 0 → 1
+  - state diff:
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc (eip1967.proxy.implementation, address): 0x0000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000001234
+  
+  0xE86B47DcD42382015973832c1531d484c8Fb1E80
   - nonce diff: 0 → 1
   
 
@@ -826,7 +888,7 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xE86B47DcD42382015973832c1531d484c8Fb1E80
   - nonce diff: 0 → 1
   
   0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
@@ -837,9 +899,9 @@ Logs:
   @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc (eip1967.proxy.implementation, address): 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f → 0x2e234DAe75C793f67A35089C9d99245E1C58470b
   
 
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+Ran 1 test suite [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
 
 "#]]);
 
@@ -874,7 +936,7 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xe02a92Ef2BAD4e4763e2545e18f3b15b2d39B049
+  0xEF5CE25829dcDb81BA4F87E9303F6C2A39A262B7
   contract: test/StateDiffProxy.t.sol:MintLib
   - nonce diff: 0 → 1
   

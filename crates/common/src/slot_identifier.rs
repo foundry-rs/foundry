@@ -410,7 +410,7 @@ pub fn identify_eip1967_slot(slot: &B256) -> Option<SlotInfo> {
             dyn_sol_type: DynSolType::Address,
         },
         offset: 0,
-        slot: U256::from_be_bytes(slot.0).to_string(),
+        slot: Into::<U256>::into(*slot).to_string(),
         members: None,
         decoded: None,
         keys: None,
@@ -1894,26 +1894,6 @@ mod tests {
         for slot in [2, 3] {
             assert!(identifier.identify(&B256::from(U256::from(slot)), None).is_none());
         }
-    }
-
-    #[test]
-    fn identifies_eip1967_slots() {
-        let implementation = Address::repeat_byte(0x11);
-        for (slot, label) in [
-            (EIP1967_IMPLEMENTATION_SLOT, "eip1967.proxy.implementation"),
-            (EIP1967_ADMIN_SLOT, "eip1967.proxy.admin"),
-            (EIP1967_BEACON_SLOT, "eip1967.proxy.beacon"),
-        ] {
-            let mut info = identify_eip1967_slot(&slot).unwrap();
-            assert_eq!(info.label, label);
-            assert_eq!(info.slot_type.label, "address");
-            assert_eq!(info.slot, U256::from_be_bytes(slot.0).to_string());
-            info.decode_values(B256::ZERO, implementation.into_word());
-            let decoded = info.decoded.unwrap();
-            assert_eq!(format_token_raw(&decoded.previous_value), Address::ZERO.to_string());
-            assert_eq!(format_token_raw(&decoded.new_value), implementation.to_string());
-        }
-        assert!(identify_eip1967_slot(&B256::ZERO).is_none());
     }
 
     /// A struct whose sole member is a struct: OpenZeppelin's `EnumerableSet.AddressSet`, which
