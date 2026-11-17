@@ -6335,6 +6335,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
  "alloy-serde",
+ "alloy-signer",
+ "alloy-signer-local",
  "base-common-consensus",
  "base-common-rpc-types",
  "chrono",

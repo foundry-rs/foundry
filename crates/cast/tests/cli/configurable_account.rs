@@ -664,7 +664,59 @@ async fn tempo_t14_send_detects_configurable_account(cmd: _) {
     };
     assert_eq!(signed.signature().as_configurable_account().unwrap().signatures().len(), 2);
     cmd.cast_fuse().args(["publish", raw.trim(), "--rpc-url", &rpc]).assert_success();
-    assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(account));
+    let receipt = last_receipt(&provider).await;
+    assert_eq!(receipt["from"], serde_json::json!(account));
+
+    // `decode-transaction` and `tx` show the account, its configuration and the owner of each
+    // approval, recovered from the owner digest, instead of the signature's opaque RLP.
+    let owners = keys.each_ref().map(|key| key.address());
+    let details = serde_json::json!({
+        "account": account,
+        "config": serde_json::from_str::<serde_json::Value>(&config).unwrap(),
+        "approvals": [
+            { "type": "secp256k1", "owner": owners[0], "weight": 1 },
+            { "type": "secp256k1", "owner": owners[2], "weight": 1 },
+        ],
+    });
+    let hash = receipt["transactionHash"].as_str().unwrap();
+    for args in [&["decode-transaction", raw.trim()][..], &["tx", hash, "--rpc-url", &rpc]] {
+        let output =
+            cmd.cast_fuse().args(args).arg("--json").assert_success().get_output().stdout_lossy();
+        assert_eq!(json_data(&output)["configurableAccountSignature"], details, "{args:?}");
+    }
+    let human = format!(
+        "\
+...
+tempoSignature       configurableAccount
+configurableAccount  {account}
+configSalt           {salt}
+configVersion        0
+threshold            2
+owners               [
+\t{} (weight 1)
+\t{} (weight 1)
+\t{} (weight 1)
+]
+approvals            [
+\t{} (secp256k1, weight 1)
+\t{} (secp256k1, weight 1)
+]
+...
+",
+        owners[0],
+        owners[1],
+        owners[2],
+        owners[0],
+        owners[2],
+        salt = B256::repeat_byte(0x07),
+    );
+    for network in [None, Some("tempo")] {
+        cmd.cast_fuse()
+            .args(["tx", hash, "--rpc-url", &rpc])
+            .args(network.map(|network| ["--network", network]).into_iter().flatten())
+            .assert_success()
+            .stdout_eq(human.clone());
+    }
 
     cmd.cast_fuse()
         .args(["batch-send", "--call", &target, "--call", &target, "--from", &account_arg])
