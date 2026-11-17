@@ -2635,14 +2635,7 @@ async fn test_simulate_resolves_nonces_from_state() {
     assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xfffffffffffffffc");
     assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0xfffffffffffffffd");
     assert_eq!(response["result"][0]["transactions"][2]["nonce"], "0xfffffffffffffffe");
-}
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_simulate_rejects_max_sender_nonce_rpc() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let endpoint = handle.http_endpoint();
-    let sender = "0xc000000000000000000000000000000000000000";
-    let receiver = "0xc100000000000000000000000000000000000000";
     let error = json!({
         "code": -32603,
         "message": "nonce has max value: address 0xC000000000000000000000000000000000000000, nonce: 18446744073709551615"
