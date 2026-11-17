@@ -1,5 +1,5 @@
 use super::{CoverageItem, CoverageItemKind, RevertGuard, SourceLocation};
-use alloy_primitives::map::{HashMap, HashSet};
+use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
@@ -205,12 +205,18 @@ impl<'gcx> SourceVisitor<'gcx> {
             all_lines: self.all_lines.len(),
             function_calls: self.function_calls.len(),
             branch_kinds: self.branch_kinds.len(),
-    revert_guards: self.revert_guards.len(),
+            revert_guards: self.revert_guards.len(),
         }
     }
 
     fn restore_checkpoint(&mut self, checkpoint: SourceVisitorCheckpoint) {
-        let SourceVisitorCheckpoint { items, all_lines, function_calls, branch_kinds, revert_guards } = checkpoint;
+        let SourceVisitorCheckpoint {
+            items,
+            all_lines,
+            function_calls,
+            branch_kinds,
+            revert_guards,
+        } = checkpoint;
         self.items.truncate(items);
         self.anchor_hints.retain(|&id, _| id < items);
         self.all_lines.truncate(all_lines);
@@ -1082,6 +1088,9 @@ pub struct SourceFiles {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evm2::interpreter::op as opcode;
+    use foundry_compilers::artifacts::sourcemap;
+    use foundry_evm_core::ic::IcPcMap;
 
     fn item(start: u32, line: u32) -> CoverageItem {
         CoverageItem {
@@ -1104,7 +1113,7 @@ mod tests {
             .build();
         let compiler = solar::sema::Compiler::new(session);
         compiler.enter(|compiler| {
-            let mut visitor = SourceVisitor::new(0, compiler.gcx());
+            let mut visitor = SourceVisitor::new(0, compiler.gcx(), Default::default());
             visitor.items = vec![item(30, 3), item(10, 1), item(20, 2)];
             visitor.all_lines = vec![3, 1, 2];
             visitor.anchor_hints.insert(
@@ -1156,5 +1165,83 @@ mod tests {
             visitor.sort();
             assert_eq!(visitor.anchor_hints.len(), 4);
         });
+    }
+
+    #[test]
+    fn codeless_if_keeps_shared_revert_recovery() {
+        let location = |bytes| SourceLocation { bytes, ..item(0, 1).loc };
+        let statement = location(10..40);
+        let mut analysis = SourceAnalysis {
+            all_items: vec![CoverageItem {
+                kind: CoverageItemKind::Branch { branch_id: 0, path_id: 0, is_first_opcode: false },
+                loc: statement.clone(),
+                anchor_loc: None,
+                hits: 0,
+            }],
+            branch_kinds: [(
+                (0, 0),
+                BranchKind::If(IfArms {
+                    then_arm: location(30..40),
+                    else_arm: None,
+                    // A nested block ends at the guard; its continuation is outside the block.
+                    after: None,
+                    then_callees: vec![],
+                    else_callees: vec![],
+                }),
+            )]
+            .into_iter()
+            .collect(),
+            anchor_hints: [(
+                0,
+                AnchorHints {
+                    revert_guard: Some(RevertGuard {
+                        condition: location(10..20),
+                        statement,
+                        function: location(0..100),
+                        selector: [0xe3, 0x37, 0x2e, 0x2d],
+                    }),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            map: vec![(0, 1)],
+            ..Default::default()
+        };
+        let bytecode = [
+            opcode::PUSH0,
+            opcode::ISZERO,
+            opcode::PUSH1,
+            7,
+            opcode::JUMPI,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH4,
+            0xe3,
+            0x37,
+            0x2e,
+            0x2d,
+            opcode::PUSH0,
+            opcode::MSTORE,
+            opcode::PUSH1,
+            4,
+            opcode::PUSH1,
+            28,
+            opcode::REVERT,
+        ];
+        let source_map = sourcemap::parse("10:10:0;;;;50:10:0;-1:-1:-1;;;;;;;;").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let anchors = crate::anchors::find_anchors(&bytecode, &source_map, &ic_pc_map, &analysis);
+        assert_eq!(anchors.anchors.len(), 1);
+        assert_eq!(anchors.anchors[0].instruction, 7);
+        assert_eq!(anchors.jumps.get(&0), Some(&4));
+
+        analysis.anchor_hints.clear();
+        let anchors = crate::anchors::find_anchors(&bytecode, &source_map, &ic_pc_map, &analysis);
+        assert!(
+            anchors.anchors.is_empty(),
+            "an ambiguous arm without recovery evidence stays unanchored"
+        );
     }
 }

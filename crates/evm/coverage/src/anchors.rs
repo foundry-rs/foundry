@@ -79,6 +79,17 @@ pub fn find_anchors(
                 return None;
             }
             let anchor_loc = item.anchor_loc.as_ref().unwrap_or(&item.loc);
+            let recover = || {
+                let hints = analysis.anchor_hints(item_id)?;
+                if let Some(guard) = &hints.revert_guard
+                    && let Some((anchor, jump)) = index.revert_guard(item_id, guard)
+                {
+                    return Some((anchor, jump, vec![]));
+                }
+                hints.alias_function.as_ref().and_then(|function| {
+                    index.alias_return(item_id, function).map(|anchor| (anchor, None, vec![]))
+                })
+            };
             if let CoverageItemKind::Branch { branch_id, path_id, .. } = item.kind
                 && let Some(BranchKind::If(arms)) =
                     analysis.branch_kind(item.loc.source_id as u32, branch_id)
@@ -88,7 +99,7 @@ pub fn find_anchors(
                 // jump's edge can count it, and when that is ambiguous the arm stays unanchored
                 // instead of taking an instruction that runs with the jump, such as its target.
                 if !arm.is_some_and(|arm| index.has_own_code(arm)) {
-                    return index.if_edge(item_id, path_id, &item.loc, arms);
+                    return index.if_edge(item_id, path_id, &item.loc, arms).or_else(recover);
                 }
             }
             match item.kind {
@@ -138,20 +149,7 @@ pub fn find_anchors(
                 }
                 _ => index.simple(item_id, anchor_loc).map(|anchor| (anchor, None, vec![])),
             }
-            .or_else(|error| {
-                let Some(hints) = analysis.anchor_hints(item_id) else { return Err(error) };
-                if let Some(guard) = &hints.revert_guard
-                    && let Some(anchor) = index.revert_guard(item_id, guard)
-                {
-                    return Ok((anchor.0, anchor.1, vec![]));
-                }
-                if let Some(function) = &hints.alias_function
-                    && let Some(anchor) = index.alias_return(item_id, function)
-                {
-                    return Ok((anchor, None, vec![]));
-                }
-                Err(error)
-            })
+            .or_else(|error| recover().ok_or(error))
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
             .ok()
         })
@@ -1784,7 +1782,7 @@ mod tests {
         let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
         let anchor = index.alias_return(0, &source_location(10, 20)).unwrap();
         assert_eq!(anchor.instruction, 4);
-        let anchors = ItemAnchors { anchors: vec![anchor], jumps: Default::default() };
+        let anchors = ItemAnchors { anchors: vec![anchor], ..Default::default() };
         let uncalled = super::super::HitMap::new(alloy_primitives::Bytes::new());
         assert_eq!(anchors.hits(&uncalled).count(), 0);
         for unsupported in
