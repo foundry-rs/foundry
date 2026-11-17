@@ -1458,6 +1458,7 @@ mod tests {
                     object: BytecodeObject::Bytecode(bytecode),
                     source_map: None,
                     link_references: Default::default(),
+                    coverage_aliases: Default::default(),
                 }),
                 deployed_bytecode: None,
             },

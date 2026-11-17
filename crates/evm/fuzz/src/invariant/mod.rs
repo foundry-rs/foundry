@@ -764,6 +764,7 @@ mod tests {
                 object: BytecodeObject::Bytecode(code),
                 source_map: None,
                 link_references: Default::default(),
+                coverage_aliases: Default::default(),
             }),
             immutable_references: Default::default(),
         };
