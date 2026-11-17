@@ -622,6 +622,8 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
             test_address: target_address,
             calldata: calldata.clone(),
             identify: None,
+            between_calls: Vec::new(),
+            checks_between_calls: false,
         },
     );
     let shrinker = run_shrink_loop(
@@ -703,7 +705,14 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     calldata: Bytes,
     options: CheckSequenceOptions<'_>,
 ) -> eyre::Result<CheckSequenceOutcome> {
-    let policy = CheckSequencePolicy { options, test_address, calldata, identify: None };
+    let policy = CheckSequencePolicy {
+        options,
+        test_address,
+        calldata,
+        identify: None,
+        between_calls: Vec::new(),
+        checks_between_calls: false,
+    };
     PrefixReplay::new(&executor, calls, policy).check(sequence, 0)
 }
 
@@ -713,6 +722,11 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
 /// Every call skips cheatcodes with effects outside the EVM, as when recording failure identities,
 /// but recording them steps every instruction, so only the call that failed at the expected site
 /// records its identity and provenance: the last call for a sequence call, or the final checks.
+///
+/// The campaign also checks the invariants between calls, and those checks can have such effects
+/// as well. With `between_calls`, the replay runs these checks between calls, unless
+/// `checks_between_calls` is false, and before the final checks, unless the failure is at a
+/// sequence call, so that skipping their effects leaves the failure unidentified too.
 pub struct CandidateReplay<'a, FEN: FoundryEvmNetwork> {
     replay: PrefixReplay<'a, FEN, CheckSequencePolicy<'a>>,
     /// Whether the latest replay skipped a cheatcode with effects outside the EVM.
@@ -726,10 +740,19 @@ impl<'a, FEN: FoundryEvmNetwork> CandidateReplay<'a, FEN> {
         calldata: Bytes,
         options: CheckSequenceOptions<'a>,
         site: CheckSequenceFailureSite,
+        between_calls: Vec<Bytes>,
+        checks_between_calls: bool,
     ) -> Self {
         executor.inspector_mut().collect_failure_identity(true);
         executor.inspector_mut().pause_failure_identity(true);
-        let policy = CheckSequencePolicy { options, test_address, calldata, identify: Some(site) };
+        let policy = CheckSequencePolicy {
+            options,
+            test_address,
+            calldata,
+            identify: Some(site),
+            between_calls,
+            checks_between_calls,
+        };
         Self { replay: PrefixReplay::new(executor, &[], policy), skipped_host_effects: false }
     }
 
@@ -780,8 +803,15 @@ trait ReplayPolicy<FEN: FoundryEvmNetwork> {
     /// Whether warp/roll of removed calls is folded into the next kept call.
     fn accumulate_warp_roll(&self) -> bool;
 
-    /// Prepares `executor` to run the kept call `idx` of `sequence`.
-    fn before_call(&self, _executor: &mut Executor<FEN>, _sequence: &[usize], _idx: usize) {}
+    /// Prepares `executor` to run the kept call `idx` of `sequence`. An error stops the replay.
+    fn before_call(
+        &self,
+        _executor: &mut Executor<FEN>,
+        _sequence: &[usize],
+        _idx: usize,
+    ) -> eyre::Result<()> {
+        Ok(())
+    }
 
     /// Classifies one replayed call of `sequence`. Returns the outcome when the call stops the
     /// replay. The decision for a call that is not the last kept call must not depend on the
@@ -818,7 +848,7 @@ fn replay_kept_calls<FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>>(
     // `&calls[idx]` directly to skip the per-call `BasicTxDetails` clone.
     if !policy.accumulate_warp_roll() {
         for &idx in kept {
-            policy.before_call(executor, sequence, idx);
+            policy.before_call(executor, sequence, idx)?;
             let (_, call_result) = execute_invariant_replay_tx(executor, &calls[idx])?;
             if let Some(outcome) = policy.on_call(calls, sequence, idx, call_result, counters) {
                 return Ok(Some(outcome));
@@ -840,7 +870,7 @@ fn replay_kept_calls<FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>>(
         kept.next();
 
         let executed = apply_warp_roll(tx.clone(), counters.warp, counters.roll);
-        policy.before_call(executor, sequence, idx);
+        policy.before_call(executor, sequence, idx)?;
         let (_, call_result) = execute_invariant_replay_tx(executor, &executed)?;
         counters.warp = U256::ZERO;
         counters.roll = U256::ZERO;
@@ -951,6 +981,35 @@ struct CheckSequencePolicy<'a> {
     /// Site whose failing call records its failure identity and provenance, see
     /// [`CandidateReplay`].
     identify: Option<CheckSequenceFailureSite>,
+    /// Calldata of the invariant checks run between calls and before the final checks, see
+    /// [`CandidateReplay`].
+    between_calls: Vec<Bytes>,
+    /// Whether `between_calls` run between calls as well as before the final checks, as in a
+    /// campaign whose `check_interval` is not 0.
+    checks_between_calls: bool,
+}
+
+impl CheckSequencePolicy<'_> {
+    /// Runs the checks of `between_calls` on discarded copies of `executor`, except the checked
+    /// invariant itself before the final checks, which run it.
+    fn check_between_calls<FEN: FoundryEvmNetwork>(
+        &self,
+        executor: &Executor<FEN>,
+        before_final: bool,
+    ) -> eyre::Result<()> {
+        for calldata in &self.between_calls {
+            if before_final && *calldata == self.calldata {
+                continue;
+            }
+            let (result, _) =
+                call_invariant_function(executor, self.test_address, calldata.clone())?;
+            // A cancelled check may not have reached its effects outside the EVM.
+            if result.execution_cancelled {
+                eyre::bail!("invariant check cancelled");
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
@@ -960,12 +1019,23 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
         self.options.accumulate_warp_roll
     }
 
-    fn before_call(&self, executor: &mut Executor<FEN>, sequence: &[usize], idx: usize) {
+    fn before_call(
+        &self,
+        executor: &mut Executor<FEN>,
+        sequence: &[usize],
+        idx: usize,
+    ) -> eyre::Result<()> {
+        // The checks before the first call see the same state for every candidate, which the
+        // campaign checked as well.
+        if self.checks_between_calls && sequence.first() != Some(&idx) {
+            self.check_between_calls(executor, false)?;
+        }
         if matches!(self.identify, Some(CheckSequenceFailureSite::SequenceCall { .. }))
             && sequence.last() == Some(&idx)
         {
             identify_failure(executor);
         }
+        Ok(())
     }
 
     fn on_call(
@@ -1050,12 +1120,17 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
         counters: &ReplayCounters,
     ) -> eyre::Result<CheckSequenceOutcome> {
         match self.identify {
-            // The checks after the failing call only skip effects outside the EVM.
+            // The checks after the failing call only skip effects outside the EVM. A replay that
+            // reaches them did not fail at that call, so it is rejected without the checks between
+            // calls.
             Some(CheckSequenceFailureSite::SequenceCall { .. }) => {
                 executor.inspector_mut().pause_failure_identity(true);
                 executor.inspector_mut().collect_failure_provenance(false);
             }
-            Some(_) => identify_failure(executor),
+            Some(_) => {
+                self.check_between_calls(executor, true)?;
+                identify_failure(executor);
+            }
             None => {}
         }
         // Unlike optimization mode we intentionally do not apply trailing warp/roll before the

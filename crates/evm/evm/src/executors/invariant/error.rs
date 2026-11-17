@@ -119,6 +119,7 @@ impl<'a> InvariantRunCtx<'a> {
             fork_block_number: call_result.fork_block_number,
             campaign_failure,
             after_invariant: false,
+            unchecked_invariants: Vec::new(),
         }
     }
 
@@ -308,6 +309,8 @@ pub struct InvariantFailures {
     handler_count: usize,
     /// Increments whenever a failure or its reproducer is inserted or replaced.
     revision: usize,
+    /// Invariants that the current run does not check, see [`Self::start_run`].
+    unchecked_invariants: Vec<String>,
 }
 
 impl InvariantFailures {
@@ -335,7 +338,29 @@ impl InvariantFailures {
         (invariant_errors, handler_errors)
     }
 
-    pub fn record_failure(&mut self, invariant: &Function, failure: InvariantFuzzError) {
+    /// Returns the names of the invariants broken so far.
+    pub fn broken_invariants(&self) -> Vec<String> {
+        self.failures
+            .keys()
+            .filter_map(|key| match key {
+                FailureKey::Invariant(name) => Some(name.clone()),
+                FailureKey::Handler(..) => None,
+            })
+            .collect()
+    }
+
+    /// Sets the invariants not checked after any call of the run starting now; failures it records
+    /// carry them.
+    pub fn start_run(&mut self, unchecked_invariants: Vec<String>) {
+        self.unchecked_invariants = unchecked_invariants;
+    }
+
+    pub fn record_failure(&mut self, invariant: &Function, mut failure: InvariantFuzzError) {
+        if let InvariantFuzzError::BrokenInvariant(case) | InvariantFuzzError::Revert(case) =
+            &mut failure
+        {
+            case.unchecked_invariants.clone_from(&self.unchecked_invariants);
+        }
         let prev = self.failures.insert(FailureKey::Invariant(invariant.name.clone()), failure);
         self.revision = self.revision.wrapping_add(1);
         if prev.is_none() {
@@ -476,6 +501,7 @@ impl InvariantFuzzError {
             fork_block_number: None,
             campaign_failure: None,
             after_invariant: false,
+            unchecked_invariants: Vec::new(),
         };
         if is_revert { Self::Revert(failure) } else { Self::BrokenInvariant(failure) }
     }
@@ -549,6 +575,9 @@ pub struct FailedInvariantCaseData {
     pub campaign_failure: Option<(CheckSequenceFailureSite, RawFailure)>,
     /// Whether `afterInvariant` failed, which can happen without any calls.
     pub after_invariant: bool,
+    /// Invariants that the campaign did not check after any call of the failing sequence, because
+    /// they broke before it.
+    pub unchecked_invariants: Vec<String>,
 }
 
 #[cfg(test)]
