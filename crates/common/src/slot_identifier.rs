@@ -6,6 +6,7 @@
 use crate::{
     constants::{EIP1967_ADMIN_SLOT, EIP1967_BEACON_SLOT, EIP1967_IMPLEMENTATION_SLOT},
     mapping_slots::MappingSlots,
+    namespaced_storage::unscoped_type_id,
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{B256, U256, hex, keccak256, map::B256Map};
@@ -122,6 +123,8 @@ impl SlotInfo {
                     None
                 }
             }
+            // A dynamic array's own slot holds its length; the elements live at keccak256(slot).
+            DynSolType::Array(_) => DynSolType::Uint(256).abi_decode(&value.0).ok(),
             _ => {
                 // Decode based on the actual type
                 actual_type.abi_decode(&value.0).ok()
@@ -495,11 +498,30 @@ impl SlotIdentifier {
                     ) {
                         return Some(slot_info);
                     }
+                    if let Some(mapping_slots) = mapping_slots
+                        && let Some(slot_info) = self.handle_struct_mapping(
+                            &storage.label,
+                            storage_type,
+                            struct_start_slot,
+                            slot,
+                            &slot_str,
+                            mapping_slots,
+                        )
+                    {
+                        return Some(slot_info);
+                    }
                 }
             } else if storage_type.encoding == ENCODING_MAPPING
                 && let Some(mapping_slots) = mapping_slots
-                && let Some(info) =
-                    self.handle_mapping(storage, storage_type, slot, &slot_str, mapping_slots)
+                && let Ok(base_slot) = U256::from_str(&storage.slot)
+                && let Some(info) = self.handle_mapping(
+                    &storage.label,
+                    storage_type,
+                    base_slot.into(),
+                    slot,
+                    &slot_str,
+                    mapping_slots,
+                )
             {
                 return Some(info);
             }
@@ -645,11 +667,23 @@ impl SlotIdentifier {
             && let Some(first_member) = members.iter().find(|m| m.slot == "0")
         {
             let member_type_info = self.storage_layout.types.get(&first_member.storage_type)?;
+            let member_label = format!("{}.{}", base_label, first_member.label);
 
-            // Check if we have a single-slot struct (all members have slot "0")
-            let is_single_slot = members.iter().all(|m| m.slot == "0");
+            // A nested struct starts its own slot, so it is the only member at slot "0".
+            if is_struct(&member_type_info.label) {
+                return self.handle_struct(
+                    &member_label,
+                    member_type_info,
+                    target_slot,
+                    struct_start_slot,
+                    first_member.offset,
+                    slot_str,
+                    depth + 1,
+                );
+            }
 
-            if is_single_slot {
+            // Structs fill whole slots; a sole member at slot "0" can still span several.
+            if storage_type.number_of_bytes == "32" {
                 // Build member info for single-slot struct
                 let mut member_infos = Vec::new();
                 for member in &members {
@@ -699,23 +733,7 @@ impl SlotIdentifier {
                 });
             }
 
-            // Multi-slot struct - return the first member.
-            let member_label = format!("{}.{}", base_label, first_member.label);
-
-            // If the first member is itself a struct, recurse
-            if is_struct(&member_type_info.label) {
-                return self.handle_struct(
-                    &member_label,
-                    member_type_info,
-                    target_slot,
-                    struct_start_slot,
-                    first_member.offset,
-                    slot_str,
-                    depth + 1,
-                );
-            }
-
-            // Return the primitive members packed into the first slot.
+            // Multi-slot struct - return the primitive members packed into the first slot.
             return self.slot_variables(
                 members
                     .iter()
@@ -775,22 +793,24 @@ impl SlotIdentifier {
     /// [`Self::handle_struct`] when it is a struct, or as a whole when its fields can't be.
     ///
     /// # Arguments
-    /// * `storage` - The storage metadata from the layout
-    /// * `storage_type` - Type information for the storage
+    /// * `base_label` - The label of the mapping variable or struct member
+    /// * `storage_type` - Type information for the mapping
+    /// * `base_slot` - The slot of the mapping
     /// * `slot` - The accessed slot being identified
     /// * `slot_str` - String representation of the slot for output
     /// * `mapping_slots` - Tracked mapping slot accesses for key resolution
     fn handle_mapping(
         &self,
-        storage: &Storage,
+        base_label: &str,
         storage_type: &StorageType,
+        base_slot: B256,
         slot: &B256,
         slot_str: &str,
         mapping_slots: &MappingSlots,
     ) -> Option<SlotInfo> {
         trace!(
-            "handle_mapping: storage.slot={}, slot={:?}, has_keys={}, has_parents={}",
-            storage.slot,
+            "handle_mapping: base_slot={}, slot={:?}, has_keys={}, has_parents={}",
+            base_slot,
             slot,
             mapping_slots.keys.contains_key(slot),
             mapping_slots.parent_slots.contains_key(slot)
@@ -802,7 +822,6 @@ impl SlotIdentifier {
 
         // Walk up to the base slot, collecting each level's entry, key and the offset of the
         // child (the next level's mapping, or the accessed slot) within that entry's value.
-        let base_slot = B256::from(U256::from_str(&storage.slot).ok()?);
         let mut levels = Vec::new();
         let mut current = *slot;
         loop {
@@ -813,7 +832,7 @@ impl SlotIdentifier {
                 break;
             }
             if levels.len() > mapping_slots.seen_sha3.len() {
-                trace!("Mapping slot {} does not match any parent in chain", storage.slot);
+                trace!("Mapping slot {base_slot} does not match any parent in chain");
                 return None;
             }
             current = parent;
@@ -825,7 +844,7 @@ impl SlotIdentifier {
         // The type reported for a plain value: the mapping it was reached through, outermost of
         // its directly nested levels, as it is declared.
         let mut type_label = storage_type.label.clone();
-        let mut label = storage.label.clone();
+        let mut label = base_label.to_string();
         let mut decoded_keys = Vec::new();
 
         for (i, (entry, key, offset)) in levels.iter().enumerate() {
@@ -883,7 +902,7 @@ impl SlotIdentifier {
                             .cloned()
                             .unwrap_or(DynSolType::Bytes),
                     },
-                    offset: storage.offset,
+                    offset: 0,
                     slot: slot_str.to_string(),
                     members: None,
                     decoded: None,
@@ -896,6 +915,46 @@ impl SlotIdentifier {
             return Some(info);
         }
 
+        None
+    }
+
+    /// Handles identification of slots of mappings held by a struct variable, directly or in a
+    /// nested struct.
+    ///
+    /// The accessed slot is walked up the recorded entries until one's parent falls within the
+    /// struct; the mapping member at that parent's offset is then resolved by
+    /// [`Self::handle_mapping`].
+    fn handle_struct_mapping(
+        &self,
+        base_label: &str,
+        struct_type: &StorageType,
+        struct_start_slot: U256,
+        slot: &B256,
+        slot_str: &str,
+        mapping_slots: &MappingSlots,
+    ) -> Option<SlotInfo> {
+        let struct_slots =
+            U256::from(struct_type.number_of_bytes.parse::<u64>().ok()?.div_ceil(32));
+        let mut current = *slot;
+        for _ in 0..=mapping_slots.seen_sha3.len() {
+            let (entry, _) = mapping_entry(&current, mapping_slots)?;
+            let &(_, parent) = mapping_slots.seen_sha3.get(&entry)?;
+            let parent_slot = U256::from_be_bytes(parent.0);
+            if let Some(offset) = parent_slot.checked_sub(struct_start_slot)
+                && offset < struct_slots
+            {
+                let (member_label, member_type) = self.mapping_member(struct_type, offset, 0)?;
+                return self.handle_mapping(
+                    &format!("{base_label}.{member_label}"),
+                    member_type,
+                    parent,
+                    slot,
+                    slot_str,
+                    mapping_slots,
+                );
+            }
+            current = parent;
+        }
         None
     }
 
@@ -1127,7 +1186,8 @@ const UDVT_TYPE_PREFIX: &str = "t_userDefinedValueType(";
 /// unsigned bits, not their original signed, address, bool or fixed-bytes values. Mapping keys
 /// retain the full encoded key word, whose padding can differ from compact storage.
 fn resolve_sol_type(id: &str, storage_type: &StorageType) -> Option<DynSolType> {
-    if id.starts_with(UDVT_TYPE_PREFIX) {
+    // ERC-7201 namespaces scope their type IDs.
+    if unscoped_type_id(id).starts_with(UDVT_TYPE_PREFIX) {
         let bytes = storage_type.number_of_bytes.parse::<usize>().ok()?;
         return (1..=32).contains(&bytes).then(|| DynSolType::Uint(bytes * 8));
     }
@@ -1530,6 +1590,122 @@ mod tests {
         assert_eq!(info.label, "pools[1].total");
     }
 
+    /// A struct variable holding mappings directly (`s.balances`, `s.vaults`) and one holding an
+    /// OpenZeppelin `EnumerableSet.AddressSet`, whose `_positions` mapping is a member of the
+    /// nested `Set` struct.
+    fn struct_mapping_layout() -> SlotIdentifier {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "s", "offset": 0, "slot": "0", "type": "t_struct(S)" },
+                { "astId": 2, "contract": "C", "label": "set", "offset": 0, "slot": "3", "type": "t_struct(AddressSet)" }
+            ],
+            "types": {
+                "t_struct(S)": {
+                    "encoding": "inplace", "label": "struct C.S", "numberOfBytes": "96",
+                    "members": [
+                        { "astId": 3, "contract": "C", "label": "total", "offset": 0, "slot": "0", "type": "t_uint256" },
+                        { "astId": 4, "contract": "C", "label": "balances", "offset": 0, "slot": "1", "type": "t_mapping(t_address,t_uint256)" },
+                        { "astId": 8, "contract": "C", "label": "vaults", "offset": 0, "slot": "2", "type": "t_mapping(t_uint256,t_struct(V))" }
+                    ]
+                },
+                "t_struct(V)": {
+                    "encoding": "inplace", "label": "struct C.V", "numberOfBytes": "96",
+                    "members": [
+                        { "astId": 9, "contract": "C", "label": "owner", "offset": 0, "slot": "0", "type": "t_address" },
+                        { "astId": 10, "contract": "C", "label": "shares", "offset": 0, "slot": "1", "type": "t_uint256" },
+                        { "astId": 11, "contract": "C", "label": "allowed", "offset": 0, "slot": "2", "type": "t_mapping(t_address,t_uint256)" }
+                    ]
+                },
+                "t_mapping(t_uint256,t_struct(V))": {
+                    "encoding": "mapping", "label": "mapping(uint256 => struct C.V)", "numberOfBytes": "32",
+                    "key": "t_uint256", "value": "t_struct(V)"
+                },
+                "t_struct(AddressSet)": {
+                    "encoding": "inplace", "label": "struct EnumerableSet.AddressSet", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 5, "contract": "C", "label": "_inner", "offset": 0, "slot": "0", "type": "t_struct(Set)" }
+                    ]
+                },
+                "t_struct(Set)": {
+                    "encoding": "inplace", "label": "struct EnumerableSet.Set", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 6, "contract": "C", "label": "_values", "offset": 0, "slot": "0", "type": "t_array(t_bytes32)dyn_storage" },
+                        { "astId": 7, "contract": "C", "label": "_positions", "offset": 0, "slot": "1", "type": "t_mapping(t_bytes32,t_uint256)" }
+                    ]
+                },
+                "t_array(t_bytes32)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "bytes32[]", "numberOfBytes": "32", "base": "t_bytes32"
+                },
+                "t_mapping(t_address,t_uint256)": {
+                    "encoding": "mapping", "label": "mapping(address => uint256)", "numberOfBytes": "32",
+                    "key": "t_address", "value": "t_uint256"
+                },
+                "t_mapping(t_bytes32,t_uint256)": {
+                    "encoding": "mapping", "label": "mapping(bytes32 => uint256)", "numberOfBytes": "32",
+                    "key": "t_bytes32", "value": "t_uint256"
+                },
+                "t_bytes32": { "encoding": "inplace", "label": "bytes32", "numberOfBytes": "32" },
+                "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" },
+                "t_address": { "encoding": "inplace", "label": "address", "numberOfBytes": "20" }
+            }
+        }))
+        .unwrap();
+        SlotIdentifier::new(Arc::new(layout))
+    }
+
+    /// `s.balances[user]`: a mapping that is a member of a struct variable.
+    #[test]
+    fn identifies_a_mapping_member_of_a_struct_variable() {
+        let identifier = struct_mapping_layout();
+        let mut slots = MappingSlots::default();
+        let balance = entry(&mut slots, USER.into_word(), U256::from(1));
+        slots.insert(balance.into());
+
+        let info = identifier.identify(&B256::from(balance), Some(&slots)).unwrap();
+        assert_eq!(info.label, "s.balances[0x1111111111111111111111111111111111111111]");
+        assert_eq!(info.slot_type.label, "mapping(address => uint256)");
+        assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Uint(256));
+        assert_eq!(info.keys, Some(vec!["0x1111111111111111111111111111111111111111".to_string()]));
+
+        // `s.vaults[3].shares` and `s.vaults[3].allowed[user]`: a mapping member of a struct held
+        // by a mapping member.
+        let vault = entry(&mut slots, U256::from(3).into(), U256::from(2));
+        let shares = vault + U256::from(1);
+        slots.insert(shares.into());
+        let info = identifier.identify(&B256::from(shares), Some(&slots)).unwrap();
+        assert_eq!(info.label, "s.vaults[3].shares");
+        assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Uint(256));
+
+        let allowed = entry(&mut slots, USER.into_word(), vault + U256::from(2));
+        slots.insert(allowed.into());
+        let info = identifier.identify(&B256::from(allowed), Some(&slots)).unwrap();
+        assert_eq!(info.label, "s.vaults[3].allowed[0x1111111111111111111111111111111111111111]");
+        assert_eq!(info.slot_type.label, "mapping(address => uint256)");
+        assert_eq!(info.keys, Some(vec!["3".to_string(), USER.to_string()]));
+    }
+
+    /// `set._inner._positions[value]`: a mapping that is a member of a struct nested in a struct
+    /// variable, as in OpenZeppelin's `EnumerableSet`.
+    #[test]
+    fn identifies_a_mapping_member_of_a_nested_struct() {
+        let identifier = struct_mapping_layout();
+        let mut slots = MappingSlots::default();
+        let position = entry(&mut slots, USER.into_word(), U256::from(4));
+        slots.insert(position.into());
+
+        let info = identifier.identify(&B256::from(position), Some(&slots)).unwrap();
+        assert_eq!(
+            info.label,
+            "set._inner._positions[0x0000000000000000000000001111111111111111111111111111111111111111]"
+        );
+        assert_eq!(info.slot_type.label, "mapping(bytes32 => uint256)");
+        assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Uint(256));
+
+        // A slot past the struct's mappings is left unidentified.
+        let other = entry(&mut slots, USER.into_word(), U256::from(5));
+        assert!(identifier.identify(&B256::from(other), Some(&slots)).is_none());
+    }
+
     #[test]
     fn identifies_deep_mappings_and_rejects_cycles() {
         let mut types = serde_json::json!({
@@ -1623,88 +1799,96 @@ mod tests {
 
     /// User-defined value types as solc lays them out: a file-level one labeled by its name, a
     /// library one by `Library.Name`, both 12 bytes (`uint96`).
-    fn udvt_layout() -> SlotIdentifier {
+    ///
+    /// Every type ID is prefixed by `scope`, as ERC-7201 namespaces scope theirs.
+    fn udvt_layout(scope: &str) -> SlotIdentifier {
+        let t = |id: &str| format!("{scope}{id}");
         let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
             "storage": [
-                { "astId": 1, "contract": "C", "label": "config", "offset": 0, "slot": "0", "type": "t_struct(Config)" },
-                { "astId": 2, "contract": "C", "label": "ids", "offset": 0, "slot": "2", "type": "t_array(t_userDefinedValueType(FileId)10)3_storage" },
-                { "astId": 3, "contract": "C", "label": "byId", "offset": 0, "slot": "4", "type": "t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)" }
+                { "astId": 1, "contract": "C", "label": "config", "offset": 0, "slot": "0", "type": t("t_struct(Config)") },
+                { "astId": 2, "contract": "C", "label": "ids", "offset": 0, "slot": "2", "type": t("t_array(t_userDefinedValueType(FileId)10)3_storage") },
+                { "astId": 3, "contract": "C", "label": "byId", "offset": 0, "slot": "4", "type": t("t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)") }
             ],
             "types": {
-                "t_struct(Config)": {
+                t("t_struct(Config)"): {
                     "encoding": "inplace", "label": "struct C.Config", "numberOfBytes": "64",
                     "members": [
-                        { "astId": 4, "contract": "C", "label": "owner", "offset": 0, "slot": "0", "type": "t_address" },
-                        { "astId": 5, "contract": "C", "label": "fileId", "offset": 20, "slot": "0", "type": "t_userDefinedValueType(FileId)10" },
-                        { "astId": 6, "contract": "C", "label": "libId", "offset": 0, "slot": "1", "type": "t_userDefinedValueType(LibId)11" }
+                        { "astId": 4, "contract": "C", "label": "owner", "offset": 0, "slot": "0", "type": t("t_address") },
+                        { "astId": 5, "contract": "C", "label": "fileId", "offset": 20, "slot": "0", "type": t("t_userDefinedValueType(FileId)10") },
+                        { "astId": 6, "contract": "C", "label": "libId", "offset": 0, "slot": "1", "type": t("t_userDefinedValueType(LibId)11") }
                     ]
                 },
-                "t_array(t_userDefinedValueType(FileId)10)3_storage": {
+                t("t_array(t_userDefinedValueType(FileId)10)3_storage"): {
                     "encoding": "inplace", "label": "FileId[3]", "numberOfBytes": "64",
-                    "base": "t_userDefinedValueType(FileId)10"
+                    "base": t("t_userDefinedValueType(FileId)10")
                 },
-                "t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)": {
+                t("t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)"): {
                     "encoding": "mapping", "label": "mapping(FileId => L.LibId)", "numberOfBytes": "32",
-                    "key": "t_userDefinedValueType(FileId)10", "value": "t_userDefinedValueType(LibId)11"
+                    "key": t("t_userDefinedValueType(FileId)10"), "value": t("t_userDefinedValueType(LibId)11")
                 },
-                "t_userDefinedValueType(FileId)10": { "encoding": "inplace", "label": "FileId", "numberOfBytes": "12" },
-                "t_userDefinedValueType(LibId)11": { "encoding": "inplace", "label": "L.LibId", "numberOfBytes": "12" },
-                "t_address": { "encoding": "inplace", "label": "address", "numberOfBytes": "20" }
+                t("t_userDefinedValueType(FileId)10"): { "encoding": "inplace", "label": "FileId", "numberOfBytes": "12" },
+                t("t_userDefinedValueType(LibId)11"): { "encoding": "inplace", "label": "L.LibId", "numberOfBytes": "12" },
+                t("t_address"): { "encoding": "inplace", "label": "address", "numberOfBytes": "20" }
             }
         }))
         .unwrap();
         SlotIdentifier::new(Arc::new(layout))
     }
 
+    /// Unscoped type IDs, and IDs scoped the way [`crate::namespaced_storage`] scopes a namespace.
+    const SCOPES: [&str; 2] = ["", "erc7201(example.udvt)::"];
+
     /// Wider than a byte, which a `Library.Name` label used to be parsed as.
     const ID: u64 = 0x0102_0304_0506;
 
     #[test]
     fn decodes_user_defined_value_type_members() {
-        let identifier = udvt_layout();
+        for scope in SCOPES {
+            let identifier = udvt_layout(scope);
+            let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+            assert_eq!(info.label, "config.owner, config.fileId");
+            info.decode_values(B256::ZERO, B256::from(U256::from(ID) << 160 | U256::from(0x1234)));
+            assert_eq!(
+                decoded(&info),
+                [
+                    (
+                        "config.owner",
+                        "0x0000000000000000000000000000000000000000".to_string(),
+                        "0x0000000000000000000000000000000000001234".to_string()
+                    ),
+                    ("config.fileId", "0".to_string(), ID.to_string())
+                ]
+            );
 
-        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
-        assert_eq!(info.label, "config.owner, config.fileId");
-        info.decode_values(B256::ZERO, B256::from(U256::from(ID) << 160 | U256::from(0x1234)));
-        assert_eq!(
-            decoded(&info),
-            [
-                (
-                    "config.owner",
-                    "0x0000000000000000000000000000000000000000".to_string(),
-                    "0x0000000000000000000000000000000000001234".to_string()
-                ),
-                ("config.fileId", "0".to_string(), ID.to_string())
-            ]
-        );
-
-        let mut info = identifier.identify(&B256::from(U256::from(1)), None).unwrap();
-        assert_eq!(info.label, "config.libId");
-        assert_eq!(info.slot_type.label, "L.LibId");
-        info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
-        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+            let mut info = identifier.identify(&B256::from(U256::from(1)), None).unwrap();
+            assert_eq!(info.label, "config.libId");
+            assert_eq!(info.slot_type.label, "L.LibId");
+            info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
+            assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+        }
     }
 
     #[test]
     fn resolves_mappings_of_user_defined_value_types() {
-        let identifier = udvt_layout();
+        for scope in SCOPES {
+            let identifier = udvt_layout(scope);
+            let mut slots = MappingSlots::default();
+            let key = B256::from(U256::from(ID));
+            let parent = B256::from(U256::from(4));
+            let entry = keccak256([key.0, parent.0].concat());
+            slots.record_hash(entry, key, parent);
+            slots.insert(entry);
 
-        let mut slots = MappingSlots::default();
-        let key = B256::from(U256::from(ID));
-        let parent = B256::from(U256::from(4));
-        let entry = keccak256([key.0, parent.0].concat());
-        slots.record_hash(entry, key, parent);
-        slots.insert(entry);
-
-        let mut info = identifier.identify(&entry, Some(&slots)).unwrap();
-        assert_eq!(info.label, format!("byId[{ID}]"));
-        info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
-        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+            let mut info = identifier.identify(&entry, Some(&slots)).unwrap();
+            assert_eq!(info.label, format!("byId[{ID}]"));
+            info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
+            assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+        }
     }
 
     #[test]
     fn leaves_unresolved_packed_udvt_arrays_unidentified() {
-        let identifier = udvt_layout();
+        let identifier = udvt_layout("");
         // Resolving FileId[3] to uint96[3] would feed packed words into a decoder that treats
         // slots as elements, giving both incorrect values and incorrect indices.
         for slot in [2, 3] {
@@ -1730,5 +1914,78 @@ mod tests {
             assert_eq!(format_token_raw(&decoded.new_value), implementation.to_string());
         }
         assert!(identify_eip1967_slot(&B256::ZERO).is_none());
+    }
+
+    /// A struct whose sole member is a struct: OpenZeppelin's `EnumerableSet.AddressSet`, which
+    /// wraps a two-slot struct holding a dynamic array and a mapping, and `wrapped`, which wraps a
+    /// packed single-slot struct.
+    #[test]
+    fn descends_into_a_struct_whose_sole_member_is_a_struct() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "set", "offset": 0, "slot": "0", "type": "t_struct(AddressSet)" },
+                { "astId": 5, "contract": "C", "label": "wrapped", "offset": 0, "slot": "2", "type": "t_struct(A)" }
+            ],
+            "types": {
+                "t_struct(A)": {
+                    "encoding": "inplace", "label": "struct C.A", "numberOfBytes": "32",
+                    "members": [
+                        { "astId": 6, "contract": "C", "label": "b", "offset": 0, "slot": "0", "type": "t_struct(B)" }
+                    ]
+                },
+                "t_struct(B)": {
+                    "encoding": "inplace", "label": "struct C.B", "numberOfBytes": "32",
+                    "members": [
+                        { "astId": 7, "contract": "C", "label": "x", "offset": 0, "slot": "0", "type": "t_uint128" },
+                        { "astId": 8, "contract": "C", "label": "y", "offset": 16, "slot": "0", "type": "t_uint64" }
+                    ]
+                },
+                "t_uint128": { "encoding": "inplace", "label": "uint128", "numberOfBytes": "16" },
+                "t_uint64": { "encoding": "inplace", "label": "uint64", "numberOfBytes": "8" },
+                "t_struct(AddressSet)": {
+                    "encoding": "inplace", "label": "struct EnumerableSet.AddressSet", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 2, "contract": "C", "label": "_inner", "offset": 0, "slot": "0", "type": "t_struct(Set)" }
+                    ]
+                },
+                "t_struct(Set)": {
+                    "encoding": "inplace", "label": "struct EnumerableSet.Set", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 3, "contract": "C", "label": "_values", "offset": 0, "slot": "0", "type": "t_array(t_bytes32)dyn_storage" },
+                        { "astId": 4, "contract": "C", "label": "_positions", "offset": 0, "slot": "1", "type": "t_mapping(t_bytes32,t_uint256)" }
+                    ]
+                },
+                "t_array(t_bytes32)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "bytes32[]", "numberOfBytes": "32", "base": "t_bytes32"
+                },
+                "t_mapping(t_bytes32,t_uint256)": {
+                    "encoding": "mapping", "label": "mapping(bytes32 => uint256)", "numberOfBytes": "32",
+                    "key": "t_bytes32", "value": "t_uint256"
+                },
+                "t_bytes32": { "encoding": "inplace", "label": "bytes32", "numberOfBytes": "32" },
+                "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+
+        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+        assert_eq!(info.label, "set._inner._values");
+        assert_eq!(info.slot_type.label, "bytes32[]");
+        // The array's own slot holds its length.
+        info.decode_values(B256::ZERO, B256::from(U256::from(1)));
+        let length = info.decoded.unwrap();
+        assert_eq!(format_token_raw(&length.previous_value), "0");
+        assert_eq!(format_token_raw(&length.new_value), "1");
+
+        let mut info = identifier.identify(&B256::from(U256::from(2)), None).unwrap();
+        assert_eq!(info.label, "wrapped.b");
+        assert_eq!(info.slot_type.label, "struct C.B");
+        // `y = 7` sits above `x = 5`.
+        info.decode_values(B256::ZERO, B256::from((U256::from(7) << 128) | U256::from(5)));
+        assert_eq!(
+            decoded(&info),
+            [("x", "0".to_string(), "5".to_string()), ("y", "0".to_string(), "7".to_string())]
+        );
     }
 }

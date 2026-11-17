@@ -14,7 +14,10 @@ use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
     utils::{LoadConfig, parse_ether_value},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::{
+    FoundryTransactionBuilder, provider::ProviderBuilder,
+    tempo::configurable_account::prepare_request,
+};
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::{str::FromStr, sync::Arc};
@@ -140,6 +143,7 @@ impl EstimateArgs {
                 "--tempo.configurable-account {account} does not match the sender {from}"
             );
         }
+        let as_access_key = tx.tempo.configurable_access_key.is_some();
         let simulation_wallet = wallet.clone();
         let (sender, is_browser) = read_only_sender::<N>(&browser, wallet, &tx, chain_id).await?;
         // Share the resolved signer with the configurable account lookup.
@@ -192,13 +196,15 @@ impl EstimateArgs {
             .await?
             .raw();
         if let Some((account, simulation)) = simulation {
-            sender = account.into();
-            // A `0x05` signature only signs Tempo transactions.
-            let tx = builder.tx_mut();
-            if tx.nonce_key().is_none() {
-                tx.set_nonce_key(U256::ZERO);
-            }
-            tx.set_configurable_account_simulation(simulation);
+            // A configurable access key signs for the sender as its `keyId`.
+            let from = if as_access_key {
+                builder.tx_mut().set_key_id(account);
+                sender.address()
+            } else {
+                sender = account.into();
+                account
+            };
+            prepare_request::<N>(builder.tx_mut(), from, simulation);
         }
         let Some(tx) = confirm_and_build(builder, sender, force, None, true).await? else {
             return Ok(());

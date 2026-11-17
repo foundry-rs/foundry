@@ -2878,8 +2878,7 @@ impl TestArgs {
                 if !path.exists() {
                     continue;
                 }
-                let previous_snapshots: BTreeMap<String, String> =
-                    fs::read_json_file(&path).expect("Failed to read snapshots from disk");
+                let previous_snapshots: BTreeMap<String, String> = fs::read_json_file(&path)?;
                 let diff = snapshots
                     .iter()
                     .filter_map(|(k, v)| {
@@ -2916,8 +2915,7 @@ impl TestArgs {
                 fs::write_pretty_json_file(
                     &config.snapshots.join(format!("{group}.json")),
                     &snapshots,
-                )
-                .expect("Failed to write gas snapshots to disk");
+                )?;
             }
         }
         Ok(())

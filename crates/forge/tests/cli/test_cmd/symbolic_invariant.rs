@@ -3158,8 +3158,60 @@ contract SymbolicSuiteInline is Test {
         );
 }
 
+// Confirming the solver's witness runs cheatcodes as the campaign does, so a handler that reads the
+// clock still confirms it, even with shrinking disabled.
+#[forgetest_init]
+fn symbolic_invariant_confirms_witness_with_host_reads(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_confirms_witness_with_host_reads");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.invariant.shrink_run_limit = 0;
+    });
+
+    prj.add_test(
+        "SymbolicHostReads.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ClockTarget is Test {
+    bool public flag;
+
+    function set(uint256 x) external {
+        uint256 time = vm.unixTime();
+        if (x == 42 && time > 0) flag = true;
+    }
+}
+
+contract SymbolicHostReads is Test {
+    ClockTarget target;
+
+    function setUp() public {
+        target = new ClockTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_flagUnset() public view {
+        assertFalse(target.flag());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "invariant_flagUnset"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] calldata=set(uint256) args=[42]
+...
+"#]]);
+}
+
 // A timed campaign's shrink deadline passes during minimization, which must keep the candidates it
-// confirmed before then.
+// confirmed before then. Only a later shrink candidate stalls, so finding and identifying the
+// original failure does not depend on executing a busy loop within the campaign's timeout.
 #[forgetest_init]
 fn symbolic_invariant_keeps_minimization_at_shrink_deadline(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_keeps_minimization_at_shrink_deadline");
@@ -3177,12 +3229,10 @@ fn symbolic_invariant_keeps_minimization_at_shrink_deadline(prj: _, cmd: _) {
 import "forge-std/Test.sol";
 
 contract SlowTarget {
-    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-    bool public broken;
+    uint256 public value;
 
     function step(uint256 x) external {
-        vm.sleep(100);
-        if (x > 1000) broken = true;
+        value = x;
     }
 }
 
@@ -3194,8 +3244,11 @@ contract SymbolicShrinkDeadline is Test {
         targetContract(address(target));
     }
 
-    function invariant_notBroken() public view {
-        assertFalse(target.broken());
+    function invariant_notBroken() public {
+        // Stop at the deadline, not at an out-of-gas failure that could finish minimization.
+        vm.pauseGasMetering();
+        while (target.value() == 1001) {}
+        assertFalse(target.value() > 1000);
     }
 }
 "#,
@@ -3211,6 +3264,6 @@ contract SymbolicShrinkDeadline is Test {
     let failure = &result["invariant_failures"][0];
     let accepted = failure["minimization"]["accepted"].as_u64();
     assert!(accepted.is_some_and(|accepted| accepted > 0), "{result}");
-    // The deadline stops minimization before it reaches the smallest failing value.
+    // The stalled candidate must not replace a failure confirmed before the deadline.
     assert_ne!(failure["counterexample"]["Sequence"][1][0]["args"], "1001", "{result}");
 }

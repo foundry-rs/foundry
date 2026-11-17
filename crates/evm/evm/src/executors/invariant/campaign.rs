@@ -538,7 +538,9 @@ mod tests {
             fail_on_revert: false,
             assertion_failure: false,
             fork_block_number: None,
+            campaign_failure: None,
             after_invariant: false,
+            unchecked_invariants: Vec::new(),
         })
     }
 

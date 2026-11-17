@@ -544,11 +544,7 @@ fn rpc_conversion_suite<FEN: FoundryEvmNetwork>() {
 
     let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
         hash: B256::ZERO,
-        inner: UnknownTypedTransaction {
-            ty: AnyTxType(0xFF),
-            fields: Default::default(),
-            memo: Default::default(),
-        },
+        inner: UnknownTypedTransaction::new(AnyTxType(0xFF), Default::default()),
     });
     assert!(TypesFor::<FEN>::tx_from_any_rpc(&rpc_transaction(unknown, from)).is_err());
 }

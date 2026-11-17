@@ -298,6 +298,7 @@ storage_layout = "solidity"
 report = ["summary"]
 lcov_version = "1.0.0"
 ir_minimum = false
+keep_optimizer = false
 include_libs = false
 exclude_tests = false
 skip_files = []
@@ -2465,6 +2466,7 @@ fn test_default_config(prj: _, cmd: _) {
     ],
     "lcov_version": "1.0.0",
     "ir_minimum": false,
+    "keep_optimizer": false,
     "report_file": null,
     "include_libs": false,
     "exclude_tests": false,
@@ -3058,6 +3060,55 @@ Error: Snapshots differ from previous run
 
 "#]]);
     assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
+}
+
+// Snapshot group names that are not plain file names must be rejected, so a dependency cannot
+// write outside the configured snapshots directory.
+#[forgetest]
+fn test_gas_snapshot_group_escape(prj: _, cmd: _) {
+    prj.insert_ds_test();
+
+    let outside_dir = tempfile::tempdir_in(prj.root().parent().unwrap()).unwrap();
+    let absolute_group = outside_dir.path().join("outside");
+    let relative_group =
+        Path::new("../..").join(outside_dir.path().file_name().unwrap()).join("outside");
+    let outside = absolute_group.with_extension("json");
+    prj.add_source(
+        "SnapshotGroupEscapeTest.sol",
+        &format!(
+            r#"
+import "./test.sol";
+
+interface Vm {{
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+}}
+
+contract SnapshotGroupEscapeTest is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testAbsoluteGroup() public {{
+        vm.snapshotValue("{}", "value", 1);
+    }}
+
+    function testRelativeGroup() public {{
+        vm.snapshotValue("{}", "value", 1);
+    }}
+}}
+"#,
+            absolute_group.to_slash_lossy(),
+            relative_group.to_slash_lossy(),
+        ),
+    );
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: group must be a plain file name] testAbsoluteGroup() ([GAS])
+[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: group must be a plain file name] testRelativeGroup() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Neither escaped file was written.
+    assert!(!outside.exists());
 }
 
 // Tests compilation restrictions enables optimizer if optimizer runs set to a value higher than 0.
