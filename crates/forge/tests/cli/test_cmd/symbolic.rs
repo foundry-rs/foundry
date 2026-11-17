@@ -8629,3 +8629,52 @@ contract SymbolicQuotientMulTest {
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
 }
+
+#[forgetest_init]
+fn symbolic_proves_bounded_complement_comparisons(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_bounded_complement_comparisons");
+
+    prj.add_test(
+        "SymbolicBoundedComplement.t.sol",
+        r#"
+contract SymbolicBoundedComplementTest {
+    // The checked add guards `q > ~b`, which bounded operands decide without the solver.
+    function checkBoundedQuotientAdd(uint128 a, uint128 b, uint128 d) public pure {
+        if (d == 0) return;
+        uint256 q = uint256(a) * b / d;
+        assert(q + b >= q);
+    }
+
+    // `~e >= 2**256 - 2**136`, which `a * b` can still exceed.
+    function checkBoundedComplement(uint128 a, uint128 b, uint136 e) public pure {
+        assert(uint256(a) * b <= ~uint256(e));
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicBoundedComplement"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkBoundedQuotientAdd(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkBoundedComplement(uint128,uint128,uint136)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+    }
+}
