@@ -39,6 +39,8 @@ struct SourceVisitor<'gcx> {
     /// was collected, so scope travels with the span to the delayed HIR resolution pass.
     function_calls: Vec<(Span, Arc<str>)>,
     function_call_scopes: FxHashMap<Span, Arc<str>>,
+    /// The span of the statement that follows each `if` statement in its block.
+    stmts_after_if: FxHashMap<Span, Span>,
 }
 
 struct SourceVisitorCheckpoint {
@@ -68,6 +70,9 @@ pub(crate) struct IfArms {
     pub(crate) then_arm: SourceLocation,
     /// The statement executed when it does not, if it has statements.
     pub(crate) else_arm: Option<SourceLocation>,
+    /// The next statement of the enclosing block, which control reaches when the `if` does not
+    /// leave it.
+    pub(crate) after: Option<SourceLocation>,
 }
 
 /// The source spans of the arms of a ternary expression.
@@ -156,6 +161,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             all_lines: Default::default(),
             function_calls: Default::default(),
             function_call_scopes: Default::default(),
+            stmts_after_if: Default::default(),
             items: Default::default(),
         }
     }
@@ -349,6 +355,15 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
         ControlFlow::Continue(())
     }
 
+    fn visit_block(&mut self, block: &'ast ast::Block<'ast>) -> ControlFlow<Self::BreakValue> {
+        for stmts in block.windows(2) {
+            if matches!(stmts[0].kind, StmtKind::If(..)) {
+                self.stmts_after_if.insert(stmts[0].span, stmts[1].span);
+            }
+        }
+        self.walk_block(block)
+    }
+
     fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
         match &stmt.kind {
             StmtKind::Break | StmtKind::Continue | StmtKind::Emit(..) | StmtKind::Revert(..) => {
@@ -370,7 +385,11 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     // Report the branch at the condition, but count hits in the true body.
                     // Line coverage uses the reported span so it also sees false conditions.
                     let anchor_loc = self.source_location_for(then_stmt.span);
-                    let mut arms = IfArms { then_arm: anchor_loc.clone(), else_arm: None };
+                    let after = self
+                        .stmts_after_if
+                        .get(&stmt.span)
+                        .map(|&span| self.source_location_for(span));
+                    let mut arms = IfArms { then_arm: anchor_loc.clone(), else_arm: None, after };
                     self.push_item_kind(
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
                         stmt.span,

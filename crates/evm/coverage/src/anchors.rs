@@ -637,7 +637,7 @@ impl<'a> AnchorIndex<'a> {
             return None;
         }
         let entries = self.fallthrough_entries(&anchors).ok()?;
-        let arm_is_taken = self.then_is_taken(loc, pc, taken.instruction, arms)? ^ (path_id == 1);
+        let arm_is_taken = self.then_is_taken(&anchors, arms)? ^ (path_id == 1);
         Some(if arm_is_taken {
             (taken.clone(), Some(jump as u32), entries)
         } else {
@@ -649,25 +649,20 @@ impl<'a> AnchorIndex<'a> {
     /// sides cannot be told apart.
     ///
     /// The code that each side runs alone, before it joins the other's, decides when an arm has
-    /// code there. An arm without code is entered by the side that does not reach the code after
-    /// the `if`, such as the loop exit of a `break` or the increment of a `continue`, but only when
-    /// the sides never meet and the other side does not reach code after the `if` either: a side
-    /// that carries a value into the join point, as with `if (c) { x = 2; }`, meets the other
-    /// side's code.
-    fn then_is_taken(
-        &self,
-        loc: &SourceLocation,
-        fallthrough: u32,
-        taken: u32,
-        arms: &IfArms,
-    ) -> Option<bool> {
-        let (fallthrough, taken) = (self.trace(fallthrough), self.trace(taken));
+    /// code there. An arm that is the jump itself is the taken side. An arm without code is entered
+    /// by the side that does not reach the next statement of the block, such as the loop exit of a
+    /// `break` or the increment of a `continue`, but only when the sides never meet and the other
+    /// side does not reach that statement either: a side that carries a value into the join point,
+    /// as with `if (c) { x = 2; }`, meets the other side's code.
+    fn then_is_taken(&self, anchors: &(ItemAnchor, ItemAnchor), arms: &IfArms) -> Option<bool> {
+        let (fallthrough, taken) =
+            (self.trace(anchors.0.instruction), self.trace(anchors.1.instruction));
         let shared = |ic: &usize| fallthrough.contains(ic) && taken.contains(ic);
         let alone = |trace: &[usize]| trace.iter().copied().take_while(|ic| !shared(ic)).count();
         let (fallthrough_alone, taken_alone) =
             (&fallthrough[..alone(&fallthrough)], &taken[..alone(&taken)]);
         let taken_enters = |arm: &SourceLocation| {
-            let holds = |trace: &[usize]| trace.iter().any(|&ic| self.maps_inside(ic, arm));
+            let holds = |trace: &[usize]| trace.iter().any(|&ic| self.starts_in_range(ic, arm));
             match (holds(fallthrough_alone), holds(taken_alone)) {
                 (false, true) => Some(true),
                 (true, false) => Some(false),
@@ -681,17 +676,27 @@ impl<'a> AnchorIndex<'a> {
             (Some(taken), _) | (None, Some(taken)) => return Some(taken),
             (None, None) => {}
         }
+        // An arm that is only a `break` or `continue` can become the jump itself.
+        let is_body = |arm| self.jump_is_body(anchors, arm);
+        match (is_body(&arms.then_arm), arms.else_arm.as_ref().is_some_and(is_body)) {
+            (true, false) => return Some(true),
+            (false, true) => return Some(false),
+            (true, true) => return None,
+            (false, false) => {}
+        }
         let meet = fallthrough.len() > fallthrough_alone.len();
         if arms.else_arm.is_some() || self.has_own_code(&arms.then_arm) || meet {
             return None;
         }
+        let after = arms.after.as_ref()?;
         let starts_after = |trace: &[usize]| {
             trace
                 .iter()
                 .find(|&&ic| self.bytecode[self.pcs[ic] as usize] != opcode::JUMPDEST)
-                .is_some_and(|&ic| self.is_after(ic, loc))
+                .is_some_and(|&ic| self.starts_in_range(ic, after))
         };
-        let reaches_after = |trace: &[usize]| trace.iter().any(|&ic| self.is_after(ic, loc));
+        let reaches_after =
+            |trace: &[usize]| trace.iter().any(|&ic| self.starts_in_range(ic, after));
         match (starts_after(&fallthrough), starts_after(&taken)) {
             (true, false) if !reaches_after(&taken) => Some(true),
             (false, true) if !reaches_after(&fallthrough) => Some(false),
@@ -737,13 +742,10 @@ impl<'a> AnchorIndex<'a> {
         trace
     }
 
-    /// Returns whether the instruction `ic` is mapped to code of the same source that starts after
-    /// `loc`.
-    fn is_after(&self, ic: usize, loc: &SourceLocation) -> bool {
-        self.source_map.get(ic).is_some_and(|element| {
-            element.index_i32() == loc.source_id as i32
-                && element.offset() >= loc.bytes.start + loc.len()
-        })
+    /// Returns whether the instruction `ic` is mapped to the byte range of `loc`, as
+    /// [`Self::simple`] matches, which tolerates a statement's span ending before its `;`.
+    fn starts_in_range(&self, ic: usize, loc: &SourceLocation) -> bool {
+        self.source_map.get(ic).is_some_and(|element| is_in_source_range(element, loc))
     }
 
     /// Returns whether an instruction mapped inside `loc` runs only when `loc` does. The pushes
@@ -751,7 +753,7 @@ impl<'a> AnchorIndex<'a> {
     /// body of a `break` or `continue`.
     fn has_own_code(&self, loc: &SourceLocation) -> bool {
         self.instructions_starting_in(loc).any(|ic| {
-            self.maps_inside(ic, loc)
+            self.starts_in_range(ic, loc)
                 && self.branches.binary_search_by_key(&ic, |&(ic, ..)| ic).is_err()
         })
     }
@@ -1674,8 +1676,21 @@ mod tests {
     }
 
     fn find_if_anchors(bytecode: &[u8], source_map: &str, else_arm: bool) -> ItemAnchors {
-        let arms =
-            IfArms { then_arm: location(40..60), else_arm: else_arm.then(|| location(61..69)) };
+        find_if_anchors_after(bytecode, source_map, else_arm, true)
+    }
+
+    /// Like [`find_if_anchors`], with the next statement at 80..90 only if `after`.
+    fn find_if_anchors_after(
+        bytecode: &[u8],
+        source_map: &str,
+        else_arm: bool,
+        after: bool,
+    ) -> ItemAnchors {
+        let arms = IfArms {
+            then_arm: location(40..60),
+            else_arm: else_arm.then(|| location(61..69)),
+            after: after.then(|| location(80..90)),
+        };
         let items = (0..2 - u32::from(!else_arm))
             .map(|path_id| CoverageItem {
                 kind: CoverageItemKind::Branch { branch_id: 0, path_id, is_first_opcode: true },
@@ -1737,6 +1752,8 @@ mod tests {
             (&exit_then_after[..], "12:3:0;;10:60:0;0:100:0;;;80:5:0;;", &fallthrough),
             // The arm continues a loop at code mapped before the `if`.
             (&after_then_exit[..], "12:3:0;;10:60:0;80:5:0;;;5:3:0;;", &taken),
+            // The push is the arm even when both sides reach code after the `if`.
+            (&after_then_exit[..], "12:3:0;45:5:0;10:60:0;80:5:0;;;85:5:0;;", &taken),
             // Both sides reach code outside the `if`, so nothing tells the arm from the skip.
             (&after_then_exit[..], "12:3:0;;10:60:0;80:5:0;;;85:5:0;;", &[]),
             // The arm has code of its own, which anchors it as before.
@@ -1778,6 +1795,29 @@ mod tests {
 
     #[test]
     fn if_edges_are_not_guessed_when_ambiguous() {
+        // Without a next statement in the block, as when the `if` ends a loop body, the skip side
+        // is not known to reach any code, so a `break` is told apart by its jump target only.
+        let after_then_exit = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::RETURN,
+        ];
+        let anchors = find_if_anchors_after(
+            &after_then_exit,
+            "12:3:0;;10:60:0;80:5:0;;;0:100:0;;",
+            false,
+            false,
+        );
+        assert!(anchors.anchors.is_empty());
+
         // The skip side runs code that is mapped to the function, and joins the other side's
         // code, as with `if (c) { x = 2; }` when the constant feeds the join point.
         let joined = [
