@@ -1537,6 +1537,20 @@ impl ConstraintContext {
                     max: numerator.max / denominator.min,
                 })
             }
+            // `a % d <= a`, and `a % d < d` for a positive `d`.
+            SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) => {
+                let dividend = self.interval_cached(dividend, intervals, remaining);
+                let divisor = self
+                    .interval_cached(divisor, intervals, remaining)
+                    .filter(|divisor| !divisor.min.is_zero());
+                let max = match (dividend, divisor) {
+                    (Some(dividend), Some(divisor)) => dividend.max.min(divisor.max - U256::ONE),
+                    (Some(dividend), None) => dividend.max,
+                    (None, Some(divisor)) => divisor.max - U256::ONE,
+                    (None, None) => return None,
+                };
+                Some(WordInterval { min: U256::ZERO, max })
+            }
             SymExprKind::BinOp(SymBinOp::Shr, value, shift) => {
                 let shift = shift.as_const()?;
                 if shift >= U256::from(256) {

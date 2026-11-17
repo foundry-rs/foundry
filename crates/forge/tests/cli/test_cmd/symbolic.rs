@@ -8649,6 +8649,21 @@ contract SymbolicBoundedComplementTest {
     function checkBoundedComplement(uint128 a, uint128 b, uint136 e) public pure {
         assert(uint256(a) * b <= ~uint256(e));
     }
+
+    // `x % d < 2**128`, so the checked add cannot overflow.
+    function checkBoundedRemainderAdd(uint256 x, uint128 d, uint128 b) public pure {
+        if (d == 0) return;
+        assert(x % d + b >= b);
+    }
+
+    // `x % d <= x` is reached at `x = 2**128 - 1`, `d = 2**128`.
+    function checkRemainderBelowDividendMax(uint128 x, uint256 d) public pure {
+        uint256 r;
+        assembly {
+            r := mod(x, d)
+        }
+        assert(r < type(uint128).max);
+    }
 }
 "#,
     );
@@ -8674,6 +8689,17 @@ contract SymbolicBoundedComplementTest {
         );
 
         let result = json_test_result(&output, "checkBoundedComplement(uint128,uint128,uint136)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkBoundedRemainderAdd(uint256,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkRemainderBelowDividendMax(uint128,uint256)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
