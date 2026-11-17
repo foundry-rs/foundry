@@ -1854,7 +1854,7 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
         Some(group) => {
             ensure!(
                 is_valid_snapshot_group(&group),
-                "invalid snapshot group name `{group}`: group must be a plain file name"
+                "invalid snapshot group name `{group}`: expected a relative path without empty, `.` or `..` components"
             );
             group
         }
@@ -1866,12 +1866,14 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
     Ok((group, name))
 }
 
-/// Returns whether `group` is a single normal path component, so that the `{group}.json` snapshot
-/// file cannot escape the configured snapshots directory.
+/// Returns whether `group` is a relative path without empty or dot components.
 fn is_valid_snapshot_group(group: &str) -> bool {
-    let mut components = Path::new(group).components();
-    matches!(components.next(), Some(Component::Normal(name)) if name == group)
-        && components.next().is_none()
+    // Check the original components because `Path::components` normalizes dots and separators.
+    group.split(std::path::is_separator).all(|component| {
+        matches!(Path::new(component).components().next(), Some(Component::Normal(name)) if name == component)
+            && (!cfg!(windows)
+                || (!component.contains(':') && !component.ends_with(['.', ' '])))
+    })
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
@@ -2641,11 +2643,49 @@ mod tests {
 
     #[test]
     fn validates_snapshot_groups() {
-        for group in ["Group", "a.b", "group with spaces", "..hidden"] {
+        for group in [
+            "Group",
+            "a.b",
+            "group with spaces",
+            "..hidden",
+            "core/someContract",
+            "periphery/someContract.v1",
+        ] {
             assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
         }
-        for group in ["", ".", "..", "../settings", "a/b", "./a", "/tmp/settings", "a/", "a/."] {
+        for group in [
+            "",
+            ".",
+            "..",
+            "../settings",
+            "./a",
+            "/tmp/settings",
+            "a/",
+            "a/.",
+            "a/./b",
+            "a/../b",
+            "a//b",
+        ] {
             assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
+
+        #[cfg(unix)]
+        assert!(is_valid_snapshot_group(r"core\someContract"));
+
+        #[cfg(windows)]
+        {
+            assert!(is_valid_snapshot_group(r"core\someContract"));
+            for group in [
+                r"C:\settings",
+                r"C:settings",
+                r"\settings",
+                r"core\..\settings",
+                "a:b",
+                "a/.. /b",
+                "a./b",
+            ] {
+                assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+            }
         }
     }
 }

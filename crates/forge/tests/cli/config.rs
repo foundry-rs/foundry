@@ -3062,8 +3062,172 @@ Error: Snapshots differ from previous run
     assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
 }
 
-// Snapshot group names that are not plain file names must be rejected, so a dependency cannot
-// write outside the configured snapshots directory.
+#[forgetest]
+fn test_gas_snapshot_nested_groups(prj: _, cmd: _) {
+    prj.insert_ds_test();
+
+    let test_contract = |value: u32| {
+        format!(
+            r#"
+import "./test.sol";
+
+interface Vm {{
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+}}
+
+contract NestedSnapshotTest is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testSnapshotValue() public {{
+        vm.snapshotValue("core/someContract", "value", 1);
+        vm.snapshotValue("periphery/someContract", "value", {value});
+        vm.snapshotValue("core/someContract.v1", "value", 3);
+    }}
+}}
+"#
+        )
+    };
+
+    prj.add_source("NestedSnapshotTest.sol", &test_contract(2));
+    cmd.args(["test"]).assert_success();
+
+    let core = prj.root().join("snapshots/core/someContract.json");
+    let periphery = prj.root().join("snapshots/periphery/someContract.json");
+    let dotted = prj.root().join("snapshots/core/someContract.v1.json");
+    assert_data_eq!(
+        fs::read_to_string(&core).unwrap(),
+        str![[r#"{
+  "value": "1"
+}"#]]
+    );
+    assert_data_eq!(
+        fs::read_to_string(&periphery).unwrap(),
+        str![[r#"{
+  "value": "2"
+}"#]]
+    );
+    assert_data_eq!(
+        fs::read_to_string(&dotted).unwrap(),
+        str![[r#"{
+  "value": "3"
+}"#]]
+    );
+    let previous_snapshot = fs::read(&periphery).unwrap();
+
+    cmd.forge_fuse()
+        .args(["test", "--gas-snapshot-check=true", "--gas-snapshot-emit=false"])
+        .assert_success();
+
+    prj.add_source("NestedSnapshotTest.sol", &test_contract(4));
+    cmd.forge_fuse().args(["test", "--gas-snapshot-check=true"]).assert_failure().stderr_eq(str![
+        [r#"
+
+[periphery/someContract] Failed to match snapshots:
+- [value] 2 → 4
+
+Error: Snapshots differ from previous run
+
+"#]
+    ]);
+    assert_eq!(fs::read(&periphery).unwrap(), previous_snapshot);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn test_gas_snapshot_group_symlinks(prj: _, cmd: _) {
+    prj.insert_ds_test();
+
+    let outside_dir = tempfile::tempdir().unwrap();
+    let outside = outside_dir.path().join("Group.json");
+    let previous_snapshot = r#"{"value":"1"}"#;
+    fs::write(&outside, previous_snapshot).unwrap();
+    let snapshots = prj.root().join("snapshots");
+    fs::create_dir_all(&snapshots).unwrap();
+
+    for (group, link, target) in [
+        ("nested/Group", snapshots.join("nested"), outside_dir.path().to_path_buf()),
+        ("Group", snapshots.join("Group.json"), outside.clone()),
+        ("Missing", snapshots.join("Missing.json"), outside_dir.path().join("missing.json")),
+    ] {
+        prj.add_source(
+            "SnapshotSymlinkTest.sol",
+            &format!(
+                r#"
+import "./test.sol";
+
+interface Vm {{
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+}}
+
+contract SnapshotSymlinkTest is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testSnapshotValue() public {{
+        vm.snapshotValue("{group}", "value", 2);
+    }}
+}}
+"#
+            ),
+        );
+        symlink(&target, &link).unwrap();
+
+        for flags in [
+            ["--gas-snapshot-check=true", "--gas-snapshot-emit=false"],
+            ["--gas-snapshot-check=false", "--gas-snapshot-emit=true"],
+        ] {
+            cmd.forge_fuse().arg("test").args(flags).assert_failure().stderr_eq(str![[r#"
+Error: gas snapshot path traverses a symlink: [..]
+"#]]);
+            assert_eq!(fs::read_to_string(&outside).unwrap(), previous_snapshot);
+            assert!(!outside_dir.path().join("missing.json").exists());
+        }
+
+        cmd.forge_fuse()
+            .args(["test", "--gas-snapshot-check=false", "--gas-snapshot-emit=false"])
+            .assert_success();
+        fs::remove_file(&link).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn test_gas_snapshot_symlinked_root(prj: _, cmd: _) {
+    prj.insert_ds_test();
+
+    let snapshots = tempfile::tempdir().unwrap();
+    symlink(snapshots.path(), prj.root().join("snapshots")).unwrap();
+    prj.add_source(
+        "SnapshotSymlinkRootTest.sol",
+        r#"
+import "./test.sol";
+
+interface Vm {
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+}
+
+contract SnapshotSymlinkRootTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testSnapshotValue() public {
+        vm.snapshotValue("nested/Group", "value", 1);
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+    assert_data_eq!(
+        fs::read_to_string(snapshots.path().join("nested/Group.json")).unwrap(),
+        str![[r#"{
+  "value": "1"
+}"#]]
+    );
+    cmd.forge_fuse()
+        .args(["test", "--gas-snapshot-check=true", "--gas-snapshot-emit=false"])
+        .assert_success();
+}
+
+// Absolute paths and parent-directory traversal must be rejected, so a dependency cannot write
+// outside the configured snapshots directory.
 #[forgetest]
 fn test_gas_snapshot_group_escape(prj: _, cmd: _) {
     prj.insert_ds_test();
@@ -3101,8 +3265,8 @@ contract SnapshotGroupEscapeTest is DSTest {{
     );
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: group must be a plain file name] testAbsoluteGroup() ([GAS])
-[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: group must be a plain file name] testRelativeGroup() ([GAS])
+[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: expected a relative path without empty, `.` or `..` components] testAbsoluteGroup() ([GAS])
+[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: expected a relative path without empty, `.` or `..` components] testRelativeGroup() ([GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
