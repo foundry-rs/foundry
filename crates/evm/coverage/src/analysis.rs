@@ -39,6 +39,8 @@ struct SourceVisitor<'gcx> {
     /// was collected, so scope travels with the span to the delayed HIR resolution pass.
     function_calls: Vec<(Span, Arc<str>)>,
     function_call_scopes: FxHashMap<Span, Arc<str>>,
+    /// The span of the statement that follows each `if` statement in its block.
+    stmts_after_if: FxHashMap<Span, Span>,
 }
 
 struct SourceVisitorCheckpoint {
@@ -55,8 +57,22 @@ pub(crate) enum BranchKind {
     Require,
     /// A ternary expression. Its jumps must match the exact expression span.
     Ternary(TernaryArms),
+    /// An `if` statement. Path 0 enters the then arm and path 1 the else arm.
+    If(IfArms),
     /// A Yul `if` with the given body. Path 0 enters the body and path 1 skips it.
     YulIf(SourceLocation),
+}
+
+/// The source spans of the arms of an `if` statement.
+#[derive(Clone, Debug)]
+pub(crate) struct IfArms {
+    /// The statement executed when the condition holds.
+    pub(crate) then_arm: SourceLocation,
+    /// The statement executed when it does not, if it has statements.
+    pub(crate) else_arm: Option<SourceLocation>,
+    /// The next statement of the enclosing block, which control reaches when the `if` does not
+    /// leave it.
+    pub(crate) after: Option<SourceLocation>,
 }
 
 /// The source spans of the arms of a ternary expression.
@@ -145,6 +161,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             all_lines: Default::default(),
             function_calls: Default::default(),
             function_call_scopes: Default::default(),
+            stmts_after_if: Default::default(),
             items: Default::default(),
         }
     }
@@ -338,6 +355,15 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
         ControlFlow::Continue(())
     }
 
+    fn visit_block(&mut self, block: &'ast ast::Block<'ast>) -> ControlFlow<Self::BreakValue> {
+        for stmts in block.windows(2) {
+            if matches!(stmts[0].kind, StmtKind::If(..)) {
+                self.stmts_after_if.insert(stmts[0].span, stmts[1].span);
+            }
+        }
+        self.walk_block(block)
+    }
+
     fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
         match &stmt.kind {
             StmtKind::Break | StmtKind::Continue | StmtKind::Emit(..) | StmtKind::Revert(..) => {
@@ -359,21 +385,30 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     // Report the branch at the condition, but count hits in the true body.
                     // Line coverage uses the reported span so it also sees false conditions.
                     let anchor_loc = self.source_location_for(then_stmt.span);
+                    let after_span = self.stmts_after_if.get(&stmt.span).copied();
+                    let after = after_span.map(|span| self.source_location_for(span));
+                    let mut arms = IfArms { then_arm: anchor_loc.clone(), else_arm: None, after };
                     self.push_item_kind(
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
                         stmt.span,
                     )
                     .anchor_loc = Some(anchor_loc);
                     if let Some(else_stmt) = else_stmt {
+                        // An `else if` continues with the statement after the outer `if`.
+                        if let Some(span) = after_span {
+                            self.stmts_after_if.insert(else_stmt.span, span);
+                        }
                         let is_first_opcode = stmt_has_statements(else_stmt);
                         let anchor_loc =
                             is_first_opcode.then(|| self.source_location_for(else_stmt.span));
+                        arms.else_arm.clone_from(&anchor_loc);
                         self.push_item_kind(
                             CoverageItemKind::Branch { branch_id, path_id: 1, is_first_opcode },
                             stmt.span,
                         )
                         .anchor_loc = anchor_loc;
                     }
+                    self.branch_kinds.push((branch_id, BranchKind::If(arms)));
                 }
             }
 

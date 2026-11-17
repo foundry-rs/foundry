@@ -1588,7 +1588,6 @@ contract AContractTest is DSTest {
 
 #[forgetest]
 fn single_statement_loop(prj: _, cmd: _) {
-    // TODO(dani): the specific case of `if (x) continue/break` is not properly covered.
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1629,7 +1628,7 @@ contract AContractTest is DSTest {
     "#,
     );
 
-    // Assert 50% coverage for true branches.
+    // Both arms are taken.
     cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
 ...
 ╭-------------------+--------------+---------------+---------------+---------------╮
@@ -1642,20 +1641,20 @@ contract AContractTest is DSTest {
 
 "#]]);
 
-    // Assert 50% coverage for false branches.
+    // Neither arm is taken.
     cmd.forge_fuse()
         .arg("coverage")
         .args(["--mt", "testFalseCoverage"])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-╭-------------------+---------------+-----------------+---------------+---------------╮
-| File              | % Lines       | % Statements    | % Branches    | % Funcs       |
-+=====================================================================================+
-| src/AContract.sol | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
-|-------------------+---------------+-----------------+---------------+---------------|
-| Total             | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
-╰-------------------+---------------+-----------------+---------------+---------------╯
+╭-------------------+---------------+-----------------+-------------+---------------╮
+| File              | % Lines       | % Statements    | % Branches  | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (7/7) | 100.00% (10/10) | 0.00% (0/2) | 100.00% (1/1) |
+|-------------------+---------------+-----------------+-------------+---------------|
+| Total             | 100.00% (7/7) | 100.00% (10/10) | 0.00% (0/2) | 100.00% (1/1) |
+╰-------------------+---------------+-----------------+-------------+---------------╯
 
 "#]]);
 
@@ -2263,6 +2262,91 @@ BRDA:6,0,1,1
 ...
 BRDA:10,1,0,1
 BRDA:10,1,1,0
+...
+"#]];
+    assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").args(["--no-isolate", "--ir-minimum"]),
+        expected.clone(),
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").arg("--no-isolate").arg("--use").arg(&solar),
+        expected,
+    );
+}
+
+// A branch path counts the times control took its edge, even when its arm has no code of its own.
+// The jump of `if (i == 3) { break; }` is the arm, whichever side of it each compiler puts the loop
+// exit on. Its arm runs once in the 6 times the jump runs, so swapped or summed counts differ. The
+// same holds without braces and for the `break` of an `else if`.
+#[forgetest]
+fn if_paths_count_jump_edges(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function stop(uint256 n) external pure returns (uint256 s) {
+        for (uint256 i = 0; i < n; i++) {
+            if (i == 3) {
+                break;
+            }
+            s += i;
+        }
+    }
+
+    function unbraced(uint256 n) external pure returns (uint256 s) {
+        for (uint256 i = 0; i < n; i++) {
+            if (i == 3) break;
+            s += i;
+        }
+    }
+
+    function chain(uint256 n) external pure returns (uint256 s) {
+        for (uint256 i = 0; i < n; i++) {
+            if (i == 1) {
+                s += 1;
+            } else if (i == 3) {
+                break;
+            }
+            s += 10;
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external view {
+        a.stop(10);
+        a.stop(2);
+        a.unbraced(10);
+        a.unbraced(2);
+        a.chain(10);
+        a.chain(2);
+    }
+}
+"#,
+    );
+
+    let expected = str![[r#"
+...
+BRDA:7,0,0,1
+...
+BRDA:16,1,0,1
+...
+BRDA:23,2,0,2
+BRDA:23,2,1,4
+...
+BRDA:25,3,0,1
 ...
 "#]];
     assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
