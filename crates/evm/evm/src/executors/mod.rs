@@ -2493,14 +2493,16 @@ mod tests {
 
     #[test]
     fn coverage_probes_feed_the_fuzzer_edges_instead_of_edgecov() {
-        // Edge 9 is in code with probes, so its `EDGECOV` is ignored. Probe 4 runs twice.
+        // Edge 9 is in code that ran a probe, so its `EDGECOV` is ignored. A probe pair is an
+        // edge: probe 4 after nothing is edge 4, and probe 4 after probe 4 is `4 ^ (4 >> 1)`.
         let probed: &[u8] = &[
             0xc2, 0x60, 0x04, // COVERAGE; PUSH1 4
             0x60, 0x09, 0xc0, // PUSH1 9; EDGECOV
             0xc2, 0x60, 0x04, // COVERAGE; PUSH1 4
             0x00,
         ];
-        let plain: &[u8] = &[0x60, 0x09, 0xc0, 0x00];
+        // A `COVERAGE` byte in data, as in metadata or constructor arguments, is no probe.
+        let plain: &[u8] = &[0x60, 0x09, 0xc0, 0x00, 0xc2];
         let mut executor = edgecov_executor(true, true);
         let (probed_target, plain_target) =
             (Address::repeat_byte(0x47), Address::repeat_byte(0x48));
@@ -2509,10 +2511,42 @@ mod tests {
 
         let result = executor.call_raw(CALLER, probed_target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(result.exit_reason, Some(InstrStop::Stop));
-        assert_eq!(instrumented_hits(&result), [(4, 2)]);
-        // Code without probes keeps its `EDGECOV` hits.
+        assert_eq!(instrumented_hits(&result), [(4, 1), (6, 1)]);
+        // Code that ran no probe keeps its `EDGECOV` hits.
         let result = executor.call_raw(CALLER, plain_target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(instrumented_hits(&result), [(9, 1)]);
+    }
+
+    #[test]
+    fn probe_edges_see_the_order_of_probes_and_restart_in_each_frame() {
+        let probes = |ids: &[u8]| ids.iter().flat_map(|&id| [0xc2, 0x60, id]).collect::<Vec<_>>();
+        let (first, second) = (Address::repeat_byte(0x49), Address::repeat_byte(0x4a));
+        let mut executor = edgecov_executor(true, true);
+        // Both orders of probes 5 and 7 reach the same probes, but by different edges.
+        for (target, ids) in [(first, [5, 7]), (second, [7, 5])] {
+            let code = [probes(&ids), vec![0x00]].concat();
+            executor.set_code(target, Bytecode::new_raw(Bytes::from(code))).unwrap();
+        }
+        let hits = |executor: &mut Executor<EthEvmNetwork>, target| {
+            let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+            instrumented_hits(&result)
+        };
+        assert_eq!(hits(&mut executor, first), [(5, 2)]);
+        assert_eq!(hits(&mut executor, second), [(7, 1), (6, 1)]);
+
+        // A call starts a new frame without a previous probe: `caller` runs probe 5, calls
+        // `first`, which runs 5 then 7, and runs probe 7. The callee's edges are those of a
+        // call on its own, and the caller's second probe continues from its first.
+        let mut caller = probes(&[5]);
+        caller.extend([0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73]);
+        caller.extend(first);
+        caller.extend([0x5a, 0xf1, 0x50]);
+        caller.extend(probes(&[7]));
+        caller.push(0x00);
+        let target = Address::repeat_byte(0x4b);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from(caller))).unwrap();
+        // The caller: edge 5, then `7 ^ (5 >> 1)` = 5. The callee: edge 5, then `7 ^ 2` = 5.
+        assert_eq!(hits(&mut executor, target), [(5, 4)]);
     }
 
     /// Runtime code with each comparison opcode once, then a loop whose `EQ` site runs 11 times.

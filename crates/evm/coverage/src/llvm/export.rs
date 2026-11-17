@@ -1,11 +1,12 @@
 //! The `llvm-cov export` JSON, ported from `CoverageExporterJson.cpp`.
+//!
+//! The text matches what LLVM 23 prints: compact, with the same member order and numbers.
 
 use super::{
     mapping::{CondState, CountedRegion, CoverageMapping, Expansion, McdcRecord},
     segments::CoverageSegment,
     summary::{Coverage, FileSummary},
 };
-use serde_json::{Value, json};
 
 /// The `llvm-cov export` version the JSON follows.
 pub const EXPORT_VERSION: &str = "3.1.0";
@@ -18,89 +19,106 @@ fn clamp(count: u64) -> i64 {
     count.min(i64::MAX as u64) as i64
 }
 
-fn render_segment(segment: &CoverageSegment) -> Value {
-    json!([
-        segment.line,
-        segment.col,
-        clamp(segment.count),
-        segment.has_count,
-        segment.is_region_entry,
-        segment.is_gap_region
+/// A JSON array of the rendered items.
+fn array(items: impl IntoIterator<Item = String>) -> String {
+    format!("[{}]", items.into_iter().collect::<Vec<_>>().join(","))
+}
+
+/// A JSON object of the rendered members, in order.
+fn object<'a>(members: impl IntoIterator<Item = (&'a str, String)>) -> String {
+    let members = members.into_iter().map(|(key, value)| format!("\"{key}\":{value}"));
+    format!("{{{}}}", members.collect::<Vec<_>>().join(","))
+}
+
+fn string(value: &str) -> String {
+    serde_json::to_string(value).expect("a string is valid JSON")
+}
+
+fn render_segment(segment: &CoverageSegment) -> String {
+    array([
+        segment.line.to_string(),
+        segment.col.to_string(),
+        clamp(segment.count).to_string(),
+        segment.has_count.to_string(),
+        segment.is_region_entry.to_string(),
+        segment.is_gap_region.to_string(),
     ])
 }
 
-fn render_region(region: &CountedRegion) -> Value {
-    json!([
-        region.region.start.0,
-        region.region.start.1,
-        region.region.end.0,
-        region.region.end.1,
-        clamp(region.count),
-        region.region.file,
-        region.region.expanded_file,
-        region.region.kind as u8
+fn render_region(region: &CountedRegion) -> String {
+    array([
+        region.region.start.0.to_string(),
+        region.region.start.1.to_string(),
+        region.region.end.0.to_string(),
+        region.region.end.1.to_string(),
+        clamp(region.count).to_string(),
+        region.region.file.to_string(),
+        region.region.expanded_file.to_string(),
+        (region.region.kind as u8).to_string(),
     ])
 }
 
-fn render_branch(region: &CountedRegion) -> Value {
-    json!([
-        region.region.start.0,
-        region.region.start.1,
-        region.region.end.0,
-        region.region.end.1,
-        clamp(region.count),
-        clamp(region.false_count),
-        region.region.file,
-        region.region.expanded_file,
-        region.region.kind as u8
+fn render_branch(region: &CountedRegion) -> String {
+    array([
+        region.region.start.0.to_string(),
+        region.region.start.1.to_string(),
+        region.region.end.0.to_string(),
+        region.region.end.1.to_string(),
+        clamp(region.count).to_string(),
+        clamp(region.false_count).to_string(),
+        region.region.file.to_string(),
+        region.region.expanded_file.to_string(),
+        (region.region.kind as u8).to_string(),
     ])
 }
 
-const fn render_cond_state(state: CondState) -> Value {
+const fn render_cond_state(state: CondState) -> &'static str {
     match state {
-        CondState::DontCare => Value::Null,
-        CondState::True => Value::Bool(true),
-        CondState::False => Value::Bool(false),
+        CondState::DontCare => "null",
+        CondState::True => "true",
+        CondState::False => "false",
     }
 }
 
-fn render_mcdc_record(record: &McdcRecord) -> Value {
+fn render_mcdc_record(record: &McdcRecord) -> String {
     let region = &record.region;
     let (true_decisions, false_decisions) = record.decisions();
-    let conditions = (0..record.num_conditions())
-        .map(|c| record.is_independence_pair_covered(c))
-        .collect::<Vec<_>>();
-    let vectors = record
-        .executed
-        .iter()
-        .map(|(vector, result)| {
-            let conditions = (0..record.num_conditions())
-                .map(|c| render_cond_state(record.condition(vector, c)))
-                .collect::<Vec<_>>();
-            json!({"conditions": conditions, "executed": true, "result": render_cond_state(*result)})
-        })
-        .collect::<Vec<_>>();
-    json!([
-        region.start.0,
-        region.start.1,
-        region.end.0,
-        region.end.1,
-        true_decisions,
-        false_decisions,
-        region.file,
-        region.expanded_file,
-        region.kind as u8,
+    let conditions = array(
+        (0..record.num_conditions()).map(|c| record.is_independence_pair_covered(c).to_string()),
+    );
+    let vectors = array(record.executed.iter().map(|(vector, result)| {
+        let conditions = array(
+            (0..record.num_conditions())
+                .map(|c| render_cond_state(record.condition(vector, c)).to_string()),
+        );
+        object([
+            ("conditions", conditions),
+            ("executed", "true".into()),
+            ("result", render_cond_state(*result).into()),
+        ])
+    }));
+    array([
+        region.start.0.to_string(),
+        region.start.1.to_string(),
+        region.end.0.to_string(),
+        region.end.1.to_string(),
+        true_decisions.to_string(),
+        false_decisions.to_string(),
+        region.file.to_string(),
+        region.expanded_file.to_string(),
+        (region.kind as u8).to_string(),
         conditions,
-        vectors
+        vectors,
     ])
 }
 
-fn render_branch_regions(regions: &[CountedRegion]) -> Value {
-    regions
-        .iter()
-        .filter(|region| !region.true_folded || !region.false_folded)
-        .map(render_branch)
-        .collect()
+fn render_branch_regions(regions: &[CountedRegion]) -> String {
+    array(
+        regions
+            .iter()
+            .filter(|region| !region.true_folded || !region.false_folded)
+            .map(render_branch),
+    )
 }
 
 /// The branches of the expansions and of the expansions they contain.
@@ -118,67 +136,98 @@ fn collect_nested_branches(
     branches
 }
 
-fn render_expansion(mapping: &CoverageMapping, expansion: Expansion) -> Value {
+fn render_expansion(mapping: &CoverageMapping, expansion: Expansion) -> String {
     let function = mapping.expansion_function(expansion);
-    json!({
-        "filenames": function.filenames,
-        "branches": render_branch_regions(&collect_nested_branches(mapping, &[expansion])),
-        "source_region": render_region(mapping.expansion_region(expansion)),
-        "target_regions": function.regions.iter().map(render_region).collect::<Vec<_>>(),
-    })
+    object([
+        ("filenames", array(function.filenames.iter().map(|name| string(name)))),
+        ("branches", render_branch_regions(&collect_nested_branches(mapping, &[expansion]))),
+        ("source_region", render_region(mapping.expansion_region(expansion))),
+        ("target_regions", array(function.regions.iter().map(render_region))),
+    ])
 }
 
-fn render_coverage(coverage: Coverage, not_covered: bool, covered_key: &str) -> Value {
-    let mut object = serde_json::Map::new();
-    object.insert("count".into(), coverage.total.into());
-    object.insert(covered_key.into(), coverage.covered.into());
-    if not_covered {
-        object.insert("notcovered".into(), (coverage.total - coverage.covered).into());
+/// Renders a double like `printf("%.17g")`, which is how LLVM's JSON writer prints one.
+fn format_double(value: f64) -> String {
+    if value == 0.0 {
+        return "0".into();
     }
-    object.insert("percent".into(), coverage.percent().into());
-    Value::Object(object)
+    // 17 significant digits as `d.dddddddddddddddde±x`.
+    let scientific = format!("{value:.16e}");
+    let (mantissa, exponent) = scientific.split_once('e').expect("scientific notation");
+    let exponent = exponent.parse::<i32>().expect("an exponent");
+    let negative = mantissa.starts_with('-');
+    let digits = mantissa.trim_start_matches('-').replace('.', "");
+    let sign = if negative { "-" } else { "" };
+    let mut text = if (-4..17).contains(&exponent) {
+        if exponent >= 0 {
+            let split = exponent as usize + 1;
+            format!("{}.{}", &digits[..split], &digits[split..])
+        } else {
+            format!("0.{}{}", "0".repeat((-exponent - 1) as usize), digits)
+        }
+    } else {
+        let exponent_sign = if exponent < 0 { '-' } else { '+' };
+        format!("{}.{}e{exponent_sign}{:02}", &digits[..1], &digits[1..], exponent.abs())
+    };
+    // `%g` drops the trailing zeros and a bare decimal point.
+    if let Some((mantissa, exponent)) = text.split_once('e') {
+        let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
+        text = format!("{mantissa}e{exponent}");
+    } else if text.contains('.') {
+        text = text.trim_end_matches('0').trim_end_matches('.').to_string();
+    }
+    format!("{sign}{text}")
 }
 
-fn render_summary(summary: &FileSummary) -> Value {
-    json!({
-        "lines": render_coverage(summary.data.lines, false, "covered"),
-        "functions": render_coverage(summary.functions, false, "covered"),
-        "instantiations": render_coverage(summary.instantiations, false, "covered"),
-        "regions": render_coverage(summary.data.regions, true, "covered"),
-        "branches": render_coverage(summary.data.branches, true, "covered"),
-        "mcdc": render_coverage(summary.data.mcdc, true, "covered"),
-    })
+fn render_coverage(coverage: Coverage, not_covered: bool) -> String {
+    let mut members =
+        vec![("count", coverage.total.to_string()), ("covered", coverage.covered.to_string())];
+    if not_covered {
+        members.push(("notcovered", (coverage.total - coverage.covered).to_string()));
+    }
+    members.push(("percent", format_double(coverage.percent())));
+    object(members)
 }
 
-fn render_file(mapping: &CoverageMapping, filename: &str, summary: &FileSummary) -> Value {
+fn render_summary(summary: &FileSummary) -> String {
+    object([
+        ("lines", render_coverage(summary.data.lines, false)),
+        ("functions", render_coverage(summary.functions, false)),
+        ("instantiations", render_coverage(summary.instantiations, false)),
+        ("regions", render_coverage(summary.data.regions, true)),
+        ("branches", render_coverage(summary.data.branches, true)),
+        ("mcdc", render_coverage(summary.data.mcdc, true)),
+    ])
+}
+
+fn render_file(mapping: &CoverageMapping, filename: &str, summary: &FileSummary) -> String {
     let data = mapping.coverage_for_file(filename);
-    json!({
-        "filename": filename,
-        "branches": data.branches.iter().map(render_branch).collect::<Vec<_>>(),
-        "expansions": data
-            .expansions
-            .iter()
-            .map(|&expansion| render_expansion(mapping, expansion))
-            .collect::<Vec<_>>(),
-        "mcdc_records": data.mcdc_records.iter().map(render_mcdc_record).collect::<Vec<_>>(),
-        "segments": data.segments.iter().map(render_segment).collect::<Vec<_>>(),
-        "summary": render_summary(summary),
-    })
+    object([
+        ("filename", string(filename)),
+        ("branches", array(data.branches.iter().map(render_branch))),
+        (
+            "expansions",
+            array(data.expansions.iter().map(|&expansion| render_expansion(mapping, expansion))),
+        ),
+        ("mcdc_records", array(data.mcdc_records.iter().map(render_mcdc_record))),
+        ("segments", array(data.segments.iter().map(render_segment))),
+        ("summary", render_summary(summary)),
+    ])
 }
 
-fn render_function(function: &super::mapping::FunctionRecord) -> Value {
-    json!({
-        "branches": render_branch_regions(&function.branch_regions),
-        "count": clamp(function.execution_count),
-        "filenames": function.filenames,
-        "mcdc_records": function.mcdc_records.iter().map(render_mcdc_record).collect::<Vec<_>>(),
-        "name": function.name,
-        "regions": function.regions.iter().map(render_region).collect::<Vec<_>>(),
-    })
+fn render_function(function: &super::mapping::FunctionRecord) -> String {
+    object([
+        ("branches", render_branch_regions(&function.branch_regions)),
+        ("count", clamp(function.execution_count).to_string()),
+        ("filenames", array(function.filenames.iter().map(|name| string(name)))),
+        ("mcdc_records", array(function.mcdc_records.iter().map(render_mcdc_record))),
+        ("name", string(&function.name)),
+        ("regions", array(function.regions.iter().map(render_region))),
+    ])
 }
 
 /// Renders the coverage mapping as `llvm-cov export` JSON.
-pub fn export_json(mapping: &CoverageMapping) -> Value {
+pub fn export_json(mapping: &CoverageMapping) -> String {
     let mut totals = FileSummary::default();
     let files = mapping
         .unique_source_files()
@@ -189,13 +238,30 @@ pub fn export_json(mapping: &CoverageMapping) -> Value {
             render_file(mapping, filename, &summary)
         })
         .collect::<Vec<_>>();
-    json!({
-        "data": [{
-            "files": files,
-            "functions": mapping.functions().iter().map(render_function).collect::<Vec<_>>(),
-            "totals": render_summary(&totals),
-        }],
-        "type": EXPORT_TYPE,
-        "version": EXPORT_VERSION,
-    })
+    let data = object([
+        ("files", array(files)),
+        ("functions", array(mapping.functions().iter().map(render_function))),
+        ("totals", render_summary(&totals)),
+    ]);
+    object([
+        ("data", array([data])),
+        ("type", string(EXPORT_TYPE)),
+        ("version", string(EXPORT_VERSION)),
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn doubles_print_like_printf_g17() {
+        assert_eq!(format_double(100.0), "100");
+        assert_eq!(format_double(0.0), "0");
+        assert_eq!(format_double(50.0), "50");
+        assert_eq!(format_double(12.0 / 13.0 * 100.0), "92.307692307692307");
+        assert_eq!(format_double(5.0 / 6.0 * 100.0), "83.333333333333343");
+        assert_eq!(format_double(0.1), "0.10000000000000001");
+        assert_eq!(format_double(1.0 / 3.0 * 0.001), "0.00033333333333333332");
+    }
 }

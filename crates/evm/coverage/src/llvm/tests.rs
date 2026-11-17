@@ -4,7 +4,7 @@ use foundry_compilers::artifacts::SourceCoverage;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, process::Command};
 
-const SOURCE: &str = "\
+pub(crate) const SOURCE: &str = "\
 contract C {
     uint x;
     function f(uint a, uint b) public returns (uint) {
@@ -175,7 +175,8 @@ fn llvm_tools_read_the_coverage_mapping() {
 fn assert_llvm_agrees(source: &str, build: &InstrumentedBuild) {
     let inputs = build.function_inputs();
     let object = CoverageObject::new(&inputs).unwrap();
-    let ours = export_json(&CoverageMapping::new(inputs));
+    let ours_text = export_json(&CoverageMapping::new(inputs));
+    let ours: Value = serde_json::from_str(&ours_text).unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
@@ -195,6 +196,10 @@ fn assert_llvm_agrees(source: &str, build: &InstrumentedBuild) {
             dir,
             &["export", "--instr-profile", "coverage.profdata", "coverage.covmap.o"],
         );
+        // LLVM 23 prints the JSON byte for byte as Foundry does. LLVM 22 sorts the members.
+        if version == "23" {
+            assert_eq!(exported, ours_text, "llvm-cov {version}");
+        }
         let theirs: Value = serde_json::from_str(&exported).unwrap();
         if let Some(difference) = diff(&normalize(ours.clone()), &normalize(theirs), "") {
             panic!("llvm-cov {version}: {difference}");
@@ -215,6 +220,7 @@ contract G {
 
         // keep
         x = 3;
+
     }
 }
 ";
@@ -257,8 +263,12 @@ fn gap_build() -> InstrumentedBuild {
                 between(3, "x = 1;\n        }", "{\n            x = 2;", &[sub(0)]),
                 region(0, "{\n            x = 2;\n        }", &[sub(0)]),
                 between(3, "x = 2;\n        }", "x = 3;", &[c(1)]),
-                region(2, "\n\n        // keep", &[]),
+                // The blank line, then the comment with its line break.
+                [2, 0, GAP_SOURCE.find("}\n\n").unwrap() + 2, 1],
+                region(2, "        // keep\n", &[]),
                 region(0, "x = 3;", &[c(1)]),
+                // A blank line after a statement.
+                [2, 0, GAP_SOURCE.find("x = 3;\n\n").unwrap() + "x = 3;\n".len(), 1],
             ],
         }]
     }))
@@ -285,7 +295,7 @@ fn gap_and_skipped_regions_follow_llvm_cov() {
         .filter(|stats| stats.mapped)
         .map(|stats| (stats.line, stats.execution_count))
         .collect::<Vec<_>>();
-    assert_eq!(lines, [(4, 3), (5, 3), (6, 1), (7, 2), (8, 2), (12, 3), (13, 3)]);
+    assert_eq!(lines, [(4, 3), (5, 3), (6, 1), (7, 2), (8, 2), (9, 2), (12, 3), (14, 3)]);
 }
 
 const MODIFIER_SOURCE: &str = "\

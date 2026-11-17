@@ -703,10 +703,7 @@ impl CoverageReporter for LlvmReporter {
         fs::write(self.root.join("coverage.covmap.o"), &object.object)?;
 
         let json = llvm::export_json(&llvm::CoverageMapping::new(inputs));
-        let mut out = std::io::BufWriter::new(fs::create_file(self.root.join("coverage.json"))?);
-        serde_json::to_writer(&mut out, &json)?;
-        writeln!(out)?;
-        out.flush()?;
+        fs::write(self.root.join("coverage.json"), json)?;
 
         sh_println!(
             "Wrote LLVM coverage report: coverage.proftext, coverage.covmap.o, coverage.json."

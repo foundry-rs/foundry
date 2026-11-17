@@ -124,7 +124,12 @@ impl CoverageReport {
     /// adds their line items, which follow `llvm-cov`'s line rules.
     pub fn finalize_instrumented(&mut self) {
         let mapping = llvm::CoverageMapping::new(self.llvm_inputs());
-        for (build_id, report) in &mut self.instrumented {
+        // A source in several builds has one set of lines, from the records of all builds.
+        let mut files_with_lines = FxHashSet::default();
+        let mut build_ids = self.instrumented.keys().cloned().collect::<Vec<_>>();
+        build_ids.sort_unstable();
+        for build_id in &build_ids {
+            let Some(report) = self.instrumented.get_mut(build_id) else { continue };
             let Some(analysis) = self.analyses.get(build_id) else { continue };
             let mut items = Vec::new();
             let mut counts = Vec::new();
@@ -147,6 +152,9 @@ impl CoverageReport {
                     counts.push(*count);
                 }
                 let Some(source) = report.build.sources.get(&(source_id as u32)) else { continue };
+                if !files_with_lines.insert(source.filename()) {
+                    continue;
+                }
                 let stats = mapping.coverage_for_file(&source.filename()).line_stats_from(1);
                 for stats in stats.into_iter().filter(|stats| stats.mapped) {
                     let loc = SourceLocation {
@@ -171,17 +179,40 @@ impl CoverageReport {
     }
 
     /// The function records of the instrumented builds for the LLVM coverage mapping, with their
-    /// counters, in the order of the builds' IDs. A function that two builds both define is
-    /// listed once.
+    /// counters, in the order of the builds' IDs.
+    ///
+    /// A function that several builds define is one record with the hits of all of them: the
+    /// counters add up and the executed MC/DC test vectors join. Records of one name with
+    /// different hashes do not have the same layout, so only the first counts.
     pub fn llvm_inputs(&self) -> Vec<llvm::FunctionInput> {
         let mut builds = self.instrumented.iter().collect::<Vec<_>>();
         builds.sort_by_key(|(build_id, _)| *build_id);
-        let mut names = FxHashSet::default();
-        let mut inputs = builds
-            .into_iter()
-            .flat_map(|(_, report)| report.build.function_inputs())
-            .filter(|input| names.insert(input.name.clone()))
-            .collect::<Vec<_>>();
+        let mut inputs = Vec::<llvm::FunctionInput>::new();
+        let mut by_name = FxHashMap::<String, usize>::default();
+        for input in builds.into_iter().flat_map(|(_, report)| report.build.function_inputs()) {
+            let Some(&index) = by_name.get(&input.name) else {
+                by_name.insert(input.name.clone(), inputs.len());
+                inputs.push(input);
+                continue;
+            };
+            let first = &mut inputs[index];
+            if first.hash != input.hash || first.counts.len() != input.counts.len() {
+                tracing::warn!(
+                    function = input.name,
+                    "builds define the function differently, so only the first build's hits count"
+                );
+                continue;
+            }
+            for (count, other) in first.counts.iter_mut().zip(&input.counts) {
+                *count = count.saturating_add(*other);
+            }
+            if first.bitmap.len() < input.bitmap.len() {
+                first.bitmap.resize(input.bitmap.len(), 0);
+            }
+            for (byte, other) in first.bitmap.iter_mut().zip(&input.bitmap) {
+                *byte |= other;
+            }
+        }
         inputs.sort_by(|a, b| (&a.filenames[0], &a.name).cmp(&(&b.filenames[0], &b.name)));
         inputs
     }

@@ -22,6 +22,9 @@ use foundry_compilers::artifacts::{
 };
 use std::{collections::BTreeMap, ops::Range, path::PathBuf, sync::Arc};
 
+/// The most bitmap bytes a function can have: a text profile counts them in one byte.
+const MAX_BITMAP_BYTES: usize = 255;
+
 /// A source of an instrumented build with its coverage map.
 #[derive(Clone, Debug)]
 pub struct InstrumentedSource {
@@ -52,6 +55,16 @@ impl InstrumentedSource {
         let offset = offset.min(self.text.len() as u32);
         let line = self.line_starts.partition_point(|&start| start <= offset);
         (line as u32, offset - self.line_starts[line - 1] + 1)
+    }
+
+    /// The 1-based line and column just after the last byte of a region, so that a region that
+    /// ends with a line break ends on that line.
+    fn region_end(&self, start: u32, len: u32) -> (u32, u32) {
+        let Some(last) = start.saturating_add(len).checked_sub(1).filter(|_| len > 0) else {
+            return self.line_col(start);
+        };
+        let (line, column) = self.line_col(last);
+        (line, column + 1)
     }
 
     /// The 1-based line of a byte offset.
@@ -342,11 +355,12 @@ impl InstrumentedBuild {
             ExpressionBuilder { function, expressions: Vec::new(), built: Default::default() };
 
         let mut mapped = Vec::with_capacity(regions.len());
+        let mut mcdc_broken = false;
         for region in &regions {
             let file = file_map[region.file() as usize].unwrap();
             let source = sources[region.file() as usize].unwrap();
             let start = source.line_col(region.start());
-            let end = source.line_col(region.start().saturating_add(region.len()));
+            let end = source.region_end(region.start(), region.len());
             let mut decision = None;
             let (kind, count, false_count, mcdc, expanded_file) = match **region {
                 Region::Code { count, .. } => {
@@ -373,7 +387,11 @@ impl InstrumentedBuild {
                     0,
                 ),
                 Region::Decision { decision: index, .. } => {
-                    let conditions = function.decisions.get(index as usize)?.conditions;
+                    let Some(entry) = function.decisions.get(index as usize) else {
+                        mcdc_broken = true;
+                        continue;
+                    };
+                    let conditions = entry.conditions;
                     decision = Some(index as usize);
                     // The bitmap index is set once the decision's conditions are known.
                     let params = McdcParams::Decision { bitmap_idx: 0, num_conditions: conditions };
@@ -450,7 +468,22 @@ impl InstrumentedBuild {
                 .then(rhs.end.cmp(&lhs.end))
         });
 
-        let bitmap = self.assign_bitmap(function, &mut mapped)?;
+        // A decision that cannot be laid out, or a bitmap that a text profile cannot hold, costs
+        // the record its MC/DC regions but not its branch coverage.
+        let bitmap = self
+            .assign_bitmap(function, &mut mapped)
+            .filter(|bitmap| bitmap.len() <= MAX_BITMAP_BYTES && !mcdc_broken);
+        let bitmap = bitmap.unwrap_or_else(|| {
+            tracing::warn!(function = function.name, "dropping the MC/DC regions of the function");
+            mapped.retain(|(region, _)| region.kind != RegionKind::McdcDecision);
+            for (region, _) in &mut mapped {
+                if region.kind == RegionKind::McdcBranch {
+                    region.kind = RegionKind::Branch;
+                    region.mcdc = McdcParams::None;
+                }
+            }
+            Vec::new()
+        });
         Some(FunctionInput {
             name: function.name.clone(),
             hash: function.hash.max(1),
@@ -648,6 +681,112 @@ mod tests {
             let line = index + 3;
             assert_eq!(*lines[index], format!("line {line}..{} {hits}", line + 1));
         }
+    }
+
+    #[test]
+    fn builds_of_one_source_add_their_hits_and_share_its_lines() {
+        let mut other = build();
+        // The second build ran `f` twice more and `h` once.
+        other.add_hits([(1, 2), (16, 1)].into_iter(), std::iter::empty(), &[]);
+        let mut report = CoverageReport::default();
+        for (id, build) in [("a", build()), ("b", other)] {
+            report.add_source(id.into(), 0, "src/C.sol".into());
+            report.add_instrumented_build(id.into(), build);
+        }
+        report.finalize_instrumented();
+        let summary = item_summary(&report);
+        for expected in ["function f 3..11 8", "function h 15..16 1", "function g 12..13 4"] {
+            assert!(summary.iter().any(|item| item == expected), "{expected} in {summary:#?}");
+        }
+        // One item per line, with the hits of both builds, as `llvm-cov` counts them.
+        let lines = summary.iter().filter(|item| item.starts_with("line")).collect::<Vec<_>>();
+        assert_eq!(lines.len(), 13);
+        assert_eq!(*lines[0], "line 3..4 8");
+        assert_eq!(*lines[12], "line 15..16 1");
+    }
+
+    #[test]
+    fn records_of_one_function_merge_whatever_the_order_of_the_builds() {
+        let source = InstrumentedSource::new(
+            "src/C.sol".into(),
+            crate::llvm::tests::SOURCE.into(),
+            true,
+            crate::llvm::tests::coverage(),
+        );
+        let mut idle = InstrumentedBuild::new(BTreeMap::from([(0, source)]));
+        idle.add_hits([(1, 4)].into_iter(), [(0, 2)].into_iter(), &[]);
+        let merged = |first: &str, second: &str| {
+            let mut report = CoverageReport::default();
+            report.add_instrumented_build(first.into(), idle.clone());
+            report.add_instrumented_build(second.into(), build());
+            report
+                .llvm_inputs()
+                .into_iter()
+                .find(|input| input.name.ends_with("C.f(uint256,uint256)"))
+                .map(|input| (input.counts, input.bitmap))
+                .unwrap()
+        };
+        let (counts, bitmap) = merged("a", "b");
+        assert_eq!(counts, [7, 2, 1]);
+        assert_eq!(merged("b", "a"), (counts, bitmap.clone()));
+        // The vectors of both builds join: the idle build ran the third, the other all three.
+        assert_eq!(bitmap, build().function_inputs()[0].bitmap);
+    }
+
+    /// A function of `decisions` decisions that each chain `conditions` conditions with `&&`, and
+    /// the source it maps.
+    fn chained_decisions(decisions: usize, conditions: usize, listed: usize) -> InstrumentedBuild {
+        let text = "c".repeat(conditions).repeat(decisions);
+        let mut regions = vec![json!([0, 0, 0, text.len(), 5])];
+        let mut listed_decisions = Vec::new();
+        for decision in 0..decisions {
+            let start = decision * conditions;
+            regions.push(json!([5, 0, start, conditions, decision]));
+            for condition in 0..conditions {
+                let next = if condition + 1 == conditions { -1 } else { condition as i64 + 1 };
+                regions.push(json!([6, 0, start + condition, 1, 5, 5, condition, -1, next]));
+            }
+            if decision < listed {
+                listed_decisions.push(json!({
+                    "id": decision, "conditions": conditions, "vectors": [],
+                }));
+            }
+        }
+        let map = serde_json::from_value(json!({
+            "version": 2,
+            "functions": [{
+                "name": "src/D.sol:D.f()", "hash": "0x1", "counters": [1, 1], "files": [0],
+                "regions": regions, "decisions": listed_decisions,
+            }]
+        }))
+        .unwrap();
+        let source = InstrumentedSource::new("src/D.sol".into(), text, true, map);
+        InstrumentedBuild::new(BTreeMap::from([(0, source)]))
+    }
+
+    fn mcdc_regions(build: &InstrumentedBuild) -> (usize, usize, usize) {
+        let inputs = build.function_inputs();
+        assert_eq!(inputs.len(), 1);
+        let count = |kind| inputs[0].regions.iter().filter(|region| region.kind == kind).count();
+        (count(RegionKind::McdcDecision), count(RegionKind::McdcBranch), count(RegionKind::Branch))
+    }
+
+    #[test]
+    fn a_function_whose_bitmap_does_not_fit_loses_its_mcdc_regions_only() {
+        // Three decisions of 64 conditions need 3 * 65 bits, which fit.
+        let fits = chained_decisions(3, 64, 3);
+        assert_eq!(mcdc_regions(&fits), (3, 192, 0));
+        assert_eq!(fits.function_inputs()[0].bitmap.len(), 25);
+        // Thirty-two of them need 260 bytes, which a text profile cannot hold.
+        let too_big = chained_decisions(32, 64, 32);
+        assert_eq!(mcdc_regions(&too_big), (0, 0, 32 * 64));
+        assert!(too_big.function_inputs()[0].bitmap.is_empty());
+    }
+
+    #[test]
+    fn a_decision_missing_from_the_map_loses_its_mcdc_regions_only() {
+        assert_eq!(mcdc_regions(&chained_decisions(2, 3, 2)), (2, 6, 0));
+        assert_eq!(mcdc_regions(&chained_decisions(2, 3, 1)), (0, 0, 6));
     }
 
     #[test]

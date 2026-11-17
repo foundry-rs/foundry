@@ -20,7 +20,8 @@
 //! probe, with bit 31 set, drives the decision stack that records which test vectors of a
 //! decision ran. The tables are per code object, keyed by code hash, and taken with
 //! [`take_coverage`] once the call ends. With edge recording on, plain probes also feed the edge
-//! hits, and code that carries probes no longer records its `EDGECOV` hits.
+//! hits as AFL-style edges, the hash of the previous probe and this one in the same call frame, and
+//! code that ran a probe no longer records its `EDGECOV` hits.
 
 use alloy_primitives::{
     Address, B256, Bytes, U256,
@@ -50,7 +51,10 @@ pub const COVERAGE: u8 = 0xC2;
 /// increment.
 const MCDC_FLAG: u32 = 1 << 31;
 
-/// The most code hashes the cache of which code carries probes holds before it starts over.
+/// The mask of an edge ID that two probes hash to, as large as the dense edge tables allow.
+const EDGE_MASK: u32 = (1 << 16) - 1;
+
+/// The most code hashes the cache of which code ran probes holds before it starts over.
 const MAX_PROBE_CACHE: usize = 1 << 16;
 
 /// Gas of the `PUSHn` that precedes every `EDGECOV` or `CMPLOG`, refunded by the instruction.
@@ -250,7 +254,7 @@ fn probe_id(word: U256) -> Option<u32> {
 }
 
 /// The `EDGECOV` instruction: pops the edge ID, records the hit and refunds the `PUSH` gas. Code
-/// that carries `COVERAGE` probes feeds the edge hits through them instead.
+/// that ran a `COVERAGE` probe feeds the edge hits through its probes instead.
 #[instruction(dynamic_gas, no_stack_preamble)]
 fn edgecov(cx: _) -> Result {
     with_state(|state| {
@@ -333,6 +337,7 @@ impl State {
     /// Handles a `COVERAGE` probe with value `value` in the executing code.
     #[inline]
     fn probe<T: EvmTypesHost>(&mut self, state: &InterpreterState<'_, '_, T>, value: u32) {
+        self.coverage.note_probe(state);
         if value & MCDC_FLAG != 0 {
             if self.coverage.counting {
                 self.coverage.mcdc(state, value);
@@ -343,7 +348,10 @@ impl State {
             self.coverage.hit(state, value);
         }
         if self.edges && (1..=MAX_EDGE_ID).contains(&value) {
-            self.hits.record(value);
+            // Like AFL, an edge is a pair of probes, so the first time a path reaches a probe by
+            // another probe is new coverage, even if the probe itself ran before.
+            let edge = self.coverage.edge(state, value);
+            self.hits.record(edge);
         }
     }
 }
@@ -375,10 +383,19 @@ struct Executing {
     /// The address of the code's bytes.
     ptr: *const u8,
     hash: B256,
-    /// Whether the code carries `COVERAGE` probes.
+    /// Whether the code ran a `COVERAGE` probe.
     has_probes: bool,
     /// The index of the code's table, once it has one.
     table: Option<usize>,
+}
+
+/// The edge state of a call frame: the previous probe in it.
+#[derive(Clone, Copy, Debug)]
+struct FrameEdges {
+    depth: u16,
+    /// The address of the frame's message, which tells frames at one depth apart.
+    message: usize,
+    prev: u32,
 }
 
 /// An MC/DC decision in progress.
@@ -401,6 +418,8 @@ struct CoverageState {
     maps: Option<Box<CodeMaps>>,
     /// The decisions in progress, innermost last.
     mcdc: Vec<McdcEntry>,
+    /// The call frames that ran probes, innermost last.
+    frames: Vec<FrameEdges>,
 }
 
 /// Lookups by code hash.
@@ -408,8 +427,8 @@ struct CoverageState {
 struct CodeMaps {
     /// The index of each code object's table.
     table_of: B256HashMap<usize>,
-    /// Whether the code with a hash carries probes. It outlives the calls, as scanning the code
-    /// for probes takes longer than a short call.
+    /// Whether the code with a hash ran a probe. It outlives the calls, so that code that ran one
+    /// in an earlier call has no `EDGECOV` hits from its first instruction.
     has_probes: B256HashMap<bool>,
 }
 
@@ -427,6 +446,7 @@ impl CoverageState {
             tables: Vec::new(),
             maps: None,
             mcdc: Vec::new(),
+            frames: Vec::new(),
         }
     }
 
@@ -451,10 +471,7 @@ impl CoverageState {
         if maps.has_probes.len() >= MAX_PROBE_CACHE {
             maps.has_probes.clear();
         }
-        let has_probes = *maps
-            .has_probes
-            .entry(hash)
-            .or_insert_with(|| carries_probes(code.original_byte_slice()));
+        let has_probes = maps.has_probes.get(&hash).copied().unwrap_or(false);
         self.executing = Executing {
             ptr: state.bytecode().as_ptr(),
             hash,
@@ -462,6 +479,42 @@ impl CoverageState {
             table: maps.table_of.get(&hash).copied(),
         };
         self.pinned = code.clone();
+    }
+
+    /// Records that the executing code ran a probe, which is what tells code with probes from code
+    /// that has a `COVERAGE` byte in its data.
+    #[inline]
+    fn note_probe<T: EvmTypesHost>(&mut self, state: &InterpreterState<'_, '_, T>) {
+        let executing = self.executing(state);
+        if !executing.has_probes {
+            executing.has_probes = true;
+            let hash = executing.hash;
+            self.maps.get_or_insert_default().has_probes.insert(hash, true);
+        }
+    }
+
+    /// The AFL-style edge ID of a probe: the probe and the previous one in the same call frame,
+    /// hashed together. A call frame starts without a previous probe.
+    fn edge<T: EvmTypesHost>(&mut self, state: &InterpreterState<'_, '_, T>, probe: u32) -> u32 {
+        let message = state.message();
+        let (depth, address) = (message.depth, std::ptr::from_ref(message) as usize);
+        // The frames deeper than this one returned.
+        while self.frames.last().is_some_and(|frame| frame.depth > depth) {
+            self.frames.pop();
+        }
+        match self.frames.last_mut() {
+            Some(frame) if frame.depth == depth => {
+                if frame.message != address {
+                    *frame = FrameEdges { depth, message: address, prev: 0 };
+                }
+            }
+            _ => self.frames.push(FrameEdges { depth, message: address, prev: 0 }),
+        }
+        let frame = self.frames.last_mut().expect("the frame was just pushed");
+        let edge = (probe ^ frame.prev) & EDGE_MASK;
+        frame.prev = probe >> 1;
+        // The ID 0 is reserved.
+        edge.max(1)
     }
 
     /// The table of the executing code, created on first use.
@@ -554,24 +607,9 @@ impl CoverageState {
             Executing { ptr: std::ptr::null(), hash: B256::ZERO, has_probes: false, table: None };
         self.pinned = Bytecode::new();
         self.mcdc.clear();
+        self.frames.clear();
         hits
     }
-}
-
-/// Returns whether the code has a `COVERAGE` opcode, outside the data of a push.
-fn carries_probes(code: &[u8]) -> bool {
-    let mut pc = 0;
-    while let Some(&opcode) = code.get(pc) {
-        if opcode == COVERAGE {
-            return true;
-        }
-        pc += if (op::PUSH1..=op::PUSH32).contains(&opcode) {
-            usize::from(opcode - op::PUSH0) + 1
-        } else {
-            1
-        };
-    }
-    false
 }
 
 /// Adds the `EDGECOV`, `CMPLOG`, and `COVERAGE` instructions to `config`.
