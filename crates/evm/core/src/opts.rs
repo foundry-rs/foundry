@@ -140,7 +140,8 @@ pub struct EvmOpts {
     /// Whether to disable block gas limit checks.
     pub disable_block_gas_limit: bool,
 
-    /// Whether to enable tx gas limit checks as imposed by Osaka (EIP-7825).
+    /// Whether to enable tx gas limit checks as imposed by Osaka (EIP-7825) and
+    /// Amsterdam (EIP-8037).
     pub enable_tx_gas_limit: bool,
 
     #[serde(flatten)]
@@ -1182,10 +1183,12 @@ impl EvmOpts {
         // is a contract. So we disable the check by default.
         version.features.remove(EvmFeatures::EIP3607 | EvmFeatures::NONCE_CHECK);
         version.features.set(EvmFeatures::BLOCK_GAS_LIMIT_CHECK, !self.disable_block_gas_limit);
-        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
+        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825) and
+        // Amsterdam (EIP-8037).
         // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
         if !self.enable_tx_gas_limit {
             version.tx_gas_limit_cap = u64::MAX;
+            version.tx_total_gas_cap = u64::MAX;
         }
         version
     }

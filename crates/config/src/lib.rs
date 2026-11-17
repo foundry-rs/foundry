@@ -610,7 +610,8 @@ pub struct Config {
     /// Whether to disable the block gas limit checks.
     pub disable_block_gas_limit: bool,
 
-    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825) and
+    /// Amsterdam (EIP-8037).
     pub enable_tx_gas_limit: bool,
 
     /// Deprecated address-label alias; use [`TracingConfig::labels`].
