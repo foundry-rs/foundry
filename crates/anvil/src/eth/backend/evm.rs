@@ -591,9 +591,7 @@ pub fn evm_tx<N: AnvilEvmNetwork>(
     let mut evm_tx = TypesFor::<N>::evm_tx(envelope, sender, payload)
         .map_err(|err| BlockchainError::Message(err.to_string()))?;
     if !payload.is_simulated() {
-        let (mut inner, signer) = evm_tx.into_parts();
-        N::apply_impersonation(&mut inner);
-        evm_tx = Recovered::new_unchecked(inner, signer);
+        N::apply_impersonation(evm_tx.inner_mut());
     }
     if let Some(cheats) = cheats {
         let overrides = authority_overrides(tx, cheats);

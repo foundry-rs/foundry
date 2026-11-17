@@ -1,15 +1,10 @@
-//! Gas estimates and impersonation for Tempo configurable accounts (TIP-1107, TIP-1113).
+//! Gas estimates and impersonation for Tempo configurable accounts (TIP-1107, TIP-1111, TIP-1113).
 //!
 //! Owners have not signed when a transaction is estimated or impersonated, so Anvil models their
 //! quorum with placeholder `0x05` approvals, as a Tempo node does for `eth_estimateGas`.
 
 use super::*;
 use alloy_provider::PendingTransactionBuilder;
-
-/// A no-op call that every transaction in these tests makes.
-const fn noop() -> Call {
-    Call { to: TxKind::Call(Address::repeat_byte(0x73)), value: U256::ZERO, input: Bytes::new() }
-}
 
 /// A configuration over `owners`, given as keys and their weights.
 fn weighted_config(
@@ -80,16 +75,6 @@ async fn estimate(provider: &RetryProvider, request: serde_json::Value) -> Resul
         .await
         .map(|gas| gas.to())
         .map_err(|err| err.to_string())
-}
-
-async fn deal(provider: &RetryProvider, account: Address) {
-    provider
-        .raw_request::<_, ()>(
-            "anvil_dealTIP20".into(),
-            (account, ALPHA_USD, U256::from(1_000_000_000_000u64)),
-        )
-        .await
-        .unwrap();
 }
 
 /// Sends `account`'s owner-signed no-op at `nonce` with `gas_limit` and returns its gas used.
@@ -245,4 +230,73 @@ async fn test_tempo_t14_impersonate_configurable_account() {
         assert_eq!(signature.config(), &account.config);
         assert_eq!(provider.get_transaction_count(address).await.unwrap(), 3);
     }
+}
+
+/// A configurable account acts as an access key of an EOA (TIP-1111). The EOA authorizes it with
+/// key type `configurable`, and its owners approve the keychain V2 hash
+/// `keccak256(0x04 || tx_hash || root)`, as Tempo and viem sign it, in a `0x05` signature that a
+/// keychain signature wraps for the EOA. The estimate models that quorum from the `keyId` and the
+/// account's witness, and the first such transaction registers the account. A quorum over the
+/// bare transaction hash, which the account's own transactions carry, does not authorize.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t14_configurable_account_as_access_key() {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let provider = handle.http_provider();
+    let root = handle.dev_accounts().next().unwrap();
+    deal(&provider, root).await;
+    let account = TestConfigurableAccount::fixture();
+
+    let authorize = authorizeKeyCall {
+        keyId: account.address,
+        signatureType: KeychainSignatureType::ConfigurableAccount,
+        config: KeyRestrictions {
+            expiry: u64::MAX,
+            enforceLimits: false,
+            limits: vec![],
+            allowAnyCalls: true,
+            allowedCalls: vec![],
+        },
+    };
+    let mut authorization = request(root, 0);
+    authorization["gas"] = serde_json::json!(U256::from(T5_PRECOMPILE_GAS));
+    authorization["calls"] = serde_json::json!([Call {
+        to: TxKind::Call(ACCOUNT_KEYCHAIN_ADDRESS),
+        value: U256::ZERO,
+        input: authorize.abi_encode().into(),
+    }]);
+    let hash = provider
+        .raw_request::<_, B256>("eth_sendTransaction".into(), (authorization,))
+        .await
+        .unwrap();
+    let receipt =
+        PendingTransactionBuilder::new(provider.root().clone(), hash).get_receipt().await.unwrap();
+    assert!(receipt.status(), "authorizeKey should succeed: {receipt:?}");
+
+    let mut simulated = request(root, 1);
+    simulated["keyId"] = serde_json::json!(account.address);
+    simulated["configurableAccountSimulation"] = witness(&account, Some("secp256k1"));
+    simulated["configurableAccountSimulation"]["signer"] = serde_json::json!(account.address);
+    let gas = estimate(&provider, simulated).await.unwrap();
+
+    let mut tx = configurable_account_tx(&provider, 1, vec![noop()]).await;
+    tx.gas_limit = gas;
+    let bare = TempoSignature::Keychain(KeychainSignature::new(
+        root,
+        account.approve(tx.signature_hash()).await,
+    ));
+    let error = send_signed_tempo_tx(&provider, tx.clone(), bare).await.unwrap_err();
+    assert!(error.ends_with("Failed to recover the signer"), "unexpected error: {error}");
+
+    let keychain_hash = KeychainSignature::signing_hash(tx.signature_hash(), root);
+    let signature = TempoSignature::Keychain(KeychainSignature::new(
+        root,
+        account.approve(keychain_hash).await,
+    ));
+    let receipt = send_signed_tempo_tx(&provider, tx, signature).await.unwrap();
+    assert!(receipt.status(), "the access key should authorize: {receipt:?}");
+    assert_eq!(receipt.from, root);
+    assert_eq!(receipt.gas_used, gas);
+    assert_eq!(provider.get_transaction_count(root).await.unwrap(), 2);
+    assert_eq!(config_commitment(&provider, account.address).await, VIEM_CA_COMMITMENT_V0);
 }

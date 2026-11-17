@@ -1,6 +1,7 @@
-use super::{call_after_invariant_function, call_invariant_function, execute_tx};
+use super::{call_after_invariant_function, call_invariant_function};
 use crate::executors::{
     EarlyExit, Executor,
+    campaign::execute_invariant_tx,
     corpus::persist_campaign_optimization,
     invariant::shrink::{
         CheckSequenceOutcome, ShrinkProgress, shrink_sequence, shrink_sequence_value,
@@ -57,7 +58,10 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
 
     // Replay each call from the sequence, collect logs, traces and coverage.
     for tx in inputs {
-        let mut call_result = execute_tx(&mut executor, tx)?;
+        // The counterexample reports the value actually sent, which replay clamps to the sender's
+        // balance, as for campaign inputs.
+        let mut tx = tx.clone();
+        let mut call_result = execute_invariant_tx(&mut executor, &mut tx)?;
         logs.append(&mut call_result.logs);
         debug_bytecodes.extend(std::mem::take(&mut call_result.debug_bytecodes));
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
@@ -72,7 +76,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
 
         // Create counter example to be used in failed case.
         counterexample_sequence.push(BaseCounterExample::from_invariant_call(
-            tx,
+            &tx,
             &ided_contracts,
             call_result.traces,
             show_solidity,

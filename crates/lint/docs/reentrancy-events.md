@@ -7,7 +7,8 @@
 
 Reports events emitted after an external interaction, such as a state-changing contract
 call, low-level `call` or `delegatecall`, ETH `send` or `transfer`, or contract creation.
-Static calls and `view` or `pure` calls are excluded.
+Static calls and `view` or `pure` calls are excluded. Inline assembly counts as an interaction
+only if it can reach `call`, `callcode`, `delegatecall`, `create`, or `create2`.
 
 Interactions hidden in `using for` internal calls may be missed.
 

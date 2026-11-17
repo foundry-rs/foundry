@@ -159,7 +159,7 @@ impl<'a> SequenceMinimizer<'a> {
     }
 
     fn minimize_len(&mut self) {
-        if self.current_calls.len() <= 1 || !self.can_try() {
+        if self.current_calls.is_empty() || !self.can_try() {
             return;
         }
 
@@ -2031,9 +2031,11 @@ mod tests {
             None,
             |calls| {
                 replays += 1;
-                assert_eq!(calls.len(), 1);
-                assert_eq!(calls[0].sender, sender);
-                assert_eq!(calls[0].value, Some(U256::ZERO));
+                // The empty sequence is tried once, then the sender candidate once.
+                if let [call] = calls {
+                    assert_eq!(call.sender, sender);
+                    assert_eq!(call.value, Some(U256::ZERO));
+                }
                 false
             },
         )
@@ -2041,7 +2043,7 @@ mod tests {
 
         assert!(!minimized.changed());
         assert_eq!(minimized.accepted, 0);
-        assert_eq!(minimized.attempts, 1);
+        assert_eq!(minimized.attempts, 2);
         assert_eq!(replays, minimized.attempts);
     }
 

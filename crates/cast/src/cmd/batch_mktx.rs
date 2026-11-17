@@ -96,6 +96,11 @@ impl BatchMakeTxArgs {
         }
 
         let configurable_account = if raw_unsigned || ethsign || tempo_access_key.is_some() {
+            eyre::ensure!(
+                tx.tempo.configurable_access_key.is_none(),
+                "--tempo.configurable-access-key cannot be combined with --raw-unsigned, \
+                 --ethsign or a Tempo access key"
+            );
             None
         } else {
             tempo::resolve_configurable_account::<TempoNetwork>(
@@ -154,7 +159,7 @@ impl BatchMakeTxArgs {
                 .await?;
             tx.sign_with_tempo_wallet(&prepared).await?
         } else if let Some(account) = &configurable_account {
-            let from = account.account();
+            let from = account.sender();
             let Some(mut tx) = confirm_and_build(tx_builder, from, force, lane, false).await?
             else {
                 return Ok(());

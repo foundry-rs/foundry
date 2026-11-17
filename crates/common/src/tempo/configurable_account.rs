@@ -55,8 +55,9 @@ use tempo_primitives::{
     SignatureType, TempoTxEnvelope,
     transaction::{
         ConfigurableAccountConfig, ConfigurableAccountOwner, ConfigurableAccountSignature,
-        MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature, TEMPO_TX_TYPE_ID, TempoSignature,
-        TempoTransaction, configurable_account_digest, tt_signature::WebAuthnSignature,
+        KeychainSignature, MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature,
+        TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction, configurable_account_digest,
+        tt_signature::WebAuthnSignature,
     },
 };
 
@@ -449,13 +450,12 @@ pub fn quorum(owners: &[ConfigurableAccountOwner], threshold: u8, largest: bool)
 /// Tells whether owners among `keys` can approve for an account with `config`, as
 /// [`ConfigurableAccountSigner::new`] selects them.
 pub fn reaches_threshold(config: &ConfigurableAccountConfig, keys: &[Address]) -> bool {
-    let mut local = config
+    let local = config
         .owners
         .iter()
         .filter(|owner| keys.contains(&owner.owner))
-        .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
+        .cloned()
         .collect::<Vec<_>>();
-    local.sort_by_key(|owner| owner.owner);
     !quorum(&local, config.threshold, false).is_empty()
 }
 
@@ -488,12 +488,11 @@ pub fn combine_approvals(
         by_owner.insert(owner, approval);
     }
 
-    let approvers = by_owner
-        .keys()
-        .map(|&owner| ConfigurableAccountOwner {
-            owner,
-            weight: config.owner_weight(owner).unwrap_or_default(),
-        })
+    let approvers = config
+        .owners
+        .iter()
+        .filter(|owner| by_owner.contains_key(&owner.owner))
+        .cloned()
         .collect::<Vec<_>>();
     let selected = quorum(&approvers, config.threshold, false);
     if selected.is_empty() {
@@ -560,7 +559,18 @@ fn parse_webauthn_assertion(json: &Value) -> Result<PrimitiveSignature> {
         if name == "clientDataJSON" && value.starts_with('{') {
             return Ok(value.as_bytes().to_vec());
         }
-        decode_binary(value).wrap_err_with(|| format!("invalid `{name}`"))
+        // 0x-prefixed hex, or base64url with or without padding.
+        let decoded = if value.starts_with("0x") {
+            hex::decode(value).map_err(eyre::Report::from)
+        } else {
+            const BASE64URL: GeneralPurpose = GeneralPurpose::new(
+                &URL_SAFE,
+                GeneralPurposeConfig::new()
+                    .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+            );
+            BASE64URL.decode(value).map_err(eyre::Report::from)
+        };
+        decoded.wrap_err_with(|| format!("invalid `{name}`"))
     };
 
     let public_key = field("publicKey")?;
@@ -591,18 +601,6 @@ fn parse_webauthn_assertion(json: &Value) -> Result<PrimitiveSignature> {
         pub_key_y: B256::from_slice(&point[32..]),
         webauthn_data: Bytes::from(webauthn_data),
     }))
-}
-
-/// Decodes 0x-prefixed hex or base64url, with or without padding.
-fn decode_binary(value: &str) -> Result<Vec<u8>> {
-    if value.starts_with("0x") {
-        return Ok(hex::decode(value)?);
-    }
-    const BASE64URL: GeneralPurpose = GeneralPurpose::new(
-        &URL_SAFE,
-        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
-    );
-    Ok(BASE64URL.decode(value)?)
 }
 
 /// A configuration as `cast wallet owners --json` prints it, and as `forge script` saves it for
@@ -759,13 +757,16 @@ pub fn stored_owner_keys(
     })
 }
 
-/// Signs the transactions of a configurable account with `0x05` signatures from local owner keys.
+/// Signs the transactions of a configurable account with `0x05` signatures from local owner keys,
+/// or, as an access key of another account (TIP-1111), with keychain V2 signatures that wrap them.
 #[derive(Clone, Debug)]
 pub struct ConfigurableAccountSigner {
     account: Address,
     config: ConfigurableAccountConfig,
     /// The approving owners, sorted by address, whose weight reaches the threshold.
     owners: Vec<ConfigurableAccountOwnerKey>,
+    /// The account that the configurable account signs for as an access key, if any.
+    parent: Option<Address>,
 }
 
 impl ConfigurableAccountSigner {
@@ -781,17 +782,12 @@ impl ConfigurableAccountSigner {
         keys: impl IntoIterator<Item = ConfigurableAccountOwnerKey>,
         hint: &str,
     ) -> Result<Self> {
-        let mut keys = keys
-            .into_iter()
-            .filter(|key| config.owner_weight(key.address()).is_some())
-            .map(|key| (key.address(), key))
-            .collect::<BTreeMap<_, _>>();
-        let local = keys
-            .keys()
-            .map(|&owner| ConfigurableAccountOwner {
-                owner,
-                weight: config.owner_weight(owner).unwrap_or_default(),
-            })
+        let mut keys = keys.into_iter().map(|key| (key.address(), key)).collect::<BTreeMap<_, _>>();
+        let local = config
+            .owners
+            .iter()
+            .filter(|owner| keys.contains_key(&owner.owner))
+            .cloned()
             .collect::<Vec<_>>();
         // The fewest local owners that the node accepts, as `combine_approvals` selects them.
         let selected = quorum(&local, config.threshold, false);
@@ -824,12 +820,25 @@ impl ConfigurableAccountSigner {
             );
         }
         let owners = selected.iter().filter_map(|owner| keys.remove(owner)).collect();
-        Ok(Self { account, config, owners })
+        Ok(Self { account, config, owners, parent: None })
+    }
+
+    /// Signs as an access key of `parent`, which authorized the account with key type
+    /// `configurable` (TIP-1111).
+    pub const fn with_parent(mut self, parent: Address) -> Self {
+        self.parent = Some(parent);
+        self
     }
 
     /// The configurable account.
     pub const fn account(&self) -> Address {
         self.account
+    }
+
+    /// The transaction sender: the account the access key signs for, else the configurable
+    /// account itself.
+    pub fn sender(&self) -> Address {
+        self.parent.unwrap_or(self.account)
     }
 
     /// The account's current configuration.
@@ -844,26 +853,45 @@ impl ConfigurableAccountSigner {
         simulation_spec(self.account, &self.config, &approvals)
     }
 
-    /// Makes `tx` a Tempo transaction from the account, whose gas estimate models the owners'
-    /// approvals.
+    /// Makes `tx` a Tempo transaction from the sender, whose gas estimate models the owners'
+    /// approvals. As an access key, the account is the request's `keyId`, so the node models its
+    /// quorum inside a keychain signature.
     pub fn prepare_request<N: Network>(&self, tx: &mut N::TransactionRequest)
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        prepare_request::<N>(tx, self.account, self.simulation_spec());
+        prepare_request::<N>(tx, self.sender(), self.simulation_spec());
+        if self.parent.is_some() {
+            tx.set_key_id(self.account);
+        }
     }
 
     /// Signs a filled request with the owners' approvals.
+    ///
+    /// As an access key of `parent`, the owners approve the keychain V2 hash
+    /// `keccak256(0x04 || tx_hash || parent)`, as Tempo and viem do, and the `0x05` signature is
+    /// wrapped in a keychain signature for `parent`.
     pub async fn sign_request(&self, request: TempoTransactionRequest) -> Result<TempoTxEnvelope> {
         if let Some(from) = request.from() {
-            eyre::ensure!(
-                from == self.account,
-                "transaction sender {from} is not the configurable account {}",
-                self.account
-            );
+            match self.parent {
+                Some(parent) => eyre::ensure!(
+                    from == parent,
+                    "transaction sender {from} is not {parent}, which the configurable access key \
+                     {} signs for",
+                    self.account
+                ),
+                None => eyre::ensure!(
+                    from == self.account,
+                    "transaction sender {from} is not the configurable account {}",
+                    self.account
+                ),
+            }
         }
-        let tx = request.build_aa().map_err(|err| eyre::eyre!("{err}"))?;
-        let inner = tx.signature_hash();
+        let tx = request.build_aa().map_err(ca_error)?;
+        let inner = match self.parent {
+            Some(parent) => KeychainSignature::signing_hash(tx.signature_hash(), parent),
+            None => tx.signature_hash(),
+        };
         let digest = configurable_account_digest(inner, self.account, self.config.version);
         let mut approvals = Vec::with_capacity(self.owners.len());
         for owner in &self.owners {
@@ -875,7 +903,11 @@ impl ConfigurableAccountSigner {
             ConfigurableAccountSignature::try_new(self.account, self.config.clone(), approvals)
                 .map_err(ca_error)?;
         signature.verify_approvals(inner).map_err(ca_error)?;
-        Ok(TempoTxEnvelope::AA(tx.into_signed(TempoSignature::ConfigurableAccount(signature))))
+        let signature = match self.parent {
+            Some(parent) => TempoSignature::Keychain(KeychainSignature::new(parent, signature)),
+            None => TempoSignature::ConfigurableAccount(signature),
+        };
+        Ok(TempoTxEnvelope::AA(tx.into_signed(signature)))
     }
 }
 
@@ -1316,6 +1348,8 @@ mod tests {
             ConfigurableAccountOwnerKey::from(WalletSigner::Local(key.clone()))
         };
 
+        let addresses = keys.iter().map(|key| key.address()).collect::<Vec<_>>();
+        assert!(reaches_threshold(&config, &addresses));
         let signer =
             ConfigurableAccountSigner::new(account, config.clone(), keys.iter().map(wallet), "")
                 .unwrap();
@@ -1324,9 +1358,11 @@ mod tests {
             [heavy]
         );
 
-        // Nine weight-one owners reach the threshold of nine only past the limit.
+        // Nine weight-one owners reach the threshold of nine only past the limit, so `forge
+        // script` saves their transactions for offline owners.
         let mut config = config;
         config.owners.last_mut().unwrap().weight = 1;
+        assert!(!reaches_threshold(&config, &addresses));
         let owners = config.owners.iter().map(|owner| owner.owner.to_string()).collect::<Vec<_>>();
         let err = ConfigurableAccountSigner::new(
             account,
