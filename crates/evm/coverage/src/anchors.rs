@@ -750,11 +750,12 @@ impl<'a> AnchorIndex<'a> {
     /// sides cannot be told apart.
     ///
     /// The code that each side runs alone, before it joins the other's, decides when an arm has
-    /// code there. An arm that is the jump itself is the taken side. An arm without code is entered
-    /// by the side that does not reach the next statement of the block, such as the loop exit of a
-    /// `break` or the increment of a `continue`, but only when the sides never meet and the other
-    /// side does not reach that statement either: a side that carries a value into the join point,
-    /// as with `if (c) { x = 2; }`, meets the other side's code.
+    /// code there, including the code of the functions that the arm calls by name, which a
+    /// compiler can inline. An arm that is the jump itself is the taken side. An arm without code
+    /// is entered by the side that does not reach the next statement of the block, such as the loop
+    /// exit of a `break` or the increment of a `continue`, but only when the sides never meet and
+    /// the other side does not reach that statement either: a side that carries a value into the
+    /// join point, as with `if (c) { x = 2; }`, meets the other side's code.
     fn then_is_taken(&self, anchors: &(ItemAnchor, ItemAnchor), arms: &IfArms) -> Option<bool> {
         let (fallthrough, taken) =
             (self.trace(anchors.0.instruction), self.trace(anchors.1.instruction));
@@ -762,16 +763,25 @@ impl<'a> AnchorIndex<'a> {
         let alone = |trace: &[usize]| trace.iter().copied().take_while(|ic| !shared(ic)).count();
         let (fallthrough_alone, taken_alone) =
             (&fallthrough[..alone(&fallthrough)], &taken[..alone(&taken)]);
-        let taken_enters = |arm: &SourceLocation| {
-            let holds = |trace: &[usize]| trace.iter().any(|&ic| self.starts_in_range(ic, arm));
+        let taken_enters = |arm: &SourceLocation, callees: &[SourceLocation]| {
+            let holds = |trace: &[usize]| {
+                trace.iter().any(|&ic| {
+                    self.starts_in_range(ic, arm)
+                        || callees.iter().any(|callee| self.starts_in_range(ic, callee))
+                })
+            };
             match (holds(fallthrough_alone), holds(taken_alone)) {
                 (false, true) => Some(true),
                 (true, false) => Some(false),
                 _ => None,
             }
         };
-        let then_taken = taken_enters(&arms.then_arm);
-        let else_taken = arms.else_arm.as_ref().and_then(taken_enters).map(|taken| !taken);
+        let then_taken = taken_enters(&arms.then_arm, &arms.then_callees);
+        let else_taken = arms
+            .else_arm
+            .as_ref()
+            .and_then(|arm| taken_enters(arm, &arms.else_callees))
+            .map(|taken| !taken);
         match (then_taken, else_taken) {
             (Some(then), Some(other)) if then != other => return None,
             (Some(taken), _) | (None, Some(taken)) => return Some(taken),
@@ -1977,10 +1987,25 @@ mod tests {
         else_arm: bool,
         after: bool,
     ) -> ItemAnchors {
+        find_if_anchors_calling(bytecode, source_map, else_arm, after, None, None)
+    }
+
+    /// Like [`find_if_anchors_after`], with the function that each arm calls at the given byte
+    /// range.
+    fn find_if_anchors_calling(
+        bytecode: &[u8],
+        source_map: &str,
+        else_arm: bool,
+        after: bool,
+        then_callee: Option<Range<u32>>,
+        else_callee: Option<Range<u32>>,
+    ) -> ItemAnchors {
         let arms = IfArms {
             then_arm: location(40..60),
             else_arm: else_arm.then(|| location(61..69)),
             after: after.then(|| location(80..90)),
+            then_callees: then_callee.into_iter().map(location).collect(),
+            else_callees: else_callee.into_iter().map(location).collect(),
         };
         let items = (0..2 - u32::from(!else_arm))
             .map(|path_id| CoverageItem {
@@ -2085,6 +2110,62 @@ mod tests {
         );
         // An arm with code on each side decides nothing alone, so nothing is guessed for it.
         assert_eq!(if_anchors(&bytecode, "12:3:0;;10:60:0;63:3:0;;;63:3:0;;", true), [(5, None)]);
+    }
+
+    #[test]
+    fn if_edges_follow_the_code_of_called_functions() {
+        // Neither arm has code of its own: each calls a function that the compiler inlined, so
+        // the source map attributes its code to the function. The then arm calls the function at
+        // 100..110 and the else arm the one at 120..130.
+        let bytecode = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+        ];
+        // Each flag makes the arm call the function at 100..110 for the then arm and 120..130 for
+        // the else arm.
+        let anchors = |source_map, then_calls: bool, else_calls: bool| {
+            let anchors = find_if_anchors_calling(
+                &bytecode,
+                source_map,
+                true,
+                true,
+                then_calls.then_some(100..110),
+                else_calls.then_some(120..130),
+            );
+            (0..anchors.anchors.len())
+                .map(|i| (anchors.anchors[i].instruction, anchors.jumps.get(&i).copied()))
+                .collect::<Vec<_>>()
+        };
+        // The taken side runs the then arm's function, so path 0 counts the jump's edge and path 1
+        // the fallthrough, however the two are laid out.
+        assert_eq!(
+            anchors("12:3:0;;10:60:0;125:3:0;;;105:3:0;;;", true, true),
+            [(8, Some(4)), (5, None)]
+        );
+        assert_eq!(
+            anchors("12:3:0;;10:60:0;105:3:0;;;125:3:0;;;", true, true),
+            [(5, None), (8, Some(4))]
+        );
+        // One arm's function is enough to tell the sides apart.
+        assert_eq!(
+            anchors("12:3:0;;10:60:0;125:3:0;;;105:3:0;;;", false, true),
+            [(8, Some(4)), (5, None)]
+        );
+        // Both sides run the same function, so nothing is guessed.
+        assert!(anchors("12:3:0;;10:60:0;105:3:0;;;105:3:0;;;", true, false).is_empty());
+        // Neither arm calls a function that the code runs.
+        assert!(anchors("12:3:0;;10:60:0;125:3:0;;;105:3:0;;;", false, false).is_empty());
+        assert!(anchors("12:3:0;;10:60:0;225:3:0;;;205:3:0;;;", true, true).is_empty());
     }
 
     #[test]

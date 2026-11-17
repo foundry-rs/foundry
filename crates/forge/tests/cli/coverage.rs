@@ -2361,6 +2361,98 @@ BRDA:25,3,0,1
     );
 }
 
+// An `else if` arm that only calls an internal function has no code of its own once the optimizer
+// inlines the function, whose code the source map attributes to the function. The called function
+// still tells the two sides of the jump apart, so each path counts its own edge: the arms run 1, 2,
+// 4, 8 and 16 times, so swapped, dropped or summed counts differ.
+#[forgetest]
+fn if_else_if_paths_follow_called_functions_solc_and_solar_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Chain.sol",
+        r#"
+contract Chain {
+    enum Kind { Payable, NonPayable, Zero, Precompile, Forge }
+
+    uint256 public total;
+
+    function check(Kind kind) external {
+        if (kind == Kind.Payable) {
+            addOne();
+        } else if (kind == Kind.NonPayable) {
+            addTwo();
+        } else if (kind == Kind.Zero) {
+            addThree();
+        } else if (kind == Kind.Precompile) {
+            addFour();
+        } else if (kind == Kind.Forge) {
+            addFive();
+        }
+    }
+
+    function addOne() internal {
+        total += 1;
+    }
+
+    function addTwo() internal {
+        total += 2;
+    }
+
+    function addThree() internal {
+        total += 3;
+    }
+
+    function addFour() internal {
+        total += 4;
+    }
+
+    function addFive() internal {
+        total += 5;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Chain.t.sol",
+        r#"
+import "../src/Chain.sol";
+
+contract ChainTest {
+    function testPaths() public {
+        Chain chain = new Chain();
+        chain.check(Chain.Kind.Payable);
+        for (uint256 i = 0; i < 2; i++) chain.check(Chain.Kind.NonPayable);
+        for (uint256 i = 0; i < 4; i++) chain.check(Chain.Kind.Zero);
+        for (uint256 i = 0; i < 8; i++) chain.check(Chain.Kind.Precompile);
+        for (uint256 i = 0; i < 16; i++) chain.check(Chain.Kind.Forge);
+    }
+}
+"#,
+    );
+
+    let expected = str![[r#"
+...
+BRDA:10,0,0,1
+BRDA:10,0,1,30
+...
+BRDA:12,1,0,2
+BRDA:12,1,1,28
+...
+BRDA:14,2,0,4
+BRDA:14,2,1,24
+...
+BRDA:16,3,0,8
+BRDA:16,3,1,16
+...
+BRDA:18,4,0,16
+...
+"#]];
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
+    assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();

@@ -41,6 +41,11 @@ struct SourceVisitor<'gcx> {
     function_call_scopes: FxHashMap<Span, Arc<str>>,
     /// The span of the statement that follows each `if` statement in its block.
     stmts_after_if: FxHashMap<Span, Span>,
+    /// The coverage source ID of every HIR source.
+    hir_source_ids: Arc<HashMap<hir::SourceId, u32>>,
+    /// The byte range of every call by name and the functions it can call, as `(range,
+    /// callees)`.
+    callees: Vec<(Range<u32>, Vec<SourceLocation>)>,
 }
 
 struct SourceVisitorCheckpoint {
@@ -73,6 +78,11 @@ pub(crate) struct IfArms {
     /// The next statement of the enclosing block, which control reaches when the `if` does not
     /// leave it.
     pub(crate) after: Option<SourceLocation>,
+    /// The functions that the then arm calls by name. A compiler can inline their code, which the
+    /// source map attributes to them and not to the arm.
+    pub(crate) then_callees: Vec<SourceLocation>,
+    /// The functions that the else arm calls by name.
+    pub(crate) else_callees: Vec<SourceLocation>,
 }
 
 /// The source spans of the arms of a ternary expression.
@@ -102,16 +112,8 @@ struct ResolvedEmptySpecialFunction {
 
 fn resolve_empty_special_functions(
     gcx: Gcx<'_>,
-    data: &SourceFiles,
+    hir_source_ids: &HashMap<hir::SourceId, u32>,
 ) -> Vec<ResolvedEmptySpecialFunction> {
-    let hir_source_ids = data
-        .sources
-        .iter()
-        .map(|(&source_id, path)| {
-            let (hir_source_id, _) = gcx.get_hir_source(path).unwrap();
-            (hir_source_id, source_id)
-        })
-        .collect::<HashMap<_, _>>();
     let mut resolved = Vec::new();
     for contract_id in gcx.hir.contract_ids() {
         let contract = gcx.hir.contract(contract_id);
@@ -151,7 +153,11 @@ fn resolve_empty_special_functions(
 }
 
 impl<'gcx> SourceVisitor<'gcx> {
-    fn new(source_id: u32, gcx: Gcx<'gcx>) -> Self {
+    fn new(
+        source_id: u32,
+        gcx: Gcx<'gcx>,
+        hir_source_ids: Arc<HashMap<hir::SourceId, u32>>,
+    ) -> Self {
         Self {
             source_id,
             gcx,
@@ -162,6 +168,8 @@ impl<'gcx> SourceVisitor<'gcx> {
             function_calls: Default::default(),
             function_call_scopes: Default::default(),
             stmts_after_if: Default::default(),
+            hir_source_ids,
+            callees: Default::default(),
             items: Default::default(),
         }
     }
@@ -224,6 +232,26 @@ impl<'gcx> SourceVisitor<'gcx> {
     fn resolve_function_calls(&mut self, hir_source_id: hir::SourceId) {
         self.function_call_scopes = self.function_calls.iter().cloned().collect();
         let _ = hir::Visit::visit_nested_source(self, hir_source_id);
+        self.callees.sort_unstable_by_key(|(range, _)| range.start);
+        let callees = std::mem::take(&mut self.callees);
+        let callees_in = |arm: &SourceLocation| {
+            let start = callees.partition_point(|(range, _)| range.start < arm.bytes.start);
+            let mut found = callees[start..]
+                .iter()
+                .take_while(|(range, _)| range.start < arm.bytes.end)
+                .filter(|(range, _)| range.end <= arm.bytes.end)
+                .flat_map(|(_, callees)| callees.iter().cloned())
+                .collect::<Vec<_>>();
+            found.sort_by_key(|callee| (callee.source_id, callee.bytes.start, callee.bytes.end));
+            found.dedup_by_key(|callee| (callee.source_id, callee.bytes.clone()));
+            found
+        };
+        for (_, kind) in &mut self.branch_kinds {
+            if let BranchKind::If(arms) = kind {
+                arms.then_callees = callees_in(&arms.then_arm);
+                arms.else_callees = arms.else_arm.as_ref().map(callees_in).unwrap_or_default();
+            }
+        }
     }
 
     fn sort(&mut self) {
@@ -277,6 +305,10 @@ impl<'gcx> SourceVisitor<'gcx> {
     }
 
     fn source_location_for(&self, span: Span) -> SourceLocation {
+        self.location(span, self.source_id, self.contract_name.clone())
+    }
+
+    fn location(&self, span: Span, source_id: u32, contract_name: Arc<str>) -> SourceLocation {
         let files = self.gcx.sess.source_map().files();
         let source = files.span_to_source(span).unwrap();
         let mut bytes = source.data;
@@ -292,10 +324,33 @@ impl<'gcx> SourceVisitor<'gcx> {
         let first = source.file.lookup_line(RelativeBytePos::from_usize(bytes.start)).unwrap();
         let last = source.file.lookup_line(RelativeBytePos::from_usize(bytes.end)).unwrap();
         SourceLocation {
-            source_id: self.source_id as usize,
-            contract_name: self.contract_name.clone(),
+            source_id: source_id as usize,
+            contract_name,
             bytes: bytes.start as u32..bytes.end as u32,
             lines: first as u32 + 1..last as u32 + 2,
+        }
+    }
+
+    /// Records the functions that a call by name can run, from the functions its callee names
+    /// resolve to. An overloaded name resolves to every overload.
+    fn push_callees(&mut self, call: &hir::Expr<'_>, callee: &hir::Expr<'_>) {
+        let hir::ExprKind::Ident(res) = &callee.peel_parens().kind else { return };
+        let callees = res
+            .iter()
+            .filter_map(|res| match res {
+                hir::Res::Item(hir::ItemId::Function(id)) => Some(self.gcx.hir.function(*id)),
+                _ => None,
+            })
+            .filter(|function| function.body.is_some())
+            .filter_map(|function| {
+                let &source_id = self.hir_source_ids.get(&function.source)?;
+                let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
+                Some(self.location(function.span, source_id, contract.unwrap_or_default().into()))
+            })
+            .collect::<Vec<_>>();
+        if !callees.is_empty() {
+            let bytes = self.gcx.sess.source_map().span_to_source(call.span).unwrap().data;
+            self.callees.push((bytes.start as u32..bytes.end as u32, callees));
         }
     }
 
@@ -387,7 +442,13 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     let anchor_loc = self.source_location_for(then_stmt.span);
                     let after_span = self.stmts_after_if.get(&stmt.span).copied();
                     let after = after_span.map(|span| self.source_location_for(span));
-                    let mut arms = IfArms { then_arm: anchor_loc.clone(), else_arm: None, after };
+                    let mut arms = IfArms {
+                        then_arm: anchor_loc.clone(),
+                        else_arm: None,
+                        after,
+                        then_callees: Vec::new(),
+                        else_callees: Vec::new(),
+                    };
                     self.push_item_kind(
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
                         stmt.span,
@@ -597,6 +658,7 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
             let prev = std::mem::replace(&mut self.contract_name, scope);
             self.push_stmt(expr.span);
             self.contract_name = prev;
+            self.push_callees(expr, lhs);
         }
         self.walk_expr(expr)
     }
@@ -659,8 +721,17 @@ impl SourceAnalysis {
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
         let mut resolved_empty_special_functions = Vec::new();
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
+            let hir_source_ids = Arc::new(
+                data.sources
+                    .iter()
+                    .map(|(&source_id, path)| {
+                        let (hir_source_id, _) = compiler.gcx().get_hir_source(path).unwrap();
+                        (hir_source_id, source_id)
+                    })
+                    .collect::<HashMap<_, _>>(),
+            );
             resolved_empty_special_functions =
-                resolve_empty_special_functions(compiler.gcx(), data);
+                resolve_empty_special_functions(compiler.gcx(), &hir_source_ids);
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -670,7 +741,8 @@ impl SourceAnalysis {
                     let ast = source.ast.as_ref().unwrap();
                     let (hir_source_id, _) = compiler.gcx().get_hir_source(path).unwrap();
 
-                    let mut visitor = SourceVisitor::new(source_id, compiler.gcx());
+                    let mut visitor =
+                        SourceVisitor::new(source_id, compiler.gcx(), hir_source_ids.clone());
                     for item in ast.items.iter() {
                         match &item.kind {
                             // Contracts: walk their functions, dropping test contracts.
