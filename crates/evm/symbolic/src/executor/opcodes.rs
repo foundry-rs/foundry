@@ -665,6 +665,18 @@ impl SymbolicExecutor {
                 match state.constrained_usize_checked(&mut self.cx, &size) {
                     Some(Ok(size)) => {
                         let bytes = state.memory.read_byte_exprs_offset(&mut self.cx, offset, size);
+                        // A folded nested mapping slot can reach storage only as the slot word of
+                        // a mapping preimage, so its preimage is searched here too. A search that
+                        // stops early leaves the slot unsearched, which keeps it a word equality.
+                        if size == 64
+                            && let Ok(slot) = concrete_expr_bytes(&bytes[32..], "mapping slot")
+                        {
+                            let slot = U256::from_be_slice(&slot);
+                            if !self.folded_slots.resolve_nested(&mut self.cx, slot, self.deadline)
+                            {
+                                self.cx.mark_unsearched_slot(slot);
+                            }
+                        }
                         let hash = keccak_word(&mut self.cx, bytes.clone());
                         let has_mapping_hook = state
                             .mapping_storage_store_hooks

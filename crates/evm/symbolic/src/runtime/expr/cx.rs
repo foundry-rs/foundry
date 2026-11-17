@@ -16,6 +16,8 @@ pub(crate) struct SymCx {
     ///
     /// Keys are strong hash-consed handles, so the map is bounded like the SAT cache.
     solver_normalized_words: HashMap<SymExpr, SymExpr>,
+    /// Constant mapping slot words whose folded slot search stopped early.
+    unsearched_slots: HashSet<U256>,
 }
 
 struct SymCxCache {
@@ -48,6 +50,7 @@ impl SymCx {
             concrete_keccak_preimages: BTreeMap::new(),
             cache: SymCxCache { zero, one, bool_true, bool_false, bytes_empty },
             solver_normalized_words: HashMap::default(),
+            unsearched_slots: HashSet::default(),
         }
     }
 
@@ -107,6 +110,14 @@ impl SymCx {
         hash: U256,
     ) -> Option<Arc<[SymExpr]>> {
         self.concrete_keccak_preimages.get(&hash).cloned()
+    }
+
+    pub(crate) fn mark_unsearched_slot(&mut self, slot: U256) {
+        self.unsearched_slots.insert(slot);
+    }
+
+    pub(in crate::runtime::expr) fn is_unsearched_slot(&self, slot: U256) -> bool {
+        self.unsearched_slots.contains(&slot)
     }
 
     /// Returns the closest recorded concrete hash below `value` that `value` is a storage layout
