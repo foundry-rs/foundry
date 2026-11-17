@@ -57,6 +57,8 @@ pub(crate) enum BranchKind {
     Ternary(TernaryArms),
     /// An `if` statement. Path 0 enters the then arm and path 1 the else arm.
     If(IfArms),
+    /// A Yul `if` with the given body. Path 0 enters the body and path 1 skips it.
+    YulIf(SourceLocation),
 }
 
 /// The source spans of the arms of an `if` statement.
@@ -483,8 +485,10 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 // Don't walk assignments.
                 return ControlFlow::Continue(());
             }
-            StmtKind::If(..) => {
+            StmtKind::If(_, body) => {
                 let branch_id = self.next_branch_id();
+                let body = self.source_location_for(body.span);
+                self.branch_kinds.push((branch_id, BranchKind::YulIf(body)));
                 // Track both outcomes, including the implicit path that skips the body.
                 for path_id in 0..2 {
                     self.push_item_kind(
