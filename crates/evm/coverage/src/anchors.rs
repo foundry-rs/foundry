@@ -573,9 +573,10 @@ impl<'a> AnchorIndex<'a> {
 
     /// Returns whether every known way into `instruction` comes from an instruction mapped inside
     /// `loc`, and there is at least one. The known ways in are falling through and a push of its
-    /// address, which is a static jump or a return address, placed by [`Self::push_element`].
-    /// Unmapped instructions, such as the `JUMPDEST` that a compiler puts before a loop body,
-    /// belong to the block they lead, so the ways into that block count.
+    /// address, which is a static jump or a return address. A push takes the source element
+    /// given by [`Self::push_element`]. Unmapped instructions, such as the `JUMPDEST` that a
+    /// compiler puts before a loop body, belong to the block they lead, so the ways into that block
+    /// count.
     fn is_entered_only_from_inside(&self, instruction: usize, loc: &SourceLocation) -> bool {
         let inside = |element: &SourceElement| is_in_source_range(element, loc);
         let (mut any, mut all) = (false, true);
@@ -583,13 +584,13 @@ impl<'a> AnchorIndex<'a> {
         loop {
             if let Some(pc) = self.ic_pc_map.get(ic as u32) {
                 let start = self.address_pushes.partition_point(|&(target, _)| target < pc);
-                for &(_, push) in
-                    self.address_pushes[start..].iter().take_while(|&&(target, _)| target == pc)
+                for element in self.address_pushes[start..]
+                    .iter()
+                    .take_while(|&&(target, _)| target == pc)
+                    .filter_map(|&(_, push)| self.push_element(push))
                 {
-                    if let Some(element) = self.push_element(push) {
-                        any = true;
-                        all &= inside(element);
-                    }
+                    any = true;
+                    all &= inside(element);
                 }
             }
             let Some(prev) = ic.checked_sub(1) else {
@@ -615,15 +616,17 @@ impl<'a> AnchorIndex<'a> {
     fn is_jumped_to_from_outside(&self, instruction: usize, loc: &SourceLocation) -> bool {
         let Some(pc) = self.ic_pc_map.get(instruction as u32) else { return false };
         let start = self.jumps.partition_point(|&(target, _)| target < pc);
-        self.jumps[start..].iter().take_while(|&&(target, _)| target == pc).any(|&(_, push)| {
-            self.push_element(push).is_some_and(|element| !is_within_source_span(element, loc))
-        })
+        self.jumps[start..]
+            .iter()
+            .take_while(|&&(target, _)| target == pc)
+            .filter_map(|&(_, push)| self.push_element(push))
+            .any(|element| !is_within_source_span(element, loc))
     }
 
     /// Returns the source element that places the push `push`. An unmapped push, such as the
     /// jump out of an `if` arm, belongs to the code it sits in, so it takes the element of the
     /// nearest mapped instruction that falls through into it. A push with no such instruction has
-    /// no place, and gives no evidence about where it comes from.
+    /// no place and gives no evidence.
     fn push_element(&self, push: usize) -> Option<&SourceElement> {
         let mut ic = push;
         loop {
@@ -634,7 +637,7 @@ impl<'a> AnchorIndex<'a> {
             if !self.falls_through.get(ic).copied().unwrap_or(false) {
                 return None;
             }
-            ic = ic.checked_sub(1)?;
+            ic -= 1;
         }
     }
 
@@ -1806,6 +1809,8 @@ mod tests {
             ("15:5:0;;;10:5:0;;0:100:0;", 0),
             // The only jump is inside the function, so the JUMPDEST is its exit.
             ("15:5:0;;;10:20:0;;12:3:0;", 0),
+            // An unmapped jump with no mapped code falling into it gives no evidence of a call.
+            ("15:5:0;;;10:20:0;;;-1:-1:-1;", 0),
         ] {
             let source_map = sourcemap::parse(source_map).unwrap();
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
