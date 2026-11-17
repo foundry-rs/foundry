@@ -469,11 +469,10 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 TernaryVisitor(self).walk_item(item)?;
                 let first = self.items.len();
                 let location = self.source_location_for(item.span);
-                let previous_function = self.current_function.replace(location);
+                let previous_function = self.current_function.replace(location.clone());
                 self.walk_item(item)?;
                 self.current_function = previous_function;
                 if storage_alias_body(func) {
-                    let location = self.source_location_for(item.span);
                     for id in first..self.items.len() {
                         self.anchor_hints.entry(id).or_default().alias_function =
                             Some(location.clone());
