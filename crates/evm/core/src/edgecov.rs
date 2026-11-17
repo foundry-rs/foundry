@@ -233,6 +233,17 @@ impl Drop for EdgeCovGuard {
     }
 }
 
+/// Starts a call frame at `depth`: the first probe in it has no previous probe. Call it where a
+/// frame starts, so that frames that the interpreter allocates alike stay apart.
+#[inline]
+pub fn enter_frame(depth: u16) {
+    with_state(|state| {
+        if state.depth != 0 && state.edges {
+            state.coverage.enter_frame(depth);
+        }
+    });
+}
+
 /// Takes this thread's edge hits in first-hit order.
 pub fn take_edges() -> Vec<InstrumentedEdgeHit> {
     with_state(|state| state.hits.take())
@@ -246,6 +257,11 @@ pub fn take_cmp_log() -> Vec<CmpOperands> {
 /// Takes this thread's `COVERAGE` hits of the code objects that ran, by code hash.
 pub fn take_coverage() -> Vec<(B256, CodeCoverage)> {
     with_state(|state| state.coverage.take())
+}
+
+/// Spreads a probe ID over the bits of a word, so that sequential IDs do not share edges.
+const fn mix(probe: u32) -> u32 {
+    probe.wrapping_mul(0x9E37_79B1).rotate_left(16)
 }
 
 /// Converts a probe's ID word, ignoring the reserved ID 0 and IDs above [`MAX_EDGE_ID`].
@@ -265,7 +281,7 @@ fn edgecov(cx: _) -> Result {
         cx.gas.erase_cost(PUSH_GAS);
         if state.edges
             && let Some(id) = probe_id(id)
-            && !state.coverage.executing(&*cx.state).has_probes
+            && !(state.coverage.any_probe_seen && state.coverage.executing(&*cx.state).has_probes)
         {
             state.hits.record(id);
         }
@@ -393,8 +409,6 @@ struct Executing {
 #[derive(Clone, Copy, Debug)]
 struct FrameEdges {
     depth: u16,
-    /// The address of the frame's message, which tells frames at one depth apart.
-    message: usize,
     prev: u32,
 }
 
@@ -418,8 +432,11 @@ struct CoverageState {
     maps: Option<Box<CodeMaps>>,
     /// The decisions in progress, innermost last.
     mcdc: Vec<McdcEntry>,
-    /// The call frames that ran probes, innermost last.
+    /// The call frames that started since the last call, innermost last.
     frames: Vec<FrameEdges>,
+    /// Whether any code ran a probe on this thread. Until one does, `EDGECOV` need not look up
+    /// the executing code.
+    any_probe_seen: bool,
 }
 
 /// Lookups by code hash.
@@ -447,6 +464,7 @@ impl CoverageState {
             maps: None,
             mcdc: Vec::new(),
             frames: Vec::new(),
+            any_probe_seen: false,
         }
     }
 
@@ -485,6 +503,7 @@ impl CoverageState {
     /// that has a `COVERAGE` byte in its data.
     #[inline]
     fn note_probe<T: EvmTypesHost>(&mut self, state: &InterpreterState<'_, '_, T>) {
+        self.any_probe_seen = true;
         let executing = self.executing(state);
         if !executing.has_probes {
             executing.has_probes = true;
@@ -493,24 +512,32 @@ impl CoverageState {
         }
     }
 
-    /// The AFL-style edge ID of a probe: the probe and the previous one in the same call frame,
-    /// hashed together. A call frame starts without a previous probe.
+    /// Starts the call frame at `depth`, which has no previous probe. The frames at that depth
+    /// and below it that ran before ended.
+    fn enter_frame(&mut self, depth: u16) {
+        while self.frames.last().is_some_and(|frame| frame.depth >= depth) {
+            self.frames.pop();
+        }
+        self.frames.push(FrameEdges { depth, prev: 0 });
+    }
+
+    /// The AFL-style edge ID of a probe: the mixed probe and the previous one in the same call
+    /// frame, hashed together. A call frame starts without a previous probe.
+    ///
+    /// Compilers number probes in sequence, so the IDs are mixed first, or the edges of one probe
+    /// would differ in a few low bits and collide.
     fn edge<T: EvmTypesHost>(&mut self, state: &InterpreterState<'_, '_, T>, probe: u32) -> u32 {
-        let message = state.message();
-        let (depth, address) = (message.depth, std::ptr::from_ref(message) as usize);
+        let depth = state.message().depth;
         // The frames deeper than this one returned.
         while self.frames.last().is_some_and(|frame| frame.depth > depth) {
             self.frames.pop();
         }
-        match self.frames.last_mut() {
-            Some(frame) if frame.depth == depth => {
-                if frame.message != address {
-                    *frame = FrameEdges { depth, message: address, prev: 0 };
-                }
-            }
-            _ => self.frames.push(FrameEdges { depth, message: address, prev: 0 }),
+        // A frame that no hook announced starts at its first probe.
+        if self.frames.last().is_none_or(|frame| frame.depth != depth) {
+            self.frames.push(FrameEdges { depth, prev: 0 });
         }
         let frame = self.frames.last_mut().expect("the frame was just pushed");
+        let probe = mix(probe);
         let edge = (probe ^ frame.prev) & EDGE_MASK;
         frame.prev = probe >> 1;
         // The ID 0 is reserved.

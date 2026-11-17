@@ -2494,7 +2494,9 @@ mod tests {
     #[test]
     fn coverage_probes_feed_the_fuzzer_edges_instead_of_edgecov() {
         // Edge 9 is in code that ran a probe, so its `EDGECOV` is ignored. A probe pair is an
-        // edge: probe 4 after nothing is edge 4, and probe 4 after probe 4 is `4 ^ (4 >> 1)`.
+        // edge: probe 4 after nothing, and probe 4 after probe 4. The IDs are mixed first, with
+        // `id * 0x9E3779B1` rotated left by 16, and the edge is the low 16 bits of the mixed probe
+        // xor half of the mixed previous one.
         let probed: &[u8] = &[
             0xc2, 0x60, 0x04, // COVERAGE; PUSH1 4
             0x60, 0x09, 0xc0, // PUSH1 9; EDGECOV
@@ -2511,7 +2513,7 @@ mod tests {
 
         let result = executor.call_raw(CALLER, probed_target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(result.exit_reason, Some(InstrStop::Stop));
-        assert_eq!(instrumented_hits(&result), [(4, 1), (6, 1)]);
+        assert_eq!(instrumented_hits(&result), [(30941, 1), (17587, 1)]);
         // Code that ran no probe keeps its `EDGECOV` hits.
         let result = executor.call_raw(CALLER, plain_target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(instrumented_hits(&result), [(9, 1)]);
@@ -2531,8 +2533,8 @@ mod tests {
             let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
             instrumented_hits(&result)
         };
-        assert_eq!(hits(&mut executor, first), [(5, 2)]);
-        assert_eq!(hits(&mut executor, second), [(7, 1), (6, 1)]);
+        assert_eq!(hits(&mut executor, first), [(5909, 1), (55310, 1)]);
+        assert_eq!(hits(&mut executor, second), [(21380, 1), (48855, 1)]);
 
         // A call starts a new frame without a previous probe: `caller` runs probe 5, calls
         // `first`, which runs 5 then 7, and runs probe 7. The callee's edges are those of a
@@ -2545,8 +2547,57 @@ mod tests {
         caller.push(0x00);
         let target = Address::repeat_byte(0x4b);
         executor.set_code(target, Bytecode::new_raw(Bytes::from(caller))).unwrap();
-        // The caller: edge 5, then `7 ^ (5 >> 1)` = 5. The callee: edge 5, then `7 ^ 2` = 5.
-        assert_eq!(hits(&mut executor, target), [(5, 4)]);
+        // The caller and the callee both go from probe 5, then to probe 7: the callee's first
+        // edge is that of a call on its own, not the edge from the caller's probe 5.
+        assert_eq!(hits(&mut executor, target), [(5909, 2), (55310, 2)]);
+    }
+
+    #[test]
+    fn sibling_calls_start_frames_without_a_previous_probe() {
+        // `callee` runs probes 5 and 7. The parent calls it twice and runs no probe between the
+        // calls, so only the start of each frame tells the second call from a continuation of the
+        // first.
+        let probes = |ids: &[u8]| ids.iter().flat_map(|&id| [0xc2, 0x60, id]).collect::<Vec<_>>();
+        let callee = Address::repeat_byte(0x4c);
+        let call = |code: &mut Vec<u8>| {
+            code.extend([0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73]);
+            code.extend(callee);
+            code.extend([0x5a, 0xf1, 0x50]);
+        };
+        let mut parent = Vec::new();
+        call(&mut parent);
+        call(&mut parent);
+        parent.push(0x00);
+        let mut executor = edgecov_executor(true, true);
+        let target = Address::repeat_byte(0x4d);
+        executor
+            .set_code(callee, Bytecode::new_raw(Bytes::from([probes(&[5, 7]), vec![0]].concat())))
+            .unwrap();
+        executor.set_code(target, Bytecode::new_raw(Bytes::from(parent))).unwrap();
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(instrumented_hits(&result), [(5909, 2), (55310, 2)]);
+    }
+
+    #[test]
+    fn sequential_probe_ids_do_not_share_edges() {
+        // Unmixed, the edges into probe 5 from probes 2 and 3 would be the same ID.
+        let probes = |ids: &[u8]| ids.iter().flat_map(|&id| [0xc2, 0x60, id]).collect::<Vec<_>>();
+        let mut executor = edgecov_executor(true, true);
+        let mut edges = Vec::new();
+        for (index, ids) in [[2, 5], [3, 5], [5, 5]].iter().enumerate() {
+            let target = Address::repeat_byte(0x50 + index as u8);
+            let code = [probes(ids), vec![0]].concat();
+            executor.set_code(target, Bytecode::new_raw(Bytes::from(code))).unwrap();
+            let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+            edges.extend(instrumented_hits(&result).into_iter().map(|(id, _)| id));
+        }
+        // Each frame has an edge for its first probe and one into probe 5, six in all.
+        let mut unique = edges.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), 6, "{edges:?}");
+        // Edges reach above the next power of two over the highest probe.
+        assert!(edges.iter().any(|&id| id > 8), "{edges:?}");
     }
 
     /// Runtime code with each comparison opcode once, then a loop whose `EQ` site runs 11 times.

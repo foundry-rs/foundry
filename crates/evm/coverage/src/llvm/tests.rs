@@ -183,9 +183,14 @@ fn branches_of_code_that_never_ran_print_a_dash() {
 /// Asserts that `llvm-cov export` over the coverage object of the build equals the JSON of the
 /// build's coverage mapping, with every installed LLVM version.
 fn assert_llvm_agrees(source: &str, build: &InstrumentedBuild) {
-    let inputs = build.function_inputs();
+    assert_inputs_agree(source, build.function_inputs());
+}
+
+/// Asserts the same for function records, which may combine several builds.
+pub(crate) fn assert_inputs_agree(source: &str, inputs: Vec<FunctionInput>) {
     let object = CoverageObject::new(&inputs).unwrap();
-    let ours_text = export_json(&CoverageMapping::new(inputs));
+    let mapping = CoverageMapping::new(inputs);
+    let ours_text = export_json(&mapping);
     let ours: Value = serde_json::from_str(&ours_text).unwrap();
 
     let dir = tempfile::tempdir().unwrap();
@@ -221,7 +226,7 @@ fn assert_llvm_agrees(source: &str, build: &InstrumentedBuild) {
                 "coverage.covmap.o",
             ],
         );
-        assert_eq!(lcov, export_lcov(&CoverageMapping::new(build.function_inputs())), "{cov}");
+        assert_eq!(lcov, export_lcov(&mapping), "{cov}");
         let theirs: Value = serde_json::from_str(&exported).unwrap();
         if let Some(difference) = diff(&normalize(ours.clone()), &normalize(theirs), "") {
             panic!("llvm-cov {version}: {difference}");

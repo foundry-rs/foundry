@@ -26,6 +26,7 @@ use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     backend::transaction_error,
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
+    edgecov,
     evm::{
         BlockEnvFor, DestructedAccount, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryExecutionHooks,
@@ -2206,6 +2207,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
     fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         self.refresh_cheat_steps();
         let depth = interp.message().depth;
+        edgecov::enter_frame(depth);
         if let Some(cheats) = self.cheatcodes.as_deref_mut()
             && let Some(checkpoint) = interp.host().frame_checkpoint()
         {

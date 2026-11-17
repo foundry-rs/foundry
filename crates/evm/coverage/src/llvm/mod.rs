@@ -20,7 +20,7 @@ pub use lcov::export_lcov;
 pub use mapping::{
     CondState, CountedRegion, Counter, CoverageMapping, Expansion, Expression, FunctionInput,
     FunctionRecord, InstantiationGroup, LineCol, MappingRegion, McdcParams, McdcRecord, RegionKind,
-    TvIdxBuilder, decision_vectors,
+    TvIdxBuilder, decision_vectors, merge_summed,
 };
 pub use segments::{CoverageData, CoverageSegment, LineCoverageStats};
 pub use summary::{Coverage, DataSummary, FileSummary, FunctionSummary};

@@ -130,6 +130,9 @@ pub struct FunctionInput {
     pub counts: Vec<u64>,
     /// The profile's MC/DC bitmap bytes.
     pub bitmap: Vec<u8>,
+    /// Whether the record has no counters of its own, such as a modifier's, so that its counts are
+    /// the sums of the counters of the records that expand it.
+    pub summed: bool,
 }
 
 /// A mapping region with its execution counts.
@@ -433,6 +436,52 @@ fn find_main_view_file_id(function: &FunctionRecord) -> Option<u32> {
 
 fn is_expansion(region: &CountedRegion, file: u32) -> bool {
     region.region.kind == RegionKind::Expansion && region.file() == file
+}
+
+/// Merges two records of the same function without counters of its own, which were built with
+/// different expansions and so differ in their counters and hash. Each region's count is the sum
+/// of its counts in both. Returns `None` unless the records have the same regions.
+pub fn merge_summed(a: &FunctionInput, b: &FunctionInput) -> Option<FunctionInput> {
+    let same = |x: &MappingRegion, y: &MappingRegion| {
+        (x.kind, x.file, x.expanded_file, x.start, x.end, x.mcdc)
+            == (y.kind, y.file, y.expanded_file, y.start, y.end, y.mcdc)
+    };
+    if a.filenames != b.filenames
+        || a.regions.len() != b.regions.len()
+        || a.bitmap.len() != b.bitmap.len()
+        || a.regions.iter().any(|region| region.kind == RegionKind::Expansion)
+        || !a.regions.iter().zip(&b.regions).all(|(x, y)| same(x, y))
+    {
+        return None;
+    }
+    let mut counts = Vec::new();
+    let mut sum = |x: Counter, y: Counter| {
+        if x.is_zero() && y.is_zero() {
+            return Counter::Zero;
+        }
+        let value = |counter, input: &FunctionInput| {
+            evaluate(counter, &input.expressions, &input.counts).unwrap_or(0).max(0) as u64
+        };
+        counts.push(value(x, a).saturating_add(value(y, b)));
+        Counter::Counter(counts.len() as u32 - 1)
+    };
+    let mut regions = a.regions.clone();
+    for (region, other) in regions.iter_mut().zip(&b.regions) {
+        region.count = sum(region.count, other.count);
+        if region.kind.is_branch() {
+            region.false_count = sum(region.false_count, other.false_count);
+        }
+    }
+    Some(FunctionInput {
+        name: a.name.clone(),
+        hash: a.hash,
+        filenames: a.filenames.clone(),
+        expressions: Vec::new(),
+        regions,
+        counts,
+        bitmap: a.bitmap.iter().zip(&b.bitmap).map(|(x, y)| x | y).collect(),
+        summed: true,
+    })
 }
 
 /// Removes the file prefix from the PGO name, like `getFuncNameWithoutPrefix`.

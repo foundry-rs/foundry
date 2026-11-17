@@ -17,6 +17,7 @@ use alloy_primitives::{
 };
 use analysis::SourceAnalysis;
 use eyre::Result;
+use foundry_common::sh_warn;
 use foundry_compilers::artifacts::{CoverageAlias, sourcemap::SourceMap};
 use instrumented::{InstrumentedBuild, ItemCount};
 use semver::Version;
@@ -26,7 +27,7 @@ use std::{
     num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex, OnceLock},
 };
 
 pub mod analysis;
@@ -196,11 +197,30 @@ impl CoverageReport {
                 continue;
             };
             let first = &mut inputs[index];
+            // The hits of a record without counters of its own, such as a modifier's, are those of
+            // the builds' expansions of it, so the builds differ in more than their hits.
+            if first.summed && input.summed {
+                if let Some(merged) = llvm::merge_summed(first, &input) {
+                    *first = merged;
+                } else if first.counts.is_empty() != input.counts.is_empty() {
+                    // A record with expansions has what one without has, and more.
+                    if first.counts.is_empty() {
+                        *first = input;
+                    }
+                } else {
+                    warn_once(format!(
+                        "builds define `{}` with different expansions, so only the hits of one \
+                         build count",
+                        first.name
+                    ));
+                }
+                continue;
+            }
             if first.hash != input.hash || first.counts.len() != input.counts.len() {
-                tracing::warn!(
-                    function = input.name,
-                    "builds define the function differently, so only the first build's hits count"
-                );
+                warn_once(format!(
+                    "builds define `{}` differently, so only the hits of the first build count",
+                    input.name
+                ));
                 continue;
             }
             for (count, other) in first.counts.iter_mut().zip(&input.counts) {
@@ -1165,6 +1185,16 @@ impl CoverageSummary {
         for item in items {
             self.add_item(item);
         }
+    }
+}
+
+/// Warns the user of `message`, once for each message in the process: the reports build their
+/// inputs more than once.
+pub(crate) fn warn_once(message: String) {
+    static WARNED: OnceLock<Mutex<FxHashSet<String>>> = OnceLock::new();
+    let warned = WARNED.get_or_init(Default::default);
+    if warned.lock().is_ok_and(|mut warned| warned.insert(message.clone())) {
+        let _ = sh_warn!("{message}");
     }
 }
 

@@ -474,7 +474,11 @@ impl InstrumentedBuild {
             .assign_bitmap(function, &mut mapped)
             .filter(|bitmap| bitmap.len() <= MAX_BITMAP_BYTES && !mcdc_broken);
         let bitmap = bitmap.unwrap_or_else(|| {
-            tracing::warn!(function = function.name, "dropping the MC/DC regions of the function");
+            crate::warn_once(format!(
+                "dropping the MC/DC regions of `{}`: its decisions cannot be laid out in a \
+                 profile bitmap",
+                function.name
+            ));
             mapped.retain(|(region, _)| region.kind != RegionKind::McdcDecision);
             for (region, _) in &mut mapped {
                 if region.kind == RegionKind::McdcBranch {
@@ -492,6 +496,7 @@ impl InstrumentedBuild {
             regions: mapped.into_iter().map(|(region, _)| region).collect(),
             counts,
             bitmap,
+            summed: len == 0,
         })
     }
 
@@ -550,11 +555,11 @@ impl InstrumentedBuild {
                 .collect::<Option<Vec<_>>>()
                 .filter(|positions| positions.len() == vectors.len());
             if positions.is_none() {
-                tracing::warn!(
-                    function = function.name,
-                    decision = ?decision.runtime_ids().collect::<Vec<_>>(),
-                    "the MC/DC test vectors of the map are not those of its condition graph"
-                );
+                crate::warn_once(format!(
+                    "the MC/DC test vectors of a decision of `{}` are not those of its condition \
+                     graph, so its MC/DC coverage may be wrong",
+                    function.name
+                ));
             }
             // The vectors that any of the decision's runtime IDs executed.
             let vectors_run = decision
@@ -628,7 +633,7 @@ fn parse_name(name: &str) -> (Option<&str>, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CoverageReport, llvm::tests::build};
+    use crate::{CoverageReport, llvm, llvm::tests::build};
     use serde_json::json;
 
     fn item_summary(report: &CoverageReport) -> Vec<String> {
@@ -787,6 +792,49 @@ mod tests {
     fn a_decision_missing_from_the_map_loses_its_mcdc_regions_only() {
         assert_eq!(mcdc_regions(&chained_decisions(2, 3, 2)), (2, 6, 0));
         assert_eq!(mcdc_regions(&chained_decisions(2, 3, 1)), (0, 0, 6));
+    }
+
+    /// The build of `build()`'s source whose modifier `m` has no expansions: its record has the
+    /// zero-count regions of its body, and so another hash.
+    fn build_without_expansions() -> InstrumentedBuild {
+        let mut map = serde_json::to_value(crate::llvm::tests::coverage()).unwrap();
+        let record = map["functions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|function| function["name"] == "src/C.sol:C.m()")
+            .unwrap();
+        let body = record["regions"][0].clone();
+        record["regions"] = json!([[0, 0, body[2], body[3], 0]]);
+        record["hash"] = json!("0x9999999999999999");
+        record.as_object_mut().unwrap().remove("expressions");
+        let source = InstrumentedSource::new(
+            "src/C.sol".into(),
+            crate::llvm::tests::SOURCE.into(),
+            true,
+            serde_json::from_value(map).unwrap(),
+        );
+        InstrumentedBuild::new(BTreeMap::from([(0, source)]))
+    }
+
+    #[test]
+    fn modifier_records_of_different_builds_keep_the_hits_of_their_expansions() {
+        let modifier_count = |first: &str, second: &str, other: InstrumentedBuild| {
+            let mut report = CoverageReport::default();
+            report.add_instrumented_build(first.into(), build());
+            report.add_instrumented_build(second.into(), other);
+            // The merged records are what the tools read, too.
+            llvm::tests::assert_inputs_agree(llvm::tests::SOURCE, report.llvm_inputs());
+            let mapping = llvm::CoverageMapping::new(report.llvm_inputs());
+            let modifier = mapping.functions().iter().find(|f| f.name == "C.m()").unwrap();
+            modifier.execution_count
+        };
+        // One build expands the modifier, the other has no expansions: whichever comes first, the
+        // sum of the expansions counts.
+        assert_eq!(modifier_count("a", "b", build_without_expansions()), 3);
+        assert_eq!(modifier_count("b", "a", build_without_expansions()), 3);
+        // Two builds that expand it add up.
+        assert_eq!(modifier_count("a", "b", build()), 6);
     }
 
     #[test]
