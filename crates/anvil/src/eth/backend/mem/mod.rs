@@ -7325,8 +7325,9 @@ where
                         let tracing_inspector = inspector.tracer.expect("tracer disappeared");
 
                         Ok(tracing_inspector
+                            .with_transaction_gas_limit(tx.tx.gas_limit())
                             .into_geth_builder()
-                            .geth_call_traces(call_config, executed.result.tx_gas_used())
+                            .geth_call_traces(call_config, executed.result.ext.charged_gas)
                             .into())
                     }
                     GethDebugBuiltInTracerType::PreStateTracer => {
@@ -7421,14 +7422,18 @@ where
         let exit_reason = result.stop;
         let gas_used = result.tx_gas_used();
 
-        trace!(target: "backend", ?exit_reason, out = ?result.output, %gas_used, %block_number, "trace call");
+        let charged_gas = result.ext.charged_gas;
+        trace!(target: "backend", ?exit_reason, out = ?result.output, %gas_used, %charged_gas, %block_number, "trace call");
 
-        let res = tracing_inspector
-            .into_geth_builder()
-            .geth_traces_with_result_gas(&result, result.output.clone(), config)
-            .into();
+        let mut res = tracing_inspector.into_geth_builder().geth_traces_with_result_gas(
+            &result,
+            result.output.clone(),
+            config,
+        );
+        // Only the root summary reports the charge; opcode and multidimensional gas stay intact.
+        res.gas = charged_gas;
 
-        Ok(res)
+        Ok(res.into())
     }
 
     /// Helper function to execute a closure with the database at a specific block
@@ -8394,6 +8399,7 @@ where
                     &pending,
                     EnvelopeExecution::replay(transaction_context, hardfork),
                 )?;
+                inspector.set_transaction_gas_limit(tx.gas_limit());
                 traces.push(TraceResult::Success {
                     result: build_trace(&inspector, *gas_used, output.clone()),
                     tx_hash: Some(tx.hash()),
@@ -8443,8 +8449,9 @@ where
                                 let frame = self.replay_tx_with_inspector(
                                     tx.info.transaction_hash,
                                     inspector,
-                                    |_, _, inspector, _, _| {
+                                    |_, _, inspector, prepared, _| {
                                         inspector
+                                            .with_transaction_gas_limit(prepared.tx.gas_limit())
                                             .geth_builder()
                                             .geth_call_traces(call_config, tx.info.gas_used)
                                             .into()
@@ -9465,6 +9472,7 @@ impl Backend<FoundryNetwork> {
                 let mut call_res = Vec::with_capacity(calls.len());
                 let mut log_index = 0;
                 let mut cumulative_gas_used = 0;
+                let mut cumulative_charged_gas = 0u64;
                 let mut block_regular_gas_used = 0;
                 let mut block_state_gas_used = 0;
                 let mut block_blob_gas_used = 0u64;
@@ -9770,8 +9778,13 @@ impl Backend<FoundryNetwork> {
                         state.account_changes().map(|changes| changes.address),
                     );
 
-                    rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
-                    cumulative_gas_used = cumulative_gas_used.saturating_add(result.tx_gas_used());
+                    // Simulation allowances measure consumption independently of receipt charges.
+                    let gas_used = result.tx_gas_used();
+                    rpc_gas_budget = rpc_gas_budget.saturating_sub(gas_used);
+                    cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
+                    cumulative_charged_gas =
+                        cumulative_charged_gas.saturating_add(result.ext.charged_gas);
+                    // Amsterdam budgets regular and state gas separately, using consumption.
                     block_regular_gas_used =
                         block_regular_gas_used.saturating_add(result.execution_gas_spent());
                     block_state_gas_used =
@@ -9832,14 +9845,14 @@ impl Backend<FoundryNetwork> {
                             canonical_logs.clone(),
                             Some(self.hardfork()),
                             caller_nonce,
-                            cumulative_gas_used,
+                            cumulative_charged_gas,
                         )
                     } else {
                         build_receipt(
                             tx.as_ref().tx_type(),
                             result.status,
                             canonical_logs.clone(),
-                            cumulative_gas_used,
+                            cumulative_charged_gas,
                             result.ext.eip8130_phase_statuses.clone(),
                         )
                     };
@@ -9848,7 +9861,7 @@ impl Backend<FoundryNetwork> {
                         tx.as_ref().tx_type(),
                         result.status,
                         canonical_logs.clone(),
-                        cumulative_gas_used,
+                        cumulative_charged_gas,
                         result.ext.eip8130_phase_statuses.clone(),
                     );
                     receipts.push(receipt);
@@ -9861,7 +9874,7 @@ impl Backend<FoundryNetwork> {
                         if result.status { result.output.clone() } else { Bytes::new() };
                     let sim_res = SimCallResult {
                         return_data,
-                        gas_used: result.tx_gas_used(),
+                        gas_used: result.ext.charged_gas,
                         max_used_gas: Some(result.total_gas_spent.max(result.floor_gas)),
                         status: result.status,
                         error: if result.status {
@@ -9915,6 +9928,9 @@ impl Backend<FoundryNetwork> {
                     }
                 }
 
+                // The header reports consumption, like the block budget, so simulated blocks stay
+                // within their gas limit and keep the next base fee meaningful. Calls and receipts
+                // report the charged gas, which can exceed consumption.
                 let gas_used = if is_amsterdam {
                     block_regular_gas_used.max(block_state_gas_used)
                 } else {
