@@ -34,12 +34,8 @@ impl L1Args {
         zone_id: u32,
     ) -> Result<RootProvider<TempoNetwork>> {
         let portal = self.portal()?;
-        let parent = parent_chain(zone_chain_id, zone_id)?;
-        let provider = RootProvider::<TempoNetwork>::new_http(self.rpc_url(parent)?.parse()?);
-        ensure!(
-            provider.get_chain_id().await? == parent,
-            "L1 RPC chain ID does not match the zone's parent chain"
-        );
+        let url = self.parent_rpc_url(zone_chain_id, zone_id).await?;
+        let provider = RootProvider::<TempoNetwork>::new_http(url.parse()?);
         ensure!(
             IZonePortal::new(portal, &provider).zoneId().call().await? == zone_id,
             "--portal does not belong to --zone-id"
@@ -50,20 +46,16 @@ impl L1Args {
     /// Returns the RPC URL of the zone's parent chain, after checking that it serves that chain.
     pub(super) async fn parent_rpc_url(&self, zone_chain_id: u64, zone_id: u32) -> Result<String> {
         let parent = parent_chain(zone_chain_id, zone_id)?;
-        let url = self.rpc_url(parent)?;
+        let url = match &self.l1_rpc_url {
+            Some(url) => url.clone(),
+            None => public_rpc(parent)?.to_string(),
+        };
         let provider = RootProvider::<TempoNetwork>::new_http(url.parse()?);
         ensure!(
             provider.get_chain_id().await? == parent,
             "L1 RPC chain ID does not match the zone's parent chain"
         );
         Ok(url)
-    }
-
-    fn rpc_url(&self, parent: u64) -> Result<String> {
-        match &self.l1_rpc_url {
-            Some(url) => Ok(url.clone()),
-            None => public_rpc(parent).map(str::to_string),
-        }
     }
 }
 
