@@ -9929,10 +9929,13 @@ impl Backend<FoundryNetwork> {
                     }
                 }
 
+                // The header reports consumption, like the block budget, so simulated blocks stay
+                // within their gas limit and keep the next base fee meaningful. Calls and receipts
+                // report the charged gas, which can exceed consumption.
                 let gas_used = if is_amsterdam {
                     block_regular_gas_used.max(block_state_gas_used)
                 } else {
-                    cumulative_charged_gas
+                    cumulative_gas_used
                 };
                 let (requests, block_access_list) = if let Some(transitions) = ethereum_transitions
                 {

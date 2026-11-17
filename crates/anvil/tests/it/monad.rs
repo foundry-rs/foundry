@@ -2712,7 +2712,8 @@ async fn monad_simulate_reports_charged_gas() {
     let to = ROLLBACK_RECIPIENT;
     let calldata = Bytes::from(vec![1; 1000]);
     // Charged gas is reported, while block and request budgets count consumption. Each expected
-    // call is `(charged gas, consumed gas, status)`; a block's header reports the sum of charges.
+    // call is `(charged gas, consumed gas, status)`. Receipts sum the
+    // charges, while headers sum consumption.
     let cases = vec![
         // Explicit limits, including a calldata floor, a revert and an exceptional halt.
         (
@@ -2825,6 +2826,7 @@ async fn monad_simulate_reports_charged_gas() {
                 assert_eq!(block.calls.len(), expected.len());
                 let transactions = block.inner.transactions.as_transactions().unwrap();
                 let mut cumulative_gas_used = 0;
+                let mut consumed_gas = 0;
                 let mut receipts = Vec::new();
                 for ((call, tx), &(charged, consumed, status)) in
                     block.calls.iter().zip(transactions).zip(expected)
@@ -2835,6 +2837,7 @@ async fn monad_simulate_reports_charged_gas() {
                     // Execution measurements include the calldata floor and exceptional halts.
                     assert_eq!(call.max_used_gas, Some(consumed));
                     cumulative_gas_used += charged;
+                    consumed_gas += consumed;
                     let receipt =
                         Receipt { status: status.into(), cumulative_gas_used, logs: vec![] };
                     receipts.push(ReceiptEnvelope::from_typed(
@@ -2842,7 +2845,9 @@ async fn monad_simulate_reports_charged_gas() {
                         receipt.with_bloom(),
                     ));
                 }
-                assert_eq!(block.inner.header.gas_used, cumulative_gas_used);
+                // Headers report consumption and stay within the block gas limit.
+                assert_eq!(block.inner.header.gas_used, consumed_gas);
+                assert!(block.inner.header.gas_used <= block.inner.header.gas_limit);
                 assert_eq!(block.inner.header.receipts_root, calculate_receipt_root(&receipts));
             }
         }
