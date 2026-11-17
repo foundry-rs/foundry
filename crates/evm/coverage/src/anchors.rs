@@ -1,7 +1,7 @@
 use super::{
     CoverageItemKind, ExecutionAnchor, ExecutionAnchorKind, ItemAnchor, ItemAnchors, SourceLocation,
 };
-use crate::analysis::{EmptySpecialFunctionKind, SourceAnalysis, TernaryArms};
+use crate::analysis::{BranchKind, EmptySpecialFunctionKind, SourceAnalysis, TernaryArms};
 use alloy_primitives::map::rustc_hash::FxHashSet;
 use evm2::interpreter::op as opcode;
 use eyre::ensure;
@@ -28,16 +28,21 @@ impl ItemAnchor {
     }
 
     fn from_branch(item_id: u32, next_pc: usize, immediate: &[u8]) -> eyre::Result<(Self, Self)> {
-        // We do not support program counters bigger than u32.
-        ensure!(immediate.len() <= 4, "jump destination overflow");
-        let mut pc_bytes = [0u8; 4];
-        pc_bytes[4 - immediate.len()..].copy_from_slice(immediate);
-        let pc_jump = u32::from_be_bytes(pc_bytes);
+        let pc_jump = jump_destination(immediate)?;
         Ok((
             Self { item_id, instruction: (next_pc + 1).try_into()? },
             Self { item_id, instruction: pc_jump },
         ))
     }
+}
+
+/// Decodes a push immediate as a program counter.
+fn jump_destination(immediate: &[u8]) -> eyre::Result<u32> {
+    // We do not support program counters bigger than u32.
+    ensure!(immediate.len() <= 4, "jump destination overflow");
+    let mut pc_bytes = [0u8; 4];
+    pc_bytes[4 - immediate.len()..].copy_from_slice(immediate);
+    Ok(u32::from_be_bytes(pc_bytes))
 }
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
@@ -81,13 +86,23 @@ pub fn find_anchors(
                     })
                 }
                 CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
-                    let arms = analysis.ternary_arms(item.loc.source_id as u32, branch_id);
-                    index.branch(item_id, anchor_loc, arms.is_some()).map(|anchors| {
-                        // The false arm of a ternary is path 0, wherever the compiler placed it.
-                        let swapped =
-                            arms.is_some_and(|arms| index.true_arm_falls_through(&anchors, arms));
-                        select_branch(anchors, path_id, swapped)
-                    })
+                    let kind = analysis.branch_kind(item.loc.source_id as u32, branch_id);
+                    index
+                        .branch(item_id, anchor_loc, matches!(kind, Some(BranchKind::Ternary(_))))
+                        .map(|anchors| {
+                            // The failing side of a `require` and the false arm of a ternary are
+                            // path 0, wherever the compiler placed them.
+                            let swapped = match kind {
+                                Some(BranchKind::Require) => {
+                                    index.taken_fails(&anchors, anchor_loc)
+                                }
+                                Some(BranchKind::Ternary(arms)) => {
+                                    index.true_arm_falls_through(&anchors, arms)
+                                }
+                                None => false,
+                            };
+                            select_branch(anchors, path_id, swapped)
+                        })
                 }
                 CoverageItemKind::Function { .. } => {
                     index.function(item_id, anchor_loc).map(|anchor| (anchor, None))
@@ -127,6 +142,9 @@ pub fn find_execution_anchors(
         })
         .collect()
 }
+
+/// The most static jumps `AnchorIndex::fails` follows.
+const MAX_FAILURE_HOPS: usize = 8;
 
 /// Source map and branch lookups precomputed once per bytecode.
 struct AnchorIndex<'a> {
@@ -291,6 +309,67 @@ impl<'a> AnchorIndex<'a> {
             .min()
             .or_else(|| candidates.min());
         ItemAnchor::from_instruction(instruction, self.ic_pc_map, item_id, loc)
+    }
+
+    /// Returns whether the taken side of a `require` branch is its failing side.
+    ///
+    /// A side that starts inside the `require` span is the failing side, because the failure
+    /// code carries the span while the passing side continues with the next statement. If
+    /// neither side starts inside it, the side that reverts without another conditional branch
+    /// is. If both do, the source map cannot tell them apart, and the revert check cannot follow
+    /// the failure code's dynamic returns, so the positional default stays.
+    fn taken_fails(
+        &self,
+        (fallthrough, taken): &(ItemAnchor, ItemAnchor),
+        loc: &SourceLocation,
+    ) -> bool {
+        match (self.starts_in(fallthrough.instruction, loc), self.starts_in(taken.instruction, loc))
+        {
+            (true, _) => false,
+            (false, true) => true,
+            (false, false) => self.fails(taken.instruction) && !self.fails(fallthrough.instruction),
+        }
+    }
+
+    /// Returns whether the first instruction at `pc` after any `JUMPDEST`s is mapped inside `loc`.
+    fn starts_in(&self, pc: u32, loc: &SourceLocation) -> bool {
+        let Ok(mut ic) = self.pcs.binary_search(&pc) else { return false };
+        while self.pcs.get(ic).is_some_and(|&p| self.bytecode[p as usize] == opcode::JUMPDEST) {
+            ic += 1;
+        }
+        self.source_map.get(ic).is_some_and(|element| is_within_source_span(element, loc))
+    }
+
+    /// Returns whether the code at `pc` reverts without another conditional branch or other halt.
+    ///
+    /// Follows static `PUSH target; JUMP` hops, which compilers use to share revert blocks.
+    fn fails(&self, mut pc: u32) -> bool {
+        // Bounds a cycle of static jumps.
+        'hops: for _ in 0..MAX_FAILURE_HOPS {
+            let code = self.bytecode.get(pc as usize..).unwrap_or_default();
+            let mut push = None;
+            for inst in InstIter::new(code) {
+                match inst.opcode.get() {
+                    opcode::REVERT | opcode::INVALID => return true,
+                    opcode::JUMP => {
+                        let Some(target) = push else { return false };
+                        pc = target;
+                        continue 'hops;
+                    }
+                    opcode::JUMPI | opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT => {
+                        return false;
+                    }
+                    op => {
+                        push = (opcode::PUSH1..=opcode::PUSH32)
+                            .contains(&op)
+                            .then(|| jump_destination(inst.immediate).ok())
+                            .flatten();
+                    }
+                }
+            }
+            return false;
+        }
+        false
     }
 
     /// Returns whether the true arm of a ternary is the fallthrough of its jump.
@@ -471,6 +550,205 @@ mod tests {
     use crate::CoverageItem;
     use foundry_compilers::artifacts::sourcemap;
 
+    /// Returns the `(instruction, jump)` of each anchor of the `require` branches at the given
+    /// source offsets, each spanning 20 bytes. Require `n` has items `2n` and `2n + 1` for its
+    /// paths 0 and 1.
+    fn require_anchors(
+        bytecode: &[u8],
+        starts: &[u32],
+        source_map: &str,
+    ) -> Vec<(u32, Option<u32>)> {
+        let items = starts
+            .iter()
+            .enumerate()
+            .flat_map(|(branch_id, &start)| {
+                (0..2).map(move |path_id| CoverageItem {
+                    kind: CoverageItemKind::Branch {
+                        branch_id: branch_id as u32,
+                        path_id,
+                        is_first_opcode: false,
+                    },
+                    loc: location(start..start + 20),
+                    anchor_loc: None,
+                    hits: 0,
+                })
+            })
+            .collect();
+        let kinds =
+            (0..starts.len() as u32).map(|id| (id, BranchKind::Require)).collect::<Vec<_>>();
+        let analysis = SourceAnalysis::for_test(items, kinds);
+        let source_map = sourcemap::parse(source_map).unwrap();
+        let ic_pc_map = IcPcMap::new(bytecode);
+        let anchors = find_anchors(bytecode, &source_map, &ic_pc_map, &analysis);
+        assert_eq!(anchors.anchors.len(), starts.len() * 2);
+        anchors
+            .anchors
+            .iter()
+            .enumerate()
+            .map(|(index, anchor)| {
+                assert_eq!(anchor.item_id as usize, index);
+                (anchor.instruction, anchors.jumps.get(&index).copied())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn require_paths_follow_the_failing_side() {
+        // `cond; PUSH dest; JUMPI`, then the continuation or the revert.
+        let solc = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let solar = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            6,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        // Both sides revert, so the layout is ambiguous and the fallthrough is path 0.
+        let both_revert = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        // The taken side branches again before it can revert.
+        let taken_branches = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            6,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            14,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        for (bytecode, expected) in [
+            (&solc[..], [(5, None), (8, Some(4))]),
+            (&solar[..], [(6, Some(4)), (5, None)]),
+            (&both_revert[..], [(5, None), (8, Some(4))]),
+            (&taken_branches[..], [(5, None), (6, Some(4))]),
+        ] {
+            let count = InstIter::new(bytecode).count();
+            // Only the condition and the jump belong to the require.
+            let source_map = format!("10:20:0;;;50:5:0{}", ";".repeat(count - 4));
+            assert_eq!(require_anchors(bytecode, &[10], &source_map), expected);
+        }
+    }
+
+    #[test]
+    fn require_paths_prefer_the_source_map() {
+        // The success path of solc's `require(c, "m"); revert Foo();` reaches a straight-line
+        // revert, while the failure code encodes the message through a dynamic jump. The failing
+        // side is the one that starts inside the require.
+        let solc = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            7,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::JUMP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        // Solar's cold block follows an unmapped `JUMPDEST` and is not provably reverting.
+        let solar = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            6,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::JUMP,
+        ];
+        for (bytecode, source_map, expected) in [
+            (&solc[..], "10:20:0;;;;;;50:13:0;;;", [(5, None), (7, Some(4))]),
+            // Both sides start inside the span, as for `require(c, E(1)); assembly { invalid() }`.
+            (&solc[..], "10:20:0;;;;;;;;;", [(5, None), (7, Some(4))]),
+            // An element that starts inside the span but extends past it is not inside.
+            (&solc[..], "10:20:0;;;15:40:0;;;50:13:0;;;", [(7, Some(4)), (5, None)]),
+            (&solar[..], "10:20:0;;;50:5:0;-1:-1:-1;10:20:0;", [(6, Some(4)), (5, None)]),
+        ] {
+            assert_eq!(require_anchors(bytecode, &[10], source_map), expected);
+        }
+    }
+
+    #[test]
+    fn requires_share_a_revert_block() {
+        // Both requires jump to the same revert block, the first through a `PUSH; JUMP` stub.
+        let bytecode = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            15,
+            opcode::JUMPI,
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            19,
+            opcode::JUMPI,
+            opcode::STOP,
+            opcode::INVALID,
+            opcode::INVALID,
+            opcode::INVALID,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            19,
+            opcode::JUMP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        // Each require maps its condition and jump. Other code lies outside both spans.
+        let source_map = format!(
+            "10:20:0;;;40:20:0;;;90:5:0{}",
+            ";".repeat(InstIter::new(&bytecode).count() - 7)
+        );
+        assert_eq!(
+            require_anchors(&bytecode, &[10, 40], &source_map),
+            [(15, Some(4)), (5, None), (19, Some(9)), (10, None)]
+        );
+    }
+
     fn location(bytes: Range<u32>) -> SourceLocation {
         SourceLocation { source_id: 0, contract_name: "T".into(), bytes, lines: 1..2 }
     }
@@ -487,7 +765,7 @@ mod tests {
             })
             .collect();
         let arms = TernaryArms { true_arm: location(20..30), false_arm: location(35..45) };
-        let analysis = SourceAnalysis::for_test(items, vec![(0, arms)]);
+        let analysis = SourceAnalysis::for_test(items, vec![(0, BranchKind::Ternary(arms))]);
         let source_map = sourcemap::parse(source_map).unwrap();
         let ic_pc_map = IcPcMap::new(bytecode);
         let anchors = find_anchors(bytecode, &source_map, &ic_pc_map, &analysis);

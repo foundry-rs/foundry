@@ -685,6 +685,112 @@ contract AContractTest is DSTest {
 "#]]);
 }
 
+// A custom-error require whose success path reaches `INVALID` keeps path 0 as the failing side.
+#[forgetest]
+fn require_custom_error_then_invalid_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    error TooLarge(uint256 x);
+
+    function check(uint256 x) external pure {
+        require(x < 100, TooLarge(1));
+        assembly { invalid() }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        address(guard).call(abi.encodeCall(guard.check, (1)));
+        address(guard).call(abi.encodeCall(guard.check, (2)));
+        address(guard).call(abi.encodeCall(guard.check, (100)));
+    }
+}
+"#,
+    );
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Guard.sol
+DA:7,3
+FN:7,Guard.check
+FNDA:3,Guard.check
+DA:8,3
+BRDA:8,0,0,1
+BRDA:8,0,1,2
+DA:9,2
+FNF:1
+FNH:1
+LF:3
+LH:3
+BRF:2
+BRH:2
+end_of_record
+
+"#]],
+    );
+}
+
+// The failing side of a require is path 0 with solc and with solar, whose layout differs.
+#[forgetest]
+fn require_paths_solc_and_solar_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    function req(uint256 a) external pure returns (uint256) {
+        require(a < 100);
+        return a + 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        guard.req(1);
+        guard.req(2);
+        guard.req(3);
+    }
+}
+"#,
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    let report = str![[r#"
+TN:
+SF:src/Guard.sol
+DA:5,3
+FN:5,Guard.req
+FNDA:3,Guard.req
+DA:6,3
+BRDA:6,0,0,0
+BRDA:6,0,1,3
+DA:7,3
+FNF:1
+FNH:1
+LF:3
+LH:3
+BRF:2
+BRH:1
+end_of_record
+
+"#]];
+    assert_lcov(cmd.arg("coverage"), report.clone());
+    assert_lcov(cmd.forge_fuse().arg("coverage").arg("--use").arg(solar), report);
+}
+
 #[forgetest]
 fn line_hit_not_doubled(prj: _, cmd: _) {
     prj.insert_ds_test();
