@@ -39,7 +39,9 @@ use foundry_compilers::{
     solc::SolcSettings,
 };
 use foundry_config::Config;
+use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
+use path_slash::PathExt;
 use solar::{
     ast::{Arena, ContractKind, ItemKind},
     interface::{Session, source_map::FileName},
@@ -361,7 +363,7 @@ impl ProjectCompiler {
             {
                 external.merge(&mut output)?;
             }
-            add_root_remapping_diagnostics(&mut output, &project.paths);
+            add_scoped_alias_diagnostics(&mut output, &project.paths);
             Ok(output)
         })
     }
@@ -1183,8 +1185,27 @@ fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'s
     reason
 }
 
-/// Finds root aliases that would resolve an import currently restricted to dependency contexts.
-fn root_remapping_candidates<L: Clone>(
+/// Returns the top-level dependency directory that contains `file`, relative to the root.
+///
+/// An npm scope such as `node_modules/@scope/` holds packages, so its owner is the package.
+fn dependency_owner<L>(paths: &ProjectPathsConfig<L>, file: &Path) -> Option<PathBuf> {
+    paths.libraries.iter().find_map(|lib| {
+        let lib = paths.root.join(lib);
+        let mut components = file.strip_prefix(&lib).ok()?.components();
+        let mut owner = lib.join(components.next()?);
+        if owner.file_name()?.to_string_lossy().starts_with('@') {
+            owner.push(components.next()?);
+        }
+        components.next()?;
+        owner.strip_prefix(&paths.root).ok().map(Path::to_path_buf)
+    })
+}
+
+/// Finds aliases restricted to dependency contexts that would resolve an import.
+///
+/// Root files get root remappings. Dependency files get remappings scoped to their top-level
+/// dependency, so the fix does not redirect the alias for the root or other dependencies.
+fn remapping_candidates<L: Clone>(
     paths: &ProjectPathsConfig<L>,
     import: &Path,
     file: &Path,
@@ -1192,13 +1213,16 @@ fn root_remapping_candidates<L: Clone>(
     let file = paths.root.join(file);
     let mut candidates = BTreeMap::<_, BTreeSet<_>>::new();
     let Some(cwd) = file.parent() else { return candidates };
+    let owner = dependency_owner(paths, &file);
     if !file.starts_with(&paths.root)
-        || paths.libraries.iter().any(|lib| file.starts_with(paths.root.join(lib)))
+        || (owner.is_none()
+            && paths.libraries.iter().any(|lib| file.starts_with(paths.root.join(lib))))
         // An applicable root or CLI mapping remains authoritative, even if its target is missing.
         || paths.resolve_library_import(cwd, import).is_some()
     {
         return candidates;
     }
+    let scope = owner.map(|owner| format!("{}/:", owner.to_slash_lossy())).unwrap_or_default();
 
     let mut candidate_paths = paths.clone();
     candidate_paths.libraries.clear();
@@ -1216,9 +1240,10 @@ fn root_remapping_candidates<L: Clone>(
                 .resolve_library_import(cwd, import)
                 .is_some_and(|target| target.is_file())
             {
-                candidates.entry(global.name.clone()).or_default().insert(
-                    RelativeRemapping::new(global, &paths.root).to_relative_remapping().to_string(),
-                );
+                candidates.entry(global.name.clone()).or_default().insert(format!(
+                    "{scope}{}",
+                    RelativeRemapping::new(global, &paths.root).to_relative_remapping()
+                ));
             }
         }
     }
@@ -1226,17 +1251,17 @@ fn root_remapping_candidates<L: Clone>(
 }
 
 /// Adds actionable alias migration help to existing import errors, including JSON diagnostics.
-fn add_root_remapping_diagnostics<C: Compiler<CompilerContract = Contract>>(
+fn add_scoped_alias_diagnostics<C: Compiler<CompilerContract = Contract>>(
     output: &mut ProjectCompileOutput<C>,
     paths: &ProjectPathsConfig<C::Language>,
 ) {
-    if !output.output().errors.iter().any(|error| error.error_code() == Some(6275)) {
+    if output.graph().unresolved_imports().is_empty() {
         return;
     }
 
     let mut suggestions = BTreeMap::<_, BTreeMap<_, BTreeSet<_>>>::new();
     for (import, file) in output.graph().unresolved_imports() {
-        for (alias, mappings) in root_remapping_candidates(paths, import, file) {
+        for (alias, mappings) in remapping_candidates(paths, import, file) {
             suggestions
                 .entry(paths.root.join(file))
                 .or_default()
@@ -1258,20 +1283,28 @@ fn add_root_remapping_diagnostics<C: Compiler<CompilerContract = Contract>>(
         } else {
             continue;
         };
-        if error.error_code == Some(6275)
+        // Solc reports missing sources as 6275; Solar reports them without a code.
+        if (error.error_code == Some(6275)
+            || error.error_code.is_none() && error.message.starts_with("couldn't read "))
             && let Some(location) = &error.source_location
             && let Some(aliases) = suggestions.remove(&paths.root.join(&location.file))
         {
+            let importer = dependency_owner(paths, &paths.root.join(&location.file)).map_or_else(
+                || "the root project".to_string(),
+                |owner| format!("`{}/`", owner.to_slash_lossy()),
+            );
             for (alias, mappings) in aliases {
                 let action = if mappings.len() == 1 {
                     "add a remapping to foundry.toml or remappings.txt"
                 } else {
-                    "choose a root remapping in foundry.toml or remappings.txt"
+                    "choose a remapping in foundry.toml or remappings.txt"
                 };
+                // Text rendering restyles later `note:message` lines, which would corrupt
+                // remappings containing `:`, so list them on the help line.
                 let help = format!(
                     "help: this file imports the alias {alias:?}, which is scoped to a dependency. \
-                     To use it from the root project, {action}:\n      {}",
-                    mappings.into_iter().collect::<Vec<_>>().join("\n      ")
+                     To use it from {importer}, {action}: {}",
+                    mappings.iter().map(|mapping| format!("`{mapping}`")).join(" or ")
                 );
                 error.secondary_source_locations.push(SecondarySourceLocation {
                     file: None,
@@ -1397,7 +1430,7 @@ mod tests {
     }
 
     #[test]
-    fn root_remapping_candidates_respect_targets_choices_and_importers() {
+    fn remapping_candidates_respect_targets_choices_and_importers() {
         let temp = tempdir().unwrap();
         let root = temp.path().join("project");
         fs::create_dir_all(root.join("lib/a/src")).unwrap();
@@ -1414,25 +1447,37 @@ mod tests {
         let import = Path::new("@alias/Target.sol");
 
         assert_eq!(
-            root_remapping_candidates(&paths, Path::new("File.sol"), &file),
+            remapping_candidates(&paths, Path::new("File.sol"), &file),
             BTreeMap::from([(
                 "File.sol".to_string(),
                 BTreeSet::from(["File.sol=lib/a/src/Target.sol".to_string()])
             )])
         );
 
+        // Dependency importers get a remapping scoped to their own top-level dependency.
+        for (importer, scoped) in [
+            ("lib/b/src/nested/Dep.sol", "lib/b/:@alias/=lib/a/src/"),
+            ("lib/@scope/c/src/Dep.sol", "lib/@scope/c/:@alias/=lib/a/src/"),
+        ] {
+            assert_eq!(
+                remapping_candidates(&paths, import, &root.join(importer)),
+                BTreeMap::from([("@alias/".to_string(), BTreeSet::from([scoped.to_string()]))])
+            );
+        }
+
         for (import, file) in [
             (Path::new("@alias/Missing.sol"), file.clone()),
+            (import, root.join("lib/Loose.sol")),
             (import, root.join("lib/a/src/Target.sol")),
             (import, temp.path().join("Outside.sol")),
         ] {
-            assert_eq!(root_remapping_candidates(&paths, import, &file), BTreeMap::new());
+            assert_eq!(remapping_candidates(&paths, import, &file), BTreeMap::new());
         }
 
         for explicit in ["@alias/=missing/", "src/:@alias/=missing/"] {
             let mut paths = paths.clone();
             paths.remappings.push(Remapping::from_str(explicit).unwrap());
-            assert_eq!(root_remapping_candidates(&paths, import, &file), BTreeMap::new());
+            assert_eq!(remapping_candidates(&paths, import, &file), BTreeMap::new());
         }
     }
 }

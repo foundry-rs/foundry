@@ -958,7 +958,11 @@ fn suppress_overridden_remapping_warnings(
     });
 }
 
-/// Retains migration advice only for former global targets that are no longer available.
+/// Retains migration advice only for former global targets that root imports silently replace.
+///
+/// Root imports still resolve when a root mapping covers the alias or a root directory has its
+/// name. Otherwise imports of it fail with actionable compiler help, so warning here would flag
+/// projects that never import the alias.
 fn retain_changed_remapping_warnings(
     warnings: &mut Vec<Warning>,
     previous_globals: &BTreeSet<RelativeRemapping>,
@@ -972,16 +976,19 @@ fn retain_changed_remapping_warnings(
         let mut global = remapping.clone();
         global.context = None;
         let original = global.clone().to_relative_remapping();
+        let mut covering = current
+            .iter()
+            .filter(|mapping| {
+                mapping.context.is_none() && remapping_name_is_prefix(&mapping.name, &global.name)
+            })
+            .peekable();
         previous_globals.contains(&global)
             // Project-path aliases could not have supplied root imports before scoping.
             && !project_paths.iter().any(|path| {
                 original.name.eq_ignore_ascii_case(&project_path_remapping_name(path))
             })
-            && !current.iter().any(|mapping| {
-                mapping.context.is_none()
-                    && remapping_name_is_prefix(&mapping.name, &global.name)
-                    && !remappings_conflict(mapping, &original, root)
-            })
+            && (covering.peek().is_some() || root.join(&original.name).exists())
+            && covering.all(|mapping| remappings_conflict(mapping, &original, root))
             && warned.insert(global)
     });
 }
@@ -1989,18 +1996,43 @@ mod tests {
                     .get_all_remappings()
                     .filter(|mapping| mapping.name == "pkg/" || mapping.name == alias)
                     .collect::<Vec<_>>();
-                assert_eq!(config.warnings.len(), usize::from(scoped), "{alias}={target}");
-                if scoped {
-                    assert_eq!(
-                        config.warnings[0].to_string(),
-                        "Dependency remapping `pkg/=lib/a/src/` now applies only within `lib/a/`. Imports of `pkg/` from the root or other dependencies may resolve differently. Adding `pkg/=lib/a/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:pkg/=<target>`."
-                    );
-                }
+                // No root mapping covers a scoped alias, so root imports fail with compiler help
+                // instead of resolving silently elsewhere.
+                assert!(config.warnings.is_empty(), "{alias}={target}");
                 assert!(
                     aliases.iter().all(|mapping| mapping.context.is_some() == scoped),
                     "{alias}={target}"
                 );
             }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn scoped_dependency_alias_shadowed_by_root_directory_warns() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = temp.path();
+            fs::create_dir_all(root.join("lib/a/src/utils")).unwrap();
+            fs::create_dir_all(root.join("utils")).unwrap();
+            fs::write(
+                root.join("lib/a").join(Config::FILE_NAME),
+                "[profile.default]\nremappings = [\"utils/=src/utils/\"]\n",
+            )
+            .unwrap();
+            fs::write(root.join("lib/a/src/utils/U.sol"), "contract Dependency {}\n").unwrap();
+            fs::write(root.join("utils/U.sol"), "contract Root {}\n").unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+
+            // Root imports of `utils/` now silently resolve to the root directory.
+            let config = Config::load_with_root(root).unwrap();
+            assert_eq!(
+                config.warnings.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                [
+                    "Dependency remapping `utils/=lib/a/src/utils/` now applies only within `lib/a/`. Imports of `utils/` from the root or other dependencies may resolve differently. Adding `utils/=lib/a/src/utils/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:utils/=<target>`."
+                ]
+            );
 
             Ok(())
         });

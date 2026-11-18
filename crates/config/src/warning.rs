@@ -71,7 +71,8 @@ pub enum Warning {
         /// The selected profile that does not exist
         profile: String,
     },
-    /// A formerly global dependency declaration now applies only within its owner.
+    /// A formerly global dependency declaration now applies only within its owner, while root
+    /// imports of its alias still resolve, to another target.
     ScopedDependencyRemapping {
         /// The original alias and target with their generated owner context.
         remapping: RelativeRemapping,

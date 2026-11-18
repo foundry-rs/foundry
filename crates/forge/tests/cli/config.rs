@@ -17,7 +17,6 @@ use foundry_config::{
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     foundry_compilers::artifacts::{EvmVersion, remappings::Remapping},
-    snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, TestCommand, pretty_err},
 };
 use path_slash::PathBufExt;
@@ -4223,10 +4222,6 @@ with remappings:
 [SOLC_VERSION] [ELAPSED]
 
 "#]];
-    let warnings = str![[r#"
-Warning: Dependency remapping `@custom/=lib/dependency/src/` now applies only within `lib/dependency/`. Imports of `@custom/` from the root or other dependencies may resolve differently. Adding `@custom/=lib/dependency/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:@custom/=<target>`.
-
-"#]];
     let migration_error = str![[r#"
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4236,20 +4231,14 @@ ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the fo
 3 | import {Dep} from "@custom/Dep.sol"; contract Root is Dep {}
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt:
-      @custom/=lib/dependency/src/
+help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt: `@custom/=lib/dependency/src/`
 
 "#]];
-    let expected_stderr = format!(
-        "{}{}",
-        warnings.clone().into_data().render().unwrap(),
-        migration_error.clone().into_data().render().unwrap(),
-    );
     cmd.forge_fuse()
         .args(["build", "--force", "--no-lint"])
         .assert_failure()
         .stdout_eq(expected_stdout)
-        .stderr_eq(expected_stderr);
+        .stderr_eq(migration_error.clone());
     cmd.forge_fuse()
         .args(["build", "--force", "--no-lint", "--quiet"])
         .assert_failure()
@@ -4269,7 +4258,7 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
           "file": null,
           "start": null,
           "end": null,
-          "message": "help: this file imports the alias \"@custom/\", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt:\n      @custom/=lib/dependency/src/"
+          "message": "help: this file imports the alias \"@custom/\", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt: `@custom/=lib/dependency/src/`"
         }
       ],
       "type": "ParserError",
@@ -4286,7 +4275,7 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
 }
 "#]],
         )
-        .stderr_eq(warnings);
+        .stderr_eq("");
 
     prj.add_test(
         "AliasMigration.t.sol",
@@ -4337,7 +4326,6 @@ fn dependency_alias_migration_only_suggests_existing_targets(prj: _, cmd: _) {
     prj.add_source("Root.sol", "import {Dep} from \"@custom/Dep.sol\"; contract Root is Dep {}\n");
 
     cmd.args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
-Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Imports of `@custom/` from the root or other dependencies may resolve differently. Adding `@custom/=lib/a/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:@custom/=<target>`.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4346,9 +4334,7 @@ ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the fo
 3 | import {Dep} from "@custom/Dep.sol"; contract Root is Dep {}
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, choose a root remapping in foundry.toml or remappings.txt:
-      @custom/=lib/a/src/
-      @custom/=lib/z/src/
+help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, choose a remapping in foundry.toml or remappings.txt: `@custom/=lib/a/src/` or `@custom/=lib/z/src/`
 
 "#]]);
 
@@ -4356,7 +4342,6 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
     fs::remove_file(prj.root().join("lib/z/src/Dep.sol")).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
         r#"
-Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Imports of `@custom/` from the root or other dependencies may resolve differently. Adding `@custom/=lib/a/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:@custom/=<target>`.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4395,6 +4380,42 @@ ParserError: Source "src/missing/Dep.sol" not found: File not found. Searched th
         }
         command.assert_failure().stderr_eq(explicit_error.clone());
     }
+}
+
+// Scoping an alias that no root mapping covers is silent until a compiled file imports it, and a
+// dependency importer is told how to fix only its own dependency.
+#[forgetest]
+fn unused_scoped_dependency_alias_does_not_warn(prj: _, cmd: _) {
+    for name in ["a", "b"] {
+        prj.create_file(
+            format!("lib/{name}/foundry.toml"),
+            "[profile.default]\nremappings = [\"@custom/=src/\"]\n",
+        );
+        prj.add_lib(&format!("{name}/src/Dep.sol"), "contract Dep {}\n");
+    }
+    prj.add_lib("c/src/C.sol", "import {Dep} from \"@custom/Dep.sol\"; contract C is Dep {}\n");
+    prj.add_source("Root.sol", "contract Root {}\n");
+
+    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq("");
+
+    prj.add_source("Root.sol", "import {C} from \"c/C.sol\"; contract Root is C {}\n");
+    cmd.forge_fuse().args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
+Error: Compiler run failed:
+Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ [FILE]:3:1:
+  |
+3 | import {Dep} from "@custom/Dep.sol"; contract C is Dep {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from `lib/c/`, choose a remapping in foundry.toml or remappings.txt: `lib/c/:@custom/=lib/a/src/` or `lib/c/:@custom/=lib/b/src/`
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("lib/c/:@custom/=lib/a/src/").unwrap().into()];
+    });
+    cmd.forge_fuse().args(["build", "--no-lint"]).assert_success().stderr_eq("");
 }
 
 #[forgetest]
