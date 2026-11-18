@@ -290,11 +290,11 @@ pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
         false
     }
 
-    /// Returns the per-phase statuses of an included signed Base EIP-8130 transaction.
+    /// Returns the number of leading call phases that committed in an included signed Base
+    /// EIP-8130 transaction.
     ///
-    /// Each entry is `0x01` if the phase committed and `0x00` if it reverted. Other transactions,
-    /// including EIP-8130 simulations, return `None`.
-    fn eip8130_phase_statuses(&self) -> Option<&[u8]> {
+    /// Other transactions, including EIP-8130 simulations, return `None`.
+    fn eip8130_committed_phases(&self) -> Option<u64> {
         None
     }
 }

@@ -46,7 +46,7 @@ const CREATE_2_DEPLOYER_ADDRESS: Address = address!("0x13b0D85CcB8bf860b6b79AF30
 const CREATE_2_DEPLOYER_CODE_HASH: B256 =
     b256!("0xb0550b5b431e30d38000efb7107aaa0ade03d48a7198a140edda9d27134468b2");
 
-/// The EIP-8130 nonce manager system account, which Zenith makes non-empty with a code stub.
+/// The EIP-8130 nonce manager system account, which Everest makes non-empty with a code stub.
 const EIP8130_NONCE_MANAGER_ADDRESS: Address =
     address!("0x813000000000000000000000000000000000aa01");
 
@@ -285,7 +285,7 @@ pub(super) fn ensure_create2_deployer(db: &mut dyn Db) -> Result<(), DatabaseErr
     Ok(())
 }
 
-/// Plants Zenith's code stub on code-less EIP-8130 system accounts so state clearing keeps them.
+/// Plants Everest's code stub on code-less EIP-8130 system accounts so state clearing keeps them.
 pub(super) fn ensure_eip8130_system_accounts(db: &mut dyn Db) -> Result<(), DatabaseError> {
     let mut info = db.basic_ref(EIP8130_NONCE_MANAGER_ADDRESS)?.unwrap_or_default();
     if !info.is_empty_code_hash() {

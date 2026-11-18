@@ -5665,7 +5665,7 @@ impl EthApi<FoundryNetwork> {
         // Payer authentication is metered on top of the gas limit, so each reservation includes
         // its worst-case cost.
         let max_fee_charge = |signed: &Eip8130Signed| {
-            let payer_auth = IntrinsicGas::max_payer_auth_cost(signed)
+            let payer_auth = IntrinsicGas::payer_auth_cost_of(signed)
                 .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
             Ok::<_, BlockchainError>(eip8130_max_fee_charge(
                 signed.tx().gas_limit,

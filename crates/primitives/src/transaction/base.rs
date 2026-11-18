@@ -72,6 +72,7 @@ mod tests {
             valid_before: 200,
             calls: vec![vec![Call {
                 to: Address::repeat_byte(3),
+                value: U256::from(5),
                 data: Bytes::from_static(b"call"),
             }]],
             account_changes: vec![AccountChange::Delegation(Delegation {

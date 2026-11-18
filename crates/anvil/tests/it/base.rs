@@ -895,7 +895,7 @@ async fn base_eip8130_debug_trace_transaction_inspects_protocol_calls() {
         .send_raw_transaction(
             &eip8130_envelope_with(
                 &signer,
-                vec![vec![Call { to: target, data: Bytes::new() }]],
+                vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
                 Bytes::new(),
             )
             .encoded_2718(),
@@ -1432,7 +1432,7 @@ async fn base_eip8130_receipt_reports_phase_statuses_and_metadata() {
     api.anvil_set_code(target, Bytes::from_static(&[0x00])).await.unwrap();
     let envelope = eip8130_envelope_with(
         &signer,
-        vec![vec![Call { to: target, data: Bytes::new() }]],
+        vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
         Bytes::from_static(&[0xaa]),
     );
 
@@ -1536,8 +1536,8 @@ async fn base_eip8130_receipt_reports_partial_phase_revert() {
     let envelope = eip8130_envelope_with(
         &signer,
         vec![
-            vec![Call { to: success, data: Bytes::new() }],
-            vec![Call { to: reverter, data: Bytes::new() }],
+            vec![Call { to: success, value: U256::ZERO, data: Bytes::new() }],
+            vec![Call { to: reverter, value: U256::ZERO, data: Bytes::new() }],
         ],
         Bytes::new(),
     );
@@ -1573,7 +1573,7 @@ async fn base_eip8130_same_block_receipts_keep_phase_statuses_isolated() {
             &eip8130_envelope_with_channel_calls(
                 &signer,
                 U256::from(20),
-                vec![vec![Call { to: success, data: Bytes::new() }]],
+                vec![vec![Call { to: success, value: U256::ZERO, data: Bytes::new() }]],
             )
             .encoded_2718(),
         )
@@ -1585,8 +1585,8 @@ async fn base_eip8130_same_block_receipts_keep_phase_statuses_isolated() {
                 &signer,
                 U256::from(21),
                 vec![
-                    vec![Call { to: success, data: Bytes::new() }],
-                    vec![Call { to: reverter, data: Bytes::new() }],
+                    vec![Call { to: success, value: U256::ZERO, data: Bytes::new() }],
+                    vec![Call { to: reverter, value: U256::ZERO, data: Bytes::new() }],
                 ],
             )
             .encoded_2718(),

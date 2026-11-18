@@ -212,8 +212,6 @@ use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 #[cfg(feature = "base")]
 use crate::eth::backend::evm::BaseEvmNetwork;
 #[cfg(feature = "base")]
-use alloy_eips::Encodable2718;
-#[cfg(feature = "base")]
 use base_common_chains::ChainConfig;
 #[cfg(feature = "base")]
 use base_common_consensus::{
@@ -221,10 +219,12 @@ use base_common_consensus::{
     Predeploys,
 };
 #[cfg(feature = "base")]
-use base_common_eip8130::{IntrinsicGas, IntrinsicGasInput, NonceManagerSlots};
+use base_common_eip8130::{IntrinsicGas, NonceManagerSlots};
+#[cfg(feature = "base")]
+use base_common_genesis::BaseFeature;
 #[cfg(feature = "base")]
 use base_common_rpc_types::{
-    EIP8130_PRE_ZENITH_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
+    EIP8130_PRE_EVEREST_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
     Transaction as BaseRpcTransaction,
 };
 #[cfg(feature = "base")]
@@ -1975,16 +1975,16 @@ impl<N: Network> Backend<N> {
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_active_at(&self, timestamp: u64) -> Result<(), BlockchainError> {
         let upgrade = self.base_upgrade_at_timestamp(timestamp);
-        if self.is_base() && upgrade >= BaseUpgrade::Zenith {
+        if self.is_base() && upgrade.is_feature_enabled(BaseFeature::Eip8130) {
             return Ok(());
         }
-        Err(BlockchainError::InvalidTransactionRequest(EIP8130_PRE_ZENITH_RPC_ERROR.to_string()))
+        Err(BlockchainError::InvalidTransactionRequest(EIP8130_PRE_EVEREST_RPC_ERROR.to_string()))
     }
 
     /// Returns an admission error if Base EIP-8130 submissions are not active.
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_submission_active(&self) -> Result<(), BlockchainError> {
-        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Zenith {
+        if self.is_base() && self.base_upgrade().is_feature_enabled(BaseFeature::Eip8130) {
             return Ok(());
         }
         Err(BlockchainError::Eip8130TransactionRejected(EIP8130_REJECTION_MSG.to_string()))
@@ -3721,6 +3721,7 @@ impl<N: Network> Backend<N> {
                 // payer authentication blobs, so intrinsic gas prices the authentication scheme.
                 let simulation = request
                     .to_eip8130_simulation_tx(self.chain_id().to(), gas_limit)
+                    .ok()
                     .and_then(|tx| tx.eip8130)
                     .ok_or_else(invalid)?;
                 let sender = request
@@ -5105,13 +5106,13 @@ impl<N: Network> Backend<N> {
         if upgrade >= BaseUpgrade::Denim {
             base::ensure_base_time_predeploy(db, true)?;
         }
-        if upgrade >= BaseUpgrade::Zenith {
+        if upgrade.is_feature_enabled(BaseFeature::NativeNonceManager) {
             base::ensure_eip8130_system_accounts(db)?;
         }
 
         // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
         // check on high-level calls to functions without return data does not revert in the
-        // caller. `ensure_eip8130_system_accounts` only covers the Zenith nonce manager.
+        // caller. `ensure_eip8130_system_accounts` only covers the Everest nonce manager.
         for address in foundry_evm_networks::BASE_CODE_SENTINEL_ADDRESSES
             .iter()
             .copied()
@@ -8761,8 +8762,14 @@ where
 
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
 
+        // The RPC reports one status per phase, derived from the receipt's committed phase count.
         #[cfg(feature = "base")]
-        let eip8130_phase_statuses = tx_receipt.eip8130_phase_statuses().to_vec();
+        let eip8130_phase_statuses = match (&tx_receipt, transaction.as_ref()) {
+            (FoundryReceiptEnvelope::Eip8130(receipt), FoundryTxEnvelope::Eip8130(tx)) => {
+                receipt.receipt.phase_statuses(tx.tx().calls.len()).unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
         let tx_receipt = tx_receipt.convert_logs_rpc(
             BlockNumHash::new(block.header.number(), block_hash),
             block.header.timestamp(),
@@ -9987,7 +9994,7 @@ impl Backend<FoundryNetwork> {
                             result.status,
                             canonical_logs.clone(),
                             cumulative_charged_gas,
-                            result.ext.eip8130_phase_statuses.clone(),
+                            result.ext.eip8130_committed_phases,
                         )
                     };
                     #[cfg(not(any(feature = "base", feature = "optimism")))]
@@ -9996,7 +10003,7 @@ impl Backend<FoundryNetwork> {
                         result.status,
                         canonical_logs.clone(),
                         cumulative_charged_gas,
-                        result.ext.eip8130_phase_statuses.clone(),
+                        result.ext.eip8130_committed_phases,
                     );
                     receipts.push(receipt);
                     transaction_envelopes.push(tx.as_ref().clone());
@@ -10652,20 +10659,18 @@ where
                     body.nonce_sequence
                 )));
             }
-            let nonce_key_first_use = channel_nonce == Some(0);
             let ready_for_execution =
                 channel_nonce.is_none_or(|nonce| body.nonce_sequence == nonce);
 
-            let intrinsic = IntrinsicGas::compute(
-                signed,
-                &signed.encoded_2718(),
-                &IntrinsicGasInput::worst_case(
-                    nonce_key_first_use,
-                    IntrinsicGasInput::sender_auto_delegated(&body.account_changes),
-                    body.payer.is_some(),
-                ),
-            )
-            .map_err(|error| rejected(&error))?;
+            // Intrinsic gas depends only on the transaction and its sender. Like Base's pool, the
+            // gas limit must cover both the sender-intrinsic gas and the EIP-7623 calldata floor.
+            let intrinsic =
+                IntrinsicGas::compute(signed, address).map_err(|error| rejected(&error))?;
+            if body.gas_limit < intrinsic.sender_floor() {
+                return Err(rejected(
+                    &"transaction gas limit is below the EIP-7623 calldata floor",
+                ));
+            }
             if intrinsic.execution_gas_available(body.gas_limit).is_none() {
                 return Err(rejected(&"sender intrinsic gas exceeds transaction gas limit"));
             }
@@ -10678,7 +10683,7 @@ where
             };
             let required = base::eip8130_max_fee_charge(
                 body.gas_limit,
-                intrinsic.payer_auth,
+                intrinsic.payer_auth_cost,
                 body.max_fee_per_gas,
             );
             if payer_balance < required {

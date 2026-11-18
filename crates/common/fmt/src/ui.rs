@@ -1341,7 +1341,7 @@ mod tests {
     #[cfg(feature = "base")]
     #[test]
     fn can_pretty_print_eip8130_transaction() {
-        let base_call = BaseCall { to: Address::ZERO, data: Bytes::new() };
+        let base_call = BaseCall { to: Address::ZERO, value: U256::ZERO, data: Bytes::new() };
         let tx = TxEip8130 {
             chain_id: 8453,
             sender: Some(Address::with_last_byte(0x11)),

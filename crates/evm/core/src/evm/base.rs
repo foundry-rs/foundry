@@ -47,8 +47,8 @@ impl FoundryTxResultExt for BaseTxResultExt {
         self.failed_deposit
     }
 
-    fn eip8130_phase_statuses(&self) -> Option<&[u8]> {
-        self.eip8130_phase_statuses.as_deref()
+    fn eip8130_committed_phases(&self) -> Option<u64> {
+        self.eip8130_committed_phases
     }
 }
 

@@ -2509,9 +2509,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-blobs"
+version = "0.0.0"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "base-common-chains"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-chains",
  "alloy-eips",
@@ -2527,21 +2537,24 @@ dependencies = [
 [[package]]
 name = "base-common-consensus"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-evm",
+ "alloy-genesis",
  "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-eth",
  "alloy-serde",
  "alloy-sol-types",
+ "ambassador",
+ "base-common-genesis",
  "bytes",
- "reth-codecs 0.6.0",
- "reth-primitives-traits 0.6.0",
- "reth-zstd-compressors 0.6.0",
+ "reth-codecs 0.8.2",
+ "reth-primitives-traits 0.8.2",
+ "reth-zstd-compressors 0.8.2",
  "revm 43.0.3",
  "serde",
  "thiserror 2.0.21",
@@ -2550,7 +2563,7 @@ dependencies = [
 [[package]]
 name = "base-common-eip8130"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-primitives",
  "base-common-consensus",
@@ -2560,7 +2573,7 @@ dependencies = [
 [[package]]
 name = "base-common-evm"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2584,12 +2597,12 @@ dependencies = [
 [[package]]
 name = "base-common-flz"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 
 [[package]]
 name = "base-common-genesis"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -2607,7 +2620,7 @@ dependencies = [
 [[package]]
 name = "base-common-l1-fees"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-primitives",
  "base-common-flz",
@@ -2617,7 +2630,7 @@ dependencies = [
 [[package]]
 name = "base-common-network"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -2629,12 +2642,13 @@ dependencies = [
  "base-common-consensus",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "base-common-precompiles"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -2650,7 +2664,7 @@ dependencies = [
 [[package]]
 name = "base-common-rpc-types"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2663,16 +2677,17 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "derive_more",
- "reth-primitives-traits 0.6.0",
+ "reth-primitives-traits 0.8.2",
  "revm 43.0.3",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "base-common-rpc-types-engine"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2692,7 +2707,7 @@ dependencies = [
 [[package]]
 name = "base-consensus-upgrades"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -2702,7 +2717,7 @@ dependencies = [
 [[package]]
 name = "base-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=65cb40bbccbc334fc4777b84d680fdcccf97ea15#65cb40bbccbc334fc4777b84d680fdcccf97ea15"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=7110e146f01ad25534286714aecb680f1bf7204b#7110e146f01ad25534286714aecb680f1bf7204b"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2722,7 +2737,7 @@ dependencies = [
 [[package]]
 name = "base-execution-eip8130"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2742,12 +2757,12 @@ dependencies = [
 [[package]]
 name = "base-metrics"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 
 [[package]]
 name = "base-precompile-macros"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-primitives",
  "proc-macro2",
@@ -2758,7 +2773,7 @@ dependencies = [
 [[package]]
 name = "base-precompile-storage"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -2773,18 +2788,17 @@ dependencies = [
 [[package]]
 name = "base-protocol"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=dc2c07d5438344ffe7159a50afc7a51448b8cde9#dc2c07d5438344ffe7159a50afc7a51448b8cde9"
+source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
 dependencies = [
  "alloc-no-stdlib",
  "alloy-consensus",
  "alloy-eips",
- "alloy-genesis",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
- "ambassador",
  "async-trait",
+ "base-common-blobs",
  "base-common-consensus",
  "base-common-genesis",
  "base-common-rpc-types-engine",
@@ -9279,7 +9293,7 @@ dependencies = [
 [[package]]
 name = "op-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=65cb40bbccbc334fc4777b84d680fdcccf97ea15#65cb40bbccbc334fc4777b84d680fdcccf97ea15"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=7110e146f01ad25534286714aecb680f1bf7204b#7110e146f01ad25534286714aecb680f1bf7204b"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10827,25 +10841,6 @@ dependencies = [
 
 [[package]]
 name = "reth-codecs"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f0dd7f542fbcae0e490ebe13f3eababcc05547375246ff7f62700b533cf3f01"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-trie",
- "bytes",
- "modular-bitfield",
- "parity-scale-codec",
- "reth-codecs-derive 0.6.0",
- "reth-zstd-compressors 0.6.0",
- "serde",
-]
-
-[[package]]
-name = "reth-codecs"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6bac09d9d84a412ae151149ec870d6eb7770335c5eb63f209453d81deff8d39"
@@ -10879,17 +10874,6 @@ dependencies = [
  "reth-codecs-derive 0.8.2",
  "reth-zstd-compressors 0.8.2",
  "serde",
-]
-
-[[package]]
-name = "reth-codecs-derive"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7e508fcbb8cb775639dbbb56b81b62756d4322f28e76c60a52aa32575f993fe"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -11088,32 +11072,6 @@ dependencies = [
 
 [[package]]
 name = "reth-primitives-traits"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4666a8d5b246650b23e6767a45e46334d352557f473e91c2ea7211cc29291cca"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types-eth",
- "alloy-trie",
- "bytes",
- "dashmap",
- "derive_more",
- "once_cell",
- "reth-codecs 0.6.0",
- "revm-bytecode 42.0.0",
- "revm-primitives 42.0.0",
- "revm-state 42.0.0",
- "secp256k1 0.30.0",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "reth-primitives-traits"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18341fba74d004c7fad32f784488baaea9adebfde7a4f231a4d8d445aea70347"
@@ -11279,15 +11237,6 @@ dependencies = [
  "serde",
  "serde_with",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "reth-zstd-compressors"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80addacffc5df9398c55919f8993922d2b688f2aa5753708fdd658ca3cc63e39"
-dependencies = [
- "zstd 0.13.3",
 ]
 
 [[package]]
