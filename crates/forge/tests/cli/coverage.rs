@@ -5449,6 +5449,81 @@ contract HelperTest {
     );
 }
 
+// A source compiled by two profiles gets one bytecode listing per artifact: the artifact name's
+// profile suffix is kept, not taken for the file's extension.
+#[forgetest]
+fn coverage_bytecode_report_profiles(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "via-ir".to_owned(),
+            via_ir: Some(true),
+            evm_version: None,
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "src/ViaIr.sol".parse().unwrap(),
+            version: None,
+            via_ir: Some(true),
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+    prj.add_source(
+        "Shared.sol",
+        "contract Shared { function get() public pure returns (uint256) { return 7; } }",
+    );
+    prj.add_source(
+        "ViaIr.sol",
+        r#"
+import {Shared} from "./Shared.sol";
+
+contract ViaIr {
+    function make() external returns (uint256) {
+        return new Shared().get();
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Shared.t.sol",
+        r#"
+import {Shared} from "src/Shared.sol";
+
+interface Vm {
+    function deployCode(string calldata) external returns (address);
+}
+
+interface IViaIr {
+    function make() external returns (uint256);
+}
+
+contract SharedTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testGet() public {
+        require(new Shared().get() == 7);
+        require(IViaIr(vm.deployCode("src/ViaIr.sol:ViaIr")).make() == 7);
+    }
+}
+"#,
+    );
+    cmd.args(["coverage", "--report=bytecode"]).assert_success();
+    let mut listings = std::fs::read_dir(prj.root().join("bytecode-coverage"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.starts_with("Shared."))
+        .collect::<Vec<_>>();
+    listings.sort();
+    assert_eq!(listings, ["Shared.asm", "Shared.via-ir.asm"]);
+}
+
 // Gaps report offsets and snippets do not depend on CRLF line endings or multibyte text.
 #[forgetest]
 fn coverage_gaps_report(prj: _, cmd: _) {
