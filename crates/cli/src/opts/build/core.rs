@@ -84,9 +84,10 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_auto_detect: bool,
 
-    /// Specify the solc version, path, or executable name on `PATH` to build with.
+    /// Specify the solc version, Solar version, path, or executable name on `PATH` to build with.
     ///
-    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `path/to/solc`, or `solc`.
+    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `solar:x.y.z`, `path/to/solc`, or
+    /// `solc`.
     #[arg(
         long = "use",
         alias = "compiler-version",
@@ -98,7 +99,7 @@ pub struct BuildOpts {
 
     /// Do not access the network.
     ///
-    /// Missing solc versions will not be installed.
+    /// Missing solc versions and Solar releases will not be installed.
     #[arg(help_heading = "Compiler options", long)]
     #[serde(skip)]
     pub offline: bool,
@@ -205,6 +206,7 @@ impl<'a> From<&'a BuildOpts> for Figment {
             .collect();
         let mut remappings = Remappings::new_with_remappings(cli_remappings).with_figment(&figment);
         let generated_remappings = Remappings::generated_from_figment(&figment);
+        let warnings = remappings.warnings_from_figment(&figment);
         remappings.extend_with_config_remappings(
             figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default(),
             &generated_remappings,
@@ -214,7 +216,8 @@ impl<'a> From<&'a BuildOpts> for Figment {
             .into_iter()
             .map(|remapping| relative_remapping_preserving_context_boundary(remapping, &root))
             .collect::<Vec<_>>();
-        figment = figment.merge(("remappings", remappings)).merge(args);
+        figment =
+            figment.merge(("remappings", remappings)).merge(("__warnings", warnings)).merge(args);
 
         if let Some(skip) = &args.skip {
             let mut skip = skip.iter().map(|s| s.file_pattern().to_string()).collect::<Vec<_>>();

@@ -165,11 +165,25 @@ jobs:
           path.parent.mkdir(parents=True, exist_ok=True)
           path.write_text(json.dumps(cache))
           PYTHON
+      - name: Configure Cargo on Windows
+        if: runner.os == 'Windows'
+        id: windows-target
+        shell: pwsh
+        run: |
+          # Preserve Cargo's response files until a release includes mozilla/sccache#3026.
+          "RUSTC_WRAPPER=" >> $env:GITHUB_ENV
+          # Keep compiler paths short on Windows.
+          $target = 'C:\t'
+          "CARGO_TARGET_DIR=$target" >> $env:GITHUB_ENV
+          # rust-cache interprets target paths relative to the workspace.
+          "cache-target=$([System.IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $target))" >> $env:GITHUB_OUTPUT
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        if: runner.os != 'Windows'
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-bin: false
-      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+          workspaces: . -> ${{ steps.windows-target.outputs.cache-target || 'target' }}
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
         with:
           tool: nextest
       - name: Setup Git config

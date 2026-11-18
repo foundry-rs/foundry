@@ -5,8 +5,8 @@ use alloy_primitives::{
 use eyre::Result;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::tempo::ResolvedSessionSigner;
-use foundry_wallets::TempoAccountsWallet;
 use itertools::Itertools;
+use tempo_alloy::accounts::TempoAccountsWallet;
 
 /// A transaction sender scoped to one chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

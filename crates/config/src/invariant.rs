@@ -142,7 +142,8 @@ pub struct InvariantConfig {
     /// The fuzz dictionary configuration
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
-    /// The maximum number of attempts to shrink the sequence
+    /// The maximum number of attempts to shrink the sequence, also used to minimize the argument
+    /// values of stateless fuzz counterexamples.
     pub shrink_run_limit: u32,
     /// The maximum number of rejects via `vm.assume` which can be encountered during a single
     /// invariant run.
@@ -164,7 +165,8 @@ pub struct InvariantConfig {
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
     pub show_metrics: bool,
-    /// Optional campaign-global timeout (in seconds) for each invariant test.
+    /// Optional campaign-global timeout (in seconds) for each invariant test. Shrinking the
+    /// failures of a timed test stops at most `timeout` seconds after the campaign deadline.
     pub timeout: Option<u32>,
     /// Display counterexample as solidity calls.
     pub show_solidity: bool,
@@ -180,6 +182,14 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// Gas limit for every campaign call after `setUp` and target selection: handler calls,
+    /// invariant checks, `afterInvariant`, and their replays and shrinks.
+    ///
+    /// Unset keeps the project `gas_limit`; a larger value has no effect. A handler call whose
+    /// minimum gas is above the limit runs with that minimum instead. At the intrinsic charge,
+    /// network charges included, it has no gas left and reverts. At an EIP-7623 calldata floor
+    /// above the intrinsic charge, it keeps the difference and can still run.
+    pub call_gas_limit: Option<u64>,
 }
 
 impl Default for InvariantConfig {
@@ -206,6 +216,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            call_gas_limit: None,
         }
     }
 }

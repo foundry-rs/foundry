@@ -428,6 +428,52 @@ Exiting debugger.
 "#]]);
 }
 
+// A Tempo fee token runs the script's calls one level below the transaction. The arena lifts
+// `run()` into the root, and a `vm.breakpoint` stop matches the recorded steps.
+#[forgetest]
+fn tempo_fee_token_script_debugger_breakpoint(prj: _, cmd: _) {
+    prj.add_script(
+        "Break.s.sol",
+        r#"
+interface Vm {
+    function breakpoint(string calldata char) external;
+}
+
+contract BreakScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 number;
+
+    function run() public {
+        number = 1;
+        vm.breakpoint("a");
+        number = 2;
+    }
+}
+"#,
+    );
+
+    cmd.args(["script", "script/Break.s.sol", "--network", "tempo", "--debug"])
+        .args(["--tempo.fee-token", "0x20C0000000000000000000000000000000000000"])
+        .stdin("continue\nbacktrace\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Loaded trace with 185 steps.
+Sources loaded for: BreakScript (0x9f7cf1d1f558e57ef88a59ac3d47214ef25b6a06)
+script/Break.s.sol:8  (step 0/184, pc 0, PUSH1, gas 1073214826)
+    8 | contract BreakScript {
+Breakpoint #1 hit at step 165, PC 177 if step >= 17 && step < 185 && depth == 1
+script/Break.s.sol:14 in run  (step 165/184, pc 177, CALL, gas 1073463375)
+   14 |         vm.breakpoint("a");
+#0  run at script/Break.s.sol:14  step 165, PC 177
+#1  BreakScript at script/Break.s.sol:8  step 40, PC 40
+Exiting debugger.
+
+"#]]);
+}
+
 // Code replaced with `vm.etch` maps through its own program, not the one that ran at the address
 // first.
 #[forgetest]

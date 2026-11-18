@@ -23,6 +23,12 @@ impl SymExpr {
         }
     }
 
+    /// Keeps the low 160 bits of a word, as the EVM reads an address operand.
+    pub(crate) fn address_operand(self, cx: &mut SymCx) -> Self {
+        let mask = Self::constant(cx, (U256::ONE << 160) - U256::ONE);
+        Self::binop(cx, SymBinOp::And, self, mask)
+    }
+
     pub(crate) fn address_match_condition(&self, cx: &mut SymCx, address: Address) -> SymBoolExpr {
         if let Some(word) = self.as_const() {
             return SymBoolExpr::constant(cx, word == address_word(address));

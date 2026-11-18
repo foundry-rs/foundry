@@ -639,15 +639,25 @@ contract CancunBlobOps {
         // to actually execute the opcodes.
         assert(uint256(h) | fee | 1 != 0);
     }
+
+    // A constant index past the blob list reads zero, also when it does not fit in `usize`.
+    function checkBlobHashPastListIsZero() public view {
+        bytes32 h;
+        assembly {
+            h := blobhash(shl(64, 1))
+        }
+        assert(h == 0);
+    }
 }
 "#,
     );
 
-    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkBlobOpcodes"]))
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkBlob"]))
         .success()
         .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/CancunBlobOps.t.sol:CancunBlobOps
+Ran 2 tests for test/CancunBlobOps.t.sol:CancunBlobOps
+[PASS] checkBlobHashPastListIsZero() ([METRICS])
 [PASS] checkBlobOpcodes() ([METRICS])
 ...
 "#]]);

@@ -644,3 +644,82 @@ contract SuperChild is SuperPureOverride {
         emit Counter(0);
     }
 }
+
+// Inline assembly taints only if it can reach `call`, `callcode`, `delegatecall`, `create` or
+// `create2`, also through a Yul function or `switch`. Yul `staticcall` is excluded.
+contract AssemblyEvents {
+    event Tick();
+
+    modifier nonReentrant() {
+        assembly ("memory-safe") {
+            tstore(0, 1)
+        }
+        _;
+    }
+
+    function emitAfterAssemblyWithoutCall() external nonReentrant {
+        uint256 x;
+        assembly ("memory-safe") {
+            x := keccak256(mload(0x40), 0x20)
+        }
+        emit Tick();
+    }
+
+    function emitAfterAssemblyStaticcall(address target) external {
+        assembly {
+            pop(staticcall(gas(), target, 0, 0, 0, 0))
+        }
+        emit Tick();
+    }
+
+    function emitAfterAssemblyCall(address target) external {
+        assembly {
+            if iszero(call(gas(), target, 0, 0, 0, 0, 0)) { revert(0, 0) }
+        }
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterAssemblyCreate() external {
+        assembly {
+            pop(create(0, 0, 0))
+        }
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterYulFunctionCall(address target) external {
+        assembly {
+            function forward(t) {
+                pop(delegatecall(gas(), t, 0, 0, 0, 0))
+            }
+            forward(target)
+        }
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterYulSwitchCall(address target, uint256 mode) external {
+        assembly {
+            switch mode
+            case 0 { pop(callcode(gas(), target, 0, 0, 0, 0, 0)) }
+            default { pop(create2(0, 0, 0, 0)) }
+        }
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    // Clean: dense mutually recursive Yul helpers without a call. The walk visits each helper
+    // once per query, not once per path.
+    function emitAfterRecursiveYulWithoutCall(uint256 n) external {
+        assembly {
+            function f0(x) { if x { f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f1(x) { if x { f0(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f2(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f3(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f4(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f5(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f6(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f7(sub(x, 1)) f8(sub(x, 1)) } }
+            function f7(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f8(sub(x, 1)) } }
+            function f8(x) { if x { f0(sub(x, 1)) f1(sub(x, 1)) f2(sub(x, 1)) f3(sub(x, 1)) f4(sub(x, 1)) f5(sub(x, 1)) f6(sub(x, 1)) f7(sub(x, 1)) } }
+            f0(n)
+        }
+        emit Tick();
+    }
+}
