@@ -16,7 +16,7 @@ use serde::{
     Serialize,
     ser::{SerializeMap, SerializeStruct},
 };
-use std::{collections::BTreeMap, str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, fmt, str::FromStr, sync::Arc};
 use tracing::trace;
 
 /// "inplace" encoding type for variables that fit in one storage slot i.e 32 bytes
@@ -78,12 +78,39 @@ pub struct StorageTypeInfo {
     pub dyn_sol_type: DynSolType,
 }
 
+/// Shows the parsed type, except for a dynamic array whose elements have no ABI type, such as
+/// structs: it is parsed as `bytes32[]` only to decode its length, so it shows its declared type
+/// from the layout, without the `struct` keyword.
+impl fmt::Display for StorageTypeInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // A mapping entry is labeled with the mapping's type; its value type is what it holds.
+        let mut value = self.label.as_str();
+        while let Some(inner) = value.strip_prefix("mapping(")
+            && let Some((_, value_type)) = inner.split_once(" => ")
+        {
+            value = value_type.strip_suffix(')').unwrap_or(value_type);
+        }
+        if matches!(self.dyn_sol_type, DynSolType::Array(_)) && parse_sol_type(value).is_none() {
+            return f.write_str(value.strip_prefix("struct ").unwrap_or(value));
+        }
+        self.dyn_sol_type.fmt(f)
+    }
+}
+
 impl SlotInfo {
     /// Decodes a single storage value based on the slot's type information.
     ///
     /// Note: For decoding [`DynSolType::Bytes`] or [`DynSolType::String`] that span multiple slots,
     /// use [`SlotInfo::decode_bytes_or_string`].
     pub fn decode(&self, value: B256) -> Option<DynSolValue> {
+        // Array elements packed into the slot decode as one array of them.
+        if let Some((element, len, size)) = packed_array(&self.slot_type.dyn_sol_type) {
+            return (0..len)
+                .map(|i| decode_packed(element, i * size, value))
+                .collect::<Option<Vec<_>>>()
+                .map(DynSolValue::FixedArray);
+        }
+
         // Storage values are always 32 bytes, stored as a single word
         let mut actual_type = &self.slot_type.dyn_sol_type;
         // Unwrap nested arrays to get to the base element type.
@@ -280,53 +307,11 @@ impl SlotInfo {
         // If this is a struct with members, decode each member individually
         if let Some(members) = &mut self.members {
             for member in members.iter_mut() {
+                let ty = &member.slot_type.dyn_sol_type;
                 let offset = member.offset as usize;
-                let size = match &member.slot_type.dyn_sol_type {
-                    DynSolType::Uint(bits) | DynSolType::Int(bits) => bits / 8,
-                    DynSolType::Address => 20,
-                    DynSolType::Bool => 1,
-                    DynSolType::FixedBytes(size) => *size,
-                    _ => 32, // Default to full word
-                };
-
-                // Extract and decode member values
-                let mut prev_bytes = [0u8; 32];
-                let mut new_bytes = [0u8; 32];
-
-                if offset + size <= 32 {
-                    // In Solidity storage, values are right-aligned
-                    // For offset 0, we want the rightmost bytes
-                    // For offset 16 (for a uint128), we want bytes 0-16
-                    // For packed storage: offset 0 is at the rightmost position
-                    // offset 0, size 16 -> read bytes 16-32 (rightmost)
-                    // offset 16, size 16 -> read bytes 0-16 (leftmost)
-                    let byte_start = 32 - offset - size;
-                    if matches!(member.slot_type.dyn_sol_type, DynSolType::Int(_)) {
-                        // ABI signed integers must be sign-extended to a full word.
-                        if previous_value.0[byte_start] & 0x80 != 0 {
-                            prev_bytes.fill(0xff);
-                        }
-                        if new_value.0[byte_start] & 0x80 != 0 {
-                            new_bytes.fill(0xff);
-                        }
-                    }
-                    // ABI fixed bytes are left-aligned, unlike integers and addresses.
-                    let abi_start =
-                        if matches!(member.slot_type.dyn_sol_type, DynSolType::FixedBytes(_)) {
-                            0
-                        } else {
-                            32 - size
-                        };
-                    prev_bytes[abi_start..abi_start + size]
-                        .copy_from_slice(&previous_value.0[byte_start..byte_start + size]);
-                    new_bytes[abi_start..abi_start + size]
-                        .copy_from_slice(&new_value.0[byte_start..byte_start + size]);
-                }
-
-                // Decode the member values
-                if let (Ok(prev_val), Ok(new_val)) = (
-                    member.slot_type.dyn_sol_type.abi_decode(&prev_bytes),
-                    member.slot_type.dyn_sol_type.abi_decode(&new_bytes),
+                if let (Some(prev_val), Some(new_val)) = (
+                    decode_packed(ty, offset, previous_value),
+                    decode_packed(ty, offset, new_value),
                 ) {
                     member.decoded =
                         Some(DecodedSlotValues { previous_value: prev_val, new_value: new_val });
@@ -443,6 +428,16 @@ impl SlotIdentifier {
     ///
     /// It can also identify whether a slot belongs to a mapping if provided with [`MappingSlots`].
     pub fn identify(&self, slot: &B256, mapping_slots: Option<&MappingSlots>) -> Option<SlotInfo> {
+        self.identify_at_depth(slot, mapping_slots, 0)
+    }
+
+    /// [`Self::identify`], `depth` dynamic arrays below the slot it was first called for.
+    fn identify_at_depth(
+        &self,
+        slot: &B256,
+        mapping_slots: Option<&MappingSlots>,
+        depth: usize,
+    ) -> Option<SlotInfo> {
         trace!(?slot, "identifying slot");
         let slot_u256 = Into::<U256>::into(*slot);
         let slot_str = slot_u256.to_string();
@@ -473,7 +468,7 @@ impl SlotIdentifier {
                 if let Some(parsed_type) = dyn_type
                     && let DynSolType::FixedArray(_, _) = parsed_type
                     && let Some(slot_info) = self.handle_array_slot(
-                        storage,
+                        &storage.label,
                         storage_type,
                         parsed_type,
                         slot_u256,
@@ -511,6 +506,18 @@ impl SlotIdentifier {
                         return Some(slot_info);
                     }
                 }
+            } else if storage_type.encoding == ENCODING_DYN_ARRAY
+                && let Ok(base_slot) = U256::from_str(&storage.slot)
+                && let Some(info) = self.handle_dynamic_array(
+                    &storage.label,
+                    storage_type,
+                    base_slot,
+                    slot_u256,
+                    &slot_str,
+                    0,
+                )
+            {
+                return Some(info);
             } else if storage_type.encoding == ENCODING_MAPPING
                 && let Some(mapping_slots) = mapping_slots
                 && let Ok(base_slot) = U256::from_str(&storage.slot)
@@ -527,7 +534,165 @@ impl SlotIdentifier {
             }
         }
 
-        None
+        mapping_slots.and_then(|mapping_slots| {
+            self.handle_hashed_array(slot_u256, &slot_str, mapping_slots, depth)
+        })
+    }
+
+    /// Identifies an element of a dynamic array whose own slot is computed, e.g. a mapping value
+    /// or an element of another array, from the recorded hash of that slot.
+    ///
+    /// The slot is attributed to the nearest recorded hash below it whose input identifies as a
+    /// dynamic array, so a hash of anything else (a string's slot, an ERC-7201 namespace id) is
+    /// never taken for an array's data.
+    fn handle_hashed_array(
+        &self,
+        slot: U256,
+        slot_str: &str,
+        mapping_slots: &MappingSlots,
+        depth: usize,
+    ) -> Option<SlotInfo> {
+        if depth >= MAX_DEPTH {
+            return None;
+        }
+        let data_starts = slot.saturating_sub(MAX_ARRAY_SLOTS - U256::ONE)..=slot;
+        mapping_slots.seen_word_sha3.range(data_starts).rev().find_map(|(_, &array_slot)| {
+            let array = self.identify_at_depth(&array_slot, Some(mapping_slots), depth + 1)?;
+            let array_type = self.dynamic_array_type(&array.slot_type.label)?;
+            let mut info = self.handle_dynamic_array(
+                &array.label,
+                array_type,
+                array_slot.into(),
+                slot,
+                slot_str,
+                depth + 1,
+            )?;
+            info.keys = array.keys;
+            Some(info)
+        })
+    }
+
+    /// The dynamic array type labeled `label`, or held by the mapping labeled `label`: a value
+    /// reached through a mapping is labeled with the mapping's type.
+    fn dynamic_array_type(&self, label: &str) -> Option<&StorageType> {
+        self.storage_layout.types.values().filter(|t| t.label == label).find_map(|mut t| {
+            while t.encoding == ENCODING_MAPPING {
+                t = self.storage_layout.types.get(t.value.as_ref()?)?;
+            }
+            (t.encoding == ENCODING_DYN_ARRAY).then_some(t)
+        })
+    }
+
+    /// Handles identification of dynamic array elements.
+    ///
+    /// The elements of the array at `base_slot` start at `keccak256(base_slot)`, several to a slot
+    /// when they are value types that fit, otherwise each taking whole slots. The length is not
+    /// checked, so an element just cleared by `pop` is still identified.
+    ///
+    /// # Arguments
+    /// * `label` - The label of the array
+    /// * `array_type` - Type information for the array
+    /// * `base_slot` - The slot holding the array's length
+    /// * `slot` - The target slot being identified
+    /// * `slot_str` - String representation of the slot for output
+    /// * `depth` - Current recursion depth
+    fn handle_dynamic_array(
+        &self,
+        label: &str,
+        array_type: &StorageType,
+        base_slot: U256,
+        slot: U256,
+        slot_str: &str,
+        depth: usize,
+    ) -> Option<SlotInfo> {
+        if depth > MAX_DEPTH || array_type.encoding != ENCODING_DYN_ARRAY {
+            return None;
+        }
+        let data_start = Into::<U256>::into(keccak256(B256::from(base_slot)));
+        let index_slot = slot.checked_sub(data_start).filter(|i| *i < MAX_ARRAY_SLOTS)?;
+        let index_slot = index_slot.to::<u128>();
+
+        let element_id = array_type.other.get("base")?.as_str()?;
+        let element_type = self.storage_layout.types.get(element_id)?;
+        let element_bytes = element_type.number_of_bytes.parse::<u128>().ok()?;
+        let element = self.parsed_type(element_id);
+
+        // Value types up to 16 bytes share slots; structs and static arrays fill whole slots.
+        if element_bytes <= 16 {
+            // Without a type, the elements sharing the slot cannot be told apart.
+            let element = element?;
+            let per_slot = 32 / element_bytes;
+            let first = index_slot * per_slot;
+            // The array length is unknown here, so the slot is labeled with the whole range of
+            // elements it can hold, and decodes as an array of them, see `SlotInfo::decode`.
+            return Some(SlotInfo {
+                label: format!("{label}[{first}..{}]", first + per_slot - 1),
+                slot_type: StorageTypeInfo {
+                    label: format!("{}[{per_slot}]", element_type.label),
+                    dyn_sol_type: DynSolType::FixedArray(
+                        Box::new(element.clone()),
+                        per_slot as usize,
+                    ),
+                },
+                offset: 0,
+                slot: slot_str.to_string(),
+                members: None,
+                decoded: None,
+                keys: None,
+            });
+        }
+
+        let element_slots = element_bytes.div_ceil(32).max(1);
+        let index = index_slot / element_slots;
+        let element_start = data_start + U256::from(index * element_slots);
+        let element_label = format!("{label}[{index}]");
+
+        // An array of structs is labeled `struct S[]` too, but has no members.
+        if element_type.other.contains_key("members") {
+            return self.handle_struct(
+                &element_label,
+                element_type,
+                slot,
+                element_start,
+                0,
+                slot_str,
+                depth + 1,
+            );
+        }
+        if let Some(element @ DynSolType::FixedArray(..)) = element {
+            // `handle_array_slot` takes each slot for one element, so skip elements that share one.
+            let mut leaves = 1;
+            let mut leaf = element;
+            while let DynSolType::FixedArray(inner, len) = leaf {
+                leaves *= *len as u128;
+                leaf = inner;
+            }
+            if leaves != element_slots {
+                return None;
+            }
+            return self.handle_array_slot(
+                &element_label,
+                element_type,
+                element,
+                slot,
+                element_start,
+                slot_str,
+            );
+        }
+        // An element without an ABI equivalent is shown raw if it fills one slot; a slot of a
+        // larger one holds only a part of it.
+        let element = element
+            .cloned()
+            .or_else(|| (element_slots == 1).then_some(DynSolType::FixedBytes(32)))?;
+        (slot == element_start).then(|| SlotInfo {
+            label: element_label,
+            slot_type: StorageTypeInfo { label: element_type.label.clone(), dyn_sol_type: element },
+            offset: 0,
+            slot: slot_str.to_string(),
+            members: None,
+            decoded: None,
+            keys: None,
+        })
     }
 
     /// Identifies a bytes or string storage slot by checking all bytes/string variables
@@ -573,14 +738,14 @@ impl SlotIdentifier {
     /// Handles identification of array slots.
     ///
     /// # Arguments
-    /// * `storage` - The storage metadata from the layout
+    /// * `label` - The label of the array
     /// * `storage_type` - Type information for the storage slot
     /// * `slot` - The target slot being identified
     /// * `array_start_slot` - The starting slot of the array in storage i.e base_slot
     /// * `slot_str` - String representation of the slot for output
     fn handle_array_slot(
         &self,
-        storage: &Storage,
+        label: &str,
         storage_type: &StorageType,
         parsed_type: &DynSolType,
         slot: U256,
@@ -600,13 +765,13 @@ impl SlotIdentifier {
                         // 2D array: calculate row and column
                         let row = index / (*inner_size as u64);
                         let col = index % (*inner_size as u64);
-                        format!("{}[{row}][{col}]", storage.label)
+                        format!("{label}[{row}][{col}]")
                     } else {
                         // 1D array
-                        format!("{}[{index}]", storage.label)
+                        format!("{label}[{index}]")
                     }
                 }
-                _ => storage.label.clone(),
+                _ => label.to_string(),
             };
 
             return Some(SlotInfo {
@@ -651,7 +816,6 @@ impl SlotIdentifier {
         depth: usize,
     ) -> Option<SlotInfo> {
         // Limit recursion depth to prevent stack overflow
-        const MAX_DEPTH: usize = 10;
         if depth > MAX_DEPTH {
             return None;
         }
@@ -765,6 +929,19 @@ impl SlotIdentifier {
                 if member_slot == target_slot || slot_info.is_some() {
                     return slot_info;
                 }
+            }
+
+            if member_type_info.encoding == ENCODING_DYN_ARRAY
+                && let Some(slot_info) = self.handle_dynamic_array(
+                    &member_label,
+                    member_type_info,
+                    member_slot,
+                    target_slot,
+                    slot_str,
+                    depth + 1,
+                )
+            {
+                return Some(slot_info);
             }
 
             if member_slot == target_slot {
@@ -966,7 +1143,6 @@ impl SlotIdentifier {
         offset: U256,
         depth: usize,
     ) -> Option<(String, &StorageType)> {
-        const MAX_DEPTH: usize = 10;
         if depth > MAX_DEPTH || !is_struct(&struct_type.label) {
             return None;
         }
@@ -1099,7 +1275,10 @@ impl SlotIdentifier {
             .filter_map(|(label, storage)| {
                 let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
                 let parsed_type = self.parsed_type(&storage.storage_type)?.clone();
-                let label = if let DynSolType::FixedArray(_, _) = &parsed_type {
+                // An array packed into the slot is labeled with the range of its elements.
+                let label = if let Some((_, len, _)) = packed_array(&parsed_type) {
+                    format!("{label}[0..{}]", len - 1)
+                } else if let DynSolType::FixedArray(_, _) = &parsed_type {
                     format!("{label}{}", get_array_base_indices(&parsed_type))
                 } else {
                     label
@@ -1138,6 +1317,13 @@ impl SlotIdentifier {
         })
     }
 }
+
+/// How deep nested structs, mappings and dynamic arrays are followed when identifying a slot.
+const MAX_DEPTH: usize = 10;
+
+/// How many slots past its data start an element of a dynamic array is searched for. Data starts
+/// are hashes, so any other slot this close to one would be a hash collision.
+const MAX_ARRAY_SLOTS: U256 = U256::from_limbs([0, 1, 0, 0]);
 
 /// How far into a mapping value a recorded entry is searched for: the slot offset of a struct
 /// field from the entry holding the struct.
@@ -1191,7 +1377,12 @@ fn resolve_sol_type(id: &str, storage_type: &StorageType) -> Option<DynSolType> 
         let bytes = storage_type.number_of_bytes.parse::<usize>().ok()?;
         return (1..=32).contains(&bytes).then(|| DynSolType::Uint(bytes * 8));
     }
-    parse_sol_type(&storage_type.label)
+    parse_sol_type(&storage_type.label).or_else(|| {
+        // An array of elements without an ABI type, such as structs, is still an array whose own
+        // slot holds its length.
+        (storage_type.encoding == ENCODING_DYN_ARRAY)
+            .then(|| DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
+    })
 }
 
 /// Parses a storage type label into a [`DynSolType`], returning `None` for labels that have no
@@ -1214,6 +1405,51 @@ fn parse_sol_type(label: &str) -> Option<DynSolType> {
 /// Checks if a given type label represents a struct type.
 pub fn is_struct(s: &str) -> bool {
     s.starts_with("struct ")
+}
+
+/// The size in bytes of a value type that can share a slot with others.
+const fn packed_size(ty: &DynSolType) -> Option<usize> {
+    match ty {
+        DynSolType::Uint(bits) | DynSolType::Int(bits) => Some(*bits / 8),
+        DynSolType::Address => Some(20),
+        DynSolType::Bool => Some(1),
+        DynSolType::FixedBytes(size) => Some(*size),
+        _ => None,
+    }
+}
+
+/// The element type, length and element size of an array of several elements packed into one
+/// slot.
+fn packed_array(ty: &DynSolType) -> Option<(&DynSolType, usize, usize)> {
+    let DynSolType::FixedArray(element, len) = ty else { return None };
+    let size = packed_size(element)?;
+    (*len > 1 && size * len <= 32).then_some((element.as_ref(), *len, size))
+}
+
+/// Decodes the value of type `ty` packed into `word` at byte `offset`.
+fn decode_packed(ty: &DynSolType, offset: usize, word: B256) -> Option<DynSolValue> {
+    // Default to the full word.
+    let size = packed_size(ty).unwrap_or(32);
+
+    let mut bytes = [0u8; 32];
+    if offset + size <= 32 {
+        // In Solidity storage, values are right-aligned
+        // For offset 0, we want the rightmost bytes
+        // For offset 16 (for a uint128), we want bytes 0-16
+        // For packed storage: offset 0 is at the rightmost position
+        // offset 0, size 16 -> read bytes 16-32 (rightmost)
+        // offset 16, size 16 -> read bytes 0-16 (leftmost)
+        let byte_start = 32 - offset - size;
+        // ABI signed integers must be sign-extended to a full word.
+        if matches!(ty, DynSolType::Int(_)) && word.0[byte_start] & 0x80 != 0 {
+            bytes.fill(0xff);
+        }
+        // ABI fixed bytes are left-aligned, unlike integers and addresses.
+        let abi_start = if matches!(ty, DynSolType::FixedBytes(_)) { 0 } else { 32 - size };
+        bytes[abi_start..abi_start + size].copy_from_slice(&word.0[byte_start..byte_start + size]);
+    }
+
+    ty.abi_decode(&bytes).ok()
 }
 
 #[cfg(test)]
@@ -1764,15 +2000,17 @@ mod tests {
         slots.insert(order.into());
         slots.insert(queue.into());
 
-        for (slot, label, key, type_label) in [
-            (order, "orders[2]", "2", "mapping(uint256 => struct C.Order)"),
-            (queue, "queues[1]", "1", "mapping(uint256 => struct C.Access[])"),
+        // The array of structs is still an array, whose entry holds its length.
+        let struct_array = DynSolType::Array(Box::new(DynSolType::FixedBytes(32)));
+        for (slot, label, key, type_label, ty) in [
+            (order, "orders[2]", "2", "mapping(uint256 => struct C.Order)", DynSolType::Bytes),
+            (queue, "queues[1]", "1", "mapping(uint256 => struct C.Access[])", struct_array),
         ] {
             let info = identifier.identify(&B256::from(slot), Some(&slots)).unwrap();
             assert_eq!(info.label, label);
             assert_eq!(info.keys, Some(vec![key.to_string()]));
             assert_eq!(info.slot_type.label, type_label);
-            assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Bytes);
+            assert_eq!(info.slot_type.dyn_sol_type, ty);
         }
     }
 
@@ -1967,5 +2205,92 @@ mod tests {
             decoded(&info),
             [("x", "0".to_string(), "5".to_string()), ("y", "0".to_string(), "7".to_string())]
         );
+    }
+
+    fn dynamic_array_layout() -> SlotIdentifier {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "name", "offset": 0, "slot": "0", "type": "t_string_storage" },
+                { "astId": 2, "contract": "C", "label": "pairs", "offset": 0, "slot": "1", "type": "t_array(t_array(t_uint128)2_storage)dyn_storage" },
+                { "astId": 3, "contract": "C", "label": "fns", "offset": 0, "slot": "2", "type": "t_array(t_function_internal_nonpayable()returns())dyn_storage" },
+                { "astId": 4, "contract": "C", "label": "wide", "offset": 0, "slot": "3", "type": "t_array(t_array(t_uint256)2_storage)dyn_storage" }
+            ],
+            "types": {
+                "t_array(t_array(t_uint128)2_storage)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "uint128[2][]", "numberOfBytes": "32", "base": "t_array(t_uint128)2_storage"
+                },
+                "t_array(t_uint128)2_storage": {
+                    "encoding": "inplace", "label": "uint128[2]", "numberOfBytes": "32", "base": "t_uint128"
+                },
+                "t_array(t_array(t_uint256)2_storage)dyn_storage": {
+                    "encoding": "dynamic_array", "label": "uint256[2][]", "numberOfBytes": "32", "base": "t_array(t_uint256)2_storage"
+                },
+                "t_array(t_uint256)2_storage": {
+                    "encoding": "inplace", "label": "uint256[2]", "numberOfBytes": "64", "base": "t_uint256"
+                },
+                "t_array(t_function_internal_nonpayable()returns())dyn_storage": {
+                    "encoding": "dynamic_array", "label": "function ()[]", "numberOfBytes": "32", "base": "t_function_internal_nonpayable()returns()"
+                },
+                "t_function_internal_nonpayable()returns()": {
+                    "encoding": "inplace", "label": "function ()", "numberOfBytes": "8"
+                },
+                "t_string_storage": { "encoding": "bytes", "label": "string", "numberOfBytes": "32" },
+                "t_uint128": { "encoding": "inplace", "label": "uint128", "numberOfBytes": "16" },
+                "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" }
+            }
+        }))
+        .unwrap();
+        SlotIdentifier::new(Arc::new(layout))
+    }
+
+    /// The slot `index` slots into the data of the dynamic array at `base`.
+    fn element(base: U256, index: u64) -> B256 {
+        B256::from(Into::<U256>::into(keccak256(B256::from(base))) + U256::from(index))
+    }
+
+    #[test]
+    fn identifies_elements_of_dynamic_arrays_of_static_arrays() {
+        let identifier = dynamic_array_layout();
+
+        // Static array elements fill whole slots.
+        let info = identifier.identify(&element(U256::from(3), 3), None).unwrap();
+        assert_eq!(info.label, "wide[1][1]");
+
+        // Elements packed several to a slot without a decodable type would be labeled one per
+        // slot, giving incorrect indices and values.
+        for base in [1, 2] {
+            assert!(identifier.identify(&element(U256::from(base), 1), None).is_none());
+        }
+    }
+
+    #[test]
+    fn ignores_hashes_of_slots_that_are_not_dynamic_arrays() {
+        let identifier = dynamic_array_layout();
+        let mut slots = MappingSlots::default();
+        // A long string's data and an unrelated hashed word start at recorded hashes too.
+        for word in [U256::ZERO, U256::from(1234)] {
+            slots.record_word_hash(keccak256(B256::from(word)), B256::from(word));
+            assert!(identifier.identify(&element(word, 0), Some(&slots)).is_none());
+        }
+    }
+
+    #[test]
+    fn shows_declared_types_of_arrays_without_abi_elements() {
+        let struct_array = DynSolType::Array(Box::new(DynSolType::FixedBytes(32)));
+        for (label, ty, shown) in [
+            ("struct C.Item[]", struct_array.clone(), "C.Item[]"),
+            ("struct C.Item[][]", struct_array.clone(), "C.Item[][]"),
+            ("mapping(uint256 => mapping(address => struct C.Item[]))", struct_array, "C.Item[]"),
+            ("uint256[]", DynSolType::Array(Box::new(DynSolType::Uint(256))), "uint256[]"),
+            ("mapping(address => uint256)", DynSolType::Uint(256), "uint256"),
+            (
+                "struct C.Pair",
+                DynSolType::Tuple(vec![DynSolType::Uint(128); 2]),
+                "(uint128,uint128)",
+            ),
+        ] {
+            let info = StorageTypeInfo { label: label.to_string(), dyn_sol_type: ty };
+            assert_eq!(info.to_string(), shown, "{label}");
+        }
     }
 }
