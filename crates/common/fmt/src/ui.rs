@@ -1144,7 +1144,7 @@ where
         }
         "v" => Some(v),
         "value" => Some(TxTrait::value(transaction).pretty()),
-        other => receipt.other_field_pretty(other),
+        _ => None,
     }
 }
 
@@ -1212,7 +1212,7 @@ where
         "type" | "transaction_type" => Some(receipt.tx_type_pretty()),
         "blobGasPrice" | "blob_gas_price" => Some(receipt.blob_gas_price().pretty()),
         "blobGasUsed" | "blob_gas_used" => Some(receipt.blob_gas_used().pretty()),
-        _ => None,
+        other => receipt.other_field_pretty(other),
     }
 }
 
