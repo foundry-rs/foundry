@@ -13,42 +13,14 @@ use super::optimism::build_deposit_receipt_envelope;
 #[cfg(feature = "base")]
 use alloy_consensus::ReceiptWithBloom;
 #[cfg(feature = "base")]
-use alloy_serde::OtherFields;
+use alloy_primitives::U64;
 #[cfg(feature = "base")]
-use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
+use base_common_consensus::BASE_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
-use base_common_consensus::Eip8130Receipt;
+use base_common_consensus::TxBaseReceipt;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, AsRef)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, AsRef)]
 pub struct FoundryTxReceipt(pub WithOtherFields<TransactionReceipt<FoundryReceiptEnvelope<Log>>>);
-
-impl<'de> Deserialize<'de> for FoundryTxReceipt {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[allow(unused_mut)]
-        let mut receipt =
-            WithOtherFields::<TransactionReceipt<FoundryReceiptEnvelope<Log>>>::deserialize(
-                deserializer,
-            )?;
-        #[cfg(feature = "base")]
-        if let FoundryReceiptEnvelope::Eip8130(inner) = &mut receipt.inner.inner {
-            inner.receipt.phase_statuses =
-                rpc_phase_statuses(&receipt.other).map_err(serde::de::Error::custom)?;
-        }
-        Ok(Self(receipt))
-    }
-}
-
-#[cfg(feature = "base")]
-fn rpc_phase_statuses(other: &OtherFields) -> serde_json::Result<Vec<u8>> {
-    #[derive(Deserialize)]
-    struct PhaseStatuses(#[serde(with = "alloy_serde::quantity::vec")] Vec<u8>);
-    Ok(other
-        .get_deserialized::<Option<PhaseStatuses>>("phaseStatuses")
-        .transpose()?
-        .flatten()
-        .map(|statuses| statuses.0)
-        .unwrap_or_default())
-}
 
 impl FoundryTxReceipt {
     pub fn new(inner: TransactionReceipt<FoundryReceiptEnvelope<Log>>) -> Self {
@@ -167,11 +139,20 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
             other,
         } = receipt.0;
 
+        // The untyped envelope leaves the EIP-8130 `committedPhases` among the other fields; it
+        // moves into the typed receipt.
         #[cfg(feature = "base")]
-        let phase_statuses = if r#type == EIP8130_TRANSACTION_TYPE {
-            rpc_phase_statuses(&other).map_err(|err| ConversionError::Custom(err.to_string()))?
+        let mut other = other;
+        #[cfg(feature = "base")]
+        let committed_phases = if r#type == EIP8130_TRANSACTION_TYPE {
+            other
+                .remove_deserialized::<U64>("committedPhases")
+                .transpose()
+                .map_err(|err| ConversionError::Custom(err.to_string()))?
+                .unwrap_or_default()
+                .to::<u64>()
         } else {
-            Vec::new()
+            0
         };
 
         Ok(Self(WithOtherFields {
@@ -195,7 +176,7 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     0x04 => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
                     #[cfg(feature = "base")]
                     EIP8130_TRANSACTION_TYPE => FoundryReceiptEnvelope::Eip8130(ReceiptWithBloom {
-                        receipt: Eip8130Receipt::new(receipt_with_bloom.receipt, phase_statuses),
+                        receipt: TxBaseReceipt::new(receipt_with_bloom.receipt, committed_phases),
                         logs_bloom: receipt_with_bloom.logs_bloom,
                     }),
                     TEMPO_TX_TYPE_ID => FoundryReceiptEnvelope::Tempo(receipt_with_bloom),
@@ -221,25 +202,19 @@ mod tests {
 
     #[cfg(feature = "base")]
     #[test]
-    fn eip8130_rpc_receipt_preserves_phase_statuses() {
+    fn eip8130_rpc_receipt_preserves_committed_phases() {
         let receipt: AnyTransactionReceipt = serde_json::from_value(serde_json::json!({
-            "type": "0x79", "status": "0x1", "cumulativeGasUsed": "0x1", "gasUsed": "0x1",
+            "type": "0x79", "status": "0x0", "cumulativeGasUsed": "0x1", "gasUsed": "0x1",
             "logs": [], "logsBloom": alloy_primitives::Bloom::ZERO,
-            "transactionHash": B256::ZERO, "from": Address::ZERO
+            "transactionHash": B256::ZERO, "from": Address::ZERO,
+            "phaseStatuses": ["0x1", "0x1", "0x0"]
         }))
         .unwrap();
-        for (statuses, expected) in [
-            (None, vec![]),
-            (Some(serde_json::Value::Null), vec![]),
-            (Some(serde_json::json!([])), vec![]),
-            (Some(serde_json::json!(["0x1", "0x0"])), vec![1, 0]),
-        ] {
+        for committed in [0u64, 2] {
             let mut original = receipt.clone();
-            if let Some(statuses) = statuses {
-                original.0.other.insert("phaseStatuses".into(), statuses);
-            }
+            original.0.other.insert("committedPhases".into(), format!("{committed:#x}").into());
             let converted = FoundryTxReceipt::try_from(original.clone()).unwrap();
-            assert_eq!(converted.0.inner.inner.eip8130_phase_statuses(), expected);
+            assert_eq!(converted.0.inner.inner.eip8130_committed_phases(), Some(committed));
             let json = serde_json::to_value(&converted).unwrap();
             let typed: FoundryTxReceipt = serde_json::from_value(json.clone()).unwrap();
             assert_eq!(typed, converted);
@@ -247,11 +222,7 @@ mod tests {
             assert_eq!(roundtrip, original);
         }
         let mut invalid = receipt;
-        invalid.0.other.insert("phaseStatuses".into(), serde_json::json!(["invalid"]));
-        assert!(
-            serde_json::from_value::<FoundryTxReceipt>(serde_json::to_value(&invalid).unwrap())
-                .is_err()
-        );
+        invalid.0.other.insert("committedPhases".into(), serde_json::json!("invalid"));
         assert!(FoundryTxReceipt::try_from(invalid).is_err());
     }
 

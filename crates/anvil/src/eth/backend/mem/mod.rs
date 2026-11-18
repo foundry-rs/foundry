@@ -212,23 +212,25 @@ use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 #[cfg(feature = "base")]
 use crate::eth::backend::evm::BaseEvmNetwork;
 #[cfg(feature = "base")]
-use alloy_eips::Encodable2718;
+use base_common_base_tx::{IntrinsicGas, NonceManagerSlots};
 #[cfg(feature = "base")]
 use base_common_chains::ChainConfig;
 #[cfg(feature = "base")]
 use base_common_consensus::{
-    BaseTransactionInfo, BaseTxEnvelope, EIP8130_REJECTION_MSG, Eip8130Constants, Eip8130Signed,
-    Predeploys,
+    BASE_TX_REJECTION_MSG, BaseTransactionInfo, BaseTxEnvelope, Predeploys, TxBaseConstants,
+    TxBaseSigned,
 };
 #[cfg(feature = "base")]
-use base_common_eip8130::{IntrinsicGas, IntrinsicGasInput, NonceManagerSlots};
+use base_common_genesis::BaseFeature;
 #[cfg(feature = "base")]
 use base_common_rpc_types::{
-    EIP8130_PRE_ZENITH_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
-    Transaction as BaseRpcTransaction,
+    BASE_TX_PRE_EVEREST_RPC_ERROR, Transaction as BaseRpcTransaction, TxBaseNonce,
+    TxBaseReceiptFields,
 };
 #[cfg(feature = "base")]
 use base_evm2::L1BlockInfo;
+#[cfg(feature = "base")]
+use base_execution_base_tx::{ResolvedSender, TransactionAuthorizer};
 #[cfg(feature = "base")]
 use evm2::bytecode::Bytecode;
 #[cfg(feature = "base")]
@@ -608,7 +610,7 @@ fn map_simulated_tx(
         let mut typed = FoundryTypedTx::Eip8130(signed.into_tx());
         f(&mut typed)?;
         let FoundryTypedTx::Eip8130(tx) = typed else { unreachable!("EIP-8130 stays EIP-8130") };
-        return Ok(FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, payer_auth)));
+        return Ok(FoundryTxEnvelope::Eip8130(TxBaseSigned::new(tx, sender_auth, payer_auth)));
     }
     if let FoundryTxEnvelope::Tempo(signed) = tx {
         let (tx, signature, _) = signed.into_parts();
@@ -1975,19 +1977,19 @@ impl<N: Network> Backend<N> {
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_active_at(&self, timestamp: u64) -> Result<(), BlockchainError> {
         let upgrade = self.base_upgrade_at_timestamp(timestamp);
-        if self.is_base() && upgrade >= BaseUpgrade::Zenith {
+        if self.is_base() && upgrade.is_feature_enabled(BaseFeature::TxBase) {
             return Ok(());
         }
-        Err(BlockchainError::InvalidTransactionRequest(EIP8130_PRE_ZENITH_RPC_ERROR.to_string()))
+        Err(BlockchainError::InvalidTransactionRequest(BASE_TX_PRE_EVEREST_RPC_ERROR.to_string()))
     }
 
     /// Returns an admission error if Base EIP-8130 submissions are not active.
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_submission_active(&self) -> Result<(), BlockchainError> {
-        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Zenith {
+        if self.is_base() && self.base_upgrade().is_feature_enabled(BaseFeature::TxBase) {
             return Ok(());
         }
-        Err(BlockchainError::Eip8130TransactionRejected(EIP8130_REJECTION_MSG.to_string()))
+        Err(BlockchainError::Eip8130TransactionRejected(BASE_TX_REJECTION_MSG.to_string()))
     }
 
     /// Returns an error if Tempo transactions are not active
@@ -3720,17 +3722,22 @@ impl<N: Network> Backend<N> {
                 // Base's RPC conversion resolves the sender and shapes representative sender and
                 // payer authentication blobs, so intrinsic gas prices the authentication scheme.
                 let simulation = request
-                    .to_eip8130_simulation_tx(self.chain_id().to(), gas_limit)
-                    .and_then(|tx| tx.eip8130)
+                    .to_base_tx_simulation_tx(self.chain_id().to(), gas_limit)
+                    .map_err(|err| {
+                        BlockchainError::InvalidTransactionRequest(format!(
+                            "invalid EIP-8130 simulation request: {err}"
+                        ))
+                    })?
+                    .base_tx
                     .ok_or_else(invalid)?;
                 let sender = request
-                    .as_eip8130()
+                    .as_base_tx()
                     .and_then(|aa| aa.sender)
                     .or(request.as_ref().from)
                     .ok_or_else(invalid)?;
                 let envelope = FoundryTxEnvelope::Eip8130(simulation.signed);
                 let mut tx = PreparedTx::simulated(envelope.clone(), sender);
-                tx.eip8130_sender_actor_id = simulation.simulation_sender_actor_id;
+                tx.eip8130_sender_actor_id = Some(sender.into_word());
                 Ok(PreparedCall {
                     evm_env,
                     tx,
@@ -5105,13 +5112,13 @@ impl<N: Network> Backend<N> {
         if upgrade >= BaseUpgrade::Denim {
             base::ensure_base_time_predeploy(db, true)?;
         }
-        if upgrade >= BaseUpgrade::Zenith {
-            base::ensure_eip8130_system_accounts(db)?;
+        if upgrade.is_feature_enabled(BaseFeature::NativeNonceManager) {
+            base::ensure_base_tx_system_accounts(db)?;
         }
 
         // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
         // check on high-level calls to functions without return data does not revert in the
-        // caller. `ensure_eip8130_system_accounts` only covers the Zenith nonce manager.
+        // caller. `ensure_base_tx_system_accounts` only covers the Everest nonce manager.
         for address in foundry_evm_networks::BASE_CODE_SENTINEL_ADDRESSES
             .iter()
             .copied()
@@ -8761,8 +8768,14 @@ where
 
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
 
+        // The RPC reports one status per phase, derived from the receipt's committed phase count.
         #[cfg(feature = "base")]
-        let eip8130_phase_statuses = tx_receipt.eip8130_phase_statuses().to_vec();
+        let eip8130_phase_statuses = match (&tx_receipt, transaction.as_ref()) {
+            (FoundryReceiptEnvelope::Eip8130(receipt), FoundryTxEnvelope::Eip8130(tx)) => {
+                receipt.receipt.phase_statuses(tx.tx().calls.len()).unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
         let tx_receipt = tx_receipt.convert_logs_rpc(
             BlockNumHash::new(block.header.number(), block_hash),
             block.header.timestamp(),
@@ -8825,7 +8838,7 @@ where
         if self.is_base()
             && let FoundryTxEnvelope::Eip8130(tx) = transaction.as_ref()
         {
-            let fields = Eip8130ReceiptFields {
+            let fields = TxBaseReceiptFields {
                 payer: Some(tx.tx().payer.unwrap_or(info.from)),
                 phase_statuses: eip8130_phase_statuses,
                 metadata: (!tx.tx().metadata.is_empty()).then(|| tx.tx().metadata.clone()),
@@ -9686,7 +9699,7 @@ impl Backend<FoundryNetwork> {
                 // execute all calls in that block
                 for (req_idx, mut request) in calls.into_iter().enumerate() {
                     #[cfg(feature = "base")]
-                    if request.transaction_type == Some(base_common_consensus::EIP8130_TX_TYPE_ID) {
+                    if request.transaction_type == Some(base_common_consensus::BASE_TX_TYPE_ID) {
                         return Err(BlockchainError::InvalidTransactionRequest(
                             "eth_simulateV1 does not accept EIP-8130 transaction requests"
                                 .to_string(),
@@ -9987,7 +10000,7 @@ impl Backend<FoundryNetwork> {
                             result.status,
                             canonical_logs.clone(),
                             cumulative_charged_gas,
-                            result.ext.eip8130_phase_statuses.clone(),
+                            result.ext.eip8130_committed_phases,
                         )
                     };
                     #[cfg(not(any(feature = "base", feature = "optimism")))]
@@ -9996,7 +10009,7 @@ impl Backend<FoundryNetwork> {
                         result.status,
                         canonical_logs.clone(),
                         cumulative_charged_gas,
-                        result.ext.eip8130_phase_statuses.clone(),
+                        result.ext.eip8130_committed_phases,
                     );
                     receipts.push(receipt);
                     transaction_envelopes.push(tx.as_ref().clone());
@@ -10629,12 +10642,17 @@ where
             signed
                 .validate_timestamp(now)
                 .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
+            // Authentication reads no state, so it runs before the nonce checks, which let a
+            // future-nonce transaction into the queue without executing it.
+            ResolvedSender::resolve(signed)
+                .and_then(|sender| TransactionAuthorizer::authorize(signed, sender))
+                .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
 
             let rejected = |error: &dyn std::fmt::Display| {
                 BlockchainError::Eip8130TransactionRejected(error.to_string())
             };
 
-            let channel_nonce = if body.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            let channel_nonce = if body.nonce_key == TxBaseConstants::NONCE_KEY_MAX {
                 None
             } else if body.nonce_key.is_zero() {
                 Some(account.nonce)
@@ -10642,7 +10660,7 @@ where
                 let slot = NonceManagerSlots::nonce_slot(address, body.nonce_key)
                     .ok_or_else(|| rejected(&"nonce_key 0 is the protocol nonce"))?;
                 let word = self.storage_at(NonceManagerSlots::ADDRESS, slot, None).await?;
-                Some(Eip8130Nonce::decode_channel_nonce(word.into()).to::<u64>())
+                Some(TxBaseNonce::decode_channel_nonce(word.into()).to::<u64>())
             };
             if let Some(channel) = channel_nonce
                 && body.nonce_sequence < channel
@@ -10652,20 +10670,17 @@ where
                     body.nonce_sequence
                 )));
             }
-            let nonce_key_first_use = channel_nonce == Some(0);
             let ready_for_execution =
                 channel_nonce.is_none_or(|nonce| body.nonce_sequence == nonce);
 
-            let intrinsic = IntrinsicGas::compute(
-                signed,
-                &signed.encoded_2718(),
-                &IntrinsicGasInput::worst_case(
-                    nonce_key_first_use,
-                    IntrinsicGasInput::sender_auto_delegated(&body.account_changes),
-                    body.payer.is_some(),
-                ),
-            )
-            .map_err(|error| rejected(&error))?;
+            // Intrinsic gas depends only on the transaction and its sender. Like Base's pool, the
+            // gas limit must cover both the sender-intrinsic gas and the EIP-7623 calldata floor.
+            let intrinsic = IntrinsicGas::compute(signed, address);
+            if body.gas_limit < intrinsic.sender_floor() {
+                return Err(rejected(
+                    &"transaction gas limit is below the EIP-7623 calldata floor",
+                ));
+            }
             if intrinsic.execution_gas_available(body.gas_limit).is_none() {
                 return Err(rejected(&"sender intrinsic gas exceeds transaction gas limit"));
             }
@@ -10678,7 +10693,7 @@ where
             };
             let required = base::eip8130_max_fee_charge(
                 body.gas_limit,
-                intrinsic.payer_auth,
+                intrinsic.payer_auth_cost,
                 body.max_fee_per_gas,
             );
             if payer_balance < required {
@@ -11135,7 +11150,7 @@ pub(crate) fn transaction_build_with_block_hash(
     if let FoundryTxEnvelope::Eip8130(eip8130_tx) = eth_transaction.as_ref() {
         let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
         let rpc_tx = BaseRpcTransaction::from_transaction(
-            Recovered::new_unchecked(BaseTxEnvelope::Eip8130(eip8130_tx.clone()), from),
+            Recovered::new_unchecked(BaseTxEnvelope::Base(eip8130_tx.clone()), from),
             BaseTransactionInfo::default(),
         );
         let mut fields = OtherFields::try_from(
@@ -11157,7 +11172,7 @@ pub(crate) fn transaction_build_with_block_hash(
         let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
             hash: eth_transaction.hash(),
             inner: UnknownTypedTransaction::new(
-                AnyTxType(base_common_consensus::EIP8130_TX_TYPE_ID),
+                AnyTxType(base_common_consensus::BASE_TX_TYPE_ID),
                 fields,
             ),
         });

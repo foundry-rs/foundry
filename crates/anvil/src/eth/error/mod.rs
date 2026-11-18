@@ -234,7 +234,7 @@ impl From<HandlerError> for BlockchainError {
             }
             HandlerError::UnsupportedTransactionType(ty) => {
                 #[cfg(feature = "base")]
-                if ty == base_common_consensus::EIP8130_TX_TYPE_ID {
+                if ty == base_common_consensus::BASE_TX_TYPE_ID {
                     return Self::BaseTransactionUnsupported;
                 }
                 Self::InvalidTransaction(InvalidTransactionError::Rejected(format!(

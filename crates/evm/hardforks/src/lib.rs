@@ -1188,11 +1188,11 @@ mod tests {
             let sepolia_config = UpgradeConfig::BASE_SEPOLIA;
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(8453, u64::MAX),
-                Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
+                Some(FoundryHardfork::Base(BaseUpgrade::Denim))
             );
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(84532, u64::MAX),
-                Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
+                Some(FoundryHardfork::Base(BaseUpgrade::Denim))
             );
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(8453, mainnet_config.base.azul.unwrap()),
