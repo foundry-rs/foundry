@@ -1236,7 +1236,8 @@ contract Anchor {{}}
 
 // A counterexample that depends on arbitrary storage, including a mapping slot keyed by calldata,
 // replays only when replay applies the solver model's storage instead of fresh arbitrary values.
-// Storage that the test itself makes arbitrary must not be set before the call.
+// Replay must not set slots that setUp wrote with `vm.store`, nor storage that the test itself
+// makes arbitrary.
 #[forgetest_init]
 fn symbolic_single_call_replays_arbitrary_storage(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_single_call_replays_arbitrary_storage");
@@ -1248,6 +1249,7 @@ interface Vm {
     function assertGe(uint256 left, uint256 right) external pure;
     function assume(bool condition) external pure;
     function setArbitraryStorage(address target, bool overwrite) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
 }
 
 interface Svm {
@@ -1271,11 +1273,15 @@ contract SymbolicStorageReplay {
     Svm constant svm = Svm(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
     Token token;
     Token concreteToken;
+    Token pinnedToken;
 
     function setUp() public {
         token = new Token();
         concreteToken = new Token();
+        pinnedToken = new Token();
         vm.setArbitraryStorage(address(token), true);
+        vm.setArbitraryStorage(address(pinnedToken), true);
+        vm.store(address(pinnedToken), bytes32(0), bytes32(uint256(5)));
     }
 
     function checkMint(uint256 amount, address account) public {
@@ -1289,6 +1295,11 @@ contract SymbolicStorageReplay {
         uint256 balanceBefore = token.balanceOf(account);
         token.mint(account, amount);
         vm.assertGe(token.balanceOf(account), balanceBefore);
+    }
+
+    // Arbitrary storage keeps a slot written with `vm.store`, so the assertion cannot fail.
+    function checkPinnedSlot() public view {
+        assert(pinnedToken.totalSupply() == 5);
     }
 
     // The storage was concrete when the call started, so the first assertion cannot fail.
@@ -1305,6 +1316,7 @@ contract SymbolicStorageReplay {
 ...
 [FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMint(uint256,address) ([METRICS])
 [FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMintNonZero(uint256,address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkPinnedSlot() ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkStorageMadeArbitraryByTest() ([METRICS])
 ...
 "#]]);

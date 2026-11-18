@@ -2734,10 +2734,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         calldata: Bytes,
         svm_returns: Vec<Bytes>,
         memory_halt_pc: Option<usize>,
-        storage: Vec<SymbolicStorageAssignment>,
+        mut storage: Vec<SymbolicStorageAssignment>,
         stats: SymbolicStats,
         symbolic_config: &SymbolicConfig,
     ) -> (TestStatus, Option<String>, Option<CounterExample>, SymbolicResult) {
+        // Arbitrary storage keeps a slot that setUp wrote with `vm.store`, so replay must not
+        // overwrite it with the model's value.
+        if let Some(cheats) = self.executor.inspector().cheatcodes.as_ref() {
+            storage.retain(|assignment| {
+                !cheats.is_arbitrary_storage_slot_explicit(assignment.address, assignment.slot)
+            });
+        }
         let symbolic_counterexample = SymbolicCounterexample {
             svm_returns: svm_returns.clone(),
             ..SymbolicCounterexample::from(&BaseCounterExample::from_fuzz_call(
