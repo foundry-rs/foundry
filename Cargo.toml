@@ -377,11 +377,11 @@ tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "9634fed2
 reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "f551b680945f55698833666e8d48034b3034bfc9", features = [
     "account-ext",
 ] }
-# Op and Base evm2 type families, on foundry-rs/evm2-networks at `f86595d`.
-op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "f86595dcd751356037e486d36065f263afe1088e", default-features = false }
-base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "f86595dcd751356037e486d36065f263afe1088e", default-features = false }
+# Op and Base evm2 type families, on foundry-rs/evm2-networks at `65cb40b`.
+op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "65cb40bbccbc334fc4777b84d680fdcccf97ea15", default-features = false }
+base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "65cb40bbccbc334fc4777b84d680fdcccf97ea15", default-features = false }
 # Monad's maintained evm2 type family.
-monad-evm2 = { git = "https://github.com/stevencartavia/monad-alloy-evm2", rev = "b0d8e658ac7250c298c868c8d2c0b5b048ea11c6", default-features = false }
+monad-evm2 = { git = "https://github.com/category-labs/monad-alloy-evm2", rev = "95db06bd60922cfc01f712ec66be9327df3d7f33", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.6.1", default-features = false }
