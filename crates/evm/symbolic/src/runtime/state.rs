@@ -2768,8 +2768,10 @@ impl SymbolicWorld {
                 self.record_replay_storage_slot(symbol, source, slot);
                 self.record_replay_storage_slot(symbol, address, slot);
             }
-        } else if self.arbitrary_storage_all && copied_source.is_none() {
-            // Generic storage replays reads at symbolic keys too.
+        } else if copied_source.is_none()
+            && (self.arbitrary_storage_all || overwrite_arbitrary_storage == Some(true))
+        {
+            // Storage that ignores setUp values replays reads at symbolic keys too.
             self.record_replay_symbolic_storage_key(symbol, address, key);
         }
         let value = SymExpr::get_var(cx, symbol);

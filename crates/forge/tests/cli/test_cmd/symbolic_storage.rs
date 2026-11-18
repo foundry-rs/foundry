@@ -436,7 +436,7 @@ contract SymbolicGenericStorage {
     .stdout_eq(str![[r#"
 ...
 Ran 2 tests for test/SymbolicGenericStorage.t.sol:SymbolicGenericStorage
-[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNativeGenericStorage(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNativeGenericStorage(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSvmArbitraryStorage(address) ([METRICS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
@@ -1232,4 +1232,102 @@ contract Anchor {{}}
 
     let args = ["test", "--symbolic", "--match-path", "test/SymbolicFallback.t.sol"];
     assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(expected);
+}
+
+// A counterexample that depends on arbitrary storage, including a mapping slot keyed by calldata,
+// replays only when replay applies the solver model's storage instead of fresh arbitrary values.
+// Storage that the test itself makes arbitrary must not be set before the call.
+#[forgetest_init]
+fn symbolic_single_call_replays_arbitrary_storage(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_single_call_replays_arbitrary_storage");
+
+    prj.add_test(
+        "SymbolicStorageReplay.t.sol",
+        r#"
+interface Vm {
+    function assertGe(uint256 left, uint256 right) external pure;
+    function assume(bool condition) external pure;
+    function setArbitraryStorage(address target, bool overwrite) external;
+}
+
+interface Svm {
+    function enableSymbolicStorage(address target) external;
+}
+
+contract Token {
+    uint256 public totalSupply;
+    mapping(address => uint256) public balanceOf;
+
+    function mint(address to, uint256 amount) external {
+        totalSupply += amount;
+        unchecked {
+            balanceOf[to] += amount;
+        }
+    }
+}
+
+contract SymbolicStorageReplay {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Svm constant svm = Svm(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+    Token token;
+    Token concreteToken;
+
+    function setUp() public {
+        token = new Token();
+        concreteToken = new Token();
+        vm.setArbitraryStorage(address(token), true);
+    }
+
+    function checkMint(uint256 amount, address account) public {
+        uint256 balanceBefore = token.balanceOf(account);
+        token.mint(account, amount);
+        vm.assertGe(token.balanceOf(account), balanceBefore);
+    }
+
+    function checkMintNonZero(uint256 amount, address account) public {
+        vm.assume(amount != 0);
+        uint256 balanceBefore = token.balanceOf(account);
+        token.mint(account, amount);
+        vm.assertGe(token.balanceOf(account), balanceBefore);
+    }
+
+    // The storage was concrete when the call started, so the first assertion cannot fail.
+    function checkStorageMadeArbitraryByTest() public {
+        assert(concreteToken.totalSupply() == 0);
+        svm.enableSymbolicStorage(address(concreteToken));
+        if (concreteToken.totalSupply() == 7) assert(false);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
+...
+[FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMint(uint256,address) ([METRICS])
+[FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMintNonZero(uint256,address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkStorageMadeArbitraryByTest() ([METRICS])
+...
+"#]]);
+
+    let artifact_dir =
+        prj.root().join("cache/symbolic/test_SymbolicStorageReplay_t_sol_SymbolicStorageReplay");
+    let mut artifacts = std::fs::read_dir(artifact_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    artifacts.sort();
+    assert_eq!(artifacts.len(), 2, "{artifacts:?}");
+    for artifact in artifacts {
+        assert_symbolic_witness(cmd.forge_fuse().args([
+            "test",
+            "--replay-symbolic-artifact",
+            artifact.to_str().unwrap(),
+        ]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMint[..] ([GAS])
+...
+"#]]);
+    }
 }
