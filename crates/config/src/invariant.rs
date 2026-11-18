@@ -118,39 +118,69 @@ impl FromStr for InvariantDepthMode {
     }
 }
 
-/// Contains for invariant testing
+/// Invariant testing configuration: the `[invariant]` section.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantConfig {
-    /// The number of runs that must execute for each invariant test group.
-    pub runs: u32,
-    /// The number of calls executed to attempt to break invariants in one run.
-    pub depth: u32,
-    /// Minimum sampled run depth when `depth_mode = "random"`.
-    pub min_depth: u32,
-    /// How to choose the effective depth for each invariant run.
-    pub depth_mode: InvariantDepthMode,
-    /// Worker selection mode used to shard invariant runs.
+    /// Number of runs to execute for each invariant test group.
     ///
-    /// Defaults to `auto`, which derives the worker count from `--jobs`. Use a positive integer
-    /// for an explicit worker count.
+    /// Each run starts from the state after `setUp` and executes a sequence of up to `depth`
+    /// calls, checking the invariants as it goes. With `timeout` set, the campaign runs until the
+    /// timeout instead. See also `fuzz.runs`.
+    pub runs: u32,
+    /// Number of calls executed in one run to try to break the invariants.
+    ///
+    /// With `depth_mode = "random"`, this is the maximum depth of a run.
+    pub depth: u32,
+    /// Minimum run depth when `depth_mode = "random"`.
+    ///
+    /// Values below 1 are treated as 1, and when it is not below `depth`, every run uses `depth`.
+    /// Ignored with `depth_mode = "fixed"`.
+    pub min_depth: u32,
+    /// How each invariant run chooses how many calls to execute.
+    ///
+    /// - `"fixed"`: every run executes `depth` calls.
+    /// - `"random"` (alias `"uniform"`): each run samples its depth uniformly between `min_depth`
+    ///   and `depth`, so a campaign mixes short and long sequences.
+    pub depth_mode: InvariantDepthMode,
+    /// Number of workers an invariant campaign is sharded across, or `"auto"`.
+    ///
+    /// `"auto"` divides the available test threads (see `--jobs`) among the invariant campaigns
+    /// that run at the same time and, unless `timeout` is set, caps the count so each worker gets
+    /// enough runs. A positive integer sets the worker count explicitly; `0` is rejected. Each
+    /// worker executes its share of `runs` with its own random stream derived from `fuzz.seed`.
     pub workers: InvariantWorkers,
-    /// Fails the invariant fuzzing if a revert occurs
+    /// Whether a reverting handler call fails the invariant test.
+    ///
+    /// When `true`, the run stops at the first call that reverts and the test fails with that call
+    /// sequence as its counterexample. When `false`, reverting calls are counted in the metrics
+    /// and the run continues.
     pub fail_on_revert: bool,
-    /// Allows overriding an unsafe external call when running invariant tests. eg. reentrancy
-    /// checks
+    /// Whether to inject reentrant calls into targeted contracts during invariant runs, to test
+    /// for reentrancy.
+    ///
+    /// When enabled, external calls to a targeted (handler) contract can be overridden with a
+    /// fuzzed call to one of the targets' functions, simulating a malicious contract that reenters
+    /// when it receives a call, such as through its `receive` function. Branch frontier capture
+    /// (`frontier_dir`) does not support it: such campaigns run without writing frontier
+    /// artifacts, with a warning.
     pub call_override: bool,
-    /// The fuzz dictionary configuration
+    /// Fuzz dictionary settings, flattened into this section.
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
-    /// The maximum number of attempts to shrink the sequence, also used to minimize the argument
-    /// values of stateless fuzz counterexamples.
+    /// Maximum number of attempts to shrink a failing call sequence.
+    ///
+    /// Shrinking removes and simplifies calls to find the shortest sequence that still fails. `0`
+    /// disables shrinking. The same limit bounds minimizing the argument values of stateless fuzz
+    /// test counterexamples.
     pub shrink_run_limit: u32,
-    /// The maximum number of rejects via `vm.assume` which can be encountered during a single
-    /// invariant run.
+    /// Maximum number of `vm.assume` rejections allowed in a single invariant run before the test
+    /// fails.
     pub max_assume_rejects: u32,
-    /// Number of runs to execute and include in the gas report.
+    /// Number of invariant runs whose traces are kept for the gas report.
+    ///
+    /// The samples are split across the campaign's workers.
     pub gas_report_samples: u32,
-    /// The fuzz corpus configuration.
+    /// Fuzz corpus settings, flattened into this section.
     #[serde(flatten)]
     pub corpus: FuzzCorpusConfig,
     /// Whether `corpus_random_sequence_weight` was supplied by a config provider.
@@ -161,34 +191,70 @@ pub struct InvariantConfig {
     #[serde(default, skip_serializing)]
     #[doc(hidden)]
     pub workers_configured: bool,
-    /// Path where invariant failures are recorded and replayed.
+    /// Directory where invariant failures are recorded and replayed.
+    ///
+    /// When an invariant test fails, its call sequence is saved under `failures/<contract>` in
+    /// this directory and replayed first the next time the test runs, so the test keeps failing
+    /// until the bug is fixed. `forge clean` removes the directory.
     pub failure_persist_dir: Option<PathBuf>,
-    /// Whether to collect and display fuzzed selectors metrics.
+    /// Whether to collect and display per-selector metrics (calls, reverts and discards) in the
+    /// test report.
     pub show_metrics: bool,
-    /// Optional campaign-global timeout (in seconds) for each invariant test. Shrinking the
-    /// failures of a timed test stops at most `timeout` seconds after the campaign deadline.
+    /// Time limit, in seconds, for each invariant campaign; when set, the campaign runs until it
+    /// elapses.
+    ///
+    /// A timed campaign keeps executing runs until the deadline instead of stopping after `runs`,
+    /// and is then reported with the runs it completed. The timeout also bounds shrinking: once
+    /// the campaign ends, shrinking the failures it found stops at most `timeout` seconds after
+    /// the campaign deadline, so a timed invariant test finishes within about twice its timeout. A
+    /// failure whose shrinking runs out of time is reported with the shortest call sequence
+    /// confirmed so far.
+    ///
+    /// ```toml
+    /// [invariant]
+    /// timeout = 300
+    /// ```
     pub timeout: Option<u32>,
-    /// Display counterexample as solidity calls.
+    /// Whether to display counterexamples as Solidity calls.
     pub show_solidity: bool,
-    /// Maximum time (in seconds) between generated txs.
+    /// Maximum time, in seconds, that may elapse between generated calls.
+    ///
+    /// When set above 0, each generated call can advance the block timestamp by a random amount up
+    /// to this value. When unset or 0, calls do not advance time.
     pub max_time_delay: Option<u32>,
-    /// Maximum number of blocks elapsed between generated txs.
+    /// Maximum number of blocks that may elapse between generated calls.
+    ///
+    /// When set above 0, each generated call can advance the block number by a random amount up to
+    /// this value. When unset or 0, calls do not advance the block number.
     pub max_block_delay: Option<u32>,
     /// Number of calls to execute between invariant assertions.
     ///
-    /// - `0`: Only assert on the last call of each run (fastest, but may miss exact breaking call)
-    /// - `1` (default): Assert after every call (current behavior, most precise)
-    /// - `N`: Assert every N calls AND always on the last call
+    /// - `0`: only assert after the last call of each run (fastest, but may not identify the exact
+    ///   call that broke the invariant).
+    /// - `1`: assert after every call (most precise).
+    /// - `N`: assert after every `N`th call and always after the last call.
     ///
-    /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
+    /// For example, `check_interval = 10` asserts after calls 10, 20, 30 and so on, and after the
+    /// last call.
     pub check_interval: u32,
-    /// Gas limit for every campaign call after `setUp` and target selection: handler calls,
-    /// invariant checks, `afterInvariant`, and their replays and shrinks.
+    /// Gas limit for every call the invariant campaign makes after `setUp` and target selection.
     ///
-    /// Unset keeps the project `gas_limit`; a larger value has no effect. A handler call whose
-    /// minimum gas is above the limit runs with that minimum instead. At the intrinsic charge,
-    /// network charges included, it has no gas left and reverts. At an EIP-7623 calldata floor
-    /// above the intrinsic charge, it keeps the difference and can still run.
+    /// It applies to handler calls, invariant checks, `afterInvariant`, and their replays and
+    /// shrinks. When unset, the campaign uses the project `gas_limit`. The setting never raises
+    /// the limit above `gas_limit`, and `setUp` always runs under `gas_limit`. A handler call
+    /// whose minimum gas is above the limit runs with that minimum instead: at the intrinsic
+    /// charge, network charges included, it has no gas left and reverts; at an EIP-7623 calldata
+    /// floor above the intrinsic charge, it keeps the difference and can still run, so large
+    /// fuzzed arrays do not stop the campaign.
+    ///
+    /// Set it when a handler loops over a fuzzed bound: under a very large `gas_limit`, one such
+    /// call can run until the campaign timeout and the whole budget is lost. Echidna and Medusa
+    /// default to 12,500,000 gas per transaction.
+    ///
+    /// ```toml
+    /// [invariant]
+    /// call_gas_limit = 30_000_000
+    /// ```
     pub call_gas_limit: Option<u64>,
 }
 

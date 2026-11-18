@@ -6,28 +6,46 @@ use std::path::PathBuf;
 /// Contains the config for parsing and rendering docs
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocConfig {
-    /// Doc output path.
-    pub out: PathBuf,
-    /// The documentation title.
-    pub title: String,
-    /// Path to user provided `book.toml`.
-    pub book: PathBuf,
-    /// Path to user provided welcome markdown.
+    /// Directory where `forge doc` writes the generated documentation site.
     ///
-    /// If none is provided, it defaults to `README.md`.
+    /// A relative path is resolved from the project root. `forge doc --out` overrides it.
+    pub out: PathBuf,
+    /// Title of the generated documentation.
+    ///
+    /// When empty, the site is titled `Documentation`.
+    pub title: String,
+    /// Legacy setting kept for compatibility; `forge doc` no longer reads it.
+    ///
+    /// `forge doc` now generates a Vocs site and does not use a `book.toml`.
+    pub book: PathBuf,
+    /// Markdown file used as the documentation homepage.
+    ///
+    /// A relative path is resolved from the project root. If the file can't be read,
+    /// `forge doc` falls back to `README.md` in the sources directory, then `README.md` in the
+    /// project root, and otherwise leaves the homepage empty. Relative links in the homepage to
+    /// `.sol` files point to their generated pages; other relative links point to the file in
+    /// `repository` at `commit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub homepage: Option<PathBuf>,
-    /// The repository url.
+    /// URL of the project's Git repository, used to link to source files.
+    ///
+    /// Also adds "edit this page" links to the site. If unset, `forge doc` derives it from the
+    /// `origin` remote of the project's Git repository.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
-    /// The Git commit hash, tag, or branch used for source links.
+    /// Git commit hash, tag or branch used in source and homepage links.
+    ///
+    /// If unset, `forge doc` uses the commit currently checked out (`HEAD`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
-    /// The path to source code (e.g. `tree/main/packages/contracts`).
-    /// Useful for monorepos or for projects with source code located in specific directories.
+    /// Legacy setting kept for compatibility; `forge doc` no longer reads it.
+    ///
+    /// Source links are now derived from the project root and each source file's path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    /// Globs to ignore
+    /// Glob patterns of files to leave out of the generated documentation.
+    ///
+    /// Patterns are resolved relative to the project root.
     pub ignore: Vec<String>,
 }
 

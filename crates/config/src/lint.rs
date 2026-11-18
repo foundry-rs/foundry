@@ -10,23 +10,40 @@ use yansi::Paint;
 /// Contains the config and rule set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinterConfig {
-    /// Specifies which lints to run based on severity.
+    /// Severities of the lints to run.
     ///
-    /// Defaults to high, medium, and low severity lints.
+    /// Valid values (case-insensitive):
+    ///
+    /// - `high`
+    /// - `medium` (or `med`)
+    /// - `low`
+    /// - `info`
+    /// - `gas`
+    /// - `code-size` (or `codesize`, `size`)
+    ///
+    /// An empty list applies no severity filter, which runs lints of every severity, including
+    /// informational, gas and code-size lints. `forge lint --severity` overrides this setting.
     pub severity: Vec<Severity>,
 
-    /// Deny specific lints based on their ID (e.g. "mixed-case-function").
+    /// IDs of lints to skip, such as `"mixed-case-function"`.
+    ///
+    /// `forge lint` fails on an unknown lint ID.
     pub exclude_lints: Vec<String>,
 
-    /// Globs to ignore.
+    /// Glob patterns of files to skip when linting.
+    ///
+    /// Patterns are resolved relative to the project root.
     pub ignore: Vec<String>,
 
-    /// Whether to run linting during `forge build`.
+    /// Whether to run the linter during `forge build`.
     ///
-    /// Defaults to true. Set to false to disable automatic linting during builds.
+    /// Set to `false` to stop linting on every build; `forge build --no-lint` skips it for a
+    /// single run. Keeping it enabled and narrowing what runs with `severity`, `exclude_lints` or
+    /// `ignore` catches issues earlier. Linting on build only runs when the build has no compiler
+    /// errors.
     pub lint_on_build: bool,
 
-    /// Configuration specific to individual lints.
+    /// Settings for individual lints.
     pub lint_specific: LintSpecificConfig,
 }
 
@@ -46,8 +63,11 @@ impl Default for LinterConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractException {
+    /// Interfaces.
     Interface,
+    /// Libraries.
     Library,
+    /// Abstract contracts.
     AbstractContract,
 }
 
@@ -55,19 +75,21 @@ pub enum ContractException {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LintSpecificConfig {
-    /// Configurable patterns that should be excluded when performing `mixedCase` and
-    /// `PascalCase` lint checks.
+    /// Name fragments, usually acronyms, that the `mixedCase` and `PascalCase` lints accept.
     ///
-    /// Defaults to ["ERC", "URI", "ID", "URL", "API", "JSON", "XML", "HTML", "HTTP",
-    /// "HTTPS"] to allow common names like `rescueERC20`, `ERC721TokenReceiver` or `tokenURI`.
+    /// Applies to the `mixed-case-function`, `mixed-case-variable` and `pascal-case-struct` lints.
+    /// The defaults allow common names like `rescueERC20`, `ERC721TokenReceiver`, `tokenURI` or
+    /// `ERC20Data`.
     pub mixed_case_exceptions: Vec<String>,
 
-    /// Contract types that are allowed to appear multiple times in the same file.
+    /// Contract kinds that the `multi-contract-file` lint ignores when a file declares more than
+    /// one.
     ///
-    /// Valid values: "interface", "library", "abstract_contract"
+    /// - `interface`: interfaces.
+    /// - `library`: libraries.
+    /// - `abstract_contract`: abstract contracts.
     ///
-    /// Defaults to an empty array (all contract types are flagged when multiple exist).
-    /// Note: Regular contracts cannot be exempted and will always be flagged when multiple exist.
+    /// Regular contracts can't be exempted: a file with more than one is always flagged.
     pub multi_contract_file_exceptions: Vec<ContractException>,
 }
 

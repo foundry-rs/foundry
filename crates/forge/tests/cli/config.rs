@@ -3453,7 +3453,7 @@ fn config_deny_warnings_is_deprecated(prj: _, cmd: _) {
 
     fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
     cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
-Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. It will be removed in future versions.
+Warning: Key `deny_warnings` is being deprecated in favor of `deny = "warnings"`. It will be removed in future versions.
 
 "#]]);
 }

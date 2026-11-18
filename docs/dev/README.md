@@ -11,6 +11,7 @@ Keep each fact in the source that owns it and link to that source elsewhere:
 | --- | --- |
 | User-facing guides, configuration, and CLI workflows | [Foundry Book][foundry-book] |
 | Lint reference explanations | [`crates/lint/docs/`](../../crates/lint/docs/README.md), imported by the Book |
+| `foundry.toml` setting reference | Field doc comments in `crates/config`, exported by `cargo config-reference` and imported by the Book |
 | Crate and module APIs, invariants, and implementation details | Source Rustdoc, published as [Foundry Rustdoc][foundry-rustdoc] |
 | Cross-crate contributor workflows | `docs/dev/` or [`CONTRIBUTING.md`](../../CONTRIBUTING.md) |
 | Agent-only repository instructions | [`AGENTS.md`](../../AGENTS.md) |

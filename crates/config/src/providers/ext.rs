@@ -641,6 +641,22 @@ impl Provider for DappHardhatDirProvider<'_> {
     }
 }
 
+/// Environment variables read by [`DappEnvCompatProvider`], and the keys they set.
+#[cfg(test)]
+pub(crate) const DAPP_ENV_COMPAT: &[(&str, &str)] = &[
+    ("DAPP_TEST_NUMBER", "block_number"),
+    ("DAPP_TEST_ADDRESS", "sender"),
+    ("DAPP_FORK_BLOCK", "fork_block_number"),
+    ("DAPP_TEST_NUMBER", "fork_block_number"),
+    ("DAPP_TEST_TIMESTAMP", "block_timestamp"),
+    ("DAPP_BUILD_OPTIMIZE_RUNS", "optimizer_runs"),
+    ("DAPP_BUILD_OPTIMIZE", "optimizer"),
+    ("DAPP_LIBRARIES", "libraries"),
+    ("FOUNDRY_LIBRARIES", "libraries"),
+    ("DAPP_TEST_FUZZ_RUNS", "fuzz.runs"),
+    ("DAPP_TEST_DEPTH", "invariant.depth"),
+];
+
 /// A provider that checks for DAPP_ env vars that are named differently than FOUNDRY_
 pub(crate) struct DappEnvCompatProvider;
 

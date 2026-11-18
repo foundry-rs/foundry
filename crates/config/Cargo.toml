@@ -59,6 +59,7 @@ path-slash = "0.2"
 snapbox.workspace = true
 similar-asserts.workspace = true
 tempfile.workspace = true
+syn = { workspace = true, features = ["full"] }
 
 [features]
 monad = ["foundry-evm-hardforks/monad", "foundry-evm-networks/monad"]
