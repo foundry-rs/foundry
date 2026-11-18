@@ -223,7 +223,7 @@ impl Display for AccountStateDiffs {
                             f,
                             "@ {slot} ({}, {}): {} → {}",
                             slot_info.label,
-                            slot_info.slot_type.dyn_sol_type,
+                            slot_info.slot_type,
                             slot_changes.previous_value,
                             slot_changes.new_value
                         )?;
@@ -233,7 +233,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "    {} ({}): {} → {}",
                                 member.label,
-                                member.slot_type.dyn_sol_type,
+                                member.slot_type,
                                 format_token_raw(&decoded.previous_value),
                                 format_token_raw(&decoded.new_value)
                             )?;
@@ -246,7 +246,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "@ {slot} ({}, {}): {} → {}",
                                 slot_info.label,
-                                slot_info.slot_type.dyn_sol_type,
+                                slot_info.slot_type,
                                 format_token_raw(&decoded.previous_value),
                                 format_token_raw(&decoded.new_value)
                             )?;
@@ -256,7 +256,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "@ {slot} ({}, {}): {} → {}",
                                 slot_info.label,
-                                slot_info.slot_type.dyn_sol_type,
+                                slot_info.slot_type,
                                 slot_changes.previous_value,
                                 slot_changes.new_value
                             )?;

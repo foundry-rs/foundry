@@ -12,7 +12,7 @@ use serde::{
     Serialize,
     ser::{SerializeMap, SerializeStruct},
 };
-use std::{collections::BTreeMap, str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, fmt, str::FromStr, sync::Arc};
 use tracing::trace;
 
 /// "inplace" encoding type for variables that fit in one storage slot i.e 32 bytes
@@ -73,6 +73,25 @@ pub struct StorageTypeInfo {
     pub label: String,
     /// The parsed dynamic Solidity type used for decoding
     pub dyn_sol_type: DynSolType,
+}
+
+/// Shows the parsed type, except for a dynamic array whose elements have no ABI type, such as
+/// structs: it is parsed as `bytes32[]` only to decode its length, so it shows its declared type
+/// from the layout, without the `struct` keyword.
+impl fmt::Display for StorageTypeInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // A mapping entry is labeled with the mapping's type; its value type is what it holds.
+        let mut value = self.label.as_str();
+        while let Some(inner) = value.strip_prefix("mapping(")
+            && let Some((_, value_type)) = inner.split_once(" => ")
+        {
+            value = value_type.strip_suffix(')').unwrap_or(value_type);
+        }
+        if matches!(self.dyn_sol_type, DynSolType::Array(_)) && parse_sol_type(value).is_none() {
+            return f.write_str(value.strip_prefix("struct ").unwrap_or(value));
+        }
+        self.dyn_sol_type.fmt(f)
+    }
 }
 
 impl SlotInfo {
@@ -2244,6 +2263,26 @@ mod tests {
         for word in [U256::ZERO, U256::from(1234)] {
             slots.record_word_hash(keccak256(B256::from(word)), B256::from(word));
             assert!(identifier.identify(&element(word, 0), Some(&slots)).is_none());
+        }
+    }
+
+    #[test]
+    fn shows_declared_types_of_arrays_without_abi_elements() {
+        let struct_array = DynSolType::Array(Box::new(DynSolType::FixedBytes(32)));
+        for (label, ty, shown) in [
+            ("struct C.Item[]", struct_array.clone(), "C.Item[]"),
+            ("struct C.Item[][]", struct_array.clone(), "C.Item[][]"),
+            ("mapping(uint256 => mapping(address => struct C.Item[]))", struct_array, "C.Item[]"),
+            ("uint256[]", DynSolType::Array(Box::new(DynSolType::Uint(256))), "uint256[]"),
+            ("mapping(address => uint256)", DynSolType::Uint(256), "uint256"),
+            (
+                "struct C.Pair",
+                DynSolType::Tuple(vec![DynSolType::Uint(128); 2]),
+                "(uint128,uint128)",
+            ),
+        ] {
+            let info = StorageTypeInfo { label: label.to_string(), dyn_sol_type: ty };
+            assert_eq!(info.to_string(), shown, "{label}");
         }
     }
 }
