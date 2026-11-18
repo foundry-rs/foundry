@@ -146,6 +146,11 @@ impl CreateArgs {
                  --tempo.sponsor-signer or --tempo.sponsor-sig"
             );
         }
+        // Tempo rejects keychain transactions whose first call is a CREATE.
+        eyre::ensure!(
+            self.tx.tempo.configurable_access_key.is_none(),
+            "--tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE"
+        );
 
         // Resolve chain early so we can dispatch to the correct network type.
         let chain = if let Some(chain) = self.chain_id() {

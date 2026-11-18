@@ -80,6 +80,11 @@ impl BatchSendArgs {
             tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
                 .await?;
         let configurable_account = if unlocked || tempo_access_key.is_some() {
+            eyre::ensure!(
+                tx.tempo.configurable_access_key.is_none(),
+                "--tempo.configurable-access-key cannot be combined with --unlocked or a Tempo \
+                 access key"
+            );
             None
         } else {
             tempo::resolve_configurable_account::<TempoNetwork>(
@@ -120,7 +125,7 @@ impl BatchSendArgs {
             cast_send_with_tempo_wallet(&provider, tx_request, &prepared, &send_opts).await?;
         } else if let Some(account) = &configurable_account {
             let Some(tx_request) =
-                confirm_and_build(builder, account.account(), force, lane, false).await?
+                confirm_and_build(builder, account.sender(), force, lane, false).await?
             else {
                 return Ok(());
             };

@@ -40,6 +40,8 @@ base-common-rpc-types = { workspace = true, optional = true, features = ["std"] 
 tempo-alloy.workspace = true
 
 [dev-dependencies]
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 foundry-macros.workspace = true
 similar-asserts.workspace = true
 proptest.workspace = true

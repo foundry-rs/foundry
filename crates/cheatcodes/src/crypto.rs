@@ -12,7 +12,7 @@ use alloy_signer_local::{
 };
 use alloy_sol_types::SolValue;
 use foundry_common::{
-    tempo::configurable_account::quorum,
+    tempo::configurable_account::{self, p256_public_key, quorum, sign_p256_low_s},
     wallet::{derive_private_key, derive_private_key_with_language},
 };
 use k256::{
@@ -26,9 +26,7 @@ use k256::{
     },
 };
 
-use p256::ecdsa::{
-    Signature as P256Signature, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner,
-};
+use p256::ecdsa::SigningKey as P256SigningKey;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_consensus::{
@@ -41,7 +39,7 @@ use tempo_primitives::transaction::{
     ConfigurableAccountConfig as TempoAccountConfig, ConfigurableAccountOwner as TempoAccountOwner,
     ConfigurableAccountSignature, KeychainSignature, MAX_CONFIGURABLE_ACCOUNT_SIGNATURES,
     PrimitiveSignature, TempoSignature, configurable_account_digest,
-    tt_signature::{P256SignatureWithPreHash, WebAuthnSignature, derive_p256_address},
+    tt_signature::{WebAuthnSignature, derive_p256_address},
 };
 
 /// The BIP32 default derivation path prefix.
@@ -551,12 +549,6 @@ fn owner_key_address(key: &OwnerKey) -> Result<Address> {
     }
 }
 
-/// Returns the affine coordinates of a P-256 key's public key.
-fn p256_public_key(key: &P256SigningKey) -> (B256, B256) {
-    let point = key.verifying_key().to_encoded_point(false);
-    (B256::from_slice(point.x().unwrap()), B256::from_slice(point.y().unwrap()))
-}
-
 /// Signs `digest` with an owner key as a Tempo primitive signature.
 fn sign_owner_approval(key: &OwnerKey, digest: &B256) -> Result<PrimitiveSignature> {
     match key.keyType {
@@ -564,16 +556,7 @@ fn sign_owner_approval(key: &OwnerKey, digest: &B256) -> Result<PrimitiveSignatu
             Ok(PrimitiveSignature::Secp256k1(sign(&key.privateKey, digest)?))
         }
         OwnerKeyType::P256 => {
-            let signing_key = parse_private_key_p256(&key.privateKey)?;
-            let (r, s) = sign_p256_low_s(&signing_key, digest.as_slice())?;
-            let (pub_key_x, pub_key_y) = p256_public_key(&signing_key);
-            Ok(PrimitiveSignature::P256(P256SignatureWithPreHash {
-                r,
-                s,
-                pub_key_x,
-                pub_key_y,
-                pre_hash: false,
-            }))
+            Ok(configurable_account::sign_p256(&parse_private_key_p256(&key.privateKey)?, digest)?)
         }
         OwnerKeyType::WebAuthn => {
             let signing_key = parse_private_key_p256(&key.privateKey)?;
@@ -719,14 +702,6 @@ fn sign_with_wallet(
 
 fn sign_p256(private_key: &U256, digest: &B256) -> Result {
     Ok(sign_p256_low_s(&parse_private_key_p256(private_key)?, digest.as_slice())?.abi_encode())
-}
-
-/// Signs the prehash `message` with `key`, returning a low-s `(r, s)`, as Tempo requires.
-fn sign_p256_low_s(key: &P256SigningKey, message: &[u8]) -> Result<(B256, B256)> {
-    let signature: P256Signature = key.sign_prehash(message)?;
-    let signature = signature.normalize_s().unwrap_or(signature);
-    let (r, s) = signature.split_bytes();
-    Ok((B256::from_slice(&r), B256::from_slice(&s)))
 }
 
 fn parse_affine_point(x: &U256, y: &U256, name: &str) -> Result<AffinePoint> {
@@ -944,7 +919,9 @@ mod tests {
     use alloy_sol_types::SolCall;
     use evm2::evm::{AccountInfo, StateCheckpoint};
     use k256::{Secp256k1, elliptic_curve::Curve};
-    use p256::ecdsa::{VerifyingKey, signature::hazmat::PrehashVerifier};
+    use p256::ecdsa::{
+        Signature as P256Signature, VerifyingKey, signature::hazmat::PrehashVerifier,
+    };
     use tempo_contracts::precompiles::ISignatureVerifier;
     use tempo_hardfork::TempoHardfork;
     use tempo_precompiles::{
@@ -1042,7 +1019,7 @@ mod tests {
             self.inner.gas_used()
         }
 
-        fn state_gas_used(&self) -> u64 {
+        fn state_gas_used(&self) -> i64 {
             self.inner.state_gas_used()
         }
 

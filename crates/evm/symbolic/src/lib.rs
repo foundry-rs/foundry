@@ -214,6 +214,10 @@ pub enum SymbolicRunResult {
         calldata: Bytes,
         /// Return data of each `svm.*` helper call on the failing path, in call order.
         svm_returns: Vec<Bytes>,
+        /// Pc in the test contract of the memory access beyond `memory_limit` or the host word
+        /// that halted the failing path. Concrete execution may charge gas for that access first
+        /// and run out of gas there.
+        memory_halt_pc: Option<usize>,
         /// Execution counters collected before the counterexample was returned.
         stats: SymbolicStats,
     },

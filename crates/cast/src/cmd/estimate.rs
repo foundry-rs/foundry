@@ -143,6 +143,7 @@ impl EstimateArgs {
                 "--tempo.configurable-account {account} does not match the sender {from}"
             );
         }
+        let as_access_key = tx.tempo.configurable_access_key.is_some();
         let simulation_wallet = wallet.clone();
         let (sender, is_browser) = read_only_sender::<N>(&browser, wallet, &tx, chain_id).await?;
         // Share the resolved signer with the configurable account lookup.
@@ -195,8 +196,15 @@ impl EstimateArgs {
             .await?
             .raw();
         if let Some((account, simulation)) = simulation {
-            sender = account.into();
-            prepare_request::<N>(builder.tx_mut(), account, simulation);
+            // A configurable access key signs for the sender as its `keyId`.
+            let from = if as_access_key {
+                builder.tx_mut().set_key_id(account);
+                sender.address()
+            } else {
+                sender = account.into();
+                account
+            };
+            prepare_request::<N>(builder.tx_mut(), from, simulation);
         }
         let Some(tx) = confirm_and_build(builder, sender, force, None, true).await? else {
             return Ok(());

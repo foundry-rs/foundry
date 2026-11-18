@@ -286,13 +286,15 @@ fn expr_less_or_equal<'a>(
             SymExprKind::BinOp(SymBinOp::UDiv, left_num, left_den),
             SymExprKind::BinOp(SymBinOp::UDiv, right_num, right_den),
         ) if left_den == right_den => expr_less_or_equal(left_num, right_num, facts, bounds),
+        // A failed bounded proof falls through: later arms can still order non-wrapping products.
         (
             SymExprKind::BinOp(SymBinOp::Mul, left_a, left_b),
             SymExprKind::BinOp(SymBinOp::Mul, right_a, right_b),
         ) if bounds.mul_cannot_overflow_256(left_a, left_b)
-            && bounds.mul_cannot_overflow_256(right_a, right_b) =>
+            && bounds.mul_cannot_overflow_256(right_a, right_b)
+            && product_less_or_equal_known(left_a, left_b, right_a, right_b, facts, bounds) =>
         {
-            product_less_or_equal_known(left_a, left_b, right_a, right_b, facts, bounds)
+            true
         }
         // Equal high words order the full products by their low words.
         (

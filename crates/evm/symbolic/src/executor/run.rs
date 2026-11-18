@@ -564,6 +564,7 @@ impl SymbolicExecutor {
                             args,
                             calldata,
                             svm_returns,
+                            memory_halt_pc: state.memory_halt_pc,
                             stats: self.stats_with_paths(*completed_paths + 1),
                         });
                     }

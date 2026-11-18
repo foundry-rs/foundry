@@ -3210,8 +3210,8 @@ contract SymbolicHostReads is Test {
 }
 
 // A timed campaign's shrink deadline passes during minimization, which must keep the candidates it
-// confirmed before then. Minimization replays skip `vm.sleep`, so the invariant, whose failure
-// identity they record, spends its time in the EVM instead.
+// confirmed before then. Only a later shrink candidate stalls, so finding and identifying the
+// original failure does not depend on executing a busy loop within the campaign's timeout.
 #[forgetest_init]
 fn symbolic_invariant_keeps_minimization_at_shrink_deadline(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_keeps_minimization_at_shrink_deadline");
@@ -3229,10 +3229,10 @@ fn symbolic_invariant_keeps_minimization_at_shrink_deadline(prj: _, cmd: _) {
 import "forge-std/Test.sol";
 
 contract SlowTarget {
-    bool public broken;
+    uint256 public value;
 
     function step(uint256 x) external {
-        if (x > 1000) broken = true;
+        value = x;
     }
 }
 
@@ -3244,10 +3244,11 @@ contract SymbolicShrinkDeadline is Test {
         targetContract(address(target));
     }
 
-    function invariant_notBroken() public view {
-        uint256 a;
-        for (uint256 i; i < 10000; ++i) a = uint256(keccak256(abi.encode(a, i)));
-        assertFalse(target.broken() && a != 0);
+    function invariant_notBroken() public {
+        // Stop at the deadline, not at an out-of-gas failure that could finish minimization.
+        vm.pauseGasMetering();
+        while (target.value() == 1001) {}
+        assertFalse(target.value() > 1000);
     }
 }
 "#,
@@ -3263,6 +3264,6 @@ contract SymbolicShrinkDeadline is Test {
     let failure = &result["invariant_failures"][0];
     let accepted = failure["minimization"]["accepted"].as_u64();
     assert!(accepted.is_some_and(|accepted| accepted > 0), "{result}");
-    // The deadline stops minimization before it reaches the smallest failing value.
+    // The stalled candidate must not replace a failure confirmed before the deadline.
     assert_ne!(failure["counterexample"]["Sequence"][1][0]["args"], "1001", "{result}");
 }

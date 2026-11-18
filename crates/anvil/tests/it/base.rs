@@ -28,7 +28,7 @@ use base_common_consensus::{
 };
 use base_common_eip8130::NonceManagerSlots as NonceManagerStorage;
 use base_protocol::{BaseTimeUpdateTx, L1BlockInfoTx};
-use foundry_common::provider::RetryProvider;
+use foundry_common::{EIP1967_ADMIN_SLOT, EIP1967_IMPLEMENTATION_SLOT, provider::RetryProvider};
 use foundry_config::Config;
 use foundry_evm_core::opts::EvmOpts;
 use foundry_evm_hardforks::BaseUpgrade;
@@ -36,18 +36,6 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use op_alloy_consensus::TxDeposit;
 use std::time::Duration;
-
-/// `BaseTime` proxy storage slots.
-struct BaseTime;
-
-impl BaseTime {
-    const IMPLEMENTATION_SLOT: U256 = alloy_primitives::uint!(
-        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc_U256
-    );
-    const ADMIN_SLOT: U256 = alloy_primitives::uint!(
-        0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103_U256
-    );
-}
 
 const ACTIVATION_REGISTRY: Address = address!("8453000000000000000000000000000000000001");
 const MAINNET_BERYL_ACTIVATION_ADMIN: Address =
@@ -1702,7 +1690,7 @@ async fn base_fork_denim_continues_every_parent_phase() {
     let (source_api, source_handle) = spawn(config).await;
     let admin = B256::from(U256::from(0x1234));
     source_api
-        .anvil_set_storage_at(Predeploys::BASE_TIME, BaseTime::ADMIN_SLOT, admin)
+        .anvil_set_storage_at(Predeploys::BASE_TIME, EIP1967_ADMIN_SLOT.into(), admin)
         .await
         .unwrap();
     let source_provider = source_handle.http_provider();
@@ -1714,7 +1702,10 @@ async fn base_fork_denim_continues_every_parent_phase() {
         let (api, handle) = spawn(config).await;
         let provider = handle.http_provider();
         assert_eq!(
-            provider.get_storage_at(Predeploys::BASE_TIME, BaseTime::ADMIN_SLOT).await.unwrap(),
+            provider
+                .get_storage_at(Predeploys::BASE_TIME, EIP1967_ADMIN_SLOT.into())
+                .await
+                .unwrap(),
             U256::from_be_bytes(admin.0)
         );
         assert_eq!(base_time_ms(&provider, BlockId::pending()).await, before + 200);
@@ -1886,13 +1877,10 @@ async fn base_denim_rejected_state_load_is_atomic() {
     source.mine_one().await.unwrap();
     let mut invalid_state = source.backend.serialized_state(false).await.unwrap();
     let base_time = invalid_state.accounts.get_mut(&Predeploys::BASE_TIME).unwrap();
+    base_time.storage.insert(EIP1967_IMPLEMENTATION_SLOT, B256::ZERO);
     base_time
         .storage
-        .insert(B256::from(BaseTime::IMPLEMENTATION_SLOT.to_be_bytes::<32>()), B256::ZERO);
-    base_time.storage.insert(
-        B256::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
-        B256::from(U256::from(0xdead).to_be_bytes::<32>()),
-    );
+        .insert(EIP1967_ADMIN_SLOT, B256::from(U256::from(0xdead).to_be_bytes::<32>()));
 
     let (target, target_handle) = spawn(config()).await;
     target.anvil_set_balance(sentinel, U256::from(7)).await.unwrap();

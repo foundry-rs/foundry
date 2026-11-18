@@ -7,7 +7,7 @@ use crate::{
 use alloy_consensus::{Transaction as _, Typed2718, transaction::SignerRecoverable};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{
-    Address, B256, Bytes, U256, hex, keccak256,
+    Address, B256, Bytes, U256, b256, hex, keccak256,
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
@@ -20,11 +20,11 @@ use evm2::{
     registry::HandlerError,
 };
 use foundry_common::{
-    TransactionMaybeSigned,
+    EIP1967_IMPLEMENTATION_SLOT, TransactionMaybeSigned,
     fs::{read_json_file, write_json_file},
     slot_identifier::{
         ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
-        SlotInfo,
+        SlotInfo, identify_eip1967_slot,
     },
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
@@ -141,7 +141,7 @@ struct SlotStateDiff {
     /// Current storage value.
     new_value: B256,
     /// Storage layout metadata (variable name, type, offset).
-    /// Only present when contract has storage layout output.
+    /// Only present when contract has storage layout output, or for the EIP-1967 proxy slots.
     /// This includes decoded values when available.
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     slot_info: Option<SlotInfo>,
@@ -223,7 +223,7 @@ impl Display for AccountStateDiffs {
                             f,
                             "@ {slot} ({}, {}): {} → {}",
                             slot_info.label,
-                            slot_info.slot_type.dyn_sol_type,
+                            slot_info.slot_type,
                             slot_changes.previous_value,
                             slot_changes.new_value
                         )?;
@@ -233,7 +233,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "    {} ({}): {} → {}",
                                 member.label,
-                                member.slot_type.dyn_sol_type,
+                                member.slot_type,
                                 format_token_raw(&decoded.previous_value),
                                 format_token_raw(&decoded.new_value)
                             )?;
@@ -246,7 +246,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "@ {slot} ({}, {}): {} → {}",
                                 slot_info.label,
-                                slot_info.slot_type.dyn_sol_type,
+                                slot_info.slot_type,
                                 format_token_raw(&decoded.previous_value),
                                 format_token_raw(&decoded.new_value)
                             )?;
@@ -256,7 +256,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "@ {slot} ({}, {}): {} → {}",
                                 slot_info.label,
-                                slot_info.slot_type.dyn_sol_type,
+                                slot_info.slot_type,
                                 slot_changes.previous_value,
                                 slot_changes.new_value
                             )?;
@@ -1854,7 +1854,7 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
         Some(group) => {
             ensure!(
                 is_valid_snapshot_group(&group),
-                "invalid snapshot group name `{group}`: group must be a plain file name"
+                "invalid snapshot group name `{group}`: expected a relative path without empty, `.` or `..` components"
             );
             group
         }
@@ -1866,12 +1866,14 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
     Ok((group, name))
 }
 
-/// Returns whether `group` is a single normal path component, so that the `{group}.json` snapshot
-/// file cannot escape the configured snapshots directory.
+/// Returns whether `group` is a relative path without empty or dot components.
 fn is_valid_snapshot_group(group: &str) -> bool {
-    let mut components = Path::new(group).components();
-    matches!(components.next(), Some(Component::Normal(name)) if name == group)
-        && components.next().is_none()
+    // Check the original components because `Path::components` normalizes dots and separators.
+    group.split(std::path::is_separator).all(|component| {
+        matches!(Path::new(component).components().next(), Some(Component::Normal(name)) if name == component)
+            && (!cfg!(windows)
+                || (!component.contains(':') && !component.ends_with(['.', ' '])))
+    })
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
@@ -2513,6 +2515,10 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
                                     },
                                 )
                             });
+                            // Proxies write the EIP-1967 slots from assembly constants, which no
+                            // layout covers.
+                            let slot_info =
+                                slot_info.or_else(|| identify_eip1967_slot(&storage_access.slot));
 
                             slot_state_diff.insert(SlotStateDiff {
                                 previous_value: storage_access.previousValue,
@@ -2543,12 +2549,9 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     state_diffs
 }
 
-/// EIP-1967 implementation storage slot
-const EIP1967_IMPL_SLOT: &str = "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
-
 /// EIP-1822 UUPS implementation storage slot: keccak256("PROXIABLE")
-const EIP1822_PROXIABLE_SLOT: &str =
-    "c5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7";
+const EIP1822_PROXIABLE_SLOT: B256 =
+    b256!("0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7");
 
 /// Helper function to get the contract data from the deployed code at an address.
 fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
@@ -2576,16 +2579,16 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
     }
 
     // Fall back to known proxy artifacts when exact matching is impossible.
-    let hex_str = hex::encode(&code_bytes);
+    let contains_slot = |slot: B256| code_bytes.windows(32).any(|word| word == slot.as_slice());
     let find_by_suffix =
         |suffix: &str| artifacts.iter().find(|(a, _)| a.identifier().ends_with(suffix));
     if detect_proxy
-        && hex_str.contains(EIP1967_IMPL_SLOT)
+        && contains_slot(EIP1967_IMPLEMENTATION_SLOT)
         && let Some(result) = find_by_suffix(":TransparentUpgradeableProxy")
     {
         return Some(result);
     } else if detect_proxy
-        && hex_str.contains(EIP1822_PROXIABLE_SLOT)
+        && contains_slot(EIP1822_PROXIABLE_SLOT)
         && let Some(result) = find_by_suffix(":UUPSUpgradeable")
     {
         return Some(result);
@@ -2641,11 +2644,49 @@ mod tests {
 
     #[test]
     fn validates_snapshot_groups() {
-        for group in ["Group", "a.b", "group with spaces", "..hidden"] {
+        for group in [
+            "Group",
+            "a.b",
+            "group with spaces",
+            "..hidden",
+            "core/someContract",
+            "periphery/someContract.v1",
+        ] {
             assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
         }
-        for group in ["", ".", "..", "../settings", "a/b", "./a", "/tmp/settings", "a/", "a/."] {
+        for group in [
+            "",
+            ".",
+            "..",
+            "../settings",
+            "./a",
+            "/tmp/settings",
+            "a/",
+            "a/.",
+            "a/./b",
+            "a/../b",
+            "a//b",
+        ] {
             assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
+
+        #[cfg(unix)]
+        assert!(is_valid_snapshot_group(r"core\someContract"));
+
+        #[cfg(windows)]
+        {
+            assert!(is_valid_snapshot_group(r"core\someContract"));
+            for group in [
+                r"C:\settings",
+                r"C:settings",
+                r"\settings",
+                r"core\..\settings",
+                "a:b",
+                "a/.. /b",
+                "a./b",
+            ] {
+                assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+            }
         }
     }
 }

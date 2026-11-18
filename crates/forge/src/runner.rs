@@ -34,7 +34,7 @@ use alloy_primitives::{
 use evm2::{
     bytecode::Bytecode,
     evm::{Cache, InMemoryDB},
-    interpreter::op as opcode,
+    interpreter::{InstrStop, op as opcode},
 };
 use eyre::Result;
 use foundry_common::{
@@ -1244,6 +1244,8 @@ struct SequenceReplay<'a> {
     assertion_failure: bool,
     storage: &'a [SymbolicStorageAssignment],
     campaign_failure: Option<(CheckSequenceFailureSite, &'a RawFailure)>,
+    /// Invariants that the campaign did not check after any call of the failing sequence.
+    unchecked_invariants: &'a [String],
     /// When shrinking the failure must stop, for a timed campaign.
     shrink_deadline: Option<Instant>,
 }
@@ -1442,11 +1444,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     }
 
     /// Replays a single call with its failure identity recorded and checks that it fails, the
-    /// same way as `expected_identity` when given, see [`RawCallResult::failure_identity`].
+    /// same way as `expected_identity` when given, see [`RawCallResult::failure_identity`]. A
+    /// replay that runs out of gas only counts when it does so at the modeled memory halt.
     fn replay_confirmed_symbolic_single_call(
         &self,
         call: &SymbolicCounterexampleCall,
         expected_identity: Option<B256>,
+        memory_halt_pc: Option<usize>,
     ) -> Result<(RawCallResult<FEN>, Option<String>), String> {
         let mut executor = self
             .clone_executor_with_svm_returns(&call.svm_returns)
@@ -1456,6 +1460,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .map_err(|err| err.to_string())?;
         if svm_returns_exhausted(&call.svm_returns, &raw) {
             return Err("candidate replay ran out of `svm` values".to_string());
+        }
+        if replay_ran_out_of_gas(&raw)
+            && !memory_halt_pc.is_some_and(|pc| {
+                replayed_memory_halt(&raw, executor.evm_env().version.memory_limit, pc)
+            })
+        {
+            return Err("candidate replay ran out of gas".to_string());
         }
         if executor.is_raw_call_success(self.address, Cow::Borrowed(&raw.state_changeset), &raw) {
             return Err("candidate replay succeeded".to_string());
@@ -1470,6 +1481,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let reason = (raw.reverted || raw.exit_reason.is_some_and(|reason| !reason.is_success()))
             .then(|| self.revert_decoder().decode(&raw.result, raw.exit_reason));
         Ok((raw, reason))
+    }
+
+    /// Replays `calldata` on the test contract and returns whether it ran out of gas at `pc` on a
+    /// memory access beyond `memory_limit`.
+    fn replays_memory_halt(&self, calldata: &Bytes, svm_returns: &[Bytes], pc: usize) -> bool {
+        let Ok(mut executor) = self.clone_executor_with_svm_returns(svm_returns) else {
+            return false;
+        };
+        executor.inspector_mut().collect_failure_identity(true);
+        let memory_limit = executor.evm_env().version.memory_limit;
+        executor
+            .call_raw(self.sender, self.address, calldata.clone(), U256::ZERO)
+            .is_ok_and(|raw| replayed_memory_halt(&raw, memory_limit, pc))
     }
 
     /// Shrinks and replays a failing invariant call sequence, persisting the confirmed
@@ -1684,29 +1708,53 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if let Some(deadline) = replay.shrink_deadline {
             executor.inspector_mut().set_execution_deadline(self.tcfg.early_exit.clone(), deadline);
         }
-        let mut candidates = CandidateReplay::new(
-            &mut executor,
-            replay.invariant_contract.address,
-            replay.target_invariant.selector().into(),
-            CheckSequenceOptions {
-                accumulate_warp_roll: false,
-                fail_on_revert: replay.invariant_config.fail_on_revert,
-                expect_assertion_failure: replay.assertion_failure,
-                call_after_invariant: replay.invariant_contract.call_after_invariant,
-                rd: Some(self.revert_decoder()),
-            },
-            campaign_site,
+        let mut checked_executor = executor.clone();
+        let candidate_replay = |executor, between_calls| {
+            CandidateReplay::new(
+                executor,
+                replay.invariant_contract.address,
+                replay.target_invariant.selector().into(),
+                CheckSequenceOptions {
+                    accumulate_warp_roll: false,
+                    fail_on_revert: replay.invariant_config.fail_on_revert,
+                    expect_assertion_failure: replay.assertion_failure,
+                    call_after_invariant: replay.invariant_contract.call_after_invariant,
+                    rd: Some(self.revert_decoder()),
+                },
+                campaign_site,
+                between_calls,
+                replay.invariant_config.check_interval != 0,
+            )
+        };
+        let mut candidates = candidate_replay(&mut executor, Vec::new());
+        // The campaign checks every invariant between calls, unless its `check_interval` is 0, and
+        // after the last call, and these checks can have effects outside the EVM too. Replaying
+        // them costs a call per invariant and sequence call, so only the original and the
+        // candidates that preserve the failure without them replay them. Invariants that the
+        // campaign did not check after any call of the sequence are left out. The replay also runs
+        // checks the campaign skips, such as after every call for any other interval, after
+        // reverted calls, and of invariants that broke during the sequence, which can only reject
+        // more candidates or leave the original to call removal.
+        let mut checked = candidate_replay(
+            &mut checked_executor,
+            (0..replay.invariant_contract.invariant_fns.len())
+                .filter(|&idx| {
+                    let name = &replay.invariant_contract.invariant_fns[idx].0.name;
+                    !replay.unchecked_invariants.contains(name)
+                })
+                .map(|idx| replay.invariant_contract.invariant_calldata(idx))
+                .collect(),
         );
         let replay_sequence = |candidates: &mut CandidateReplay<'_, FEN>,
                                calls: &[SymbolicCounterexampleCall]| {
             let txes = calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect();
             candidates.check(txes).ok().filter(|outcome| !outcome.success)
         };
-        let expected = replay_sequence(&mut candidates, &original_calls);
+        let expected = replay_sequence(&mut checked, &original_calls);
         // A replay that skipped effects outside the EVM, such as `vm.setEnv` or `vm.unixTime`, can
         // read state the campaign left behind, fail elsewhere, or pass, so only call removal
         // applies, as without minimization.
-        if candidates.skipped_host_effects {
+        if checked.skipped_host_effects {
             return SequenceMinimization::RemoveCalls;
         }
         let Some(expected) = expected else {
@@ -1731,7 +1779,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return SequenceMinimization::KeepOriginal;
         }
         let mut replay_candidate = |candidate: &[SymbolicCounterexampleCall]| {
-            replay_sequence(&mut candidates, candidate)
+            let actual = replay_sequence(&mut candidates, candidate)
+                .filter(|actual| same_sequence_failure(actual, &expected))?;
+            // With one call and one invariant, the checked replay skips the checks before the first
+            // call and the invariant's own check before the final checks, so it would repeat this
+            // one.
+            if candidate.len() == 1 && replay.invariant_contract.invariant_fns.len() == 1 {
+                return Some(actual);
+            }
+            replay_sequence(&mut checked, candidate)
                 .filter(|actual| same_sequence_failure(actual, &expected))
         };
         let deadline = replay.shrink_deadline;
@@ -2636,15 +2692,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     None,
                 ),
             ),
-            SymbolicRunResult::Counterexample { args, calldata, svm_returns, stats } => self
-                .replay_symbolic_counterexample(
-                    func,
-                    args,
-                    calldata,
-                    svm_returns,
-                    stats,
-                    &symbolic_config,
-                ),
+            SymbolicRunResult::Counterexample {
+                args,
+                calldata,
+                svm_returns,
+                memory_halt_pc,
+                stats,
+            } => self.replay_symbolic_counterexample(
+                func,
+                args,
+                calldata,
+                svm_returns,
+                memory_halt_pc,
+                stats,
+                &symbolic_config,
+            ),
         };
         let symbolic_result = match corpus_seed_metadata {
             Some(metadata) => symbolic_result.with_corpus_seeds(metadata),
@@ -2656,12 +2718,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
     /// Replays a symbolic counterexample concretely, minimizing and persisting it when it
     /// reproduces.
+    #[expect(clippy::too_many_arguments)]
     fn replay_symbolic_counterexample(
         &mut self,
         func: &Function,
         args: Vec<DynSolValue>,
         calldata: Bytes,
         svm_returns: Vec<Bytes>,
+        memory_halt_pc: Option<usize>,
         stats: SymbolicStats,
         symbolic_config: &SymbolicConfig,
     ) -> (TestStatus, Option<String>, Option<CounterExample>, SymbolicResult) {
@@ -2728,8 +2792,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // A replay that runs out of `svm` values left the solver path, so its failure proves
         // nothing.
         let svm_exhausted = svm_returns_exhausted(&svm_returns, &raw);
+        // Concrete execution charges gas for a memory access before it checks `memory_limit`, so
+        // a model that halts on that access may replay as out of gas, but only at that access.
+        let out_of_gas = replay_ran_out_of_gas(&raw)
+            && memory_halt_pc.is_none_or(|pc| {
+                !self.replays_memory_halt(&base_counterexample.calldata, &svm_returns, pc)
+            });
         if rejected_by_assume
             || svm_exhausted
+            || out_of_gas
             || self.executor.is_raw_call_success(
                 self.address,
                 Cow::Borrowed(&raw.state_changeset),
@@ -2744,6 +2815,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 "symbolic counterexample did not replay: rejected by `vm.assume`"
             } else if svm_exhausted {
                 "symbolic counterexample did not replay: ran out of `svm` values"
+            } else if out_of_gas {
+                "symbolic counterexample did not replay: ran out of gas"
             } else {
                 "symbolic counterexample did not replay"
             }
@@ -2773,7 +2846,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // which must reproduce the reported failure.
         if final_reason.is_some()
             && let Some(identity) = self
-                .replay_confirmed_symbolic_single_call(&original_call, None)
+                .replay_confirmed_symbolic_single_call(&original_call, None, memory_halt_pc)
                 .ok()
                 .filter(|(_, reason)| *reason == final_reason)
                 .and_then(|(raw, _)| raw.failure_identity)
@@ -2782,7 +2855,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &original_call,
                 self.tcfg.config.invariant.shrink_run_limit as usize,
                 |candidate| {
-                    self.replay_confirmed_symbolic_single_call(candidate, Some(identity)).is_ok()
+                    self.replay_confirmed_symbolic_single_call(
+                        candidate,
+                        Some(identity),
+                        memory_halt_pc,
+                    )
+                    .is_ok()
                 },
             )
         {
@@ -2790,6 +2868,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 match self.replay_confirmed_symbolic_single_call(
                     &candidate.minimized_call,
                     Some(identity),
+                    memory_halt_pc,
                 ) {
                     Ok((raw, reason)) => {
                         final_call = candidate.minimized_call.clone();
@@ -4643,6 +4722,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         assertion_failure: false,
                         storage: &storage,
                         campaign_failure: None,
+                        unchecked_invariants: &[],
                         shrink_deadline: None,
                     };
                     let replayed = self
@@ -5102,6 +5182,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 .campaign_failure
                                 .as_ref()
                                 .map(|(site, failure)| (*site, failure)),
+                            unchecked_invariants: &case_data.unchecked_invariants,
                             shrink_deadline: invariant_result.shrink_deadline,
                         },
                         calls,
@@ -6072,6 +6153,30 @@ fn svm_returns_exhausted<FEN: FoundryEvmNetwork>(
             .mock_call_sequence_exhausted(SYMBOLIC_VM_COMPAT_ADDRESS)
             .unwrap_or(!svm_returns.is_empty())
     })
+}
+
+/// Returns whether a replay ran out of gas without failing an assertion first. The symbolic engine
+/// does not model gas, so such a halt is not the failure the solver model was found for.
+/// `MemoryLimitOOG` and `InvalidOperandOOG` are memory exceptions the engine does model.
+fn replay_ran_out_of_gas<FEN: FoundryEvmNetwork>(raw: &RawCallResult<FEN>) -> bool {
+    raw.failed_assertion.is_none()
+        && raw.exit_reason.is_some_and(|reason| {
+            reason.is_out_of_gas()
+                && !matches!(reason, InstrStop::MemoryLimitOOG | InstrStop::InvalidOperandOOG)
+        })
+}
+
+/// Returns whether a replay ran out of gas at `pc` on a memory access that ends beyond
+/// `memory_limit`, the halt the symbolic engine modeled there.
+fn replayed_memory_halt<FEN: FoundryEvmNetwork>(
+    raw: &RawCallResult<FEN>,
+    memory_limit: u64,
+    pc: usize,
+) -> bool {
+    replay_ran_out_of_gas(raw)
+        && raw
+            .failure_halt
+            .is_some_and(|(halt_pc, end)| halt_pc == pc && end > U256::from(memory_limit))
 }
 
 fn frontier_selector(frontier: &FuzzBranchFrontierRecord) -> Option<Selector> {

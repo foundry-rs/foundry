@@ -564,6 +564,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 // Proxy storage written by both the proxy's own code and its implementations decodes each slot
 // with the layout of the code that wrote it last, even for proxies created during the recording.
 // Libraries write with their caller's layout under both the legacy and the IR pipeline.
+// The EIP-1967 slots, which no layout covers, are labeled too.
 #[forgetest_init]
 fn state_diff_decodes_proxy_storage_by_writer(prj: _, cmd: _) {
     prj.add_test(
@@ -644,6 +645,15 @@ contract ERC1967Proxy {
             returndatacopy(0, 0, returndatasize())
             if iszero(success) { revert(0, returndatasize()) }
             return(0, returndatasize())
+        }
+    }
+}
+
+contract AdminBeaconProxy {
+    constructor(address admin, address beacon) {
+        assembly {
+            sstore(0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103, admin)
+            sstore(0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50, beacon)
         }
     }
 }
@@ -760,6 +770,12 @@ contract StateDiffProxyTest is Test {
         LegacyImplementation(address(proxy)).setValue(3);
         console.log(vm.getStateDiff());
     }
+
+    function test_adminAndBeaconSlots() public {
+        vm.startStateDiffRecording();
+        new AdminBeaconProxy(address(0xA11CE), address(0xBEAC0));
+        console.log(vm.getStateDiff());
+    }
 }
 "#,
     );
@@ -771,7 +787,23 @@ contract StateDiffProxyTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 4 tests for test/StateDiffProxy.t.sol:StateDiffProxyTest
+Ran 5 tests for test/StateDiffProxy.t.sol:StateDiffProxyTest
+[PASS] test_adminAndBeaconSlots() ([GAS])
+Logs:
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  contract: test/StateDiffProxy.t.sol:AdminBeaconProxy
+  - nonce diff: 0 → 1
+  - state diff:
+  @ 0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50 (eip1967.proxy.beacon, address): 0x0000000000000000000000000000000000000000 → 0x00000000000000000000000000000000000bEaC0
+  @ 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103 (eip1967.proxy.admin, address): 0x0000000000000000000000000000000000000000 → 0x00000000000000000000000000000000000A11cE
+  
+  0xC48F49274b2cf8e87D173C4ebC18e9a51a496c4C
+  - nonce diff: 0 → 1
+  
+
 [PASS] test_createdProxy() ([GAS])
 Logs:
   0x2e234DAe75C793f67A35089C9d99245E1C58470b
@@ -781,12 +813,12 @@ Logs:
   @ 0x0000000000000000000000000000000000000000000000000000000000000000 (owner, address): 0x0000000000000000000000000000000000000000 → 0x000000000000000000000000000000000000bEEF
   @ 0x0000000000000000000000000000000000000000000000000000000000000002 (stats, (uint256,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000005
       minted (uint256): 0 → 5
-  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc (eip1967.proxy.implementation, address): 0x0000000000000000000000000000000000000000 → 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
   
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xC48F49274b2cf8e87D173C4ebC18e9a51a496c4C
   contract: test/StateDiffProxy.t.sol:MintLib
   - nonce diff: 0 → 1
   
@@ -796,7 +828,7 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xC48F49274b2cf8e87D173C4ebC18e9a51a496c4C
   - nonce diff: 0 → 1
   
   0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
@@ -817,7 +849,7 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xC48F49274b2cf8e87D173C4ebC18e9a51a496c4C
   - nonce diff: 0 → 1
   
 
@@ -826,7 +858,7 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xC48F49274b2cf8e87D173C4ebC18e9a51a496c4C
   - nonce diff: 0 → 1
   
   0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
@@ -834,12 +866,12 @@ Logs:
   - state diff:
   @ 0x0000000000000000000000000000000000000000000000000000000000000001 (value, uint256): 0 → 7
   @ 0x0000000000000000000000000000000000000000000000000000000000000003 (extra, uint256): 0 → 9
-  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f → 0x0000000000000000000000002e234dae75c793f67a35089c9d99245e1c58470b
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc (eip1967.proxy.implementation, address): 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f → 0x2e234DAe75C793f67A35089C9d99245E1C58470b
   
 
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+Ran 1 test suite [ELAPSED]: 5 tests passed, 0 failed, 0 skipped (5 total tests)
 
 "#]]);
 
@@ -869,12 +901,12 @@ Logs:
   @ 0x0000000000000000000000000000000000000000000000000000000000000000 (owner, address): 0x0000000000000000000000000000000000000000 → 0x000000000000000000000000000000000000bEEF
   @ 0x0000000000000000000000000000000000000000000000000000000000000002 (stats, (uint256,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000005
       minted (uint256): 0 → 5
-  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc (eip1967.proxy.implementation, address): 0x0000000000000000000000000000000000000000 → 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
   
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xe02a92Ef2BAD4e4763e2545e18f3b15b2d39B049
+  0xfB717444DA32274846B7af71Ff58f4D3Bb9f38dd
   contract: test/StateDiffProxy.t.sol:MintLib
   - nonce diff: 0 → 1
   
@@ -882,6 +914,180 @@ Logs:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
+// Dynamic array elements are labeled at their own slots, whether the array sits at a slot the
+// layout knows or at a computed one, and elements packed several to a slot share one label.
+#[forgetest_init]
+fn state_diff_labels_dynamic_array_elements(prj: _, cmd: _) {
+    prj.add_test(
+        "StateDiffDynamicArray.t.sol",
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+contract DynamicArrays {
+    struct Item {
+        uint256 a;
+        address b;
+    }
+
+    struct Holder {
+        uint256 count;
+        address[] list;
+    }
+
+    struct Pair {
+        uint256 a;
+        uint256 b;
+    }
+
+    uint256[] public nums;
+    uint128[] public packed;
+    bool[] public flags;
+    Item[] public items;
+    Holder internal holder;
+    mapping(address => uint256[]) public byOwner;
+    uint256[][] public nested;
+    Item[][] internal grid;
+    // An element spanning several slots without an ABI type is not labeled as a whole.
+    Pair[2][] internal pairs;
+
+    function push(address owner) public {
+        nums.push(7);
+        nums.push(9);
+        packed.push(5);
+        packed.push(6);
+        flags.push(true);
+        items.push(Item(1, address(0x1234)));
+        holder.count = 1;
+        holder.list.push(address(0x1234));
+        byOwner[owner].push(42);
+        nested.push();
+        nested[0].push(5);
+        grid.push();
+        grid[0].push(Item(3, address(0x9abc)));
+        pairs.push();
+        pairs[0][0].a = 1;
+    }
+}
+
+contract PackedFlags {
+    bool[] public flags;
+
+    function push() public {
+        flags.push(true);
+    }
+}
+
+// OpenZeppelin's `EnumerableSet.AddressSet`, kept in an ERC-7201 namespace.
+contract NamespacedSet {
+    struct Set {
+        bytes32[] _values;
+        mapping(bytes32 => uint256) _positions;
+    }
+
+    struct AddressSet {
+        Set _inner;
+    }
+
+    /// @custom:storage-location erc7201:example.storage.Registry
+    struct RegistryStorage {
+        AddressSet set;
+    }
+
+    function _registry() internal pure returns (RegistryStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("example.storage.Registry")) - 1))
+            & ~bytes32(uint256(0xff));
+        assembly {
+            $.slot := slot
+        }
+    }
+
+    function add(address value) public {
+        Set storage inner = _registry().set._inner;
+        inner._values.push(bytes32(uint256(uint160(value))));
+        inner._positions[bytes32(uint256(uint160(value)))] = inner._values.length;
+    }
+}
+
+contract StateDiffDynamicArrayTest is Test {
+    function test_dynamicArrays() public {
+        DynamicArrays arrays = new DynamicArrays();
+        NamespacedSet set = new NamespacedSet();
+
+        vm.startStateDiffRecording();
+        // Keys passed at runtime, since solc folds the hashes of constant keys.
+        arrays.push(address(0xAA));
+        set.add(address(0x1234));
+        console.log(vm.getStateDiff());
+    }
+
+    function test_packedArrayJson() public {
+        PackedFlags flags = new PackedFlags();
+
+        vm.startStateDiffRecording();
+        flags.push();
+        console.log(vm.getStateDiffJson());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-vv", "--mc", "StateDiffDynamicArrayTest", "--extra-output", "storageLayout"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/StateDiffDynamicArray.t.sol:StateDiffDynamicArrayTest
+[PASS] test_dynamicArrays() ([GAS])
+Logs:
+  0x2e234DAe75C793f67A35089C9d99245E1C58470b
+  contract: test/StateDiffDynamicArray.t.sol:NamespacedSet
+  - state diff:
+  @ 0x1bc5dea3fd74b23c7b599ce4170b61140394f82a0bfca71d7bd6b3e85e8d499f (example.storage.Registry.set._inner._positions[0x0000000000000000000000000000000000000000000000000000000000001234], uint256): 0 → 1
+  @ 0x9059e8fd9c5070bf26463002743d587936571e76c7911ed0ac60ce4e404c5200 (example.storage.Registry.set._inner._values, bytes32[]): 0 → 1
+  @ 0xae6cff763a4cb355f07f5b0c1bce1427ea6d7a53d2f7e76d57b4d613203b0cf6 (example.storage.Registry.set._inner._values[0], bytes32): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000001234
+  
+  0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  contract: test/StateDiffDynamicArray.t.sol:DynamicArrays
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (nums, uint256[]): 0 → 2
+  @ 0x0000000000000000000000000000000000000000000000000000000000000001 (packed, uint128[]): 0 → 2
+  @ 0x0000000000000000000000000000000000000000000000000000000000000002 (flags, bool[]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000003 (items, DynamicArrays.Item[]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000004 (holder.count, uint256): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000005 (holder.list, address[]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000007 (nested, uint256[][]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000008 (grid, DynamicArrays.Item[][]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000009 (pairs, DynamicArrays.Pair[2][]): 0 → 1
+  @ 0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0 (holder.list[0], address): 0x0000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000001234
+  @ 0x2497362b1265b72a2d08ffe21ad6eae809e05da456ede5913d1c8c28d6751f15 (byOwner[0x00000000000000000000000000000000000000AA], uint256[]): 0 → 1
+  @ 0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563 (nums[0], uint256): 0 → 7
+  @ 0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e564 (nums[1], uint256): 0 → 9
+  @ 0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace (flags[0..31], bool[32]): [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false] → [true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]
+  @ 0x607bca8f7c1c56da874da29cd62c3769b9880d38a258a91fc6dd1cfb6b4d1a8e (nested[0][0], uint256): 0 → 5
+  @ 0x6e1540171b6c0c960b71a7020d9f60077f6af931a8bbf590da0223dacf75c7af: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000001
+  @ 0x9c973ba2c6604c7aed8b01a10af981baaad177814235fed50ee801a71cbd5eb7 (byOwner[0x00000000000000000000000000000000000000AA][0], uint256): 0 → 42
+  @ 0xa66cc928b5edb82af9bd49922954155ab7b0942694bea4ce44661d9a8736c688 (nested[0], uint256[]): 0 → 1
+  @ 0xa7c46294ffa3fad92dc8422b2e38b688ccf1b86172f5beaf864af9368d2844e5 (grid[0][0].a, uint256): 0 → 3
+  @ 0xa7c46294ffa3fad92dc8422b2e38b688ccf1b86172f5beaf864af9368d2844e6 (grid[0][0].b, address): 0x0000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000009ABc
+  @ 0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6 (packed[0..1], uint128[2]): [0, 0] → [5, 6]
+  @ 0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b (items[0].a, uint256): 0 → 1
+  @ 0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85c (items[0].b, address): 0x0000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000001234
+  @ 0xf3f7a9fe364faab93b216da50a3214154f22a0a2b415b23a84c8169e8b636ee3 (grid[0], DynamicArrays.Item[]): 0 → 1
+  
+
+[PASS] test_packedArrayJson() ([GAS])
+Logs:
+  {"0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f":{"label":null,"contract":"test/StateDiffDynamicArray.t.sol:PackedFlags","balanceDiff":null,"nonceDiff":null,"stateDiff":{"0x0000000000000000000000000000000000000000000000000000000000000000":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001","label":"flags","type":"bool[]","offset":0,"slot":"0","decoded":{"previousValue":"0","newValue":"1"}},"0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001","label":"flags[0..31]","type":"bool[32]","offset":0,"slot":"18569430475105882587588266137607568536673111973893317399460219858819262702947","decoded":{"previousValue":"[false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]","newValue":"[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]"}}}}}
+
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 }

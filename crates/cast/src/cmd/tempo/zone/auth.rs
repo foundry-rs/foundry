@@ -1,24 +1,23 @@
 //! Zone RPC auth wire format, mirrored from tempoxyz/zones at a1c15e9f.
 //!
 //! Source: <https://github.com/tempoxyz/zones/tree/a1c15e9f002a5efd150f56c5076fb35519288396/crates/rpc/src/auth/token.rs>
+//!
+//! The signature is a Tempo transaction signature over the token digest. tempoxyz/tempo's zone
+//! RPC accepts configurable account (`0x05`) signatures from #9045; see `authenticate_token` in
+//! <https://github.com/tempoxyz/tempo/blob/c8b89f9b6d9f011a8a277ab431183b2b105c4af7/crates/zones/rpc/src/server.rs>.
 
+use super::signer::ZoneSigner;
 use alloy_primitives::{B256, hex, keccak256};
-use alloy_signer::Signer;
 use eyre::Result;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) const HEADER: &str = "x-authorization-token";
 
-/// Sign a short-lived token with the same raw-digest signature as `cast wallet sign --no-hash`.
-pub(super) async fn sign_token(
-    signer: &impl Signer,
-    zone_id: u32,
-    chain_id: u64,
-) -> Result<String> {
+/// Sign a short-lived token as `signer`, see [`ZoneSigner::sign_token_digest`].
+pub(super) async fn sign_token(signer: &ZoneSigner, zone_id: u32, chain_id: u64) -> Result<String> {
     let issued = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let (fields, digest) = token_fields(zone_id, chain_id, issued, issued + 600);
-    let signature = signer.sign_hash(&digest).await?;
-    let mut token = signature.as_bytes().to_vec();
+    let mut token = signer.sign_token_digest(digest).await?.to_vec();
     token.extend_from_slice(&fields);
     Ok(hex::encode(token))
 }
@@ -37,11 +36,21 @@ fn token_fields(zone_id: u32, chain_id: u64, issued: u64, expires: u64) -> ([u8;
 mod tests {
     use super::*;
     use alloy_primitives::{Signature, b256};
+    use alloy_signer::Signer;
     use alloy_signer_local::PrivateKeySigner;
+    use foundry_common::tempo::configurable_account::{
+        ConfigurableAccountSigner, single_owner_config,
+    };
+    use foundry_wallets::WalletSigner;
+    use tempo_primitives::transaction::{
+        ConfigurableAccountSignature, PrimitiveSignature, tt_signature::TempoSignature,
+    };
 
     #[tokio::test]
     async fn token_recovers_wallet_from_raw_digest() {
         let signer = PrivateKeySigner::random();
+        let address = signer.address();
+        let signer = ZoneSigner::Wallet(WalletSigner::Local(signer));
         let token = hex::decode(sign_token(&signer, 42, 1337).await.unwrap()).unwrap();
         assert_eq!(token.len(), 94);
         let fields = &token[65..];
@@ -51,7 +60,59 @@ mod tests {
         assert_eq!(expires - issued, 600);
         let (_, digest) = token_fields(42, 1337, issued, expires);
         let signature = Signature::try_from(&token[..65]).unwrap();
-        assert_eq!(signature.recover_address_from_prehash(&digest).unwrap(), signer.address());
+        assert_eq!(signature.recover_address_from_prehash(&digest).unwrap(), address);
+    }
+
+    /// Repeats the signature checks of tempoxyz/tempo's zone RPC at c8b89f9 (`authenticate_token`
+    /// in crates/zones/rpc/src/server.rs) on a configurable account token, with Tempo's own
+    /// types, and pins the owners' digest.
+    #[tokio::test]
+    async fn configurable_account_token_matches_zone_rpc_checks() {
+        let owner = PrivateKeySigner::random();
+        let config = single_owner_config(owner.address());
+        let account = config.derive_account().unwrap();
+        let signer = ZoneSigner::ConfigurableAccount(
+            ConfigurableAccountSigner::new(
+                account,
+                config.clone(),
+                [WalletSigner::Local(owner.clone()).into()],
+                "",
+            )
+            .unwrap(),
+        );
+        let token = hex::decode(sign_token(&signer, 42, 1337).await.unwrap()).unwrap();
+
+        // `<signature><29 fixed bytes>`, with a `0x05` signature.
+        let (signature, fields) = token.split_at(token.len() - 29);
+        assert_eq!(signature[0], 0x05);
+        let issued = u64::from_be_bytes(fields[13..21].try_into().unwrap());
+        let (expected_fields, digest) = token_fields(42, 1337, issued, issued + 600);
+        assert_eq!(fields, expected_fields);
+
+        let parsed = TempoSignature::from_bytes(signature).unwrap();
+        assert!(!parsed.is_legacy_keychain());
+        assert_eq!(parsed.recover_signer(&digest).unwrap(), account);
+        let TempoSignature::ConfigurableAccount(approval) = &parsed else {
+            panic!("a configurable account signature")
+        };
+        // Unregistered, the owners derive the account; registered, they match its commitment.
+        approval.validate_account_commitment(B256::ZERO).unwrap();
+        approval.validate_account_commitment(config.commitment().unwrap()).unwrap();
+        assert!(approval.validate_account_commitment(B256::repeat_byte(1)).is_err());
+
+        // The owner approves keccak256(domain || token digest || account || version).
+        let mut preimage = b"tempo:configurable-account:signature".to_vec();
+        preimage.extend_from_slice(digest.as_slice());
+        preimage.extend_from_slice(account.as_slice());
+        preimage.extend_from_slice(&0u64.to_be_bytes());
+        let approval = owner.sign_hash(&keccak256(preimage)).await.unwrap();
+        let expected = ConfigurableAccountSignature::try_new(
+            account,
+            config,
+            vec![PrimitiveSignature::Secp256k1(approval)],
+        )
+        .unwrap();
+        assert_eq!(signature, TempoSignature::ConfigurableAccount(expected).to_bytes().as_ref());
     }
 
     #[test]

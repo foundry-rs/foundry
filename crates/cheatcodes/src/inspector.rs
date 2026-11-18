@@ -1651,19 +1651,25 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Record called accounts if `startStateDiffRecording` has been called
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
-            // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
+            // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code.
             let evm = interp.host();
-            let (initialized, old_balance, old_nonce) = match evm.state_mut().account(&target) {
-                Ok(mut account) => {
-                    account.warm();
-                    (
-                        account.get().is_some_and(|info| !info.is_empty()),
-                        account.balance(),
-                        account.nonce(),
-                    )
-                }
-                Err(_) => (false, U256::ZERO, 0),
-            };
+            let state_account = recorded_call_state_account(call);
+            let (initialized, old_balance, old_nonce) =
+                match evm.state_mut().account(&state_account) {
+                    Ok(mut account) => {
+                        // The opcode already warmed a `DELEGATECALL` or `CALLCODE` callee, and a
+                        // `vm.mockFunction` target is never accessed by the EVM, so keep it cold.
+                        if state_account == call.destination {
+                            account.warm();
+                        }
+                        (
+                            account.get().is_some_and(|info| !info.is_empty()),
+                            account.balance(),
+                            account.nonce(),
+                        )
+                    }
+                    Err(_) => (false, U256::ZERO, 0),
+                };
             // Fork switches and `vm.chainId` take effect before the execution version changes.
             let chain_id = self
                 .env_overrides
@@ -1939,7 +1945,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if !self.allowed_mem_writes.is_empty() {
             steps = steps.union(MEMORY_OPCODES);
         }
-        // Mapping recording reads the stored slot and the 64-byte hash that derives it.
+        // Mapping recording reads the stored slot and the 32- or 64-byte hash that derives it.
         if self.core.mapping_slots.is_some() {
             steps = steps.union(opcodes([op::SSTORE, op::KECCAK256]));
         }
@@ -2195,10 +2201,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             if let Some(mapping_slots) = &mut self.core.mapping_slots {
                 record_mapping_hash(mapping_slots, interp, pending);
             }
-            if self
-                .mapping_storage_store_hooks
-                .get(&pending.address)
-                .is_some_and(|hooks| !hooks.is_empty())
+            // Storage hooks resolve only mapping entries, whose slots are 64-byte hashes.
+            if pending.size == 0x40
+                && self
+                    .mapping_storage_store_hooks
+                    .get(&pending.address)
+                    .is_some_and(|hooks| !hooks.is_empty())
                 && self.active_storage_hook.is_none()
             {
                 record_mapping_hash(&mut self.storage_hook_mapping_slots, interp, pending);
@@ -2565,11 +2573,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // changes. Depending on the depth the cheat was
                     // called at, there may not be any pending
                     // calls to update if execution has percolated up to a higher depth.
+                    let state_account = recorded_call_state_account(call);
                     if call_access.depth == curr_depth as u64
-                        && let Ok(mut account) = interp.host().state_mut().account(&target)
+                        && let Ok(mut account) = interp.host().state_mut().account(&state_account)
                     {
                         debug_assert!(access_is_call(call_access.kind));
-                        account.warm();
+                        if state_account == call.destination {
+                            account.warm();
+                        }
                         call_access.newBalance = account.balance();
                         call_access.newNonce = account.nonce();
                     }
@@ -3890,6 +3901,18 @@ const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
             | crate::Vm::AccountAccessKind::CallCode
             | crate::Vm::AccountAccessKind::DelegateCall
     )
+}
+
+/// Returns the account whose balance and nonce a call's [`AccountAccess`] records.
+///
+/// `DELEGATECALL` and `CALLCODE` execute in the caller's context, so their callee's state does not
+/// change. Other calls record the executing context, which a `vm.mockFunction` redirect keeps as
+/// the original target while `call_target` becomes the mock.
+const fn recorded_call_state_account<E>(call: &MessageExt<E>) -> Address {
+    match call.kind {
+        MessageKind::DelegateCall | MessageKind::CallCode => call.call_target,
+        _ => call.destination,
+    }
 }
 
 /// Records a log into the recorded logs vector, if it exists.
