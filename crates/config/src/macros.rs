@@ -162,11 +162,7 @@ macro_rules! impl_figment_convert_cast {
     ($name:ty) => {
         impl<'a> From<&'a $name> for $crate::figment::Figment {
             fn from(args: &'a $name) -> Self {
-                let root =
-                    $crate::find_project_root(None).expect("could not determine project root");
-                $crate::Config::with_root(&root)
-                    .to_figment($crate::FigmentProviders::Cast)
-                    .merge(args)
+                $crate::Config::current_project_figment($crate::FigmentProviders::Cast).merge(args)
             }
         }
     };
