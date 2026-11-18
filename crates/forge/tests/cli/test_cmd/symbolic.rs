@@ -8681,6 +8681,23 @@ contract SymbolicBoundedComplementTest {
         }
         assert(s <= type(uint128).max);
     }
+
+    function remainderMul(uint256 x, uint256 d, uint256 k) external pure returns (uint256) {
+        return x % d * k;
+    }
+
+    // `x % d * k` fits in 192 bits, so its checked multiply cannot overflow.
+    function checkBoundedRemainderMul(uint256 x, uint64 d, uint128 k) public view {
+        if (d == 0) return;
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.remainderMul, (x, d, k)));
+        assert(ok);
+    }
+
+    function checkWideRemainderMul(uint256 x, uint256 d, uint256 k) public view {
+        if (d == 0) return;
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.remainderMul, (x, d, k)));
+        assert(ok);
+    }
 }
 "#,
     );
@@ -8727,7 +8744,18 @@ contract SymbolicBoundedComplementTest {
             "optimized={optimized}"
         );
 
+        let result = json_test_result(&output, "checkBoundedRemainderMul(uint256,uint64,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
         let result = json_test_result(&output, "checkOtherDivisorSub(uint256,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkWideRemainderMul(uint256,uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }

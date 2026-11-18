@@ -2111,26 +2111,50 @@ impl ConstraintContext {
         }
         // For a symbolic d, normalization rewrites the zero check of EVM's `div(n, d)` to
         // `d == 0 || n < d`, possibly with repeated terms.
-        if let Some((numerator, denominator)) = word_division_operands(operand)
-            && let SymBoolExprKind::Not(negated) = condition.kind()
-            && let SymBoolExprKind::And(terms) = negated.kind()
-        {
-            let (mut zero, mut below) = (false, false);
-            for term in terms.iter() {
-                let SymBoolExprKind::Not(term) = term.kind() else { return false };
-                if term.zero_check_operand() == Some(denominator) {
-                    zero = true;
-                } else if matches!(
+        if let Some((numerator, denominator)) = word_division_operands(operand) {
+            return Self::zero_or_condition(condition, denominator, |term| {
+                matches!(
                     term.kind(),
                     SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right)
                         if left == numerator && right == denominator
-                ) {
-                    below = true;
+                )
+            });
+        }
+        // EVM's `mod(n, d)` keeps `n % d == 0` in its zero check `d == 0 || n % d == 0`. SMT
+        // `bvurem(n, 0)` is `n` but EVM `mod(n, 0)` is 0, so this needs a proven nonzero `d`; a
+        // bare `URem` only appears once normalization dropped `ite(d == 0, 0, ..)` under that fact.
+        if let SymExprKind::BinOp(SymBinOp::URem, _, divisor) = operand.kind()
+            && self.interval(divisor).is_some_and(|range| !range.min.is_zero())
+        {
+            return Self::zero_or_condition(condition, divisor, |term| {
+                term.zero_check_operand() == Some(operand)
+            });
+        }
+        false
+    }
+
+    /// Returns whether `condition` is exactly `divisor == 0 || other`, possibly with repeated
+    /// terms.
+    fn zero_or_condition(
+        condition: &SymBoolExpr,
+        divisor: &SymExpr,
+        other: impl Fn(&SymBoolExpr) -> bool,
+    ) -> bool {
+        if let SymBoolExprKind::Not(negated) = condition.kind()
+            && let SymBoolExprKind::And(terms) = negated.kind()
+        {
+            let (mut zero, mut matched) = (false, false);
+            for term in terms.iter() {
+                let SymBoolExprKind::Not(term) = term.kind() else { return false };
+                if term.zero_check_operand() == Some(divisor) {
+                    zero = true;
+                } else if other(term) {
+                    matched = true;
                 } else {
                     return false;
                 }
             }
-            return zero && below;
+            return zero && matched;
         }
         false
     }
