@@ -5788,6 +5788,67 @@ contract CounterTest {
     );
 }
 
+// Contracts that share a name get one bytecode listing each, under their source path.
+#[forgetest]
+fn coverage_bytecode_report_same_name(prj: _, cmd: _) {
+    prj.add_source(
+        "A.sol",
+        "contract Helper { function get() public pure returns (uint256) { return 1; } }",
+    );
+    prj.add_source(
+        "B.sol",
+        "contract Helper { function get() public pure returns (uint256) { return 2; } }",
+    );
+    prj.add_test(
+        "Helper.t.sol",
+        r#"
+import {Helper as A} from "src/A.sol";
+import {Helper as B} from "src/B.sol";
+
+contract HelperTest {
+    function testGet() public {
+        require(new A().get() == 1);
+        require(new B().get() == 2);
+    }
+}
+"#,
+    );
+    cmd.args(["coverage", "--report=bytecode"]).assert_success();
+    assert!(!prj.root().join("bytecode-coverage/Helper.asm").exists());
+    let a = fs::read_to_string(prj.root().join("bytecode-coverage/src/A.sol/Helper.asm")).unwrap();
+    assert_data_eq!(
+        a,
+        str![[r#"
+[002] 00000000: PUSH1 0x80                     // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000002: PUSH1 0x40                     // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000004: MSTORE                         // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000005: CALLVALUE                      // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000006: DUP1                           // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000007: ISZERO                         // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000008: PUSH1 0x0e                     // src/A.sol: 3:1-3:79 (71-149)
+[002] 0000000a: JUMPI                          // src/A.sol: 3:1-3:79 (71-149)
+      0000000b: PUSH0                          // src/A.sol: 3:1-3:79 (71-149)
+...
+"#]]
+    );
+    let b = fs::read_to_string(prj.root().join("bytecode-coverage/src/B.sol/Helper.asm")).unwrap();
+    assert_data_eq!(
+        b,
+        str![[r#"
+[002] 00000000: PUSH1 0x80                     // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000002: PUSH1 0x40                     // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000004: MSTORE                         // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000005: CALLVALUE                      // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000006: DUP1                           // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000007: ISZERO                         // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000008: PUSH1 0x0e                     // src/B.sol: 3:1-3:79 (71-149)
+[002] 0000000a: JUMPI                          // src/B.sol: 3:1-3:79 (71-149)
+      0000000b: PUSH0                          // src/B.sol: 3:1-3:79 (71-149)
+...
+"#]]
+    );
+}
+
 // Gaps report offsets and snippets do not depend on CRLF line endings or multibyte text.
 #[forgetest]
 fn coverage_gaps_report(prj: _, cmd: _) {
