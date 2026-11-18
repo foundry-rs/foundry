@@ -694,6 +694,47 @@ async fn test_tempo_fork_executes_request_extensions_locally() {
         .unwrap();
 }
 
+/// Dev accounts on a Tempo fork get fee tokens even when the forked chain drained them.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_funds_dev_account_fee_tokens() {
+    let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
+    let from = source_handle.dev_accounts().next().unwrap();
+    for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD] {
+        source_api.anvil_deal_tip20(from, token, U256::ZERO).await.unwrap();
+    }
+    source_api.mine_one().await.unwrap();
+
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let provider = fork_handle.http_provider();
+    for reset in [false, true] {
+        // Resetting to the fork funds the accounts again.
+        if reset {
+            fork_api
+                .anvil_reset(Some(Forking {
+                    json_rpc_url: Some(source_handle.http_endpoint()),
+                    block_number: Some(1),
+                }))
+                .await
+                .unwrap();
+        }
+        for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD] {
+            assert_eq!(
+                IERC20::new(token, &provider).balanceOf(from).call().await.unwrap(),
+                U256::from(u64::MAX),
+            );
+        }
+        let tx = TransactionRequest::default().from(from).to(Address::random());
+        let receipt =
+            provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+    }
+}
+
 sol! {
     #[sol(rpc)]
     interface IFeeManagerRpc {

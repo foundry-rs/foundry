@@ -34,7 +34,7 @@ use tempo_precompiles::{
         IAccountKeychain::{KeyRestrictions, SignatureType},
     },
     error::TempoPrecompileError,
-    storage::StorageCtx,
+    storage::{Handler, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{IRolesAuth, ITIP20, TIP20Error, TIP20Token, USD_CURRENCY, roles::UNGRANTABLE_ROLE},
     tip20_factory::{TIP20Factory, TIP20FactoryError},
@@ -43,6 +43,10 @@ use tempo_primitives::TempoAddressExt;
 
 const SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
+
+/// Fee token balance each test account gets: u64::MAX, safe since u128::MAX can hold ~18
+/// quintillion u64::MAX values.
+const TEST_ACCOUNT_FEE_TOKEN_BALANCE: U256 = U256::from_limbs([u64::MAX, 0, 0, 0]);
 
 /// Runs `f` in a Tempo precompile storage context over `db` at `env`, then writes the state it
 /// changed back to `db` only if every operation succeeds.
@@ -139,6 +143,45 @@ pub fn initialize_tempo_precompiles(
     Ok(())
 }
 
+/// Funds test accounts on a forked Tempo chain with the fee token balance a fresh genesis mints.
+///
+/// Each account gets every standard fee token the chain has deployed and the fee token it prefers
+/// in the fee manager. Balances are written directly because the local node holds no issuer role
+/// on a forked chain.
+pub fn fund_fork_test_accounts(
+    db: &mut dyn Db,
+    env: &EvmEnv,
+    test_accounts: &[Address],
+    hardfork: FoundryHardfork,
+) -> Result<(), BlockchainError> {
+    with_tempo_storage(db, env, hardfork, || {
+        (|| -> Result<(), TempoPrecompileError> {
+            let factory = TIP20Factory::new();
+            let fee_manager = TipFeeManager::new();
+            for &account in test_accounts {
+                let preferred =
+                    fee_manager.user_tokens(IFeeManager::userTokensCall { user: account })?;
+                for token in [
+                    PATH_USD_ADDRESS,
+                    ALPHA_USD_ADDRESS,
+                    BETA_USD_ADDRESS,
+                    THETA_USD_ADDRESS,
+                    preferred,
+                ] {
+                    if factory.is_tip20(token)? {
+                        let mut token = TIP20Token::from_address(token)?;
+                        token.balances[account].write(TEST_ACCOUNT_FEE_TOKEN_BALANCE)?;
+                    }
+                }
+            }
+            Ok(())
+        })()
+        .map_err(|err| {
+            BlockchainError::Message(format!("failed to fund Tempo fork accounts: {err}"))
+        })
+    })
+}
+
 fn initialize_tempo_genesis(
     test_accounts: &[Address],
     hardfork: FoundryHardfork,
@@ -146,9 +189,7 @@ fn initialize_tempo_genesis(
     // Initialize base Tempo genesis (precompiles and tokens)
     let initialized = initialize_tempo_genesis_inner(ADMIN, SENDER, hardfork.into())?;
 
-    // Mint fee tokens to test accounts
-    // u64::MAX per account - safe since u128::MAX can hold ~18 quintillion u64::MAX values
-    let mint_amount = U256::from(u64::MAX);
+    let mint_amount = TEST_ACCOUNT_FEE_TOKEN_BALANCE;
     let tokens = [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS];
 
     (|| -> Result<bool, TempoPrecompileError> {

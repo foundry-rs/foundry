@@ -5002,6 +5002,16 @@ impl<N: Network> Backend<N> {
             info.balance = self.genesis.balance;
             db_guard.insert_account(address, info);
         }
+        // Tempo pays fees in TIP-20 tokens, so dev accounts also need fee tokens to transact.
+        if self.is_tempo() {
+            crate::eth::backend::tempo::fund_fork_test_accounts(
+                &mut **db_guard,
+                parent_env,
+                &self.genesis.accounts,
+                hardfork,
+            )
+            .map_err(tempo_db_err)?;
+        }
         self.genesis.apply_genesis_json_alloc(&mut **db_guard)?;
         // A fork taken before the remote chain activated Denim has no BaseTime deployment, but
         // Denim blocks mined locally still send the BaseTime deposit. Existing deployments and
