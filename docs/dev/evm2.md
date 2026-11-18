@@ -35,8 +35,11 @@ revm 43 and alloy-evm 0.39 through `base-evm2` and the Base crates it depends on
   out-of-bounds `RETURNDATACOPY`, the memory limit or a runtime code starting with `0xEF`, reports
   all the gas forwarded to it as used, as the EVM charges it. This shows in `-vvvv` traces, `--json`
   traces, gas reports and the debugger. revm-inspectors reported only the gas spent before the
-  halt, such as `[223]` instead of `[1056938677]`, and kept the output of a create rejected for
-  its `0xEF` prefix.
+  halt, such as `[112]` instead of `[1056938743]`, and kept the output of a create rejected for
+  its `0xEF` prefix. This changes every halting frame except the root of a transaction: with
+  `isolate = true`, a non-static call or create made directly by the test is its own transaction
+  and already reported all its gas. Nested frames, `view` calls from the test, and every call with
+  `isolate = false` change.
 - **`prestateTracer` diff mode**: Anvil leaves every account that was empty before the transaction
   out of `pre`, also when the transaction funds it, such as the coinbase at its first fee credit.
   This matches geth. revm-inspectors reported such an account with `"balance":"0x0"`.
@@ -66,7 +69,9 @@ These compatibility differences affect execution, gas reports and Anvil library 
 - **`vm.expectRevert` on a halt**: a call that halts spends all the gas forwarded to it, even when
   `vm.expectRevert` turns the halt into a success. revm returned the unspent gas to the caller, so
   a test that only ran `vm.expectRevert(); target.invalidOpcode();` reported 8,264 gas instead of
-  1,056,944,039, and kept its gas for later work. A test that does more than 1/64 of
+  1,056,944,039, and kept its gas for later work. As with traces, this affects every halting call
+  except a non-static call the test makes directly with `isolate = true`, which revm already
+  charged in full. A test that does more than 1/64 of
   the gas limit after such a call now fails with `OutOfGas` unless the call forwards a fixed amount,
   as in `target.invalidOpcode{gas: 100_000}()`.
 - **Monad isolated calls**: under `--network monad` with `isolate = true`, a slot that the test
