@@ -8158,7 +8158,9 @@ contract SymbolicSqrt {
 // quotient wraps; neither may be rewritten into a false proof. Rounding up is monotone, bounds the
 // product from above, and exceeds the floor by at most one. Claims that it is at most the floor
 // of a larger product, at least the floor plus one, strictly above the product, or above it in
-// low words alone must still reach counterexamples.
+// low words alone must still reach counterexamples. An optimizer may lower `iszero(sub(x, y))` to
+// `eq(x, y)`, so the high word's zero check can reach the solver as `mm - lo == lt(mm, lo)` or
+// `mm == lo + lt(mm, lo)`; both must prove like the high word compared with zero.
 #[forgetest_init]
 fn symbolic_proves_full_precision_mul_div(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_full_precision_mul_div");
@@ -8505,6 +8507,53 @@ contract FullPrecisionMulDivTest {
         assert(zdHi > xyHi || (zdHi == xyHi && zdLo > xyLo));
     }
 
+    function proveLoweredSubZeroCheck(uint256 a, uint256 b) external pure {
+        assert(zeroSub(a, b) == (high(a, b) == 0));
+    }
+
+    function proveLoweredAddZeroCheck(uint256 a, uint256 b) external pure {
+        assert(zeroAdd(a, b) == (high(a, b) == 0));
+    }
+
+    function proveV4FloorUnderLoweredZeroCheck(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || !zeroSub(x, y)) return;
+        assertFloor(FullMath.mulDiv(x, y, d), x, y, d);
+    }
+
+    function proveLoweredZeroCheckAlwaysHolds(uint256 a, uint256 b) external pure {
+        assert(zeroSub(a, b));
+    }
+
+    function proveLoweredZeroCheckWithWrongOperand(uint256 a, uint256 b) external pure {
+        bool zero;
+        assembly ("memory-safe") {
+            let mm := mulmod(a, b, not(0))
+            let lo := mul(a, a)
+            zero := eq(sub(mm, lo), lt(mm, lo))
+        }
+        assert(zero == (high(a, b) == 0));
+    }
+
+    function proveLoweredZeroCheckWithWrongModulus(uint256 a, uint256 b) external pure {
+        bool zero;
+        assembly ("memory-safe") {
+            let mm := mulmod(a, b, sub(not(0), 1))
+            let lo := mul(a, b)
+            zero := eq(sub(mm, lo), lt(mm, lo))
+        }
+        assert(zero == (high(a, b) == 0));
+    }
+
+    function proveLoweredZeroCheckWithSwappedBorrow(uint256 a, uint256 b) external pure {
+        bool zero;
+        assembly ("memory-safe") {
+            let mm := mulmod(a, b, not(0))
+            let lo := mul(a, b)
+            zero := eq(sub(mm, lo), lt(lo, mm))
+        }
+        assert(zero == (high(a, b) == 0));
+    }
+
     function assertFloor(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
         (uint256 zdHi, uint256 zdLo) = mul512(z, d);
         (uint256 xyHi, uint256 xyLo) = mul512(x, y);
@@ -8526,6 +8575,22 @@ contract FullPrecisionMulDivTest {
             let mm := mulmod(a, b, not(0))
             lo := mul(a, b)
             hi := sub(sub(mm, lo), lt(mm, lo))
+        }
+    }
+
+    function zeroSub(uint256 a, uint256 b) internal pure returns (bool zero) {
+        assembly ("memory-safe") {
+            let mm := mulmod(a, b, not(0))
+            let lo := mul(a, b)
+            zero := eq(sub(mm, lo), lt(mm, lo))
+        }
+    }
+
+    function zeroAdd(uint256 a, uint256 b) internal pure returns (bool zero) {
+        assembly ("memory-safe") {
+            let mm := mulmod(a, b, not(0))
+            let lo := mul(a, b)
+            zero := eq(mm, add(lo, lt(mm, lo)))
         }
     }
 }
@@ -8561,6 +8626,9 @@ contract FullPrecisionMulDivTest {
             ("proveSoladyRoundingUpMonotone", "uint256,uint256,uint256,uint256"),
             ("proveSoladyRoundingUpCeiling", "uint256,uint256,uint256"),
             ("proveSoladyRoundingUpWithinOne", "uint256,uint256,uint256"),
+            ("proveLoweredSubZeroCheck", "uint256,uint256"),
+            ("proveLoweredAddZeroCheck", "uint256,uint256"),
+            ("proveV4FloorUnderLoweredZeroCheck", "uint256,uint256,uint256"),
         ] {
             let result = json_test_result(&output, &format!("{name}({args})"));
             assert_eq!(result["symbolic"]["status"], "pass", "{name}, optimized={optimized}");
@@ -8574,6 +8642,10 @@ contract FullPrecisionMulDivTest {
             ("proveSoladyRoundingUpStrictCeiling", "uint256,uint256,uint256"),
             ("proveV4FloorSuccessorBelowRoundingUp", "uint256,uint256,uint256,uint256"),
             ("proveV4RoundingUpLowWordCeiling", "uint256,uint256,uint256"),
+            ("proveLoweredZeroCheckAlwaysHolds", "uint256,uint256"),
+            ("proveLoweredZeroCheckWithWrongOperand", "uint256,uint256"),
+            ("proveLoweredZeroCheckWithWrongModulus", "uint256,uint256"),
+            ("proveLoweredZeroCheckWithSwappedBorrow", "uint256,uint256"),
         ] {
             let result = json_test_result(&output, &format!("{name}({args})"));
             assert_eq!(

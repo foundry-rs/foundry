@@ -4,6 +4,17 @@ use super::*;
 #[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt, symlink};
 
+/// Restores search permission so the temporary project can be torn down, even on panic.
+#[cfg(unix)]
+struct RestorePermissions<'a>(&'a Path);
+
+#[cfg(unix)]
+impl Drop for RestorePermissions<'_> {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(self.0, fs::Permissions::from_mode(0o755));
+    }
+}
+
 #[casttest]
 fn browser_wallet_commands_expose_browser_option(cmd: _) {
     for (name, args) in [
@@ -366,15 +377,6 @@ Error: [..]
 #[cfg(unix)]
 #[casttest]
 fn new_wallet_bare_name_unresolvable_symlink_errors(prj: _, cmd: _) {
-    /// Restores search permission so the temporary project can be torn down, even on panic.
-    struct RestorePermissions<'a>(&'a Path);
-
-    impl Drop for RestorePermissions<'_> {
-        fn drop(&mut self) {
-            let _ = fs::set_permissions(self.0, fs::Permissions::from_mode(0o755));
-        }
-    }
-
     let account = "inaccessible-wallet";
     // Resolving a symlink through a directory without search permission fails with
     // `PermissionDenied` instead of `NotFound`.
@@ -396,6 +398,38 @@ Error: [..]
 
     let keystore_path = prj.root().join(".foundry").join("keystores").join(account);
     assert!(!keystore_path.exists(), "unexpected keystore at {}", keystore_path.display());
+}
+
+// tests that a bare account name falls back to the default keystore even when the current
+// directory cannot be canonicalized because one of its ancestors is not searchable
+#[cfg(unix)]
+#[casttest]
+fn new_wallet_bare_name_in_unsearchable_cwd_uses_default_keystore(prj: _, cmd: _) {
+    let account = "unsearchable-cwd-wallet";
+    let locked = prj.root().join("locked");
+    let cwd = locked.join("cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    // Enter the directory before locking its parent; the child inherits it via a relative path.
+    cmd.set_current_dir(&cwd);
+    cmd.current_dir(".");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let _restore = RestorePermissions(&locked);
+
+    cmd.env("HOME", prj.root());
+    cmd.args(["wallet", "new", account, "--unsafe-password", "test"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+
+"#]]);
+
+    let keystore_path = prj.root().join(".foundry").join("keystores").join(account);
+    assert!(keystore_path.is_file(), "expected keystore at {}", keystore_path.display());
 }
 
 // tests that the two-positional `[PATH] [ACCOUNT_NAME]` form still errors for a missing
