@@ -585,8 +585,9 @@ impl CoverageReporter for BytecodeReporter {
 /// extension.
 ///
 /// A contract is listed under its name. Contracts that share a name are listed under their source
-/// path instead (`<source path>/<name>`, as in the artifacts directory), with the compiler version
-/// appended when one source was compiled by several versions.
+/// path instead (`<source path>/<name>`, as in the artifacts directory). The name is the artifact
+/// name, which already carries a version or profile suffix when one source is compiled several
+/// times, so the extension is appended rather than set.
 fn listing_paths<'a>(report: &'a CoverageReport, root: &Path) -> HashMap<&'a ContractId, PathBuf> {
     let mut by_name = HashMap::<_, Vec<_>>::default();
     for contract_id in report.bytecode_hits.keys() {
@@ -600,27 +601,16 @@ fn listing_paths<'a>(report: &'a CoverageReport, root: &Path) -> HashMap<&'a Con
             continue;
         }
 
-        let source = |contract_id: &ContractId| {
-            let path = report
+        for contract_id in contract_ids {
+            let source = report
                 .get_source_path(&contract_id.build_id, contract_id.source_id)
                 .map(|path| path.strip_prefix(root).unwrap_or(path))
                 .unwrap_or_else(|| Path::new("unknown"));
-            path.components()
+            let source = source
+                .components()
                 .filter(|component| matches!(component, Component::Normal(_)))
-                .collect::<PathBuf>()
-        };
-        let mut sources = HashMap::<_, usize>::default();
-        for &contract_id in &contract_ids {
-            *sources.entry(source(contract_id)).or_default() += 1;
-        }
-        for contract_id in contract_ids {
-            let source = source(contract_id);
-            let path = if sources[&source] > 1 {
-                source.join(format!("{name}-{}", contract_id.version))
-            } else {
-                source.join(&**name)
-            };
-            paths.insert(contract_id, path);
+                .collect::<PathBuf>();
+            paths.insert(contract_id, source.join(&**name));
         }
     }
     paths
