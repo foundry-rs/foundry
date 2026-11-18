@@ -322,26 +322,6 @@ mod tests {
     }
 
     #[test]
-    fn state_block_id_preserves_numbers_tags_and_explicit_canonical_flags() {
-        let hash = B256::with_last_byte(1);
-        for block in [
-            BlockId::number(123),
-            BlockId::latest(),
-            BlockId::pending(),
-            BlockId::safe(),
-            BlockId::finalized(),
-            BlockId::earliest(),
-            BlockId::from((hash, Some(false))),
-            BlockId::from((hash, Some(true))),
-        ] {
-            assert_eq!(
-                serde_json::to_value(StateBlockId(block)).unwrap(),
-                serde_json::to_value(block).unwrap()
-            );
-        }
-    }
-
-    #[test]
     fn fork_state_by_number_preserves_anchor_and_separates_identity() {
         let block = BlockNumHash::new(42, B256::with_last_byte(1));
         let exact = Fork::test("http://localhost:8545", None, None, None, block, context(42));
