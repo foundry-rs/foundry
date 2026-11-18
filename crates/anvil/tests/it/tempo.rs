@@ -13,7 +13,7 @@ use alloy_consensus::{
     transaction::{SignableTransaction, SignerRecoverable, TxHashRef},
 };
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_genesis::Genesis;
+use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{
     Address, B256, Bytes, Signature, TxKind, U256, address, aliases::U96, b256, bytes, hex,
@@ -86,7 +86,10 @@ use tempo_contracts::{
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_hardfork::{
     TempoHardfork,
-    constants::gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
+    constants::{
+        OUSD_ADDRESS,
+        gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
+    },
 };
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CONFIGURABLE_ACCOUNT_ADDRESS,
@@ -101,6 +104,7 @@ use tempo_precompiles::{
     nonce::NonceManager,
     receive_policy_guard::{IReceivePolicyGuard, InboundKind},
     tip_fee_manager::{IFeeManager, TipFeeManager},
+    tip20::TIP20Token,
     tip403_registry::{ALLOW_ALL_POLICY_ID, ITIP403Registry, REJECT_ALL_POLICY_ID},
 };
 use tempo_primitives::{
@@ -697,22 +701,24 @@ async fn test_tempo_fork_executes_request_extensions_locally() {
         .unwrap();
 }
 
-/// Dev accounts on a Tempo fork get fee tokens even when the forked chain drained them.
+/// Dev accounts on a Tempo fork are topped up in the fee token they pay with, as if minted, even
+/// when the forked chain drained them.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_fork_funds_dev_account_fee_tokens() {
     let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
-    let from = source_handle.dev_accounts().next().unwrap();
-    for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD] {
-        source_api.anvil_deal_tip20(from, token, U256::ZERO).await.unwrap();
-    }
-    // A preferred fee token outside the standard set is funded too.
-    let custom = address!("0x20c0000000000000000000006a37da5c996874be");
-    let prefers_custom = source_handle.dev_accounts().nth(3).unwrap();
+    let mut accounts = source_handle.dev_accounts();
+    // Prefers AlphaUSD.
+    let from = accounts.next().unwrap();
+    source_api.anvil_deal_tip20(from, ALPHA_USD, U256::ZERO).await.unwrap();
+    // Prefers a fee token outside the standard set.
+    let prefers_ousd = accounts.nth(2).unwrap();
+    // Has no preference and holds OUSD, so it pays with OUSD rather than PathUSD.
+    let no_preference = accounts.next().unwrap();
     source_api
         .anvil_tempo_create_token(TempoCreateTokenRequest {
-            address: custom,
-            name: "Custom".into(),
-            symbol: "CUSD".into(),
+            address: OUSD_ADDRESS,
+            name: "OUSD".into(),
+            symbol: "OUSD".into(),
             currency: "USD".into(),
             quote_token: PATH_USD,
             admin: from,
@@ -720,20 +726,57 @@ async fn test_tempo_fork_funds_dev_account_fee_tokens() {
         })
         .await
         .unwrap();
-    let slot = TipFeeManager::new().user_tokens[prefers_custom].slot();
-    source_api
-        .anvil_set_storage_at(TIP_FEE_MANAGER_ADDRESS, slot, custom.into_word())
-        .await
-        .unwrap();
+    for (account, token) in [(prefers_ousd, OUSD_ADDRESS), (no_preference, Address::ZERO)] {
+        let slot = TipFeeManager::new().user_tokens[account].slot();
+        source_api
+            .anvil_set_storage_at(TIP_FEE_MANAGER_ADDRESS, slot, token.into_word())
+            .await
+            .unwrap();
+    }
+    source_api.anvil_deal_tip20(no_preference, PATH_USD, U256::ZERO).await.unwrap();
+    source_api.anvil_deal_tip20(no_preference, OUSD_ADDRESS, U256::from(1000)).await.unwrap();
+    // The genesis alloc makes this account prefer ThetaUSD, which it lacks.
+    let prefers_theta_by_alloc = accounts.next().unwrap();
+    source_api.anvil_deal_tip20(prefers_theta_by_alloc, THETA_USD, U256::ZERO).await.unwrap();
+    // The genesis alloc sets this account's PathUSD balance explicitly.
+    let allocated = accounts.next().unwrap();
     source_api.mine_one().await.unwrap();
 
+    let source = source_handle.http_provider();
+    let mut genesis = Genesis::default();
+    for (address, slot, value) in [
+        (
+            TIP_FEE_MANAGER_ADDRESS,
+            TipFeeManager::new().user_tokens[prefers_theta_by_alloc].slot(),
+            THETA_USD.into_word(),
+        ),
+        (
+            PATH_USD,
+            TIP20Token::from_address_unchecked(PATH_USD).balances[allocated].slot(),
+            B256::with_last_byte(7),
+        ),
+    ] {
+        let code = source.get_code_at(address).await.unwrap();
+        genesis.alloc.insert(
+            address,
+            GenesisAccount::default()
+                .with_code(Some(code))
+                .with_nonce(Some(1))
+                .with_storage(Some([(slot.into(), value)].into())),
+        );
+    }
     let (fork_api, fork_handle) = spawn(
         NodeConfig::test_tempo()
+            .with_genesis(Some(genesis))
             .with_eth_rpc_url(Some(source_handle.http_endpoint()))
             .with_fork_block_number(Some(1u64)),
     )
     .await;
     let provider = fork_handle.http_provider();
+    let balance = async |token, account| {
+        IERC20::new(token, &provider).balanceOf(account).call().await.unwrap()
+    };
+    let funded = U256::from(u64::MAX);
     for reset in [false, true] {
         // Resetting to the fork funds the accounts again.
         if reset {
@@ -745,21 +788,83 @@ async fn test_tempo_fork_funds_dev_account_fee_tokens() {
                 .await
                 .unwrap();
         }
-        for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD] {
-            assert_eq!(
-                IERC20::new(token, &provider).balanceOf(from).call().await.unwrap(),
-                U256::from(u64::MAX),
-            );
-        }
+        assert_eq!(balance(ALPHA_USD, from).await, funded);
+        assert_eq!(balance(OUSD_ADDRESS, prefers_ousd).await, funded);
+        assert_eq!(balance(OUSD_ADDRESS, no_preference).await, funded);
+        assert_eq!(balance(PATH_USD, no_preference).await, U256::ZERO);
+        assert_eq!(balance(THETA_USD, prefers_theta_by_alloc).await, funded);
+        assert_eq!(balance(PATH_USD, allocated).await, U256::from(7));
         assert_eq!(
-            IERC20::new(custom, &provider).balanceOf(prefers_custom).call().await.unwrap(),
-            U256::from(u64::MAX),
+            IERC20::new(OUSD_ADDRESS, &provider).totalSupply().call().await.unwrap(),
+            funded * U256::from(2) - U256::from(1000),
         );
         let tx = TransactionRequest::default().from(from).to(Address::random());
         let receipt =
             provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
         assert!(receipt.status());
     }
+}
+
+/// Fork funding keeps pre-T8 reward accounting consistent, so an account opted into rewards can
+/// still pay fees.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_funds_reward_opted_in_account() {
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()));
+    let (source_api, source_handle) = spawn(config.clone()).await;
+    let source = source_handle.http_provider();
+    // Opts into AlphaUSD rewards at a zero balance, then prefers AlphaUSD.
+    let account = source_handle.dev_accounts().nth(4).unwrap();
+    source_api.anvil_deal_tip20(account, ALPHA_USD, U256::ZERO).await.unwrap();
+    let alpha = tempo_precompiles::tip20::ITIP20::new(ALPHA_USD, &source);
+    let opt_in = alpha.setRewardRecipient(account).from(account);
+    assert!(opt_in.send().await.unwrap().get_receipt().await.unwrap().status());
+    let slot = TipFeeManager::new().user_tokens[account].slot();
+    source_api
+        .anvil_set_storage_at(TIP_FEE_MANAGER_ADDRESS, slot, ALPHA_USD.into_word())
+        .await
+        .unwrap();
+    source_api.mine_one().await.unwrap();
+
+    let (_fork_api, fork_handle) = spawn(
+        config
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(source.get_block_number().await.unwrap())),
+    )
+    .await;
+    let provider = fork_handle.http_provider();
+    let tx = TransactionRequest::default().from(account).to(Address::random());
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+}
+
+/// A transaction-hash fork replays its block prefix before funding dev accounts, so historical
+/// results are preserved.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_transaction_hash_replays_before_funding() {
+    let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
+    let source = source_handle.http_provider();
+    // Pays with PathUSD and holds enough for fees but not for the transfer.
+    let account = source_handle.dev_accounts().nth(4).unwrap();
+    source_api.anvil_deal_tip20(account, PATH_USD, U256::from(10u64.pow(9))).await.unwrap();
+    let recipient = Address::random();
+    let path_usd = IERC20::new(PATH_USD, &source);
+    let transfer = path_usd.transfer(recipient, U256::from(10u64.pow(12))).from(account);
+    let receipt = transfer.gas(5_000_000).send().await.unwrap().get_receipt().await.unwrap();
+    assert!(!receipt.status());
+
+    let (_fork_api, fork_handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(receipt.transaction_hash)),
+    )
+    .await;
+    let provider = fork_handle.http_provider();
+    let replayed =
+        provider.get_transaction_receipt(receipt.transaction_hash).await.unwrap().unwrap();
+    assert!(!replayed.status());
+    let path_usd = IERC20::new(PATH_USD, &provider);
+    assert_eq!(path_usd.balanceOf(recipient).call().await.unwrap(), U256::ZERO);
+    assert_eq!(path_usd.balanceOf(account).call().await.unwrap(), U256::from(u64::MAX));
 }
 
 sol! {

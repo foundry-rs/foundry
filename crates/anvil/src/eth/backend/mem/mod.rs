@@ -181,9 +181,10 @@ use tempo_precompiles::{
     CONFIGURABLE_ACCOUNT_ADDRESS, NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     configurable_account,
     nonce::NonceManager,
-    storage::account_config_commitment,
+    storage::{Handler, account_config_commitment},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
+    tip20_factory::TIP20Factory,
 };
 use tempo_primitives::{
     AASigned, SignatureType, TEMPO_TX_TYPE_ID, TempoSignature,
@@ -4883,6 +4884,8 @@ impl<N: Network> Backend<N> {
                     &parent_env,
                     self.best_hash(),
                     self.hardfork(),
+                    // A transaction-hash fork funds fee tokens after replaying its block prefix.
+                    self.get_fork().is_some_and(|fork| fork.transaction_hash().is_none()),
                 )
                 .await;
         }
@@ -4963,9 +4966,11 @@ impl<N: Network> Backend<N> {
         parent_env: &EvmEnv,
         parent_hash: B256,
         hardfork: FoundryHardfork,
+        fund_fee_tokens: bool,
     ) -> Result<(), DatabaseError> {
         let user = StagedForkDbUser { db: Some(db), cache_lease };
         let is_tempo = self.is_tempo();
+        let tempo_hardfork = TempoHardfork::from(hardfork);
         let mut genesis_accounts = JoinSet::new();
         for address in self.genesis.accounts.iter().copied() {
             let task_user = StagedForkDbUser {
@@ -4978,7 +4983,11 @@ impl<N: Network> Backend<N> {
                 let db = task_user.db().read().await;
                 let info = db.basic_ref(address)?.unwrap_or_default();
                 if is_tempo {
-                    crate::eth::backend::tempo::prefetch_fork_test_account(&**db, address)?;
+                    crate::eth::backend::tempo::prefetch_fork_test_account(
+                        &**db,
+                        address,
+                        tempo_hardfork,
+                    )?;
                 }
                 Ok::<_, DatabaseError>((address, info))
             });
@@ -5005,17 +5014,17 @@ impl<N: Network> Backend<N> {
             info.balance = self.genesis.balance;
             db_guard.insert_account(address, info);
         }
+        self.genesis.apply_genesis_json_alloc(&mut **db_guard)?;
         // Tempo pays fees in TIP-20 tokens, so dev accounts also need fee tokens to transact.
-        if self.is_tempo() {
+        if is_tempo && fund_fee_tokens {
             crate::eth::backend::tempo::fund_fork_test_accounts(
                 &mut **db_guard,
                 parent_env,
-                &self.genesis.accounts,
+                &self.genesis,
                 hardfork,
             )
             .map_err(tempo_db_err)?;
         }
-        self.genesis.apply_genesis_json_alloc(&mut **db_guard)?;
         // A fork taken before the remote chain activated Denim has no BaseTime deployment, but
         // Denim blocks mined locally still send the BaseTime deposit. Existing deployments and
         // their admin are preserved.
@@ -5361,6 +5370,7 @@ impl<N: Network> Backend<N> {
                 &staged_env,
                 staged_client_config.block_hash,
                 staged_client_config.hardfork.unwrap_or_else(|| staged_config.get_hardfork()),
+                true,
             )
             .await?;
 
@@ -6384,6 +6394,14 @@ where
             .transpose()?;
         db.commit(&state_changes);
         db.insert_block_hash(U256::from(block_number), block_hash);
+        if self.is_tempo() {
+            crate::eth::backend::tempo::fund_fork_test_accounts(
+                &mut **db,
+                &evm_env,
+                &self.genesis,
+                self.hardfork(),
+            )?;
+        }
 
         let BlockInfo { block, transactions, receipts } = block_info;
         let header = block.header.clone();
@@ -10380,8 +10398,13 @@ impl Backend<FoundryNetwork> {
         balance: U256,
     ) -> DatabaseResult<bool> {
         self.with_tempo_storage(|| {
-            crate::eth::backend::tempo::set_tip20_balance(token_address, address, balance)
-                .map_err(tempo_db_err)
+            if !TIP20Factory::new().is_tip20(token_address).map_err(tempo_db_err)? {
+                return Ok(false);
+            }
+
+            let mut token = TIP20Token::from_address(token_address).map_err(tempo_db_err)?;
+            token.balances[address].write(balance).map_err(tempo_db_err)?;
+            Ok(true)
         })
         .await
     }

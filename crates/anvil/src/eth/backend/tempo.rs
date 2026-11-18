@@ -11,6 +11,7 @@ use super::{
     db::{DatabaseRef, Db, EvmDb},
     env::EvmEnv,
     evm::{EvmOptions, TempoEvmNetwork, build_evm},
+    genesis::GenesisConfig,
 };
 use crate::eth::error::BlockchainError;
 use alloy_primitives::{Address, U256, address};
@@ -148,12 +149,14 @@ pub fn initialize_tempo_precompiles(
 
 /// Loads the state [`fund_fork_test_accounts`] reads for `account`, so a fork database can fetch
 /// it concurrently before the write lock serializes those reads.
-pub fn prefetch_fork_test_account(db: &dyn DatabaseRef, account: Address) -> DatabaseResult<()> {
+pub fn prefetch_fork_test_account(
+    db: &dyn DatabaseRef,
+    account: Address,
+    hardfork: TempoHardfork,
+) -> DatabaseResult<()> {
     let slot = TipFeeManager::new().user_tokens[account].slot();
     let preferred = Address::from_word(db.storage_ref(TIP_FEE_MANAGER_ADDRESS, slot)?.into());
-    for token in
-        [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS, preferred]
-    {
+    for &token in hardfork.fallback_fee_tokens().iter().chain([&preferred]) {
         if token.is_tip20() && db.basic_ref(token)?.is_some() {
             let slot = TIP20Token::from_address_unchecked(token).balances[account].slot();
             db.storage_ref(token, slot)?;
@@ -162,33 +165,57 @@ pub fn prefetch_fork_test_account(db: &dyn DatabaseRef, account: Address) -> Dat
     Ok(())
 }
 
-/// Funds test accounts on a forked Tempo chain with the fee token balance a fresh genesis mints.
+/// Tops up test accounts on a forked Tempo chain to the fee token balance a fresh genesis mints.
 ///
-/// Each account gets every standard fee token the chain has deployed and the fee token it prefers
-/// in the fee manager. Balances are written directly because the local node holds no issuer role
-/// on a forked chain. This skips the pre-T8 reward bookkeeping, so on a fork before T8 a dev
-/// account with a reward recipient can fail to pay fees.
+/// Each account is funded only in the token it pays fees with by default: its preferred fee
+/// token, or else the fallback fee token it already holds the most of, so funding does not change
+/// which token pays. The top-up is accounted like a mint, keeping the total supply and pre-T8
+/// opted-in reward supply consistent, without the issuer role the local node lacks on a forked
+/// chain. Unlike a mint, the top-up ignores the supply cap so the account can always pay fees. A
+/// balance set explicitly in the genesis alloc is left as is.
 pub fn fund_fork_test_accounts(
     db: &mut dyn Db,
     env: &EvmEnv,
-    test_accounts: &[Address],
+    genesis: &GenesisConfig,
     hardfork: FoundryHardfork,
 ) -> Result<(), BlockchainError> {
     with_tempo_storage(db, env, hardfork, || {
         (|| -> Result<(), TempoPrecompileError> {
-            let fee_manager = TipFeeManager::new();
-            for &account in test_accounts {
-                let preferred =
-                    fee_manager.user_tokens(IFeeManager::userTokensCall { user: account })?;
-                for token in [
-                    PATH_USD_ADDRESS,
-                    ALPHA_USD_ADDRESS,
-                    BETA_USD_ADDRESS,
-                    THETA_USD_ADDRESS,
-                    preferred,
-                ] {
-                    set_tip20_balance(token, account, TEST_ACCOUNT_FEE_TOKEN_BALANCE)?;
+            let factory = TIP20Factory::new();
+            for &account in &genesis.accounts {
+                let mut fee_token = TipFeeManager::new().user_tokens[account].read()?;
+                if fee_token.is_zero() {
+                    let mut richest = U256::ZERO;
+                    for &token in TempoHardfork::from(hardfork).fallback_fee_tokens() {
+                        let balance = if factory.is_tip20(token)? {
+                            TIP20Token::from_address(token)?.balances[account].read()?
+                        } else {
+                            U256::ZERO
+                        };
+                        if fee_token.is_zero() || balance > richest {
+                            (fee_token, richest) = (token, balance);
+                        }
+                    }
                 }
+                if !factory.is_tip20(fee_token)? {
+                    continue;
+                }
+                let mut token = TIP20Token::from_address(fee_token)?;
+                if genesis.allocates_storage(fee_token, token.balances[account].slot()) {
+                    continue;
+                }
+                let amount =
+                    TEST_ACCOUNT_FEE_TOKEN_BALANCE.saturating_sub(token.balances[account].read()?);
+                if amount.is_zero() {
+                    continue;
+                }
+                token.handle_rewards_on_mint(account, amount)?;
+                let supply = token
+                    .total_supply()?
+                    .checked_add(amount)
+                    .ok_or_else(TempoPrecompileError::under_overflow)?;
+                token.total_supply.write(supply)?;
+                token.increment_balance(account, amount)?;
             }
             Ok(())
         })()
@@ -196,19 +223,6 @@ pub fn fund_fork_test_accounts(
             BlockchainError::Message(format!("failed to fund Tempo fork accounts: {err}"))
         })
     })
-}
-
-/// Sets `account`'s balance of `token` if it is a deployed TIP-20, returning whether it is.
-pub fn set_tip20_balance(
-    token: Address,
-    account: Address,
-    balance: U256,
-) -> Result<bool, TempoPrecompileError> {
-    if !TIP20Factory::new().is_tip20(token)? {
-        return Ok(false);
-    }
-    TIP20Token::from_address(token)?.balances[account].write(balance)?;
-    Ok(true)
 }
 
 fn initialize_tempo_genesis(
