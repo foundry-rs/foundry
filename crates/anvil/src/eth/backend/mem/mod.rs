@@ -4884,6 +4884,8 @@ impl<N: Network> Backend<N> {
                     &parent_env,
                     self.best_hash(),
                     self.hardfork(),
+                    // A transaction-hash fork funds fee tokens after replaying its block prefix.
+                    self.get_fork().is_some_and(|fork| fork.transaction_hash().is_none()),
                 )
                 .await;
         }
@@ -4964,8 +4966,11 @@ impl<N: Network> Backend<N> {
         parent_env: &EvmEnv,
         parent_hash: B256,
         hardfork: FoundryHardfork,
+        fund_fee_tokens: bool,
     ) -> Result<(), DatabaseError> {
         let user = StagedForkDbUser { db: Some(db), cache_lease };
+        let is_tempo = self.is_tempo();
+        let tempo_hardfork = TempoHardfork::from(hardfork);
         let mut genesis_accounts = JoinSet::new();
         for address in self.genesis.accounts.iter().copied() {
             let task_user = StagedForkDbUser {
@@ -4977,6 +4982,13 @@ impl<N: Network> Backend<N> {
             genesis_accounts.spawn(async move {
                 let db = task_user.db().read().await;
                 let info = db.basic_ref(address)?.unwrap_or_default();
+                if is_tempo {
+                    crate::eth::backend::tempo::prefetch_fork_test_account(
+                        &**db,
+                        address,
+                        tempo_hardfork,
+                    )?;
+                }
                 Ok::<_, DatabaseError>((address, info))
             });
         }
@@ -5003,6 +5015,16 @@ impl<N: Network> Backend<N> {
             db_guard.insert_account(address, info);
         }
         self.genesis.apply_genesis_json_alloc(&mut **db_guard)?;
+        // Tempo pays fees in TIP-20 tokens, so dev accounts also need fee tokens to transact.
+        if is_tempo && fund_fee_tokens {
+            crate::eth::backend::tempo::fund_fork_test_accounts(
+                &mut **db_guard,
+                parent_env,
+                &self.genesis,
+                hardfork,
+            )
+            .map_err(tempo_db_err)?;
+        }
         // A fork taken before the remote chain activated Denim has no BaseTime deployment, but
         // Denim blocks mined locally still send the BaseTime deposit. Existing deployments and
         // their admin are preserved.
@@ -5017,7 +5039,7 @@ impl<N: Network> Backend<N> {
             )?;
         }
         #[cfg(not(feature = "base"))]
-        let _ = (parent_env, parent_hash, hardfork);
+        let _ = parent_hash;
         drop(db_guard);
         self.apply_funded_accounts(user.db()).await
     }
@@ -5348,6 +5370,7 @@ impl<N: Network> Backend<N> {
                 &staged_env,
                 staged_client_config.block_hash,
                 staged_client_config.hardfork.unwrap_or_else(|| staged_config.get_hardfork()),
+                true,
             )
             .await?;
 
@@ -6371,6 +6394,14 @@ where
             .transpose()?;
         db.commit(&state_changes);
         db.insert_block_hash(U256::from(block_number), block_hash);
+        if self.is_tempo() {
+            crate::eth::backend::tempo::fund_fork_test_accounts(
+                &mut **db,
+                &evm_env,
+                &self.genesis,
+                self.hardfork(),
+            )?;
+        }
 
         let BlockInfo { block, transactions, receipts } = block_info;
         let header = block.header.clone();
