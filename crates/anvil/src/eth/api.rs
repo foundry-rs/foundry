@@ -82,7 +82,7 @@ use alloy_rpc_types::{
 };
 use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, FillTransaction, StateContext};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
-use alloy_serde::WithOtherFields;
+use alloy_serde::{JsonStorageKey, WithOtherFields};
 use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil_core::{
     eth::{
@@ -2346,6 +2346,12 @@ impl EthApi<FoundryNetwork> {
                 self.storage_at(addr, slot, block).await.to_rpc_result()
             }
             EthRequest::EthGetStorageValues(requests, block) => {
+                let requests = requests
+                    .into_iter()
+                    .map(|(address, keys)| {
+                        (address, keys.iter().map(JsonStorageKey::as_b256).collect())
+                    })
+                    .collect();
                 self.storage_values(requests, block).await.to_rpc_result()
             }
             EthRequest::EthGetBlockByHash(hash, full) => {
@@ -2409,9 +2415,17 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthGetCodeAt(addr, block) => {
                 self.get_code(addr, block).await.to_rpc_result()
             }
-            EthRequest::EthGetProof(addr, keys, block) => {
-                self.get_proof(addr, keys, block).await.to_rpc_result()
-            }
+            EthRequest::EthGetProof(addr, keys, block) => self
+                .get_proof(addr, keys.iter().map(JsonStorageKey::as_b256).collect(), block)
+                .await
+                .map(|mut proof| {
+                    // Echo each key in the encoding it was requested with.
+                    for (entry, key) in proof.storage_proof.iter_mut().zip(keys) {
+                        entry.key = key;
+                    }
+                    proof
+                })
+                .to_rpc_result(),
             EthRequest::EthSign(addr, content) => self.sign(addr, content).await.to_rpc_result(),
             EthRequest::PersonalSign(content, addr) => {
                 self.sign(addr, content).await.to_rpc_result()
