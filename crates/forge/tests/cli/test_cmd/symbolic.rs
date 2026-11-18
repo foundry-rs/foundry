@@ -8732,3 +8732,72 @@ contract SymbolicBoundedComplementTest {
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
 }
+
+#[forgetest_init]
+fn symbolic_shares_negated_complement_comparisons(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_shares_negated_complement_comparisons");
+
+    prj.add_test(
+        "SymbolicNegatedComplement.t.sol",
+        r#"
+interface Vm {
+    function assertGe(uint256 left, uint256 right) external pure;
+    function assertTrue(bool condition) external pure;
+}
+
+contract SymbolicNegatedComplementTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    // forge-std's `assertGe` calls the cheatcode under its own `left < right` branch, and the
+    // cheatcode's failing side is the negation of `left >= right`.
+    function checkAssertGe(uint256 a, uint256 b) public pure {
+        uint256 sum;
+        unchecked {
+            sum = a + b;
+        }
+        if (sum < a) vm.assertGe(sum, a);
+    }
+
+    // The same property, with the comparison done by the EVM.
+    function checkAssertTrue(uint256 a, uint256 b) public pure {
+        uint256 sum;
+        unchecked {
+            sum = a + b;
+        }
+        if (sum < a) vm.assertTrue(sum >= a);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicNegatedComplement"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let assert_ge = json_test_result(&output, "checkAssertGe(uint256,uint256)");
+        let assert_true = json_test_result(&output, "checkAssertTrue(uint256,uint256)");
+        for result in [&assert_ge, &assert_true] {
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}"
+            );
+        }
+
+        // `!(a <= ~b)` and `~b < a` are one constraint, so the cheatcode's failing side reuses the
+        // answer cached for the branch.
+        let stats = &assert_ge["symbolic"]["solver"]["stats"];
+        let expected = &assert_true["symbolic"]["solver"]["stats"];
+        assert!(stats["sat_cache_hits"].as_u64().unwrap() > 0, "optimized={optimized}: {stats}");
+        assert_eq!(stats["sat_cache_hits"], expected["sat_cache_hits"], "optimized={optimized}");
+        assert_eq!(stats["solver_queries"], expected["solver_queries"], "optimized={optimized}");
+    }
+}
