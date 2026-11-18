@@ -2429,9 +2429,12 @@ impl EthApi<FoundryNetwork> {
                 .get_proof(addr, keys.iter().map(JsonStorageKey::as_b256).collect(), block)
                 .await
                 .map(|mut proof| {
-                    // Echo each key in the encoding it was requested with.
+                    // Echo each key in the encoding it was requested with. A forked upstream may
+                    // sort or dedupe its entries, so only relabel an entry for the same slot.
                     for (entry, key) in proof.storage_proof.iter_mut().zip(keys) {
-                        entry.key = key;
+                        if entry.key.as_b256() == key.as_b256() {
+                            entry.key = key;
+                        }
                     }
                     proof
                 })
