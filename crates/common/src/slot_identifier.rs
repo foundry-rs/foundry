@@ -705,15 +705,8 @@ impl SlotIdentifier {
             label: element_label,
             slot_type: StorageTypeInfo {
                 label: element_type.label.clone(),
-                // An element without an ABI equivalent is shown raw, except that an array of
-                // structs is still an array whose slot holds its length.
-                dyn_sol_type: element.cloned().unwrap_or_else(|| {
-                    if element_type.encoding == ENCODING_DYN_ARRAY {
-                        DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))
-                    } else {
-                        DynSolType::FixedBytes(32)
-                    }
-                }),
+                // An element without an ABI equivalent is shown raw.
+                dyn_sol_type: element.cloned().unwrap_or(DynSolType::FixedBytes(32)),
             },
             offset: 0,
             slot: slot_str.to_string(),
@@ -1402,7 +1395,12 @@ fn resolve_sol_type(id: &str, storage_type: &StorageType) -> Option<DynSolType> 
         let bytes = storage_type.number_of_bytes.parse::<usize>().ok()?;
         return (1..=32).contains(&bytes).then(|| DynSolType::Uint(bytes * 8));
     }
-    parse_sol_type(&storage_type.label)
+    parse_sol_type(&storage_type.label).or_else(|| {
+        // An array of elements without an ABI type, such as structs, is still an array whose own
+        // slot holds its length.
+        (storage_type.encoding == ENCODING_DYN_ARRAY)
+            .then(|| DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
+    })
 }
 
 /// Parses a storage type label into a [`DynSolType`], returning `None` for labels that have no
@@ -1975,15 +1973,17 @@ mod tests {
         slots.insert(order.into());
         slots.insert(queue.into());
 
-        for (slot, label, key, type_label) in [
-            (order, "orders[2]", "2", "mapping(uint256 => struct C.Order)"),
-            (queue, "queues[1]", "1", "mapping(uint256 => struct C.Access[])"),
+        // The array of structs is still an array, whose entry holds its length.
+        let struct_array = DynSolType::Array(Box::new(DynSolType::FixedBytes(32)));
+        for (slot, label, key, type_label, ty) in [
+            (order, "orders[2]", "2", "mapping(uint256 => struct C.Order)", DynSolType::Bytes),
+            (queue, "queues[1]", "1", "mapping(uint256 => struct C.Access[])", struct_array),
         ] {
             let info = identifier.identify(&B256::from(slot), Some(&slots)).unwrap();
             assert_eq!(info.label, label);
             assert_eq!(info.keys, Some(vec![key.to_string()]));
             assert_eq!(info.slot_type.label, type_label);
-            assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Bytes);
+            assert_eq!(info.slot_type.dyn_sol_type, ty);
         }
     }
 

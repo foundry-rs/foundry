@@ -1382,18 +1382,20 @@ mod tests {
         let mut targets = TargetedContracts::new();
         targets.insert(address, contract);
 
-        // `nums`, `x`, `pairs[1]` and `grid[0]`.
-        let grid_0 = U256::from_be_bytes(keccak256(B256::from(U256::from(4))).0);
+        // `nums`, `x`, `pairs[1]`, `grid` and `grid[0]`.
+        let grid_0 = Into::<U256>::into(keccak256(B256::from(U256::from(4))));
         let mut state = evm2::evm::PendingState::default();
         state.insert_account(address, None, Some(AccountInfo::default()));
-        for (slot, value) in [(U256::ZERO, 5), (U256::ONE, 7), (U256::from(3), 9), (grid_0, 12)] {
+        for (slot, value) in
+            [(U256::ZERO, 5), (U256::ONE, 7), (U256::from(3), 9), (U256::from(4), 15), (grid_0, 12)]
+        {
             state.insert_storage(address, slot, U256::ZERO, U256::from(value));
         }
         let mut dictionary = FuzzDictionary::default();
         dictionary.insert_new_state_values(state.account_changes(), &targets);
 
         // Lengths and their neighbours are sampled for any parameter, like other words.
-        for length in [4, 5, 6, 8, 9, 10, 11, 12, 13] {
+        for length in [4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16] {
             assert!(dictionary.values().contains(&B256::from(U256::from(length))), "{length}");
         }
         // The account itself is an address sample; storage adds only `x`.
