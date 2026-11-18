@@ -31,8 +31,8 @@ use foundry_common::{
     tempo::{
         active_tempo_hardfork,
         configurable_account::{
-            abi_owners, ca_error, combine_approvals, current_config, parse_owner_signature,
-            simulation_spec,
+            abi_owners, ca_error, combine_approvals, current_config, decode_unsigned_tx,
+            parse_owner_signature, simulation_spec,
         },
     },
 };
@@ -47,25 +47,41 @@ use tempo_alloy::{
 use tempo_contracts::precompiles::{CONFIGURABLE_ACCOUNT_ADDRESS, IConfigurableAccount};
 use tempo_primitives::transaction::{
     CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, ConfigurableAccountConfig, ConfigurableAccountOwner,
-    PrimitiveSignature, TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction, TempoTxEnvelope,
-    configurable_account_digest,
+    PrimitiveSignature, TempoSignature, TempoTxEnvelope, configurable_account_digest,
 };
 
 /// Decides whether `cast wallet new` creates a configurable account.
 ///
-/// It does unless `eoa` is set, when a Tempo signal is present and T14 is active there: `--chain`,
-/// `chain` in `foundry.toml`, a Tempo network selected in `foundry.toml`, or an RPC from
-/// `--rpc-url`, `ETH_RPC_URL` or `foundry.toml` that serves a Tempo chain. An RPC is asked for its
-/// active hardfork; otherwise the compiled Tempo hardfork schedule is read for the chain.
-/// A non-Tempo `--chain` creates an EOA without reading the configuration. Without `requested`
-/// (`--configurable-account`), a configuration or RPC URL that cannot be read also creates an EOA;
-/// `requested` fails on it, and reports why it creates an EOA instead of an account.
+/// It does unless `eoa` is set, when a Tempo signal is present and T14 is active there: `--chain`
+/// (or `CHAIN` with `requested`), `chain` in `foundry.toml`, a Tempo network selected in
+/// `foundry.toml`, or an RPC from `--rpc-url`, `ETH_RPC_URL` or `foundry.toml` that serves a Tempo
+/// chain. An RPC is asked for its active hardfork; otherwise the compiled Tempo hardfork schedule
+/// is read for the chain.
+/// A non-Tempo `--chain` (or `CHAIN`) creates an EOA without reading the configuration. Without
+/// `requested` (`--configurable-account`), a configuration or RPC URL that cannot be read also
+/// creates an EOA; `requested` fails on it, and reports why it creates an EOA instead of an
+/// account.
 pub(crate) async fn new_wallet_is_configurable(
     eoa: bool,
     requested: bool,
     chain: Option<Chain>,
     rpc: &RpcOpts,
 ) -> Result<bool> {
+    // `CHAIN` is read only with `--configurable-account`, so a value set for other tools does not
+    // break key generation.
+    let chain = match chain {
+        Some(chain) => Some(chain),
+        None if requested => match std::env::var("CHAIN") {
+            Ok(chain) => Some(
+                chain
+                    .parse()
+                    .map_err(|_| eyre::eyre!("invalid CHAIN: `{chain}` is not a chain"))?,
+            ),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(err) => eyre::bail!("invalid CHAIN: {err}"),
+        },
+        None => None,
+    };
     if eoa || chain.is_some_and(|chain| !chain.is_tempo()) {
         return Ok(false);
     }
@@ -106,7 +122,7 @@ pub(crate) async fn new_wallet_is_configurable(
     let Some((source, hardfork)) = signal else {
         if requested {
             sh_status!(
-                "No Tempo chain was given (--chain, an RPC or foundry.toml); creating an EOA."
+                "No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA."
             )?;
         }
         return Ok(false);
@@ -141,21 +157,6 @@ async fn rpc_tempo_hardfork(config: &Config) -> Result<Option<(String, Option<Te
 fn scheduled_hardfork(chain: Chain) -> (String, Option<TempoHardfork>) {
     let timestamp = now().as_secs();
     (format!("chain {chain}"), TempoHardfork::from_chain_and_timestamp(chain.id(), timestamp))
-}
-
-/// Decodes the unsigned Tempo transaction that `cast mktx --raw-unsigned` prints.
-fn decode_unsigned_tx(raw: &str) -> Result<TempoTransaction> {
-    let bytes = hex::decode(raw.trim()).wrap_err("invalid hex transaction")?;
-    let Some((&TEMPO_TX_TYPE_ID, mut fields)) = bytes.split_first() else {
-        eyre::bail!(
-            "expected an unsigned Tempo (0x76) transaction from `cast mktx --raw-unsigned`"
-        );
-    };
-    let tx = <TempoTransaction as alloy_rlp::Decodable>::decode(&mut fields).map_err(|_| {
-        eyre::eyre!("invalid unsigned Tempo transaction; sponsored transactions are not supported")
-    })?;
-    eyre::ensure!(fields.is_empty(), "trailing bytes after the unsigned Tempo transaction");
-    Ok(tx)
 }
 
 /// Parses an owner as `ADDRESS` or `ADDRESS:WEIGHT`.
@@ -372,7 +373,8 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
             "the wallet {} has weight {signer_weight} in {account}, which requires {}. Collect \
              the owners' approvals instead:\n  cast mktx {CONFIGURABLE_ACCOUNT_ADDRESS} {} --from \
              {account} --raw-unsigned --tempo.digest\nthen `cast wallet sign --no-hash <DIGEST>` \
-             on each owner's machine, `cast wallet assemble`, and `cast publish`",
+             (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet \
+             assemble`, and `cast publish`",
             signer.address(),
             current.threshold,
             hex::encode_prefixed(&calldata),
@@ -527,10 +529,11 @@ pub struct AssembleArgs {
 
     /// Owner approvals of the digest that `cast mktx --tempo.digest` prints.
     ///
-    /// Each one is a hex signature from `cast wallet sign --no-hash` (or a hex Tempo P-256 or
-    /// WebAuthn signature), a JSON signature, or a WebAuthn assertion made with a passkey in a
-    /// browser: a JSON object with `authenticatorData`, `clientDataJSON` and `signature`
-    /// (top-level or under `response`) and the credential's `publicKey`, as base64url or hex.
+    /// Each one is a hex signature from `cast wallet sign --no-hash` (`--p256` for a raw P-256
+    /// owner), a hex Tempo P-256 or WebAuthn signature, a JSON signature, or a WebAuthn assertion
+    /// made with a passkey in a browser: a JSON object with `authenticatorData`, `clientDataJSON`
+    /// and `signature` (top-level or under `response`) and the credential's `publicKey`, as
+    /// base64url or hex.
     /// The assertion's challenge is the digest. A value naming a file is read from it.
     #[arg(required = true, value_name = "SIGNATURE")]
     signatures: Vec<String>,
@@ -546,7 +549,9 @@ pub struct AssembleArgs {
 impl AssembleArgs {
     pub async fn run(self) -> Result<()> {
         let Self { unsigned_tx, signatures, from: account, rpc } = self;
-        let tx = decode_unsigned_tx(&unsigned_tx)?;
+        let tx = decode_unsigned_tx(
+            &hex::decode(unsigned_tx.trim()).wrap_err("invalid hex transaction")?,
+        )?;
         let approvals = signatures
             .iter()
             .enumerate()

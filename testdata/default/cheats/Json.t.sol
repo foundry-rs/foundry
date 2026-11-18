@@ -553,6 +553,12 @@ contract WriteJsonTest is Test {
         simpleJson c;
     }
 
+    // Struct resolution for `vm.serialize*` must not recurse without end on self-referencing
+    // structs: https://github.com/foundry-rs/foundry/issues/18464
+    struct recursiveJson {
+        recursiveJson[] subtree;
+    }
+
     function test_serializeNotSimpleJson() public {
         string memory json3 = "json3";
         string memory path = "fixtures/Json/write_complex_test_serialize.json";

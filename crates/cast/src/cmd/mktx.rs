@@ -81,9 +81,9 @@ pub struct MakeTxArgs {
     /// digest with `cast wallet sign --no-hash <DIGEST>` (or a passkey in a browser), and
     /// `cast wallet assemble` combines the signatures into the signed transaction.
     ///
-    /// Gas estimation models the owner quorum, assuming the fewest owners that reach the
-    /// threshold approve with maximum-size WebAuthn signatures. An account that is not registered
-    /// yet needs `--gas-limit`, since only its owners know its configuration.
+    /// Gas estimation models the largest owner quorum the account accepts (at most eight
+    /// approvals), each a maximum-size WebAuthn signature. An account that is not registered yet
+    /// needs `--gas-limit`, since only its owners know its configuration.
     #[arg(long = "tempo.digest", requires_all = ["raw_unsigned", "from"])]
     tempo_digest: bool,
 
@@ -126,6 +126,12 @@ impl MakeTxArgs {
                  --tempo.sponsor-signer or --tempo.sponsor-sig"
             );
         }
+        // Tempo rejects keychain transactions whose first call is a CREATE.
+        eyre::ensure!(
+            self.tx.tempo.configurable_access_key.is_none()
+                || !matches!(self.command, Some(MakeTxSubcommands::Create { .. })),
+            "--tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE"
+        );
 
         let (network, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.eth).await?;
@@ -230,6 +236,12 @@ impl MakeTxArgs {
             || ethsign
             || signature.is_some()
         {
+            // Only local owners can sign the keychain signature of a configurable access key.
+            eyre::ensure!(
+                tx.tempo.configurable_access_key.is_none(),
+                "--tempo.configurable-access-key cannot be combined with --raw-unsigned, \
+                 --ethsign, --signature or a Tempo access key"
+            );
             None
         } else {
             tempo::resolve_configurable_account::<N>(&tx.tempo, &config, &eth.wallet, &mut signer)
@@ -254,11 +266,11 @@ impl MakeTxArgs {
                 (tx, prepared.account())
             } else if let Some(account) = &configurable_account {
                 let Some(tx) =
-                    confirm_and_build(tx_builder, account.account(), force, None, false).await?
+                    confirm_and_build(tx_builder, account.sender(), force, None, false).await?
                 else {
                     return Ok(());
                 };
-                (tx, account.account())
+                (tx, account.sender())
             } else {
                 let signer = match signer {
                     Some(signer) => signer,
@@ -326,7 +338,10 @@ impl MakeTxArgs {
                 }));
             }
             sh_status!("Owner digest: {digest}")?;
-            sh_status!("Each owner signs it with `cast wallet sign --no-hash {digest}`")?;
+            sh_status!(
+                "Each owner signs it with `cast wallet sign --no-hash {digest}`, adding `--p256` \
+                 for a raw P-256 owner"
+            )?;
             sh_println!("{raw}\t{digest}")?;
             return Ok(());
         }
@@ -387,7 +402,7 @@ impl MakeTxArgs {
             .await?;
             tx.sign_with_tempo_wallet(&prepared).await?
         } else if let Some(account) = &configurable_account {
-            let from = account.account();
+            let from = account.sender();
             let Some(mut tx) = confirm_and_build(tx_builder, from, force, lane, false).await?
             else {
                 return Ok(());

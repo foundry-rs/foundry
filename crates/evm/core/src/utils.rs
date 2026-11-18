@@ -6,7 +6,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
-use evm2::{EvmFeatures, EvmTypesHost, SpecId, env::BlockEnv};
+use evm2::{EvmFeatures, EvmTypesHost, OpcodeSet, SpecId, env::BlockEnv};
 use foundry_config::NamedChain::{
     self, Avalanche, AvalancheFuji, BinanceSmartChain, BinanceSmartChainTestnet, Polygon,
     PolygonAmoy,
@@ -215,6 +215,17 @@ pub fn tx_warm_addresses<T: EvmTypesHost>(
         arbitrum::is_arbitrum_chain(env.version.chain_id).then_some(arbitrum::ARB_SYS_ADDRESS);
     let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
     coinbase.into_iter().chain(arb_sys).chain(access_list).collect()
+}
+
+/// Returns the set of `ops`.
+pub const fn opcodes<const N: usize>(ops: [u8; N]) -> OpcodeSet {
+    let mut set = OpcodeSet::EMPTY;
+    let mut i = 0;
+    while i < N {
+        set.insert(ops[i]);
+        i += 1;
+    }
+    set
 }
 
 #[cfg(test)]

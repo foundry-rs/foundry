@@ -16,6 +16,7 @@ use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
+use alloy_signer::Signer;
 use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
@@ -468,8 +469,14 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             }
         }
 
+        // The local owners of transactions saved for owners on other machines approve them again
+        // when their approvals are void.
         if !self.args.unlocked
-            && !remaining_unsigned_transactions_for_recovery(&sequence).is_empty()
+            && (!remaining_unsigned_transactions_for_recovery(&sequence).is_empty()
+                || sequence
+                    .sequences()
+                    .iter()
+                    .any(|deployment| !deployment.awaiting_owners.is_empty()))
         {
             self.script_wallets =
                 Wallets::new(self.args.wallets.get_multi_wallet().await?, self.args.evm.sender);
@@ -708,8 +715,9 @@ async fn configurable_account_signers_available<FEN: FoundryEvmNetwork>(
         .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
     let config = tempo.configurable_account_config.as_deref().map(parse_config).transpose()?;
     // Broadcast also signs with the `--tempo.owner` keys.
-    let Ok(owners) = tempo.owner_addresses().await else { return Ok(false) };
-    let keys = signers.iter().chain(&owners).copied().collect::<Vec<_>>();
+    let Ok(owners) = tempo.owner_signers().await else { return Ok(false) };
+    let keys =
+        signers.iter().copied().chain(owners.iter().map(Signer::address)).collect::<Vec<_>>();
     let mut scopes = remaining.to_vec();
     scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
     scopes.dedup();

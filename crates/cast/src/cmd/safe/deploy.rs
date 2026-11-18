@@ -106,7 +106,7 @@ impl CreateArgs {
         .abi_encode()
         .into();
 
-        sh_status!("Deploying Safe with singleton {singleton}")?;
+        sh_status!("Deploying Safe on chain ID {chain_id} with singleton {singleton}")?;
         let calldata = ISafeProxyFactory::createProxyWithNonceCall {
             singleton,
             initializer,

@@ -28,7 +28,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use alloy_primitives::{Address, U256, map::HashMap};
+use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
 /// Network context used to identify and decode execution traces.
@@ -319,6 +319,26 @@ impl SparsedTraceArena {
             debug_steps.frames.remove(0);
             debug_steps.frames.iter_mut().for_each(|frame| frame.depth -= 1);
         }
+    }
+
+    /// Returns the arena with only the data that a gas report reads.
+    ///
+    /// A gas report keeps every sampled run of a test until its suite is reported. Logs, the
+    /// return data of calls and spare node capacity are not read, and they add up over the
+    /// samples. The output of a create stays, because it is the runtime code that identifies the
+    /// created contract.
+    pub fn into_gas_report_arena(self) -> CallTraceArena {
+        let mut arena = self.arena;
+        let nodes = arena.nodes_mut();
+        for node in nodes.iter_mut() {
+            node.logs = Vec::new();
+            node.ordering = Vec::new();
+            if !node.trace.kind.is_any_create() {
+                node.trace.output = Bytes::new();
+            }
+        }
+        nodes.shrink_to_fit();
+        arena
     }
 }
 
@@ -805,7 +825,6 @@ impl TraceRequirements {
 mod tests {
     use super::*;
     use alloy_network::TransactionBuilder;
-    use alloy_primitives::Bytes;
     use evm2::{
         bytecode::Bytecode,
         evm::{AccountInfo, InMemoryDB},

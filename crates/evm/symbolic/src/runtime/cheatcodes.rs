@@ -409,7 +409,7 @@ pub(crate) fn complete_cheatcode_call(
 }
 
 /// Completes a cheatcode call that reverts with `return_data`, which can be the reverter of a
-/// pending `vm.expectRevert`.
+/// pending `vm.expectRevert` or `vm.assumeNoRevert`, including one this frame set.
 pub(crate) fn revert_cheatcode_call(
     cx: &mut SymCx,
     state: &mut PathState,
@@ -419,6 +419,9 @@ pub(crate) fn revert_cheatcode_call(
 ) -> Result<(), SymbolicError> {
     state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
     state.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
+    if let Some(assumption) = &mut state.assume_no_revert_next_call {
+        assumption.reverted_by.get_or_insert(CHEATCODE_ADDRESS);
+    }
     state.return_data = return_data;
     state.copy_call_output_offset(cx, out_offset, out_size)?;
     state.stack.push(SymExpr::zero(cx))?;
@@ -864,68 +867,32 @@ pub(crate) fn parse_env_array(
     delimiter: &str,
     ty: &DynSolType,
 ) -> Result<DynSolValue, SymbolicError> {
-    if delimiter.is_empty() {
-        return Err(SymbolicError::Unsupported("symbolic env delimiter"));
+    // Like Forge, elements are trimmed and an empty first element gives an empty array.
+    let mut values = value.split(delimiter).map(str::trim).peekable();
+    if values.peek().is_some_and(|first| first.is_empty()) {
+        return Ok(DynSolValue::Array(Vec::new()));
     }
-    value
-        .split(delimiter)
+    values
         .map(|value| parse_env_value(value, ty))
         .collect::<Result<Vec<_>, _>>()
         .map(DynSolValue::Array)
 }
 
 pub(crate) fn parse_env_value(value: &str, ty: &DynSolType) -> Result<DynSolValue, SymbolicError> {
-    match ty {
-        DynSolType::Bool => Ok(DynSolValue::Bool(parse_env_bool(value)?)),
-        DynSolType::Uint(256) => Ok(DynSolValue::Uint(parse_env_uint(value)?, 256)),
-        DynSolType::Int(256) => Ok(DynSolValue::Int(I256::from_raw(parse_env_int(value)?), 256)),
-        DynSolType::Address => Ok(DynSolValue::Address(parse_env_address(value)?)),
-        DynSolType::FixedBytes(32) => {
-            Ok(DynSolValue::FixedBytes(B256::from(parse_env_bytes32(value)?), 32))
+    // Forge's env cheatcodes use the same parser.
+    parse_value(value, ty).map_err(|_| SymbolicError::Unsupported("symbolic env parse"))
+}
+
+/// Reads an environment variable like Forge's `envOr` cheatcodes: `None` only when it is not
+/// set, and an error when it is not valid unicode.
+pub(crate) fn env_var(name: &str) -> Result<Option<String>, SymbolicError> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(SymbolicError::Unsupported("symbolic env var not unicode"))
         }
-        DynSolType::String => Ok(DynSolValue::String(value.to_string())),
-        DynSolType::Bytes => Ok(DynSolValue::Bytes(parse_env_bytes(value)?)),
-        _ => Err(SymbolicError::Unsupported("symbolic env type")),
     }
-}
-
-pub(crate) fn parse_env_uint(value: &str) -> Result<U256, SymbolicError> {
-    match DynSolType::Uint(256).coerce_str(value) {
-        Ok(DynSolValue::Uint(value, _)) => Ok(value),
-        _ => Err(SymbolicError::Unsupported("symbolic env uint parse")),
-    }
-}
-
-pub(crate) fn parse_env_int(value: &str) -> Result<U256, SymbolicError> {
-    match DynSolType::Int(256).coerce_str(value) {
-        Ok(DynSolValue::Int(value, _)) => Ok(value.into_raw()),
-        _ => Err(SymbolicError::Unsupported("symbolic env int parse")),
-    }
-}
-
-pub(crate) fn parse_env_bool(value: &str) -> Result<bool, SymbolicError> {
-    match value {
-        "true" | "1" | "TRUE" | "True" => Ok(true),
-        "false" | "0" | "FALSE" | "False" => Ok(false),
-        _ => Err(SymbolicError::Unsupported("symbolic env bool parse")),
-    }
-}
-
-pub(crate) fn parse_env_bytes(value: &str) -> Result<Vec<u8>, SymbolicError> {
-    let value = value.strip_prefix("0x").unwrap_or(value);
-    hex::decode(value).map_err(|_| SymbolicError::Unsupported("symbolic env bytes parse"))
-}
-
-pub(crate) fn parse_env_bytes32(value: &str) -> Result<U256, SymbolicError> {
-    let bytes = parse_env_bytes(value)?;
-    if bytes.len() != 32 {
-        return Err(SymbolicError::Unsupported("symbolic env bytes32 parse"));
-    }
-    Ok(U256::from_be_slice(&bytes))
-}
-
-pub(crate) fn parse_env_address(value: &str) -> Result<Address, SymbolicError> {
-    value.parse::<Address>().map_err(|_| SymbolicError::Unsupported("symbolic env address parse"))
 }
 
 pub(crate) fn private_key_signer(private_key: U256) -> Result<PrivateKeySigner, SymbolicError> {

@@ -43,7 +43,7 @@ use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError, Resol
 use rayon::prelude::*;
 use std::{
     borrow::{Borrow, Cow},
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     ops::{Deref, DerefMut},
     path::PathBuf,
     sync::{Arc, Mutex, mpsc},
@@ -560,6 +560,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.enable_edgecov_opcode(self.edgecov_opcode());
+        inspector.fork_prefetch(self.evm_opts.fork_prefetch);
         executor.set_spec_id(self.spec_id);
         executor.set_legacy_assertions(self.config.legacy_assertions);
     }
@@ -591,6 +592,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
                     .trace_requirements(self.trace_requirements())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
+                    .fork_prefetch(self.evm_opts.fork_prefetch)
                     .create2_deployer(self.evm_opts.create2_deployer)
                     .set_analysis(analysis)
             })
@@ -899,39 +901,39 @@ impl MultiContractRunnerBuilder {
         ));
         dcx.set_flags_mut(|f| f.track_diagnostics = false);
 
-        // Populate solar's global context by parsing and lowering the sources.
-        let files: Vec<_> = output.output().sources.as_ref().keys().cloned().collect();
-        let target_paths = (!self.line_coverage && !files.is_empty()).then_some(&files[..]);
+        // Populate solar's global context by parsing and lowering every source, not only the
+        // sources that this build recompiled. Struct definitions, fuzz dictionary literals, enum
+        // bounds and ERC-7201 namespaces must not depend on the build history.
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
-            configure_pcx_from_compile_output(&mut pcx, &self.config, output, target_paths)?;
+            configure_pcx_from_compile_output(&mut pcx, &self.config, output)?;
             pcx.parse();
             let _ = compiler.lower_asts();
             Ok(())
         })?;
 
         // Create known contracts from linked contracts and storage layout information (if any),
-        // including ERC-7201 namespaces. Namespaces can be declared in sources that weren't
-        // recompiled, so they are computed from every source.
-        let storage_layouts = output.artifact_ids().filter_map(|(id, artifact)| {
-            artifact.storage_layout.as_ref().map(|layout| (artifact_id(id), layout.clone()))
-        });
-        let storage_layouts = if target_paths.is_none() {
-            namespaced_storage::extend_storage_layouts(&mut analysis, root, storage_layouts)
-        } else {
-            let mut compiler = solar::sema::Compiler::new(
-                solar::interface::Session::builder()
-                    .with_buffer_emitter(Default::default())
-                    .build(),
-            );
-            compiler.enter_mut(|compiler| -> Result<()> {
-                let mut pcx = compiler.parse();
-                configure_pcx_from_compile_output(&mut pcx, &self.config, output, None)?;
-                pcx.parse();
-                Ok(())
-            })?;
-            namespaced_storage::extend_storage_layouts(&mut compiler, root, storage_layouts)
+        // including ERC-7201 namespaces. A filtered build can keep cached artifacts of other
+        // compiler profiles without layouts, so they take the layout of the same contract from
+        // another profile, which only differs in AST ids.
+        let contract_key = |id: &ArtifactId| {
+            (id.source.clone(), id.version.clone(), id.name.split('.').next().unwrap().to_owned())
         };
+        let layouts = output
+            .artifact_ids()
+            .filter_map(|(id, artifact)| {
+                Some((contract_key(&id), artifact.storage_layout.as_ref()?))
+            })
+            .collect::<HashMap<_, _>>();
+        let storage_layouts = output.artifact_ids().filter_map(|(id, artifact)| {
+            let layout = artifact
+                .storage_layout
+                .as_ref()
+                .or_else(|| layouts.get(&contract_key(&id)).copied())?;
+            Some((artifact_id(id), layout.clone()))
+        });
+        let storage_layouts =
+            namespaced_storage::extend_storage_layouts(&mut analysis, root, storage_layouts);
         let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
             .with_storage_layouts(storage_layouts)
             .build();

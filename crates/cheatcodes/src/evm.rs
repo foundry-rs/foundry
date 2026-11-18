@@ -11,7 +11,7 @@ use alloy_primitives::{
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolCall, SolValue};
 use evm2::{
     EvmFeatures, SpecId,
     bytecode::Bytecode,
@@ -29,7 +29,7 @@ use foundry_common::{
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
-    backend::{RevertStateSnapshotAction, transaction_error},
+    backend::{GLOBAL_FAIL_SLOT, RevertStateSnapshotAction, transaction_error},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
         HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
@@ -37,8 +37,8 @@ use foundry_evm_core::{
     },
     evm::{
         EvmEnvFor, EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork,
-        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, TxEnvelopeFor, TxPayload,
-        TypesFor, evm_env,
+        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, Replay, TxEnvelopeFor,
+        TxPayload, TypesFor, evm_env,
     },
 };
 use foundry_evm_traces::TraceRequirements;
@@ -47,7 +47,7 @@ use rand::Rng;
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
-    path::Path,
+    path::{Component, Path},
     str::FromStr,
 };
 
@@ -846,7 +846,8 @@ impl Cheatcode for dealCall {
             old_balance
         };
         // The balance survives reverts of the enclosing calls.
-        let write = PersistentWrite::balance(address, old_balance, new_balance);
+        let write =
+            PersistentWrite::balance(address, old_balance, new_balance).with_replay(Replay::Set);
         ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
@@ -926,6 +927,15 @@ impl Cheatcode for storeCall {
             .map_err(|e| fmt_err!("failed to store storage slot: {e}"))?
             .set(value.into());
         ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
+        // A `fail()` fails the call where it is made, like an assertion.
+        if target == CHEATCODE_ADDRESS && slot == B256::from(GLOBAL_FAIL_SLOT) && !value.is_zero() {
+            if let Some(trace) = &mut ccx.state.failure_trace {
+                trace.record_assertion(Self::SELECTOR, "", None);
+            }
+            if let Some(provenance) = &mut ccx.state.failure_provenance {
+                provenance.pending_assertion = Some(keccak256(Self::SELECTOR));
+            }
+        }
         Ok(Default::default())
     }
 }
@@ -1669,6 +1679,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    let fork_id = ccx.active_fork_id();
     let (evm, db) = ccx.evm_db_mut();
     if let Some(replaced) = db.revert_state(
         snapshot_id,
@@ -1676,7 +1687,13 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertKeep,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.restore_persistent_writes(snapshot_id, replaced, false);
+        let switched = ccx.active_fork_id() != fork_id;
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, false, switched);
+        // A restore can make a different path look like the recorded one, so its identity is
+        // unknown.
+        if let Some(trace) = &mut ccx.state.failure_trace {
+            trace.unidentified = true;
+        }
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         ccx.state.env_overrides.restore_snapshot(snapshot_id, false);
@@ -1697,6 +1714,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    let fork_id = ccx.active_fork_id();
     let (evm, db) = ccx.evm_db_mut();
     if let Some(replaced) = db.revert_state(
         snapshot_id,
@@ -1704,7 +1722,11 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertRemove,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.restore_persistent_writes(snapshot_id, replaced, true);
+        let switched = ccx.active_fork_id() != fork_id;
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, true, switched);
+        if let Some(trace) = &mut ccx.state.failure_trace {
+            trace.unidentified = true;
+        }
         ccx.state.env_overrides.restore_snapshot(snapshot_id, true);
         if let Some(fork_block_number) =
             ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)
@@ -1725,7 +1747,7 @@ fn inner_value_snapshot<FEN: FoundryEvmNetwork>(
     name: Option<String>,
     value: String,
 ) -> Result {
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value);
 
@@ -1738,7 +1760,7 @@ fn inner_last_gas_snapshot<FEN: FoundryEvmNetwork>(
     name: Option<String>,
     value: u64,
 ) -> Result {
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value.to_string());
 
@@ -1755,7 +1777,7 @@ fn inner_start_gas_snapshot<FEN: FoundryEvmNetwork>(
         bail!("gas snapshot was already started with group: {group} and name: {name}");
     }
 
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_metering.gas_records.push(GasRecord {
         group: group.clone(),
@@ -1827,12 +1849,31 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
     ccx: &CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
     name: Option<String>,
-) -> (String, String) {
-    let group = group.unwrap_or_else(|| {
-        ccx.state.core.config.running_artifact.clone().expect("expected running contract").name
-    });
+) -> Result<(String, String)> {
+    let group = match group {
+        Some(group) => {
+            ensure!(
+                is_valid_snapshot_group(&group),
+                "invalid snapshot group name `{group}`: expected a relative path without empty, `.` or `..` components"
+            );
+            group
+        }
+        None => {
+            ccx.state.core.config.running_artifact.clone().expect("expected running contract").name
+        }
+    };
     let name = name.unwrap_or_else(|| "default".to_string());
-    (group, name)
+    Ok((group, name))
+}
+
+/// Returns whether `group` is a relative path without empty or dot components.
+fn is_valid_snapshot_group(group: &str) -> bool {
+    // Check the original components because `Path::components` normalizes dots and separators.
+    group.split(std::path::is_separator).all(|component| {
+        matches!(Path::new(component).components().next(), Some(Component::Normal(name)) if name == component)
+            && (!cfg!(windows)
+                || (!component.contains(':') && !component.ends_with(['.', ' '])))
+    })
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
@@ -1904,7 +1945,7 @@ fn set_persistent_nonce<FEN: FoundryEvmNetwork>(
     account.warm();
     let previous = account.nonce();
     account.set_nonce(nonce);
-    let write = PersistentWrite::nonce(&account, previous);
+    let write = PersistentWrite::nonce(&account, previous).with_replay(Replay::Set);
     drop(account);
     ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
     Ok(Default::default())
@@ -2598,5 +2639,53 @@ mod tests {
             "- state diff:\n\
 @ 0x0000000000000000000000000000000000000000000000000000000000000000 (data, (bool,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000001\n    paused (bool): false → false\n"
         );
+    }
+
+    #[test]
+    fn validates_snapshot_groups() {
+        for group in [
+            "Group",
+            "a.b",
+            "group with spaces",
+            "..hidden",
+            "core/someContract",
+            "periphery/someContract.v1",
+        ] {
+            assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
+        }
+        for group in [
+            "",
+            ".",
+            "..",
+            "../settings",
+            "./a",
+            "/tmp/settings",
+            "a/",
+            "a/.",
+            "a/./b",
+            "a/../b",
+            "a//b",
+        ] {
+            assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
+
+        #[cfg(unix)]
+        assert!(is_valid_snapshot_group(r"core\someContract"));
+
+        #[cfg(windows)]
+        {
+            assert!(is_valid_snapshot_group(r"core\someContract"));
+            for group in [
+                r"C:\settings",
+                r"C:settings",
+                r"\settings",
+                r"core\..\settings",
+                "a:b",
+                "a/.. /b",
+                "a./b",
+            ] {
+                assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+            }
+        }
     }
 }

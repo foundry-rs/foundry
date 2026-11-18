@@ -234,10 +234,15 @@ pub struct Config {
     pub out: PathBuf,
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
-    /// Remappings to use for this repo
+    /// Remappings to use for this repo.
     #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
+    ///
+    /// Defaults to `true`. Dependency declarations that conflict with root paths or other
+    /// dependency mappings are scoped to their owner, with a configuration warning. Unique aliases
+    /// remain global. Dependencies with source directories outside their package retain their
+    /// existing declaration scope.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
     ///
@@ -408,7 +413,10 @@ pub struct Config {
     pub tracing: TracingConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
-    /// Whether to show `console.log` outputs in realtime during script/test execution
+    /// Whether to show `console.log` outputs in realtime during script/test execution.
+    ///
+    /// Ignored when `--json` or `--junit` writes a report to stdout. Otherwise, logs print live
+    /// instead of being captured, so `forge test --json-file` does not include them.
     pub live_logs: bool,
     /// Whether to allow `expectRevert` for internal functions.
     pub allow_internal_expect_revert: bool,
@@ -535,13 +543,13 @@ pub struct Config {
     /// change forks already created by `setUp`.
     #[serde(default)]
     pub no_fork_bal: bool,
-    /// Prefetches a new fork block's remote cache from the keys of an older cached block.
+    /// Prefetches remote fork state before the EVM reads it.
     ///
-    /// Defaults to `false`. When a fork starts on a block with an empty disk cache, the accounts
-    /// and storage slots in the cache of the newest older block on the same chain are fetched
-    /// again at the new block in the background. This helps forks of `latest`, which start
-    /// cold on each new head. Values come from the fork block and never replace cached values,
-    /// so results do not change; unused keys cost extra RPC requests. Requires storage caching.
+    /// Defaults to `false`. While reads miss the cache, each call into a fork contract is
+    /// simulated on the endpoint with `eth_createAccessList`, and the state it touches is
+    /// fetched in batches. With storage caching, a fork block with an empty disk cache also
+    /// fetches the keys cached for the newest older block on the same chain. Values come from
+    /// the fork block; extra keys cost requests.
     #[serde(default)]
     pub fork_prefetch: bool,
     /// Disables rate limiting entirely. This overrides any settings made in
@@ -1199,6 +1207,16 @@ impl Config {
                     .unwrap_or_else(|_| Cow::Borrowed(&self.libs)),
                 root,
                 remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+                project_paths: [("src", &self.src), ("test", &self.test), ("script", &self.script)]
+                    .into_iter()
+                    .map(|(key, default)| {
+                        figment.extract_inner::<PathBuf>(key).unwrap_or_else(|_| default.clone())
+                    })
+                    .collect(),
+                warnings: match figment.extract_inner::<Vec<Warning>>("__warnings") {
+                    Err(error) if error.missing() => Ok(Vec::new()),
+                    warnings => warnings,
+                },
             };
             figment = figment.merge(remappings);
         }
@@ -5727,7 +5745,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.set_env(
                 "FOUNDRY_LIBRARIES",
-                "[src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222]",
+                " [src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222,]\n",
             );
             let config = Config::load().unwrap();
 
@@ -5753,6 +5771,31 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn can_parse_empty_libraries() {
+        for env_var in ["DAPP_LIBRARIES", "FOUNDRY_LIBRARIES"] {
+            for value in ["", "[]", "[ ]", "[\t\n]", " [,]\n"] {
+                figment::Jail::expect_with(|jail| {
+                    jail.create_file(
+                        "foundry.toml",
+                        r#"
+                        [profile.default]
+                        libraries = ["src/A.sol:A:0x1111111111111111111111111111111111111111"]
+                        "#,
+                    )?;
+                    assert_eq!(Config::load().unwrap().libraries.len(), 1);
+
+                    jail.set_env(env_var, value);
+                    let config = Config::load().unwrap();
+                    assert!(config.libraries.is_empty(), "{env_var}={value:?}");
+                    assert!(config.parsed_libraries().unwrap().libs.is_empty());
+
+                    Ok(())
+                });
+            }
+        }
     }
 
     #[test]
@@ -9903,6 +9946,7 @@ mod tests {
                 report = ["summary", "lcov"]
                 lcov_version = "2.2.0"
                 ir_minimum = true
+                keep_optimizer = true
                 report_file = "out/lcov.info"
                 include_libs = true
                 exclude_tests = true
@@ -9916,6 +9960,7 @@ mod tests {
             );
             assert_eq!(config.coverage.lcov_version, semver::Version::new(2, 2, 0));
             assert!(config.coverage.ir_minimum);
+            assert!(config.coverage.keep_optimizer);
             assert_eq!(
                 config.coverage.report_file.as_deref(),
                 Some(std::path::Path::new("out/lcov.info"))

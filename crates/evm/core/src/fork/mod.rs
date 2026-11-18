@@ -21,7 +21,7 @@ pub use multi::{ForkId, ForkResult, MultiFork, MultiForkHandler};
 mod bal;
 pub use bal::{cache_bal, validate_bal};
 
-mod prefetch;
+pub(crate) mod prefetch;
 
 /// Represents a _fork_ of a remote chain whose data is available only via the `url` endpoint.
 #[derive(Clone, Debug)]

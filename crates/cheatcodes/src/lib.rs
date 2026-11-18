@@ -80,7 +80,7 @@ mod tempo;
 mod test;
 pub use test::{
     expect::{ExpectedCallTracker, ExpectedCallType},
-    revert_handlers::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
+    revert_handlers::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS, expect_revert_mismatch},
 };
 
 mod toml;

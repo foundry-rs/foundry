@@ -16,6 +16,38 @@ impl SymbolicExecutor {
 
         let offset = state.stack.peek(1)?.clone();
         let size = state.stack.peek(2)?.clone();
+        // EIP-3860: like revm, initcode above the limit halts the creating frame before the
+        // offset converts or memory expands, so the memory guard cannot drop that halt as out of
+        // gas.
+        match state.constrained_usize_checked(&mut self.cx, &size) {
+            Some(Ok(size)) if size > executor.max_initcode_size => {
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                return Ok(StepOutcome::ExceptionalHalt);
+            }
+            // A symbolic size that may exceed the limit reports incomplete. A size beyond the host
+            // word runs out of gas before the limit check.
+            None if executor.max_initcode_size < usize::MAX => {
+                let mut over_limit = state.constraints.clone();
+                over_limit.push(SymBoolExpr::cmp_word_const(
+                    &mut self.cx,
+                    SymCmpOp::Ugt,
+                    &size,
+                    U256::from(executor.max_initcode_size),
+                ));
+                over_limit.push(SymBoolExpr::cmp_word_const(
+                    &mut self.cx,
+                    SymCmpOp::Ule,
+                    &size,
+                    U256::from(usize::MAX),
+                ));
+                if self.is_sat_with_state(state, &over_limit)? {
+                    return Err(SymbolicError::Unsupported(
+                        "symbolic CREATE initcode size beyond the EIP-3860 limit",
+                    ));
+                }
+            }
+            _ => {}
+        }
         if let Some(outcome) = self.guard_memory_range(executor, state, worklist, &offset, &size)? {
             return Ok(outcome);
         }
@@ -148,7 +180,7 @@ impl SymbolicExecutor {
         child.world.mark_current_transaction_created(created);
         child.persistent_writes.push(PersistentWrite::Created(created));
         child.world.set_nonce(created, 1);
-        child.world.transfer(&mut self.cx, executor, creator, created, value, false);
+        child.world.transfer(&mut self.cx, executor, creator, created, value, false)?;
 
         let outcomes = self.execute_external_call(executor, child, &initcode, completed_paths)?;
         if outcomes.is_empty() {
@@ -162,15 +194,12 @@ impl SymbolicExecutor {
             let failed_callee = matches!(outcome.status, CallStatus::Revert).then_some(created);
             let runtime = &outcome.state.frame.return_data;
             let spec_id = executor.spec_id;
-            let mut rejected_runtime = false;
-            if matches!(outcome.status, CallStatus::Success) {
-                if runtime_exceeds_code_size_limit(executor.max_code_size, spec_id, runtime) {
-                    outcome.status = CallStatus::Revert;
-                    outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
-                } else if runtime_has_rejected_prefix(&mut self.cx, spec_id, runtime)? {
-                    outcome.status = CallStatus::Revert;
-                    rejected_runtime = true;
-                }
+            if matches!(outcome.status, CallStatus::Success)
+                && (runtime_exceeds_code_size_limit(executor.max_code_size, spec_id, runtime)
+                    || runtime_has_rejected_prefix(&mut self.cx, spec_id, runtime)?)
+            {
+                outcome.status = CallStatus::Revert;
+                outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
             }
             if !matches!(outcome.status, CallStatus::Success)
                 && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
@@ -204,7 +233,12 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::constant(&mut self.cx, address))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child, unmet_expected_revert } => {
+                JoinedCallOutcome::Success { mut parent, child, mut unmet_expected_revert } => {
+                    // Like Forge's `create_end`, a CREATE settles a `vm.expectRevert` that
+                    // internal mode leaves pending after a successful call.
+                    if parent.expected_revert.take().is_some() {
+                        unmet_expected_revert = Some("next call did not revert as expected");
+                    }
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     let runtime = &child.frame.return_data;
                     parent.world = child.world;
@@ -228,10 +262,7 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
-                    parent.return_data = SymReturnData::empty(&mut self.cx);
-                    if !rejected_runtime {
-                        parent.return_data = child.frame.return_data;
-                    }
+                    parent.return_data = child.frame.return_data;
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
@@ -291,7 +322,7 @@ impl SymbolicExecutor {
     }
 }
 
-fn runtime_exceeds_code_size_limit(
+pub(super) fn runtime_exceeds_code_size_limit(
     max_code_size: usize,
     spec_id: SpecId,
     runtime: &SymReturnData,
@@ -301,7 +332,7 @@ fn runtime_exceeds_code_size_limit(
         && runtime.len() > max_code_size
 }
 
-fn runtime_has_rejected_prefix(
+pub(super) fn runtime_has_rejected_prefix(
     cx: &mut SymCx,
     spec_id: SpecId,
     runtime: &SymReturnData,

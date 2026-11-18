@@ -1415,7 +1415,10 @@ impl<'ast> State<'_, 'ast> {
     /// printer method, handling all Solidity expression kinds.
     fn print_expr(&mut self, expr: &'ast ast::Expr<'ast>) {
         let ast::Expr { span, ref kind } = *expr;
-        if self.handle_span(span, false) {
+        // Drop blank lines before an expression (not after a comment): they cannot be kept when the
+        // enclosing statement is inlined, which is decided ignoring them.
+        self.print_comments(span.lo(), CommentConfig::skip_leading_ws(false));
+        if self.handle_span(span, true) {
             return;
         }
 
@@ -2899,7 +2902,7 @@ impl<'ast> State<'_, 'ast> {
 
             ast::StmtKind::If(_, _, Some(_)) => true,
             ast::StmtKind::If(_, then, None) => {
-                self.has_comment_between(stmt.span.lo(), then.span.lo())
+                self.peek_comment_between(stmt.span.lo(), then.span.lo()).is_some()
                     || self.is_multiline_block_stmt(then, empty_as_multiline)
             }
 
@@ -2919,7 +2922,7 @@ impl<'ast> State<'_, 'ast> {
             | ast::StmtKind::Revert(_, _)
             | ast::StmtKind::Placeholder => {
                 // Internal comments can force hard breaks even when the source occupies one line.
-                self.has_comment_between(stmt.span.lo(), stmt.span.hi())
+                self.peek_comment_between(stmt.span.lo(), stmt.span.hi()).is_some()
             }
         }
     }
@@ -2950,7 +2953,7 @@ impl<'ast> State<'_, 'ast> {
         if (!matches!(
             self.config.single_line_statement_blocks,
             config::SingleLineBlockStyle::Single
-        ) || self.has_comment_between(block.span.lo(), block.span.hi()))
+        ) || self.peek_comment_between(block.span.lo(), block.span.hi()).is_some())
             && !self.same_source_line(block.span.lo(), block.span.hi())
             && let Some(snip) = self.snippet(block.span)
         {

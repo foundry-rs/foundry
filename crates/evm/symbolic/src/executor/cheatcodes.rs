@@ -5,7 +5,10 @@ use foundry_evm::{
     inspectors::cheatcodes::current_execution_context,
 };
 
-use super::*;
+use super::{
+    create::{runtime_exceeds_code_size_limit, runtime_has_rejected_prefix},
+    *,
+};
 
 impl SymbolicExecutor {
     pub(super) fn handle_assertion(
@@ -222,11 +225,14 @@ impl SymbolicExecutor {
         data: ExpectedRevertData,
         reverter: Option<SymExpr>,
         count: u64,
+        name: &str,
     ) -> CheatcodeOutcome {
-        if state.expected_revert.is_some() {
+        if state.expected_revert.is_some() || state.outer_expected_revert {
             return CheatcodeOutcome::Revert(error_string_return_data(
                 &mut self.cx,
-                "you must call another function prior to expecting a second revert",
+                &format!(
+                    "vm.{name}: you must call another function prior to expecting a second revert"
+                ),
             ));
         }
         state.expected_revert = Some(ExpectedRevert::new(data, reverter, count));
@@ -374,6 +380,20 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
+        self.stateless_retry_safe = false;
+        let mut initcode = artifact_code(&artifact, false)?;
+        initcode.extend_from_slice(&constructor_args);
+        // Like Forge, initcode above the EIP-3860 limit fails the cheatcode before it takes a
+        // prank or changes any state.
+        if initcode.len() > executor.max_initcode_size {
+            let return_data = error_string_return_data(
+                &mut self.cx,
+                "vm.deployCode: initcode size limit exceeded",
+            );
+            revert_cheatcode_call(&mut self.cx, state, out_offset, out_size, return_data)?;
+            return Ok(StepOutcome::Continue);
+        }
+
         // Like Forge, the CREATE applies and consumes a pending prank.
         let inherited_prank = state.callers();
         let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
@@ -383,9 +403,6 @@ impl SymbolicExecutor {
         {
             return Err(SymbolicError::Unsupported("symbolic vm.deployCode prank"));
         }
-        self.stateless_retry_safe = false;
-        let mut initcode = artifact_code(&artifact, false)?;
-        initcode.extend_from_slice(&constructor_args);
         let initcode = SymCode::concrete(&mut self.cx, initcode);
 
         let nonce = state.world.nonce(executor, creator)?;
@@ -441,7 +458,27 @@ impl SymbolicExecutor {
         }
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for outcome in outcomes {
+        for mut outcome in outcomes {
+            // Like a CREATE, a runtime over the code size limit or starting with 0xEF fails the
+            // deployment. Forge reverts the cheatcode with that runtime, or with no data when the
+            // CREATE ran as its own transaction.
+            let runtime = &outcome.state.frame.return_data;
+            let rejected_runtime = matches!(outcome.status, CallStatus::Success)
+                && (runtime_exceeds_code_size_limit(
+                    executor.max_code_size,
+                    executor.spec_id,
+                    runtime,
+                ) || runtime_has_rejected_prefix(&mut self.cx, executor.spec_id, runtime)?);
+            if rejected_runtime {
+                outcome.status = CallStatus::Revert;
+                if isolated {
+                    outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
+                }
+            }
+            // Forge's CREATE runs a frame below the cheatcode call, so a rejected runtime leaves
+            // the caller's `vm.expectRevert` pending for the cheatcode revert.
+            let expected_revert =
+                if rejected_runtime { state.expected_revert.take() } else { None };
             if !matches!(outcome.status, CallStatus::Success)
                 && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
             {
@@ -452,18 +489,24 @@ impl SymbolicExecutor {
             // Forge records a reverting CREATE, and otherwise the failed cheatcode call.
             let failed_callee = match outcome.status {
                 CallStatus::Success => None,
-                CallStatus::Revert => Some(created),
-                CallStatus::ExceptionalHalt | CallStatus::Failure => Some(CHEATCODE_ADDRESS),
+                CallStatus::Revert if !rejected_runtime => Some(created),
+                CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
+                    Some(CHEATCODE_ADDRESS)
+                }
             };
             // Like Forge, a cheatcode CREATE leaves `vm.assumeNoRevert` for the next call.
-            match self.join_call_outcome(
+            let joined = self.join_call_outcome(
                 executor,
                 state,
                 &failure_world,
                 outcome,
                 failed_callee,
                 None,
-            )? {
+            );
+            if rejected_runtime {
+                state.expected_revert = expected_revert;
+            }
+            match joined? {
                 JoinedCallOutcome::Failure(parent)
                 | JoinedCallOutcome::Success { parent, unmet_expected_revert: Some(_), .. } => {
                     *state = parent;
@@ -515,6 +558,21 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
+                    if rejected_runtime {
+                        // Like Forge, the failed cheatcode call is the reverter for
+                        // `vm.assumeNoRevert` unless a call reverted earlier, also for an
+                        // assumption this frame set.
+                        parent.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
+                        if let Some(assumption) = &mut parent.assume_no_revert_next_call {
+                            assumption.reverted_by.get_or_insert(CHEATCODE_ADDRESS);
+                        }
+                        parent.expected_revert.clone_from(&state.expected_revert);
+                        // The constructor ran a frame deeper, so a revert of this frame can meet
+                        // the pending expectation.
+                        if let Some(expected) = &mut parent.expected_revert {
+                            expected.mark_deeper_frame_ran();
+                        }
+                    }
                     parent.return_data = child.frame.return_data;
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), out_size)?;
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -1216,7 +1274,8 @@ impl SymbolicExecutor {
                 if count == 0 {
                     return Err(SymbolicError::Unsupported("symbolic vm.expectRevert count 0"));
                 }
-                Ok(self.set_expected_revert(state, data, reverter, count))
+                let name = if partial { "expectPartialRevert" } else { "expectRevert" };
+                Ok(self.set_expected_revert(state, data, reverter, count, name))
             }
             expectEmitAnonymous_0Call::SELECTOR
             | expectEmitAnonymous_1Call::SELECTOR
@@ -1422,7 +1481,9 @@ impl SymbolicExecutor {
                 self.add_call_mock(executor, state, callee, value, data, returns, false)
             }
             mockFunctionCall::SELECTOR => {
-                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                // Like Forge's ABI decoding, keep only the address bits of the callee.
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?
+                    .address_operand(&mut self.cx);
                 let target = read_abi_address_arg(
                     &mut self.cx,
                     &state.memory,
@@ -1815,11 +1876,11 @@ impl SymbolicExecutor {
                     state.guard_free_address_write(&mut self.cx, executor, &word)
                 {
                     let previous =
-                        state.world.balance_word_for_address(&mut self.cx, executor, address);
+                        state.world.balance_word_for_address(&mut self.cx, executor, address)?;
                     let balance = SymExpr::ite(&mut self.cx, condition, value.clone(), previous);
-                    state.set_persistent_balance(&mut self.cx, executor, address, balance);
+                    state.set_persistent_balance(&mut self.cx, executor, address, balance)?;
                 }
-                state.set_persistent_balance(&mut self.cx, executor, target, value);
+                state.set_persistent_balance(&mut self.cx, executor, target, value)?;
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             setNonceCall::SELECTOR | setNonceUnsafeCall::SELECTOR => {
@@ -2490,7 +2551,7 @@ impl SymbolicExecutor {
                 self.stateless_retry_safe = false;
                 Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
                     &mut self.cx,
-                    U256::from(std::env::var_os(name).is_some()),
+                    U256::from(std::env::var(name).is_ok()),
                 )]))
             }
             envBool_1Call::SELECTOR
@@ -2523,8 +2584,11 @@ impl SymbolicExecutor {
                 )?;
                 self.stateless_retry_safe = false;
                 // Forge treats a set-but-empty variable as missing for the typed overloads.
-                let value = match std::env::var(name).ok().filter(|value| !value.is_empty()) {
-                    Some(value) => U256::from(parse_env_bool(&value)?),
+                let value = match env_var(&name)?.filter(|value| !value.is_empty()) {
+                    Some(value) => parse_env_value(&value, &DynSolType::Bool)?
+                        .as_word()
+                        .ok_or(SymbolicError::Unsupported("symbolic env type"))?
+                        .into(),
                     None => read_abi_concrete_word_arg(
                         &mut self.cx,
                         &state.memory,
@@ -2554,13 +2618,17 @@ impl SymbolicExecutor {
                     "symbolic vm.envOr",
                 )?;
                 self.stateless_retry_safe = false;
-                let value = match std::env::var(name).ok().filter(|value| !value.is_empty()) {
-                    Some(value) if selector == envOr_1Call::SELECTOR => parse_env_uint(&value)?,
-                    Some(value) if selector == envOr_2Call::SELECTOR => parse_env_int(&value)?,
-                    Some(value) if selector == envOr_3Call::SELECTOR => {
-                        address_word(parse_env_address(&value)?)
-                    }
-                    Some(value) => parse_env_bytes32(&value)?,
+                let ty = match selector {
+                    envOr_1Call::SELECTOR => DynSolType::Uint(256),
+                    envOr_2Call::SELECTOR => DynSolType::Int(256),
+                    envOr_3Call::SELECTOR => DynSolType::Address,
+                    _ => DynSolType::FixedBytes(32),
+                };
+                let value = match env_var(&name)?.filter(|value| !value.is_empty()) {
+                    Some(value) => parse_env_value(&value, &ty)?
+                        .as_word()
+                        .ok_or(SymbolicError::Unsupported("symbolic env type"))?
+                        .into(),
                     None => default,
                 };
                 Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(&mut self.cx, value)]))
@@ -2570,7 +2638,10 @@ impl SymbolicExecutor {
                     decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let name = dyn_string(&values[0])?;
                 self.stateless_retry_safe = false;
-                let value = std::env::var(name).unwrap_or(dyn_string(&values[1])?);
+                let value = match env_var(&name)? {
+                    Some(value) => dyn_string(&parse_env_value(&value, &DynSolType::String)?)?,
+                    None => dyn_string(&values[1])?,
+                };
                 Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
                     &mut self.cx,
                     value.as_bytes(),
@@ -2581,8 +2652,8 @@ impl SymbolicExecutor {
                     decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let name = dyn_string(&values[0])?;
                 self.stateless_retry_safe = false;
-                let value = match std::env::var(name).ok().filter(|value| !value.is_empty()) {
-                    Some(value) => parse_env_bytes(&value)?,
+                let value = match env_var(&name)?.filter(|value| !value.is_empty()) {
+                    Some(value) => dyn_bytes(&parse_env_value(&value, &DynSolType::Bytes)?)?,
                     None => dyn_bytes(&values[1])?,
                 };
                 Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&mut self.cx, &value)))
@@ -2603,9 +2674,9 @@ impl SymbolicExecutor {
                 let name = dyn_string(&values[0])?;
                 let delimiter = dyn_string(&values[1])?;
                 self.stateless_retry_safe = false;
-                let value = match std::env::var(name) {
-                    Ok(value) => parse_env_array(&value, &delimiter, &element_ty)?,
-                    Err(_) => values[2].clone(),
+                let value = match env_var(&name)? {
+                    Some(value) => parse_env_array(&value, &delimiter, &element_ty)?,
+                    None => values[2].clone(),
                 };
                 Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(&mut self.cx, value)))
             }

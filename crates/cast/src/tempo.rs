@@ -162,9 +162,15 @@ pub(crate) async fn resolve_session_or_wallet_signer(
     wallet: &WalletOpts,
     chain_id: u64,
 ) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+    // `--from` names the parent of a configurable access key, whose own access key in the Tempo
+    // Accounts store must not sign instead.
+    let mut store_wallet = wallet.clone();
+    if tempo.configurable_access_key.is_some() {
+        store_wallet.from = None;
+    }
     let (signer, access_key) = match tempo.session_signer_for_wallet(wallet, chain_id)? {
         Some(session) => (None, Some(session.access_key)),
-        None => foundry_common::tempo::maybe_signer(wallet, Some(chain_id)).await?,
+        None => foundry_common::tempo::maybe_signer(&store_wallet, Some(chain_id)).await?,
     };
     if let (Some(from), Some(access_key)) = (wallet.from, &access_key) {
         eyre::ensure!(
@@ -255,9 +261,18 @@ pub(crate) async fn resolve_transaction_network_and_signer(
     eth: &EthereumOpts,
 ) -> Result<(NetworkVariant, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     let config = eth.load_config()?;
+    resolve_transaction_network_and_signer_with_config(tempo, eth, &config).await
+}
+
+/// Resolves the transaction network and signer using an already loaded configuration.
+pub(crate) async fn resolve_transaction_network_and_signer_with_config(
+    tempo: &TempoOpts,
+    eth: &EthereumOpts,
+    config: &Config,
+) -> Result<(NetworkVariant, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     let has_session = tempo.session_id()?.is_some();
     let requires_tempo = tempo.is_tempo() || has_session;
-    crate::cmd::validate_tempo_network(&config, requires_tempo)?;
+    crate::cmd::validate_tempo_network(config, requires_tempo)?;
     if has_session {
         return Ok((NetworkVariant::Tempo, None, None));
     }
@@ -266,7 +281,7 @@ pub(crate) async fn resolve_transaction_network_and_signer(
     explicit_wallet.from = None;
     let (signer, access_key) = foundry_common::tempo::maybe_signer(&explicit_wallet, None).await?;
     let network =
-        crate::cmd::resolve_transaction_network(&config, requires_tempo || access_key.is_some())
+        crate::cmd::resolve_transaction_network(config, requires_tempo || access_key.is_some())
             .await?;
     if let (Some(from), Some(access_key)) = (eth.wallet.from, &access_key) {
         eyre::ensure!(
@@ -275,13 +290,18 @@ pub(crate) async fn resolve_transaction_network_and_signer(
             access_key.account()
         );
     }
-    if !network.is_tempo() || signer.is_some() || access_key.is_some() || eth.wallet.from.is_none()
+    // `--from` names the parent of a configurable access key, which signs instead of its keys.
+    if !network.is_tempo()
+        || signer.is_some()
+        || access_key.is_some()
+        || eth.wallet.from.is_none()
+        || tempo.configurable_access_key.is_some()
     {
         return Ok((network, signer, access_key));
     }
 
     // Only consult the Accounts store after selecting Tempo.
-    let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
+    let provider = ProviderBuilder::<Ethereum>::from_config(config)?.build()?;
     let chain = get_chain(config.chain, &provider).await?;
     let (signer, access_key) =
         foundry_common::tempo::maybe_signer(&eth.wallet, Some(chain.id())).await?;
@@ -300,6 +320,12 @@ pub(crate) async fn resolve_transaction_network_and_signer(
 const CAST_OWNERS_HINT: &str = "Pass the other owner keys with --tempo.owner, or have each owner \
      sign the digest from `cast mktx --raw-unsigned --tempo.digest` with \
      `cast wallet sign --no-hash` and combine the signatures with `cast wallet assemble`.";
+
+/// How a Cast command tells the owners of a configurable account that are not local how to sign
+/// when its signature cannot be assembled from signatures made elsewhere: for a configurable
+/// access key's keychain signature, and for zone commands.
+pub(crate) const CAST_LOCAL_OWNERS_HINT: &str =
+    "Pass the other owner keys with --tempo.owner, or keep them in the Tempo Accounts store.";
 
 /// Detects a Tempo configurable account sender and selects its local owners, taking `signer` when
 /// it is one of them.
@@ -325,16 +351,22 @@ where
         );
         return Ok(None);
     }
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(config)?.build()?;
-    let signers = signer.take().map(Arc::new).into_iter().collect::<Vec<_>>();
-    let linked = tempo.linked_account(wallet)?;
-    let account = tempo
-        .configurable_account_signer(&provider, wallet.from, linked, &signers, CAST_OWNERS_HINT)
-        .await?;
-    match &account {
-        Some(account) => sh_status!("Sending as Tempo configurable account {}", account.account())?,
-        // Only a configurable account keeps the signer.
-        None => *signer = signers.into_iter().next().and_then(Arc::into_inner),
+    let hint = if tempo.configurable_access_key.is_some() {
+        CAST_LOCAL_OWNERS_HINT
+    } else {
+        CAST_OWNERS_HINT
+    };
+    let account = tempo.configurable_account_signer(config, wallet, signer, hint).await?;
+    if let Some(account) = &account {
+        if account.sender() == account.account() {
+            sh_status!("Sending as Tempo configurable account {}", account.account())?;
+        } else {
+            sh_status!(
+                "Sending as {} with Tempo configurable access key {}",
+                account.sender(),
+                account.account()
+            )?;
+        }
     }
     Ok(account)
 }
@@ -378,7 +410,12 @@ where
     let signers = signer.into_iter().collect::<Vec<_>>();
     // A sender that is the linked keystore's own key was not named with `--from`.
     let linked = tempo.linked_account(wallet)?;
-    let from = (!linked.is_some_and(|(_, owner)| owner == sender)).then_some(sender);
+    let from = if tempo.configurable_access_key.is_some() {
+        // A configurable access key signs for the account `--from` names, never for its owner.
+        wallet.from
+    } else {
+        (!linked.is_some_and(|(_, owner)| owner == sender)).then_some(sender)
+    };
     let Some((account, config, keys)) =
         tempo.configurable_account_owners(&provider, from, linked, &signers, block).await?
     else {

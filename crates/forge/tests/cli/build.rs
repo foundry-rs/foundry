@@ -300,6 +300,27 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]],
     );
+    cmd.forge_fuse()
+        .args(["test", "--list", "--json", "--match-path", "native/**"])
+        .assert_json_stdout(str![[r#"
+{"native/src/lib.fe":{"Counter":["testExternalArtifactIsDeployable"]}}
+"#]]);
+    cmd.forge_fuse()
+        .args(["coverage", "--report", "lcov", "--match-contract", "^Counter$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[..]
+Analysing contracts...
+Running tests...
+
+Ran 1 test for native/src/lib.fe:Counter
+[PASS] testExternalArtifactIsDeployable() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Wrote LCOV report.
+
+"#]]);
     for name in ["Counter.V1", "Counter-V1"] {
         fs::write(&adapter, adapter_script.replace("name=Counter", &format!("name={name}")))
             .unwrap();
@@ -429,14 +450,21 @@ fn can_build_physical_and_symlinked_dependency_configs(prj: _, cmd: _) {
         fs::create_dir_all(dependency.join("vendor/file/src")).unwrap();
         fs::write(
             dependency.join("foundry.toml"),
-            r#"
+            format!(
+                r#"
 [profile.default]
 src = "custom-source"
-remappings = ["special-alias/=vendor/inner/src/"]
+remappings = ["{}:special-alias/=vendor/inner/src/"]
 "#,
+                prj.root().display()
+            ),
         )
         .unwrap();
-        fs::write(dependency.join("remappings.txt"), "file-alias/=vendor/file/src/\n").unwrap();
+        fs::write(
+            dependency.join("remappings.txt"),
+            format!("{}:file-alias/=vendor/file/src/\n", prj.root().display()),
+        )
+        .unwrap();
         fs::write(
             dependency.join("custom-source/Dep.sol"),
             r#"
@@ -471,21 +499,38 @@ contract FromFile {}
 
     write_dependency(&physical);
     write_dependency(&linked);
+    prj.add_lib("special-alias/src/Thing.sol", "contract RootThing {}");
+    prj.add_lib("file-alias/src/FromFile.sol", "contract RootFromFile {}");
+    prj.add_lib(
+        "sibling/src/Sibling.sol",
+        r#"
+import {RootThing} from "special-alias/Thing.sol";
+import {RootFromFile} from "file-alias/FromFile.sol";
+
+contract Sibling is RootThing, RootFromFile {}
+"#,
+    );
     prj.add_raw_source(
         "Root.sol",
         r#"
 pragma solidity >=0.8.0;
 
 import {Dep} from "linked/Dep.sol";
+import {RootThing} from "special-alias/Thing.sol";
+import {RootFromFile} from "file-alias/FromFile.sol";
+import {Sibling} from "sibling/Sibling.sol";
 
-contract Root is Dep {}
+contract Root is Dep, Sibling {}
 "#,
     );
 
     let remappings = str![[r#"
-file-alias/=lib/linked/vendor/file/src/
+lib/linked/:special-alias/=lib/linked/vendor/inner/src/
+lib/linked/:file-alias/=lib/linked/vendor/file/src/
+file-alias/=lib/file-alias/src/
 linked/=lib/linked/custom-source/
-special-alias/=lib/linked/vendor/inner/src/
+sibling/=lib/sibling/src/
+special-alias/=lib/special-alias/src/
 
 "#]];
     cmd.arg("remappings").assert_success().stdout_eq(remappings.clone());
