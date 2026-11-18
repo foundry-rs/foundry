@@ -377,9 +377,9 @@ tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "9634fed2
 reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "f551b680945f55698833666e8d48034b3034bfc9", features = [
     "account-ext",
 ] }
-# Op and Base evm2 type families, on foundry-rs/evm2-networks at `65cb40b`.
-op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "65cb40bbccbc334fc4777b84d680fdcccf97ea15", default-features = false }
-base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "65cb40bbccbc334fc4777b84d680fdcccf97ea15", default-features = false }
+# Op and Base evm2 type families, on foundry-rs/evm2-networks at `b90cf83`.
+op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b90cf83a877af2d9141a282ae493ec54ca50f0c9", default-features = false }
+base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b90cf83a877af2d9141a282ae493ec54ca50f0c9", default-features = false }
 # Monad's maintained evm2 type family.
 monad-evm2 = { git = "https://github.com/category-labs/monad-alloy-evm2", rev = "95db06bd60922cfc01f712ec66be9327df3d7f33", default-features = false }
 
@@ -564,15 +564,16 @@ blst = "0.3.17"
 rand_chacha = { version = "=0.10.0", default-features = false }
 
 # Base
-base-common-chains = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-consensus = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-eip8130 = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-genesis = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-network = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-precompiles = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-rpc-types = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-consensus-upgrades = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-protocol = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
+base-common-chains = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-consensus = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-base-tx = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-genesis = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-network = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-precompiles = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-rpc-types = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-consensus-upgrades = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-execution-base-tx = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-protocol = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
