@@ -8604,6 +8604,13 @@ contract SymbolicQuotientMulTest {
         (bool ok,) = address(this).staticcall(abi.encodeCall(this.quotientMul, (a, d, k)));
         assert(ok);
     }
+
+    // `x / d * d <= x`, so its checked multiply cannot overflow in either order.
+    function checkRoundDownMultiple(uint256 x, uint256 d) public pure {
+        if (d == 0) return;
+        assert(x / d * d <= x);
+        assert(d * (x / d) <= x);
+    }
 }
 "#,
     );
@@ -8627,6 +8634,13 @@ contract SymbolicQuotientMulTest {
         let result = json_test_result(&output, "checkWideQuotientMul(uint256,uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkRoundDownMultiple(uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
     }
 }
 
