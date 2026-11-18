@@ -40,7 +40,7 @@ use base_evm2::precompiles::{
     ACTIVATION_REGISTRY_ADDRESS, B20_FACTORY_ADDRESS, POLICY_REGISTRY_ADDRESS, TX_CONTEXT_ADDRESS,
 };
 #[cfg(feature = "base")]
-use foundry_evm_hardforks::BaseUpgrade;
+use foundry_evm_hardforks::{BaseUpgrade, base_upgrade_from_chain_and_timestamp};
 
 #[cfg(feature = "optimism")]
 use foundry_evm_hardforks::OpHardfork;
@@ -267,7 +267,7 @@ impl NetworkVariant {
             }
             #[cfg(feature = "base")]
             Self::Base => {
-                BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp).map(Into::into)
+                base_upgrade_from_chain_and_timestamp(chain_id, timestamp).map(Into::into)
             }
         }
     }

@@ -232,7 +232,7 @@ use base_evm2::L1BlockInfo;
 #[cfg(feature = "base")]
 use evm2::bytecode::Bytecode;
 #[cfg(feature = "base")]
-use foundry_evm_hardforks::BaseUpgrade;
+use foundry_evm_hardforks::{BaseUpgrade, base_upgrade_from_chain_and_timestamp};
 
 #[cfg(feature = "optimism")]
 use foundry_evm_hardforks::OpHardfork;
@@ -1748,7 +1748,7 @@ impl<N: Network> Backend<N> {
     #[cfg(feature = "base")]
     pub fn base_upgrade_at_timestamp(&self, timestamp: u64) -> BaseUpgrade {
         if self.is_fork() {
-            BaseUpgrade::from_chain_and_timestamp(self.chain_id().to(), timestamp)
+            base_upgrade_from_chain_and_timestamp(self.chain_id().to(), timestamp)
                 .unwrap_or_else(|| self.base_upgrade())
         } else {
             self.base_upgrade()
@@ -2888,7 +2888,7 @@ impl<N: Network> Backend<N> {
                 _ => BaseUpgrade::Azul,
             };
             let upgrade = if self.is_fork() {
-                BaseUpgrade::from_chain_and_timestamp(self.chain_id().to(), timestamp)
+                base_upgrade_from_chain_and_timestamp(self.chain_id().to(), timestamp)
                     .unwrap_or(configured)
             } else {
                 configured
