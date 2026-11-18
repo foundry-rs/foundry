@@ -643,10 +643,10 @@ syn-solidity = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d08
 # alloy = { git = "https://github.com/alloy-rs/alloy", rev = "395521c" }
 
 ## op-alloy
-op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", rev = "eed6e5788898612087498034dd90e58b5e8097a7" }
-op-alloy-network = { git = "https://github.com/foundry-rs/optimism", rev = "eed6e5788898612087498034dd90e58b5e8097a7" }
-op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "eed6e5788898612087498034dd90e58b5e8097a7" }
-alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "eed6e5788898612087498034dd90e58b5e8097a7" }
+op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", rev = "502f4baaaf7eb90d1e57919c4f0d3e1a6226df6c" }
+op-alloy-network = { git = "https://github.com/foundry-rs/optimism", rev = "502f4baaaf7eb90d1e57919c4f0d3e1a6226df6c" }
+op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "502f4baaaf7eb90d1e57919c4f0d3e1a6226df6c" }
+alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "502f4baaaf7eb90d1e57919c4f0d3e1a6226df6c" }
 
 ## reth-core — as patched by tempoxyz/tempo and reth, whose root patches do not propagate
 reth-codecs = { git = "https://github.com/paradigmxyz/reth-core", rev = "275ce4cf5befeb9f1e8acd935ff2882d2d25fc61" }
