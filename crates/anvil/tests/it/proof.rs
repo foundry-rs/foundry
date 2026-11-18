@@ -1,6 +1,7 @@
 //! tests for `eth_getProof`
 
 use alloy_primitives::{Address, B256, Bytes, U256, address, fixed_bytes};
+use alloy_provider::Provider;
 use anvil::{NodeConfig, eth::EthApi, spawn};
 use foundry_primitives::FoundryNetwork;
 use std::{collections::BTreeMap, str::FromStr};
@@ -136,4 +137,41 @@ async fn can_get_random_account_proofs() {
             .await
             .unwrap_or_else(|_| panic!("Failed to get proof for {acc:?}"));
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_storage_proof_for_short_keys() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let target = Address::repeat_byte(0x01);
+    api.anvil_set_storage_at(target, U256::ONE, B256::with_last_byte(0x2a)).await.unwrap();
+
+    let keys = ["0x1", "0x01", "0x", &format!("0x{:063x}", 1), &format!("{:064x}", 1)];
+    let proof: serde_json::Value =
+        provider.raw_request("eth_getProof".into(), (target, keys, "latest")).await.unwrap();
+    let entries = proof["storageProof"].as_array().unwrap();
+
+    let keys = entries.iter().map(|entry| entry["key"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        [
+            "0x1",
+            "0x1",
+            "0x0",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+        ]
+    );
+    let values = entries.iter().map(|entry| entry["value"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(values, ["0x2a", "0x2a", "0x0", "0x2a", "0x2a"]);
+    assert_eq!(entries[0]["proof"], entries[4]["proof"]);
+
+    let err = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_getProof".into(),
+            (target, [format!("0x{:065x}", 1)], "latest"),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32602);
 }
