@@ -1821,6 +1821,9 @@ mod tests {
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
             assert!(index.alias_return(0, &source_location(10, 20)).is_none(), "{other}");
         }
+        let brace_entry = sourcemap::parse("10:19:0;;;29:1:0:o").unwrap();
+        let index = AnchorIndex::new(&bytecode, &brace_entry, &ic_pc_map);
+        assert!(index.alias_return(0, &source_location(10, 20)).is_none());
         for unsupported in
             [opcode::MLOAD, opcode::JUMPI, opcode::CALL, opcode::INVALID, opcode::REVERT]
         {
