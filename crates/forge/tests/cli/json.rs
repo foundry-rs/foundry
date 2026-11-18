@@ -65,3 +65,51 @@ contract SimpleJsonCheatsTest is Test {
     // Should still work when the project is not compiled.
     cmd.forge_fuse().args(["test"]).assert_success();
 }
+
+// Struct definitions of sources that weren't recompiled still order the fields of parsed JSON.
+#[forgetest]
+fn parse_json_struct_order_after_partial_recompile(prj: _, cmd: _) {
+    prj.add_test(
+        "Json.t.sol",
+        r#"
+interface Vm {
+    function parseJson(string calldata json) external pure returns (bytes memory);
+}
+
+// Definition order: second, first
+// Alphabetical order: first, second
+struct Pair {
+    uint256 second;
+    uint256 first;
+}
+
+contract JsonTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testDefinitionOrder() public pure {
+        Pair memory pair = abi.decode(vm.parseJson('{"first": 1, "second": 2}'), (Pair));
+        require(pair.second == 2, "fields decoded in alphabetical order");
+    }
+}
+"#,
+    );
+    prj.add_source("Unrelated.sol", "contract Unrelated { function one() external {} }");
+
+    let expected_output = str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Json.t.sol:JsonTest
+[PASS] testDefinitionOrder() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]];
+    cmd.arg("test").assert_success().stdout_eq(expected_output.clone());
+
+    // Only `Unrelated.sol` is recompiled.
+    prj.add_source("Unrelated.sol", "contract Unrelated { function two() external {} }");
+    cmd.forge_fuse().arg("test").assert_success().stdout_eq(expected_output);
+}

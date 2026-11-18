@@ -1,6 +1,5 @@
-use crate::config::anvil_tmp_dir;
+use crate::{config::anvil_tmp_dir, eth::backend::db::StateSnapshot};
 use alloy_primitives::B256;
-use foundry_evm::backend::StateSnapshot;
 use std::{
     io,
     path::{Path, PathBuf},
@@ -47,12 +46,10 @@ impl DiskStateCache {
                 }
             }
         }
-        if let Some(temp_dir) = &self.temp_dir {
+        self.temp_dir.as_ref().map(|temp_dir| {
             let path = temp_dir.path().join(format!("{hash:?}.json"));
-            Some(f(path))
-        } else {
-            None
-        }
+            f(path)
+        })
     }
 
     /// Stores the snapshot for the given hash synchronously.

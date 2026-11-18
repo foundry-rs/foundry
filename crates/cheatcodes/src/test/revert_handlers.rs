@@ -1,9 +1,9 @@
 use crate::{Error, Result};
 use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::{SolError, SolValue};
+use evm2::interpreter::InstrStop;
 use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
-use revm::interpreter::InstructionResult;
 use spec::Vm;
 
 use super::{
@@ -47,7 +47,7 @@ impl RevertParameters for AcceptableRevertParameters {
 fn handle_revert(
     is_cheatcode: bool,
     revert_params: &impl RevertParameters,
-    status: InstructionResult,
+    status: InstrStop,
     retdata: &Bytes,
     known_contracts: &Option<ContractsByArtifact>,
     reverter: Option<&Address>,
@@ -70,7 +70,7 @@ fn handle_revert(
     };
 
     let actual_revert = if retdata.is_empty() && !expected_reason.is_empty() {
-        if status == InstructionResult::Revert {
+        if status == InstrStop::Revert {
             bail!("call reverted as expected, but without data");
         }
         RevertDecoder::new().decode(retdata, Some(status)).into_bytes()
@@ -127,7 +127,7 @@ fn handle_revert(
 
 pub(crate) fn handle_assume_no_revert(
     assume_no_revert: &AssumeNoRevert,
-    status: InstructionResult,
+    status: InstrStop,
     retdata: &Bytes,
     known_contracts: &Option<ContractsByArtifact>,
 ) -> Result<()> {
@@ -159,7 +159,7 @@ pub(crate) fn handle_expect_revert(
     is_create: bool,
     internal_expect_revert: bool,
     expected_revert: &ExpectedRevert,
-    status: InstructionResult,
+    status: InstrStop,
     retdata: Bytes,
     known_contracts: &Option<ContractsByArtifact>,
 ) -> Result<(Option<Address>, Bytes)> {
@@ -182,7 +182,7 @@ pub(crate) fn handle_expect_revert(
     if expected_revert.count == 0 {
         // If no specific reason or reverter is expected, we just check if it reverted
         if expected_revert.reverter.is_none() && expected_revert.reason.is_none() {
-            ensure!(status.is_ok(), "call reverted when it was expected not to revert");
+            ensure!(status.is_success(), "call reverted when it was expected not to revert");
             return Ok(success_return());
         }
 
@@ -192,7 +192,7 @@ pub(crate) fn handle_expect_revert(
 
         // If we expect no reverts with a specific reason/reverter, but got a revert,
         // we need to check if it matches our criteria
-        if status.is_ok() {
+        if status.is_success() {
             // No revert occurred, which is what we expected
             Ok(success_return())
         } else {
@@ -265,7 +265,7 @@ pub(crate) fn handle_expect_revert(
             }
         }
     } else {
-        ensure!(!status.is_ok(), "next call did not revert as expected");
+        ensure!(!status.is_success(), "next call did not revert as expected");
 
         handle_revert(
             is_cheatcode,
@@ -277,6 +277,49 @@ pub(crate) fn handle_expect_revert(
         )?;
         Ok(success_return())
     }
+}
+
+/// Returns the error that a call reverting with `retdata`, first failing in `reverted_by`, ends
+/// with when it does not meet a `vm.expectRevert` of `reason` from `reverter`, or `None` when it
+/// meets it. With `partial_match`, only the first 4 bytes of `reason` are compared.
+pub fn expect_revert_mismatch(
+    reason: Option<&[u8]>,
+    partial_match: bool,
+    reverter: Option<Address>,
+    reverted_by: Option<Address>,
+    retdata: &Bytes,
+    known_contracts: &Option<ContractsByArtifact>,
+) -> Option<Error> {
+    struct Expected<'a> {
+        reason: Option<&'a [u8]>,
+        partial_match: bool,
+        reverter: Option<Address>,
+    }
+
+    impl RevertParameters for Expected<'_> {
+        fn reverter(&self) -> Option<Address> {
+            self.reverter
+        }
+
+        fn reason(&self) -> Option<&[u8]> {
+            self.reason
+        }
+
+        fn partial_match(&self) -> bool {
+            self.partial_match
+        }
+    }
+
+    let expected = Expected { reason, partial_match, reverter };
+    handle_revert(
+        false,
+        &expected,
+        InstrStop::Revert,
+        retdata,
+        known_contracts,
+        reverted_by.as_ref(),
+    )
+    .err()
 }
 
 fn stringify(data: &[u8]) -> String {

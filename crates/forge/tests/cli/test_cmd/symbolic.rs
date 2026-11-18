@@ -620,8 +620,48 @@ fn symbolic_cli_accepts_zero_init_storage_layout(prj: _, cmd: _) {
     prj.add_test(
         "SymbolicZeroInit.t.sol",
         r#"
+contract SetupMapping {
+    mapping(uint256 => uint256) public m;
+
+    function set() external {
+        m[1] = 5;
+    }
+}
+
 contract SymbolicZeroInit {
+    mapping(uint256 => uint256) own;
+    SetupMapping other;
+
+    function setUp() public {
+        own[1] = 5;
+        other = new SetupMapping();
+        other.set();
+    }
+
     function checkNoop(uint256) public pure {}
+
+    // Unwritten symbolic keys read zero.
+    function checkUnwrittenIsZero(uint256 k) public view {
+        if (k != 1) assert(own[k] == 0 && other.m(k) == 0);
+    }
+
+    // Mapping entries written in setUp stay visible to a symbolic key once the run has
+    // computed the entry's slot hash, so k = 1 breaks these.
+    function checkOwnMapping(uint256 k) public view {
+        require(own[1] == 5);
+        assert(own[k] != 5);
+    }
+
+    function checkOtherContractMapping(uint256 k) public view {
+        require(other.m(1) == 5);
+        assert(other.m(k) != 5);
+    }
+
+    function checkRepeatedRead(uint256 k) public view {
+        uint256 before = own[k];
+        require(own[1] == 5);
+        if (own[k] == before) assert(k != 1);
+    }
 }
 "#,
     );
@@ -633,10 +673,10 @@ contract SymbolicZeroInit {
             "--symbolic-storage-layout",
             "zero_init",
             "--json",
-            "--match-test",
-            "checkNoop",
+            "--match-contract",
+            "SymbolicZeroInit",
         ])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .stdout
         .clone();
@@ -644,6 +684,18 @@ contract SymbolicZeroInit {
     let result = json_test_result(&output, "checkNoop(uint256)");
     assert_eq!(result["symbolic"]["status"], "pass");
     assert_eq!(result["symbolic"]["bounds"]["storage_layout"], "zero_init");
+    let result = json_test_result(&output, "checkUnwrittenIsZero(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    for test in [
+        "checkOwnMapping(uint256)",
+        "checkOtherContractMapping(uint256)",
+        "checkRepeatedRead(uint256)",
+    ] {
+        let result = json_test_result(&output, test);
+        assert_eq!(result["status"], "Failure", "{test}");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{test}");
+        assert_eq!(result["counterexample"]["Single"]["args"], "1", "{test}");
+    }
 }
 
 #[forgetest_init]
@@ -1143,6 +1195,16 @@ contract SymbolicSaturatingMul {
             assert(SaturatingMath.saturatingMul(x, y) == 0);
         }
     }
+
+    // Division on narrow operands runs at their width in the solver.
+    function checkNarrowDivision(uint8 x, uint8 d) public pure {
+        require(d != 0);
+        uint256 z;
+        assembly {
+            z := div(x, d)
+        }
+        assert(z == x / d);
+    }
 }
 "#,
     );
@@ -1162,6 +1224,16 @@ contract SymbolicSaturatingMul {
 
     let output = cmd
         .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNarrowDivision"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNarrowDivision(uint8,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
         .args([
             "test",
             "--symbolic",
@@ -1177,6 +1249,44 @@ contract SymbolicSaturatingMul {
     let result = json_test_result(&output, "checkWrongOverflowResult(uint256,uint256)");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+}
+
+#[forgetest_init]
+fn symbolic_shares_nested_narrow_divisors(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_shares_nested_narrow_divisors");
+
+    let steps = "q := add(1, div(x, q))\n".repeat(12);
+    let source = format!(
+        r#"
+contract SymbolicNestedDivisors {{
+    function checkNestedDivisors(uint8 x, uint8 d) public pure {{
+        uint256 q;
+        assembly {{
+            q := add(d, 1)
+            {steps}
+            q := div(x, q)
+        }}
+        // A divisor of one keeps `x`, and any larger divisor at least halves it. The normalizer
+        // does not decide this, so the property reaches the SMT solver.
+        assert(q == x || q <= x / 2);
+    }}
+}}
+"#
+    );
+    prj.add_test("SymbolicNestedDivisors.t.sol", &source);
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNestedDivisors"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNestedDivisors(uint8,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass", "{result}");
+    let max_query_bytes = result["symbolic"]["solver"]["stats"]["smt_max_query_bytes"]
+        .as_u64()
+        .expect("SMT query size");
+    assert!(max_query_bytes > 0 && max_query_bytes < 100_000, "{result}");
 }
 
 #[forgetest_init]
@@ -1339,22 +1449,51 @@ contract SymbolicLoopBound {
         }
         assert(i <= 2);
     }
+
+    // Internal helper calls are not loop iterations: four checked additions stay in bound.
+    /// forge-config: default.symbolic.loop = 2
+    function checkLoopBoundIgnoresInternalCalls(uint256 x, bool b) public pure {
+        if (b) {
+            uint256 y = x + 1;
+            y = y + 1;
+            y = y + 1;
+            y = y + 1;
+            assert(y != 9);
+        }
+    }
+
+    function down(uint256 n) internal pure returns (uint256) {
+        if (n == 0) return 0;
+        return down(n - 1);
+    }
+
+    // A recursive call pushes the same return address again, so the bound still applies.
+    /// forge-config: default.symbolic.loop = 2
+    function checkLoopBoundLimitsRecursion(uint256 n) public pure {
+        assert(down(n) == 0);
+    }
 }
 "#,
     );
 
-    let stdout =
-        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkLoopBound"]))
-            .success()
-            .stdout_eq(str![[r#"
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicLoopBound",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
+Ran 3 tests for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
 [PASS] checkLoopBound(uint8) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkLoopBoundIgnoresInternalCalls(uint256,bool) ([METRICS])
+[PASS] checkLoopBoundLimitsRecursion(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
-            .get_output()
-            .stdout_lossy();
+    .get_output()
+    .stdout_lossy();
 
     assert!(!stdout.contains("symbolic depth limit exceeded"), "{stdout}");
 }
@@ -1375,18 +1514,54 @@ contract SymbolicAssert {
     function checkRejectsFortyTwo(uint256 x) public pure {
         assert(x != 42);
     }
+
+    // The revert data stays symbolic, but the path pins it to an assertion failure.
+    function checkRejectsSymbolicAssertionMessage(uint256 x) public pure {
+        if (x == 42) revert(string(abi.encodePacked("assertion failed: ", bytes32(x))));
+    }
+
+    function checkRejectsSymbolicPanicCode(uint256 x) public pure {
+        assembly {
+            if eq(x, 1) {
+                mstore(0, shl(224, 0x4e487b71))
+                mstore(4, x)
+                revert(0, 0x24)
+            }
+        }
+    }
+
+    // Like the concrete decoder, the message must be valid UTF-8 within its encoded length.
+    function checkIgnoresInvalidUtf8AssertionMessage(uint256 x) public pure {
+        if (x == 255) revert(string(abi.encodePacked("assertion failed: ", bytes1(uint8(x)))));
+    }
+
+    function checkIgnoresTrailingAssertionMessage(uint256 x) public pure {
+        assembly {
+            if eq(x, 1) {
+                mstore(0, shl(224, 0x08c379a0))
+                mstore(4, 0x20)
+                mstore(36, sub(x, 1))
+                mstore(68, "assertion failed")
+                revert(0, 100)
+            }
+        }
+    }
 }
 "#,
     );
 
     let stderr =
-        assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkRejectsFortyTwo"]))
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicAssert"]))
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicAssert.t.sol:SymbolicAssert
+Ran 5 tests for test/SymbolicAssert.t.sol:SymbolicAssert
+[PASS] checkIgnoresInvalidUtf8AssertionMessage(uint256) ([METRICS])
+[PASS] checkIgnoresTrailingAssertionMessage(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xf24fa427000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkRejectsFortyTwo(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[42]] checkRejectsSymbolicAssertionMessage(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[1]] checkRejectsSymbolicPanicCode(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()
@@ -1647,6 +1822,37 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 }
 
 #[forgetest_init]
+fn symbolic_minimizer_keeps_non_reverting_assertion_failure(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_minimizer_keeps_non_reverting_assertion_failure");
+
+    // The failed soft assertion is followed by a revert that `x == 0` also hits, so the zero
+    // candidate fails with the same reason without failing the assertion.
+    prj.add_test(
+        "SymbolicMinimizeSoftAssert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicMinimizeSoftAssert is Test {
+    /// forge-config: default.assertions_revert = false
+    function checkSoftAssert(uint256 x) public pure {
+        vm.assertTrue(x != 7);
+        require(x != 7 && x != 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkSoftAssert"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMinimizeSoftAssert.t.sol:SymbolicMinimizeSoftAssert
+[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] calldata=0x6bab43b10000000000000000000000000000000000000000000000000000000000000007 args=[7]] checkSoftAssert(uint256) ([METRICS])
+...
+"#]]);
+}
+
+#[forgetest_init]
 fn symbolic_minimizes_echidna_address_array_duplicate_fixture(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -1841,18 +2047,30 @@ contract SymbolicRiddle {
 
         assert(false);
     }
+
+    // The query shares `add(a, b)` through a solver helper definition, which the model echoes
+    // without a literal value; the model parser must not give it the next variable's value.
+    function check_shared_subterm_model(uint256 a, uint256 b) external pure {
+        uint256 r;
+        assembly {
+            r := add(mod(0, add(a, b)), sub(iszero(a), b))
+        }
+        require(a != 0);
+        assert(r != type(uint256).max - 244);
+    }
 }
 "#,
     );
 
     let stdout =
-        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "check_riddle"]))
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicRiddle"]))
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicRiddle.t.sol:SymbolicRiddle
+Ran 2 tests for test/SymbolicRiddle.t.sol:SymbolicRiddle
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check_riddle(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check_shared_subterm_model(uint256,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()
@@ -1870,7 +2088,21 @@ fn symbolic_requires_successful_path(prj: _, cmd: _) {
         r#"
 import "forge-std/Test.sol";
 
+contract Handler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function assumeNot5(uint256 x) external pure {
+        vm.assume(x != 5);
+    }
+
+    function skipBelow5(uint256 x) external {
+        vm.skip(x < 5);
+    }
+}
+
 contract SymbolicEmptyDomain is Test {
+    Handler handler = new Handler();
+
     function checkConstantAssumption() public {
         vm.assume(false);
     }
@@ -1893,18 +2125,74 @@ contract SymbolicEmptyDomain is Test {
     function checkSkipped() public {
         vm.skip(true);
     }
+
+    // A rejected `vm.assume` reverts only the callee, which the caller catches.
+    function checkAssumeCaught(uint256 x) public {
+        try handler.assumeNot5(x) {} catch {}
+        assert(x != 5);
+    }
+
+    // `vm.skip` below the test level is an error.
+    function checkSkipNested(uint256 x) public {
+        handler.skipBelow5(x);
+    }
+
+    // A caught test-level `vm.skip` continues the test.
+    function checkSkipCaught(uint256 x) public {
+        try vm.skip(x < 5) {} catch {}
+        assert(x >= 5);
+    }
+
+    // The rejected branch of a repeated assumption is infeasible: it neither fails nor passes.
+    function checkCaughtRepeatedAssumption(uint256 x) public {
+        vm.assume(x != 5);
+        try vm.assume(x != 5) { vm.assume(false); } catch { assert(false); }
+    }
+
+    // An infeasible caught rejection never runs, so it cannot make the proof incomplete.
+    function checkInfeasibleCaughtRejection(uint256 x) public {
+        vm.assume(x != 5);
+        try vm.assume(x != 5) {} catch {
+            vm.assertEq(uint256(1), uint256(2));
+        }
+    }
+
+    // The allocation makes the cheatcode input offset symbolic.
+    function checkAssumeAfterSymbolicAlloc(uint8 n) public {
+        new bytes(n);
+        vm.assume(n != 37);
+        assert(n != 37);
+    }
+
+    function checkSkipAfterSymbolicAlloc(uint8 n) public {
+        new bytes(n);
+        vm.skip(n == 37);
+        assert(n != 37);
+    }
 }
 "#,
     );
 
-    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicEmptyDomain"]))
-        .failure()
-        .stdout_eq(str![[r#"
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicEmptyDomain",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+Ran 12 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+[PASS] checkAssumeAfterSymbolicAlloc(uint8) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeCaught(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkCaughtRepeatedAssumption(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkConstantAssumption() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkContradictoryAssumptions(uint256) ([METRICS])
+[PASS] checkInfeasibleCaughtRejection(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkRejectedAndReverted(bool) ([METRICS])
+[PASS] checkSkipAfterSymbolicAlloc(uint8) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSkipCaught(uint256) ([METRICS])
+[FAIL: vm.skip: `skip` can only be used at test level; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSkipNested(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkSkipped() ([METRICS])
 [PASS] checkSomeAccepted(bool) ([METRICS])
 ...
@@ -2084,7 +2372,7 @@ contract SymbolicArrayAssertions is Test {
     }
 
     function checkZeroLengthMcopy(uint256 dest, uint256 size) public view {
-        vm.assume(size <= 2);
+        vm.assume(size <= 2 && (size == 0 || dest <= 0x100));
         uint256 byteAtZero;
         assembly {
             mstore8(0, 0xaa)
@@ -2357,11 +2645,27 @@ import "forge-std/Test.sol";
 
 /// forge-config: default.evm_version = "cancun"
 
+contract SelfdestructTarget {
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+}
+
 contract SymbolicSelfdestructCancun is Test {
     function checkSelfdestructCancun(uint256) public {
         selfdestruct(payable(address(this)));
 
         assert(false);
+    }
+
+    // The target is created in this transaction, so SELFDESTRUCT takes the legacy path. The
+    // beneficiary may already hold ETH, so its balance is not modeled for a symbolic address.
+    function checkSelfdestructSymbolicBeneficiary(address payable beneficiary) public {
+        SelfdestructTarget target = new SelfdestructTarget();
+        vm.deal(address(target), 7);
+        target.die(beneficiary);
+
+        assert(beneficiary.balance == 7);
     }
 }
 "#,
@@ -2370,15 +2674,16 @@ contract SymbolicSelfdestructCancun is Test {
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkSelfdestructCancun",
+        "--match-contract",
+        "SymbolicSelfdestructCancun",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicSelfdestructCancun.t.sol:SymbolicSelfdestructCancun
+Ran 2 tests for test/SymbolicSelfdestructCancun.t.sol:SymbolicSelfdestructCancun
 [PASS] checkSelfdestructCancun(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic SELFDESTRUCT beneficiary] checkSelfdestructSymbolicBeneficiary(address) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -3717,6 +4022,7 @@ fn symbolic_fuzz_frontier_seeding_ignores_pre_target_counterexamples(prj: _, cmd
         "SymbolicFuzzFrontierTargetGate.t.sol",
         r#"
 /// forge-config: default.symbolic.exploration_order = "dfs"
+/// forge-config: default.fuzz.mutation_weight_cmp = 0
 contract SymbolicFuzzFrontierTargetGate {
     event TargetHit();
 
@@ -4053,7 +4359,7 @@ contract SymbolicInvariantFrontierSeed is Test {
             "--depth",
             "2",
             "--seed",
-            "0x5678",
+            "0x5679",
             "--threads",
             "1",
             "--frontier-dir",
@@ -4515,7 +4821,7 @@ contract SymbolicInvariantRevertSeed is Test {
             "--depth",
             "1",
             "--seed",
-            "0x1234",
+            "0x1235",
             "--threads",
             "1",
             "--frontier-dir",
@@ -4656,7 +4962,7 @@ contract SymbolicInvariantAssertionSeed is Test {
             "--depth",
             "1",
             "--seed",
-            "0x1234",
+            "0x1235",
             "--threads",
             "1",
             "--frontier-dir",
@@ -7355,6 +7661,44 @@ contract RoundedProductTest {
             assert(rounded - value < 37);
         }
     }
+
+    function checkSymbolicDivisorFacts(uint256 value, uint256 divisor) external pure {
+        if (divisor == 0) return;
+        uint256 rounded;
+        assembly {
+            rounded := mul(div(value, divisor), divisor)
+        }
+        assert(value % divisor < divisor);
+        assert(rounded <= value);
+    }
+
+    function checkEuclideanIdentities(uint256 value) external pure {
+        assert(value / 7 * 7 + value % 7 == value);
+        assert(value - value % 1e18 == value / 1e18 * 1e18);
+    }
+
+    function checkNarrowFloorError(uint128 value) external pure {
+        uint128 rounded = value / 1000 * 1000;
+        assert(rounded <= value);
+    }
+
+    function checkBasisPointsFee(uint64 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        assert(uint256(amount) * bps / 10000 <= amount);
+    }
+
+    mapping(address => uint256) balances;
+
+    function checkTransferConservation(address from, address to, uint256 amount) external {
+        uint256 fromBefore = balances[from];
+        uint256 toBefore = balances[to];
+        require(fromBefore >= amount);
+        balances[from] = fromBefore - amount;
+        balances[to] += amount;
+        unchecked {
+            assert(balances[from] + balances[to] == fromBefore + toBefore);
+        }
+    }
 }
 "#,
     );
@@ -7366,7 +7710,7 @@ contract RoundedProductTest {
             "--symbolic-timeout",
             "30",
             "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip)",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee|TransferConservation)",
         ])
         .assert_success();
         let output = cmd
@@ -7486,6 +7830,11 @@ contract NormalizerBoundariesTest {
             assert(x + y >= x);
         }
     }
+
+    // solc guards checked `x * 2` with `(x * 2) / x == 2`, and `x * 2` is built as `x << 1`.
+    function checkCheckedDoublingGuard(uint256 x) external pure {
+        assert(x * 2 != 30);
+    }
 }
 
 "#,
@@ -7500,6 +7849,7 @@ contract NormalizerBoundariesTest {
         "checkWrappedRoundUpDivision(uint256)",
         "checkRoundTripWithoutRateLowerBound(uint128,uint256)",
         "checkNonnegativeSignedAdditionOverflows(int256,int256)",
+        "checkCheckedDoublingGuard(uint256)",
     ];
     for optimized in [false, true] {
         prj.update_config(|config| config.optimizer = Some(optimized));
@@ -7748,5 +8098,734 @@ fn symbolic_xor_specialist_limits_fall_back(prj: _, cmd: _) {
         let result = json_test_result(&output, &format!("{name}(uint256,uint256)"));
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{name}: {result}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+    }
+}
+
+// Each Babylonian square-root iteration nests the previous estimate inside a division-by-zero
+// `ite` condition. Normalizing those words must stay polynomial in the loop depth.
+#[forgetest_init]
+fn symbolic_normalizes_nested_division_loop(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_normalizes_nested_division_loop");
+    prj.add_test(
+        "SymbolicSqrt.t.sol",
+        r#"
+contract SymbolicSqrt {
+    function sqrt(uint256 y) internal pure returns (uint256 z) {
+        if (y > 3) {
+            z = y;
+            uint256 x = y / 2 + 1;
+            while (x < z) {
+                z = x;
+                x = (y / x + x) / 2;
+            }
+        } else if (y != 0) {
+            z = 1;
+        }
+    }
+
+    /// forge-config: default.symbolic.timeout = 1
+    function checkSqrtLower(uint256 x) public pure {
+        require(x < (1 << 26));
+        uint256 r = sqrt(x);
+        assert(r * r <= x);
+    }
+}
+"#,
+    );
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkSqrtLower"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkSqrtLower(uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete", "{result}");
+    assert_eq!(
+        result["symbolic"]["incomplete"]["reason"], "symbolic execution timeout exceeded (1s)",
+        "{result}"
+    );
+}
+
+// Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
+// 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
+// its exact quotient, and a false rounding claim must still reach a replayed counterexample. A
+// five-step inverse is wrong for large odd denominators, and without the high-word guard the
+// quotient wraps; neither may be rewritten into a false proof. Rounding up is monotone, bounds the
+// product from above, and exceeds the floor by at most one. Claims that it is at most the floor
+// of a larger product, at least the floor plus one, strictly above the product, or above it in
+// low words alone must still reach counterexamples.
+#[forgetest_init]
+fn symbolic_proves_full_precision_mul_div(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_full_precision_mul_div");
+    let full_math = r#"
+library FullMath {
+    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        unchecked {
+            uint256 prod0 = a * b;
+            uint256 prod1;
+            assembly ("memory-safe") {
+                let mm := mulmod(a, b, not(0))
+                prod1 := sub(sub(mm, prod0), lt(mm, prod0))
+            }
+            require(denominator > prod1);
+            if (prod1 == 0) {
+                assembly ("memory-safe") {
+                    result := div(prod0, denominator)
+                }
+                return result;
+            }
+            uint256 remainder;
+            assembly ("memory-safe") {
+                remainder := mulmod(a, b, denominator)
+            }
+            assembly ("memory-safe") {
+                prod1 := sub(prod1, gt(remainder, prod0))
+                prod0 := sub(prod0, remainder)
+            }
+            uint256 twos = (0 - denominator) & denominator;
+            assembly ("memory-safe") {
+                denominator := div(denominator, twos)
+            }
+            assembly ("memory-safe") {
+                prod0 := div(prod0, twos)
+            }
+            assembly ("memory-safe") {
+                twos := add(div(sub(0, twos), twos), 1)
+            }
+            prod0 |= prod1 * twos;
+            uint256 inv = (3 * denominator) ^ 2;
+            inv *= 2 - denominator * inv;
+            inv *= 2 - denominator * inv;
+            inv *= 2 - denominator * inv;
+            inv *= 2 - denominator * inv;
+            inv *= 2 - denominator * inv;
+            inv *= 2 - denominator * inv;
+            result = prod0 * inv;
+            return result;
+        }
+    }
+
+    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        unchecked {
+            result = mulDiv(a, b, denominator);
+            if (mulmod(a, b, denominator) != 0) {
+                require(++result > 0);
+            }
+        }
+    }
+}
+"#;
+    let five_step = full_math.replacen("library FullMath", "library FiveStepMath", 1).replacen(
+        "            inv *= 2 - denominator * inv;\n",
+        "",
+        1,
+    );
+    let unguarded = full_math.replacen("library FullMath", "library UnguardedMath", 1).replacen(
+        "require(denominator > prod1);",
+        "require(denominator > 0);",
+        1,
+    );
+    prj.add_source("FullMath.sol", &format!("{full_math}{five_step}{unguarded}"));
+    prj.add_source(
+        "Math.sol",
+        r#"
+library Math {
+    function mul512(uint256 a, uint256 b) internal pure returns (uint256 high, uint256 low) {
+        assembly ("memory-safe") {
+            let mm := mulmod(a, b, not(0))
+            low := mul(a, b)
+            high := sub(sub(mm, low), lt(mm, low))
+        }
+    }
+
+    function ternary(bool condition, uint256 a, uint256 b) internal pure returns (uint256) {
+        unchecked {
+            return b ^ ((a ^ b) * toUint(condition));
+        }
+    }
+
+    function toUint(bool b) internal pure returns (uint256 u) {
+        assembly ("memory-safe") {
+            u := iszero(iszero(b))
+        }
+    }
+
+    function panic(uint256 code) internal pure {
+        assembly ("memory-safe") {
+            mstore(0x00, 0x4e487b71)
+            mstore(0x20, code)
+            revert(0x1c, 0x24)
+        }
+    }
+
+    function mulDiv(uint256 x, uint256 y, uint256 denominator) internal pure returns (uint256 result) {
+        unchecked {
+            (uint256 high, uint256 low) = mul512(x, y);
+            if (high == 0) {
+                return low / denominator;
+            }
+            if (denominator <= high) {
+                panic(ternary(denominator == 0, 0x12, 0x11));
+            }
+            uint256 remainder;
+            assembly ("memory-safe") {
+                remainder := mulmod(x, y, denominator)
+                high := sub(high, gt(remainder, low))
+                low := sub(low, remainder)
+            }
+            uint256 twos = denominator & (0 - denominator);
+            assembly ("memory-safe") {
+                denominator := div(denominator, twos)
+                low := div(low, twos)
+                twos := add(div(sub(0, twos), twos), 1)
+            }
+            low |= high * twos;
+            uint256 inverse = (3 * denominator) ^ 2;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            result = low * inverse;
+            return result;
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "FixedPointMathLib.sol",
+        r#"
+library FixedPointMathLib {
+    function fullMulDiv(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            z := mul(x, y)
+            for {} 1 {} {
+                if iszero(mul(or(iszero(x), eq(div(z, x), y)), d)) {
+                    let mm := mulmod(x, y, not(0))
+                    let p1 := sub(mm, add(z, lt(mm, z)))
+                    let r := mulmod(x, y, d)
+                    let t := and(d, sub(0, d))
+                    if iszero(gt(d, p1)) {
+                        mstore(0x00, 0xae47f702)
+                        revert(0x1c, 0x04)
+                    }
+                    d := div(d, t)
+                    let inv := xor(2, mul(3, d))
+                    inv := mul(inv, sub(2, mul(d, inv)))
+                    inv := mul(inv, sub(2, mul(d, inv)))
+                    inv := mul(inv, sub(2, mul(d, inv)))
+                    inv := mul(inv, sub(2, mul(d, inv)))
+                    inv := mul(inv, sub(2, mul(d, inv)))
+                    z := mul(
+                        or(mul(sub(p1, gt(r, z)), add(div(sub(0, t), t), 1)), div(sub(z, r), t)),
+                        mul(sub(2, mul(d, inv)), inv)
+                    )
+                    break
+                }
+                z := div(z, d)
+                break
+            }
+        }
+    }
+
+    function fullMulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        z = fullMulDiv(x, y, d);
+        assembly {
+            if mulmod(x, y, d) {
+                z := add(z, 1)
+                if iszero(z) {
+                    mstore(0x00, 0xae47f702)
+                    revert(0x1c, 0x04)
+                }
+            }
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "FullPrecisionMulDiv.t.sol",
+        r#"
+import {FiveStepMath, FullMath, UnguardedMath} from "../src/FullMath.sol";
+import {Math} from "../src/Math.sol";
+import {FixedPointMathLib} from "../src/FixedPointMathLib.sol";
+
+contract FullPrecisionMulDivTest {
+    function proveV4Identity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(FullMath.mulDiv(x, d, d) == x);
+    }
+
+    function proveV4Monotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FullMath.mulDiv(x1, y, d) <= FullMath.mulDiv(x2, y, d));
+    }
+
+    function proveV4Floor(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        assertFloor(FullMath.mulDiv(x, y, d), x, y, d);
+    }
+
+    function proveV4RoundsUpRemainder(uint256 x, uint256 y, uint256 d) external pure {
+        uint256 up = FullMath.mulDivRoundingUp(x, y, d);
+        assert(up == FullMath.mulDiv(x, y, d) + (mulmod(x, y, d) == 0 ? 0 : 1));
+    }
+
+    function proveV4RoundingUpIdentity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(FullMath.mulDivRoundingUp(x, d, d) == x);
+    }
+
+    function proveFiveStepIdentity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(FiveStepMath.mulDiv(x, d, d) == x);
+    }
+
+    function proveUnguardedMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0) return;
+        assert(UnguardedMath.mulDiv(x1, y, d) <= UnguardedMath.mulDiv(x2, y, d));
+    }
+
+    function proveV4RoundingUpIsFloor(uint256 x, uint256 y, uint256 d) external pure {
+        assert(FullMath.mulDivRoundingUp(x, y, d) == FullMath.mulDiv(x, y, d));
+    }
+
+    function proveOzIdentity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(Math.mulDiv(x, d, d) == x);
+    }
+
+    function proveOzMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(Math.mulDiv(x1, y, d) <= Math.mulDiv(x2, y, d));
+    }
+
+    function proveOzFloor(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        assertFloor(Math.mulDiv(x, y, d), x, y, d);
+    }
+
+    function proveSoladyIdentity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(FixedPointMathLib.fullMulDiv(x, d, d) == x);
+    }
+
+    function proveSoladyMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FixedPointMathLib.fullMulDiv(x1, y, d) <= FixedPointMathLib.fullMulDiv(x2, y, d));
+    }
+
+    function proveSoladyFloor(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        assertFloor(FixedPointMathLib.fullMulDiv(x, y, d), x, y, d);
+    }
+
+    function proveSoladyRoundsUpRemainder(uint256 x, uint256 y, uint256 d) external pure {
+        uint256 up = FixedPointMathLib.fullMulDivUp(x, y, d);
+        assert(up == FixedPointMathLib.fullMulDiv(x, y, d) + (mulmod(x, y, d) == 0 ? 0 : 1));
+    }
+
+    function proveSoladyRoundingUpIdentity(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        assert(FixedPointMathLib.fullMulDivUp(x, d, d) == x);
+    }
+
+    function proveSoladyRoundingUpIsFloor(uint256 x, uint256 y, uint256 d) external pure {
+        assert(FixedPointMathLib.fullMulDivUp(x, y, d) == FixedPointMathLib.fullMulDiv(x, y, d));
+    }
+
+    function proveV4RoundingUpMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FullMath.mulDivRoundingUp(x1, y, d) <= FullMath.mulDivRoundingUp(x2, y, d));
+    }
+
+    function proveV4RoundingUpCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        assertCeiling(FullMath.mulDivRoundingUp(x, y, d), x, y, d);
+    }
+
+    function proveV4RoundingUpWithinOne(uint256 x, uint256 y, uint256 d) external pure {
+        uint256 up = FullMath.mulDivRoundingUp(x, y, d);
+        uint256 down = FullMath.mulDiv(x, y, d);
+        unchecked {
+            assert(up - down <= 1);
+        }
+    }
+
+    function proveV4RoundingUpBelowFloor(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FullMath.mulDivRoundingUp(x1, y, d) <= FullMath.mulDiv(x2, y, d));
+    }
+
+    function proveSoladyRoundingUpMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FixedPointMathLib.fullMulDivUp(x1, y, d) <= FixedPointMathLib.fullMulDivUp(x2, y, d));
+    }
+
+    function proveSoladyRoundingUpCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        assertCeiling(FixedPointMathLib.fullMulDivUp(x, y, d), x, y, d);
+    }
+
+    function proveSoladyRoundingUpWithinOne(uint256 x, uint256 y, uint256 d) external pure {
+        uint256 up = FixedPointMathLib.fullMulDivUp(x, y, d);
+        uint256 down = FixedPointMathLib.fullMulDiv(x, y, d);
+        unchecked {
+            assert(up - down <= 1);
+        }
+    }
+
+    function proveV4FloorSuccessorBelowRoundingUp(uint256 x1, uint256 x2, uint256 y, uint256 d)
+        external
+        pure
+    {
+        if (x1 > x2 || d == 0 || high(x2, y) >= d) return;
+        assert(FullMath.mulDiv(x1, y, d) + 1 <= FullMath.mulDivRoundingUp(x2, y, d));
+    }
+
+    function proveV4RoundingUpLowWordCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        uint256 up = FullMath.mulDivRoundingUp(x, y, d);
+        unchecked {
+            assert(up * d >= x * y);
+        }
+    }
+
+    function proveSoladyRoundingUpStrictCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        if (d == 0 || high(x, y) >= d) return;
+        (uint256 zdHi, uint256 zdLo) = mul512(FixedPointMathLib.fullMulDivUp(x, y, d), d);
+        (uint256 xyHi, uint256 xyLo) = mul512(x, y);
+        assert(zdHi > xyHi || (zdHi == xyHi && zdLo > xyLo));
+    }
+
+    function assertFloor(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
+        (uint256 zdHi, uint256 zdLo) = mul512(z, d);
+        (uint256 xyHi, uint256 xyLo) = mul512(x, y);
+        assert(zdHi < xyHi || (zdHi == xyHi && zdLo <= xyLo));
+    }
+
+    function assertCeiling(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
+        (uint256 zdHi, uint256 zdLo) = mul512(z, d);
+        (uint256 xyHi, uint256 xyLo) = mul512(x, y);
+        assert(zdHi > xyHi || (zdHi == xyHi && zdLo >= xyLo));
+    }
+
+    function high(uint256 a, uint256 b) internal pure returns (uint256 hi) {
+        (hi,) = mul512(a, b);
+    }
+
+    function mul512(uint256 a, uint256 b) internal pure returns (uint256 hi, uint256 lo) {
+        assembly ("memory-safe") {
+            let mm := mulmod(a, b, not(0))
+            lo := mul(a, b)
+            hi := sub(sub(mm, lo), lt(mm, lo))
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--symbolic-timeout", "60"])
+            .args(["--match-contract", "FullPrecisionMulDivTest"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for (name, args) in [
+            ("proveV4Identity", "uint256,uint256"),
+            ("proveV4Monotone", "uint256,uint256,uint256,uint256"),
+            ("proveV4Floor", "uint256,uint256,uint256"),
+            ("proveV4RoundsUpRemainder", "uint256,uint256,uint256"),
+            ("proveV4RoundingUpIdentity", "uint256,uint256"),
+            ("proveOzIdentity", "uint256,uint256"),
+            ("proveOzMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveOzFloor", "uint256,uint256,uint256"),
+            ("proveSoladyIdentity", "uint256,uint256"),
+            ("proveSoladyMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveSoladyFloor", "uint256,uint256,uint256"),
+            ("proveSoladyRoundsUpRemainder", "uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpIdentity", "uint256,uint256"),
+            ("proveV4RoundingUpMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveV4RoundingUpCeiling", "uint256,uint256,uint256"),
+            ("proveV4RoundingUpWithinOne", "uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpCeiling", "uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpWithinOne", "uint256,uint256,uint256"),
+        ] {
+            let result = json_test_result(&output, &format!("{name}({args})"));
+            assert_eq!(result["symbolic"]["status"], "pass", "{name}, optimized={optimized}");
+        }
+        for (name, args) in [
+            ("proveV4RoundingUpIsFloor", "uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpIsFloor", "uint256,uint256,uint256"),
+            ("proveFiveStepIdentity", "uint256,uint256"),
+            ("proveUnguardedMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveV4RoundingUpBelowFloor", "uint256,uint256,uint256,uint256"),
+            ("proveSoladyRoundingUpStrictCeiling", "uint256,uint256,uint256"),
+            ("proveV4FloorSuccessorBelowRoundingUp", "uint256,uint256,uint256,uint256"),
+            ("proveV4RoundingUpLowWordCeiling", "uint256,uint256,uint256"),
+        ] {
+            let result = json_test_result(&output, &format!("{name}({args})"));
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{name}, optimized={optimized}"
+            );
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{name}");
+        }
+    }
+}
+
+#[forgetest_init]
+fn symbolic_proves_checked_mul_of_symbolic_quotient(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_checked_mul_of_symbolic_quotient");
+
+    prj.add_test(
+        "SymbolicQuotientMul.t.sol",
+        r#"
+contract SymbolicQuotientMulTest {
+    function quotientMul(uint256 a, uint256 d, uint256 k) external pure returns (uint256) {
+        return a / d * k;
+    }
+
+    // `a / d * k` fits in 192 bits, so its checked multiply cannot overflow.
+    function checkBoundedQuotientMul(uint128 a, uint128 d, uint64 k) public view {
+        if (d == 0) return;
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.quotientMul, (a, d, k)));
+        assert(ok);
+    }
+
+    function checkWideQuotientMul(uint256 a, uint256 d, uint256 k) public view {
+        if (d == 0) return;
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.quotientMul, (a, d, k)));
+        assert(ok);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicQuotientMul"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkBoundedQuotientMul(uint128,uint128,uint64)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkWideQuotientMul(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_proves_bounded_complement_comparisons(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_bounded_complement_comparisons");
+
+    prj.add_test(
+        "SymbolicBoundedComplement.t.sol",
+        r#"
+contract SymbolicBoundedComplementTest {
+    // The checked add guards `q > ~b`, which bounded operands decide without the solver.
+    function checkBoundedQuotientAdd(uint128 a, uint128 b, uint128 d) public pure {
+        if (d == 0) return;
+        uint256 q = uint256(a) * b / d;
+        assert(q + b >= q);
+    }
+
+    // `~e >= 2**256 - 2**136`, which `a * b` can still exceed.
+    function checkBoundedComplement(uint128 a, uint128 b, uint136 e) public pure {
+        assert(uint256(a) * b <= ~uint256(e));
+    }
+
+    // `x % d < 2**128`, so the checked add cannot overflow.
+    function checkBoundedRemainderAdd(uint256 x, uint128 d, uint128 b) public pure {
+        if (d == 0) return;
+        assert(x % d + b >= b);
+    }
+
+    // `x % d <= x` is reached at `x = 2**128 - 1`, `d = 2**128`.
+    function checkRemainderBelowDividendMax(uint128 x, uint256 d) public pure {
+        uint256 r;
+        assembly {
+            r := mod(x, d)
+        }
+        assert(r < type(uint128).max);
+    }
+
+    // `d - x % d <= d`, so rounding `x` up to a multiple of `d` cannot overflow.
+    function checkRoundUp(uint128 x, uint128 d) public pure {
+        if (d == 0) return;
+        uint256 r = x % d;
+        uint256 y = r == 0 ? x : uint256(x) + (d - r);
+        assert(y >= x);
+    }
+
+    // `x % e` can exceed `d`, so the unchecked subtraction can wrap.
+    function checkOtherDivisorSub(uint256 x, uint128 d, uint128 e) public pure {
+        uint256 s;
+        unchecked {
+            s = d - x % e;
+        }
+        assert(s <= type(uint128).max);
+    }
+
+    function remainderMul(uint256 x, uint256 d, uint256 k) external pure returns (uint256) {
+        return x % d * k;
+    }
+
+    // `x % d * k` fits in 192 bits, so its checked multiply cannot overflow.
+    function checkBoundedRemainderMul(uint256 x, uint64 d, uint128 k) public view {
+        if (d == 0) return;
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.remainderMul, (x, d, k)));
+        assert(ok);
+    }
+
+    function checkWideRemainderMul(uint256 x, uint256 d, uint256 k) public view {
+        if (d == 0) return;
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.remainderMul, (x, d, k)));
+        assert(ok);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicBoundedComplement"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkBoundedQuotientAdd(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkBoundedComplement(uint128,uint128,uint136)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkBoundedRemainderAdd(uint256,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkRemainderBelowDividendMax(uint128,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkRoundUp(uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkBoundedRemainderMul(uint256,uint64,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkOtherDivisorSub(uint256,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkWideRemainderMul(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_shares_negated_complement_comparisons(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_shares_negated_complement_comparisons");
+
+    prj.add_test(
+        "SymbolicNegatedComplement.t.sol",
+        r#"
+interface Vm {
+    function assertGe(uint256 left, uint256 right) external pure;
+    function assertTrue(bool condition) external pure;
+}
+
+contract SymbolicNegatedComplementTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    // forge-std's `assertGe` calls the cheatcode under its own `left < right` branch, and the
+    // cheatcode's failing side is the negation of `left >= right`.
+    function checkAssertGe(uint256 a, uint256 b) public pure {
+        uint256 sum;
+        unchecked {
+            sum = a + b;
+        }
+        if (sum < a) vm.assertGe(sum, a);
+    }
+
+    // The same property, with the comparison done by the EVM.
+    function checkAssertTrue(uint256 a, uint256 b) public pure {
+        uint256 sum;
+        unchecked {
+            sum = a + b;
+        }
+        if (sum < a) vm.assertTrue(sum >= a);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicNegatedComplement"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let assert_ge = json_test_result(&output, "checkAssertGe(uint256,uint256)");
+        let assert_true = json_test_result(&output, "checkAssertTrue(uint256,uint256)");
+        for result in [&assert_ge, &assert_true] {
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}"
+            );
+        }
+
+        // `!(a <= ~b)` and `~b < a` are one constraint, so the cheatcode's failing side reuses the
+        // answer cached for the branch.
+        let stats = &assert_ge["symbolic"]["solver"]["stats"];
+        let expected = &assert_true["symbolic"]["solver"]["stats"];
+        assert!(stats["sat_cache_hits"].as_u64().unwrap() > 0, "optimized={optimized}: {stats}");
+        assert_eq!(stats["sat_cache_hits"], expected["sat_cache_hits"], "optimized={optimized}");
+        assert_eq!(stats["solver_queries"], expected["solver_queries"], "optimized={optimized}");
     }
 }

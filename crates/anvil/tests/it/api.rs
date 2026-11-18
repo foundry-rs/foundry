@@ -487,6 +487,37 @@ async fn rejects_call_with_undersized_max_fee_per_gas() {
     );
 }
 
+// Halts and invalid state overrides are reported with their messages and error codes.
+#[tokio::test(flavor = "multi_thread")]
+async fn reports_halt_and_state_override_errors() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let contract = Address::random();
+    api.anvil_set_code(contract, bytes!("fe")).await.unwrap();
+    let request = WithOtherFields::new(TransactionRequest::default().to(contract));
+
+    let result = api.create_access_list(request.clone(), None, None).await.unwrap();
+    assert_eq!(result.error.as_deref(), Some("invalid 0xFE opcode"));
+
+    let overrides = AddressHashMap::from_iter([(
+        contract,
+        AccountOverride {
+            state: Some(Default::default()),
+            state_diff: Some(Default::default()),
+            ..Default::default()
+        },
+    )]);
+    let error = provider.call(request).overrides(overrides).await.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!(error.code, -32602);
+    assert_eq!(
+        error.message,
+        format!(
+            "State override error: state and state_diff can't be used together for account {contract}"
+        )
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_with_state_override() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -665,7 +696,8 @@ async fn can_call_bundle() {
         let mut tx = TxEip1559 {
             chain_id: CHAIN_ID,
             nonce,
-            gas_limit: 21_000,
+            // Ethereum charges consumption even when the signed allowance is larger.
+            gas_limit: 100_000,
             max_fee_per_gas: fees.max_fee_per_gas,
             max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
             to: coinbase.into(),
@@ -717,6 +749,10 @@ async fn can_call_bundle() {
     assert_eq!(response.results[0].to_address, Some(coinbase));
     assert_eq!(response.results[0].eth_sent_to_coinbase, U256::ONE);
     assert_eq!(response.results[1].eth_sent_to_coinbase, U256::from(2));
+    for result in &response.results {
+        assert_eq!(result.gas_used, 21_000);
+        assert_eq!(result.gas_fees, result.gas_price * U256::from(result.gas_used));
+    }
     assert!(response.results.iter().all(|result| result.revert.is_none()));
 
     assert_eq!(provider.get_balance(coinbase).await.unwrap(), initial_coinbase_balance);

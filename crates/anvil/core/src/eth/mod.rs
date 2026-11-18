@@ -1,4 +1,7 @@
-use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
+use crate::{
+    eth::subscription::SubscriptionId,
+    types::{ReorgOptions, TempoCreateTokenRequest},
+};
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, U64, U256,
     map::{HashMap, HashSet},
@@ -958,6 +961,10 @@ pub enum EthRequest {
     /// Schedules a new development consensus identity (Tempo-only).
     #[serde(rename = "anvil_tempoRotateConsensusIdentity", with = "empty_params")]
     TempoRotateConsensusIdentity(()),
+
+    /// Creates a native TIP-20 token at a chosen address (Tempo-only).
+    #[serde(rename = "anvil_tempoCreateToken", with = "sequence")]
+    TempoCreateToken(TempoCreateTokenRequest),
 }
 
 /// Native Tempo consensus selector: `"latest"` or `{"height": N}` with a numeric height.
@@ -978,9 +985,17 @@ pub enum EthPubSub {
     #[serde(rename = "eth_subscribe")]
     EthSubscribe(SubscriptionKind, #[serde(default)] Box<SubscriptionParams>),
 
-    /// Unsubscribe from an eth subscription
+    /// Cancels a subscription on the current connection.
     #[serde(rename = "eth_unsubscribe", with = "sequence")]
     EthUnSubscribe(SubscriptionId),
+
+    /// Subscribes to locally finalized Tempo blocks.
+    #[serde(rename = "consensus_subscribe", with = "empty_params")]
+    ConsensusSubscribe(()),
+
+    /// Alias for `eth_unsubscribe`.
+    #[serde(rename = "consensus_unsubscribe", with = "sequence")]
+    ConsensusUnsubscribe(SubscriptionId),
 }
 
 /// Container type for either a request or a pub sub
@@ -997,7 +1012,15 @@ impl<'de> serde::Deserialize<'de> for EthRpcCall {
     {
         let value = serde_json::Value::deserialize(deserializer)?;
         match value.get("method").and_then(serde_json::Value::as_str) {
-            Some("eth_subscribe" | "eth_unsubscribe") => serde_json::from_value(value)
+            Some("consensus_subscribe") if value.get("params").is_none() => {
+                Ok(Self::PubSub(EthPubSub::ConsensusSubscribe(())))
+            }
+            Some(
+                "eth_subscribe"
+                | "eth_unsubscribe"
+                | "consensus_subscribe"
+                | "consensus_unsubscribe",
+            ) => serde_json::from_value(value)
                 .map(Self::PubSub)
                 .map_err(<D::Error as serde::de::Error>::custom),
             _ => serde_json::from_value(value)
@@ -2411,5 +2434,69 @@ true}]}"#;
         ] {
             assert!(serde_json::from_str::<EthRequest>(request).is_err(), "{request}");
         }
+    }
+
+    #[test]
+    fn test_tempo_consensus_pubsub_requests() {
+        for request in [
+            serde_json::json!({ "method": "consensus_subscribe", "params": [] }),
+            serde_json::json!({ "method": "consensus_subscribe", "params": null }),
+            serde_json::json!({ "method": "consensus_subscribe" }),
+            serde_json::json!({ "method": "consensus_unsubscribe", "params": ["0x1234"] }),
+        ] {
+            let call = serde_json::from_value::<EthRpcCall>(request).unwrap();
+            assert!(matches!(call, EthRpcCall::PubSub(_)));
+        }
+
+        for request in [
+            serde_json::json!({ "method": "consensus_subscribe", "params": [1] }),
+            serde_json::json!({ "method": "consensus_subscribe", "params": ["finalized"] }),
+            serde_json::json!({ "method": "consensus_subscribe", "params": { "type": "finalized" } }),
+            serde_json::json!({ "method": "consensus_unsubscribe", "params": [] }),
+            serde_json::json!({ "method": "consensus_unsubscribe", "params": ["0x1", "0x2"] }),
+        ] {
+            assert!(serde_json::from_value::<EthRpcCall>(request).is_err());
+        }
+    }
+
+    #[test]
+    fn test_tempo_create_token_request() {
+        let parse = |params: &serde_json::Value| {
+            serde_json::from_value::<EthRequest>(serde_json::json!({
+                "method": "anvil_tempoCreateToken",
+                "params": [params]
+            }))
+        };
+        let mut params = serde_json::json!({
+            "address": "0x20c0000000000000000000006a37da5c996874be",
+            "name": "OUSD",
+            "symbol": "OUSD",
+            "currency": "USD",
+            "quoteToken": "0x20c0000000000000000000000000000000000000",
+            "admin": "0x0000000000000000000000000000000000000001"
+        });
+        let Ok(EthRequest::TempoCreateToken(request)) = parse(&params) else {
+            panic!("expected TempoCreateToken");
+        };
+        assert!(request.mint.is_empty());
+
+        params["mint"] = serde_json::json!([
+            { "to": "0x0000000000000000000000000000000000000002", "amount": "0x2a" },
+            { "to": "0x0000000000000000000000000000000000000003", "amount": 43 }
+        ]);
+        let Ok(EthRequest::TempoCreateToken(request)) = parse(&params) else {
+            panic!("expected TempoCreateToken");
+        };
+        let mut expected = params.clone();
+        expected["mint"][1]["amount"] = serde_json::json!("0x2b");
+        assert_eq!(serde_json::to_value(request).unwrap(), expected);
+
+        params["mint"][0]["from"] = serde_json::json!("0x0000000000000000000000000000000000000001");
+        assert!(parse(&params).is_err());
+        params["mint"][0].as_object_mut().unwrap().remove("from");
+
+        let mint = params.as_object_mut().unwrap().remove("mint").unwrap();
+        params["mints"] = mint;
+        assert!(parse(&params).is_err());
     }
 }

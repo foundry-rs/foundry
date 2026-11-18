@@ -1,6 +1,7 @@
-use super::{call_after_invariant_function, call_invariant_function, execute_tx};
+use super::{call_after_invariant_function, call_invariant_function};
 use crate::executors::{
     EarlyExit, Executor,
+    campaign::execute_invariant_tx,
     corpus::persist_campaign_optimization,
     invariant::shrink::{
         CheckSequenceOutcome, ShrinkProgress, shrink_sequence, shrink_sequence_value,
@@ -21,7 +22,7 @@ use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantC
 use foundry_evm_traces::{TraceKind, TraceRequirements, Traces, load_contracts};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 pub struct ReplayErrorResult {
     pub counterexample_sequence: Vec<BaseCounterExample>,
@@ -57,7 +58,10 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
 
     // Replay each call from the sequence, collect logs, traces and coverage.
     for tx in inputs {
-        let mut call_result = execute_tx(&mut executor, tx)?;
+        // The counterexample reports the value actually sent, which replay clamps to the sender's
+        // balance, as for campaign inputs.
+        let mut tx = tx.clone();
+        let mut call_result = execute_invariant_tx(&mut executor, &mut tx)?;
         logs.append(&mut call_result.logs);
         debug_bytecodes.extend(std::mem::take(&mut call_result.debug_bytecodes));
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
@@ -72,7 +76,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
 
         // Create counter example to be used in failed case.
         counterexample_sequence.push(BaseCounterExample::from_invariant_call(
-            tx,
+            &tx,
             &ided_contracts,
             call_result.traces,
             show_solidity,
@@ -91,7 +95,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     )?;
     let fork_block_number = invariant_result.fork_block_number;
     debug_bytecodes.extend(invariant_result.debug_bytecodes);
-    traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
+    traces.push((TraceKind::Execution, invariant_result.traces.unwrap()));
     logs.extend(invariant_result.logs);
     deprecated_cheatcodes.extend(
         invariant_result
@@ -105,7 +109,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
         let (after_invariant_result, _) =
             call_after_invariant_function(&executor, invariant_contract.address)?;
         debug_bytecodes.extend(after_invariant_result.debug_bytecodes);
-        traces.push((TraceKind::Execution, after_invariant_result.traces.clone().unwrap()));
+        traces.push((TraceKind::Execution, after_invariant_result.traces.unwrap()));
         logs.extend(after_invariant_result.logs);
     }
 
@@ -143,6 +147,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
+    shrink_deadline: Option<Instant>,
     position: Option<(usize, usize)>,
 ) -> Result<ReplayErrorResult> {
     // Multi-invariant runs include `[i/N]` in the shrink progress message so users see how many
@@ -170,6 +175,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             targets,
             &shrink_progress,
             early_exit,
+            shrink_deadline,
         )?;
         (calls, None, Some(value))
     } else {
@@ -183,6 +189,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             rd,
             &shrink_progress,
             early_exit,
+            shrink_deadline,
         )?;
         (shrunk.calls, shrunk.result, None)
     };

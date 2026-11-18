@@ -143,6 +143,24 @@
           "description": "Represents a CREATE2 broadcast tx."
         }
       ]
+    },
+    {
+      "name": "OwnerKeyType",
+      "description": "The key type of a configurable account owner.",
+      "variants": [
+        {
+          "name": "Secp256k1",
+          "description": "A secp256k1 key, signing with a 65-byte ECDSA signature."
+        },
+        {
+          "name": "P256",
+          "description": "A P-256 key, signing the digest directly (`0x01` signature)."
+        },
+        {
+          "name": "WebAuthn",
+          "description": "A P-256 passkey, signing a WebAuthn assertion (`0x02` signature) with the RP ID\n `localhost` and the origin `http://localhost`."
+        }
+      ]
     }
   ],
   "structs": [
@@ -742,6 +760,64 @@
           "name": "storageKeys",
           "ty": "bytes32[]",
           "description": "The storage keys to be added in access list."
+        }
+      ]
+    },
+    {
+      "name": "ConfigurableAccountOwner",
+      "description": "An owner of a Tempo configurable account (TIP-1107).",
+      "fields": [
+        {
+          "name": "owner",
+          "ty": "address",
+          "description": "The owner address: a secp256k1 address, or `keccak256(x || y)[12:]` of a P-256 key."
+        },
+        {
+          "name": "weight",
+          "ty": "uint8",
+          "description": "The nonzero weight of the owner's approval."
+        }
+      ]
+    },
+    {
+      "name": "ConfigurableAccountConfig",
+      "description": "The configuration of a Tempo configurable account (TIP-1107).",
+      "fields": [
+        {
+          "name": "salt",
+          "ty": "bytes32",
+          "description": "The salt that, with the initial owners and threshold, determines the account address."
+        },
+        {
+          "name": "version",
+          "ty": "uint64",
+          "description": "The configuration version: zero for the initial configuration, incremented by each update."
+        },
+        {
+          "name": "threshold",
+          "ty": "uint8",
+          "description": "The total owner weight that approvals must reach."
+        },
+        {
+          "name": "owners",
+          "ty": "ConfigurableAccountOwner[]",
+          "description": "The owners, sorted by ascending address."
+        }
+      ]
+    },
+    {
+      "name": "OwnerKey",
+      "description": "A private key of a configurable account owner.",
+      "fields": [
+        {
+          "name": "keyType",
+          "ty": "OwnerKeyType",
+          "description": "The key type."
+        },
+        {
+          "name": "privateKey",
+          "ty": "uint256",
+          "description": "The private key, on secp256k1 or P-256 depending on `keyType`."
         }
       ]
     }
@@ -3749,6 +3825,26 @@
     },
     {
       "func": {
+        "id": "configurableAccountDigest",
+        "description": "Returns the digest that the owners of the configurable account `account` approve for\n`digest`, such as a transaction signature hash, under configuration version `configVersion`:\n`keccak256(\"tempo:configurable-account:signature\" || digest || account || uint64(configVersion))`.",
+        "declaration": "function configurableAccountDigest(address account, uint64 configVersion, bytes32 digest) external pure returns (bytes32 ownerDigest);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "configurableAccountDigest(address,uint64,bytes32)",
+        "selector": "0xbe0e0237",
+        "selectorBytes": [
+          190,
+          14,
+          2,
+          55
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "contains",
         "description": "Returns true if `search` is found in `subject`, false otherwise.",
         "declaration": "function contains(string calldata subject, string calldata search) external pure returns (bool result);",
@@ -4353,6 +4449,26 @@
     },
     {
       "func": {
+        "id": "deriveConfigurableAccount",
+        "description": "Derives the address of the Tempo configurable account with the initial configuration `config`\n(TIP-1107), as `IConfigurableAccount.deriveAccount` does, without the chain's reserved\naddress checks. `config.version` is ignored.",
+        "declaration": "function deriveConfigurableAccount(ConfigurableAccountConfig calldata config) external pure returns (address account);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "deriveConfigurableAccount((bytes32,uint64,uint8,(address,uint8)[]))",
+        "selector": "0x88e79a90",
+        "selectorBytes": [
+          136,
+          231,
+          154,
+          144
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "deriveKey_0",
         "description": "Derive a private key from a provided mnemonic string (or mnemonic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);",
@@ -4688,6 +4804,26 @@
         ]
       },
       "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "encodeConfigurableAccountSignature",
+        "description": "Encodes a `0x05` configurable account signature for `account` from its current configuration\n`config` and encoded owner approvals of its owner digest (65-byte secp256k1, `0x01` P-256 or\n`0x02` WebAuthn signatures).\nApprovals are encoded in the given order. Only the shape is checked, so this can build\nsignatures that the node rejects, such as unsorted or excess approvals.",
+        "declaration": "function encodeConfigurableAccountSignature(address account, ConfigurableAccountConfig calldata config, bytes[] calldata ownerSignatures) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "encodeConfigurableAccountSignature(address,(bytes32,uint64,uint8,(address,uint8)[]),bytes[])",
+        "selector": "0x4cd2c78e",
+        "selectorBytes": [
+          76,
+          210,
+          199,
+          142
+        ]
+      },
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -5868,7 +6004,9 @@
         ]
       },
       "group": "testing",
-      "status": "stable",
+      "status": {
+        "deprecated": "TIP-1137 stops admin keys at Tempo T14"
+      },
       "safety": "unsafe"
     },
     {
@@ -11441,6 +11579,46 @@
     },
     {
       "func": {
+        "id": "signConfigurableAccount_0",
+        "description": "Signs `digest` as the configurable account `account` with its current configuration `config`,\nusing secp256k1 owner keys.\nSigns with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted\nby owner address, the last of which reaches the threshold. Reverts if `config` is invalid,\nhas version 0 but does not derive `account`, a key is not an owner, or no such quorum exists\namong the keys. Returns the `0x05` signature accepted by\n`SignatureVerifier.verifyConfigurableAccount`.",
+        "declaration": "function signConfigurableAccount(uint256[] calldata privateKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signConfigurableAccount(uint256[],address,(bytes32,uint64,uint8,(address,uint8)[]),bytes32)",
+        "selector": "0x9f493d1c",
+        "selectorBytes": [
+          159,
+          73,
+          61,
+          28
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signConfigurableAccount_1",
+        "description": "Signs `digest` as the configurable account `account` with its current configuration `config`,\nusing secp256k1, P-256 or WebAuthn owner keys.\nSigns with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted\nby owner address, the last of which reaches the threshold. Reverts if `config` is invalid,\nhas version 0 but does not derive `account`, a key is not an owner, or no such quorum exists\namong the keys. Returns the `0x05` signature accepted by\n`SignatureVerifier.verifyConfigurableAccount`.",
+        "declaration": "function signConfigurableAccount(OwnerKey[] calldata ownerKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signConfigurableAccount((uint8,uint256)[],address,(bytes32,uint64,uint8,(address,uint8)[]),bytes32)",
+        "selector": "0x4d2e91cf",
+        "selectorBytes": [
+          77,
+          46,
+          145,
+          207
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "signDelegation_0",
         "description": "Sign an EIP-7702 authorization for delegation",
         "declaration": "function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
@@ -11542,7 +11720,7 @@
     {
       "func": {
         "id": "signKeychainAdmin",
-        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address.",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address. Returns the same bytes as `signKeychain`.",
         "declaration": "function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);",
         "visibility": "external",
         "mutability": "pure",
@@ -11553,6 +11731,28 @@
           95,
           178,
           247
+        ]
+      },
+      "group": "crypto",
+      "status": {
+        "deprecated": "replaced by `signKeychain`; TIP-1137 stops admin keys at Tempo T14"
+      },
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signKeychainConfigurableAccount",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` whose access key is the\nconfigurable account `configurableAccount` with its current configuration `config` (TIP-1111).\nThe owners approve the keychain V2 hash `keccak256(0x04 || digest || account)`, with\napprovals chosen as in `signConfigurableAccount`. Returns the signature accepted by\n`SignatureVerifier.verifyKeychain`.",
+        "declaration": "function signKeychainConfigurableAccount(OwnerKey[] calldata ownerKeys, address configurableAccount, ConfigurableAccountConfig calldata config, address account, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signKeychainConfigurableAccount((uint8,uint256)[],address,(bytes32,uint64,uint8,(address,uint8)[]),address,bytes32)",
+        "selector": "0xb6468902",
+        "selectorBytes": [
+          182,
+          70,
+          137,
+          2
         ]
       },
       "group": "crypto",

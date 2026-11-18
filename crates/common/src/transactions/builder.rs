@@ -1,16 +1,25 @@
+use crate::tempo::configurable_account::ConfigurableAccountSigner;
 use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
-use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet};
-use alloy_primitives::{Address, B256, Signature, TxKind, U256};
+use alloy_network::{
+    AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet, TransactionBuilder,
+};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, serde_helpers::WithOtherFields};
 use eyre::Result;
-use foundry_wallets::TempoAccountsWallet;
 use std::num::NonZeroU64;
-use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
+use tempo_alloy::{
+    TempoNetwork,
+    accounts::TempoAccountsWallet,
+    rpc::{ConfigurableAccountSimulationSpec, TempoTransactionRequest},
+};
+use tempo_primitives::{
+    SignatureType, TempoTxType,
+    transaction::{Call, TempoSignedAuthorization},
+};
 
 #[cfg(feature = "base")]
 use base_common_network::Base;
@@ -162,6 +171,11 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
         false
     }
 
+    /// Sets the input of the first Tempo AA call, or the transaction input without a call list.
+    fn set_first_call_input(&mut self, input: Bytes) {
+        self.set_input(input);
+    }
+
     /// Returns true when this request will be built as a Tempo AA transaction.
     fn is_tempo_aa(&self) -> bool {
         false
@@ -222,6 +236,10 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
         self.set_key_id(key_id);
         self
     }
+
+    /// Set the configurable account owner quorum that gas estimation models for the sender of a
+    /// Tempo transaction signed with a `0x05` signature.
+    fn set_configurable_account_simulation(&mut self, _spec: ConfigurableAccountSimulationSpec) {}
 
     /// Get the valid_before timestamp for a Tempo expiring nonce transaction.
     fn valid_before(&self) -> Option<NonZeroU64> {
@@ -310,6 +328,16 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     ) -> impl Future<Output = Result<Vec<u8>>> + Send {
         std::future::ready(Err(eyre::eyre!(
             "Tempo access-key wallets are not supported for this network"
+        )))
+    }
+
+    /// Sign a prepared request as a Tempo configurable account with its owners' approvals.
+    fn sign_with_configurable_account(
+        self,
+        _signer: &ConfigurableAccountSigner,
+    ) -> impl Future<Output = Result<Vec<u8>>> + Send {
+        std::future::ready(Err(eyre::eyre!(
+            "Tempo configurable accounts are not supported for this network"
         )))
     }
 }
@@ -437,8 +465,26 @@ impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
         self.authorization_list.as_ref()
     }
 
+    /// A Tempo AA transaction carries its authorizations in `tempo_authorization_list` and
+    /// ignores the Ethereum list, so they go there once Tempo options have made the request AA.
+    /// A list with an invalid signature stays in the Ethereum list, where it is never applied.
     fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
-        self.authorization_list = Some(authorization_list);
+        if self.is_tempo_aa()
+            && let Ok(tempo_authorization_list) = authorization_list
+                .iter()
+                .map(|auth| {
+                    let signature = auth.signature()?;
+                    Ok(TempoSignedAuthorization::new_unchecked(
+                        auth.inner().clone(),
+                        signature.into(),
+                    ))
+                })
+                .collect::<Result<_, alloy_primitives::SignatureError>>()
+        {
+            self.tempo_authorization_list = tempo_authorization_list;
+        } else {
+            self.authorization_list = Some(authorization_list);
+        }
     }
 
     fn fee_token(&self) -> Option<Address> {
@@ -457,6 +503,13 @@ impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
 
     fn has_tempo_call_list(&self) -> bool {
         !self.calls.is_empty()
+    }
+
+    fn set_first_call_input(&mut self, input: Bytes) {
+        match self.calls.first_mut() {
+            Some(call) => call.input = input,
+            None => self.set_input(input),
+        }
     }
 
     fn is_tempo_aa(&self) -> bool {
@@ -499,6 +552,10 @@ impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
 
     fn set_key_id(&mut self, key_id: Address) {
         self.key_id = Some(key_id);
+    }
+
+    fn set_configurable_account_simulation(&mut self, spec: ConfigurableAccountSimulationSpec) {
+        self.configurable_account_simulation = Some(spec);
     }
 
     fn valid_before(&self) -> Option<NonZeroU64> {
@@ -561,5 +618,12 @@ impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
 
     async fn sign_with_tempo_wallet(self, wallet: &TempoAccountsWallet) -> Result<Vec<u8>> {
         wallet.sign_request(self).await.map(|envelope| envelope.encoded_2718()).map_err(Into::into)
+    }
+
+    async fn sign_with_configurable_account(
+        self,
+        signer: &ConfigurableAccountSigner,
+    ) -> Result<Vec<u8>> {
+        signer.sign_request(self).await.map(|envelope| envelope.encoded_2718())
     }
 }

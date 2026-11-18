@@ -1,6 +1,12 @@
 //! Support for forking off another client
 
-use crate::eth::{backend::db::Db, error::BlockchainError};
+use crate::eth::{
+    backend::{
+        db::{BlockchainDb, Db},
+        env::{BlobExcessGasAndPrice, SpecId},
+    },
+    error::BlockchainError,
+};
 use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount};
 use alloy_eips::{eip2930::AccessListResult, eip7840::BlobParams};
@@ -35,20 +41,24 @@ use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, StateContext};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
-use foundry_common::provider::{RetryProvider, is_rpc_method_not_found};
-use foundry_evm::{
-    backend::{AccountFetchPolicy, BlockchainDb, account_fetch_policy_for_source},
-    fork::{cache_bal, validate_bal},
-    hardfork::FoundryHardfork,
+use foundry_common::{
+    provider::{RetryProvider, is_rpc_method_not_found},
+    tempo::configurable_account::config_from_logs,
 };
+use foundry_evm_core::{
+    backend::account_fetch_policy_for_source,
+    fork::{cache_bal, validate_bal},
+};
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_fork_db::AccountFetchPolicy;
 use foundry_primitives::{FoundryHeader, FoundryTxReceipt};
 use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
-use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroU64, sync::Arc, time::Duration};
+use tempo_primitives::transaction::ConfigurableAccountConfig;
 use tokio::sync::RwLock as AsyncRwLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,7 +198,7 @@ impl<N: Network> ClientFork<N> {
         account_fetch_policy_for_source(
             config.chain_id,
             config.endpoint_identity.network_profile.unwrap_or_default(),
-        ) == AccountFetchPolicy::RequireAccountInfo
+        ) != AccountFetchPolicy::Auto
     }
 
     /// Returns the execution chain ID exposed by the forked node.
@@ -790,6 +800,25 @@ impl<N: Network> ClientFork<N> {
         storage.hashes.insert(block_number, hash);
         storage.blocks.insert(hash, block.clone());
     }
+
+    /// Returns the configuration of the Tempo configurable account `account` that `commitment`
+    /// names, from the latest configuration event of `account` at or before the fork block.
+    pub async fn configurable_account_config(
+        &self,
+        account: Address,
+        commitment: B256,
+    ) -> eyre::Result<ConfigurableAccountConfig> {
+        let key = (account, commitment);
+        if let Some(config) = self.storage_read().configurable_account_configs.get(&key).cloned() {
+            return Ok(config);
+        }
+
+        let config =
+            config_from_logs(&*self.provider(), account, commitment, self.block_number()).await?;
+
+        self.storage_write().configurable_account_configs.insert(key, config.clone());
+        Ok(config)
+    }
 }
 
 impl ClientFork {
@@ -958,6 +987,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub(crate) endpoint_identity: ForkEndpointIdentity,
     /// Discovery identified a local node or could not rule out mutable source state.
     pub(crate) state_is_mutable: bool,
+    /// Tempo consensus epoch length reported by the fork source, if it exposes one.
+    pub(crate) tempo_epoch_length: Option<NonZeroU64>,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block
@@ -1087,6 +1118,7 @@ pub struct ForkedStorage<N: Network = AnyNetwork> {
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<FoundryTxReceipt>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
+    pub configurable_account_configs: HashMap<(Address, B256), ConfigurableAccountConfig>,
 }
 
 impl<N: Network> Default for ForkedStorage<N> {
@@ -1104,6 +1136,7 @@ impl<N: Network> Default for ForkedStorage<N> {
             block_traces: Default::default(),
             block_receipts: Default::default(),
             code_at: Default::default(),
+            configurable_account_configs: Default::default(),
         }
     }
 }

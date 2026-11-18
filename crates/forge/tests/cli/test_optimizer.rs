@@ -5702,6 +5702,18 @@ contract CheckTest {
 [FAIL: implementation changed] test_value() ([GAS])
 ...
 "#]]);
+
+    // Removing the ambiguous artifact path must restore dynamic linking in the cached factory.
+    fs::remove_file(prj.root().join("vendor/pkg/src/Impl.sol")).unwrap();
+    fs::remove_file(prj.root().join("script/Other.s.sol")).unwrap();
+    cmd.forge_fuse().args(["build", "src/Consumer.sol"]).assert_success();
+    let restored = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    let clean = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    assert_eq!(
+        restored.deployed_bytecode.unwrap().bytecode.unwrap().object,
+        clean.deployed_bytecode.unwrap().bytecode.unwrap().object
+    );
 }
 
 #[forgetest]
@@ -5752,4 +5764,38 @@ contract TargetTest {
     let restored = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
     assert_eq!(original_bytecode, restored.deployed_bytecode.unwrap().bytecode.unwrap().object);
     cmd.forge_fuse().arg("test").assert_success();
+}
+
+// <https://github.com/foundry-rs/foundry/issues/18024>
+#[forgetest]
+fn preprocess_removed_test_keeps_script_cache(prj: _, cmd: _) {
+    for i in 1..=5 {
+        prj.add_source(
+            &format!("C{i}.sol"),
+            &format!("contract C{i} {{ uint256 public x = {i}; }}"),
+        );
+    }
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import {C1} from "../src/C1.sol";
+contract Deploy { function run() external { new C1(); } }
+"#,
+    );
+    prj.add_test(
+        "T.t.sol",
+        r#"
+import {C2} from "../src/C2.sol";
+contract T { function test_x() external { new C2(); } }
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    fs::remove_file(prj.root().join("test/T.t.sol")).unwrap();
+    cmd.forge_fuse().args(["script", "script/Deploy.s.sol"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+Script ran successfully.
+...
+"#]]);
 }

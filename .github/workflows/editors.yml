@@ -56,6 +56,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
+      - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
       - name: Install Forge and VS Code native dependencies
         run: |
           sudo apt-get update
@@ -64,6 +65,7 @@ jobs:
         with:
           cache-bin: false
           prefix-key: v2-editor-forge
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: npm ci
         working-directory: editors/vscode
       - run: npm run check && npm test && npm run bundle:check
@@ -78,7 +80,6 @@ jobs:
           unzip -p bundle/forge.vsix extension/LICENSE-MIT | cmp - ../../LICENSE-MIT
           unzip -p bundle/forge.vsix extension/LICENSE-APACHE | cmp - ../../LICENSE-APACHE
       - run: cargo build --locked -p forge --bin forge
-      - run: cargo test --locked -p forge --test cli 'lsp::'
       - name: Real Forge in VS Code Extension Development Host
         run: |
           xvfb-run -a npm run test:host

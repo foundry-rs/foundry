@@ -12,7 +12,7 @@
 use alloy_chains::NamedChain;
 use alloy_eips::Typed2718;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, state::EvmOverrides};
 use alloy_transport::{RpcError, TransportError};
 use anvil::{
@@ -117,6 +117,21 @@ async fn fork_and_assert(chain: NamedChain) -> Option<()> {
         // Public endpoints occasionally report block zero while they are unhealthy.
         return skip(chain, "fork head", "endpoint reported block zero");
     }
+
+    // Without a configured gas limit, the fork adopts the gas limit of the block it forked from.
+    let block = fork_ok(
+        chain,
+        "eth_getBlockByNumber",
+        api.block_by_number(BlockNumberOrTag::Number(fork_block)).await,
+    )?;
+    let Some(block) = block else {
+        return skip(chain, "eth_getBlockByNumber", "endpoint did not serve the fork block");
+    };
+    assert_eq!(
+        api.gas_limit(),
+        U256::from(block.header.gas_limit),
+        "{chain:?} fork did not adopt the fork block's gas limit"
+    );
 
     for wallet in handle.dev_wallets() {
         let balance = api.balance(wallet.address(), None).await.unwrap();

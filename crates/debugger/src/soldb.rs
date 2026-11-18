@@ -5,6 +5,7 @@
 //! soldb's own tools read.
 
 use alloy_primitives::{Address, B256, Bytes, hex, keccak256, map::HashSet};
+use evm2::interpreter::{InstrStop, opcode::OpCode};
 use eyre::{OptionExt, Result};
 use foundry_common::{
     ContractsByArtifact, Shell,
@@ -19,10 +20,10 @@ use foundry_evm_traces::{
     CallTrace, CallTraceArena, CallTraceNode, CallTraceStep, TraceMemberOrder,
     debug::{
         ArtifactData, ContractSources, DebugRecording, RecordedFrame, SourceData, StepConverter,
-        quantity,
+        quantity, step_record,
     },
 };
-use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
+use foundry_tui::{TuiMode, restore_terminal_on_panic, tui_mode};
 use serde_json::{Map, Value, json};
 use soldb_core::{
     ContractCreation, EvmWord, ExecutionCall, StepRecord, StepTable, TraceArtifacts,
@@ -33,7 +34,6 @@ use soldb_ethdebug::{EthdebugInfo, Instruction, SourceLocation, SourceMapContext
 use soldb_repl::{BreakpointTarget, DebuggerCommand, DebuggerState, Output, Renderer, Session};
 use soldb_tui::Exit;
 use std::{
-    borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap},
     io::{self, IsTerminal, Write},
     ops::Range,
@@ -85,8 +85,8 @@ impl SoldbDebugger {
 
     /// Runs the session.
     ///
-    /// If stdin and stdout are terminals, the full-screen view opens first. Then commands are
-    /// read from stdin, one per line, until `quit` or the end of the input.
+    /// If the full-screen view can run, it opens first. Then commands are read from stdin, one per
+    /// line, until `quit` or the end of the input, with a prompt if stdin is a terminal.
     pub(crate) fn try_run(self) -> Result<()> {
         let mut state = DebuggerState::new();
         state.load_trace_with_debug_info(self.trace, self.contracts)?;
@@ -105,20 +105,21 @@ impl SoldbDebugger {
         }
         let mut session = Session::new(state);
         let renderer = Renderer::new(Shell::get().out_supports_color());
-        let terminal = io::stdin().is_terminal() && io::stdout().is_terminal();
+        // The prompt goes to stderr, so it shows even when stdout is piped.
+        let prompt = io::stdin().is_terminal();
 
         emit(&renderer, vec![session.loaded()])?;
         emit(&renderer, session.initial_stop())?;
-        if terminal {
-            if open_tui(&mut session)? == Flow::Quit {
-                return Ok(());
-            }
+        if tui_mode().is_interactive() && open_tui(&mut session)? == Flow::Quit {
+            return Ok(());
+        }
+        if prompt {
             sh_eprintln!("Type `help` for the command list, `tui` for the full-screen view.")?;
         }
 
         let mut line = String::new();
         loop {
-            if terminal {
+            if prompt {
                 sh_eprint!("soldb> ")?;
                 io::stderr().flush()?;
             }
@@ -160,7 +161,11 @@ fn emit(renderer: &Renderer, outputs: Vec<Output>) -> Result<Flow> {
 
 /// Opens the full-screen view until the user leaves it.
 fn open_tui(session: &mut Session) -> Result<Flow> {
-    match soldb_tui::run(session) {
+    if let TuiMode::Fallback(reason) = tui_mode() {
+        sh_warn!("cannot open the full-screen view: {}", reason.as_str())?;
+        return Ok(Flow::Continue);
+    }
+    match restore_terminal_on_panic(|| soldb_tui::run(session)) {
         Ok(Exit::Repl) => Ok(Flow::Continue),
         Ok(Exit::Quit) => Ok(Flow::Quit),
         Err(error) if error.kind() == io::ErrorKind::Unsupported => {
@@ -481,7 +486,8 @@ impl TraceBuilder {
             .filter(|_| step.op == OpCode::SSTORE)
             .and_then(|change| change.had_value);
         let storage = self.converter.storage(step.op.get(), stack, loaded, had_value);
-        // `None` would keep the previous step's buffer, so an empty one is spelled out too.
+        // The converter spells out the buffer of the first step and of every change, including
+        // to an empty one; `None` keeps the previous step's.
         let return_data = self.converter.return_data(&step.returndata);
         self.steps.append(
             StepRecord {
@@ -495,7 +501,7 @@ impl TraceBuilder {
                 storage: Some(storage.storage),
                 storage_diff: storage.storage_diff,
                 transient_storage: storage.transient_storage,
-                return_data: Some(return_data),
+                return_data,
             },
             stack.iter().map(|word| EvmWord(word.to_be_bytes())),
         );
@@ -536,24 +542,7 @@ fn recorded_steps(recordings: &[DebugRecording]) -> Result<(StepTable, Vec<usize
         let source = source.as_ref().ok_or_eyre("the recorded steps are in use")?;
         for index in recording.steps.clone() {
             let step = source.step(index);
-            let stack = step.stack();
-            table.append(
-                StepRecord {
-                    pc: step.pc(),
-                    op: step.op(),
-                    gas: step.gas(),
-                    gas_cost: step.gas_cost(),
-                    depth: step.depth(),
-                    error: step.error().map(str::to_owned),
-                    memory: step.memory(),
-                    storage: Some(Arc::new(step.storage().clone())),
-                    storage_diff: Some(step.storage_diff().clone()).filter(|diff| !diff.is_empty()),
-                    transient_storage: Some(step.transient_storage().clone())
-                        .filter(|slots| !slots.is_empty()),
-                    return_data: Some(Arc::from(step.return_data().unwrap_or_default())),
-                },
-                (0..stack.len()).filter_map(|position| stack.get(position)),
-            );
+            table.append(step_record(&step), step.stack().iter());
         }
     }
     Ok((table, offsets))
@@ -657,15 +646,8 @@ fn contract_debug_info(
             Some(pc as u32)
         };
         if let Some(element) = index.and_then(|index| program.source_map.get(index as usize)) {
-            let mnemonic = op.map_or_else(
-                || Cow::Owned(format!("UNKNOWN(0x{byte:02x})")),
-                |op| Cow::Borrowed(op.as_str()),
-            );
-            instructions.push(Instruction::from_source_map(
-                pc as u64,
-                mnemonic,
-                instruction_context(element, program.build_sources, &mut used_sources),
-            ));
+            let context = instruction_context(element, program.build_sources, &mut used_sources);
+            instructions.extend(Instruction::from_bytecode(program.code, pc, context));
         }
         pc += 1 + op.map_or(0, |op| op.info().immediate_size() as usize);
     }
@@ -712,6 +694,28 @@ fn contract_debug_info(
     )
 }
 
+/// Checks that a SolDB bundle can be written to `dir`, before the run that records it.
+pub fn ensure_dump_dir(dir: &Path) -> Result<()> {
+    // Before 1.9, `--dump` wrote a single file, which a later run would otherwise fail on only
+    // after recording the trace.
+    if dir.exists() && !dir.is_dir() {
+        eyre::bail!(
+            "--dump now takes a directory, but {} is not one; remove it or pass a directory path",
+            dir.display()
+        );
+    }
+    // The bundle copies the compiler's sources under their project paths, and they can differ
+    // from the files on disk, so a directory with files, such as the project root, could have its
+    // files replaced.
+    if std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()) {
+        eyre::bail!(
+            "cannot write the SolDB bundle to {}: the directory is not empty",
+            dir.display()
+        );
+    }
+    Ok(())
+}
+
 /// Writes a bundle that soldb's own tools read, for example
 /// `soldb profile --trace-file <dir>/trace.json --contracts <dir>/contracts.json`.
 ///
@@ -726,15 +730,7 @@ pub(crate) fn write_bundle(
     sources: &ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Result<()> {
-    // The bundle copies the compiler's sources under their project paths, and they can differ
-    // from the files on disk, so a directory with files, such as the project root, could have its
-    // files replaced.
-    if std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()) {
-        eyre::bail!(
-            "cannot write the SolDB bundle to {}: the directory is not empty",
-            dir.display()
-        );
-    }
+    ensure_dump_dir(dir)?;
     // One entry per deployed code, so code replaced at an address keeps its own source maps.
     let mut contracts = BTreeMap::<(Address, B256), CombinedJson>::new();
     let mut written_sources = HashSet::<PathBuf>::default();
@@ -873,8 +869,8 @@ fn instruction_context(
 }
 
 /// The error a failed step or call ended with.
-fn status_error(status: Option<InstructionResult>) -> Option<String> {
-    status.filter(|status| !status.is_ok()).map(|status| format!("{status:?}"))
+fn status_error(status: Option<InstrStop>) -> Option<String> {
+    status.filter(|status| !status.is_success()).map(|status| format!("{status:?}"))
 }
 
 #[cfg(test)]
@@ -896,13 +892,12 @@ mod tests {
             returndata: Bytes::new(),
             gas_remaining: 0,
             gas_refund_counter: 0,
-            gas_used: 0,
             gas_cost: 0,
             state_gas_cost: None,
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            status: (op == OpCode::STOP).then_some(InstructionResult::Stop),
+            status: (op == OpCode::STOP).then_some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
         }
@@ -1076,6 +1071,7 @@ mod tests {
                 json!({
                     "offset": instruction.offset,
                     "mnemonic": instruction.mnemonic(),
+                    "arguments": instruction.arguments(),
                     "context": serde_json::to_value(instruction).unwrap()["context"],
                 })
             })
@@ -1086,6 +1082,7 @@ mod tests {
                 {
                     "offset": 0,
                     "mnemonic": "PUSH1",
+                    "arguments": ["0x80"],
                     "context": {
                         "modifierDepth": 0,
                         "code": { "source": { "id": 0 }, "range": { "offset": 0, "length": 8 } },
@@ -1094,13 +1091,19 @@ mod tests {
                 {
                     "offset": 2,
                     "mnemonic": "JUMPDEST",
+                    "arguments": [],
                     "context": {
                         "modifierDepth": 0,
                         "code": { "source": { "id": 0 }, "range": { "offset": 9, "length": 3 } },
                         "invoke": {},
                     },
                 },
-                { "offset": 3, "mnemonic": "STOP", "context": { "modifierDepth": 0, "return": {} } },
+                {
+                    "offset": 3,
+                    "mnemonic": "STOP",
+                    "arguments": [],
+                    "context": { "modifierDepth": 0, "return": {} },
+                },
             ])
         );
     }
@@ -1116,7 +1119,7 @@ mod tests {
         set_up.nodes_mut()[0].trace.success = true;
         let (_, mut test, _) = executed_c();
         test.nodes_mut()[0].trace.gas_used = 30;
-        test.nodes_mut()[0].trace.status = Some(InstructionResult::Revert);
+        test.nodes_mut()[0].trace.status = Some(InstrStop::Revert);
         let breakpoints = Breakpoints::from_iter([('a', (Address::repeat_byte(0xc), 2))]);
         let (trace, hits) =
             transaction_trace(&mut [deployment, set_up, test], Vec::new(), &breakpoints).unwrap();

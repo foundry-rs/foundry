@@ -4,6 +4,7 @@ use foundry_common::{
     version::{IS_NIGHTLY_VERSION, NIGHTLY_VERSION_WARNING_MESSAGE},
 };
 use foundry_config::{Config, figment::Profile};
+use foundry_evm::EVM_THREAD_STACK_SIZE;
 use serde::{Deserialize, Serialize};
 
 /// Global arguments for the CLI.
@@ -90,9 +91,11 @@ impl GlobalArgs {
         }
         shell.set();
 
-        // Initialize the thread pool only if `threads` was requested to avoid unnecessary overhead.
         if self.threads.is_some() {
             self.force_init_thread_pool()?;
+        } else {
+            // The pool may already exist when the CLI runs in-process, which keeps its stack size.
+            let _ = init_thread_pool(0);
         }
 
         // Display a warning message if the current version is not stable.
@@ -138,7 +141,11 @@ impl GlobalArgs {
         {
             builder.worker_threads(threads);
         }
-        builder.enable_all().build().expect("failed to create tokio runtime")
+        builder
+            .thread_stack_size(EVM_THREAD_STACK_SIZE)
+            .enable_all()
+            .build()
+            .expect("failed to create tokio runtime")
     }
 
     /// Creates a new tokio runtime and blocks on the future.
@@ -153,6 +160,7 @@ pub fn init_thread_pool(threads: usize) -> eyre::Result<()> {
     rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("foundry-{i}"))
         .num_threads(threads)
+        .stack_size(EVM_THREAD_STACK_SIZE)
         .build_global()?;
     Ok(())
 }

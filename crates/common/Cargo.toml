@@ -9,9 +9,6 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
-[package.metadata.cargo-shear]
-ignored = ["syn"]
-
 [lints]
 workspace = true
 
@@ -53,7 +50,7 @@ op-alloy-rpc-types = { workspace = true, optional = true }
 base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
 
-revm.workspace = true
+evm2.workspace = true
 
 solar.workspace = true
 
@@ -93,14 +90,12 @@ mpp.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic-all-languages"] }
 base64.workspace = true
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 sha2 = "0.11"
 
 [build-dependencies]
 chrono.workspace = true
 smolgen = { workspace = true, features = ["emit_and_set"] }
-# Unused. Enables the same host features as the anvil dependency tree so that Cargo reuses proc
-# macro builds across package selections.
-syn = { version = "3", default-features = false, features = ["fold"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

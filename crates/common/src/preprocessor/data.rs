@@ -289,6 +289,8 @@ pub(crate) fn create_deploy_helpers(
 const DEPLOY_HELPERS_DIR: &str = "foundry-pp";
 
 /// Returns a generated helper path that cannot overwrite an existing source unit.
+///
+/// Keep `is_source_context_change_relevant` in sync with how this reads `source_units`.
 pub(crate) fn deploy_helper_path(contract_id: &str, source_units: &[PathBuf]) -> PathBuf {
     let mut stem = format!("DeployHelper{contract_id}");
     loop {
