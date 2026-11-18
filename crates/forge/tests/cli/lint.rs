@@ -788,22 +788,25 @@ Warning: test and script files are only checked by `unsafe-cheatcode` and `envir
     cmd.arg("lint").arg(&test).assert_success().stderr_eq(warning.clone());
     cmd.forge_fuse().arg("lint").arg(&script).assert_success().stderr_eq(warning.clone());
     cmd.forge_fuse()
-        .args(["lint", "--only-lint", "incorrect-shift"])
+        .arg("lint")
         .arg(prj.root().join("script"))
+        .args(["--only-lint", "incorrect-shift"])
         .assert_success()
         .stderr_eq(warning);
 
     // Nothing is skipped when only lints that apply to tests and scripts are selected.
     cmd.forge_fuse()
-        .args(["lint", "--only-lint", "unsafe-cheatcode"])
+        .arg("lint")
         .arg(&script)
+        .args(["--only-lint", "unsafe-cheatcode"])
         .assert_success()
         .stderr_eq("");
 
     // Named sources are linted as usual, without the warning.
     cmd.forge_fuse()
-        .args(["lint", "--only-lint", "incorrect-shift"])
+        .arg("lint")
         .arg(&source)
+        .args(["--only-lint", "incorrect-shift"])
         .assert_success()
         .stderr_eq(str![[r#"
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
