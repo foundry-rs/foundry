@@ -1241,7 +1241,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1265,7 +1265,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1300,13 +1300,14 @@ dependencies = [
  "async-trait",
  "auto_impl",
  "axum",
+ "base-common-base-tx",
  "base-common-chains",
  "base-common-consensus",
- "base-common-eip8130",
  "base-common-genesis",
  "base-common-rpc-types",
  "base-consensus-upgrades",
  "base-evm2",
+ "base-execution-base-tx",
  "base-protocol",
  "chrono",
  "clap",
@@ -2509,9 +2510,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-base-tx"
+version = "0.0.0"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
+dependencies = [
+ "alloy-primitives",
+ "base-common-consensus",
+]
+
+[[package]]
 name = "base-common-blobs"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -2521,7 +2531,7 @@ dependencies = [
 [[package]]
 name = "base-common-chains"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-chains",
  "alloy-eips",
@@ -2537,7 +2547,7 @@ dependencies = [
 [[package]]
 name = "base-common-consensus"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2548,7 +2558,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-eth",
  "alloy-serde",
- "alloy-sol-types",
  "ambassador",
  "base-common-genesis",
  "bytes",
@@ -2561,19 +2570,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-eip8130"
-version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
-dependencies = [
- "alloy-primitives",
- "base-common-consensus",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "base-common-evm"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2586,7 +2585,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-l1-fees",
  "base-common-precompiles",
- "base-execution-eip8130",
+ "base-execution-base-tx",
  "base-metrics",
  "base-precompile-storage",
  "revm 43.0.3",
@@ -2597,12 +2596,12 @@ dependencies = [
 [[package]]
 name = "base-common-flz"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 
 [[package]]
 name = "base-common-genesis"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -2620,7 +2619,7 @@ dependencies = [
 [[package]]
 name = "base-common-l1-fees"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-primitives",
  "base-common-flz",
@@ -2630,7 +2629,7 @@ dependencies = [
 [[package]]
 name = "base-common-network"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -2648,13 +2647,13 @@ dependencies = [
 [[package]]
 name = "base-common-precompiles"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
  "alloy-sol-types",
+ "base-common-base-tx",
  "base-common-chains",
- "base-common-eip8130",
  "base-common-genesis",
  "base-precompile-macros",
  "base-precompile-storage",
@@ -2664,7 +2663,7 @@ dependencies = [
 [[package]]
 name = "base-common-rpc-types"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2687,7 +2686,7 @@ dependencies = [
 [[package]]
 name = "base-common-rpc-types-engine"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2707,7 +2706,7 @@ dependencies = [
 [[package]]
 name = "base-consensus-upgrades"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -2717,52 +2716,46 @@ dependencies = [
 [[package]]
 name = "base-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=7110e146f01ad25534286714aecb680f1bf7204b#7110e146f01ad25534286714aecb680f1bf7204b"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=22eed5bfb88624c4f657fa7c6e07543ab5580004#22eed5bfb88624c4f657fa7c6e07543ab5580004"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-sol-types",
+ "base-common-base-tx",
  "base-common-consensus",
- "base-common-eip8130",
  "base-common-genesis",
  "base-common-l1-fees",
  "base-common-precompiles",
- "base-execution-eip8130",
+ "base-execution-base-tx",
  "base-precompile-storage",
  "evm2",
  "revm 43.0.3",
 ]
 
 [[package]]
-name = "base-execution-eip8130"
+name = "base-execution-base-tx"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
+ "base-common-base-tx",
  "base-common-consensus",
- "base-common-eip8130",
  "base-common-precompiles",
- "base-precompile-macros",
  "base-precompile-storage",
- "base64 0.22.1",
- "k256 0.13.4",
- "p256 0.13.2",
  "revm 43.0.3",
- "sha2 0.10.9",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "base-metrics"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 
 [[package]]
 name = "base-precompile-macros"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-primitives",
  "proc-macro2",
@@ -2773,7 +2766,7 @@ dependencies = [
 [[package]]
 name = "base-precompile-storage"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -2788,7 +2781,7 @@ dependencies = [
 [[package]]
 name = "base-protocol"
 version = "0.0.0"
-source = "git+https://github.com/foundry-rs/base?rev=cf040fa0d97828e9fa4c2a127b8048df19906803#cf040fa0d97828e9fa4c2a127b8048df19906803"
+source = "git+https://github.com/foundry-rs/base?rev=8d20ec38f386e91a56a13ff21020c6b61c3f8823#8d20ec38f386e91a56a13ff21020c6b61c3f8823"
 dependencies = [
  "alloc-no-stdlib",
  "alloy-consensus",
@@ -3686,7 +3679,7 @@ dependencies = [
  "terminfo",
  "thiserror 2.0.21",
  "which",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3842,7 +3835,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5093,7 +5086,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.3",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5408,7 +5401,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5659,7 +5652,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6716,7 +6709,7 @@ dependencies = [
  "alloy-eips",
  "alloy-op-hardforks",
  "alloy-primitives",
- "base-common-eip8130",
+ "base-common-base-tx",
  "base-evm2",
  "clap",
  "foundry-evm-hardforks",
@@ -8053,7 +8046,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8944,7 +8937,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9293,7 +9286,7 @@ dependencies = [
 [[package]]
 name = "op-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=7110e146f01ad25534286714aecb680f1bf7204b#7110e146f01ad25534286714aecb680f1bf7204b"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=22eed5bfb88624c4f657fa7c6e07543ab5580004#22eed5bfb88624c4f657fa7c6e07543ab5580004"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10355,7 +10348,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11882,7 +11875,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11941,7 +11934,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -12755,7 +12748,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -13242,7 +13235,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -13581,7 +13574,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -13917,7 +13910,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -15039,7 +15032,7 @@ dependencies = [
  "watchexec-events",
  "watchexec-signals",
  "watchexec-supervisor",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -15188,7 +15181,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

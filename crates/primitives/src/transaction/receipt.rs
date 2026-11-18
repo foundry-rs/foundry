@@ -19,9 +19,9 @@ use tempo_primitives::TEMPO_TX_TYPE_ID;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom};
 
 #[cfg(feature = "base")]
-use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
+use base_common_consensus::BASE_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
-use base_common_consensus::Eip8130Receipt;
+use base_common_consensus::TxBaseReceipt;
 
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{
@@ -49,7 +49,7 @@ pub enum FoundryReceiptEnvelope<T = Log> {
     Deposit(OpDepositReceiptWithBloom<T>),
     #[cfg(feature = "base")]
     #[serde(rename = "0x79")]
-    Eip8130(ReceiptWithBloom<Eip8130Receipt<T>>),
+    Eip8130(ReceiptWithBloom<TxBaseReceipt<T>>),
     #[serde(rename = "0x76")]
     Tempo(ReceiptWithBloom<Receipt<T>>),
     /// A receipt with a transaction type Foundry does not model.
@@ -112,7 +112,7 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
             }
             #[cfg(feature = "base")]
             FoundryTxType::Eip8130 => Self::Eip8130(ReceiptWithBloom {
-                receipt: Eip8130Receipt::new(inner_receipt, eip8130_committed_phases),
+                receipt: TxBaseReceipt::new(inner_receipt, eip8130_committed_phases),
                 logs_bloom,
             }),
             FoundryTxType::Celo => Self::Unknown(AnyReceiptEnvelope {
@@ -257,7 +257,7 @@ impl<T> FoundryReceiptEnvelope<T> {
             ),
             #[cfg(feature = "base")]
             Self::Eip8130(r) => {
-                FoundryReceiptEnvelope::Eip8130(r.map_receipt(|r: Eip8130Receipt<T>| r.map_logs(f)))
+                FoundryReceiptEnvelope::Eip8130(r.map_receipt(|r: TxBaseReceipt<T>| r.map_logs(f)))
             }
             Self::Tempo(r) => FoundryReceiptEnvelope::Tempo(r.map_logs(f)),
             Self::Unknown(r) => FoundryReceiptEnvelope::Unknown(AnyReceiptEnvelope {

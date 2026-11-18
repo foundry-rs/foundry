@@ -120,7 +120,7 @@ pub(crate) fn build_receipt(
         #[cfg(feature = "base")]
         FoundryTxType::Eip8130 => {
             FoundryReceiptEnvelope::Eip8130(alloy_consensus::ReceiptWithBloom {
-                receipt: base_common_consensus::Eip8130Receipt::new(
+                receipt: base_common_consensus::TxBaseReceipt::new(
                     receipt.receipt,
                     eip8130_committed_phases.unwrap_or_default(),
                 ),

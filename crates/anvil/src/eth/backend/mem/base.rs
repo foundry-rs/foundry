@@ -286,7 +286,7 @@ pub(super) fn ensure_create2_deployer(db: &mut dyn Db) -> Result<(), DatabaseErr
 }
 
 /// Plants Everest's code stub on code-less EIP-8130 system accounts so state clearing keeps them.
-pub(super) fn ensure_eip8130_system_accounts(db: &mut dyn Db) -> Result<(), DatabaseError> {
+pub(super) fn ensure_base_tx_system_accounts(db: &mut dyn Db) -> Result<(), DatabaseError> {
     let mut info = db.basic_ref(EIP8130_NONCE_MANAGER_ADDRESS)?.unwrap_or_default();
     if !info.is_empty_code_hash() {
         return Ok(());

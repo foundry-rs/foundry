@@ -30,7 +30,7 @@ use tempo_alloy::{
 
 #[cfg(feature = "base")]
 use base_common_consensus::{
-    BaseReceipt, BaseTxEnvelope, Eip8130Signed, TxDeposit as BaseTxDeposit,
+    BaseReceipt, BaseTxEnvelope, TxBaseSigned, TxDeposit as BaseTxDeposit,
 };
 #[cfg(feature = "base")]
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction as BaseRpcTransaction};
@@ -559,7 +559,7 @@ input                {}",
 }
 
 #[cfg(feature = "base")]
-impl UIfmt for Eip8130Signed {
+impl UIfmt for TxBaseSigned {
     fn pretty(&self) -> String {
         let tx = self.tx();
         // `calls` is grouped into phases, and `accountChanges` can be long, so both are summarized
@@ -733,7 +733,7 @@ impl UIfmt for BaseTxEnvelope {
             Self::Eip1559(tx) => tx.pretty(),
             Self::Eip7702(tx) => tx.pretty(),
             Self::Deposit(tx) => tx.inner().pretty(),
-            Self::Eip8130(tx) => tx.pretty(),
+            Self::Base(tx) => tx.pretty(),
         }
     }
 }
@@ -1310,7 +1310,7 @@ mod tests {
     use similar_asserts::assert_eq;
 
     #[cfg(feature = "base")]
-    use base_common_consensus::{Call as BaseCall, TxEip8130};
+    use base_common_consensus::{Call as BaseCall, TxBase};
 
     #[test]
     fn format_date_time() {
@@ -1342,7 +1342,7 @@ mod tests {
     #[test]
     fn can_pretty_print_eip8130_transaction() {
         let base_call = BaseCall { to: Address::ZERO, value: U256::ZERO, data: Bytes::new() };
-        let tx = TxEip8130 {
+        let tx = TxBase {
             chain_id: 8453,
             sender: Some(Address::with_last_byte(0x11)),
             payer: Some(Address::with_last_byte(0x22)),
@@ -1358,7 +1358,7 @@ mod tests {
             ..Default::default()
         };
         let signed =
-            Eip8130Signed::new(tx, Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02]));
+            TxBaseSigned::new(tx, Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02]));
 
         assert_eq!(
             signed.pretty().trim(),

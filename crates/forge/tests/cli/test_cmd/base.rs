@@ -5,7 +5,7 @@ use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
-use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
+use base_common_consensus::{BaseTxEnvelope, TxBase, TxBaseSigned};
 use foundry_evm::hardforks::BaseUpgrade;
 use foundry_test_utils::util::OutputExt;
 
@@ -193,7 +193,7 @@ contract BaseScript {
 #[forgetest]
 fn base_execute_transaction_rejects_eip8130(prj: _, cmd: _) {
     let signer = PrivateKeySigner::from_bytes(&B256::with_last_byte(1)).unwrap();
-    let tx = TxEip8130 {
+    let tx = TxBase {
         chain_id: 8453,
         sender: None,
         nonce_key: U256::ZERO,
@@ -210,7 +210,7 @@ fn base_execute_transaction_rejects_eip8130(prj: _, cmd: _) {
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
     let signed =
-        BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()));
+        BaseTxEnvelope::Base(TxBaseSigned::new(tx, signature.as_bytes().into(), Bytes::new()));
     assert_eq!(signed.recover_signer().unwrap(), signer.address());
     let mut raw = Vec::new();
     signed.network_encode(&mut raw);

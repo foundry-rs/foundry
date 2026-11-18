@@ -2,13 +2,13 @@
 
 use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types::TransactionRequest;
-use base_common_consensus::{EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE, TxEip8130};
-use base_common_rpc_types::{BaseTransactionRequest, Eip8130RequestFields};
+use base_common_consensus::{BASE_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE, TxBase};
+use base_common_rpc_types::{BaseTransactionRequest, TxBaseRequestFields};
 use serde::Serialize;
 
 /// Projects the complete AA body into a simulation request without inventing a single call.
 pub(super) fn simulation_request(
-    tx: TxEip8130,
+    tx: TxBase,
     from: Option<Address>,
     sender_auth: Option<Bytes>,
     payer_auth: Option<Bytes>,
@@ -23,7 +23,7 @@ pub(super) fn simulation_request(
         max_priority_fee_per_gas: Some(tx.max_priority_fee_per_gas),
         ..Default::default()
     };
-    let fields = Eip8130RequestFields {
+    let fields = TxBaseRequestFields {
         nonce_key: Some(tx.nonce_key),
         account_changes: Some(tx.account_changes),
         calls: Some(tx.calls),
@@ -34,7 +34,6 @@ pub(super) fn simulation_request(
         sender_auth,
         payer: tx.payer,
         payer_auth,
-        ..Default::default()
     };
     // The upstream request exposes no constructor for its private AA fields.
     #[derive(Serialize)]
@@ -42,7 +41,7 @@ pub(super) fn simulation_request(
         #[serde(flatten)]
         inner: TransactionRequest,
         #[serde(flatten)]
-        fields: Eip8130RequestFields,
+        fields: TxBaseRequestFields,
     }
     let value = serde_json::to_value(SimulationRequest { inner, fields })
         .expect("serializable Base simulation request");
@@ -55,11 +54,11 @@ mod tests {
     use crate::{FoundryTransactionRequest, FoundryTxEnvelope, FoundryTypedTx};
     use alloy_network::NetworkTransactionBuilder;
     use alloy_primitives::U256;
-    use base_common_consensus::{AccountChange, Call, Delegation, Eip8130Signed};
+    use base_common_consensus::{AccountChange, Call, Delegation, TxBaseSigned};
 
     #[test]
     fn eip8130_simulation_projection() {
-        let body = TxEip8130 {
+        let body = TxBase {
             chain_id: 8453,
             sender: Some(Address::repeat_byte(1)),
             payer: Some(Address::repeat_byte(2)),
@@ -80,7 +79,7 @@ mod tests {
             })],
             metadata: Bytes::from_static(b"metadata"),
         };
-        let signed = Eip8130Signed::new(
+        let signed = TxBaseSigned::new(
             body.clone(),
             Bytes::from_static(b"sender"),
             Bytes::from_static(b"payer"),
@@ -103,8 +102,8 @@ mod tests {
             assert!(!request.can_build());
             let base = request.as_base().unwrap();
             assert_eq!(
-                base.as_eip8130(),
-                Some(&Eip8130RequestFields {
+                base.as_base_tx(),
+                Some(&TxBaseRequestFields {
                     nonce_key: Some(body.nonce_key),
                     account_changes: Some(body.account_changes.clone()),
                     calls: Some(body.calls.clone()),
@@ -115,7 +114,6 @@ mod tests {
                     payer: body.payer,
                     sender_auth,
                     payer_auth,
-                    ..Default::default()
                 })
             );
             assert_eq!(

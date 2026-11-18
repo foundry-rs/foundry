@@ -15,9 +15,9 @@ use alloy_consensus::ReceiptWithBloom;
 #[cfg(feature = "base")]
 use alloy_primitives::U64;
 #[cfg(feature = "base")]
-use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
+use base_common_consensus::BASE_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
-use base_common_consensus::Eip8130Receipt;
+use base_common_consensus::TxBaseReceipt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, AsRef)]
 pub struct FoundryTxReceipt(pub WithOtherFields<TransactionReceipt<FoundryReceiptEnvelope<Log>>>);
@@ -176,7 +176,7 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     0x04 => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
                     #[cfg(feature = "base")]
                     EIP8130_TRANSACTION_TYPE => FoundryReceiptEnvelope::Eip8130(ReceiptWithBloom {
-                        receipt: Eip8130Receipt::new(receipt_with_bloom.receipt, committed_phases),
+                        receipt: TxBaseReceipt::new(receipt_with_bloom.receipt, committed_phases),
                         logs_bloom: receipt_with_bloom.logs_bloom,
                     }),
                     TEMPO_TX_TYPE_ID => FoundryReceiptEnvelope::Tempo(receipt_with_bloom),
