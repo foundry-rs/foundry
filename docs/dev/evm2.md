@@ -98,9 +98,10 @@ These compatibility differences affect execution, gas reports and Anvil library 
   EIP-161 requires. revm-based Anvil kept it in state, for example an OP Stack fee vault after a
   zero fee credit or the target of a call to an address without code. For the same transactions,
   state roots and block hashes differ from revm-based Anvil.
-- **Anvil state dumps**: dumps written by this version do not load on revm-based Anvil. They store
-  historical-state code as raw bytes and trace steps without `gas_used`, which older versions cannot
-  deserialize. They also leave out zero-valued storage slots.
+- **Anvil state dumps**: ordinary dumps written by this version load on revm-based Anvil. Dumps
+  written with `--preserve-historical-states` do not, because they store historical-state code as
+  raw bytes, which older versions cannot deserialize. Dumps also leave out zero-valued storage
+  slots.
 - **Fork caches**: RPC fork caches written by revm-based Foundry are reused when their block
   environment metadata matches. Tempo caches, whose metadata revm wrote as Tempo's block
   environment, and caches of blocks without a `mixHash` that revm recorded with no `prevrandao` no
