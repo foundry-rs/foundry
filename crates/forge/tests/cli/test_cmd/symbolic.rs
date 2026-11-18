@@ -8704,3 +8704,34 @@ contract SymbolicBoundedComplementTest {
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
 }
+
+// The fallback search must not spend its budget below an early value that a later constraint
+// rules out for every candidate.
+#[forgetest_init]
+fn symbolic_fallback_backjumps_past_unrelated_vars(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_fallback_backjumps_past_unrelated_vars");
+
+    prj.add_test(
+        "SymbolicFallbackBackjump.t.sol",
+        r#"
+contract SymbolicFallbackBackjump {
+    function checkComplementBound(uint256 amount, uint256 supply, uint256 balance) public pure {
+        require(amount <= ~supply);
+        assert(amount <= ~balance);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--match-test", "checkComplementBound"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkComplementBound(uint256,uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
+}
