@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Bump all dependencies from the tempoxyz/tempo repository to the latest commit on main.
 # All tempo dependencies share the same commit revision.
-# The evm2 and reth revisions follow Tempo's new revision when Tempo's are newer.
+# The reth revision follows Tempo's new revision, and the evm2 revision does when Tempo's is newer.
 #
 # Usage:
 #   ./bump-tempo.sh [--dry-run]
@@ -29,11 +29,11 @@ if [[ "${1:-}" == "--dry-run" ]]; then
   echo "Running in dry-run mode (no changes will be made)"
 fi
 
-# Print the revision of the first dependency in a manifest that uses a git URL.
+# Print the full revision of the first uncommented dependency in a manifest that uses a git URL.
 get_rev() {
   local manifest="$1"
   local url="$2"
-  { grep -F "git = \"$url\"" "$manifest" || true; } | head -1 | sed 's/.*rev = "\([^"]*\)".*/\1/'
+  { grep -F "git = \"$url\"" "$manifest" | grep -v '^[[:space:]]*#' | grep -o 'rev = "[0-9a-f]\{40\}"' || true; } | head -1 | cut -d'"' -f2
 }
 
 # Get the current tempo revision from any dependency using tempoxyz/tempo
@@ -83,14 +83,16 @@ update_cargo_toml() {
   echo "Updated Cargo.toml: $old_rev -> $new_rev"
 }
 
-# Move a pin that Foundry shares with Tempo to Tempo's revision, but only forward.
-# Both manifests must pin the same git URL; GitHub's compare API decides which revision is newer.
+# Move a pin that Foundry shares with Tempo to Tempo's revision.
+# Both manifests must pin the same git URL. With "forward", GitHub's compare API must report
+# Tempo's revision as newer; otherwise the pin matches Tempo's exactly.
 sync_pin() {
   local name="$1"
   local repo="$2"
   local url="$3"
   local tempo_manifest="$4"
   local changelog="$5"
+  local mode="${6:-exact}"
   local old_rev new_rev status
 
   old_rev=$(get_rev "$CARGO_TOML" "$url")
@@ -103,32 +105,33 @@ sync_pin() {
     return
   fi
 
-  status=$(gh api "repos/$repo/compare/${old_rev}...${new_rev}" --jq '.status' || echo "unavailable")
-  if [[ "$status" != "ahead" ]]; then
-    echo "Keeping $name at ${old_rev:0:7}: Tempo's ${new_rev:0:7} is not newer ($status)"
-    echo "- Kept \`$name\` at [\`${old_rev:0:7}\`](https://redirect.github.com/$repo/commit/${old_rev}); Tempo's [\`${new_rev:0:7}\`](https://redirect.github.com/$repo/commit/${new_rev}) is not newer (compare status: $status)." >> "$changelog"
-    return
+  if [[ "$mode" == "forward" ]]; then
+    status=$(gh api "repos/$repo/compare/${old_rev}...${new_rev}" --jq '.status') || status=unavailable
+    if [[ "$status" != "ahead" ]]; then
+      echo "Keeping $name at ${old_rev:0:7}: Tempo's ${new_rev:0:7} is not newer ($status)"
+      echo "- Kept \`$name\` at [\`${old_rev:0:7}\`](https://redirect.github.com/$repo/commit/${old_rev}); Tempo's [\`${new_rev:0:7}\`](https://redirect.github.com/$repo/commit/${new_rev}) is not newer (compare status: $status)." >> "$changelog"
+      return
+    fi
   fi
 
   if [[ "$DRY_RUN" != "true" ]]; then
-    sed -i.bak "s/$old_rev/$new_rev/g; s/\`${old_rev:0:7}\`/\`${new_rev:0:7}\`/g" "$CARGO_TOML"
-    rm "$CARGO_TOML.bak"
+    sed -i "s/rev = \"$old_rev\"/rev = \"$new_rev\"/g; s/\`${old_rev:0:7}\`/\`${new_rev:0:7}\`/g" "$CARGO_TOML"
   fi
   echo "Synced $name with Tempo: ${old_rev:0:7} -> ${new_rev:0:7}"
   echo "- Bumped \`$name\` to Tempo's revision: [\`${old_rev:0:7}...${new_rev:0:7}\`](https://redirect.github.com/$repo/compare/${old_rev}...${new_rev})." >> "$changelog"
 }
 
-# Sync the evm2 and reth revisions that Tempo's new revision builds against.
+# Sync the evm2 and reth revisions with the manifest of Tempo's new revision.
 sync_tempo_pins() {
-  local new_rev="$1"
+  local tempo_manifest="$1"
   local changelog="$2"
-  local tempo_manifest notes
-  tempo_manifest=$(mktemp)
+  local notes
   notes=$(mktemp)
 
-  gh api "repos/tempoxyz/tempo/contents/Cargo.toml?ref=${new_rev}" -H "Accept: application/vnd.github.raw" > "$tempo_manifest"
   # Both manifests force the whole graph onto one evm2 revision through this patch URL.
-  sync_pin "evm2" "alloy-rs/evm2" "https://github.com/DaniPopes/evm2" "$tempo_manifest" "$notes"
+  # Foundry may run ahead of Tempo on evm2, so it only moves forward.
+  sync_pin "evm2" "alloy-rs/evm2" "https://github.com/DaniPopes/evm2" "$tempo_manifest" "$notes" forward
+  # reth-evm must match Tempo's exactly, or the lockfile carries two reth graphs.
   sync_pin "reth" "paradigmxyz/reth" "https://github.com/paradigmxyz/reth" "$tempo_manifest" "$notes"
   if [[ -s "$notes" ]]; then
     {
@@ -138,7 +141,7 @@ sync_tempo_pins() {
       cat "$notes"
     } >> "$changelog"
   fi
-  rm "$tempo_manifest" "$notes"
+  rm "$notes"
 }
 
 # Resolve the new revision while preserving unrelated locked dependencies.
@@ -194,17 +197,22 @@ main() {
   generate_changelog "$CURRENT_REV" "$LATEST_REV" "$CHANGELOG_FILE"
   set_output "changelog" "$CHANGELOG_FILE"
 
+  # Fetch before editing Cargo.toml, so a failed fetch leaves a rerun with work to do.
+  TEMPO_MANIFEST=$(mktemp)
+  trap 'rm -f "$TEMPO_MANIFEST"' EXIT
+  gh api "repos/tempoxyz/tempo/contents/Cargo.toml?ref=${LATEST_REV}" -H "Accept: application/vnd.github.raw" > "$TEMPO_MANIFEST"
+
   if [[ "$DRY_RUN" == "true" ]]; then
     echo ""
     echo "[DRY RUN] Would update Cargo.toml"
     echo "[DRY RUN] Would update Cargo.lock, preserving unrelated dependencies"
-    sync_tempo_pins "$LATEST_REV" "$CHANGELOG_FILE"
+    sync_tempo_pins "$TEMPO_MANIFEST" "$CHANGELOG_FILE"
     echo ""
     echo "=== Changelog Preview ==="
     cat "$CHANGELOG_FILE"
   else
     update_cargo_toml "$CURRENT_REV" "$LATEST_REV"
-    sync_tempo_pins "$LATEST_REV" "$CHANGELOG_FILE"
+    sync_tempo_pins "$TEMPO_MANIFEST" "$CHANGELOG_FILE"
     regenerate_lockfile
   fi
 

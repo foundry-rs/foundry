@@ -103,12 +103,14 @@ class SyncPinTests(unittest.TestCase):
     OLDER = "a" * 40
     NEWER = "b" * 40
     TEMPO = "c" * 40
+    UNKNOWN = "d" * 40
 
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        # GitHub's compare API reports the head's status relative to the base.
+        # GitHub's compare API reports the head's status relative to the base. On an error,
+        # `gh api --jq` prints the error body to stdout and exits non-zero.
         bin_dir = self.root / "bin"
         bin_dir.mkdir()
         gh = bin_dir / "gh"
@@ -117,7 +119,7 @@ class SyncPinTests(unittest.TestCase):
             'case "$2" in\n'
             f'  */compare/{self.OLDER}...{self.NEWER}) echo ahead ;;\n'
             f'  */compare/{self.NEWER}...{self.OLDER}) echo behind ;;\n'
-            '  *) exit 1 ;;\n'
+            """  *) echo '{"message":"Not Found"}'; exit 1 ;;\n"""
             "esac\n"
         )
         gh.chmod(0o755)
@@ -126,30 +128,27 @@ class SyncPinTests(unittest.TestCase):
         self.tempo_manifest = self.root / "tempo.toml"
         self.notes = self.root / "notes.md"
         self.notes.write_text("")
-        script = self.root / ".github/scripts/bump-tempo.sh"
-        script.parent.mkdir(parents=True)
-        source = (SCRIPTS / "bump-tempo.sh").read_text()
-        script.write_text(
-            source.removesuffix('main "$@"\n')
-            + f'sync_pin evm2 alloy-rs/evm2 https://github.com/DaniPopes/evm2 "{self.tempo_manifest}" "{self.notes}"\n'
-        )
-        self.script = script
+        self.script = self.root / ".github/scripts/bump-tempo.sh"
+        self.script.parent.mkdir(parents=True)
+        self.source = (SCRIPTS / "bump-tempo.sh").read_text().removesuffix('main "$@"\n')
 
-    def foundry_manifest(self, evm2):
+    def foundry_manifest(self, rev, url="https://github.com/DaniPopes/evm2"):
         return (
-            f'evm2 = {{ git = "https://github.com/alloy-rs/evm2", rev = "{evm2}" }}\n'
+            f'evm2 = {{ git = "https://github.com/alloy-rs/evm2", rev = "{self.TEMPO}" }}\n'
             f'tempo-evm = {{ git = "https://github.com/tempoxyz/tempo", rev = "{self.TEMPO}" }}\n'
-            f"# alloy-rs/evm2 main at `{evm2[:7]}`.\n"
-            '[patch."https://github.com/alloy-rs/evm2"]\n'
-            f'evm2 = {{ git = "https://github.com/DaniPopes/evm2", rev = "{evm2}" }}\n'
+            f"# Upstream main at `{rev[:7]}`.\n"
+            f'dep = {{ git = "{url}", rev = "{rev}" }}\n'
         )
 
-    def sync(self, foundry, tempo):
-        self.manifest.write_text(self.foundry_manifest(foundry))
+    def sync(self, foundry, tempo, mode="", url="https://github.com/DaniPopes/evm2", tempo_prefix=""):
+        self.manifest.write_text(self.foundry_manifest(foundry, url))
         self.tempo_manifest.write_text(
-            f'evm2 = {{ git = "https://github.com/alloy-rs/evm2", rev = "{self.TEMPO}" }}\n'
-            '[patch."https://github.com/alloy-rs/evm2"]\n'
-            f'evm2 = {{ git = "https://github.com/DaniPopes/evm2", rev = "{tempo}" }}\n'
+            tempo_prefix
+            + f'evm2 = {{ git = "https://github.com/alloy-rs/evm2", rev = "{self.TEMPO}" }}\n'
+            f'dep = {{ git = "{url}", rev = "{tempo}" }}\n'
+        )
+        self.script.write_text(
+            self.source + f'sync_pin dep owner/dep {url} "{self.tempo_manifest}" "{self.notes}" {mode}\n'
         )
         result = subprocess.run(
             ["bash", str(self.script)], env=self.env,
@@ -158,14 +157,43 @@ class SyncPinTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_follows_newer_tempo_pin(self):
-        self.sync(foundry=self.OLDER, tempo=self.NEWER)
+        self.sync(foundry=self.OLDER, tempo=self.NEWER, mode="forward")
         self.assertEqual(self.manifest.read_text(), self.foundry_manifest(self.NEWER))
         self.assertIn(f"/compare/{self.OLDER}...{self.NEWER}", self.notes.read_text())
 
     def test_keeps_newer_foundry_pin(self):
-        self.sync(foundry=self.NEWER, tempo=self.OLDER)
+        self.sync(foundry=self.NEWER, tempo=self.OLDER, mode="forward")
         self.assertEqual(self.manifest.read_text(), self.foundry_manifest(self.NEWER))
         self.assertIn("compare status: behind", self.notes.read_text())
+
+    def test_keeps_pin_when_compare_fails(self):
+        self.sync(foundry=self.UNKNOWN, tempo=self.NEWER, mode="forward")
+        self.assertEqual(self.manifest.read_text(), self.foundry_manifest(self.UNKNOWN))
+        self.assertIn("(compare status: unavailable).", self.notes.read_text())
+
+    def test_matches_older_tempo_pin_exactly(self):
+        self.sync(foundry=self.NEWER, tempo=self.OLDER)
+        self.assertEqual(self.manifest.read_text(), self.foundry_manifest(self.OLDER))
+
+    def test_skips_commented_and_short_pins(self):
+        url = "https://github.com/paradigmxyz/reth"
+        commented = f'# reth-basic-payload-builder = {{ git = "{url}", rev = "{self.UNKNOWN}" }}\n'
+        short = f'dep-short = {{ git = "{url}", rev = "{self.NEWER[:7]}" }}\n'
+        self.sync(foundry=self.OLDER, tempo=self.NEWER, url=url, tempo_prefix=commented + short)
+        self.assertEqual(self.manifest.read_text(), self.foundry_manifest(self.NEWER, url))
+
+    def test_syncs_reth_exactly_and_evm2_forward(self):
+        evm2 = 'dep = {{ git = "https://github.com/DaniPopes/evm2", rev = "{}" }}\n'
+        reth = 'reth-evm = {{ git = "https://github.com/paradigmxyz/reth", rev = "{}" }}\n'
+        self.manifest.write_text(evm2.format(self.NEWER) + reth.format(self.TEMPO))
+        self.tempo_manifest.write_text(evm2.format(self.OLDER) + reth.format(self.UNKNOWN))
+        self.script.write_text(self.source + f'sync_tempo_pins "{self.tempo_manifest}" "{self.notes}"\n')
+        result = subprocess.run(
+            ["bash", str(self.script)], env=self.env,
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.manifest.read_text(), evm2.format(self.NEWER) + reth.format(self.UNKNOWN))
 
 
 if __name__ == "__main__":
