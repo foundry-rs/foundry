@@ -3,7 +3,11 @@
 //! This module provides functionality to identify and decode storage slots based on
 //! Solidity storage layout information from the compiler.
 
-use crate::{mapping_slots::MappingSlots, namespaced_storage::unscoped_type_id};
+use crate::{
+    constants::{EIP1967_ADMIN_SLOT, EIP1967_BEACON_SLOT, EIP1967_IMPLEMENTATION_SLOT},
+    mapping_slots::MappingSlots,
+    namespaced_storage::unscoped_type_id,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{B256, U256, hex, keccak256, map::B256Map};
 use foundry_common_fmt::format_token_raw;
@@ -386,6 +390,31 @@ impl Serialize for DecodedSlotValues {
         state.serialize_field("newValue", &format_token_raw(&self.new_value))?;
         state.end()
     }
+}
+
+/// Identifies the standard [EIP-1967](https://eips.ethereum.org/EIPS/eip-1967) proxy slots, which
+/// proxies write from assembly constants that no storage layout covers.
+///
+/// Callers should prefer a layout's identification of the same slot.
+pub fn identify_eip1967_slot(slot: &B256) -> Option<SlotInfo> {
+    let label = match *slot {
+        EIP1967_IMPLEMENTATION_SLOT => "eip1967.proxy.implementation",
+        EIP1967_ADMIN_SLOT => "eip1967.proxy.admin",
+        EIP1967_BEACON_SLOT => "eip1967.proxy.beacon",
+        _ => return None,
+    };
+    Some(SlotInfo {
+        label: label.to_string(),
+        slot_type: StorageTypeInfo {
+            label: "address".to_string(),
+            dyn_sol_type: DynSolType::Address,
+        },
+        offset: 0,
+        slot: Into::<U256>::into(*slot).to_string(),
+        members: None,
+        decoded: None,
+        keys: None,
+    })
 }
 
 /// Storage slot identifier that uses Solidity [`StorageLayout`] to identify storage slots.

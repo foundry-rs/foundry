@@ -17,7 +17,7 @@ use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
 use alloy_network::{BlockResponse, Ethereum, Network, eip2718::Decodable2718};
 use alloy_primitives::{
-    Address, B256, Bytes, I256, Keccak256, LogData, Selector, TxHash, U64, U256, b256,
+    Address, B256, Bytes, I256, Keccak256, LogData, Selector, TxHash, U64, U256,
     eip191_hash_message, hex, keccak256,
     utils::{ParseUnits, Unit},
 };
@@ -34,6 +34,7 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
+    EIP1967_ADMIN_SLOT, EIP1967_BEACON_SLOT, EIP1967_IMPLEMENTATION_SLOT,
     abi::{
         abi_decode_calldata, abi_decode_event_data, encode_function_args,
         encode_function_args_packed, encode_function_args_raw, get_error, get_event, get_func,
@@ -1004,22 +1005,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Query(QuerySubcommand::Implementation { block, beacon, who, rpc }) => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            // bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)
-            const BEACON_SLOT: B256 =
-                b256!("0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50");
-            // bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)
-            const IMPLEMENTATION_SLOT: B256 =
-                b256!("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc");
-
-            let slot = if beacon { BEACON_SLOT } else { IMPLEMENTATION_SLOT };
+            let slot = if beacon { EIP1967_BEACON_SLOT } else { EIP1967_IMPLEMENTATION_SLOT };
             print_scalar(address_at_slot(&provider, who, slot, block).await?)?;
         }
         CastSubcommand::Query(QuerySubcommand::Admin { block, who, rpc }) => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            // bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1)
-            const ADMIN_SLOT: B256 =
-                b256!("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103");
-            print_scalar(address_at_slot(&provider, who, ADMIN_SLOT, block).await?)?;
+            print_scalar(address_at_slot(&provider, who, EIP1967_ADMIN_SLOT, block).await?)?;
         }
         CastSubcommand::Query(QuerySubcommand::Nonce { block, who, rpc }) => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;

@@ -7,7 +7,7 @@ use crate::{
 use alloy_consensus::{Transaction as _, Typed2718, transaction::SignerRecoverable};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{
-    Address, B256, Bytes, U256, hex, keccak256,
+    Address, B256, Bytes, U256, b256, hex, keccak256,
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
@@ -20,11 +20,11 @@ use evm2::{
     registry::HandlerError,
 };
 use foundry_common::{
-    TransactionMaybeSigned,
+    EIP1967_IMPLEMENTATION_SLOT, TransactionMaybeSigned,
     fs::{read_json_file, write_json_file},
     slot_identifier::{
         ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
-        SlotInfo,
+        SlotInfo, identify_eip1967_slot,
     },
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
@@ -141,7 +141,7 @@ struct SlotStateDiff {
     /// Current storage value.
     new_value: B256,
     /// Storage layout metadata (variable name, type, offset).
-    /// Only present when contract has storage layout output.
+    /// Only present when contract has storage layout output, or for the EIP-1967 proxy slots.
     /// This includes decoded values when available.
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     slot_info: Option<SlotInfo>,
@@ -2515,6 +2515,10 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
                                     },
                                 )
                             });
+                            // Proxies write the EIP-1967 slots from assembly constants, which no
+                            // layout covers.
+                            let slot_info =
+                                slot_info.or_else(|| identify_eip1967_slot(&storage_access.slot));
 
                             slot_state_diff.insert(SlotStateDiff {
                                 previous_value: storage_access.previousValue,
@@ -2545,12 +2549,9 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     state_diffs
 }
 
-/// EIP-1967 implementation storage slot
-const EIP1967_IMPL_SLOT: &str = "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
-
 /// EIP-1822 UUPS implementation storage slot: keccak256("PROXIABLE")
-const EIP1822_PROXIABLE_SLOT: &str =
-    "c5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7";
+const EIP1822_PROXIABLE_SLOT: B256 =
+    b256!("0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7");
 
 /// Helper function to get the contract data from the deployed code at an address.
 fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
@@ -2578,16 +2579,16 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
     }
 
     // Fall back to known proxy artifacts when exact matching is impossible.
-    let hex_str = hex::encode(&code_bytes);
+    let contains_slot = |slot: B256| code_bytes.windows(32).any(|word| word == slot.as_slice());
     let find_by_suffix =
         |suffix: &str| artifacts.iter().find(|(a, _)| a.identifier().ends_with(suffix));
     if detect_proxy
-        && hex_str.contains(EIP1967_IMPL_SLOT)
+        && contains_slot(EIP1967_IMPLEMENTATION_SLOT)
         && let Some(result) = find_by_suffix(":TransparentUpgradeableProxy")
     {
         return Some(result);
     } else if detect_proxy
-        && hex_str.contains(EIP1822_PROXIABLE_SLOT)
+        && contains_slot(EIP1822_PROXIABLE_SLOT)
         && let Some(result) = find_by_suffix(":UUPSUpgradeable")
     {
         return Some(result);
