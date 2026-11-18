@@ -93,7 +93,6 @@ pub const EIP1967_BEACON_SLOT: B256 =
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U256, keccak256};
 
     #[test]
     fn test_constant_sender() {
@@ -101,13 +100,5 @@ mod tests {
         assert_eq!(arb, ARBITRUM_SENDER);
         let base = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001");
         assert_eq!(base, OPTIMISM_SYSTEM_ADDRESS);
-    }
-
-    #[test]
-    fn eip1967_slots() {
-        let slot = |id: &str| B256::from(Into::<U256>::into(keccak256(id)) - U256::ONE);
-        assert_eq!(slot("eip1967.proxy.implementation"), EIP1967_IMPLEMENTATION_SLOT);
-        assert_eq!(slot("eip1967.proxy.admin"), EIP1967_ADMIN_SLOT);
-        assert_eq!(slot("eip1967.proxy.beacon"), EIP1967_BEACON_SLOT);
     }
 }

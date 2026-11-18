@@ -34,6 +34,7 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
+    EIP1967_ADMIN_SLOT, EIP1967_BEACON_SLOT, EIP1967_IMPLEMENTATION_SLOT,
     abi::{
         abi_decode_calldata, abi_decode_event_data, encode_function_args,
         encode_function_args_packed, encode_function_args_raw, get_error, get_event, get_func,
@@ -1004,17 +1005,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Query(QuerySubcommand::Implementation { block, beacon, who, rpc }) => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            let slot = if beacon {
-                foundry_common::EIP1967_BEACON_SLOT
-            } else {
-                foundry_common::EIP1967_IMPLEMENTATION_SLOT
-            };
+            let slot = if beacon { EIP1967_BEACON_SLOT } else { EIP1967_IMPLEMENTATION_SLOT };
             print_scalar(address_at_slot(&provider, who, slot, block).await?)?;
         }
         CastSubcommand::Query(QuerySubcommand::Admin { block, who, rpc }) => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            let slot = foundry_common::EIP1967_ADMIN_SLOT;
-            print_scalar(address_at_slot(&provider, who, slot, block).await?)?;
+            print_scalar(address_at_slot(&provider, who, EIP1967_ADMIN_SLOT, block).await?)?;
         }
         CastSubcommand::Query(QuerySubcommand::Nonce { block, who, rpc }) => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;

@@ -141,7 +141,7 @@ struct SlotStateDiff {
     /// Current storage value.
     new_value: B256,
     /// Storage layout metadata (variable name, type, offset).
-    /// Only present when contract has storage layout output.
+    /// Only present when contract has storage layout output, or for the EIP-1967 proxy slots.
     /// This includes decoded values when available.
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     slot_info: Option<SlotInfo>,
@@ -2494,29 +2494,29 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
                                 .as_ref()
                                 .and_then(|slots| slots.get(&storage_access.account));
 
-                            let slot_info = layout
-                                .and_then(|layout| {
-                                    let decoder = SlotIdentifier::new(layout.clone());
-                                    decoder.identify(&storage_access.slot, mapping_slots).or_else(
-                                        || {
-                                            // Create a map of new values for bytes/string
-                                            // identification. These values are used to determine
-                                            // the length of the data which helps determine how
-                                            // many slots to search.
-                                            let current_base_slot_values = raw_changes_by_slot
-                                                .iter()
-                                                .map(|(slot, (_, new_val))| (*slot, *new_val))
-                                                .collect::<B256Map<_>>();
-                                            decoder.identify_bytes_or_string(
-                                                &storage_access.slot,
-                                                &current_base_slot_values,
-                                            )
-                                        },
-                                    )
-                                })
-                                // Proxies write the EIP-1967 slots from assembly constants, which
-                                // no layout covers.
-                                .or_else(|| identify_eip1967_slot(&storage_access.slot));
+                            let slot_info = layout.and_then(|layout| {
+                                let decoder = SlotIdentifier::new(layout.clone());
+                                decoder.identify(&storage_access.slot, mapping_slots).or_else(
+                                    || {
+                                        // Create a map of new values for bytes/string
+                                        // identification. These values are used to determine
+                                        // the length of the data which helps determine how many
+                                        // slots to search
+                                        let current_base_slot_values = raw_changes_by_slot
+                                            .iter()
+                                            .map(|(slot, (_, new_val))| (*slot, *new_val))
+                                            .collect::<B256Map<_>>();
+                                        decoder.identify_bytes_or_string(
+                                            &storage_access.slot,
+                                            &current_base_slot_values,
+                                        )
+                                    },
+                                )
+                            });
+                            // Proxies write the EIP-1967 slots from assembly constants, which no
+                            // layout covers.
+                            let slot_info =
+                                slot_info.or_else(|| identify_eip1967_slot(&storage_access.slot));
 
                             slot_state_diff.insert(SlotStateDiff {
                                 previous_value: storage_access.previousValue,
