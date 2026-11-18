@@ -8789,6 +8789,23 @@ contract SymbolicBoundedComplementTest {
         (bool ok,) = address(this).staticcall(abi.encodeCall(this.remainderMul, (x, d, k)));
         assert(ok);
     }
+
+    // Converting assets to shares and back rounds down twice, so it cannot create assets.
+    function checkVaultRoundTrip(uint256 assets, uint256 supply, uint256 total) public pure {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = assets * supply / total;
+        assert(shares * total / supply <= assets);
+    }
+
+    // Scaling back by another total can create assets.
+    function checkVaultOtherTotal(uint128 assets, uint128 supply, uint128 total, uint128 other)
+        public
+        pure
+    {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert(shares * other / supply <= assets);
+    }
 }
 "#,
     );
@@ -8847,6 +8864,18 @@ contract SymbolicBoundedComplementTest {
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
 
         let result = json_test_result(&output, "checkWideRemainderMul(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkVaultRoundTrip(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result =
+            json_test_result(&output, "checkVaultOtherTotal(uint128,uint128,uint128,uint128)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }

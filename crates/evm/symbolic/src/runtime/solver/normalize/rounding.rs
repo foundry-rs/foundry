@@ -183,21 +183,34 @@ impl ConstraintContext {
                 if dividend == large {
                     return nonzero(divisor).then_some(false);
                 }
-                let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
+                let range = self.interval(divisor)?;
+                if range.min.is_zero() {
                     return None;
+                }
+                let bounded = |dividend: &SymExpr| {
+                    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
+                        return false;
+                    };
+                    let other = if left == large {
+                        right
+                    } else if right == large {
+                        left
+                    } else {
+                        return false;
+                    };
+                    (other == divisor
+                        || self.interval(other).is_some_and(|other| other.max <= range.min))
+                        && self.mul_cannot_overflow_256(left, right)
                 };
-                let other = if left == large {
-                    right
-                } else if right == large {
-                    left
-                } else {
-                    return None;
+                // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
+                // is bounded by `n / d`.
+                let peeled = match dividend.kind() {
+                    SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                        rounded_product_operands(left, right).map(|(n, _)| n)
+                    }
+                    _ => None,
                 };
-                let divisor = self.interval(divisor)?;
-                (!divisor.min.is_zero()
-                    && self.interval(other)?.max <= divisor.min
-                    && self.mul_cannot_overflow_256(left, right))
-                .then_some(false)
+                (peeled.is_some_and(bounded) || bounded(dividend)).then_some(false)
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => rounded_product_operands(left, right)
                 .is_some_and(|(dividend, _)| dividend == large)
