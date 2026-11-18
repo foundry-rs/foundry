@@ -1,5 +1,8 @@
 use super::{auth::confirm_and_build, print_result_line};
-use crate::tx::{CastTxBuilder, read_only_sender};
+use crate::{
+    tempo,
+    tx::{CastTxBuilder, SenderKind, read_only_sender},
+};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::U256;
@@ -11,10 +14,13 @@ use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
     utils::{LoadConfig, parse_ether_value},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::{
+    FoundryTransactionBuilder, provider::ProviderBuilder,
+    tempo::configurable_account::prepare_request,
+};
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 use tempo_alloy::TempoNetwork;
 
 #[cfg(feature = "base")]
@@ -130,7 +136,40 @@ impl EstimateArgs {
             Some(chain) => chain.id(),
             None => provider.get_chain_id().await?,
         };
+        // `cast send` rejects the same conflict.
+        if let (Some(account), Some(from)) = (tx.tempo.configurable_account, wallet.from) {
+            eyre::ensure!(
+                account == from,
+                "--tempo.configurable-account {account} does not match the sender {from}"
+            );
+        }
+        let as_access_key = tx.tempo.configurable_access_key.is_some();
+        let simulation_wallet = wallet.clone();
         let (sender, is_browser) = read_only_sender::<N>(&browser, wallet, &tx, chain_id).await?;
+        // Share the resolved signer with the configurable account lookup.
+        let (sender, signer) = match sender {
+            SenderKind::OwnedSigner(signer) => (None, Some(Arc::new(*signer))),
+            sender => (Some(sender), None),
+        };
+        let mut sender = match (tx.tempo.configurable_account, sender) {
+            (Some(account), _) if !is_browser => account.into(),
+            (_, Some(sender)) => sender,
+            (_, None) => SenderKind::Signer(signer.as_deref().expect("an owned signer")),
+        };
+        // A configurable account sender is estimated with its owners' approvals.
+        let simulation = if is_browser || sender.address().is_zero() {
+            None
+        } else {
+            tempo::configurable_account_simulation::<N>(
+                &tx.tempo,
+                &config,
+                &simulation_wallet,
+                sender.address(),
+                signer.clone(),
+                block.unwrap_or_default(),
+            )
+            .await?
+        };
 
         let code = if let Some(EstimateSubcommands::Create {
             code,
@@ -149,13 +188,24 @@ impl EstimateArgs {
             None
         };
 
-        let builder = CastTxBuilder::new(&provider, tx, &config)
+        let mut builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_to(to)
             .await?
             .with_code_sig_and_args(code, sig, args)
             .await?
             .raw();
+        if let Some((account, simulation)) = simulation {
+            // A configurable access key signs for the sender as its `keyId`.
+            let from = if as_access_key {
+                builder.tx_mut().set_key_id(account);
+                sender.address()
+            } else {
+                sender = account.into();
+                account
+            };
+            prepare_request::<N>(builder.tx_mut(), from, simulation);
+        }
         let Some(tx) = confirm_and_build(builder, sender, force, None, true).await? else {
             return Ok(());
         };

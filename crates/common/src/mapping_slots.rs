@@ -2,9 +2,9 @@ use alloy_primitives::{
     Address, B256, U256,
     map::{AddressHashMap, B256HashMap},
 };
-use revm::{
-    bytecode::opcode,
-    interpreter::{Interpreter, interpreter_types::Jumps},
+use evm2::{
+    EvmTypesHost,
+    interpreter::{Interpreter, op},
 };
 
 /// Provenance recovered for a Solidity mapping storage slot.
@@ -86,26 +86,30 @@ pub struct PendingMappingHash {
 }
 
 /// Captures a 64-byte Keccak operation before execution.
-pub fn capture_hash(interpreter: &Interpreter) -> Option<PendingMappingHash> {
-    if interpreter.bytecode.opcode() != opcode::KECCAK256
-        || interpreter.stack.peek(1).ok()? != U256::from(0x40)
-    {
+pub fn capture_hash<T: EvmTypesHost>(
+    interp: &Interpreter<'_, '_, T>,
+) -> Option<PendingMappingHash> {
+    let stack = interp.stack();
+    if interp.opcode() != op::KECCAK256 || stack.peek(1)? != U256::from(0x40) {
         return None;
     }
     Some(PendingMappingHash {
-        address: interpreter.input.target_address,
-        offset: interpreter.stack.peek(0).ok()?.try_into().ok()?,
+        address: interp.message().destination,
+        offset: stack.peek(0)?.try_into().ok()?,
     })
 }
 
 /// Records a successfully executed 64-byte Keccak operation after memory expansion.
-pub fn record_hash(
+pub fn record_hash<T: EvmTypesHost>(
     mapping_slots: &mut AddressHashMap<MappingSlots>,
-    interpreter: &Interpreter,
+    interp: &Interpreter<'_, '_, T>,
     pending: PendingMappingHash,
 ) {
-    let Ok(result) = interpreter.stack.peek(0) else { return };
-    let data = interpreter.memory.slice_len(pending.offset, 0x40);
+    if interp.result().is_err() {
+        return;
+    }
+    let Some(result) = interp.stack().peek(0) else { return };
+    let data = interp.memory().slice(pending.offset, 0x40);
     let key = B256::from_slice(&data[..0x20]);
     let parent = B256::from_slice(&data[0x20..]);
     mapping_slots.entry(pending.address).or_default().record_hash(result.into(), key, parent);
@@ -113,10 +117,13 @@ pub fn record_hash(
 
 /// Function to be used in `Inspector::step` to record mapping slots.
 #[cold]
-pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
-    if interpreter.bytecode.opcode() == opcode::SSTORE
-        && let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)
-        && let Ok(slot) = interpreter.stack.peek(0)
+pub fn step<T: EvmTypesHost>(
+    mapping_slots: &mut AddressHashMap<MappingSlots>,
+    interp: &Interpreter<'_, '_, T>,
+) {
+    if interp.opcode() == op::SSTORE
+        && let Some(mapping_slots) = mapping_slots.get_mut(&interp.message().destination)
+        && let Some(slot) = interp.stack().peek(0)
     {
         mapping_slots.insert(slot.into());
     }

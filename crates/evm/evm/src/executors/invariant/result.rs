@@ -2,20 +2,17 @@ use super::{
     InvariantFailures, InvariantFuzzError, InvariantMetrics, InvariantTest, InvariantTestRun,
     LiveInvariantStats, call_after_invariant_function, call_invariant_function,
     error::{InvariantRunCtx, record_handler_assertion_bug},
+    failure_provenance,
+    shrink::TerminalFailureSite,
 };
 use crate::executors::{Executor, RawCallResult};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, I256, Selector};
-use alloy_sol_types::{Panic, PanicKind, Revert, SolError, SolInterface};
+use alloy_sol_types::{Panic, PanicKind, Revert, SolError};
+use evm2::{evm::PendingState, interpreter::InstrStop};
 use eyre::Result;
 use foundry_config::InvariantConfig;
-use foundry_evm_core::{
-    abi::Vm,
-    constants::CHEATCODE_ADDRESS,
-    decode::{ASSERTION_FAILED_PREFIX, decode_console_log},
-    evm::FoundryEvmNetwork,
-    utils::StateChangeset,
-};
+use foundry_evm_core::{decode::ASSERTION_FAILED_PREFIX, evm::FoundryEvmNetwork};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BasicTxDetails,
@@ -23,8 +20,7 @@ use foundry_evm_fuzz::{
 };
 use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::TestError;
-use revm::interpreter::InstructionResult;
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, time::Instant};
 
 /// The outcome of an invariant fuzz test
 #[derive(Debug, Default)]
@@ -64,6 +60,8 @@ pub struct InvariantFuzzTestResult {
     pub interrupted: bool,
     /// Counters for the optional live symbolic worker.
     pub symbolic_live: Option<LiveInvariantStats>,
+    /// When shrinking this campaign's failures must stop, for a timed campaign.
+    pub shrink_deadline: Option<Instant>,
 }
 
 impl InvariantFuzzTestResult {
@@ -109,6 +107,7 @@ impl InvariantFuzzTestResult {
             optimization_best_sequence,
             interrupted: false,
             symbolic_live: None,
+            shrink_deadline: None,
         }
     }
 }
@@ -146,9 +145,8 @@ pub(crate) fn is_assertion_failure<FEN: FoundryEvmNetwork>(
     }
 
     is_assert_panic(call_result.result.as_ref())
-        || matches!(call_result.exit_reason, Some(InstructionResult::InvalidFEOpcode))
+        || matches!(call_result.exit_reason, Some(InstrStop::InvalidFEOpcode))
         || is_revert_assertion_failure(call_result.result.as_ref())
-        || is_cheatcode_assert_revert(call_result)
 }
 
 fn is_assert_panic(data: &[u8]) -> bool {
@@ -159,34 +157,19 @@ fn is_revert_assertion_failure(data: &[u8]) -> bool {
     Revert::abi_decode(data).is_ok_and(|revert| revert.reason.contains(ASSERTION_FAILED_PREFIX))
 }
 
-fn is_cheatcode_assert_revert<FEN: FoundryEvmNetwork>(call_result: &RawCallResult<FEN>) -> bool {
-    call_result.reverter == Some(CHEATCODE_ADDRESS)
-        && Vm::VmErrors::abi_decode(call_result.result.as_ref())
-            .ok()
-            .map(|error| error.to_string())
-            .is_some_and(|message| message.starts_with(ASSERTION_FAILED_PREFIX))
-}
-
-fn logged_assertion_failure<FEN: FoundryEvmNetwork>(call_result: &RawCallResult<FEN>) -> bool {
-    call_result
-        .logs
-        .iter()
-        .filter_map(decode_console_log)
-        .any(|msg| msg.starts_with(ASSERTION_FAILED_PREFIX))
-}
-
 /// Returns whether the current fuzz call should be treated as an assertion failure.
 ///
-/// This covers Solidity `assert`, legacy invalid-opcode assertions, `vm.assert*` reverts, and the
-/// non-reverting `GLOBAL_FAIL_SLOT` path used when `assertions_revert = false`.
+/// This covers Solidity `assert`, legacy invalid-opcode assertions, any failed `vm.assert*`
+/// (whatever its message, and even if the call reverted afterwards or caught the assertion
+/// revert), and the `GLOBAL_FAIL_SLOT` written by legacy `fail()`.
 pub fn did_fail_on_assert<FEN: FoundryEvmNetwork>(
     call_result: &RawCallResult<FEN>,
-    state_changeset: &StateChangeset,
+    state_changeset: &PendingState,
 ) -> bool {
     is_assertion_failure(call_result)
+        || call_result.failed_assertion.is_some()
         || call_result.has_state_snapshot_failure
         || Executor::<FEN>::has_pending_global_failure(state_changeset)
-        || logged_assertion_failure(call_result)
 }
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
@@ -217,19 +200,29 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
             continue;
         }
 
-        let (call_result, success) = call_invariant_function(
-            executor,
-            invariant_contract.address,
-            invariant_contract.invariant_calldata(idx),
-        )?;
+        let calldata = invariant_contract.invariant_calldata(idx);
+        let (mut call_result, success) =
+            call_invariant_function(executor, invariant_contract.address, calldata.clone())?;
         if call_result.execution_cancelled {
             return Ok((first_broken, true));
         }
         if !success {
+            call_result.failure_provenance =
+                failure_provenance(executor, invariant_config, |executor| {
+                    call_invariant_function(executor, invariant_contract.address, calldata)
+                        .ok()
+                        .map(|(result, _)| result)
+                });
             let inner_sequence =
                 inner_sequence.get_or_insert_with(|| invariant_inner_sequence(executor));
-            let case =
-                ctx.failed_case(invariant, *fail_on_revert, false, call_result, inner_sequence);
+            let case = ctx.failed_case(
+                invariant,
+                *fail_on_revert,
+                false,
+                call_result,
+                inner_sequence,
+                Some(TerminalFailureSite::Invariant),
+            );
             invariant_failures.record_failure(invariant, InvariantFuzzError::BrokenInvariant(case));
             if first_broken.is_none() {
                 first_broken = Some(*invariant);
@@ -277,7 +270,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     invariant_run: &mut InvariantTestRun<FEN>,
     invariant_config: &InvariantConfig,
     call_result: RawCallResult<FEN>,
-    state_changeset: &StateChangeset,
+    state_changeset: &PendingState,
     handler_target: Address,
     handler_selector: Selector,
     assertion_failure: bool,
@@ -307,7 +300,9 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
         })
     };
 
-    if !call_result.reverted && handlers_succeeded() {
+    // Classify assertion failures first, so a caught `vm.assert*` that leaves no revert or fail
+    // slot is recorded as a handler assertion bug.
+    if !assertion_failure && !call_result.reverted && handlers_succeeded() {
         if let Some(traces) = call_result.traces {
             invariant_run.run_traces.push(traces);
         }
@@ -406,6 +401,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 is_assert_failure,
                 call_result,
                 &[],
+                None,
             );
 
             for (invariant, fail_on_revert) in failing_invariants {
@@ -452,8 +448,9 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
     invariant_run: &InvariantTestRun<FEN>,
     invariant_config: &InvariantConfig,
 ) -> Result<(Option<&'a Function>, bool)> {
-    let (call_result, success) =
-        call_after_invariant_function(&invariant_run.executor, invariant_contract.address)?;
+    let executor = &invariant_run.executor;
+    let (mut call_result, success) =
+        call_after_invariant_function(executor, invariant_contract.address)?;
     if call_result.execution_cancelled {
         return Ok((None, true));
     }
@@ -461,16 +458,29 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
     if success {
         return Ok((None, false));
     }
+    call_result.failure_provenance = failure_provenance(executor, invariant_config, |executor| {
+        call_after_invariant_function(executor, invariant_contract.address)
+            .ok()
+            .map(|(result, _)| result)
+    });
     // `afterInvariant` failures are contract-wide (no specific invariant body executed),
     // so attribute to the campaign anchor.
     let anchor = invariant_contract.anchor();
-    let case_data = InvariantRunCtx {
+    let mut case_data = InvariantRunCtx {
         contract: invariant_contract,
         config: invariant_config,
         targeted_contracts: &invariant_test.targeted_contracts,
         calldata: &invariant_run.inputs,
     }
-    .failed_case(anchor, invariant_config.fail_on_revert, false, call_result, &[]);
+    .failed_case(
+        anchor,
+        invariant_config.fail_on_revert,
+        false,
+        call_result,
+        &[],
+        Some(TerminalFailureSite::AfterInvariant),
+    );
+    case_data.after_invariant = true;
     invariant_test
         .test_data
         .failures
@@ -483,16 +493,17 @@ mod tests {
     use super::*;
     use crate::executors::{EarlyExit, ExecutorBuilder};
     use alloy_dyn_abi::JsonAbiExt;
-    use alloy_evm::EvmEnv;
     use alloy_primitives::{Bytes, U256};
     use alloy_sol_types::SolCall;
+    use evm2::bytecode::Bytecode;
     use foundry_cheatcodes::{CheatsConfig, Vm::expectRevert_0Call};
     use foundry_config::Config;
     use foundry_evm_core::{
-        backend::Backend, constants::CALLER, evm::EthEvmNetwork, opts::EvmOpts,
+        constants::{CALLER, CHEATCODE_ADDRESS},
+        evm::EthEvmNetwork,
+        opts::EvmOpts,
     };
     use foundry_evm_fuzz::invariant::TargetedContracts;
-    use revm::{bytecode::Bytecode, context::TxEnv};
     use std::sync::Arc;
 
     fn panic_payload(code: u8) -> Bytes {
@@ -506,11 +517,12 @@ mod tests {
     fn cancellation_does_not_record_call_end_rewrite_as_invariant_failure() {
         let cheats_config =
             Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, false));
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default()
-            .inspectors(|stack| stack.cheatcodes(cheats_config))
-            .gas_limit(1 << 24)
-            .build(EvmEnv::default(), TxEnv::default(), backend, Default::default());
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default()
+                .inspectors(|stack| stack.cheatcodes(cheats_config))
+                .gas_limit(1 << 24),
+            Default::default(),
+        );
         let invariant_address = Address::repeat_byte(0x11);
         executor
             .set_code(
@@ -593,20 +605,7 @@ mod tests {
     fn detects_legacy_invalid_opcode_assert() {
         let call_result = RawCallResult::<EthEvmNetwork> {
             reverted: true,
-            exit_reason: Some(InstructionResult::InvalidFEOpcode),
-            ..Default::default()
-        };
-        assert!(is_assertion_failure(&call_result));
-    }
-
-    #[test]
-    fn detects_vm_assert_revert() {
-        let call_result = RawCallResult::<EthEvmNetwork> {
-            reverted: true,
-            result: Vm::CheatcodeError { message: format!("{ASSERTION_FAILED_PREFIX}: 1 != 2") }
-                .abi_encode()
-                .into(),
-            reverter: Some(CHEATCODE_ADDRESS),
+            exit_reason: Some(InstrStop::InvalidFEOpcode),
             ..Default::default()
         };
         assert!(is_assertion_failure(&call_result));

@@ -4,7 +4,8 @@ use std::time::Duration;
 // HD wallet key derivation
 pub(crate) const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 pub(crate) const MAX_REMEMBER_KEYS: u32 = 64;
-pub(crate) const SYMBOLIC_VM_COMPAT_ADDRESS: Address =
+/// Address of the Halmos-style symbolic VM helpers (`svm.*`).
+pub const SYMBOLIC_VM_COMPAT_ADDRESS: Address =
     address!("0xF3993A62377BCd56AE39D773740A5390411E8BC9");
 
 // Symbolic exponentiation limits
@@ -14,8 +15,14 @@ pub(crate) const CONCRETE_BASE_SYMBOLIC_EXPONENT_LIMIT: u64 = 256;
 // ABI encoding lengths
 pub(crate) const ERROR_DATA_MIN_LEN: usize = 68; // selector (4) + offset (32) + length (32)
 
+// `svm.createCalldata` fallback calldata: a selector and the 1024 arbitrary bytes Halmos uses.
+pub(crate) const CREATE_CALLDATA_FALLBACK_LEN: usize = 4 + 1024;
+
 // Precompile address layout
 pub(crate) const PRECOMPILE_ADDRESS_LEADING_ZEROS: usize = 19;
+
+// EIP-7823 modexp input length limit in bytes, enforced from Osaka.
+pub(crate) const MODEXP_INPUT_SIZE_LIMIT: usize = 1024;
 
 // Native stack reserved for nested call frames, which the EVM allows up to its call depth
 // limit.

@@ -6,14 +6,15 @@ manipulate the environment in which the execution is run.
 Most of the time, simply testing your smart contracts outputs isn't enough. To manipulate the state of the EVM, as well
 as test for specific reverts and events, Foundry is shipped with a set of cheatcodes.
 
-## [`revm::Inspector`](https://docs.rs/revm/latest/revm/trait.Inspector.html)
+## [evm2 `Inspector`](https://github.com/alloy-rs/evm2)
 
-To understand how cheatcodes are implemented, we first need to look at [`revm::Inspector`](https://docs.rs/revm/latest/revm/trait.Inspector.html),
-a trait that provides a set of callbacks to be notified at certain stages of EVM execution.
+To understand how cheatcodes are implemented, we first need to look at evm2's `Inspector`, a trait
+that provides a set of callbacks to be notified at certain stages of EVM execution.
 
-For example, [`Inspector::call`](https://docs.rs/revm/latest/revm/trait.Inspector.html#method.call)
-is called when the EVM is about to execute a call and is provided with the call's inputs and the
-current state of the EVM.
+For example, `Inspector::call` is called when the EVM is about to execute a call and is provided
+with the call's inputs and the current state of the EVM. Foundry's
+[inspector stack](../../crates/evm/evm/src/inspectors/stack.rs) implements it and forwards each
+hook to the cheatcode inspector and the other inspectors.
 
 ## [Foundry inspectors](../../crates/evm/evm/src/inspectors/)
 
@@ -34,12 +35,13 @@ Cheatcodes are calls to a specific address, the cheatcode handler address, defin
 In Solidity, this can be initialized as `Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);`,
 but generally this is inherited from `forge-std/Test.sol`.
 
-Since cheatcodes are bound to a constant address, the cheatcode inspector listens for that address:
+Since cheatcodes are bound to a constant address, the cheatcode inspector's call hook listens for
+that address:
 
 ```rust
-impl Inspector for Cheatcodes {
-    fn call(&mut self, ...) -> ... {
-        if call.contract == CHEATCODE_ADDRESS {
+impl Cheatcodes {
+    pub fn call_with_executor(&mut self, ...) -> ... {
+        if call.destination == CHEATCODE_ADDRESS {
             // intercepted cheatcode call
             // --snip--
         }

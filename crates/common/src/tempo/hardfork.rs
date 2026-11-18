@@ -7,7 +7,7 @@ use alloy_transport::{TransportError, TransportErrorKind};
 use eyre::Result;
 use serde::Deserialize;
 use tempo_alloy::{chainspec::hardfork::TempoHardfork, rpc::ForkSchedule};
-use tempo_primitives::transaction::TEMPO_EXPIRING_NONCE_KEY;
+use tempo_primitives::transaction::{FEE_PAYER_SIGNATURE_MARKER, TEMPO_EXPIRING_NONCE_KEY};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +63,27 @@ where
         );
     }
     Ok(())
+}
+
+/// Marks `request`, the gas estimation request of a transaction a fee payer will sponsor, as
+/// sponsored.
+///
+/// From T14 a fee payer signature costs one cold account access: the fee payer's account is read
+/// to check that its root key is not retired. The sponsor signs after estimation, because its
+/// signature commits to the gas limit, so the request carries [`FEE_PAYER_SIGNATURE_MARKER`] in its
+/// place, for which a Tempo node adds that access to the estimate. Before T14 nodes do not handle
+/// the marker, so the request is left unchanged there and when the hardfork is unknown.
+pub async fn mark_sponsored_gas_estimation<N: Network, P: Provider<N>>(
+    provider: &P,
+    request: &mut N::TransactionRequest,
+) where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if request.fee_payer_signature().is_none()
+        && matches!(is_tempo_hardfork_active(provider, TempoHardfork::T14).await, Ok(true))
+    {
+        request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
+    }
 }
 
 async fn fork_schedule_hardfork<N: Network, P: Provider<N>>(

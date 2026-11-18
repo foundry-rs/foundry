@@ -1,6 +1,7 @@
 use crate::{
     executors::{
-        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
+        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, EvmExecutionCancellation, Executor,
+        RawCallResult,
         campaign::{
             CampaignCallKind, CampaignControl, CampaignEvent, CampaignSequenceOutcome,
             FuzzCampaign, FuzzCampaignMode,
@@ -20,19 +21,20 @@ use crate::{
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, StateMutability};
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, I256, Selector, U256,
-    map::{AddressMap, AddressSet, HashMap, hash_map::Entry as AddressMapEntry},
+    Address, B256, Bytes, FixedBytes, I256, Selector, U256,
+    map::{AddressSet, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
 use campaign::{
     InvariantCampaignAggregator, InvariantCampaignSpec, InvariantCampaignState,
     InvariantWorkerOutput, InvariantWorkerPlan,
 };
+use evm2::evm::PendingState;
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
     TestFunctionExt,
     contracts::{ContractsByAddress, ContractsByArtifact},
-    sh_eprintln, sh_println,
+    sh_eprintln,
 };
 use foundry_config::{FuzzCorpusConfig, InvariantConfig, InvariantDepthMode, InvariantWorkers};
 use foundry_evm_core::{
@@ -60,7 +62,6 @@ use proptest::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use result::{assert_after_invariant, can_continue, invariant_preflight_check};
-use revm::state::Account;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use snapshot::StateSnapshots;
@@ -86,9 +87,10 @@ pub use result::{InvariantFuzzTestResult, did_fail_on_assert};
 
 mod shrink;
 pub use shrink::{
-    CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome, HandlerReplayOutcome,
-    SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats, check_sequence,
-    check_sequence_value, replay_handler_failure_sequence, shrink_sequence_by_removing,
+    CandidateReplay, CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
+    HandlerReplayOutcome, SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats,
+    check_sequence, check_sequence_value, deadline_passed, replay_handler_failure_sequence,
+    reset_shrink_progress, shrink_sequence_by_removing,
 };
 
 mod snapshot;
@@ -537,8 +539,8 @@ impl InvariantTest {
     }
 
     /// Set last invariant run call sequence.
-    fn set_last_run_inputs(&mut self, inputs: &Vec<BasicTxDetails>) {
-        self.test_data.last_run_inputs.clone_from(inputs);
+    fn set_last_run_inputs(&mut self, inputs: Vec<BasicTxDetails>) {
+        self.test_data.last_run_inputs = inputs;
     }
 
     /// Merge current collected line coverage with the new coverage from last fuzzed call.
@@ -550,12 +552,7 @@ impl InvariantTest {
     /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
     /// separated from reverts.
     fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
-        let Some(selector) = tx_details
-            .call_details
-            .calldata
-            .get(..4)
-            .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-            .map(Selector::from)
+        let Some(selector) = tx_details.call_details.calldata.get(..4).map(Selector::from_slice)
         else {
             return;
         };
@@ -605,9 +602,9 @@ impl InvariantTest {
         self.targeted_contracts.clear_created_contracts(run.created_contracts);
 
         if self.test_data.gas_report_traces.len() < gas_samples {
-            self.test_data
-                .gas_report_traces
-                .push(run.run_traces.into_iter().map(|arena| arena.arena).collect());
+            self.test_data.gas_report_traces.push(
+                run.run_traces.into_iter().map(SparsedTraceArena::into_gas_report_arena).collect(),
+            );
         }
         self.test_data.runs += 1;
         self.test_data.calls += run.fuzz_runs.len();
@@ -797,10 +794,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     /// `initial_handler_failures` pre-seeds the campaign's `broken_handlers` map with bugs
     /// recovered from disk by the runner's persisted-failure replay step, so the live
     /// progress bar and JSON pulse stream surface them from the first emission instead of
-    /// jumping at the final report.
+    /// jumping at the final report. `sender_filters` and `targeted_contracts` are the selection
+    /// from [`Self::select_contracts_and_senders`], made before the executor's gas limit was
+    /// lowered to `call_gas_limit`.
+    #[allow(clippy::too_many_arguments)]
     pub fn invariant_fuzz(
         &mut self,
         invariant_contract: InvariantContract<'_>,
+        sender_filters: SenderFilters,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
@@ -817,8 +819,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             self.invariant_campaign_anchors,
         ))?;
         let actual_worker_count = worker_plans.len();
-        let campaign_seed =
-            self.prepare_campaign_seed(&invariant_contract, initial_handler_failures)?;
+        let campaign_seed = InvariantCampaignSeed {
+            artifact_filters: self.artifact_filters.clone(),
+            sender_filters,
+            targeted_contracts: targeted_contracts.targets().clone(),
+            targets_are_updatable: targeted_contracts.is_updatable,
+            initial_handler_failures,
+        };
         let replay_targets = FuzzRunIdentifiedContracts::new(
             campaign_seed.targeted_contracts.clone(),
             campaign_seed.targets_are_updatable,
@@ -997,6 +1004,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             aggregator.finish_campaign()?
         };
         result.interrupted = campaign_state.interrupted(result.runs, self.config.runs);
+        result.shrink_deadline = campaign_state.shrink_deadline();
         result.symbolic_live =
             campaign_state.live_solver.as_ref().map(|solver| solver.lock().unwrap().finish());
         persist_campaign_optimization(
@@ -1040,7 +1048,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let live_solver =
             (plan.worker_id == 0).then_some(campaign_state.live_solver.as_ref()).flatten();
         let mut frontier_recorder = FuzzFrontierRecorder::new(frontier_limit);
-        executor.inspector_mut().set_execution_cancellation(campaign_state.cancellation().clone());
+        // The campaign deadline must not cancel the initial invariant check, or an initial-state
+        // failure is dropped. `prepare_worker` installs it right after that check.
+        executor.inspector_mut().set_early_exit(campaign_state.early_exit().clone());
 
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
             &mut executor,
@@ -1053,6 +1063,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &config,
             &campaign_seed,
             corpus_seed,
+            campaign_state.cancellation().clone(),
         )?;
         let collect_corpus_cmp =
             invariant_worker_collects_evm_cmp_log(&config, plan.worker_id, worker_count);
@@ -1068,6 +1079,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &invariant_contract,
             &invariant_test.test_data.failures,
         );
+        let broken_initially = invariant_test.test_data.failures.broken_invariants();
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();
@@ -1075,8 +1087,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         'stop: while should_continue_invariant_worker(campaign_state, runs, plan) {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
-            let failures_checkpoint = invariant_test.test_data.failures.clone();
-            let failures_revision = failures_checkpoint.revision();
+            // A run that records no failure changes only the revert count.
+            let failures_revision = invariant_test.test_data.failures.revision();
+            let handler_failures_before_run = invariant_test.test_data.failures.handler_count();
+            let reverts_before_run = invariant_test.test_data.failures.reverts;
             let mut stop_after_run = false;
             let mut run_cancelled = false;
             let mut observed_call_entries = Vec::<(Vec<ObservedCall>, BasicTxDetails)>::new();
@@ -1102,6 +1116,16 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             } else {
                 snapshots.start(&mut invariant_test.test_data.branch_runner, &executor)
             };
+            // The calls of a run are not checked for the invariants already broken, but a run
+            // resumed from a snapshot carries calls of earlier runs, which may have been checked
+            // for any invariant that broke after the initial checks, so only those broken
+            // initially are left out.
+            let unchecked_invariants = if start.prefix.is_empty() {
+                invariant_test.test_data.failures.broken_invariants()
+            } else {
+                broken_initially.clone()
+            };
+            invariant_test.test_data.failures.start_run(unchecked_invariants);
             // Corpus entries replay from the post-setUp state, so a resumed run makes fresh calls.
             let sequence_plan = if let Some(candidate) = candidate {
                 corpus_manager
@@ -1181,19 +1205,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             let current_tx = current_run.inputs.last().ok_or_else(|| {
                                 eyre!("no input generated to call fuzzed target.")
                             })?;
-                            let sel_bytes: [u8; 4] = current_tx
+                            let selector = current_tx
                                 .call_details
                                 .calldata
                                 .get(..4)
-                                .and_then(|selector| selector.try_into().ok())
+                                .map(Selector::from_slice)
                                 .unwrap_or_default();
-                            handler =
-                                Some((current_tx.call_details.target, Selector::from(sel_bytes)));
-                            if let Some(fuzzer) =
-                                current_run.executor.inspector_mut().fuzzer.as_mut()
-                            {
-                                invariant_test.fuzz_state.collect_fuzzer_values(fuzzer);
-                            }
+                            handler = Some((current_tx.call_details.target, selector));
                             call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                             let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                             if config.show_metrics {
@@ -1209,6 +1227,30 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             );
                             assertion_failure = !discarded
                                 && did_fail_on_assert(call_result, &call_result.state_changeset);
+                            // A revert that fails an invariant is committed before the failure is
+                            // recorded, so its provenance is recorded now. The block delay was
+                            // already applied.
+                            if call_result.reverted
+                                && !discarded
+                                && !assertion_failure
+                                && invariant_contract.invariant_fns.iter().any(
+                                    |(invariant, fail_on_revert)| {
+                                        *fail_on_revert
+                                            && !invariant_test
+                                                .test_data
+                                                .failures
+                                                .has_failure(invariant)
+                                    },
+                                )
+                            {
+                                let tx =
+                                    BasicTxDetails { warp: None, roll: None, ..current_tx.clone() };
+                                call_result.failure_provenance = failure_provenance(
+                                    &current_run.executor,
+                                    &config,
+                                    |executor| execute_tx(executor, &tx).ok(),
+                                );
+                            }
                             pre_merge_edges_hash = assertion_failure
                                 .then(|| error::snapshot_edge_fingerprint(call_result))
                                 .flatten();
@@ -1305,22 +1347,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             if result.reverted {
                                 run_reverts += 1;
                             }
-                            let mut state_changeset = std::mem::take(&mut result.state_changeset);
+                            let state_changeset = std::mem::take(&mut result.state_changeset);
                             let reverted = result.reverted;
                             if !result.reverted {
-                                let mapping_slots = current_run
-                                    .executor
-                                    .inspector()
-                                    .fuzzer
-                                    .as_ref()
-                                    .and_then(|fuzzer| fuzzer.mapping_slots.as_ref());
                                 collect_data(
                                     &invariant_test,
-                                    &mut state_changeset,
+                                    &state_changeset,
                                     current_run.inputs.last().expect("checked above"),
                                     &result,
                                     run_depth,
-                                    mapping_slots,
                                 );
                                 if config.dictionary.include_view_values {
                                     collect_view_values(
@@ -1337,7 +1372,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             let created_before = current_run.created_contracts.len();
                             if let Err(error) =
                                 &invariant_test.targeted_contracts.collect_created_contracts(
-                                    &state_changeset,
+                                    state_changeset.account_changes(),
                                     project_contracts,
                                     setup_contracts,
                                     &campaign_seed.artifact_filters,
@@ -1353,7 +1388,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 .fuzz_runs
                                 .push(FuzzCase { gas: result.gas_used, stipend: result.stipend });
 
-                            let continues = if should_check {
+                            let continues = if should_check || assertion_failure || reverted {
                                 let outcome = can_continue(
                                     &invariant_contract,
                                     &mut invariant_test,
@@ -1370,48 +1405,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 run_cancelled = outcome.cancelled;
                                 outcome.continues
                             } else {
-                                if result.reverted {
-                                    invariant_test.test_data.failures.reverts += 1;
-                                }
-                                if assertion_failure {
-                                    let call_reverted = result.reverted;
-                                    error::record_handler_assertion_bug(
-                                        &invariant_contract,
-                                        &config,
-                                        &invariant_test.targeted_contracts,
-                                        &mut invariant_test.test_data.failures,
-                                        &mut current_run.inputs,
-                                        handler_target,
-                                        handler_selector,
-                                        pre_merge_edges_hash,
-                                        result,
-                                        call_reverted,
-                                        invariant_contract.is_optimization(),
-                                    );
-                                    true
-                                } else if result.reverted && config.fail_on_revert {
-                                    let anchor = invariant_contract.anchor();
-                                    let case_data = error::InvariantRunCtx {
-                                        contract: &invariant_contract,
-                                        config: &config,
-                                        targeted_contracts: &invariant_test.targeted_contracts,
-                                        calldata: &current_run.inputs,
-                                    }
-                                    .failed_case(anchor, config.fail_on_revert, false, result, &[]);
-                                    invariant_test.test_data.failures.record_failure(
-                                        anchor,
-                                        InvariantFuzzError::Revert(case_data),
-                                    );
-                                    false
-                                } else {
-                                    if result.reverted
-                                        && !invariant_contract.is_optimization()
-                                        && !config.has_delay()
-                                    {
-                                        current_run.inputs.pop();
-                                    }
-                                    true
-                                }
+                                true
                             };
 
                             if run_cancelled {
@@ -1456,6 +1450,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             )?);
                         }
                         CampaignEvent::PostCheck => {
+                            // A complete run ends with the input generated after its last call,
+                            // which never runs.
+                            if current_run.depth >= run_depth {
+                                current_run.inputs.pop();
+                            }
                             // Multi-predicate campaigns keep running after earlier failures, but
                             // the hook must still execute on subsequent clean runs.
                             if !abort_campaign
@@ -1509,7 +1508,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     );
                     campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
                 } else {
-                    invariant_test.test_data.failures.clone_from(&failures_checkpoint);
+                    invariant_test.test_data.failures.reverts = reverts_before_run;
                 }
                 break 'stop;
             }
@@ -1521,9 +1520,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &invariant_test.test_data.failures,
                 );
             }
-            if invariant_test.test_data.failures.handler_count()
-                > failures_checkpoint.handler_count()
-            {
+            if invariant_test.test_data.failures.handler_count() > handler_failures_before_run {
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
             }
 
@@ -1552,10 +1549,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     );
                 }
             }
-            let optimization = current_run.optimization_value.map(|v| {
-                let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
-                (v, prefix)
-            });
+            let optimization = current_run
+                .optimization_value
+                .map(|value| (value, &current_run.inputs[..current_run.optimization_prefix_len]));
             let mut corpus_inputs = corpus_run
                 .as_ref()
                 .map_or(current_run.inputs.as_slice(), |history| history.inputs.as_slice());
@@ -1583,14 +1579,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // End current invariant test run.
-            if current_run.save_last_run_inputs {
-                invariant_test.set_last_run_inputs(&current_run.inputs);
-            }
             if let Some(value) = current_run.optimization_value {
                 invariant_test.update_optimization_value(
                     value,
                     &current_run.inputs[..current_run.optimization_prefix_len],
                 );
+            }
+            if current_run.save_last_run_inputs {
+                invariant_test.set_last_run_inputs(std::mem::take(&mut current_run.inputs));
             }
             invariant_test.merge_line_coverage(current_run.line_coverage.take());
             for fuzz_run in &current_run.fuzz_runs {
@@ -1674,7 +1670,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &corpus_manager.metrics,
                     &failure_metrics,
                 );
-                let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
+                let _ = sh_eprintln!("{}", serde_json::to_string(&metrics)?);
             }
 
             if stop_after_run {
@@ -1685,7 +1681,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         trace!(?fuzz_fixtures);
         invariant_test.fuzz_state.log_stats();
 
-        // Campaign-local terminal stops and deadlines must not suppress post-campaign shrinking.
+        // Campaign-local terminal stops and deadlines must not suppress post-campaign shrinking,
+        // which a timed campaign bounds by its own shrink deadline instead.
         executor.inspector_mut().set_early_exit(campaign_state.early_exit().clone());
         Self::shrink_handler_failures(
             &config,
@@ -1693,6 +1690,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &mut invariant_test.test_data,
             progress,
             campaign_state.early_exit(),
+            campaign_state.shrink_deadline(),
         );
 
         // Move out the final test data and drop worker-local fuzz state before returning this
@@ -1738,6 +1736,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         result: &mut InvariantTestData,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
+        shrink_deadline: Option<Instant>,
     ) {
         let total = result.failures.handler_count();
         if total == 0 {
@@ -1766,6 +1765,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 executor,
                 &shrink_progress,
                 early_exit,
+                shrink_deadline,
             ) {
                 Ok(shrunk) if !shrunk.is_empty() => {
                     failure.call_sequence = shrunk;
@@ -1774,29 +1774,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 Err(e) => trace!(target: "forge::test", "handler shrink failed: {e}"),
             }
         }
-    }
-
-    fn prepare_campaign_seed(
-        &mut self,
-        invariant_contract: &InvariantContract<'_>,
-        initial_handler_failures: std::collections::HashMap<
-            (Address, Selector),
-            InvariantFuzzError,
-        >,
-    ) -> Result<InvariantCampaignSeed> {
-        self.select_contract_artifacts(invariant_contract.address)?;
-        let (sender_filters, targeted_contracts) =
-            self.select_contracts_and_senders(invariant_contract.address)?;
-        let targets_are_updatable = targeted_contracts.is_updatable;
-        let targeted_contracts = targeted_contracts.targets().clone();
-
-        Ok(InvariantCampaignSeed {
-            artifact_filters: self.artifact_filters.clone(),
-            sender_filters,
-            targeted_contracts,
-            targets_are_updatable,
-            initial_handler_failures,
-        })
     }
 
     /// Prepares worker-local structures to execute an invariant campaign slice.
@@ -1812,6 +1789,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         config: &InvariantConfig,
         campaign_seed: &InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
+        cancellation: EvmExecutionCancellation,
     ) -> Result<(InvariantTest, WorkerCorpus)> {
         let fuzz_state = fuzz_state.into_invariant();
         let targeted_contracts = FuzzRunIdentifiedContracts::new(
@@ -1833,20 +1811,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             fuzz_fixtures.clone(),
         );
 
-        // If any of the targeted contracts have the storage layout enabled then we can sample
-        // mapping values. To accomplish, we need to record the mapping storage slots and keys.
-        let mapping_slots = targeted_contracts
-            .targets()
-            .iter()
-            .any(|(_, t)| t.storage_layout.is_some())
-            .then(AddressMap::default);
-
         // Set up fuzzer WITHOUT call_generator initially.
         // We defer call_override until after the initial invariant check to avoid
         // injecting random calls during setup which would break the invariant assertion.
         let extra_cheatcode_addresses = executor.inspector().extra_cheatcode_addresses();
         executor.inspector_mut().set_fuzzer(
-            Fuzzer::new(config.dictionary.max_fuzz_dictionary_values, mapping_slots)
+            Fuzzer::default()
                 .with_extra_cheatcode_addresses(extra_cheatcode_addresses)
                 .with_call_recording(config.corpus.is_coverage_guided()),
         );
@@ -1868,8 +1838,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &[],
             &mut failures,
         )?;
+        executor.inspector_mut().set_execution_cancellation(cancellation);
         if let Some(fuzzer) = executor.inspector_mut().fuzzer.as_mut() {
-            fuzz_state.collect_fuzzer_values(fuzzer);
             let _ = fuzzer.take_observed_calls();
         }
         let generator = foundry_evm_fuzz::sequence::SequenceGenerator::invariant_with_fixtures(
@@ -2310,33 +2280,23 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 /// randomly generated addresses.
 fn collect_data<FEN: FoundryEvmNetwork>(
     invariant_test: &InvariantTest,
-    state_changeset: &mut AddressMap<Account>,
+    state_changeset: &PendingState,
     tx: &BasicTxDetails,
     call_result: &RawCallResult<FEN>,
     run_depth: u32,
-    mapping_slots: Option<&AddressMap<foundry_common::mapping_slots::MappingSlots>>,
 ) {
-    // We keep the nonce changes to apply later.
-    let sender_changeset = match state_changeset.entry(tx.sender) {
-        AddressMapEntry::Occupied(entry) => entry
-            .get()
-            .info
-            .code
-            .as_ref()
-            .is_none_or(|code| code.is_empty())
-            .then(|| entry.remove()),
-        AddressMapEntry::Vacant(_) => None,
-    };
-
     // Collect values from fuzzed call result and add them to fuzz dictionary.
     invariant_test.fuzz_state.collect_values_from_call(
         &invariant_test.targeted_contracts,
         tx,
         &call_result.result,
         &call_result.logs,
-        &*state_changeset,
+        // Skip the EOA sender's own nonce and balance changes.
+        state_changeset.account_changes().filter(|changes| {
+            changes.address != tx.sender
+                || changes.current.is_some_and(|info| !info.is_empty_code_hash())
+        }),
         run_depth,
-        mapping_slots,
     );
 
     // Inject typed sancov trace-cmp operands into the fuzz dictionary.
@@ -2344,10 +2304,6 @@ fn collect_data<FEN: FoundryEvmNetwork>(
         invariant_test.fuzz_state.collect_typed_cmp_values(
             cmp_values.iter().map(|s| (s.width, alloy_primitives::B256::from(s.value))),
         );
-    }
-    // Re-add changes
-    if let Some(changed) = sender_changeset {
-        state_changeset.insert(tx.sender, changed);
     }
 }
 
@@ -2367,7 +2323,7 @@ const MAX_VIEW_CALLS_PER_TX: usize = 32;
 fn collect_view_values<FEN: FoundryEvmNetwork>(
     invariant_test: &InvariantTest,
     executor: &Executor<FEN>,
-    state_changeset: &AddressMap<Account>,
+    state_changeset: &PendingState,
     tx: &BasicTxDetails,
     run_depth: u32,
     view_cursor: &mut usize,
@@ -2376,7 +2332,7 @@ fn collect_view_values<FEN: FoundryEvmNetwork>(
         let targets = invariant_test.targeted_contracts.targets();
         let mut candidates = targets
             .iter()
-            .filter(|(address, _)| state_changeset.contains_key(*address))
+            .filter(|(address, _)| state_changeset.account_changes_for(address).is_some())
             .flat_map(|(address, contract)| {
                 contract
                     .abi
@@ -2463,6 +2419,29 @@ pub(crate) fn call_invariant_function<FEN: FoundryEvmNetwork>(
     Ok((call_result, success))
 }
 
+/// Runs a failing campaign call again with `call` on a copy of `executor` that records its failure
+/// identity and provenance. The campaign does not record them for every call, since that steps
+/// their instructions.
+///
+/// Returns the provenance of the identified failure, for minimization to check that a replay
+/// reached it. `None` without a shrink budget or when the failure is not identified, which
+/// minimization handles alike.
+pub(crate) fn failure_provenance<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    config: &InvariantConfig,
+    call: impl FnOnce(&mut Executor<FEN>) -> Option<RawCallResult<FEN>>,
+) -> Option<B256> {
+    if config.shrink_run_limit == 0 {
+        return None;
+    }
+    let mut executor = executor.clone();
+    executor.inspector_mut().disable_fuzz_instrumentation();
+    executor.inspector_mut().collect_failure_identity(true);
+    executor.inspector_mut().collect_failure_provenance(true);
+    let result = call(&mut executor).filter(|result| !result.execution_cancelled)?;
+    result.failure_identity.and(result.failure_provenance)
+}
+
 /// Executes an invariant replay fuzz call and returns the result.
 ///
 /// This applies invariant replay semantics: warp/roll deltas are applied before the call and the
@@ -2490,7 +2469,7 @@ pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
 ) -> Result<()> {
     let call_result = execute_and_commit_tx(executor, tx)?;
     targeted_contracts.collect_created_contracts(
-        &call_result.state_changeset,
+        call_result.state_changeset.account_changes(),
         dynamic_target_ctx.project_contracts,
         dynamic_target_ctx.setup_contracts,
         dynamic_target_ctx.artifact_filters,
@@ -2529,20 +2508,15 @@ mod tests {
 
     use super::*;
     use crate::executors::ExecutorBuilder;
-    use alloy_evm::EvmEnv;
+    use evm2::{bytecode::Bytecode, evm::InMemoryDB};
     use foundry_cheatcodes::CheatsConfig;
     use foundry_config::{FuzzCorpusMutationWeights, FuzzDictionaryConfig};
-    use foundry_evm_core::{backend::Backend, evm::EthEvmNetwork};
+    use foundry_evm_core::evm::EthEvmNetwork;
     use foundry_evm_fuzz::CallDetails;
     use proptest::{
         prelude::any,
         strategy::{Strategy, ValueTree},
         test_runner::Config,
-    };
-    use revm::{
-        bytecode::Bytecode,
-        context::{Block, TxEnv},
-        database::InMemoryDB,
     };
     use serde_json::json;
     use std::{sync::mpsc, thread};
@@ -2563,22 +2537,22 @@ mod tests {
 
     #[test]
     fn assumption_rejection_restores_delayed_block_environment() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default()
-            .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
-            .gas_limit(1 << 24)
-            .build(EvmEnv::default(), TxEnv::default(), backend, Default::default());
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default()
+                .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
+                .gas_limit(1 << 24),
+            Default::default(),
+        );
         let target = Address::repeat_byte(0x11);
         let mut code = vec![0x6e]; // PUSH15.
         code.extend_from_slice(MAGIC_ASSUME);
         code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, 0x0f, 0x60, 0x11, 0xf3]);
         executor.set_code(target, Bytecode::new_raw(Bytes::from(code))).unwrap();
 
-        let initial_block = executor.evm_env().block_env.clone();
-        let initial_cheatcode_block =
-            executor.inspector().cheatcodes.as_ref().unwrap().block.clone();
-        let expected_timestamp = initial_block.timestamp() + U256::from(10);
-        let expected_number = initial_block.number() + U256::from(5);
+        let initial_block = executor.evm_env().block;
+        let initial_cheatcode_block = executor.inspector().cheatcodes.as_ref().unwrap().block;
+        let expected_timestamp = initial_block.timestamp + U256::from(10);
+        let expected_number = initial_block.number + U256::from(5);
         let tx = BasicTxDetails {
             warp: Some(U256::from(10)),
             roll: Some(U256::from(5)),
@@ -2601,9 +2575,9 @@ mod tests {
                 |state, event| {
                     match event {
                         CampaignEvent::Feedback(_) => {
-                            let block = &state.0.evm_env().block_env;
-                            assert_eq!(block.timestamp(), expected_timestamp);
-                            assert_eq!(block.number(), expected_number);
+                            let block = &state.0.evm_env().block;
+                            assert_eq!(block.timestamp, expected_timestamp);
+                            assert_eq!(block.number, expected_number);
                             let block = state
                                 .0
                                 .inspector()
@@ -2613,8 +2587,8 @@ mod tests {
                                 .block
                                 .as_ref()
                                 .unwrap();
-                            assert_eq!(block.timestamp(), expected_timestamp);
-                            assert_eq!(block.number(), expected_number);
+                            assert_eq!(block.timestamp, expected_timestamp);
+                            assert_eq!(block.number, expected_number);
                         }
                         CampaignEvent::Check { kind, .. } => {
                             assert_eq!(kind, CampaignCallKind::AssumptionRejected);
@@ -2628,14 +2602,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(outcome, CampaignSequenceOutcome::Stopped);
-        assert_eq!(state.0.evm_env().block_env, initial_block);
+        assert_eq!(state.0.evm_env().block, initial_block);
         assert_eq!(state.0.inspector().cheatcodes.as_ref().unwrap().block, initial_cheatcode_block);
 
         let (kind, _) =
             crate::executors::campaign::execute_invariant_replay_tx(&mut state.0, &state.1)
                 .unwrap();
         assert_eq!(kind, CampaignCallKind::AssumptionRejected);
-        assert_eq!(state.0.evm_env().block_env, initial_block);
+        assert_eq!(state.0.evm_env().block, initial_block);
         assert_eq!(state.0.inspector().cheatcodes.as_ref().unwrap().block, initial_cheatcode_block);
     }
 
@@ -2932,11 +2906,8 @@ mod tests {
         const GAS_LIMIT: u64 = 1 << 24;
         let invariant_address = Address::repeat_byte(0x11);
         let handler_address = Address::repeat_byte(0x22);
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default().gas_limit(GAS_LIMIT),
             Default::default(),
         );
         // Return ABI-encoded `true` for the invariant predicate.

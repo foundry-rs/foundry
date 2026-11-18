@@ -24,6 +24,10 @@ pub async fn parse_function_args<N: Network, P: Provider<N>>(
 
     // Try to decode as hex calldata first, otherwise treat as function signature
     if let Ok(data) = hex::decode(sig) {
+        eyre::ensure!(
+            args.is_empty(),
+            "Arguments cannot be used with raw calldata. Use a function signature to encode arguments, or provide the complete calldata without arguments."
+        );
         return Ok((data, None));
     } else if sig.starts_with("0x") || sig.starts_with("0X") {
         let e = hex::decode(sig).unwrap_err();
@@ -133,5 +137,46 @@ mod tests {
                 DynSolValue::String("bob.eth".to_string()),
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_args_after_hex_calldata() {
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(Asserter::new());
+
+        for sig in ["0x12345678", "0X12345678", "12345678", "0x1234567800000000", "0x"] {
+            for to in [Some(Address::ZERO), None] {
+                let err = parse_function_args(
+                    sig,
+                    vec!["1".to_string()],
+                    to,
+                    Chain::mainnet(),
+                    &provider,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err();
+
+                assert_eq!(
+                    err.to_string(),
+                    "Arguments cannot be used with raw calldata. Use a function signature to encode arguments, or provide the complete calldata without arguments."
+                );
+
+                let (data, func) = parse_function_args(
+                    sig,
+                    Vec::new(),
+                    to,
+                    Chain::mainnet(),
+                    &provider,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+                assert_eq!(data, hex::decode(sig).unwrap());
+                assert!(func.is_none());
+            }
+        }
     }
 }

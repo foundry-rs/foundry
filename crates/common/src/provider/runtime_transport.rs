@@ -97,8 +97,8 @@ pub enum RuntimeTransportError {
 /// client layer (e.g., `RetryBackoffLayer`) when configured.
 #[derive(Clone, Debug)]
 pub struct RuntimeTransport {
-    /// The inner actual transport used.
-    inner: Arc<RwLock<Option<(Id, InnerTransport)>>>,
+    /// The connection to the URL, established by the first request on each runtime.
+    connection: Arc<RwLock<Connection>>,
     /// The URL to connect to.
     url: Url,
     /// The headers to use for requests.
@@ -113,6 +113,30 @@ pub struct RuntimeTransport {
     no_proxy: bool,
     /// Whether to disable MPP: no `MPP_API_KEY` `x-api-key` header and no 402 payments.
     no_mpp: bool,
+}
+
+/// The connection state of a [RuntimeTransport].
+#[derive(Debug)]
+enum Connection {
+    /// No request has connected yet.
+    Disconnected,
+    /// Connected from the Tokio runtime with ID `runtime`.
+    ///
+    /// Connections may own tasks and I/O resources on their originating runtime, so a request
+    /// from another runtime reconnects.
+    Connected { runtime: Id, transport: InnerTransport },
+}
+
+impl Connection {
+    /// Returns the transport if it was connected from `runtime`.
+    fn transport_for(&self, runtime: Id) -> Option<InnerTransport> {
+        match self {
+            Self::Connected { runtime: connected, transport } if *connected == runtime => {
+                Some(transport.clone())
+            }
+            Self::Connected { .. } | Self::Disconnected => None,
+        }
+    }
 }
 
 /// A builder for [RuntimeTransport].
@@ -184,7 +208,7 @@ impl RuntimeTransportBuilder {
     /// The runtime transport will then connect when the first request happens.
     pub fn build(self) -> RuntimeTransport {
         RuntimeTransport {
-            inner: Arc::new(RwLock::new(None)),
+            connection: Arc::new(RwLock::new(Connection::Disconnected)),
             url: self.url,
             headers: self.headers,
             jwt: self.jwt,
@@ -376,23 +400,23 @@ impl RuntimeTransport {
         let this = self.clone();
         Box::pin(async move {
             let runtime = Handle::current().id();
-            let inner = this.inner.read().await;
-            let transport = if let Some((id, transport)) = &*inner
-                && *id == runtime
-            {
-                let transport = transport.clone();
-                drop(inner);
-                transport
-            } else {
-                drop(inner);
-                let mut inner = this.inner.write().await;
-                // Connections may own tasks and I/O resources on their originating runtime.
-                // Reconnect when a shared client is used from another runtime.
-                if inner.as_ref().is_none_or(|(id, _)| *id != runtime) {
-                    *inner =
-                        Some((runtime, this.connect().await.map_err(TransportErrorKind::custom)?));
+            let connected = this.connection.read().await.transport_for(runtime);
+            let transport = match connected {
+                Some(transport) => transport,
+                None => {
+                    let mut connection = this.connection.write().await;
+                    // Another request may have connected while waiting for the write lock.
+                    match connection.transport_for(runtime) {
+                        Some(transport) => transport,
+                        None => {
+                            let transport =
+                                this.connect().await.map_err(TransportErrorKind::custom)?;
+                            *connection =
+                                Connection::Connected { runtime, transport: transport.clone() };
+                            transport
+                        }
+                    }
                 }
-                inner.as_ref().expect("transport is connected").1.clone()
             };
 
             match transport {

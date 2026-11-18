@@ -98,8 +98,8 @@ fn symbolic_live_two_step(prj: _, cmd: _) {
     assert_eq!(replayed["invariant_failures"][0]["name"], "invariant_z");
 }
 
-// Every call carries a warp and a roll once delays are configured; the worker applies them
-// concretely instead of rejecting the frontier.
+// Calls carry warps and rolls once delays are configured; the worker applies them concretely
+// instead of rejecting the frontier.
 #[forgetest_init]
 fn symbolic_live_solves_delayed_calls(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_live_solves_delayed_calls");
