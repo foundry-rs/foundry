@@ -373,7 +373,8 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
             "the wallet {} has weight {signer_weight} in {account}, which requires {}. Collect \
              the owners' approvals instead:\n  cast mktx {CONFIGURABLE_ACCOUNT_ADDRESS} {} --from \
              {account} --raw-unsigned --tempo.digest\nthen `cast wallet sign --no-hash <DIGEST>` \
-             on each owner's machine, `cast wallet assemble`, and `cast publish`",
+             (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet \
+             assemble`, and `cast publish`",
             signer.address(),
             current.threshold,
             hex::encode_prefixed(&calldata),
@@ -528,10 +529,11 @@ pub struct AssembleArgs {
 
     /// Owner approvals of the digest that `cast mktx --tempo.digest` prints.
     ///
-    /// Each one is a hex signature from `cast wallet sign --no-hash` (or a hex Tempo P-256 or
-    /// WebAuthn signature), a JSON signature, or a WebAuthn assertion made with a passkey in a
-    /// browser: a JSON object with `authenticatorData`, `clientDataJSON` and `signature`
-    /// (top-level or under `response`) and the credential's `publicKey`, as base64url or hex.
+    /// Each one is a hex signature from `cast wallet sign --no-hash` (`--p256` for a raw P-256
+    /// owner), a hex Tempo P-256 or WebAuthn signature, a JSON signature, or a WebAuthn assertion
+    /// made with a passkey in a browser: a JSON object with `authenticatorData`, `clientDataJSON`
+    /// and `signature` (top-level or under `response`) and the credential's `publicKey`, as
+    /// base64url or hex.
     /// The assertion's challenge is the digest. A value naming a file is read from it.
     #[arg(required = true, value_name = "SIGNATURE")]
     signatures: Vec<String>,

@@ -1031,7 +1031,7 @@ contract LibraryWriterTest is Test {
         )
         .unwrap();
         let layout = serde_json::json!({
-            "version": 3,
+            "version": 4,
             "contractName": contract,
             "storageLayout": artifact.storage_layout.unwrap(),
         });

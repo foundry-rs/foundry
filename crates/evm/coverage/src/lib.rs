@@ -536,6 +536,11 @@ pub struct ItemAnchors {
     /// Sparse map from anchor indices to the conditional jumps whose taken edges they represent.
     /// Indices distinguish anchors even when they share an item or destination.
     pub jumps: FxHashMap<usize, u32>,
+    /// Sparse map from anchor indices of a branch's two paths to the `(pc, conditional)` jumps
+    /// that enter the branch's fall-through from elsewhere, such as a loop's back edge into a loop
+    /// head that it falls into. Their executions do not count as the fall-through's: all of an
+    /// unconditional jump's, and a conditional jump's minus its own fall-through's.
+    pub entries: FxHashMap<usize, Vec<(u32, bool)>>,
 }
 
 impl ItemAnchors {
@@ -543,16 +548,25 @@ impl ItemAnchors {
         &'a self,
         hit_map: &'a HitMap,
     ) -> impl Iterator<Item = (&'a ItemAnchor, NonZeroU32)> {
-        self.anchors.iter().enumerate().filter_map(|(index, anchor)| {
+        let get = |pc| hit_map.get(pc).map_or(0, NonZeroU32::get);
+        self.anchors.iter().enumerate().filter_map(move |(index, anchor)| {
+            let entries = self.entries.get(&index).map_or(0u32, |jumps| {
+                jumps.iter().fold(0u32, |sum, &(jump, conditional)| {
+                    let taken = if conditional {
+                        get(jump).saturating_sub(get(jump + 1))
+                    } else {
+                        get(jump)
+                    };
+                    sum.saturating_add(taken)
+                })
+            });
             let hits = if let Some(&jump) = self.jumps.get(&index) {
                 // A destination can also be reached through the other branch. Count executions
                 // of the jump minus its fall-through instruction instead of destination hits.
-                let hits = hit_map.get(jump)?.get();
-                NonZeroU32::new(
-                    hits.saturating_sub(hit_map.get(jump + 1).map_or(0, NonZeroU32::get)),
-                )?
+                let fallthrough = get(jump + 1).saturating_sub(entries);
+                NonZeroU32::new(get(jump).saturating_sub(fallthrough))?
             } else {
-                hit_map.get(anchor.instruction)?
+                NonZeroU32::new(get(anchor.instruction).saturating_sub(entries))?
             };
             Some((anchor, hits))
         })
@@ -686,6 +700,15 @@ pub struct CoverageItem {
     pub anchor_loc: Option<SourceLocation>,
     /// The number of times this item was hit.
     pub hits: u32,
+}
+
+/// The source condition and payload of a direct, argument-free custom-error revert.
+#[derive(Clone, Debug)]
+pub(crate) struct RevertGuard {
+    pub condition: SourceLocation,
+    pub statement: SourceLocation,
+    pub function: SourceLocation,
+    pub selector: [u8; 4],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -953,6 +976,7 @@ mod tests {
                 ItemAnchor { instruction: 20, item_id: 0 },
             ],
             jumps: [(1, 4), (2, 10)].into_iter().collect(),
+            ..Default::default()
         };
         for (jump_hits, fallthrough_hits, taken_hits) in
             [(3, 2, 1), (3, 0, 3), (3, 3, 0), (0, 0, 0)]
@@ -968,6 +992,32 @@ mod tests {
             let expected = if taken_hits == 0 { vec![5] } else { vec![5, taken_hits] };
             assert_eq!(hits, expected);
         }
+    }
+
+    #[test]
+    fn entries_into_the_fallthrough_are_not_its_hits() {
+        // A branch at pc 4 falls into a loop head at pc 5, which a back edge at pc 30 and a
+        // conditional jump at pc 40 also enter.
+        let anchors = ItemAnchors {
+            anchors: vec![
+                ItemAnchor { instruction: 5, item_id: 0 },
+                ItemAnchor { instruction: 12, item_id: 1 },
+            ],
+            jumps: [(1, 4)].into_iter().collect(),
+            entries: [(0, vec![(30, false), (40, true)]), (1, vec![(30, false), (40, true)])]
+                .into_iter()
+                .collect(),
+        };
+        let mut hit_map = HitMap::new(Bytes::new());
+        // The branch runs 5 times: twice into the loop, which iterates 3 and 1 times.
+        hit_map.hits(4, 5);
+        hit_map.hits(5, 8);
+        hit_map.hits(30, 4);
+        // The conditional jump runs 3 times and jumps twice.
+        hit_map.hits(40, 3);
+        hit_map.hits(41, 1);
+        let hits = anchors.hits(&hit_map).map(|(_, hits)| hits.get()).collect::<Vec<_>>();
+        assert_eq!(hits, [2, 3]);
     }
 
     #[test]

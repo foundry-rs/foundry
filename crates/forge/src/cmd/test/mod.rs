@@ -48,14 +48,14 @@ use foundry_common::{
     sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
-    Artifact, ArtifactId, ProjectCompileOutput,
+    Artifact, ArtifactId, Graph, ProjectCompileOutput,
     artifacts::{
-        BytecodeObject, ConfigurableContractArtifact, Libraries, ast::NodeType,
+        BytecodeObject, ConfigurableContractArtifact, Libraries, Source, ast::NodeType,
         output_selection::ContractOutputSelection,
     },
     compilers::{
         Language,
-        multi::{MultiCompiler, MultiCompilerLanguage},
+        multi::{MultiCompiler, MultiCompilerLanguage, MultiCompilerParser},
     },
     utils::source_files_iter,
 };
@@ -87,7 +87,7 @@ use rand::Rng;
 use regex::Regex;
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc::channel},
@@ -1748,7 +1748,7 @@ impl TestArgs {
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
-            let compile = || {
+            let compile = |files: &BTreeSet<PathBuf>| {
                 let compiler = if filter.is_empty() {
                     compiler()
                 } else {
@@ -1760,20 +1760,24 @@ impl TestArgs {
                             )),
                     )
                 };
-                compiler.files(files.clone()).compile(&project)
+                compiler.files(files.iter().cloned()).compile(&project)
             };
-            let mut output = compile();
+            let mut output = compile(&files);
+            let mut reresolved = false;
             // A build without storage layouts keeps a cached profile that requested them, so its
             // artifacts are reused here without layouts. Delete them so they are recompiled.
             // Artifacts of sources without contracts never have layouts, and their AST has no
             // contract definition.
-            if config.extra_output.contains(&ContractOutputSelection::StorageLayout)
+            while config.extra_output.contains(&ContractOutputSelection::StorageLayout)
                 && let Ok(compiled) = &output
             {
-                let stale = compiled
+                let mut stale = compiled
                     .cached_artifacts()
-                    .artifact_files()
-                    .filter(|file| {
+                    .iter()
+                    .flat_map(|(source, artifacts)| {
+                        artifacts.values().flatten().map(move |file| (source, file))
+                    })
+                    .filter(|(_, file)| {
                         file.artifact.storage_layout.is_none()
                             && file.artifact.ast.as_ref().is_none_or(|ast| {
                                 ast.nodes
@@ -1781,17 +1785,64 @@ impl TestArgs {
                                     .any(|node| node.node_type == NodeType::ContractDefinition)
                             })
                     })
-                    .map(|file| file.file.clone())
                     .collect::<Vec<_>>();
-                if !stale.is_empty() {
-                    if !(shell::is_json() || self.junit) {
-                        sh_status!("Recompiling cached artifacts without storage layouts...")?;
-                    }
-                    for file in stale {
-                        fs::remove_file(file)?;
-                    }
-                    output = compile();
+                if stale.is_empty() {
+                    break;
                 }
+                // Cached artifacts of other profiles are reused for every source in scope, but
+                // only the profiles compiled from these roots are rewritten. Deleting any other
+                // artifact would leave the cache pointing at a missing file, and every later build
+                // would recompile. The roots are those of the compilation that produced the output,
+                // which differ from `files` after a source order fallback.
+                let graph = compiled.graph();
+                let roots = graph
+                    .source_files()
+                    .map(|id| graph.node_path(id).to_path_buf())
+                    .collect::<BTreeSet<_>>();
+                let scope = Graph::<MultiCompilerParser>::resolve_sources(
+                    &project.paths,
+                    Source::read_all(&roots)?,
+                )?
+                .into_sources_by_version(&project)?
+                .sources
+                .into_values()
+                .flatten()
+                .flat_map(|(version, sources, (profile, _))| {
+                    sources.into_iter().map(move |(path, _)| (path, version.clone(), profile))
+                })
+                .collect::<HashSet<_>>();
+                // Resolving the roots again can pick another compiler version than the compilation
+                // that produced the output, such as one it installed. The recompile would not
+                // rewrite stale artifacts of the old version, so recompile once with the new
+                // versions instead of deleting them.
+                if !reresolved
+                    && stale.iter().any(|(source, file)| {
+                        !scope
+                            .iter()
+                            .any(|(path, version, _)| path == *source && *version == file.version)
+                    })
+                {
+                    reresolved = true;
+                    output = compile(&roots);
+                    continue;
+                }
+                stale.retain(|(source, file)| {
+                    scope.contains(&(
+                        (*source).clone(),
+                        file.version.clone(),
+                        file.profile.as_str(),
+                    ))
+                });
+                if stale.is_empty() {
+                    break;
+                }
+                if !(shell::is_json() || self.junit) {
+                    sh_status!("Recompiling cached artifacts without storage layouts...")?;
+                }
+                for (_, file) in stale {
+                    fs::remove_file(&file.file)?;
+                }
+                output = compile(&roots);
             }
             let output = if should_mutate {
                 output.wrap_err(
@@ -2870,16 +2921,26 @@ impl TestArgs {
         config: &Config,
         gas_snapshots: &BTreeMap<String, BTreeMap<String, String>>,
     ) -> Result<()> {
-        if self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
+        let check = self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check);
+        let emit = self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit);
+        if !check && !emit {
+            return Ok(());
+        }
+        let gas_snapshots = gas_snapshots
+            .iter()
+            .map(|(group, snapshots)| {
+                gas_snapshot_path(&config.snapshots, group).map(|path| (group, snapshots, path))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if check {
             let mut differences_found = false;
-            for (group, snapshots) in gas_snapshots {
-                let path = config.snapshots.join(format!("{group}.json"));
+            for (group, snapshots, path) in &gas_snapshots {
                 // If the snapshot file doesn't exist, we can't compare so we skip.
                 if !path.exists() {
                     continue;
                 }
-                let previous_snapshots: BTreeMap<String, String> =
-                    fs::read_json_file(&path).expect("Failed to read snapshots from disk");
+                let previous_snapshots: BTreeMap<String, String> = fs::read_json_file(path)?;
                 let diff = snapshots
                     .iter()
                     .filter_map(|(k, v)| {
@@ -2910,14 +2971,10 @@ impl TestArgs {
             }
         }
 
-        if self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
-            fs::create_dir_all(&config.snapshots)?;
-            for (group, snapshots) in gas_snapshots {
-                fs::write_pretty_json_file(
-                    &config.snapshots.join(format!("{group}.json")),
-                    &snapshots,
-                )
-                .expect("Failed to write gas snapshots to disk");
+        if emit {
+            for (_, snapshots, path) in gas_snapshots {
+                fs::create_dir_all(path.parent().expect("snapshot path has a parent"))?;
+                fs::write_pretty_json_file(&path, snapshots)?;
             }
         }
         Ok(())
@@ -3733,6 +3790,29 @@ impl JunitOutput {
             }
         }
     }
+}
+
+/// Resolves a snapshot path, rejecting symlinks below the user-configured snapshots root.
+fn gas_snapshot_path(root: &Path, group: &str) -> Result<PathBuf> {
+    let relative = PathBuf::from(format!("{group}.json"));
+    let path = root.join(&relative);
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                bail!("gas snapshot path traverses a symlink: {}", current.display());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(error).wrap_err_with(|| {
+                    format!("failed to inspect gas snapshot path {}", current.display())
+                });
+            }
+        }
+    }
+    Ok(path)
 }
 
 #[cfg(test)]
