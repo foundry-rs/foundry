@@ -204,12 +204,11 @@ sol! {
         error NonPayable();
         error ProtocolNonceNotSupported();
         error InvalidNonceKey();
+        error InvalidReplayId();
         error NonceOverflow();
         error InvalidExpiringNonceExpiry();
         error ExpiringNonceReplay();
         error ExpiringNonceSetFull();
-
-        event NonceIncremented(address indexed account, uint256 indexed nonceKey, uint64 newNonce);
 
         function getNonce(address account, uint256 nonceKey) external view returns (uint64);
     }
@@ -661,8 +660,8 @@ mod tests {
             canonical::INonceManager::InvalidExpiringNonceExpiry::SELECTOR
         );
         assert_eq!(
-            super::INonceManager::NonceIncremented::SIGNATURE_HASH,
-            canonical::INonceManager::NonceIncremented::SIGNATURE_HASH
+            super::INonceManager::InvalidReplayId::SELECTOR,
+            canonical::INonceManager::InvalidReplayId::SELECTOR
         );
     }
 

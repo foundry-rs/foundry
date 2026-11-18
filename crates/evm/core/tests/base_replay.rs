@@ -10,7 +10,7 @@ use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{
-    BaseTransactionInfo, BaseTxEnvelope, Eip8130Signed, Predeploys, TxDeposit, TxEip8130,
+    BaseTransactionInfo, BaseTxEnvelope, Predeploys, TxBase, TxBaseSigned, TxDeposit,
 };
 use base_common_rpc_types::Transaction;
 use evm2::{
@@ -275,7 +275,7 @@ fn replays_successful_and_failed_base_deposits() {
 }
 
 fn eip8130_envelope(signer: &PrivateKeySigner) -> BaseTxEnvelope {
-    let tx = TxEip8130 {
+    let tx = TxBase {
         chain_id: 8453,
         sender: None,
         nonce_key: U256::ZERO,
@@ -291,7 +291,7 @@ fn eip8130_envelope(signer: &PrivateKeySigner) -> BaseTxEnvelope {
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()))
+    BaseTxEnvelope::Base(TxBaseSigned::new(tx, signature.as_bytes().into(), Bytes::new()))
 }
 
 #[test]
