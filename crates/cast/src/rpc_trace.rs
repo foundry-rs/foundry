@@ -12,10 +12,10 @@
 use alloy_primitives::{Address, Bytes, LogData, U256};
 use alloy_rpc_types::trace::geth::{CallConfig, CallFrame, CallLogFrame};
 use alloy_transport::TransportError;
+use evm2::interpreter::InstrStop;
 use foundry_evm::traces::{
     CallKind, CallLog, CallTrace, CallTraceArena, CallTraceNode, TraceMemberOrder,
 };
-use revm::interpreter::InstructionResult;
 
 pub use foundry_common::provider::is_rpc_method_not_found as is_method_not_found_error;
 
@@ -88,12 +88,12 @@ fn push_frame(
     // contract, `to` as the refund target and `value` as the transferred balance (the inverse of
     // `CallTraceNode::geth_selfdestruct_call_trace`). Mirror the local trace representation, which
     // records the selfdestruct through the dedicated fields and an
-    // `InstructionResult::SelfDestruct` status, so the destructed contract (not the
+    // `InstrStop::SelfDestruct` status, so the destructed contract (not the
     // beneficiary) is identified and `is_selfdestruct` holds. The transferred balance lives in
     // `selfdestruct_transferred_value`, so the call `value` stays zero.
     let is_selfdestruct = frame.typ == "SELFDESTRUCT";
     let status = if is_selfdestruct {
-        Some(InstructionResult::SelfDestruct)
+        Some(InstrStop::SelfDestruct)
     } else {
         Some(status_from_frame(frame))
     };
@@ -175,25 +175,25 @@ fn push_frame(
     idx
 }
 
-/// Maps a `callTracer` frame to the [`InstructionResult`] used for the rendered `[status]` label.
+/// Maps a `callTracer` frame to the [`InstrStop`] used for the rendered `[status]` label.
 ///
 /// `callTracer` only exposes a coarse, human-readable `error` string (plus an optional
 /// `revert_reason`), not a machine status code, so we recognise the two halts geth and reth report
 /// reliably (an explicit revert and running out of gas) and fall back to
-/// [`InstructionResult::Revert`] for anything else. `push_frame` preserves the frame's `error` /
+/// [`InstrStop::Revert`] for anything else. `push_frame` preserves the frame's `error` /
 /// `revert_reason` text in the trace output, and the call is coloured by [`CallTrace::success`], so
 /// an imperfect status never hides a failure or the original error message.
-fn status_from_frame(frame: &CallFrame) -> InstructionResult {
+fn status_from_frame(frame: &CallFrame) -> InstrStop {
     if frame.error.is_none() && frame.revert_reason.is_none() {
-        return InstructionResult::Return;
+        return InstrStop::Return;
     }
     if frame.revert_reason.is_some() {
-        return InstructionResult::Revert;
+        return InstrStop::Revert;
     }
     match frame.error.as_deref() {
-        Some(err) if err.contains("out of gas") => InstructionResult::OutOfGas,
+        Some(err) if err.contains("out of gas") => InstrStop::OutOfGas,
         // "execution reverted" and any other unclassified halt render as a revert.
-        _ => InstructionResult::Revert,
+        _ => InstrStop::Revert,
     }
 }
 
@@ -257,7 +257,7 @@ mod tests {
         assert_eq!(trace.selfdestruct_address, Some(destructed));
         assert_eq!(trace.selfdestruct_refund_target, Some(beneficiary));
         assert_eq!(trace.selfdestruct_transferred_value, Some(U256::from(9u64)));
-        assert_eq!(trace.status, Some(InstructionResult::SelfDestruct));
+        assert_eq!(trace.status, Some(InstrStop::SelfDestruct));
         assert!(trace.is_selfdestruct());
     }
 
@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn maps_frame_status() {
         let ok = CallFrame { typ: "CALL".to_string(), ..Default::default() };
-        assert_eq!(status_from_frame(&ok), InstructionResult::Return);
+        assert_eq!(status_from_frame(&ok), InstrStop::Return);
 
         let reverted = CallFrame {
             typ: "CALL".to_string(),
@@ -342,21 +342,21 @@ mod tests {
             revert_reason: Some("boom".to_string()),
             ..Default::default()
         };
-        assert_eq!(status_from_frame(&reverted), InstructionResult::Revert);
+        assert_eq!(status_from_frame(&reverted), InstrStop::Revert);
 
         let oog = CallFrame {
             typ: "CALL".to_string(),
             error: Some("out of gas".to_string()),
             ..Default::default()
         };
-        assert_eq!(status_from_frame(&oog), InstructionResult::OutOfGas);
+        assert_eq!(status_from_frame(&oog), InstrStop::OutOfGas);
 
         let other = CallFrame {
             typ: "CALL".to_string(),
             error: Some("invalid opcode: opcode 0xfe not defined".to_string()),
             ..Default::default()
         };
-        assert_eq!(status_from_frame(&other), InstructionResult::Revert);
+        assert_eq!(status_from_frame(&other), InstrStop::Revert);
     }
 
     /// An unclassified halt with no return data (e.g. an invalid opcode) must keep its original

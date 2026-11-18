@@ -80,6 +80,7 @@ contract SymbolicMsizeAfterWrite {
         r#"
 contract SymbolicMemoryEpochOrdering {
     function checkLaterConcreteWriteWins(uint256 symKey, uint256 readKey) public pure {
+        if (symKey > 0xffff || readKey > 0xffff) return;
         uint256 v;
         assembly {
             // Earlier symbolic-offset write.
@@ -470,6 +471,20 @@ contract SymbolicMemoryLimit {
         (bool nestedOk,) = address(this).call(abi.encodeCall(this.nestedWrappingCallRange, ()));
         assert(!directOk && !nestedOk);
     }
+
+    function checkTopLevelMemoryLimitAtInput(uint256 x) public pure {
+        if (x == 42) {
+            assembly {
+                mstore(4065, 1)
+            }
+        }
+    }
+
+    function checkTopLevelMemoryLimitAtOffset(uint16 offset) public pure {
+        assembly {
+            mstore(offset, 1)
+        }
+    }
 }
 "#,
     );
@@ -489,6 +504,25 @@ Ran 6 tests for test/SymbolicMemoryLimit.t.sol:SymbolicMemoryLimit
 [PASS] checkMemoryLimitRejectsWrappingCallRanges() ([METRICS])
 [PASS] checkMemoryLimitSymbolicCallSize(bool) ([METRICS])
 Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Going past the memory limit halts, as in concrete execution, so it fails the test instead
+    // of pruning the path.
+    cmd.forge_fuse();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkTopLevelMemoryLimit",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicMemoryLimit.t.sol:SymbolicMemoryLimit
+[FAIL: EvmError: MemoryLimitOOG; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkTopLevelMemoryLimitAtInput(uint256) ([METRICS])
+[FAIL: EvmError: MemoryLimitOOG; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkTopLevelMemoryLimitAtOffset(uint16) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1125,6 +1159,12 @@ contract SymbolicReturndataCopyOobOffset is Test {
         assertEq(data.length, 0);
     }
 
+    function checkTopLevelOutOfBoundsOffset(uint8 offset) public view {
+        assembly {
+            pop(staticcall(gas(), 4, 0, 32, 0, 0))
+            returndatacopy(0, offset, 32)
+        }
+    }
 }
 "#,
     );
@@ -1142,6 +1182,23 @@ Ran 2 tests for test/SymbolicReturndataCopyOobOffset.t.sol:SymbolicReturndataCop
 [PASS] checkOutOfBoundsClearsReturnData(uint256) ([METRICS])
 [PASS] checkOutOfBoundsOffsetForcedZeroSizeReverts(uint256) ([METRICS])
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Copying past the return data halts, as in concrete execution, so it fails the test.
+    cmd.forge_fuse();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkTopLevelOutOfBoundsOffset",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicReturndataCopyOobOffset.t.sol:SymbolicReturndataCopyOobOffset
+[FAIL: EvmError: OutOfOffset; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkTopLevelOutOfBoundsOffset(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

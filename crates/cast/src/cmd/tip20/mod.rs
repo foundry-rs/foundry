@@ -8,9 +8,9 @@ use alloy_primitives::{Address, B256};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils::get_chain};
-use foundry_wallets::{TempoAccountsWallet, WalletSigner};
+use foundry_wallets::WalletSigner;
 use std::str::FromStr;
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet};
 
 mod create;
 pub(crate) use create::iso4217_warning_message;

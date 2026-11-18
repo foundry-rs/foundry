@@ -24,7 +24,11 @@ use foundry_common::{
 use foundry_compilers::{
     Artifact, ArtifactId, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     VYPER_EXTENSIONS,
-    artifacts::{CompactBytecode, CompactDeployedBytecode, Source, sourcemap::SourceMap},
+    artifacts::{
+        CompactBytecode, CompactDeployedBytecode, Source,
+        sourcemap::{self, SourceMap},
+    },
+    buildinfo::SourceEdit,
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         Language,
@@ -43,6 +47,7 @@ use semver::Version;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -54,7 +59,7 @@ foundry_config::impl_figment_convert!(CoverageArgs, test);
 ///
 /// Most flags here have a corresponding `[profile.<name>.coverage]` config
 /// option in `foundry.toml`. CLI flags take precedence over config; the helper
-/// `resolve_with` merges them after the config is loaded.
+/// `resolve` merges them after the config is loaded.
 #[derive(Parser)]
 #[command(after_long_help = r#"Source attribution:
   Coverage follows compiler source maps. Inherited modifier code is reported under the
@@ -91,16 +96,20 @@ pub struct CoverageArgs {
     #[arg(long = "lcov-version", value_parser = parse_lcov_version)]
     lcov_version_cli: Option<Version>,
 
-    /// The resolved LCOV version to use after merging CLI and config values.
-    #[arg(skip = Version::new(1, 0, 0))]
-    lcov_version: Version,
-
     /// Enable viaIR with minimum optimization
     ///
     /// This can fix most of the "stack too deep" errors while resulting a
     /// relatively accurate source map.
     #[arg(long)]
     ir_minimum: bool,
+
+    /// Keep the project's optimizer and viaIR settings instead of disabling them.
+    ///
+    /// Optimized builds can miss or merge coverage items. Cannot be combined with
+    /// `--ir-minimum`, including when either is enabled in config, where it can only be turned
+    /// off. Falls back to the `[profile.<name>.coverage] keep_optimizer` config value.
+    #[arg(long)]
+    keep_optimizer: bool,
 
     /// The path to output the report.
     ///
@@ -121,21 +130,33 @@ pub struct CoverageArgs {
     #[arg(long)]
     exclude_tests: bool,
 
-    /// The coverage reporters to use. Constructed from the other fields.
-    #[arg(skip)]
-    reporters: Vec<Box<dyn CoverageReporter>>,
-
-    /// Glob patterns of source files to exclude from the coverage report.
-    /// Populated from `[profile.<name>.coverage] skip_files` after config is
-    /// loaded; not exposed directly on the CLI.
-    #[arg(skip)]
-    skip_files: Vec<String>,
-
     #[command(flatten)]
     test: TestArgs,
 }
 
-impl CoverageArgs {
+/// The coverage settings of a run: the CLI flags merged with the
+/// `[profile.<name>.coverage]` config values by [`CoverageArgs::resolve`].
+#[derive(Debug)]
+struct CoverageSettings {
+    /// The report types to generate. Never empty.
+    report: Vec<CoverageReportKind>,
+    /// The version of the LCOV "tracefile" format to use.
+    lcov_version: Version,
+    /// Whether to enable viaIR with minimum optimization.
+    ir_minimum: bool,
+    /// Whether to keep the project's optimizer and viaIR settings.
+    keep_optimizer: bool,
+    /// The path to output a single file report to.
+    report_file: Option<PathBuf>,
+    /// Whether to include dependency sources in the coverage report.
+    include_libs: bool,
+    /// Whether to exclude tests from the coverage report.
+    exclude_tests: bool,
+    /// Glob patterns of source files to exclude from the coverage report.
+    skip_files: Vec<String>,
+}
+
+impl CoverageSettings {
     fn report_path(&self, root: &Path, default_file_name: &str) -> PathBuf {
         let report_file =
             (self.file_report_count() == 1).then_some(self.report_file.as_deref()).flatten();
@@ -150,84 +171,10 @@ impl CoverageArgs {
         usize::from(has_lcov) + usize::from(has_attribution) + usize::from(has_gaps)
     }
 
-    pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
-        self.test.ensure_coverage_mode_compatible()
-    }
-
-    pub async fn run(mut self) -> Result<()> {
-        self.ensure_mode_compatible()?;
-
-        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
-
-        // install missing dependencies
-        self.install_missing_dependencies(&mut config)?;
-
-        // Default to a static fuzz seed so coverage reports are deterministic,
-        // but allow the user to override it via `--fuzz-seed` or `[fuzz] seed` in config.
-        if config.fuzz.seed.is_none() {
-            config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
-        }
-
-        // Merge CLI args with `[profile.<name>.coverage]` config values. CLI
-        // flags take precedence; unset CLI flags fall back to the config.
-        self.resolve_with(&config.coverage);
-        let filter = self.test.filter(&config)?;
-
-        let (paths, mut output) = {
-            let (project, output) = self.build(&config, &filter)?;
-            (project.paths, output)
-        };
-
-        if self.report_file.is_some() && self.file_report_count() > 1 {
-            sh_warn!(
-                "`--report-file` is ignored when multiple file reports are requested; \
-                 each report will use its default output path"
-            )?;
-        }
-
-        self.populate_reporters(&paths.root);
-
-        sh_println!("Analysing contracts...")?;
-        let report = self.prepare(&paths, &mut output)?;
-
-        sh_println!("Running tests...")?;
-        self.collect(&paths.root, &output, report, config, evm_opts, filter).await
-    }
-
-    /// Merge `[profile.<name>.coverage]` config values into this struct. CLI
-    /// flags already set on `self` win; unset/false flags inherit from
-    /// `config`.
-    ///
-    /// After this returns:
-    /// - `self.report` is non-empty.
-    /// - boolean flags reflect `cli || config` (CLI cannot disable a flag set to `true` in config;
-    ///   this matches the pre-existing flag-only semantics where booleans defaulted to `false`).
-    fn resolve_with(&mut self, config: &CoverageConfig) {
-        if self.report.is_empty() {
-            self.report.clone_from(&config.report);
-        }
-        self.lcov_version =
-            self.lcov_version_cli.clone().unwrap_or_else(|| config.lcov_version.clone());
-        if !self.ir_minimum {
-            self.ir_minimum = config.ir_minimum;
-        }
-        if self.report_file.is_none() {
-            self.report_file.clone_from(&config.report_file);
-        }
-        if !self.include_libs {
-            self.include_libs = config.include_libs;
-        }
-        if !self.exclude_tests {
-            self.exclude_tests = config.exclude_tests;
-        }
-        // Glob filters are additive — there's no CLI flag for these, so always
-        // take from config.
-        self.skip_files.clone_from(&config.skip_files);
-    }
-
-    fn populate_reporters(&mut self, root: &Path) {
-        self.reporters = self
-            .report
+    /// The reporters that write the requested reports, except the attribution report, which
+    /// needs the test outcome.
+    fn reporters(&self, root: &Path) -> Vec<Box<dyn CoverageReporter>> {
+        self.report
             .iter()
             .filter_map(|report_kind| match report_kind {
                 CoverageReportKind::Summary => {
@@ -248,14 +195,105 @@ impl CoverageArgs {
                     Some(Box::new(GapsReporter::new(root.to_path_buf(), path)))
                 }
             })
-            .collect::<Vec<_>>();
+            .collect()
+    }
+}
+
+impl CoverageArgs {
+    pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
+        self.test.ensure_coverage_mode_compatible()?;
+        let settings = self.resolve(&self.load_config_no_warnings()?.coverage);
+        eyre::ensure!(
+            !(settings.ir_minimum && settings.keep_optimizer),
+            "`ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled"
+        );
+        Ok(())
+    }
+
+    pub async fn run(self) -> Result<()> {
+        self.ensure_mode_compatible()?;
+
+        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+
+        // install missing dependencies
+        self.install_missing_dependencies(&mut config)?;
+
+        // Default to a static fuzz seed so coverage reports are deterministic,
+        // but allow the user to override it via `--fuzz-seed` or `[fuzz] seed` in config.
+        if config.fuzz.seed.is_none() {
+            config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        }
+
+        // Merge CLI args with `[profile.<name>.coverage]` config values. CLI
+        // flags take precedence; unset CLI flags fall back to the config.
+        let settings = self.resolve(&config.coverage);
+        let filter = self.test.filter(&config)?;
+
+        let (paths, mut output) = {
+            let (project, output) = Self::build(&config, &filter, &settings)?;
+            (project.paths, output)
+        };
+
+        if settings.report_file.is_some() && settings.file_report_count() > 1 {
+            sh_warn!(
+                "`--report-file` is ignored when multiple file reports are requested; \
+                 each report will use its default output path"
+            )?;
+        }
+
+        let mut reporters = settings.reporters(&paths.root);
+
+        sh_println!("Analysing contracts...")?;
+        let report = Self::prepare(&settings, &reporters, &paths, &mut output)?;
+
+        sh_println!("Running tests...")?;
+        self.collect(
+            &settings,
+            &mut reporters,
+            &paths.root,
+            &output,
+            report,
+            config,
+            evm_opts,
+            filter,
+        )
+        .await
+    }
+
+    /// Merges `[profile.<name>.coverage]` config values with the CLI flags. CLI
+    /// flags that are set win; unset/false flags inherit from `config`.
+    ///
+    /// In the result:
+    /// - `report` is non-empty.
+    /// - boolean flags reflect `cli || config` (CLI cannot disable a flag set to `true` in config;
+    ///   this matches the pre-existing flag-only semantics where booleans defaulted to `false`).
+    fn resolve(&self, config: &CoverageConfig) -> CoverageSettings {
+        CoverageSettings {
+            report: if self.report.is_empty() {
+                config.report.clone()
+            } else {
+                self.report.clone()
+            },
+            lcov_version: self
+                .lcov_version_cli
+                .clone()
+                .unwrap_or_else(|| config.lcov_version.clone()),
+            ir_minimum: self.ir_minimum || config.ir_minimum,
+            keep_optimizer: self.keep_optimizer || config.keep_optimizer,
+            report_file: self.report_file.clone().or_else(|| config.report_file.clone()),
+            include_libs: self.include_libs || config.include_libs,
+            exclude_tests: self.exclude_tests || config.exclude_tests,
+            // Glob filters are additive — there's no CLI flag for these, so always
+            // take from config.
+            skip_files: config.skip_files.clone(),
+        }
     }
 
     /// Builds the project.
     fn build(
-        &self,
         config: &Config,
         filter: &ProjectPathsAwareFilter,
+        settings: &CoverageSettings,
     ) -> Result<(Project, ProjectCompileOutput)> {
         let mut project = config.ephemeral_project()?;
         // A contended or unavailable cache retains ephemeral compilation. Keep the lock until
@@ -292,13 +330,18 @@ impl CoverageArgs {
             project.paths.slash_paths();
         }
 
-        if self.ir_minimum {
+        if settings.ir_minimum {
             sh_warn!(
                 "`--ir-minimum` enables `viaIR` with minimum optimization, \
                  which can result in inaccurate source mappings.\n\
                  Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
                  Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
                  See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep"
+            )?;
+        } else if settings.keep_optimizer {
+            sh_warn!(
+                "`--keep-optimizer` keeps the optimizer and `viaIR` settings, so coverage can miss \
+                 or merge items that the optimizer removes or combines."
             )?;
         } else {
             sh_warn!(
@@ -309,7 +352,9 @@ impl CoverageArgs {
             )?;
         }
 
-        config.disable_optimizations(&mut project, self.ir_minimum);
+        if !settings.keep_optimizer {
+            config.disable_optimizations(&mut project, settings.ir_minimum);
+        }
 
         let files = (filter.args().path_pattern.is_some()
             || filter.args().path_pattern_inverse.is_some())
@@ -445,7 +490,8 @@ impl CoverageArgs {
     /// Builds the coverage report.
     #[instrument(name = "Coverage::prepare", skip_all)]
     fn prepare(
-        &self,
+        settings: &CoverageSettings,
+        reporters: &[Box<dyn CoverageReporter>],
         project_paths: &ProjectPathsConfig,
         output: &mut ProjectCompileOutput,
     ) -> Result<CoverageReport> {
@@ -474,8 +520,8 @@ impl CoverageArgs {
                 let path = path.strip_prefix(&project_paths.root).unwrap_or(path);
                 report.add_source(build_id.clone(), *source_id as usize, path.to_path_buf());
 
-                if (!self.include_libs && project_paths.has_library_ancestor(path))
-                    || (self.exclude_tests && project_paths.is_test(path))
+                if (!settings.include_libs && project_paths.has_library_ancestor(path))
+                    || (settings.exclude_tests && project_paths.is_test(path))
                 {
                     continue;
                 }
@@ -489,12 +535,17 @@ impl CoverageArgs {
         }
 
         // Get source maps and bytecodes.
+        let source_edits = output
+            .builds()
+            .map(|(build_id, build)| (build_id.as_str(), &build.source_edits))
+            .collect::<HashMap<_, _>>();
         let artifacts: Vec<ArtifactData> = output
             .artifact_ids()
             .par_bridge() // This parses source maps, so we want to run it in parallel.
             .filter_map(|(id, artifact)| {
                 let source_id = report.get_source_id(&id.build_id, &id.source)?;
-                ArtifactData::new(&id, source_id, artifact)
+                let edits = source_edits.get(id.build_id.as_str()).copied();
+                ArtifactData::new(&id, source_id, artifact, edits)
             })
             .collect();
 
@@ -530,7 +581,7 @@ impl CoverageArgs {
             report.add_analysis(build_id.clone(), source_analysis);
         }
 
-        if self.reporters.iter().any(|reporter| reporter.needs_source_maps()) {
+        if reporters.iter().any(|reporter| reporter.needs_source_maps()) {
             report.add_source_maps(artifacts.into_iter().map(|artifact| {
                 (artifact.contract_id, (artifact.creation.source_map, artifact.deployed.source_map))
             }));
@@ -541,8 +592,11 @@ impl CoverageArgs {
 
     /// Runs tests, collects coverage data and generates the final report.
     #[instrument(name = "Coverage::collect", skip_all)]
+    #[allow(clippy::too_many_arguments)]
     async fn collect(
         mut self,
+        settings: &CoverageSettings,
+        reporters: &mut [Box<dyn CoverageReporter>],
         project_root: &Path,
         output: &ProjectCompileOutput,
         mut report: CoverageReport,
@@ -655,9 +709,9 @@ impl CoverageArgs {
                 !not_re.is_match(&path.to_string_lossy())
             });
         }
-        if !self.skip_files.is_empty() {
+        if !settings.skip_files.is_empty() {
             let mut builder = GlobSetBuilder::new();
-            for pattern in &self.skip_files {
+            for pattern in &settings.skip_files {
                 let glob = Glob::new(pattern).map_err(|e| {
                     eyre::eyre!("invalid glob in coverage.skip_files: '{pattern}': {e}")
                 })?;
@@ -673,11 +727,11 @@ impl CoverageArgs {
         }
 
         // Output final reports.
-        self.report(&report)?;
+        Self::report(reporters, &report)?;
 
-        if self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution)) {
+        if settings.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution)) {
             let reporter = CoverageAttributionReporter::new(
-                self.report_path(project_root, "coverage-attribution.json"),
+                settings.report_path(project_root, "coverage-attribution.json"),
             );
             reporter.report(&report, &outcome, &resolved_hit_maps)?;
         }
@@ -690,8 +744,8 @@ impl CoverageArgs {
     }
 
     #[instrument(name = "Coverage::report", skip_all)]
-    fn report(&mut self, report: &CoverageReport) -> Result<()> {
-        for reporter in &mut self.reporters {
+    fn report(reporters: &mut [Box<dyn CoverageReporter>], report: &CoverageReport) -> Result<()> {
+        for reporter in reporters {
             let _guard = debug_span!("reporter.report", kind=%reporter.name()).entered();
             reporter.report(report)?;
         }
@@ -739,7 +793,12 @@ pub struct ArtifactData {
 }
 
 impl ArtifactData {
-    pub fn new(id: &ArtifactId, source_id: usize, artifact: &impl Artifact) -> Option<Self> {
+    pub fn new(
+        id: &ArtifactId,
+        source_id: usize,
+        artifact: &impl Artifact,
+        source_edits: Option<&BTreeMap<u32, Vec<SourceEdit>>>,
+    ) -> Option<Self> {
         let abi = artifact.get_abi();
         let function_selectors = abi
             .as_ref()
@@ -758,13 +817,13 @@ impl ArtifactData {
                 contract_name: id.name.as_str().into(),
             },
             creation: BytecodeData::new(
-                artifact.get_source_map()?.ok()?,
+                to_original_source_map(artifact.get_source_map()?.ok()?, source_edits),
                 artifact
                     .get_bytecode()
                     .and_then(|bytecode| dummy_link_bytecode(bytecode.into_owned()))?,
             ),
             deployed: BytecodeData::new(
-                artifact.get_source_map_deployed()?.ok()?,
+                to_original_source_map(artifact.get_source_map_deployed()?.ok()?, source_edits),
                 artifact
                     .get_deployed_bytecode()
                     .and_then(|bytecode| dummy_link_deployed_bytecode(bytecode.into_owned()))?,
@@ -774,6 +833,62 @@ impl ArtifactData {
             fallback_payable,
         })
     }
+}
+
+/// Maps the ranges of a source map from the sources the compiler read back to the sources on
+/// disk, which coverage items refer to.
+///
+/// Preprocessing, such as dynamic test linking, rewrites sources before compilation, so the
+/// compiler reports offsets in the edited text. A range inside a replacement maps to the whole
+/// replaced range.
+fn to_original_source_map(
+    mut source_map: SourceMap,
+    source_edits: Option<&BTreeMap<u32, Vec<SourceEdit>>>,
+) -> SourceMap {
+    let Some(source_edits) = source_edits else { return source_map };
+    for element in &mut source_map {
+        let Some(edits) = element.index().and_then(|source| source_edits.get(&source)) else {
+            continue;
+        };
+        let offset = element.offset() as usize;
+        let length = element.length() as usize;
+        let (start, end) = original_range(edits, offset..offset + length);
+        if (start, end) == (offset, offset + length) {
+            continue;
+        }
+        // Source maps have no setters, so rebuild the element from its textual form.
+        let mapped = format!(
+            "{start}:{}:{}:{}:{}",
+            end - start,
+            element.index_i32(),
+            element.jump(),
+            element.modifier_depth()
+        );
+        *element = sourcemap::parse(&mapped)
+            .ok()
+            .and_then(|map| map.into_iter().next())
+            .expect("source element should round-trip through its textual form");
+    }
+    source_map
+}
+
+/// Maps a byte range of an edited source back to the original source.
+///
+/// `edits` must be sorted by start offset.
+fn original_range(edits: &[SourceEdit], range: Range<usize>) -> (usize, usize) {
+    let start = SourceEdit::original_offset(edits, range.start);
+    let mut shift = 0isize;
+    for edit in edits {
+        let edited_start = edit.start.saturating_add_signed(shift);
+        if range.end <= edited_start {
+            break;
+        }
+        if range.end < edited_start + edit.len {
+            return (start, edit.end);
+        }
+        shift += edit.len as isize - (edit.end - edit.start) as isize;
+    }
+    (start, range.end.saturating_add_signed(-shift).max(start))
 }
 
 pub struct BytecodeData {
@@ -815,31 +930,90 @@ mod tests {
 
     #[test]
     fn resolve_lcov_version_uses_config_when_cli_absent() {
-        let mut args = CoverageArgs::parse_from(["coverage"]);
+        let args = CoverageArgs::parse_from(["coverage"]);
         let config = CoverageConfig { lcov_version: Version::new(2, 2, 0), ..Default::default() };
 
-        args.resolve_with(&config);
+        let settings = args.resolve(&config);
 
-        assert_eq!(args.lcov_version, Version::new(2, 2, 0));
+        assert_eq!(settings.lcov_version, Version::new(2, 2, 0));
     }
 
     #[test]
     fn resolve_lcov_version_keeps_explicit_cli_default() {
-        let mut args = CoverageArgs::parse_from(["coverage", "--lcov-version", "1"]);
+        let args = CoverageArgs::parse_from(["coverage", "--lcov-version", "1"]);
         let config = CoverageConfig { lcov_version: Version::new(2, 2, 0), ..Default::default() };
 
-        args.resolve_with(&config);
+        let settings = args.resolve(&config);
 
-        assert_eq!(args.lcov_version, Version::new(1, 0, 0));
+        assert_eq!(settings.lcov_version, Version::new(1, 0, 0));
     }
 
     #[test]
     fn resolve_lcov_version_keeps_explicit_cli_value() {
-        let mut args = CoverageArgs::parse_from(["coverage", "--lcov-version", "2"]);
+        let args = CoverageArgs::parse_from(["coverage", "--lcov-version", "2"]);
         let config = CoverageConfig { lcov_version: Version::new(2, 2, 0), ..Default::default() };
 
-        args.resolve_with(&config);
+        let settings = args.resolve(&config);
 
-        assert_eq!(args.lcov_version, Version::new(2, 0, 0));
+        assert_eq!(settings.lcov_version, Version::new(2, 0, 0));
+    }
+
+    #[test]
+    fn maps_edited_ranges_to_original() {
+        // "new C()" at 10..17 grows to 30 bytes, 50..60 is removed, and 5 bytes are inserted at
+        // 100.
+        let edits = [
+            SourceEdit { start: 10, end: 17, len: 30 },
+            SourceEdit { start: 50, end: 60, len: 0 },
+            SourceEdit { start: 100, end: 100, len: 5 },
+        ];
+        for (edited, original) in [
+            // Before the first edit.
+            (0..10, (0, 10)),
+            // The replacement itself, and ranges inside it, map to the replaced range.
+            (10..40, (10, 17)),
+            (15..20, (10, 17)),
+            (39..40, (10, 17)),
+            // A range that straddles one boundary of the replacement.
+            (5..20, (5, 17)),
+            (20..45, (10, 22)),
+            // Containing the replacement.
+            (5..45, (5, 22)),
+            // After the replacement, before and around the removal.
+            (40..43, (17, 20)),
+            (43..90, (20, 77)),
+            (90..95, (77, 82)),
+            // Around the insertion, which starts at 113 in the edited source.
+            (110..113, (97, 100)),
+            (113..118, (100, 100)),
+            (115..116, (100, 100)),
+            (118..120, (100, 102)),
+            // Empty ranges.
+            (10..10, (10, 10)),
+            (40..40, (17, 17)),
+            (12..12, (10, 17)),
+        ] {
+            assert_eq!(original_range(&edits, edited.clone()), original, "{edited:?}");
+        }
+        assert_eq!(original_range(&[], 7..9), (7, 9));
+    }
+
+    #[test]
+    fn converts_source_map_per_source() {
+        let edits = BTreeMap::from([(1, vec![SourceEdit { start: 10, end: 17, len: 30 }])]);
+        let map = sourcemap::parse(
+            "0:5:1:-:0;45:3:1:i:2;12:2:1:o:1;45:3:0:-:0;-1:0:-1:-:0;40:0:1:-:0;12:0:1:o:0",
+        )
+        .unwrap();
+        // Elements of unedited sources and without a source are unchanged.
+        assert_eq!(to_original_source_map(map.clone(), None), map);
+        let converted = to_original_source_map(map, Some(&edits));
+        assert_eq!(
+            converted,
+            sourcemap::parse(
+                "0:5:1:-:0;22:3:1:i:2;10:7:1:o:1;45:3:0:-:0;-1:0:-1:-:0;17:0:1:-:0;10:7:1:o:0"
+            )
+            .unwrap()
+        );
     }
 }

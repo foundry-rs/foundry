@@ -2,7 +2,11 @@ use crate::{
     FeeManager, PrecompileFactory,
     eth::{
         backend::{
-            db::{Db, SerializableState},
+            db::{BlockchainDb, BlockchainDbMeta, Db, SerializableState, SharedBackend},
+            env::{
+                BlobExcessGasAndPrice, BlockEnv, CfgEnv, EvmEnv, SpecId,
+                apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
+            },
             fork::{
                 ClientFork, ClientForkConfig, ForkEndpointIdentity, ensure_fork_network_supported,
             },
@@ -20,7 +24,6 @@ use crate::{
 use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, eip1559::BaseFeeParams, eip7840::BlobParams};
-use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{
@@ -42,26 +45,16 @@ use foundry_common::{
     provider::{ProviderBuilder, RetryProvider, is_rpc_method_not_found, redact_url},
 };
 use foundry_config::Config;
-use foundry_evm::{
-    backend::{
-        BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend, account_fetch_policy_for_source,
-    },
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    hardfork::FoundryHardfork,
-    traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
-    utils::{
-        apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
-        get_blob_params_by_hardfork,
-    },
+use foundry_evm_core::{
+    backend::account_fetch_policy_for_source, constants::DEFAULT_CREATE2_DEPLOYER,
+    utils::get_blob_params_by_hardfork,
 };
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_evm_traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
+use foundry_fork_db::ForkBlock;
 use parking_lot::RwLock;
-use rand_08::thread_rng;
-use revm::{
-    context::{BlockEnv, CfgEnv},
-    context_interface::block::BlobExcessGasAndPrice,
-    primitives::hardfork::SpecId,
-};
+use rand_08::{Rng, thread_rng};
 use serde_json::{Value, json};
 use std::{
     fmt::Write as FmtWrite,
@@ -116,7 +109,7 @@ pub(crate) fn source_hardfork(
     #[cfg(feature = "base")]
     if matches!(NamedChain::try_from(chain_id), Ok(NamedChain::Base | NamedChain::BaseSepolia)) {
         #[cfg(feature = "optimism")]
-        return foundry_evm::hardfork::OpHardfork::from_chain_and_timestamp(
+        return foundry_evm_hardforks::OpHardfork::from_chain_and_timestamp(
             Chain::from_id(chain_id),
             timestamp,
         )
@@ -351,7 +344,7 @@ pub struct NodeConfig {
     ///
     /// If set to `Some(num)` keep latest num state in memory only.
     pub prune_history: PruneStateHistoryConfig,
-    /// Max number of states cached on disk.
+    /// Max number of older states to keep, beyond the most recent ones.
     pub max_persisted_states: Option<usize>,
     /// The initial state to apply and consume during startup.
     pub init_state: Option<SerializableState>,
@@ -496,7 +489,7 @@ Chain ID
             );
         }
 
-        if SpecId::from(self.get_hardfork()).is_enabled_in(SpecId::LONDON) {
+        if SpecId::from(self.get_hardfork()).enables(SpecId::LONDON) {
             let _ = write!(
                 s,
                 r#"
@@ -750,7 +743,7 @@ impl Default for NodeConfig {
 impl NodeConfig {
     /// Applies Tempo's safe default beneficiary for forked nodes while preserving
     /// explicit coinbase selections.
-    pub(crate) fn apply_tempo_fork_beneficiary_default<N>(&self, evm_env: &mut EvmEnv<N>) {
+    pub(crate) fn apply_tempo_fork_beneficiary_default(&self, evm_env: &mut EvmEnv) {
         if self.networks.is_tempo()
             && !self.fork_urls.is_empty()
             && evm_env.block_env.beneficiary.is_zero()
@@ -765,17 +758,14 @@ impl NodeConfig {
         }
     }
 
-    /// Sets the execution spec, its mainnet gas parameters, and the transaction gas limit cap.
+    /// Sets the execution spec and the transaction gas limit cap.
     ///
-    /// The Amsterdam gas features follow the spec in both directions, so switching to an earlier
-    /// spec disables them. The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except
-    /// under EIP-8037, where the cap divides a transaction's gas into regular gas and the state
-    /// gas reservoir instead of limiting it.
+    /// The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except under EIP-8037, where
+    /// the cap divides a transaction's gas into regular gas and the state gas reservoir instead of
+    /// limiting it.
     pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, spec: SpecId) {
-        cfg.set_spec_and_mainnet_gas_params(spec);
+        cfg.spec = spec;
         let is_amsterdam = spec >= SpecId::AMSTERDAM;
-        cfg.enable_amsterdam_eip8037 = is_amsterdam;
-        cfg.enable_amsterdam_eip2780 = is_amsterdam;
         cfg.tx_gas_limit_cap = (!self.enable_tx_gas_limit && !is_amsterdam).then_some(u64::MAX);
     }
 
@@ -813,16 +803,14 @@ impl NodeConfig {
     }
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
-        if let Some(value) = self.blob_excess_gas_and_price {
-            value
-        } else {
+        self.blob_excess_gas_and_price.unwrap_or_else(|| {
             let excess_blob_gas =
                 self.genesis.as_ref().and_then(|g| g.excess_blob_gas).unwrap_or(0);
             BlobExcessGasAndPrice::new(
                 excess_blob_gas,
                 self.get_blob_params().update_fraction as u64,
             )
-        }
+        })
     }
 
     /// Returns the [`BlobParams`] that should be used.
@@ -954,7 +942,7 @@ impl NodeConfig {
         self
     }
 
-    /// Sets max number of states to cache on disk.
+    /// Sets max number of older states to keep, beyond the most recent ones.
     #[must_use]
     pub fn with_max_persisted_states<U: Into<usize>>(
         mut self,
@@ -1326,10 +1314,7 @@ impl NodeConfig {
 
     /// Returns the ipc path for the ipc endpoint if any
     pub fn get_ipc_path(&self) -> Option<String> {
-        match &self.ipc_path {
-            Some(path) => path.clone().or_else(|| Some(DEFAULT_IPC_ENDPOINT.to_string())),
-            None => None,
-        }
+        self.ipc_path.clone().map(|path| path.unwrap_or_else(|| DEFAULT_IPC_ENDPOINT.to_string()))
     }
 
     /// Prints the config info
@@ -1546,7 +1531,7 @@ impl NodeConfig {
     {
         // configure the revm environment
 
-        let mut cfg = CfgEnv::new();
+        let mut cfg = CfgEnv::default();
         self.set_cfg_spec(&mut cfg, self.get_hardfork().into());
 
         cfg.chain_id = self.get_chain_id();
@@ -2280,7 +2265,7 @@ latest block number: {latest_block}"
 
         // Cache identity must describe the remote fork block, not local execution overrides that
         // can change after mining (for example, the locally advanced base fee).
-        let cache_block_env: BlockEnv = block_env_from_header(&block.header);
+        let cache_block_env = block_env_from_header(&block.header);
 
         evm_env.block_env = BlockEnv {
             gas_limit,
@@ -2397,7 +2382,7 @@ latest block number: {latest_block}"
         let block_hash = block.header.hash;
 
         // Apply changes such as difficulty -> prevrandao for the remote source chain.
-        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork>(
             evm_env,
             &block,
             source_chain_id,
@@ -2523,7 +2508,11 @@ latest block number: {latest_block}"
 
         debug!(target: "node", fork_number=config.block_number, fork_hash=%config.block_hash, "set up fork db");
 
-        let mut db = ForkedDatabase::new(backend, block_chain_db);
+        let mut db = ForkedDatabase::new(
+            backend,
+            block_chain_db,
+            self.prune_history.is_state_history_supported(),
+        );
 
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
@@ -2773,7 +2762,9 @@ impl AccountGenerator {
         Self {
             chain_id: CHAIN_ID,
             amount,
-            phrase: Mnemonic::<English>::new(&mut thread_rng()).to_phrase(),
+            phrase: Mnemonic::<English>::new_from_entropy(thread_rng().r#gen::<[u8; 16]>().into())
+                .to_phrase()
+                .to_string(),
             derivation_path: None,
         }
     }
@@ -2867,16 +2858,16 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
+    use foundry_evm_hardforks::{EthereumHardfork, latest_active_tempo_hardfork};
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     #[cfg(feature = "base")]
-    use foundry_evm::hardforks::BaseUpgrade;
+    use foundry_evm_hardforks::BaseUpgrade;
 
     #[cfg(feature = "optimism")]
-    use foundry_evm::hardfork::OpHardfork;
+    use foundry_evm_hardforks::OpHardfork;
 
     #[cfg(not(feature = "base"))]
     use alloy_chains::NamedChain;
@@ -3207,7 +3198,7 @@ mod tests {
         assert_eq!(config.get_chain_id(), 1);
         assert_eq!(
             config.get_hardfork(),
-            FoundryHardfork::Monad(foundry_evm::hardfork::MonadHardfork::MonadEight)
+            FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight)
         );
     }
 

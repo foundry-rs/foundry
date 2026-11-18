@@ -1,5 +1,6 @@
 //! Integration tests for `forge fmt` command
 
+use foundry_config::fmt::DocCommentStyle;
 use foundry_test_utils::{forgetest, snapbox::IntoData};
 
 const UNFORMATTED: &str = r#"// SPDX-License-Identifier: MIT
@@ -337,7 +338,7 @@ HINT: If you are working outside of the project, try providing paths to your sou
 }
 
 #[forgetest]
-fn fmt_external_configured_directories(prj: _, cmd: _) {
+fn fmt_skips_external_configured_directories(prj: _, cmd: _) {
     let outside = tempfile::tempdir().unwrap();
     for name in ["src", "test", "script"] {
         let dir = outside.path().join(name);
@@ -350,7 +351,20 @@ fn fmt_external_configured_directories(prj: _, cmd: _) {
         config.script = outside.path().join("script");
     });
 
-    cmd.args(["fmt", "--check"]).assert_failure().stderr_eq("");
+    cmd.args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq(
+        str![[r#"
+Warning: Skipping [..]/src/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/test/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/script/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Nothing to format.
+HINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`
+
+"#]]
+        .unordered(),
+    );
     for name in ["src", "test", "script"] {
         assert_data_eq!(
             std::fs::read_to_string(outside.path().join(name).join("External.sol")).unwrap(),
@@ -360,9 +374,14 @@ fn fmt_external_configured_directories(prj: _, cmd: _) {
 
     cmd.forge_fuse().arg("fmt").assert_success().stdout_eq("").stderr_eq(
         str![[r#"
-Formatted [..]/src/External.sol
-Formatted [..]/test/External.sol
-Formatted [..]/script/External.sol
+Warning: Skipping [..]/src/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/test/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/script/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Nothing to format.
+HINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`
 
 "#]]
         .unordered(),
@@ -370,10 +389,23 @@ Formatted [..]/script/External.sol
     for name in ["src", "test", "script"] {
         assert_data_eq!(
             std::fs::read_to_string(outside.path().join(name).join("External.sol")).unwrap(),
-            FORMATTED,
+            UNFORMATTED,
         );
     }
-    cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq("");
+    cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq(
+        str![[r#"
+Warning: Skipping [..]/src/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/test/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/script/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Nothing to format.
+HINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`
+
+"#]]
+        .unordered(),
+    );
 }
 
 #[forgetest]
@@ -446,4 +478,155 @@ Formatted [..]/Script.sol
         assert_data_eq!(std::fs::read_to_string(prj.root().join(file)).unwrap(), FORMATTED);
     }
     cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq("");
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn fmt_skips_symlinked_default_source_root(prj: _, cmd: _) {
+    let outside = tempfile::tempdir().unwrap();
+    let outside_file = outside.path().join("Outside.sol");
+    std::fs::write(&outside_file, UNFORMATTED).unwrap();
+
+    std::fs::remove_dir(prj.root().join("src")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), prj.root().join("src")).unwrap();
+
+    cmd.args(["fmt", "--check"]).assert_success();
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), UNFORMATTED);
+
+    cmd.forge_fuse().arg("fmt").assert_success();
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), UNFORMATTED);
+
+    // An explicit directory remains an opt-in for external targets.
+    cmd.forge_fuse().args(["fmt", "src"]).assert_success();
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), FORMATTED);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn fmt_skips_symlinked_configured_file(prj: _, cmd: _) {
+    let outside = tempfile::tempdir().unwrap();
+    let outside_file = outside.path().join("Outside.sol");
+    std::fs::write(&outside_file, UNFORMATTED).unwrap();
+    std::os::unix::fs::symlink(&outside_file, prj.root().join("src/Link.sol")).unwrap();
+    prj.update_config(|config| config.src = "src/Link.sol".into());
+
+    cmd.args(["fmt", "--check"]).assert_success();
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), UNFORMATTED);
+
+    cmd.forge_fuse().arg("fmt").assert_success();
+    assert_data_eq!(std::fs::read_to_string(outside_file).unwrap(), UNFORMATTED);
+}
+
+#[forgetest]
+fn fmt_directives_preserve_comments_and_targets(prj: _, cmd: _) {
+    for wrap_comments in [false, true] {
+        prj.update_config(|config| {
+            config.fmt.wrap_comments = wrap_comments;
+            config.fmt.docs_style = DocCommentStyle::Block;
+        });
+        prj.add_raw_source(
+            "Test.sol",
+            r#"// forgefmt: disable-end
+// forgefmt: disable-end
+/**@notice First contract.*/
+contract  A {}
+// forgefmt: disable-start
+contract  Disabled {}
+// forgefmt:disable-end
+/**@notice Second contract.*/
+contract  B {}
+/* stop */
+/// @notice Before.
+/// forgefmt:disable-next-item
+/// @dev After.
+contract  C {}
+
+contract  D {}
+"#,
+        );
+
+        cmd.forge_fuse().args(["fmt", "src/Test.sol"]).assert_success().stdout_eq("").stderr_eq(
+            str![[r#"
+Formatted [..]/src/Test.sol
+
+"#]],
+        );
+        assert_data_eq!(
+            std::fs::read_to_string(prj.root().join("src/Test.sol")).unwrap(),
+            str![[r#"
+// forgefmt: disable-end
+// forgefmt: disable-end
+/**
+ * @notice First contract.
+ */
+contract A {}
+
+// forgefmt: disable-start
+contract  Disabled {}
+// forgefmt:disable-end
+/**
+ * @notice Second contract.
+ */
+contract B {}
+
+/* stop */
+/// @notice Before.
+/// forgefmt:disable-next-item
+/// @dev After.
+contract  C {}
+
+contract D {}
+
+"#]],
+        );
+        cmd.forge_fuse().args(["fmt", "src/Test.sol"]).assert_success().stdout_eq("").stderr_eq("");
+        cmd.forge_fuse()
+            .args(["fmt", "src/Test.sol", "--check"])
+            .assert_success()
+            .stdout_eq("")
+            .stderr_eq("");
+    }
+}
+
+#[forgetest]
+fn fmt_doc_directives_preserve_compiler_documentation(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fmt.wrap_comments = true;
+        config.fmt.docs_style = DocCommentStyle::Block;
+    });
+    prj.add_source(
+        "A.sol",
+        r#"/// @notice Before.
+/// forgefmt:disable-end
+/// @dev After.
+contract  A {}
+"#,
+    );
+
+    for attempt in 0..2 {
+        if attempt == 1 {
+            cmd.forge_fuse().args(["fmt", "src/A.sol"]).assert_success().stdout_eq("").stderr_eq(
+                str![[r#"
+Formatted [..]/src/A.sol
+
+"#]],
+            );
+        }
+        cmd.forge_fuse().args(["inspect", "A", "userdoc", "--json"]).assert_json_stdout(str![[
+            r#"
+{
+  "kind": "user",
+  "notice": "Before. forgefmt:disable-end",
+  "version": 1
+}
+"#
+        ]]);
+        cmd.forge_fuse().args(["inspect", "A", "devdoc", "--json"]).assert_json_stdout(str![[r#"
+{
+  "details": "After.",
+  "kind": "dev",
+  "version": 1
+}
+"#]]);
+    }
 }

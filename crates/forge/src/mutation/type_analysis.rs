@@ -72,7 +72,7 @@ pub fn collect_mutation_exclusions(
     let mut compiler = Compiler::new(Session::builder().with_silent_emitter(None).build());
     compiler.enter_mut(|compiler| {
         let mut pcx = compiler.parse();
-        configure_pcx_from_compile_output(&mut pcx, config, output, None)?;
+        configure_pcx_from_compile_output(&mut pcx, config, output)?;
         pcx.parse();
 
         let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else {

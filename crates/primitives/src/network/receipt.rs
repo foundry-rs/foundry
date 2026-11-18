@@ -15,9 +15,9 @@ use alloy_consensus::ReceiptWithBloom;
 #[cfg(feature = "base")]
 use alloy_serde::OtherFields;
 #[cfg(feature = "base")]
-use base_common_consensus::Eip8130Receipt;
+use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
-use base_common_evm::EIP8130_TRANSACTION_TYPE;
+use base_common_consensus::Eip8130Receipt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, AsRef)]
 pub struct FoundryTxReceipt(pub WithOtherFields<TransactionReceipt<FoundryReceiptEnvelope<Log>>>);

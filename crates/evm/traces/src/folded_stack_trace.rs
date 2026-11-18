@@ -1,8 +1,5 @@
+use crate::{CallTraceArena, CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder};
 use alloy_primitives::hex::ToHexExt;
-use revm_inspectors::tracing::{
-    CallTraceArena,
-    types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
-};
 
 /// Wrapper for building a folded stack trace using EVM call trace node.
 #[derive(Default)]
@@ -22,36 +19,8 @@ impl EvmFoldedStackTraceBuilder {
     pub fn process_call_node(&mut self, nodes: &[CallTraceNode], idx: usize) {
         let node = &nodes[idx];
 
-        let func_name = if node.trace.kind.is_any_create() {
-            let contract_name = node
-                .trace
-                .decoded
-                .as_ref()
-                .and_then(|dc| dc.label.as_deref())
-                .unwrap_or("Contract");
-            format!("new {contract_name}")
-        } else {
-            let selector = node
-                .selector()
-                .map(|selector| selector.encode_hex_with_prefix())
-                .unwrap_or_else(|| "fallback".to_string());
-            let signature = node
-                .trace
-                .decoded
-                .as_ref()
-                .and_then(|dc| dc.call_data.as_ref())
-                .map(|dc| &dc.signature)
-                .unwrap_or(&selector);
-
-            if let Some(label) = node.trace.decoded.as_ref().and_then(|dc| dc.label.as_ref()) {
-                format!("{label}.{signature}")
-            } else {
-                signature.clone()
-            }
-        };
-
         // Call gas is gross: refunds are only subtracted from the test's reported gas.
-        self.fst.enter(func_name, node.trace.gas_used);
+        self.fst.enter(call_frame_name(node), node.trace.gas_used);
 
         // Track internal function step exits to do in this call context.
         let mut step_exits = vec![];
@@ -153,8 +122,10 @@ pub struct FoldedStackTraceBuilder {
 /// A single entry in a folded stack trace.
 #[derive(Debug, Default)]
 struct TraceEntry {
-    /// Names of all functions in the call stack of this trace.
-    names: Vec<String>,
+    /// Name of the function entered by this trace.
+    label: String,
+    /// Index of the trace entry of the calling function, if any.
+    parent: Option<usize>,
     /// Gas consumed by this function, not including refunds.
     gas: u64,
 }
@@ -162,15 +133,14 @@ struct TraceEntry {
 impl FoldedStackTraceBuilder {
     /// Enter execution of a function call that consumes `gas`.
     pub fn enter(&mut self, label: String, gas: u64) {
-        let mut names = self.traces.last().map(|entry| entry.names.clone()).unwrap_or_default();
-
+        // The previous entry is the innermost open function before the pending exits.
+        let mut parent = self.traces.len().checked_sub(1);
         while self.exits > 0 {
-            names.pop();
+            parent = parent.and_then(|idx| self.traces[idx].parent);
             self.exits -= 1;
         }
 
-        names.push(label);
-        self.traces.push(TraceEntry { names, gas });
+        self.traces.push(TraceEntry { label, parent, gas });
     }
 
     /// Exit execution of a function call.
@@ -181,31 +151,61 @@ impl FoldedStackTraceBuilder {
     /// Returns folded stack trace as formatted strings.
     pub fn build(mut self) -> Vec<String> {
         self.subtract_children();
-        self.traces.iter().map(|e| format!("{} {}", e.names.join(";"), e.gas)).collect()
+        self.build_without_subtraction()
     }
 
     /// Internal method to build the folded stack trace without subtracting gas consumed by
     /// the children function calls.
     pub fn build_without_subtraction(&self) -> Vec<String> {
-        self.traces.iter().map(|e| format!("{} {}", e.names.join(";"), e.gas)).collect()
+        // A parent always precedes its children, so its stack is already built.
+        let mut stacks = Vec::<String>::with_capacity(self.traces.len());
+        for entry in &self.traces {
+            stacks.push(match entry.parent {
+                Some(parent) => format!("{};{}", stacks[parent], entry.label),
+                None => entry.label.clone(),
+            });
+        }
+        stacks.iter().zip(&self.traces).map(|(stack, e)| format!("{stack} {}", e.gas)).collect()
     }
 
     /// Subtracts gas consumed by the children function calls from the parent function calls.
     fn subtract_children(&mut self) {
-        // Iterate over each trace to find the children and subtract their values from the parents.
+        // A child always follows its parent, and only its own children reduce its gas, so each
+        // entry still holds its gross gas when it is subtracted from its parent.
         for i in 0..self.traces.len() {
-            let (left, right) = self.traces.split_at_mut(i);
-            let TraceEntry { names, gas } = &right[0];
-            if names.len() > 1 {
-                let parent_trace_to_match = &names[..names.len() - 1];
-                for parent in left.iter_mut().rev() {
-                    if parent.names == parent_trace_to_match {
-                        parent.gas = parent.gas.saturating_sub(*gas);
-                        break;
-                    }
-                }
+            let TraceEntry { parent, gas, .. } = self.traces[i];
+            if let Some(parent) = parent {
+                let parent = &mut self.traces[parent];
+                parent.gas = parent.gas.saturating_sub(gas);
             }
         }
+    }
+}
+
+/// Returns the frame name of a call node, as used in flamegraphs and speedscope profiles.
+pub(crate) fn call_frame_name(node: &CallTraceNode) -> String {
+    if node.trace.kind.is_any_create() {
+        let contract_name =
+            node.trace.decoded.as_ref().and_then(|dc| dc.label.as_deref()).unwrap_or("Contract");
+        return format!("new {contract_name}");
+    }
+
+    let selector = node
+        .selector()
+        .map(|selector| selector.encode_hex_with_prefix())
+        .unwrap_or_else(|| "fallback".to_string());
+    let signature = node
+        .trace
+        .decoded
+        .as_ref()
+        .and_then(|dc| dc.call_data.as_ref())
+        .map(|dc| &dc.signature)
+        .unwrap_or(&selector);
+
+    if let Some(label) = node.trace.decoded.as_ref().and_then(|dc| dc.label.as_ref()) {
+        format!("{label}.{signature}")
+    } else {
+        signature.clone()
     }
 }
 
@@ -220,15 +220,10 @@ pub fn build(arena: &CallTraceArena) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::{CallTrace, DecodedInternalCall};
     use alloy_primitives::{Bytes, U256};
-    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::{
-        CallTraceArena,
-        types::{
-            CallTrace, CallTraceNode, CallTraceStep, DecodedInternalCall, DecodedTraceStep,
-            TraceMemberOrder,
-        },
-    };
+    use evm2::interpreter::{InstrStop, opcode::OpCode};
 
     fn trace_step(gas_remaining: u64) -> CallTraceStep {
         CallTraceStep {
@@ -240,13 +235,12 @@ mod tests {
             returndata: Bytes::new(),
             gas_remaining,
             gas_refund_counter: 0,
-            gas_used: 0,
             gas_cost: 0,
             state_gas_cost: None,
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            status: Some(InstructionResult::Stop),
+            status: Some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
         }

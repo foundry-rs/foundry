@@ -53,6 +53,38 @@ contract NamespacedToken is NamespacedInitializable, NamespacedBase {
     }
 }
 
+type NamespacedConfig is uint16;
+
+library NamespacedIds {
+    type LibId is uint24;
+}
+
+// User-defined value types packed between plain fields of a namespace.
+contract NamespacedUdvt {
+    /// @custom:storage-location erc7201:example.storage.Udvt
+    struct UdvtStorage {
+        uint32 timestamp; // offset 0
+        NamespacedConfig config; // offset 4
+        NamespacedIds.LibId libId; // offset 6
+        uint64 count; // offset 9
+    }
+
+    function _udvt() internal pure returns (UdvtStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("example.storage.Udvt")) - 1)) & ~bytes32(uint256(0xff));
+        assembly {
+            $.slot := slot
+        }
+    }
+
+    function set() public {
+        UdvtStorage storage $ = _udvt();
+        $.timestamp = 7;
+        $.config = NamespacedConfig.wrap(4);
+        $.libId = NamespacedIds.LibId.wrap(0x0a0b0c);
+        $.count = 9;
+    }
+}
+
 contract StateDiffErc7201Test is Test {
     NamespacedToken internal token;
 
@@ -117,5 +149,26 @@ contract StateDiffErc7201Test is Test {
         );
         assertTrue(vm.contains(json, '"label":"example.storage.Token.totalSupply"'));
         assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"1000"}'));
+    }
+
+    // Namespaced type ids are scoped as `erc7201(<id>)::t_userDefinedValueType(...)`, so user-defined
+    // value types must still resolve to an integer of their recorded size.
+    function testNamespacedUserDefinedValueTypes() public {
+        NamespacedUdvt store = new NamespacedUdvt();
+
+        vm.startStateDiffRecording();
+        store.set();
+        string memory json = vm.getStateDiffJson();
+        emit log_string(json);
+
+        // The file-level type is a member of its own, decoded at its width.
+        assertTrue(vm.contains(json, '"type":"(uint32,uint16,uint24,uint64)"'));
+        assertTrue(vm.contains(json, '"label":"example.storage.Udvt.config","type":"NamespacedConfig","offset":4'));
+        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"4"}'));
+        // The library-scoped one is decoded from all three of its bytes, not its lowest.
+        assertTrue(vm.contains(json, '"label":"example.storage.Udvt.libId","type":"NamespacedIds.LibId","offset":6'));
+        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"658188"}'));
+
+        vm.stopAndReturnStateDiff();
     }
 }

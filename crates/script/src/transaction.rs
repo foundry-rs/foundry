@@ -5,6 +5,7 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Selector, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
+use foundry_cli::utils::apply_gas_estimate_multiplier;
 use foundry_common::{
     ContractData, ContractsByArtifact, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw,
 };
@@ -170,7 +171,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
         linked_build_data: &LinkedBuildData,
-    ) -> Self {
+    ) -> Result<Self> {
         let mut created_contracts =
             result.get_created_contracts(&linked_build_data.known_contracts);
 
@@ -186,10 +187,13 @@ impl<N: Network> ScriptTransactionBuilder<N> {
             && let Some(unsigned) = self.transaction.transaction.as_unsigned_mut()
         {
             // We inflate the gas used by the user specified percentage
-            unsigned.set_gas_limit(result.gas_used * gas_estimate_multiplier / 100);
+            unsigned.set_gas_limit(apply_gas_estimate_multiplier(
+                result.gas_used,
+                Some(gas_estimate_multiplier),
+            )?);
         }
 
-        self
+        Ok(self)
     }
 
     pub fn build(self) -> TransactionWithMetadata<N> {

@@ -21,6 +21,8 @@ pub enum KeyType {
     Secp256k1,
     P256,
     WebAuthn,
+    /// A configurable account (owner quorum) acting as an access key, from T14.
+    ConfigurableAccount,
 }
 
 impl From<SignatureType> for KeyType {
@@ -29,6 +31,7 @@ impl From<SignatureType> for KeyType {
             SignatureType::Secp256k1 => Self::Secp256k1,
             SignatureType::P256 => Self::P256,
             SignatureType::WebAuthn => Self::WebAuthn,
+            SignatureType::ConfigurableAccount => Self::ConfigurableAccount,
         }
     }
 }

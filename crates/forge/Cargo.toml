@@ -64,6 +64,7 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-signer.workspace = true
 alloy-transport.workspace = true
+evm2 = { workspace = true, features = ["parse"] }
 
 tempo-alloy.workspace = true
 
@@ -81,7 +82,6 @@ itertools.workspace = true
 mpp.workspace = true
 parking_lot.workspace = true
 regex = { workspace = true, default-features = false }
-revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "3", features = ["inline", "unicode"] }
@@ -138,7 +138,7 @@ commonware-codec.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]
-asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
+asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]

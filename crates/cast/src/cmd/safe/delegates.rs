@@ -1,5 +1,5 @@
 use super::{
-    rpc_provider,
+    SafeRpcOpts, rpc_provider,
     service::{SafeDelegatesResponse, SafeServiceOpts},
     signing::sign_delegate,
 };
@@ -7,10 +7,8 @@ use alloy_primitives::Address;
 use alloy_signer::Signer;
 use clap::Args;
 use eyre::{Context, Result, ensure};
-use foundry_cli::{
-    json::{print_json_object, print_scalar},
-    opts::RpcOpts,
-};
+use foundry_cli::json::{print_json_object, print_scalar};
+use foundry_common::sh_status;
 use foundry_wallets::WalletOpts;
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -33,7 +31,7 @@ pub struct AddDelegateArgs {
     service: Box<SafeServiceOpts>,
 
     #[command(flatten)]
-    rpc: Box<RpcOpts>,
+    rpc: Box<SafeRpcOpts>,
 
     #[command(flatten)]
     wallet: Box<WalletOpts>,
@@ -68,7 +66,7 @@ pub struct ListDelegatesArgs {
     service: Box<SafeServiceOpts>,
 
     #[command(flatten)]
-    rpc: Box<RpcOpts>,
+    rpc: Box<SafeRpcOpts>,
 }
 
 impl ListDelegatesArgs {
@@ -111,7 +109,7 @@ pub struct RemoveDelegateArgs {
     service: Box<SafeServiceOpts>,
 
     #[command(flatten)]
-    rpc: Box<RpcOpts>,
+    rpc: Box<SafeRpcOpts>,
 
     #[command(flatten)]
     wallet: Box<WalletOpts>,
@@ -131,7 +129,7 @@ impl RemoveDelegateArgs {
 #[allow(clippy::too_many_arguments)]
 async fn submit_delegate(
     service: &SafeServiceOpts,
-    rpc: &RpcOpts,
+    rpc: &SafeRpcOpts,
     wallet: &WalletOpts,
     safe: Address,
     delegate: Address,
@@ -140,6 +138,7 @@ async fn submit_delegate(
     mut body: Value,
 ) -> Result<()> {
     let (_, chain_id) = rpc_provider(rpc).await?;
+    sh_status!("Signing Safe delegate authorization on chain ID {chain_id}")?;
     let signer = wallet.signer().await?;
     let signature = sign_delegate(&signer, delegate, chain_id).await?;
     body["safe"] = safe.to_checksum(None).into();

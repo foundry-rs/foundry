@@ -26,11 +26,13 @@ pub struct SignaturesCache {
 }
 
 /// Disk representation of the signatures cache.
+///
+/// `S` is the signature string type: owned when the cache is loaded, borrowed when it is saved.
 #[derive(Serialize, Deserialize)]
-struct SignaturesDiskCache {
-    functions: BTreeMap<Selector, String>,
-    errors: BTreeMap<Selector, String>,
-    events: BTreeMap<B256, String>,
+struct SignaturesDiskCache<S = String> {
+    functions: BTreeMap<Selector, S>,
+    errors: BTreeMap<Selector, S>,
+    events: BTreeMap<B256, S>,
 }
 
 impl From<SignaturesDiskCache> for SignaturesCache {
@@ -57,15 +59,15 @@ impl From<SignaturesDiskCache> for SignaturesCache {
     }
 }
 
-impl From<&SignaturesCache> for SignaturesDiskCache {
-    fn from(value: &SignaturesCache) -> Self {
+impl<'a, S: From<&'a str>> From<&'a SignaturesCache> for SignaturesDiskCache<S> {
+    fn from(value: &'a SignaturesCache) -> Self {
         let (functions, errors, events) = value.signatures.iter().fold(
             (BTreeMap::new(), BTreeMap::new(), BTreeMap::new()),
             |mut acc, (kind, signature)| {
                 // Only persist resolved signatures. Unknown selectors (None) are kept
                 // in-memory for session dedup but not written to disk, so they can be
                 // re-queried in future sessions once the signature database is updated.
-                if let Some(value) = signature.clone() {
+                if let Some(value) = signature.as_deref().map(S::from) {
                     match *kind {
                         SelectorKind::Function(selector) => _ = acc.0.insert(selector, value),
                         SelectorKind::Error(selector) => _ = acc.1.insert(selector, value),
@@ -84,7 +86,7 @@ impl Serialize for SignaturesCache {
     where
         S: serde::Serializer,
     {
-        SignaturesDiskCache::from(self).serialize(serializer)
+        SignaturesDiskCache::<&str>::from(self).serialize(serializer)
     }
 }
 
@@ -146,7 +148,7 @@ impl SignaturesCache {
                 Some((SelectorKind::Error(e.selector()), e.signature()))
             }
             alloy_json_abi::AbiItem::Event(e) => {
-                Some((SelectorKind::Event(e.selector()), e.full_signature()))
+                Some((SelectorKind::Event(e.selector()), event_cache_signature(&e)))
             }
             _ => None,
         })
@@ -172,6 +174,31 @@ impl SignaturesCache {
     pub fn contains_key(&self, key: &SelectorKind) -> bool {
         self.signatures.contains_key(key)
     }
+}
+
+/// Returns the event signature stored in the cache: like [`Event::full_signature`], with indexed
+/// flags and parameter names, but with struct parameters written as plain tuples, because
+/// [`Event::parse`] rejects named tuple components.
+fn event_cache_signature(event: &Event) -> String {
+    let mut sig = format!("event {}(", event.name);
+    for (i, input) in event.inputs.iter().enumerate() {
+        if i > 0 {
+            sig.push_str(", ");
+        }
+        input.selector_type_raw(&mut sig);
+        if input.indexed {
+            sig.push_str(" indexed");
+        }
+        if !input.name.is_empty() {
+            sig.push(' ');
+            sig.push_str(&input.name);
+        }
+    }
+    sig.push(')');
+    if event.anonymous {
+        sig.push_str(" anonymous");
+    }
+    sig
 }
 
 /// An identifier that tries to identify functions and events using signatures found at
@@ -495,5 +522,35 @@ mod tests {
 
         assert_eq!(decoded_one_topic.full_signature(), one_topic.full_signature());
         assert_eq!(decoded_two_topics.full_signature(), two_topics.full_signature());
+    }
+
+    #[tokio::test]
+    async fn abi_seeded_events_with_struct_params_are_identified() {
+        let event: Event = serde_json::from_str(
+            r#"{"type":"event","name":"Placed","anonymous":false,"inputs":[
+                {"name":"by","type":"address","indexed":true},
+                {"name":"order","type":"tuple","indexed":false,"components":[
+                    {"name":"who","type":"address"},{"name":"amount","type":"uint256"}]},
+                {"name":"orders","type":"tuple[]","indexed":false,"components":[
+                    {"name":"who","type":"address"},{"name":"amount","type":"uint256"}]}]}"#,
+        )
+        .unwrap();
+        let mut abi = JsonAbi::new();
+        abi.events.insert(event.name.clone(), vec![event.clone()]);
+
+        let mut cache = SignaturesCache::default();
+        cache.extend_from_abi(&abi);
+        assert_eq!(
+            cache.get(&SelectorKind::Event(event.selector())),
+            Some(Some(
+                "event Placed(address indexed by, (address,uint256) order, (address,uint256)[] orders)"
+                    .into()
+            ))
+        );
+
+        let identifier = SignaturesIdentifier::from_cache((cache, None), None);
+        let decoded = identifier.identify_event(event.selector()).await.unwrap();
+        assert_eq!(decoded.selector(), event.selector());
+        assert_eq!(decoded.inputs.iter().filter(|i| i.indexed).count(), 1);
     }
 }
