@@ -5,10 +5,9 @@ use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
 use foundry_evm::hardforks::BaseUpgrade;
 use foundry_test_utils::util::OutputExt;
-use serde_json::json;
 
 #[forgetest]
 fn base_azul_excludes_beryl_precompiles(prj: _, cmd: _) {
@@ -194,23 +193,24 @@ contract BaseScript {
 #[forgetest]
 fn base_execute_transaction_rejects_eip8130(prj: _, cmd: _) {
     let signer = PrivateKeySigner::from_bytes(&B256::with_last_byte(1)).unwrap();
-    let mut envelope = json!({
-        "type": "0x79",
-        "tx": {
-            "chainId": 8453, "sender": null, "payer": null,
-            "nonceKey": "0x0", "nonceSequence": 0,
-            "validAfter": 0, "validBefore": 0,
-            "maxPriorityFeePerGas": "0x0", "maxFeePerGas": "0x3b9aca00",
-            "gasLimit": 200000, "accountChanges": [], "calls": [], "metadata": "0x"
-        },
-        "senderAuth": "0x", "payerAuth": "0x"
-    });
-    let unsigned = serde_json::from_value::<BaseTxEnvelope>(envelope.clone()).unwrap();
-    let signature = signer
-        .sign_hash_sync(&unsigned.as_eip8130().unwrap().tx().sender_signature_hash())
-        .unwrap();
-    envelope["senderAuth"] = json!(Bytes::from(signature.as_bytes()));
-    let signed = serde_json::from_value::<BaseTxEnvelope>(envelope).unwrap();
+    let tx = TxEip8130 {
+        chain_id: 8453,
+        sender: None,
+        nonce_key: U256::ZERO,
+        nonce_sequence: 0,
+        valid_after: 0,
+        valid_before: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 200_000,
+        account_changes: Vec::new(),
+        calls: Vec::new(),
+        metadata: Bytes::new(),
+        payer: None,
+    };
+    let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+    let signed =
+        BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()));
     assert_eq!(signed.recover_signer().unwrap(), signer.address());
     let mut raw = Vec::new();
     signed.network_encode(&mut raw);

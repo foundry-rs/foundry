@@ -339,8 +339,11 @@ async fn base_fork_call_and_trace_use_native_evm() {
     let source_config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()));
     let (source_api, source_handle) = spawn(source_config).await;
     source_api.mine_one().await.unwrap();
+    // The fork resolves Base mainnet's current upgrade (Denim), which seeds no activation admin,
+    // and the local source never wrote one to storage, so pin it explicitly.
     let target_config = NodeConfig::test_base()
         .with_hardfork(Some(BaseUpgrade::Beryl.into()))
+        .with_base_activation_admin(Some(MAINNET_BERYL_ACTIVATION_ADMIN))
         .with_eth_rpc_url(Some(source_handle.http_endpoint()));
     let (_target_api, target_handle) = spawn(target_config).await;
     let provider = target_handle.http_provider();
@@ -776,7 +779,7 @@ async fn base_eip8130_estimate_prices_authentication_scheme() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_simulation_and_nonce_key_are_rejected_before_zenith() {
+async fn base_eip8130_simulation_and_nonce_key_are_rejected_before_everest() {
     let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
@@ -798,7 +801,7 @@ async fn base_eip8130_simulation_and_nonce_key_are_rejected_before_zenith() {
         access_list_error.to_string(),
         nonce_error.to_string(),
     ] {
-        assert!(error.contains("not active before the Zenith hard fork"), "{error}");
+        assert!(error.contains("not active before the Everest hard fork"), "{error}");
     }
 }
 
@@ -1364,13 +1367,13 @@ async fn base_standalone_mines_eip8130_transaction() {
 
     assert!(receipt.status());
     let receipt_json = serde_json::to_value(&receipt).unwrap();
-    assert!(receipt_json.get("phaseStatuses").is_none(), "{receipt_json}");
+    assert_eq!(receipt_json["phaseStatuses"], serde_json::json!([]), "{receipt_json}");
     assert_eq!(receipt_json["payer"], serde_json::to_value(sender).unwrap());
     let mined = provider.get_transaction_by_hash(receipt.tx_hash()).await.unwrap().unwrap();
     assert_eq!(mined.ty(), 0x79);
     let mined_json = serde_json::to_value(mined).unwrap();
-    assert_eq!(mined_json["tx"]["nonceKey"], "0x0", "{mined_json}");
-    assert!(mined_json["tx"].get("calls").is_some());
+    assert_eq!(mined_json["nonceKey"], "0x0", "{mined_json}");
+    assert!(mined_json.get("calls").is_some());
     assert!(mined_json.get("senderAuth").is_some());
     assert!(provider.get_balance(sender).await.unwrap() < before);
 }
@@ -1622,9 +1625,9 @@ async fn base_beryl_rejects_eip8130_transaction() {
         .await
         .unwrap_err();
 
-    assert!(err.to_string().contains("gated behind Zenith"), "{err}");
+    assert!(err.to_string().contains("gated behind Everest"), "{err}");
     assert!(
-        nonce_error.to_string().contains("not active before the Zenith hard fork"),
+        nonce_error.to_string().contains("not active before the Everest hard fork"),
         "{nonce_error}"
     );
 }
@@ -1644,7 +1647,7 @@ async fn base_eip8130_is_rejected_by_non_base_networks() {
             .await
             .unwrap_err();
 
-        assert!(error.to_string().contains("gated behind Zenith"), "{error}");
+        assert!(error.to_string().contains("gated behind Everest"), "{error}");
     }
 }
 
