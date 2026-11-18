@@ -24,10 +24,6 @@ revm 43 and alloy-evm 0.39 through `base-evm2` and the Base crates it depends on
 
 ## User-visible output changes
 
-- **Cheatcode `EXTCODEHASH`**: the cheatcode address, and any network-specific extra cheatcode
-  addresses, hold the one-byte stub `0x00`, so `EXTCODEHASH` on them returns `keccak256(0x00)`.
-  revm reported `keccak256(abi.encodePacked(CHEATCODE_ADDRESS))` for the cheatcode address and the
-  hash of the address for extra ones.
 - **Step-trace JSON**: steps in `forge test --json` traces no longer carry `gas_used`. A `CREATE`
   or `CREATE2` step's `gas_cost` now excludes the gas forwarded to the new frame. Each call's
   `step_deltas` lists `gas_remaining_after` for call-like steps and for steps whose remaining gas
