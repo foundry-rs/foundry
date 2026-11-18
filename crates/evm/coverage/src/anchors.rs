@@ -904,13 +904,19 @@ impl<'a> AnchorIndex<'a> {
     }
 
     /// An alias-only function has no instructions for some of its statements. Its unique normal
-    /// return proves those statements completed. Require an exact declaration location, an explicit
-    /// function-exit marker, and a pure return stub; never infer hits for inlined or aborting code.
+    /// return proves those statements completed. Require an exact declaration location at the
+    /// entry, an explicit function-exit marker mapped to the declaration or the closing brace, and
+    /// a pure return stub; never infer hits for inlined or aborting code.
     fn alias_return(&self, item_id: u32, function: &SourceLocation) -> Option<ItemAnchor> {
         let exact = |element: &SourceElement| {
             element.index() == Some(function.source_id as u32)
                 && element.offset() == function.bytes.start
                 && element.length() == function.len()
+        };
+        let closing_brace = |element: &SourceElement| {
+            element.index() == Some(function.source_id as u32)
+                && element.offset() == function.bytes.end.saturating_sub(1)
+                && element.length() == 1
         };
         let mut returns = Vec::new();
         for (ic, (pc, instruction)) in InstIter::new(self.bytecode).with_pc().enumerate() {
@@ -930,11 +936,10 @@ impl<'a> AnchorIndex<'a> {
                     | opcode::SWAP1..=opcode::SWAP16
                     | opcode::POP => {}
                     opcode::JUMP => {
-                        if self
-                            .source_map
-                            .get(ic + relative)
-                            .is_some_and(|element| exact(element) && element.jump() == Jump::Out)
-                        {
+                        if self.source_map.get(ic + relative).is_some_and(|element| {
+                            (exact(element) || closing_brace(element))
+                                && element.jump() == Jump::Out
+                        }) {
                             returns.push(pc + offset);
                         }
                         break;
@@ -1807,6 +1812,15 @@ mod tests {
         let anchors = ItemAnchors { anchors: vec![anchor], ..Default::default() };
         let uncalled = super::super::HitMap::new(alloy_primitives::Bytes::new());
         assert_eq!(anchors.hits(&uncalled).count(), 0);
+
+        let brace_map = sourcemap::parse("10:20:0;;;29:1:0:o").unwrap();
+        let index = AnchorIndex::new(&bytecode, &brace_map, &ic_pc_map);
+        assert_eq!(index.alias_return(0, &source_location(10, 20)).unwrap().instruction, 4);
+        for other in ["28:1:0:o", "29:2:0:o", "29:1:1:o", "29:1:0:i"] {
+            let source_map = sourcemap::parse(&format!("10:20:0;;;{other}")).unwrap();
+            let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+            assert!(index.alias_return(0, &source_location(10, 20)).is_none(), "{other}");
+        }
         for unsupported in
             [opcode::MLOAD, opcode::JUMPI, opcode::CALL, opcode::INVALID, opcode::REVERT]
         {
