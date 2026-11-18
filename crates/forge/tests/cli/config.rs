@@ -1588,7 +1588,7 @@ fn nested_auto_remapping_preserves_declared_precedence(prj: _, cmd: _) {
     );
     prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"a/pinned/Version.sol\"; import {ShadowedA} from \"shared/Version.sol\"; contract UsesA is A, Marker, ShadowedA {}\n");
     let warning = str![[r#"
-Warning: Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `shared/=lib/a/src/pinned/` to your root remappings.
+Warning: Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Imports of `shared/` from the root or other dependencies may resolve differently. Adding `shared/=lib/a/src/pinned/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:shared/=<target>`.
 
 "#]];
 
@@ -4224,7 +4224,7 @@ with remappings:
 
 "#]];
     let warnings = str![[r#"
-Warning: Dependency remapping `@custom/=lib/dependency/src/` now applies only within `lib/dependency/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/dependency/src/` to your root remappings.
+Warning: Dependency remapping `@custom/=lib/dependency/src/` now applies only within `lib/dependency/`. Imports of `@custom/` from the root or other dependencies may resolve differently. Adding `@custom/=lib/dependency/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:@custom/=<target>`.
 
 "#]];
     let migration_error = str![[r#"
@@ -4337,7 +4337,7 @@ fn dependency_alias_migration_only_suggests_existing_targets(prj: _, cmd: _) {
     prj.add_source("Root.sol", "import {Dep} from \"@custom/Dep.sol\"; contract Root is Dep {}\n");
 
     cmd.args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
-Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/a/src/` to your root remappings.
+Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Imports of `@custom/` from the root or other dependencies may resolve differently. Adding `@custom/=lib/a/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:@custom/=<target>`.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4356,7 +4356,7 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
     fs::remove_file(prj.root().join("lib/z/src/Dep.sol")).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
         r#"
-Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `@custom/=lib/a/src/` to your root remappings.
+Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Imports of `@custom/` from the root or other dependencies may resolve differently. Adding `@custom/=lib/a/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:@custom/=<target>`.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".

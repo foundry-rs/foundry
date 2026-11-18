@@ -1903,7 +1903,7 @@ mod tests {
             );
             assert_eq!(
                 config.warnings[1].to_string(),
-                "Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `shared/=lib/a/src/pinned/` to your root remappings."
+                "Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Imports of `shared/` from the root or other dependencies may resolve differently. Adding `shared/=lib/a/src/pinned/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:shared/=<target>`."
             );
             assert_eq!(
                 config
@@ -1979,7 +1979,7 @@ mod tests {
                 if scoped {
                     assert_eq!(
                         config.warnings[0].to_string(),
-                        "Dependency remapping `pkg/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `pkg/=lib/a/src/` to your root remappings."
+                        "Dependency remapping `pkg/=lib/a/src/` now applies only within `lib/a/`. Imports of `pkg/` from the root or other dependencies may resolve differently. Adding `pkg/=lib/a/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:pkg/=<target>`."
                     );
                 }
                 assert!(

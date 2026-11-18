@@ -132,11 +132,14 @@ impl fmt::Display for Warning {
             Self::ScopedDependencyRemapping { remapping } => {
                 let mut global = remapping.clone();
                 let context = global.context.take().unwrap_or_default();
+                let alias = &global.name;
                 write!(
                     f,
                     "Dependency remapping `{global}` now applies only within `{context}`. \
-                     Root imports may resolve differently. To retain the previous target, \
-                     add `{global}` to your root remappings."
+                     Imports of `{alias}` from the root or other dependencies may resolve \
+                     differently. Adding `{global}` to your root remappings restores the previous \
+                     resolution for the whole project, including other dependencies; to keep a \
+                     dependency's own target, also add `<dependency>/:{alias}=<target>`."
                 )
             }
             Self::UnknownProfile { profile } => {
