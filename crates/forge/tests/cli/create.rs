@@ -462,6 +462,20 @@ async fn create_rejects_tempo_access_key_before_broadcast(prj: _, cmd: _) {
     assert!(stderr.contains("Tempo access-key transactions cannot use CREATE"), "{stderr}");
 }
 
+// Tempo rejects keychain transactions whose first call is a CREATE, so a configurable access key
+// cannot deploy.
+#[forgetest]
+async fn create_rejects_configurable_access_key(cmd: _) {
+    cmd.args(["create", "src/Counter.sol:Counter", "--rpc-url", "http://127.0.0.1:1"])
+        .args(["--tempo.configurable-access-key", "0x1111111111111111111111111111111111111111"])
+        .args(["--from", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--broadcast"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: --tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE
+
+"#]]);
+}
+
 // tests that we can deploy the template contract
 #[forgetest_init]
 async fn can_create_using_unlocked(prj: _, cmd: _) {
@@ -747,7 +761,8 @@ Error: deployment transaction failed (receipt status 0): [..]
 
 /// `forge create` deploys from a 2-of-3 Tempo configurable account, signed by two local owners:
 /// the first deployment registers the account with `--tempo.config`, and a later one detects it
-/// from the chain. The estimate models both approvals, and one owner alone fails clearly.
+/// from the chain. The estimate models both approvals, and one owner alone fails clearly. A
+/// keystore that `cast wallet new` linked to a configurable account deploys from the account.
 #[forgetest_init]
 async fn create_from_tempo_configurable_account(prj: _, cmd: _) {
     prj.initialize_default_contracts();
@@ -815,25 +830,15 @@ async fn create_from_tempo_configurable_account(prj: _, cmd: _) {
          {high} (weight 1). forge create needs the owner keys locally: pass the other owners with \
          --tempo.owner, or keep them in the Tempo Accounts store.\n"
     ));
-}
 
-/// On T14, `forge create` with a keystore that `cast wallet new` linked to a configurable account
-/// deploys from the account, and `--eoa` deploys from the key.
-#[forgetest_init]
-async fn create_from_tempo_linked_keystore(prj: _, cmd: _) {
-    prj.initialize_default_contracts();
-    let (api, handle) =
-        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
-    let rpc = handle.http_endpoint();
-    let provider = handle.http_provider();
+    // With a keystore that `cast wallet new` linked to a configurable account, `forge create`
+    // deploys from the account, and `--eoa` deploys from the key.
     let (keystore, account, owner) = tempo_linked_keystore(prj.root());
     for address in [account, owner] {
         api.anvil_deal_tip20(address, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
             .await
             .unwrap();
     }
-    let contract = format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}");
-    let fee_token = ALPHA_USD_ADDRESS.to_string();
     for (extra, deployer) in [(&[][..], account), (&["--eoa"][..], owner)] {
         cmd.forge_fuse()
             .args(["create", &contract, "--broadcast", "--rpc-url", &rpc])

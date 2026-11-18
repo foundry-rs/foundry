@@ -298,6 +298,7 @@ storage_layout = "solidity"
 report = ["summary"]
 lcov_version = "1.0.0"
 ir_minimum = false
+keep_optimizer = false
 include_libs = false
 exclude_tests = false
 skip_files = []
@@ -2465,6 +2466,7 @@ fn test_default_config(prj: _, cmd: _) {
     ],
     "lcov_version": "1.0.0",
     "ir_minimum": false,
+    "keep_optimizer": false,
     "report_file": null,
     "include_libs": false,
     "exclude_tests": false,
@@ -3015,7 +3017,9 @@ contract {name} is DSTest {{
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testSnapshotValue() public {{
-        vm.snapshotValue("Shared", "{name}", {value});
+        vm.snapshotValue("nested/Shared", "{name}", {value});
+        vm.snapshotValue("other/Shared", "value", 2);
+        vm.snapshotValue("nested/Shared.v1", "value", 3);
     }}
 }}
 "#
@@ -3026,8 +3030,31 @@ contract {name} is DSTest {{
     prj.add_source("BetaTest.sol", &test_contract("BetaTest", 1));
     cmd.args(["test", "-j1"]).assert_success();
 
-    let snapshot_path = prj.root().join("snapshots/Shared.json");
+    let snapshot_path = prj.root().join("snapshots/nested/Shared.json");
+    assert_data_eq!(
+        fs::read_to_string(&snapshot_path).unwrap(),
+        str![[r#"{
+  "AlphaTest": "1",
+  "BetaTest": "1"
+}"#]]
+    );
+    assert_data_eq!(
+        fs::read_to_string(prj.root().join("snapshots/other/Shared.json")).unwrap(),
+        str![[r#"{
+  "value": "2"
+}"#]]
+    );
+    assert_data_eq!(
+        fs::read_to_string(prj.root().join("snapshots/nested/Shared.v1.json")).unwrap(),
+        str![[r#"{
+  "value": "3"
+}"#]]
+    );
     let previous_snapshot = fs::read(&snapshot_path).unwrap();
+
+    cmd.forge_fuse()
+        .args(["test", "-j1", "--gas-snapshot-check=true", "--gas-snapshot-emit=false"])
+        .assert_success();
 
     // With a single thread `AlphaTest` finishes first, so the changed value is only seen after
     // another suite already contributed to the same group.
@@ -3051,13 +3078,156 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]])
         .stderr_eq(str![[r#"
 
-[Shared] Failed to match snapshots:
+[nested/Shared] Failed to match snapshots:
 - [BetaTest] 1 → 2
 
 Error: Snapshots differ from previous run
 
 "#]]);
     assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn test_gas_snapshot_group_symlinks(prj: _, cmd: _) {
+    prj.insert_ds_test();
+
+    let outside_dir = tempfile::tempdir().unwrap();
+    let outside = outside_dir.path().join("Group.json");
+    let previous_snapshot = r#"{"value":"1"}"#;
+    fs::write(&outside, previous_snapshot).unwrap();
+    let snapshots = prj.root().join("snapshots");
+    fs::create_dir_all(&snapshots).unwrap();
+
+    for (group, link, target) in [
+        ("nested/Group", snapshots.join("nested"), outside_dir.path().to_path_buf()),
+        ("Group", snapshots.join("Group.json"), outside.clone()),
+        ("Missing", snapshots.join("Missing.json"), outside_dir.path().join("missing.json")),
+    ] {
+        prj.add_source(
+            "SnapshotSymlinkTest.sol",
+            &format!(
+                r#"
+import "./test.sol";
+
+interface Vm {{
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+}}
+
+contract SnapshotSymlinkTest is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testSnapshotValue() public {{
+        vm.snapshotValue("{group}", "value", 2);
+    }}
+}}
+"#
+            ),
+        );
+        symlink(&target, &link).unwrap();
+
+        for flags in [
+            ["--gas-snapshot-check=true", "--gas-snapshot-emit=false"],
+            ["--gas-snapshot-check=false", "--gas-snapshot-emit=true"],
+        ] {
+            cmd.forge_fuse().arg("test").args(flags).assert_failure().stderr_eq(str![[r#"
+Error: gas snapshot path traverses a symlink: [..]
+"#]]);
+            assert_eq!(fs::read_to_string(&outside).unwrap(), previous_snapshot);
+            assert!(!outside_dir.path().join("missing.json").exists());
+        }
+
+        cmd.forge_fuse()
+            .args(["test", "--gas-snapshot-check=false", "--gas-snapshot-emit=false"])
+            .assert_success();
+        fs::remove_file(&link).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn test_gas_snapshot_symlinked_root(prj: _, cmd: _) {
+    prj.insert_ds_test();
+
+    let snapshots = tempfile::tempdir().unwrap();
+    symlink(snapshots.path(), prj.root().join("snapshots")).unwrap();
+    prj.add_source(
+        "SnapshotSymlinkRootTest.sol",
+        r#"
+import "./test.sol";
+
+interface Vm {
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+}
+
+contract SnapshotSymlinkRootTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testSnapshotValue() public {
+        vm.snapshotValue("nested/Group", "value", 1);
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+    assert_data_eq!(
+        fs::read_to_string(snapshots.path().join("nested/Group.json")).unwrap(),
+        str![[r#"{
+  "value": "1"
+}"#]]
+    );
+    cmd.forge_fuse()
+        .args(["test", "--gas-snapshot-check=true", "--gas-snapshot-emit=false"])
+        .assert_success();
+}
+
+// Absolute paths and parent-directory traversal must be rejected, so a dependency cannot write
+// outside the configured snapshots directory.
+#[forgetest]
+fn test_gas_snapshot_group_escape(prj: _, cmd: _) {
+    prj.insert_ds_test();
+
+    let outside_dir = tempfile::tempdir_in(prj.root().parent().unwrap()).unwrap();
+    let absolute_group = outside_dir.path().join("outside");
+    let relative_group =
+        Path::new("../..").join(outside_dir.path().file_name().unwrap()).join("outside");
+    let outside = absolute_group.with_extension("json");
+    prj.add_source(
+        "SnapshotGroupEscapeTest.sol",
+        &format!(
+            r#"
+import "./test.sol";
+
+interface Vm {{
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+}}
+
+contract SnapshotGroupEscapeTest is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testAbsoluteGroup() public {{
+        vm.snapshotValue("{}", "value", 1);
+    }}
+
+    function testRelativeGroup() public {{
+        vm.snapshotValue("{}", "value", 1);
+    }}
+}}
+"#,
+            absolute_group.to_slash_lossy(),
+            relative_group.to_slash_lossy(),
+        ),
+    );
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: expected a relative path without empty, `.` or `..` components] testAbsoluteGroup() ([GAS])
+[FAIL: vm.snapshotValue: invalid snapshot group name `[..]/outside`: expected a relative path without empty, `.` or `..` components] testRelativeGroup() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Neither escaped file was written.
+    assert!(!outside.exists());
 }
 
 // Tests compilation restrictions enables optimizer if optimizer runs set to a value higher than 0.

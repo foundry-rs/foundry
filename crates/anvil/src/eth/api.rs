@@ -3873,6 +3873,7 @@ impl EthApi<FoundryNetwork> {
             ));
         }
 
+        self.backend.prefetch_impersonated_configurable_accounts([request.from]).await;
         self.backend
             .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
                 let mut cache_db = CacheDB::new(&*state);
@@ -5147,6 +5148,7 @@ impl EthApi<FoundryNetwork> {
             return Ok(fork.estimate_gas_raw(&request, Some(number.into())).await?);
         }
 
+        self.backend.prefetch_impersonated_configurable_accounts([request.from]).await;
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
@@ -5176,6 +5178,7 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<u128> {
         let block_request = self.block_request(block_number).await?;
+        self.backend.prefetch_impersonated_configurable_accounts([request.from()]).await;
         self.on_blocking_task(|this| async move {
             this.backend
                 .with_database_at_and_context(Some(block_request), |state, block, monad_context| {

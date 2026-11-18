@@ -8,7 +8,7 @@ mod rounding;
 
 use mul_div::{
     checked_product_guard_operands, full_mul_div_operands, mul_high_operands,
-    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq,
+    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq, word_division_operands,
 };
 use polynomial::polynomial_identity;
 
@@ -410,6 +410,12 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
                 if matches!(left.kind(), SymExprKind::Not(_)) =>
             {
                 normalize_cmp_for_solver(cx, SymCmpOp::Ule, right.clone(), left.clone())
+            }
+            // The mirror: `!(y <= ~x) => ~x < y`, so both negations share one canonical form.
+            SymBoolExprKind::Cmp(SymCmpOp::Ule, left, right)
+                if matches!(right.kind(), SymExprKind::Not(_)) =>
+            {
+                normalize_cmp_for_solver(cx, SymCmpOp::Ult, right.clone(), left.clone())
             }
             _ => expr,
         },
@@ -1256,7 +1262,12 @@ impl ConstraintContext {
                         (Some(bound), _) => (!bound.is_zero()).then(|| (right, bound - U256::ONE)),
                         _ => None,
                     },
-                    SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
+                    // `x != MAX => x <= MAX - 1`; normalized equalities put the constant on the
+                    // RHS.
+                    SymCmpOp::Eq => {
+                        (right.as_const() == Some(U256::MAX)).then(|| (left, U256::MAX - U256::ONE))
+                    }
+                    SymCmpOp::Slt | SymCmpOp::Sgt => None,
                 },
                 _ => None,
             },
@@ -1463,9 +1474,18 @@ impl ConstraintContext {
     ) -> Option<WordInterval> {
         match expr.kind() {
             SymExprKind::Const(value) => Some(WordInterval::exact(*value)),
-            SymExprKind::BinOp(SymBinOp::And, left, right) => {
-                let mask = left.as_const().or_else(|| right.as_const())?;
-                Some(WordInterval { min: U256::ZERO, max: mask })
+            // `~x == MAX - x`, which reverses unsigned order.
+            SymExprKind::Not(value) => {
+                let value = self.interval_cached(value, intervals, remaining)?;
+                Some(WordInterval { min: !value.max, max: !value.min })
+            }
+            SymExprKind::BinOp(SymBinOp::And, value, mask) => {
+                let mask = mask.as_const()?;
+                // `x & mask <= min(x, mask)`.
+                let max = self
+                    .interval_cached(value, intervals, remaining)
+                    .map_or(mask, |value| value.max.min(mask));
+                Some(WordInterval { min: U256::ZERO, max })
             }
             SymExprKind::BinOp(SymBinOp::Add, left, right) => {
                 let left = self.interval_cached(left, intervals, remaining)?;
@@ -1526,6 +1546,20 @@ impl ConstraintContext {
                     min: numerator.min / denominator.max,
                     max: numerator.max / denominator.min,
                 })
+            }
+            // `a % d <= a`, and `a % d < d` for a positive `d`.
+            SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) => {
+                let dividend = self.interval_cached(dividend, intervals, remaining);
+                let divisor = self
+                    .interval_cached(divisor, intervals, remaining)
+                    .filter(|divisor| !divisor.min.is_zero());
+                let max = match (dividend, divisor) {
+                    (Some(dividend), Some(divisor)) => dividend.max.min(divisor.max - U256::ONE),
+                    (Some(dividend), None) => dividend.max,
+                    (None, Some(divisor)) => divisor.max - U256::ONE,
+                    (None, None) => return None,
+                };
+                Some(WordInterval { min: U256::ZERO, max })
             }
             SymExprKind::BinOp(SymBinOp::Shr, value, shift) => {
                 let shift = shift.as_const()?;
@@ -2079,6 +2113,53 @@ impl ConstraintContext {
         {
             return left == numerator && right == denominator;
         }
+        // For a symbolic d, normalization rewrites the zero check of EVM's `div(n, d)` to
+        // `d == 0 || n < d`, possibly with repeated terms.
+        if let Some((numerator, denominator)) = word_division_operands(operand) {
+            return Self::zero_or_condition(condition, denominator, |term| {
+                matches!(
+                    term.kind(),
+                    SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right)
+                        if left == numerator && right == denominator
+                )
+            });
+        }
+        // EVM's `mod(n, d)` keeps `n % d == 0` in its zero check `d == 0 || n % d == 0`. SMT
+        // `bvurem(n, 0)` is `n` but EVM `mod(n, 0)` is 0, so this needs a proven nonzero `d`; a
+        // bare `URem` only appears once normalization dropped `ite(d == 0, 0, ..)` under that fact.
+        if let SymExprKind::BinOp(SymBinOp::URem, _, divisor) = operand.kind()
+            && self.interval(divisor).is_some_and(|range| !range.min.is_zero())
+        {
+            return Self::zero_or_condition(condition, divisor, |term| {
+                term.zero_check_operand() == Some(operand)
+            });
+        }
+        false
+    }
+
+    /// Returns whether `condition` is exactly `divisor == 0 || other`, possibly with repeated
+    /// terms.
+    fn zero_or_condition(
+        condition: &SymBoolExpr,
+        divisor: &SymExpr,
+        other: impl Fn(&SymBoolExpr) -> bool,
+    ) -> bool {
+        if let SymBoolExprKind::Not(negated) = condition.kind()
+            && let SymBoolExprKind::And(terms) = negated.kind()
+        {
+            let (mut zero, mut matched) = (false, false);
+            for term in terms.iter() {
+                let SymBoolExprKind::Not(term) = term.kind() else { return false };
+                if term.zero_check_operand() == Some(divisor) {
+                    zero = true;
+                } else if other(term) {
+                    matched = true;
+                } else {
+                    return false;
+                }
+            }
+            return zero && matched;
+        }
         false
     }
 
@@ -2183,7 +2264,10 @@ impl ConstraintContext {
     }
 
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
-        if self.has_non_wrapping_product(left, right) {
+        // `(a / d) * d <= a`, and the product is zero when `d == 0`, so it never wraps.
+        if self.has_non_wrapping_product(left, right)
+            || rounded_product_operands(left, right).is_some()
+        {
             return true;
         }
         let mut intervals = HashMap::default();

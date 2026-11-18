@@ -98,7 +98,7 @@ pub struct ResultExt {
     pub failed_deposit: bool,
     /// Per-phase statuses of an included signed Base EIP-8130 transaction.
     pub eip8130_phase_statuses: Option<Vec<u8>>,
-    /// Gas charged for fees, receipts and mined block totals; see
+    /// Gas charged for fees, receipts and block totals; see
     /// [`AnvilEvmNetwork::charged_gas`].
     pub charged_gas: u64,
 }
@@ -205,7 +205,7 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
         evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)
     }
 
-    /// Returns the gas `result` charges for fees, receipts and mined block totals.
+    /// Returns the gas `result` charges for fees, receipts and block totals.
     fn charged_gas(result: &TxResult<TypesFor<Self>>) -> u64 {
         result.tx_gas_used()
     }
@@ -591,9 +591,7 @@ pub fn evm_tx<N: AnvilEvmNetwork>(
     let mut evm_tx = TypesFor::<N>::evm_tx(envelope, sender, payload)
         .map_err(|err| BlockchainError::Message(err.to_string()))?;
     if !payload.is_simulated() {
-        let (mut inner, signer) = evm_tx.into_parts();
-        N::apply_impersonation(&mut inner);
-        evm_tx = Recovered::new_unchecked(inner, signer);
+        N::apply_impersonation(evm_tx.inner_mut());
     }
     if let Some(cheats) = cheats {
         let overrides = authority_overrides(tx, cheats);

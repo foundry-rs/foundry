@@ -47,7 +47,7 @@ use rand::Rng;
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
-    path::Path,
+    path::{Component, Path},
     str::FromStr,
 };
 
@@ -1747,7 +1747,7 @@ fn inner_value_snapshot<FEN: FoundryEvmNetwork>(
     name: Option<String>,
     value: String,
 ) -> Result {
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value);
 
@@ -1760,7 +1760,7 @@ fn inner_last_gas_snapshot<FEN: FoundryEvmNetwork>(
     name: Option<String>,
     value: u64,
 ) -> Result {
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value.to_string());
 
@@ -1777,7 +1777,7 @@ fn inner_start_gas_snapshot<FEN: FoundryEvmNetwork>(
         bail!("gas snapshot was already started with group: {group} and name: {name}");
     }
 
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_metering.gas_records.push(GasRecord {
         group: group.clone(),
@@ -1849,12 +1849,31 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
     ccx: &CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
     name: Option<String>,
-) -> (String, String) {
-    let group = group.unwrap_or_else(|| {
-        ccx.state.core.config.running_artifact.clone().expect("expected running contract").name
-    });
+) -> Result<(String, String)> {
+    let group = match group {
+        Some(group) => {
+            ensure!(
+                is_valid_snapshot_group(&group),
+                "invalid snapshot group name `{group}`: expected a relative path without empty, `.` or `..` components"
+            );
+            group
+        }
+        None => {
+            ccx.state.core.config.running_artifact.clone().expect("expected running contract").name
+        }
+    };
     let name = name.unwrap_or_else(|| "default".to_string());
-    (group, name)
+    Ok((group, name))
+}
+
+/// Returns whether `group` is a relative path without empty or dot components.
+fn is_valid_snapshot_group(group: &str) -> bool {
+    // Check the original components because `Path::components` normalizes dots and separators.
+    group.split(std::path::is_separator).all(|component| {
+        matches!(Path::new(component).components().next(), Some(Component::Normal(name)) if name == component)
+            && (!cfg!(windows)
+                || (!component.contains(':') && !component.ends_with(['.', ' '])))
+    })
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
@@ -2620,5 +2639,53 @@ mod tests {
             "- state diff:\n\
 @ 0x0000000000000000000000000000000000000000000000000000000000000000 (data, (bool,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000001\n    paused (bool): false → false\n"
         );
+    }
+
+    #[test]
+    fn validates_snapshot_groups() {
+        for group in [
+            "Group",
+            "a.b",
+            "group with spaces",
+            "..hidden",
+            "core/someContract",
+            "periphery/someContract.v1",
+        ] {
+            assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
+        }
+        for group in [
+            "",
+            ".",
+            "..",
+            "../settings",
+            "./a",
+            "/tmp/settings",
+            "a/",
+            "a/.",
+            "a/./b",
+            "a/../b",
+            "a//b",
+        ] {
+            assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
+
+        #[cfg(unix)]
+        assert!(is_valid_snapshot_group(r"core\someContract"));
+
+        #[cfg(windows)]
+        {
+            assert!(is_valid_snapshot_group(r"core\someContract"));
+            for group in [
+                r"C:\settings",
+                r"C:settings",
+                r"\settings",
+                r"core\..\settings",
+                "a:b",
+                "a/.. /b",
+                "a./b",
+            ] {
+                assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+            }
+        }
     }
 }

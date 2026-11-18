@@ -66,7 +66,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
     ops::Range,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, atomic::Ordering},
 };
 
 mod env_overrides;
@@ -1651,19 +1651,25 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Record called accounts if `startStateDiffRecording` has been called
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
-            // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
+            // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code.
             let evm = interp.host();
-            let (initialized, old_balance, old_nonce) = match evm.state_mut().account(&target) {
-                Ok(mut account) => {
-                    account.warm();
-                    (
-                        account.get().is_some_and(|info| !info.is_empty()),
-                        account.balance(),
-                        account.nonce(),
-                    )
-                }
-                Err(_) => (false, U256::ZERO, 0),
-            };
+            let state_account = recorded_call_state_account(call);
+            let (initialized, old_balance, old_nonce) =
+                match evm.state_mut().account(&state_account) {
+                    Ok(mut account) => {
+                        // The opcode already warmed a `DELEGATECALL` or `CALLCODE` callee, and a
+                        // `vm.mockFunction` target is never accessed by the EVM, so keep it cold.
+                        if state_account == call.destination {
+                            account.warm();
+                        }
+                        (
+                            account.get().is_some_and(|info| !info.is_empty()),
+                            account.balance(),
+                            account.nonce(),
+                        )
+                    }
+                    Err(_) => (false, U256::ZERO, 0),
+                };
             // Fork switches and `vm.chainId` take effect before the execution version changes.
             let chain_id = self
                 .env_overrides
@@ -1924,7 +1930,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.gas_metering.recording
             || self.core.arbitrary_storage.is_some()
             || self.deploy_code_depth.is_some()
-            || self.failure_trace.is_some()
+            || self.failure_trace.as_ref().is_some_and(|trace| !trace.paused)
         {
             return OpcodeSet::ALL;
         }
@@ -2565,11 +2571,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // changes. Depending on the depth the cheat was
                     // called at, there may not be any pending
                     // calls to update if execution has percolated up to a higher depth.
+                    let state_account = recorded_call_state_account(call);
                     if call_access.depth == curr_depth as u64
-                        && let Ok(mut account) = interp.host().state_mut().account(&target)
+                        && let Ok(mut account) = interp.host().state_mut().account(&state_account)
                     {
                         debug_assert!(access_is_call(call_access.kind));
-                        account.warm();
+                        if state_account == call.destination {
+                            account.warm();
+                        }
                         call_access.newBalance = account.balance();
                         call_access.newNonce = account.nonce();
                     }
@@ -3892,6 +3901,18 @@ const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     )
 }
 
+/// Returns the account whose balance and nonce a call's [`AccountAccess`] records.
+///
+/// `DELEGATECALL` and `CALLCODE` execute in the caller's context, so their callee's state does not
+/// change. Other calls record the executing context, which a `vm.mockFunction` redirect keeps as
+/// the original target while `call_target` becomes the mock.
+const fn recorded_call_state_account<E>(call: &MessageExt<E>) -> Address {
+    match call.kind {
+        MessageKind::DelegateCall | MessageKind::CallCode => call.call_target,
+        _ => call.destination,
+    }
+}
+
 /// Records a log into the recorded logs vector, if it exists.
 fn record_logs(recorded_logs: &mut Option<Vec<Vm::Log>>, log: &Log) {
     if let Some(storage_recorded_logs) = recorded_logs {
@@ -3968,8 +3989,8 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
         && has_host_effects(calls)
     {
         // A replay must not repeat these effects and cannot reproduce these reads, so it skips
-        // them and leaves the failure unidentified.
-        trace.unidentified = true;
+        // them and leaves this and later failures unidentified.
+        trace.skipped_host_effects.store(true, Ordering::Relaxed);
         Ok(Default::default())
     } else if ccx.state.failure_trace.is_some() && matches!(calls, Vm::VmCalls::sleep(_)) {
         // A replay does not wait, which only `unixTime` could observe.
