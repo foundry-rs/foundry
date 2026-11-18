@@ -182,16 +182,15 @@ pub fn fund_fork_test_accounts(
     with_tempo_storage(db, env, hardfork, || {
         (|| -> Result<(), TempoPrecompileError> {
             let factory = TIP20Factory::new();
+            let fallback_tokens = TempoHardfork::from(hardfork).fallback_fee_tokens();
             for &account in &genesis.accounts {
                 let mut fee_token = TipFeeManager::new().user_tokens[account].read()?;
                 if fee_token.is_zero() {
                     let mut richest = U256::ZERO;
-                    for &token in TempoHardfork::from(hardfork).fallback_fee_tokens() {
-                        let balance = if factory.is_tip20(token)? {
-                            TIP20Token::from_address(token)?.balances[account].read()?
-                        } else {
-                            U256::ZERO
-                        };
+                    // An undeployed token reads as a zero balance and is skipped below.
+                    for &token in fallback_tokens {
+                        let balance =
+                            TIP20Token::from_address_unchecked(token).balances[account].read()?;
                         if fee_token.is_zero() || balance > richest {
                             (fee_token, richest) = (token, balance);
                         }
