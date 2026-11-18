@@ -103,7 +103,7 @@ sync_pin() {
     return
   fi
 
-  status=$(gh api "repos/$repo/compare/${old_rev}...${new_rev}" --jq '.status')
+  status=$(gh api "repos/$repo/compare/${old_rev}...${new_rev}" --jq '.status' || echo "unavailable")
   if [[ "$status" != "ahead" ]]; then
     echo "Keeping $name at ${old_rev:0:7}: Tempo's ${new_rev:0:7} is not newer ($status)"
     echo "- Kept \`$name\` at [\`${old_rev:0:7}\`](https://redirect.github.com/$repo/commit/${old_rev}); Tempo's [\`${new_rev:0:7}\`](https://redirect.github.com/$repo/commit/${new_rev}) is not newer (compare status: $status)." >> "$changelog"
