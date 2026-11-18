@@ -10,6 +10,7 @@ use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use anvil::NodeConfig;
+use axum::{Router, http::StatusCode, routing::post};
 use base64::Engine;
 use foundry_cli::utils::parse_json;
 use foundry_common::{provider::RetryProvider, tempo::configurable_account::single_owner_account};
@@ -17,7 +18,13 @@ use foundry_evm::core::tempo::ALPHA_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, assert_data_eq, util::OutputExt};
 use p256::ecdsa::{SigningKey, signature::Signer as _};
 use sha2::{Digest, Sha256};
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 use tempo_contracts::precompiles::{ITIP20, PATH_USD_ADDRESS};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::{
@@ -1061,4 +1068,41 @@ async fn tempo_t14_zone_deposit_from_configurable_account(cmd: _) {
     assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(eoa.address()));
     // As before configurable accounts, the key sends a plain secp256k1 transaction.
     assert!(!matches!(last_tx().await, TempoTxEnvelope::AA(_)));
+}
+
+/// `cast wallet new` sends one request to an RPC that fails, so an unreachable RPC delays key
+/// generation by one timeout rather than one per query, and a plain key is still created.
+#[casttest]
+async fn wallet_new_asks_failing_rpc_once(cmd: _) {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let counter = requests.clone();
+    let app = Router::new().route(
+        "/",
+        post(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            async { StatusCode::SERVICE_UNAVAILABLE }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let (stdout, stderr) = wallet_new(&mut cmd, &[], &[("ETH_RPC_URL", &rpc)]);
+    let [address, key] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
+        panic!("expected an EOA record, got {stdout}");
+    };
+    let signer = PrivateKeySigner::from_str(key).unwrap();
+    assert_eq!(Address::from_str(address).unwrap(), signer.address());
+    assert_data_eq!(
+        stderr,
+        str![[r#"
+Warning: Could not ask the RPC for its chain ([..]); using the configured chain
+Successfully created new keypair.
+Address:     [..]
+Private key: [..]
+
+"#]]
+    );
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    server.abort();
 }
