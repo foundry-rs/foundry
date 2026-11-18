@@ -2264,7 +2264,10 @@ impl ConstraintContext {
     }
 
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
-        if self.has_non_wrapping_product(left, right) {
+        // `(a / d) * d <= a`, and the product is zero when `d == 0`, so it never wraps.
+        if self.has_non_wrapping_product(left, right)
+            || rounded_product_operands(left, right).is_some()
+        {
             return true;
         }
         let mut intervals = HashMap::default();
