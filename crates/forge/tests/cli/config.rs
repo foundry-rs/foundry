@@ -1587,7 +1587,7 @@ fn nested_auto_remapping_preserves_declared_precedence(prj: _, cmd: _) {
     );
     prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"a/pinned/Version.sol\"; import {ShadowedA} from \"shared/Version.sol\"; contract UsesA is A, Marker, ShadowedA {}\n");
     let warning = str![[r#"
-Warning: Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Imports of `shared/` from the root or other dependencies may resolve differently. Adding `shared/=lib/a/src/pinned/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:shared/=<target>`.
+Warning: Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports of `shared/` now resolve to `lib/a/lib/shared/src/` instead. Adding `shared/=lib/a/src/pinned/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:shared/=<target>`.
 
 "#]];
 

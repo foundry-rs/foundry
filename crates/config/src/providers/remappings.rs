@@ -408,6 +408,7 @@ impl RemappingsProvider<'_> {
                 .map(|remapping| remapping.into_relative(self.root))
                 .collect::<BTreeSet<_>>();
             let mut contextual_remappings = Vec::new();
+            let mut scoped_remappings = Vec::new();
             for (lib, r, kind) in &nested_foundry_remappings {
                 if r.context.is_some() {
                     continue;
@@ -440,12 +441,10 @@ impl RemappingsProvider<'_> {
                             .any(|other| remappings_conflict(r, other, self.root)))
                 {
                     if let Some(contextual) = scope_nested_remapping(r.clone(), lib) {
-                        warnings.push(Warning::ScopedDependencyRemapping {
-                            remapping: relative_remapping_preserving_context_boundary(
-                                contextual.clone(),
-                                self.root,
-                            ),
-                        });
+                        scoped_remappings.push(relative_remapping_preserving_context_boundary(
+                            contextual.clone(),
+                            self.root,
+                        ));
                         if let Some(overlays) =
                             contextual_overlays(&authoritative_remappings, &contextual)
                         {
@@ -531,13 +530,13 @@ impl RemappingsProvider<'_> {
                     .collect(),
             );
 
-            retain_changed_remapping_warnings(
-                &mut warnings,
+            warnings.extend(scoped_remapping_warnings(
+                scoped_remappings,
                 &previous_globals,
                 &all_remappings.remappings,
                 &self.project_paths,
                 self.root,
-            );
+            ));
             suppress_overridden_remapping_warnings(&mut warnings, &authoritative_remappings);
             return Ok(RemappingsOutput {
                 remappings: all_remappings.into_inner(),
@@ -951,46 +950,71 @@ fn suppress_overridden_remapping_warnings(
     authoritative: &[Remapping],
 ) {
     warnings.retain(|warning| match warning {
-        Warning::ScopedDependencyRemapping { remapping } => !authoritative.iter().any(|mapping| {
-            mapping.context.is_none() && remapping_name_is_prefix(&mapping.name, &remapping.name)
-        }),
+        Warning::ScopedDependencyRemapping { remapping, .. } => {
+            !authoritative.iter().any(|mapping| {
+                mapping.context.is_none()
+                    && remapping_name_is_prefix(&mapping.name, &remapping.name)
+            })
+        }
         _ => true,
     });
 }
 
-/// Retains migration advice only for former global targets that root imports silently replace.
+/// Returns migration advice for scoped declarations whose former global target root imports
+/// silently replace.
 ///
 /// Root imports still resolve when a root mapping covers the alias or a root directory has its
 /// name. Otherwise imports of it fail with actionable compiler help, so warning here would flag
 /// projects that never import the alias.
-fn retain_changed_remapping_warnings(
-    warnings: &mut Vec<Warning>,
+fn scoped_remapping_warnings(
+    scoped: Vec<RelativeRemapping>,
     previous_globals: &BTreeSet<RelativeRemapping>,
     current: &[Remapping],
     project_paths: &[PathBuf],
     root: &Path,
-) {
+) -> Vec<Warning> {
     let mut warned = BTreeSet::new();
-    warnings.retain(|warning| {
-        let Warning::ScopedDependencyRemapping { remapping } = warning else { return true };
-        let mut global = remapping.clone();
-        global.context = None;
-        let original = global.clone().to_relative_remapping();
-        let mut covering = current
-            .iter()
-            .filter(|mapping| {
-                mapping.context.is_none() && remapping_name_is_prefix(&mapping.name, &global.name)
-            })
-            .peekable();
-        previous_globals.contains(&global)
-            // Project-path aliases could not have supplied root imports before scoping.
-            && !project_paths.iter().any(|path| {
-                original.name.eq_ignore_ascii_case(&project_path_remapping_name(path))
-            })
-            && (covering.peek().is_some() || root.join(&original.name).exists())
-            && covering.all(|mapping| remappings_conflict(mapping, &original, root))
-            && warned.insert(global)
-    });
+    scoped
+        .into_iter()
+        .filter_map(|remapping| {
+            let mut global = remapping.clone();
+            global.context = None;
+            let original = global.clone().to_relative_remapping();
+            if !previous_globals.contains(&global)
+                // Project-path aliases could not have supplied root imports before scoping.
+                || project_paths.iter().any(|path| {
+                    original.name.eq_ignore_ascii_case(&project_path_remapping_name(path))
+                })
+                || !warned.insert(global.clone())
+            {
+                return None;
+            }
+            // Like solc, the longest root alias wins; without one, the root directory resolves it.
+            let resolved = match current
+                .iter()
+                .filter(|mapping| {
+                    mapping.context.is_none()
+                        && remapping_name_is_prefix(&mapping.name, &global.name)
+                })
+                .max_by_key(|mapping| mapping.name.len())
+            {
+                Some(mapping) if remappings_conflict(mapping, &original, root) => {
+                    let target =
+                        RelativeRemapping::new(mapping.clone(), root).to_relative_remapping();
+                    let suffix = original.name[mapping.name.trim_end_matches('/').len()..]
+                        .trim_start_matches('/');
+                    if suffix.is_empty() {
+                        target.path
+                    } else {
+                        format!("{}/{suffix}", target.path.trim_end_matches('/'))
+                    }
+                }
+                None if root.join(&original.name).exists() => original.name,
+                _ => return None,
+            };
+            Some(Warning::ScopedDependencyRemapping { remapping, resolved })
+        })
+        .collect()
 }
 
 fn project_path_remapping_name(path: &Path) -> String {
@@ -1924,7 +1948,7 @@ mod tests {
             );
             assert_eq!(
                 config.warnings[1].to_string(),
-                "Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Imports of `shared/` from the root or other dependencies may resolve differently. Adding `shared/=lib/a/src/pinned/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:shared/=<target>`."
+                "Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports of `shared/` now resolve to `lib/a/lib/shared/src/` instead. Adding `shared/=lib/a/src/pinned/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:shared/=<target>`."
             );
             assert_eq!(
                 config
@@ -2030,7 +2054,7 @@ mod tests {
             assert_eq!(
                 config.warnings.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 [
-                    "Dependency remapping `utils/=lib/a/src/utils/` now applies only within `lib/a/`. Imports of `utils/` from the root or other dependencies may resolve differently. Adding `utils/=lib/a/src/utils/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:utils/=<target>`."
+                    "Dependency remapping `utils/=lib/a/src/utils/` now applies only within `lib/a/`. Root imports of `utils/` now resolve to `utils/` instead. Adding `utils/=lib/a/src/utils/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:utils/=<target>`."
                 ]
             );
 

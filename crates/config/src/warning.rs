@@ -76,6 +76,8 @@ pub enum Warning {
     ScopedDependencyRemapping {
         /// The original alias and target with their generated owner context.
         remapping: RelativeRemapping,
+        /// Where root imports of the alias resolve now, relative to the root.
+        resolved: String,
     },
 }
 
@@ -130,17 +132,17 @@ impl fmt::Display for Warning {
                     "Found unknown `{key}` config key in section `{section}` defined in {source}."
                 )
             }
-            Self::ScopedDependencyRemapping { remapping } => {
+            Self::ScopedDependencyRemapping { remapping, resolved } => {
                 let mut global = remapping.clone();
                 let context = global.context.take().unwrap_or_default();
                 let alias = &global.name;
                 write!(
                     f,
-                    "Dependency remapping `{global}` now applies only within `{context}`. \
-                     Imports of `{alias}` from the root or other dependencies may resolve \
-                     differently. Adding `{global}` to your root remappings restores the previous \
-                     resolution for the whole project, including other dependencies; to keep a \
-                     dependency's own target, also add `<dependency>/:{alias}=<target>`."
+                    "Dependency remapping `{global}` now applies only within `{context}`. Root \
+                     imports of `{alias}` now resolve to `{resolved}` instead. Adding `{global}` \
+                     to your root remappings restores the previous resolution for the whole \
+                     project, including other dependencies; to keep a dependency's own target, \
+                     also add `<dependency>/:{alias}=<target>`."
                 )
             }
             Self::UnknownProfile { profile } => {
