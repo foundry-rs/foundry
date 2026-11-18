@@ -16,9 +16,12 @@ use crate::eth::error::BlockchainError;
 use alloy_primitives::{Address, U256, address};
 use anvil_core::types::TempoCreateTokenRequest;
 use evm2::evm::{AccountChangeRef, BlockStateAccumulator, StateChangeSink, StorageChange};
-use foundry_evm_core::tempo::{
-    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    active_tempo_precompile_addresses, initialize_tempo_genesis_inner, tempo_genesis_contracts,
+use foundry_evm_core::{
+    backend::DatabaseResult,
+    tempo::{
+        ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+        active_tempo_precompile_addresses, initialize_tempo_genesis_inner, tempo_genesis_contracts,
+    },
 };
 use foundry_evm_hardforks::FoundryHardfork;
 use tempo_hardfork::TempoHardfork;
@@ -143,11 +146,28 @@ pub fn initialize_tempo_precompiles(
     Ok(())
 }
 
+/// Loads the state [`fund_fork_test_accounts`] reads for `account`, so a fork database can fetch
+/// it concurrently before the write lock serializes those reads.
+pub fn prefetch_fork_test_account(db: &dyn DatabaseRef, account: Address) -> DatabaseResult<()> {
+    let slot = TipFeeManager::new().user_tokens[account].slot();
+    let preferred = Address::from_word(db.storage_ref(TIP_FEE_MANAGER_ADDRESS, slot)?.into());
+    for token in
+        [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS, preferred]
+    {
+        if token.is_tip20() && db.basic_ref(token)?.is_some() {
+            let slot = TIP20Token::from_address_unchecked(token).balances[account].slot();
+            db.storage_ref(token, slot)?;
+        }
+    }
+    Ok(())
+}
+
 /// Funds test accounts on a forked Tempo chain with the fee token balance a fresh genesis mints.
 ///
 /// Each account gets every standard fee token the chain has deployed and the fee token it prefers
 /// in the fee manager. Balances are written directly because the local node holds no issuer role
-/// on a forked chain.
+/// on a forked chain. This skips the pre-T8 reward bookkeeping, so on a fork before T8 a dev
+/// account with a reward recipient can fail to pay fees.
 pub fn fund_fork_test_accounts(
     db: &mut dyn Db,
     env: &EvmEnv,
@@ -156,7 +176,6 @@ pub fn fund_fork_test_accounts(
 ) -> Result<(), BlockchainError> {
     with_tempo_storage(db, env, hardfork, || {
         (|| -> Result<(), TempoPrecompileError> {
-            let factory = TIP20Factory::new();
             let fee_manager = TipFeeManager::new();
             for &account in test_accounts {
                 let preferred =
@@ -168,10 +187,7 @@ pub fn fund_fork_test_accounts(
                     THETA_USD_ADDRESS,
                     preferred,
                 ] {
-                    if factory.is_tip20(token)? {
-                        let mut token = TIP20Token::from_address(token)?;
-                        token.balances[account].write(TEST_ACCOUNT_FEE_TOKEN_BALANCE)?;
-                    }
+                    set_tip20_balance(token, account, TEST_ACCOUNT_FEE_TOKEN_BALANCE)?;
                 }
             }
             Ok(())
@@ -180,6 +196,19 @@ pub fn fund_fork_test_accounts(
             BlockchainError::Message(format!("failed to fund Tempo fork accounts: {err}"))
         })
     })
+}
+
+/// Sets `account`'s balance of `token` if it is a deployed TIP-20, returning whether it is.
+pub fn set_tip20_balance(
+    token: Address,
+    account: Address,
+    balance: U256,
+) -> Result<bool, TempoPrecompileError> {
+    if !TIP20Factory::new().is_tip20(token)? {
+        return Ok(false);
+    }
+    TIP20Token::from_address(token)?.balances[account].write(balance)?;
+    Ok(true)
 }
 
 fn initialize_tempo_genesis(

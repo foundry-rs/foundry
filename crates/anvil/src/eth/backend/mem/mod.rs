@@ -181,10 +181,9 @@ use tempo_precompiles::{
     CONFIGURABLE_ACCOUNT_ADDRESS, NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     configurable_account,
     nonce::NonceManager,
-    storage::{Handler, account_config_commitment},
+    storage::account_config_commitment,
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
-    tip20_factory::TIP20Factory,
 };
 use tempo_primitives::{
     AASigned, SignatureType, TEMPO_TX_TYPE_ID, TempoSignature,
@@ -4966,6 +4965,7 @@ impl<N: Network> Backend<N> {
         hardfork: FoundryHardfork,
     ) -> Result<(), DatabaseError> {
         let user = StagedForkDbUser { db: Some(db), cache_lease };
+        let is_tempo = self.is_tempo();
         let mut genesis_accounts = JoinSet::new();
         for address in self.genesis.accounts.iter().copied() {
             let task_user = StagedForkDbUser {
@@ -4977,6 +4977,9 @@ impl<N: Network> Backend<N> {
             genesis_accounts.spawn(async move {
                 let db = task_user.db().read().await;
                 let info = db.basic_ref(address)?.unwrap_or_default();
+                if is_tempo {
+                    crate::eth::backend::tempo::prefetch_fork_test_account(&**db, address)?;
+                }
                 Ok::<_, DatabaseError>((address, info))
             });
         }
@@ -5027,7 +5030,7 @@ impl<N: Network> Backend<N> {
             )?;
         }
         #[cfg(not(feature = "base"))]
-        let _ = (parent_env, parent_hash, hardfork);
+        let _ = parent_hash;
         drop(db_guard);
         self.apply_funded_accounts(user.db()).await
     }
@@ -10377,13 +10380,8 @@ impl Backend<FoundryNetwork> {
         balance: U256,
     ) -> DatabaseResult<bool> {
         self.with_tempo_storage(|| {
-            if !TIP20Factory::new().is_tip20(token_address).map_err(tempo_db_err)? {
-                return Ok(false);
-            }
-
-            let mut token = TIP20Token::from_address(token_address).map_err(tempo_db_err)?;
-            token.balances[address].write(balance).map_err(tempo_db_err)?;
-            Ok(true)
+            crate::eth::backend::tempo::set_tip20_balance(token_address, address, balance)
+                .map_err(tempo_db_err)
         })
         .await
     }

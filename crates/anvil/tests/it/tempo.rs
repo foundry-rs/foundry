@@ -42,7 +42,10 @@ use anvil::{
     eth::{EthApi, pool::transactions::TransactionOrder},
     spawn, try_spawn,
 };
-use anvil_core::{eth::block::Block, types::ReorgOptions};
+use anvil_core::{
+    eth::block::Block,
+    types::{ReorgOptions, TempoCreateTokenRequest},
+};
 use axum::{Json, Router, routing::post};
 use commonware_codec::{DecodeExt, Encode, ReadExt, varint::UInt};
 use commonware_cryptography::bls12381::primitives::{
@@ -97,7 +100,7 @@ use tempo_precompiles::{
     current_committee::{CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee},
     nonce::NonceManager,
     receive_policy_guard::{IReceivePolicyGuard, InboundKind},
-    tip_fee_manager::IFeeManager,
+    tip_fee_manager::{IFeeManager, TipFeeManager},
     tip403_registry::{ALLOW_ALL_POLICY_ID, ITIP403Registry, REJECT_ALL_POLICY_ID},
 };
 use tempo_primitives::{
@@ -702,6 +705,26 @@ async fn test_tempo_fork_funds_dev_account_fee_tokens() {
     for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD] {
         source_api.anvil_deal_tip20(from, token, U256::ZERO).await.unwrap();
     }
+    // A preferred fee token outside the standard set is funded too.
+    let custom = address!("0x20c0000000000000000000006a37da5c996874be");
+    let prefers_custom = source_handle.dev_accounts().nth(3).unwrap();
+    source_api
+        .anvil_tempo_create_token(TempoCreateTokenRequest {
+            address: custom,
+            name: "Custom".into(),
+            symbol: "CUSD".into(),
+            currency: "USD".into(),
+            quote_token: PATH_USD,
+            admin: from,
+            mint: vec![],
+        })
+        .await
+        .unwrap();
+    let slot = TipFeeManager::new().user_tokens[prefers_custom].slot();
+    source_api
+        .anvil_set_storage_at(TIP_FEE_MANAGER_ADDRESS, slot, custom.into_word())
+        .await
+        .unwrap();
     source_api.mine_one().await.unwrap();
 
     let (fork_api, fork_handle) = spawn(
@@ -728,6 +751,10 @@ async fn test_tempo_fork_funds_dev_account_fee_tokens() {
                 U256::from(u64::MAX),
             );
         }
+        assert_eq!(
+            IERC20::new(custom, &provider).balanceOf(prefers_custom).call().await.unwrap(),
+            U256::from(u64::MAX),
+        );
         let tx = TransactionRequest::default().from(from).to(Address::random());
         let receipt =
             provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
