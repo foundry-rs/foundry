@@ -387,7 +387,8 @@ impl ContractsByArtifact {
     }
 
     /// Same as [`Self::find_by_deployed_code_exact_unambiguous`], preferring artifacts matching
-    /// `preferred` only among equally strong matches.
+    /// `preferred` only among equally strong matches. Partial matches are ambiguous only if several
+    /// are preferred, or none is and several match.
     pub fn find_by_deployed_code_exact_unambiguous_preferred(
         &self,
         code: &[u8],
@@ -426,7 +427,8 @@ impl ContractsByArtifact {
 
         let mut partial_match = None;
         let mut exact_match = None;
-        let mut ambiguous_partial = false;
+        let mut partials = 0;
+        let mut preferred_partials = 0;
         for (id, contract) in self.iter() {
             let Some(deployed_bytecode) = &contract.deployed_bytecode else {
                 continue;
@@ -504,14 +506,17 @@ impl ContractsByArtifact {
                     return (exact_match, None, false);
                 }
             } else {
-                ambiguous_partial |= partial_match.is_some();
+                partials += 1;
+                preferred_partials += preferred(id) as usize;
                 if preferred(id) || partial_match.is_none_or(|(id, _)| !preferred(id)) {
                     partial_match = Some((id, contract));
                 }
             }
         }
 
-        let ambiguous_partial = exact_match.is_none() && ambiguous_partial;
+        // Preferred partial matches, if any, are the only candidates.
+        let candidates = if preferred_partials > 0 { preferred_partials } else { partials };
+        let ambiguous_partial = exact_match.is_none() && candidates > 1;
         (exact_match, partial_match, ambiguous_partial)
     }
 
@@ -955,6 +960,18 @@ mod tests {
                     .unwrap_err()
                     .to_string(),
                 "Multiple local contracts match the deployed bytecode with different metadata. Specify the contract as <path>:<contract>"
+            );
+            // A single preferred partial match isn't ambiguous.
+            assert_eq!(
+                contracts
+                    .find_by_deployed_code_exact_unambiguous_preferred(&deployed_code, |id| {
+                        id.name == "C"
+                    })
+                    .unwrap()
+                    .unwrap()
+                    .0
+                    .name,
+                "C"
             );
 
             let contracts = ContractsByArtifact::new([

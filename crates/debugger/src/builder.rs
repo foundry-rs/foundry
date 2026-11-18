@@ -222,7 +222,8 @@ fn identify_code<'a>(
         Some(creator) => id == creator,
         None => address_name == Some(&id.name),
     };
-    // If several artifacts match except for metadata, we can't tell which ran, so none is used.
+    // If the metadata-only matches leave more than one candidate, we can't tell which ran, so none
+    // is used.
     if let Ok(Some((id, _))) =
         known_contracts.find_by_deployed_code_exact_unambiguous_preferred(code, preferred)
     {
