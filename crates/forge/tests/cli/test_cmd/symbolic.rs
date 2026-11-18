@@ -7687,6 +7687,11 @@ contract RoundedProductTest {
         assert(uint256(amount) * bps / 10000 <= amount);
     }
 
+    function checkSlippageMinimum(uint64 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        assert(uint256(amount) * (10000 - bps) / 10000 <= amount);
+    }
+
     mapping(address => uint256) balances;
 
     function checkTransferConservation(address from, address to, uint256 amount) external {
@@ -7710,7 +7715,7 @@ contract RoundedProductTest {
             "--symbolic-timeout",
             "30",
             "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee|TransferConservation)",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee|SlippageMinimum|TransferConservation)",
         ])
         .assert_success();
         let output = cmd

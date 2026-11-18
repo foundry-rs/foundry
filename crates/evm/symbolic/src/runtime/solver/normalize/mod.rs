@@ -1479,9 +1479,13 @@ impl ConstraintContext {
                 let value = self.interval_cached(value, intervals, remaining)?;
                 Some(WordInterval { min: !value.max, max: !value.min })
             }
-            SymExprKind::BinOp(SymBinOp::And, left, right) => {
-                let mask = left.as_const().or_else(|| right.as_const())?;
-                Some(WordInterval { min: U256::ZERO, max: mask })
+            SymExprKind::BinOp(SymBinOp::And, value, mask) => {
+                let mask = mask.as_const()?;
+                // `x & mask <= min(x, mask)`.
+                let max = self
+                    .interval_cached(value, intervals, remaining)
+                    .map_or(mask, |value| value.max.min(mask));
+                Some(WordInterval { min: U256::ZERO, max })
             }
             SymExprKind::BinOp(SymBinOp::Add, left, right) => {
                 let left = self.interval_cached(left, intervals, remaining)?;
