@@ -1198,10 +1198,7 @@ impl<N: Network> EthApi<N> {
         hash: B256,
     ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByHash");
-        Ok(self.backend.block_by_hash(hash).await?.map(|block| {
-            let WithOtherFields { inner: block, other } = block.0;
-            WithOtherFields { inner: block.header, other }
-        }))
+        Ok(self.backend.block_by_hash(hash).await?.map(rpc_header))
     }
 
     /// Returns a _full_ block with given hash.
@@ -2994,14 +2991,10 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
         if number.is_pending() {
-            let WithOtherFields { inner: block, other } = self.pending_block().await?.0;
-            return Ok(Some(WithOtherFields { inner: block.header, other }));
+            return Ok(Some(rpc_header(self.pending_block().await?)));
         }
 
-        Ok(self.backend.block_by_number(number).await?.map(|block| {
-            let WithOtherFields { inner: block, other } = block.0;
-            WithOtherFields { inner: block.header, other }
-        }))
+        Ok(self.backend.block_by_number(number).await?.map(rpc_header))
     }
 
     /// Returns a _full_ block with given number
@@ -6064,6 +6057,15 @@ fn merge_pre_fork_fee_history(
 fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
     let index = (percentile * REWARD_PERCENTILE_RESOLUTION).round() as usize;
     rewards.get(index).copied().unwrap_or_default()
+}
+
+/// Splits the header out of a block, dropping the block-only `size` and `totalDifficulty`.
+fn rpc_header(block: AnyRpcBlock) -> WithOtherFields<AnyRpcHeader> {
+    let WithOtherFields { inner: block, other } = block.0;
+    let mut header = block.header;
+    header.size = None;
+    header.total_difficulty = None;
+    WithOtherFields { inner: header, other }
 }
 
 #[cfg(test)]
