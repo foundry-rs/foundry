@@ -29,7 +29,14 @@ revm 43 and alloy-evm 0.39 through `base-evm2` and the Base crates it depends on
   `step_deltas` lists `gas_remaining_after` for call-like steps and for steps whose remaining gas
   differs from `gas_remaining - gas_cost`.
 - **`SLOAD` values**: with `-vvvvv --opcodes SLOAD`, every `SLOAD` shows its slot and loaded value,
-  including repeated reads of a slot that revm printed as a bare `SLOAD`.
+  including repeated reads of a slot that revm printed as a bare `SLOAD`. In `--json` step traces,
+  those reads carry a `storage_change` with reason `SLOAD`.
+- **Halted calls**: a call or create that halts, such as on `INVALID`, an invalid jump, an
+  out-of-bounds `RETURNDATACOPY`, the memory limit or a runtime code starting with `0xEF`, reports
+  all the gas forwarded to it as used, as the EVM charges it. This shows in `-vvvv` traces, `--json`
+  traces, gas reports and the debugger. revm-inspectors reported only the gas spent before the
+  halt, such as `[223]` instead of `[1056938677]`, and kept the output of a create rejected for
+  its `0xEF` prefix.
 - **`prestateTracer` diff mode**: Anvil leaves every account that was empty before the transaction
   out of `pre`, also when the transaction funds it, such as the coinbase at its first fee credit.
   This matches geth. revm-inspectors reported such an account with `"balance":"0x0"`.
@@ -56,6 +63,16 @@ These compatibility differences affect execution, gas reports and Anvil library 
   call that switches forks can replace the outer transaction's warmth with its own. Transient
   storage follows the same lifetime, so it no longer leaks from `setUp` into a test through a fork.
   See [`ForkSwitch.t.sol`](../../testdata/default/cheats/ForkSwitch.t.sol).
+- **`vm.expectRevert` on a halt**: a call that halts spends all the gas forwarded to it, even when
+  `vm.expectRevert` turns the halt into a success. revm returned the unspent gas to the caller, so
+  a test that only ran `vm.expectRevert(); target.invalidOpcode();` reported 8,264 gas instead of
+  1,056,944,039, and kept its gas for later work. A test that does more than 1/64 of
+  the gas limit after such a call now fails with `OutOfGas` unless the call forwards a fixed amount,
+  as in `target.invalidOpcode{gas: 100_000}()`.
+- **Monad isolated calls**: under `--network monad` with `isolate = true`, a slot that the test
+  transaction warmed, for example with `vm.store`, is cold again in an isolated call, as on
+  Ethereum. revm-based Foundry carried that warmth into the isolated call, so its first `SLOAD`
+  of the slot cost 8,000 gas less.
 - **Fork environment on re-select**: switching back to a fork restores the whole block environment
   it last ran with, including `vm.fee`, `vm.coinbase` and `vm.prevrandao` changes. revm kept only
   the block number and timestamp and restored the rest from the fork block.
