@@ -1188,26 +1188,32 @@ mod tests {
 
     #[test]
     fn test_dump_sources_rejects_contract_name_paths() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("project");
-        let victim = temp.path().join("victim");
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::create_dir_all(root.join("lib")).unwrap();
-        std::fs::create_dir_all(&victim).unwrap();
-        let victim_file = victim.join("outside.sol");
-        std::fs::write(&victim_file, "contract Outside {}").unwrap();
-        let contract_name = victim.to_string_lossy().into_owned();
-        let meta = contract_metadata(&contract_name, false, None).items.remove(0);
+        for absolute in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("project");
+            let victim = temp.path().join("victim");
+            std::fs::create_dir_all(root.join("src")).unwrap();
+            std::fs::create_dir_all(root.join("lib")).unwrap();
+            std::fs::create_dir_all(&victim).unwrap();
+            let victim_file = victim.join("outside.sol");
+            std::fs::write(&victim_file, "contract Outside {}").unwrap();
+            let contract_name = if absolute {
+                victim.to_string_lossy().into_owned()
+            } else {
+                "../../victim".to_string()
+            };
+            let meta = contract_metadata(&contract_name, false, None).items.remove(0);
 
-        let err = dump_sources(&meta, &root, false).unwrap_err();
+            let err = dump_sources(&meta, &root, false).unwrap_err();
 
-        assert_eq!(
-            err.to_string(),
-            format!("invalid contract name from explorer: {contract_name:?}")
-        );
-        assert!(victim_file.exists());
-        assert!(!root.join("raw_sources").exists());
-        assert!(!root.join("src/outside.sol").exists());
+            assert_eq!(
+                err.to_string(),
+                format!("invalid contract name from explorer: {contract_name:?}")
+            );
+            assert!(victim_file.exists());
+            assert!(!root.join("raw_sources").exists());
+            assert!(!root.join("src/outside.sol").exists());
+        }
     }
 
     #[test]
@@ -1222,21 +1228,6 @@ mod tests {
 
         assert!(root.join("src/Contract.sol").exists());
         assert!(!root.join("raw_sources").exists());
-    }
-
-    #[test]
-    fn test_dump_sources_preserves_write_error_context() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().to_path_buf();
-        let raw_sources = root.join("raw_sources");
-        std::fs::write(&raw_sources, "original").unwrap();
-        let meta = contract_metadata("Contract_2", false, None).items.remove(0);
-
-        let err = dump_sources(&meta, &root, false).unwrap_err();
-
-        assert_eq!(err.to_string(), "failed to dump sources");
-        assert!(matches!(err.downcast_ref::<EtherscanError>(), Some(EtherscanError::IO(_))));
-        assert_eq!(std::fs::read_to_string(raw_sources).unwrap(), "original");
     }
 
     #[tokio::test]

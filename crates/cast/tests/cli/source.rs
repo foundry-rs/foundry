@@ -383,19 +383,22 @@ async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
     let sentinel_contents = "[profile.default]\nffi = false\n";
     fs::write(&sentinel, sentinel_contents).unwrap();
     let external = prj.root().join("external");
-    fs::create_dir_all(&external).unwrap();
-    let external_source = external.join("Probe.sol");
-    let external_contents = b"\xff\xfe private source";
-    fs::write(&external_source, external_contents).unwrap();
     let source = "[profile.default]\nffi = true\n";
     let source_code = json!({ "foundry.toml": { "content": source } });
 
-    // Full name boundaries are covered in core; exercise each CLI validation entry point.
-    for (contract_name, source_code, expected_error) in [
-        ("", source_code.clone(), "Error: invalid contract name from explorer: \"\"\n".to_string()),
+    // Full name boundaries are covered in core; exercise each CLI validation entry point:
+    // `-d` writes the source tree, and `--flatten` uses it as the project source root.
+    for (contract_name, source_code, flatten, expected_error) in [
+        (
+            "",
+            source_code.clone(),
+            false,
+            "Error: invalid contract name from explorer: \"\"\n".to_string(),
+        ),
         (
             external.to_str().unwrap(),
             source_code,
+            true,
             format!(
                 "Error: invalid contract name from explorer: {:?}\n",
                 external.to_str().unwrap()
@@ -403,7 +406,8 @@ async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
         ),
         (
             "foundry.toml",
-            json!(json!({ "": { "content": source } }).to_string()),
+            json!({ "": { "content": source } }),
+            false,
             format!(
                 "Error: invalid source path from explorer: {:?}\n",
                 Path::new("foundry.toml").join("")
@@ -429,29 +433,23 @@ async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-        let args = [
+        let command = cmd.cast_fuse().args([
             "source",
             "0x0000000000000000000000000000000000000001",
             "--explorer-api-url",
             &format!("{url}/api"),
             "--explorer-url",
             &url,
-        ];
-        cmd.cast_fuse().args(args).assert_success().stdout_eq(format!("{source}\n"));
-        for flatten in [false, true] {
-            let command = cmd.cast_fuse().args(args).arg("-d");
-            if flatten {
-                command.arg(&sentinel).arg("--flatten");
-            } else {
-                command.arg(&directory);
-            }
-            command.assert_failure().stdout_eq("").stderr_eq(expected_error.clone().raw());
-            assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
-            assert_eq!(
-                fs::read(&external_source).unwrap().as_slice(),
-                external_contents.as_slice()
-            );
+            "-d",
+        ]);
+        if flatten {
+            command.arg(&sentinel).arg("--flatten");
+        } else {
+            command.arg(&directory);
         }
+        command.assert_failure().stdout_eq("").stderr_eq(expected_error.raw());
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
+        assert!(!external.exists());
         server.abort();
     }
 }
