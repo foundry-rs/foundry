@@ -1351,6 +1351,48 @@ impl TestArgs {
         Ok(())
     }
 
+    /// Warns about test contracts that the project compiles from outside its `src`, `test` and
+    /// `script` directories and `libs`, since they no longer run as test suites.
+    fn warn_skipped_test_suites(
+        &self,
+        output: &ProjectCompileOutput,
+        config: &Config,
+        inline_config: &InlineConfig,
+        filter: &ProjectPathsAwareFilter,
+    ) -> Result<()> {
+        let matcher = TestFunctionMatcher::new(config, inline_config, None);
+        let mut skipped = output
+            .artifact_ids()
+            .filter_map(|(id, artifact)| {
+                let abi = artifact.abi.as_ref()?;
+                let id = id.with_stripped_file_prefixes(&config.root);
+                (filter.is_outside_test_roots(&id.source)
+                    && filter.matches_contract(&id.name)
+                    && is_runnable_test_contract(output, config, &id, artifact, abi)
+                    && matcher
+                        .test_functions(id.identifier(), abi, |contract_id, func, kind| {
+                            filter.matches_test_function_kind_in_contract(contract_id, func, kind)
+                        })
+                        .next()
+                        .is_some())
+                .then(|| id.identifier())
+            })
+            .collect::<Vec<_>>();
+        skipped.sort();
+        skipped.dedup();
+        if !skipped.is_empty() {
+            sh_warn!(
+                "Skipping test contracts outside the configured `src`, `test` and `script` directories:\n\t{}\n\
+                 They are compiled because other files import them, but do not run as test \
+                 suites. To run them, set `test` (currently `{}`) to a directory that contains \
+                 them.",
+                skipped.join("\n\t"),
+                config.test.strip_prefix(&config.root).unwrap_or(&config.test).display(),
+            )?;
+        }
+        Ok(())
+    }
+
     /// Builds the delegated `forge test` invocation for `forge fuzz run`.
     pub(crate) fn from_fuzz_run(args: FuzzRunArgs) -> Self {
         let campaign = args.campaign;
@@ -1961,6 +2003,7 @@ impl TestArgs {
             filter,
             &execution.multi_network,
         )?;
+        self.warn_skipped_test_suites(output, &config, &execution.inline_config, filter)?;
 
         let mut filter = filter.clone();
         self.apply_gas_report_overrides(&mut config, &mut evm_opts);
