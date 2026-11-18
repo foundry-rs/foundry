@@ -29,10 +29,22 @@ contract DependencyTest {
 "#,
     )
     .unwrap();
-    prj.add_source("Import.sol", "import 'dependency/Dependency.sol'; contract Import {}");
+    let library = prj.root().join("lib/library");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("Library.t.sol"),
+        "pragma solidity >=0.8.0; contract LibraryTest { function testLibrary() public pure {} }",
+    )
+    .unwrap();
+    prj.add_source(
+        "Import.sol",
+        "import 'dependency/Dependency.sol'; import '../lib/library/Library.t.sol'; contract Import {}",
+    );
     prj.add_test("Local.t.sol", "contract LocalTest { function testLocal() public pure {} }");
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -43,7 +55,8 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
-"#]]);
+"#]])
+        .stderr_eq(str![[""]]);
 
     cmd.forge_fuse().args(["test", "--list", "--json"]).assert_json_stdout(str![[r#"
 {"test/Local.t.sol":{"LocalTest":["testLocal"]}}
