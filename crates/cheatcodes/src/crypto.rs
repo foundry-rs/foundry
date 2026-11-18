@@ -1019,7 +1019,7 @@ mod tests {
             self.inner.gas_used()
         }
 
-        fn state_gas_used(&self) -> u64 {
+        fn state_gas_used(&self) -> i64 {
             self.inner.state_gas_used()
         }
 

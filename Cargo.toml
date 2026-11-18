@@ -358,30 +358,30 @@ svm = { package = "svm-rs", version = "0.5.30", default-features = false, featur
 
 ## evm2
 # alloy-rs/evm2 main; see the patch sections below.
-evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8", default-features = false, features = [
+evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "e25a95fb27de49d06ae9a23c4c9ee578a81504fc", default-features = false, features = [
     "account-ext",
     "std",
 ] }
-evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8", features = [
+evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "e25a95fb27de49d06ae9a23c4c9ee578a81504fc", features = [
     "serde",
 ] }
-evm2-macros = { git = "https://github.com/alloy-rs/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8" }
+evm2-macros = { git = "https://github.com/alloy-rs/evm2", rev = "e25a95fb27de49d06ae9a23c4c9ee578a81504fc" }
 # Tempo, using upstream reth and evm2.
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "c8b89f9b6d9f011a8a277ab431183b2b105c4af7", default-features = false }
-tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "c8b89f9b6d9f011a8a277ab431183b2b105c4af7", default-features = false, features = [
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "9634fed25ed0b19d7d7680c949a1706181a4086f", default-features = false }
+tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "9634fed25ed0b19d7d7680c949a1706181a4086f", default-features = false, features = [
     "serde",
     "std",
 ] }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "c8b89f9b6d9f011a8a277ab431183b2b105c4af7", default-features = false }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "9634fed25ed0b19d7d7680c949a1706181a4086f", default-features = false }
 # Must match tempoxyz/tempo's reth-evm rev.
-reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "31d05e14329ec25e0d559f901502c959aa04ddd8", features = [
+reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "f551b680945f55698833666e8d48034b3034bfc9", features = [
     "account-ext",
 ] }
-# Op and Base evm2 type families, on foundry-rs/evm2-networks at `192fca3`.
-op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "192fca39730726d027cd8ff1aef32fd19b4379c3", default-features = false }
-base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "192fca39730726d027cd8ff1aef32fd19b4379c3", default-features = false }
+# Op and Base evm2 type families, on foundry-rs/evm2-networks at `65cb40b`.
+op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "65cb40bbccbc334fc4777b84d680fdcccf97ea15", default-features = false }
+base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "65cb40bbccbc334fc4777b84d680fdcccf97ea15", default-features = false }
 # Monad's maintained evm2 type family.
-monad-evm2 = { git = "https://github.com/category-labs/monad-alloy-evm2", rev = "4df6f6b394e193db1eef05de15557cd5fa992d73", default-features = false }
+monad-evm2 = { git = "https://github.com/category-labs/monad-alloy-evm2", rev = "95db06bd60922cfc01f712ec66be9327df3d7f33", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.6.1", default-features = false }
@@ -547,12 +547,12 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "fa51e6ae93197aadc16cb
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "c8b89f9b6d9f011a8a277ab431183b2b105c4af7", default-features = false, features = [
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "9634fed25ed0b19d7d7680c949a1706181a4086f", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "c8b89f9b6d9f011a8a277ab431183b2b105c4af7", default-features = false }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "c8b89f9b6d9f011a8a277ab431183b2b105c4af7" }
-tempo-dkg-onchain-artifacts = { git = "https://github.com/tempoxyz/tempo", rev = "c8b89f9b6d9f011a8a277ab431183b2b105c4af7", default-features = false }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "9634fed25ed0b19d7d7680c949a1706181a4086f", default-features = false }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "9634fed25ed0b19d7d7680c949a1706181a4086f" }
+tempo-dkg-onchain-artifacts = { git = "https://github.com/tempoxyz/tempo", rev = "9634fed25ed0b19d7d7680c949a1706181a4086f", default-features = false }
 
 # Tempo consensus certificate primitives.
 commonware-codec = { version = "=2026.10.0", default-features = false }
@@ -657,11 +657,11 @@ reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 
-# The single evm2 revision for the whole graph: alloy-rs/evm2 main at `0b5a72e`. Tempo, reth,
+# The single evm2 revision for the whole graph: alloy-rs/evm2 main at `e25a95f`. Tempo, reth,
 # reth-core and evm2-networks all pin `alloy-rs/evm2`, at different revisions. Cargo rejects a
 # patch from the same source, so this goes through `DaniPopes/evm2`, the pre-transfer URL of
 # alloy-rs/evm2, which GitHub redirects to it.
 [patch."https://github.com/alloy-rs/evm2"]
-evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8" }
-evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8" }
-evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "0b5a72e1cd9f679aefef913789e548f8082a31b8" }
+evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "e25a95fb27de49d06ae9a23c4c9ee578a81504fc" }
+evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "e25a95fb27de49d06ae9a23c4c9ee578a81504fc" }
+evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "e25a95fb27de49d06ae9a23c4c9ee578a81504fc" }
