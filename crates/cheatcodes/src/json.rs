@@ -1088,9 +1088,28 @@ mod tests {
         assert!(error.to_string().contains("unterminated block comment"));
     }
 
+    /// Returns `true` if `serialize_value_as_json` writes `s` as a JSON object, which does not
+    /// roundtrip.
+    fn is_json_object(s: &str) -> bool {
+        serialize_value_as_json(DynSolValue::String(s.to_string()), None, false)
+            .is_ok_and(|json| json.is_object())
+    }
+
+    /// Returns `true` if `value` holds a string that `is_json_object` matches.
+    fn has_json_object_string(value: &DynSolValue) -> bool {
+        match value {
+            DynSolValue::String(s) => is_json_object(s),
+            DynSolValue::Array(v) | DynSolValue::FixedArray(v) | DynSolValue::Tuple(v) => {
+                v.iter().any(has_json_object_string)
+            }
+            DynSolValue::CustomStruct { tuple, .. } => tuple.iter().any(has_json_object_string),
+            _ => false,
+        }
+    }
+
     fn valid_value(value: &DynSolValue) -> bool {
         (match value {
-            DynSolValue::String(s) if s == "{}" => false,
+            DynSolValue::String(s) if is_json_object(s) => false,
 
             DynSolValue::Tuple(_) | DynSolValue::CustomStruct { .. } => false,
 
@@ -1137,7 +1156,8 @@ mod tests {
             any::<u32>().prop_map(|v| DynSolValue::Uint(U256::from(v), 256)),
             any::<[u8; 20]>().prop_map(Address::from).prop_map(DynSolValue::Address),
             any::<[u8; 32]>().prop_map(B256::from).prop_map(|b| DynSolValue::FixedBytes(b, 32)),
-            ".*".prop_filter("invalid string value", |s| s != "{}").prop_map(DynSolValue::String),
+            ".*".prop_filter("invalid string value", |s| !is_json_object(s))
+                .prop_map(DynSolValue::String),
         ];
 
         // Combine them to create a list of unique fields that preserve the random order.
@@ -1180,7 +1200,7 @@ mod tests {
         }
 
         #[test]
-        fn test_json_roundtrip(v in any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some())) {
+        fn test_json_roundtrip(v in any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some() && !has_json_object_string(v))) {
             let json = serialize_value_as_json(v.clone(), None, false).unwrap();
             let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
             assert_eq!(value, v);

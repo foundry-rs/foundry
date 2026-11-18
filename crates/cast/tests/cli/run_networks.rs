@@ -20,7 +20,7 @@ enum GasExpectation {
     /// Replay reproduces `gasUsed` minus the L1 data availability component the receipt reports
     /// in `gasUsedForL1`, which is posting cost rather than EVM execution.
     ExactMinusL1Gas,
-    /// The chain prices execution differently from stock revm, so only assert that the
+    /// The chain prices execution differently from stock evm2, so only assert that the
     /// transaction replays at all. Polygon, for example, charges an extra 840 gas for every
     /// storage slot a transaction creates.
     ReplaysOnly,
@@ -239,7 +239,7 @@ network_replay_tests! {
     flaky_run_linea => ("linea", "https://linea-rpc.publicnode.com", Exact),
 
     // Disables gas refunds and, since Helicon, charges at least ceil(gas_limit / 2), neither of
-    // which stock revm models.
+    // which stock evm2 models.
     // TODO: Restore exact gas assertions once native Avalanche accounting is implemented.
     flaky_run_avalanche => ("avalanche", "https://avalanche-c-chain-rpc.publicnode.com", ReplaysOnly),
 
@@ -253,7 +253,7 @@ network_replay_tests! {
     // and receipts fold the L1 posting cost into `gasUsed`.
     flaky_run_arbitrum => ("arbitrum", "https://arb1.arbitrum.io/rpc", ExactMinusL1Gas),
 
-    // Charges 840 gas for each storage slot a transaction creates, which revm does not model.
+    // Charges 840 gas for each storage slot a transaction creates, which evm2 does not model.
     flaky_run_polygon => ("polygon", "https://polygon-bor-rpc.publicnode.com", ReplaysOnly),
 
     flaky_run_gnosis => ("gnosis", "https://gnosis-rpc.publicnode.com", Exact),

@@ -39,12 +39,12 @@ use tokio::{
     runtime::Handle,
     task::{JoinError, JoinHandle},
 };
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types as _;
 
-pub use foundry_evm::hardfork::EthereumHardfork;
+pub use foundry_evm_hardforks::EthereumHardfork;
 
 /// contains the background service that drives the node
 mod service;
@@ -58,7 +58,7 @@ mod error;
 /// ethereum related implementations
 pub mod eth;
 /// Evm related abstractions
-mod evm;
+pub mod evm;
 pub use evm::PrecompileFactory;
 
 /// support for polling filters
@@ -489,8 +489,6 @@ impl Future for NodeHandle {
 
 #[doc(hidden)]
 pub fn init_tracing() -> LoggingManager {
-    use tracing_subscriber::prelude::*;
-
     let manager = LoggingManager::default();
 
     let _ = if let Ok(rust_log_val) = std::env::var("RUST_LOG")

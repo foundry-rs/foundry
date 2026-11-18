@@ -1,4 +1,4 @@
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::Address;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 
@@ -157,15 +157,15 @@ fn prank<FEN: FoundryEvmNetwork>(
     // Ensure that we load the account of the pranked address and mark it as touched.
     // This is necessary to ensure that account state changes (such as the account's `nonce`) are
     // properly tracked.
-    let account = journaled_account(ccx.ecx, *new_caller)?;
+    let mut account = ccx.evm.state_mut().account(new_caller)?;
+    account.touch();
+    account.warm();
 
     // Ensure that code exists at `msg.sender` if delegate calling.
     if delegate_call {
-        ensure!(
-            account.info.code.as_ref().is_some_and(|code| !code.is_empty()),
-            "cannot `prank` delegate call from an EOA"
-        );
+        ensure!(!account.load_code()?.is_empty(), "cannot `prank` delegate call from an EOA");
     }
+    drop(account);
 
     let depth = ccx.depth();
     if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.get_prank(depth) {

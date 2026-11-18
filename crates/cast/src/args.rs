@@ -38,7 +38,10 @@ use foundry_common::{
         abi_decode_calldata, abi_decode_event_data, encode_function_args,
         encode_function_args_packed, encode_function_args_raw, get_error, get_event, get_func,
     },
-    fmt::{UIfmt, UIfmtSignatureExt, format_uint_exp, get_pretty_block_attr, get_pretty_tx_attr},
+    fmt::{
+        UIfmt, UIfmtSignatureExt, add_configurable_account_details, format_uint_exp,
+        get_pretty_block_attr, get_pretty_tx_attr,
+    },
     fs,
     provider::{ProviderBuilder, RetryProvider},
     selectors::{
@@ -499,10 +502,25 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 } else {
                     let _ = sh_println!("{}", event.signature());
                 }
-                let data = data.get(64..).unwrap_or_default();
-                get_event(&event.signature())?
-                    .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
-                    .body
+                let expected = event.selector();
+                eyre::ensure!(
+                    expected == selector,
+                    alloy_dyn_abi::Error::EventSignatureMismatch { expected, actual: selector }
+                );
+                let data = hex::decode(data.get(64..).unwrap_or_default())?;
+                // Indexed parameters are not in DATA, but logs sharing a topic0 can index different
+                // parameters, like ERC-20 and ERC-721 `Transfer`. Keep the cached indexed flags
+                // only if the non-indexed parameters account for all of DATA, otherwise decode
+                // every parameter from DATA.
+                match abi_decode_event_data(&event, &data) {
+                    Ok(values)
+                        if DynSolValue::Tuple(values.clone()).abi_encode_params().len()
+                            == data.len() =>
+                    {
+                        values
+                    }
+                    _ => abi_decode_event_data(&get_event(&event.signature())?, &data)?,
+                }
             };
             print_tokens(&decoded_values)?;
         }
@@ -1515,7 +1533,8 @@ where
         if let Some(value) = get_pretty_tx_attr::<N>(&tx, &field) {
             value
         } else {
-            let tx_json = serde_json::to_value(&tx)?;
+            let mut tx_json = serde_json::to_value(&tx)?;
+            add_configurable_account_details(&mut tx_json);
             let value =
                 tx_json.get(&field).ok_or_else(|| eyre::eyre!("invalid tx field: {field}"))?;
             match value {
@@ -1525,7 +1544,9 @@ where
         }
     } else if shell::is_json() {
         // to_value first to sort json object keys
-        serde_json::to_value(&tx)?.to_string()
+        let mut tx_json = serde_json::to_value(&tx)?;
+        add_configurable_account_details(&mut tx_json);
+        tx_json.to_string()
     } else if to_request {
         serde_json::to_string_pretty(&Into::<N::TransactionRequest>::into(tx))?
     } else {
@@ -1650,11 +1671,13 @@ fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>
 ) -> Result<serde_json::Value> {
     let tx_hex = hex::decode(tx)?;
     let tx: N::TxEnvelope = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
-    if let Ok(signer) = tx.recover_signer() {
-        Ok(serde_json::to_value(Recovered::new_unchecked(tx, signer))?)
+    let mut decoded = if let Ok(signer) = tx.recover_signer() {
+        serde_json::to_value(Recovered::new_unchecked(tx, signer))?
     } else {
-        Ok(serde_json::to_value(tx)?)
-    }
+        serde_json::to_value(tx)?
+    };
+    add_configurable_account_details(&mut decoded);
+    Ok(decoded)
 }
 
 fn get_selector(signature: &str, optimize: usize) -> Result<(String, String)> {

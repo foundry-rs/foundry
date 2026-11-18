@@ -68,7 +68,7 @@ pub fn find_project_root(cwd: Option<&Path>) -> io::Result<PathBuf> {
     let found = cwd
         .ancestors()
         // Don't look outside of the git repo if it exists.
-        .take_while(|p| if let Some(boundary) = &boundary { p.starts_with(boundary) } else { true })
+        .take_while(|p| boundary.as_ref().is_none_or(|boundary| p.starts_with(boundary)))
         .find(|p| p.join(Config::FILE_NAME).is_file())
         .map(Path::to_path_buf);
     Ok(found.or(boundary).unwrap_or_else(|| cwd.to_path_buf()))
@@ -107,19 +107,16 @@ pub fn remappings_from_env_var(env_var: &str) -> Option<Result<Vec<Remapping>, R
 ///
 /// The values should be separated by commas, surrounding brackets are also supported `[a,b,c]`
 pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
-    let value: Value = match Value::from(val) {
-        Value::String(_, val) => val
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect::<Vec<_>>()
-            .into(),
-        Value::Empty(_, _) => Vec::<Value>::new().into(),
-        val @ Value::Array(_, _) => val,
-        _ => return Err(format!("Invalid value `{val}`, expected an array").into()),
-    };
-    Ok(value)
+    Ok(val
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect::<Vec<_>>()
+        .into())
 }
 
 /// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file
@@ -183,7 +180,7 @@ pub(crate) fn foundry_toml_dir_entries(root: impl AsRef<Path>) -> Vec<FoundryTom
 /// Returns a remapping for the given dir
 pub(crate) fn get_dir_remapping(dir: impl AsRef<Path>) -> Option<Remapping> {
     let dir = dir.as_ref();
-    if let Some(dir_name) = dir.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty()) {
+    dir.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty()).map(|dir_name| {
         let mut r = Remapping {
             context: None,
             name: format!("{dir_name}/"),
@@ -192,10 +189,8 @@ pub(crate) fn get_dir_remapping(dir: impl AsRef<Path>) -> Option<Remapping> {
         if !r.path.ends_with('/') {
             r.path.push('/')
         }
-        Some(r)
-    } else {
-        None
-    }
+        r
+    })
 }
 
 /// Deserialize stringified percent. The value must be between 0 and 100 inclusive.

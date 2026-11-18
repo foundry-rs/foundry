@@ -1,10 +1,10 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
-    compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, exploit,
-    flatten, fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect, install::InstallArgs,
-    lint::LintArgs, lsp::LspArgs, properties::PropertiesArgs, reinit::ReinitArgs,
-    remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
-    soldeer, test, tree, update,
+    compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712,
+    equivalence, exploit, flatten, fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect,
+    install::InstallArgs, lint::LintArgs, lsp::LspArgs, properties::PropertiesArgs,
+    reinit::ReinitArgs, remappings::RemappingArgs, remove::RemoveArgs,
+    selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -235,6 +235,17 @@ pub enum ForgeSubcommand {
     /// - forge exploit --target src/Vault.sol --context docs/spec.md --attempts 5
     #[command(verbatim_doc_comment)]
     Exploit(exploit::ExploitArgs),
+
+    /// Check whether two contracts' runtime bytecodes behave the same for every input.
+    ///
+    /// Like `hevm equivalence`, it symbolically explores both codes on shared calldata and
+    /// compares success, return or revert data, storage, logs and balances.
+    ///
+    /// Examples:
+    /// - forge equivalence --code-a 0x6001... --code-b 0x6001...
+    /// - forge equivalence --code-a-file a.hex --code-b-file b.hex --sig "f(uint256)"
+    #[command(verbatim_doc_comment, visible_alias = "eq")]
+    Equivalence(equivalence::EquivalenceArgs),
 
     /// Function selector utilities.
     #[command(visible_alias = "se")]

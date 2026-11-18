@@ -14,6 +14,8 @@ use tempo_alloy::TempoNetwork;
 #[derive(Debug, Parser)]
 pub(super) struct L1Args {
     /// Override the public mainnet or Moderato RPC inferred from the zone chain ID.
+    ///
+    /// Withdrawals also read a configurable account sender's configuration from it.
     #[arg(long, env = "L1_RPC_URL")]
     l1_rpc_url: Option<String>,
     /// Zone portal on Tempo L1. Required for --wait-l1 and Earn callback builders.
@@ -32,21 +34,28 @@ impl L1Args {
         zone_id: u32,
     ) -> Result<RootProvider<TempoNetwork>> {
         let portal = self.portal()?;
+        let url = self.parent_rpc_url(zone_chain_id, zone_id).await?;
+        let provider = RootProvider::<TempoNetwork>::new_http(url.parse()?);
+        ensure!(
+            IZonePortal::new(portal, &provider).zoneId().call().await? == zone_id,
+            "--portal does not belong to --zone-id"
+        );
+        Ok(provider)
+    }
+
+    /// Returns the RPC URL of the zone's parent chain, after checking that it serves that chain.
+    pub(super) async fn parent_rpc_url(&self, zone_chain_id: u64, zone_id: u32) -> Result<String> {
         let parent = parent_chain(zone_chain_id, zone_id)?;
-        let url = match self.l1_rpc_url.as_deref() {
-            Some(url) => url,
-            None => public_rpc(parent)?,
+        let url = match &self.l1_rpc_url {
+            Some(url) => url.clone(),
+            None => public_rpc(parent)?.to_string(),
         };
         let provider = RootProvider::<TempoNetwork>::new_http(url.parse()?);
         ensure!(
             provider.get_chain_id().await? == parent,
             "L1 RPC chain ID does not match the zone's parent chain"
         );
-        ensure!(
-            IZonePortal::new(portal, &provider).zoneId().call().await? == zone_id,
-            "--portal does not belong to --zone-id"
-        );
-        Ok(provider)
+        Ok(url)
     }
 }
 

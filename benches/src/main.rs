@@ -158,11 +158,8 @@ fn main() -> Result<()> {
 
     // Determine versions to test. Each entry is a display name, optionally
     // `name=path` to build that ref from source (e.g. a baseline worktree).
-    let raw_versions = if let Some(v) = cli.versions {
-        v
-    } else {
-        FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
-    };
+    let raw_versions =
+        cli.versions.unwrap_or_else(|| FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect());
     let version_specs = parse_version_specs(&raw_versions)?;
     let versions: Vec<String> = version_specs.iter().map(|(name, _)| name.clone()).collect();
     if cli.symbolic_sidecar_output.is_some() && versions.len() != 1 {
