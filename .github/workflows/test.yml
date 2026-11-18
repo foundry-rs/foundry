@@ -165,17 +165,20 @@ jobs:
           path.parent.mkdir(parents=True, exist_ok=True)
           path.write_text(json.dumps(cache))
           PYTHON
-      - name: Use a short Cargo target directory on Windows
+      - name: Configure Cargo on Windows
         if: runner.os == 'Windows'
         id: windows-target
         shell: pwsh
         run: |
-          # Keep sccache's rustc command line below the Windows length limit.
+          # Preserve Cargo's response files until a release includes mozilla/sccache#3026.
+          "RUSTC_WRAPPER=" >> $env:GITHUB_ENV
+          # Keep compiler paths short on Windows.
           $target = 'C:\t'
           "CARGO_TARGET_DIR=$target" >> $env:GITHUB_ENV
           # rust-cache interprets target paths relative to the workspace.
           "cache-target=$([System.IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $target))" >> $env:GITHUB_OUTPUT
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        if: runner.os != 'Windows'
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-bin: false
