@@ -226,6 +226,12 @@ impl ConstraintContext {
         {
             return Some(WordInterval { min: U256::ZERO, max: bounds.below });
         }
+        // A division shape such as `d - x % d` proves `right <= left`.
+        if self.division_order(right, left).is_some()
+            && let Some(left) = self.interval_cached(left, intervals, remaining)
+        {
+            return Some(WordInterval { min: U256::ZERO, max: left.max });
+        }
         None
     }
 }

@@ -191,8 +191,8 @@ pub struct TempoOpts {
     )]
     pub configurable_account: Option<Address>,
 
-    /// The configuration of the configurable account sender, instead of rebuilding it from the
-    /// chain.
+    /// The configuration of the configurable account sender, or of
+    /// `--tempo.configurable-access-key`, instead of rebuilding it from the chain.
     ///
     /// JSON, inline or in a file, with `salt`, `version`, `threshold` and `owners` (each an
     /// `owner` and a `weight`), as `cast wallet owners --json` prints it. It is checked against
@@ -201,13 +201,28 @@ pub struct TempoOpts {
     #[arg(long = "tempo.config", id = "tempo_config", value_name = "CONFIG")]
     pub configurable_account_config: Option<String>,
 
-    /// An owner key of the configurable account sender, in addition to the wallet options.
+    /// An owner key of the configurable account sender, or of `--tempo.configurable-access-key`,
+    /// in addition to the wallet options.
     ///
     /// Repeat for several owners. Takes the forms of `--tempo.sponsor-signer`: `env://VAR`,
     /// `keystore://PATH`, `account://NAME`, `ledger://`, `trezor://`, `aws://`, `gcp://`,
     /// `turnkey://`, or `private-key://KEY`.
     #[arg(long = "tempo.owner", id = "tempo_owner", value_name = "SIGNER")]
     pub owners: Vec<String>,
+
+    /// Sign with this Tempo configurable account as an access key of the sender `--from` (T14,
+    /// TIP-1111).
+    ///
+    /// The sender must have authorized the account with key type `configurable`. Its local owner
+    /// keys, found as for `--tempo.configurable-account`, approve the transaction inside a
+    /// keychain signature for the sender.
+    #[arg(
+        long = "tempo.configurable-access-key",
+        id = "tempo_configurable_access_key",
+        value_name = "ADDRESS",
+        conflicts_with_all = ["tempo_configurable_account", "tempo_eoa", "key_id"]
+    )]
+    pub configurable_access_key: Option<Address>,
 
     /// Send from the key itself instead of the Tempo configurable account linked to its keystore.
     ///

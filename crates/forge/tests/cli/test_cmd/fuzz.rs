@@ -5923,6 +5923,59 @@ Encountered a total of 1 failing tests, 0 tests succeeded
     test_literal(999, "testFuzz_BytesFromString", "bytes", "0x78797a7a79"); // abi.encodePacked("xyzzy")
 }
 
+// Literals of sources that weren't recompiled still seed the fuzz dictionary, so a fixed seed
+// finds the same counterexample after a partial recompile as from scratch.
+#[forgetest]
+fn should_fuzz_literals_after_partial_recompile(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.runs = 100;
+        config.fuzz.seed = Some(U256::from(600));
+    });
+    // The string reaches the dictionary only as a source literal: the bytecode holds its hash.
+    prj.add_test(
+        "MagicFuzz.t.sol",
+        r#"
+contract MagicTest {
+    function testFuzz_String(string memory v) public pure {
+        assert(keccak256(bytes(v)) != keccak256("xyzzy"));
+    }
+}
+"#,
+    );
+    prj.add_source("Unrelated.sol", "contract Unrelated { function one() external {} }");
+
+    let expected_output = str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/MagicFuzz.t.sol:MagicTest
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=["xyzzy"]] testFuzz_String(string) (runs: [..], [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/MagicFuzz.t.sol:MagicTest
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=["xyzzy"]] testFuzz_String(string) (runs: [..], [AVG_GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]];
+    cmd.arg("test").assert_failure().stdout_eq(expected_output.clone());
+
+    // Only `Unrelated.sol` is recompiled. Remove the persisted failure, so that the fuzzer has to
+    // find the counterexample again.
+    std::fs::remove_dir_all(prj.root().join("cache/fuzz")).unwrap();
+    prj.add_source("Unrelated.sol", "contract Unrelated { function two() external {} }");
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(expected_output);
+}
+
 // Tests that `vm.randomUint()` produces different values across fuzz runs.
 // Regression test for https://github.com/foundry-rs/foundry/issues/12817
 //

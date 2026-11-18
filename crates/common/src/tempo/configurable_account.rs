@@ -28,6 +28,7 @@ use base64::{
 };
 use eyre::{Context, Result};
 use foundry_wallets::WalletSigner;
+use p256::ecdsa::signature::hazmat::PrehashSigner;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -55,10 +56,13 @@ use tempo_primitives::{
     SignatureType, TempoTxEnvelope,
     transaction::{
         ConfigurableAccountConfig, ConfigurableAccountOwner, ConfigurableAccountSignature,
-        MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature, TEMPO_TX_TYPE_ID, TempoSignature,
-        TempoTransaction, configurable_account_digest, tt_signature::WebAuthnSignature,
+        KeychainSignature, MAX_CONFIGURABLE_ACCOUNT_SIGNATURES, PrimitiveSignature,
+        TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction, configurable_account_digest,
+        tt_signature::{P256SignatureWithPreHash, WebAuthnSignature},
     },
 };
+
+pub use foundry_common_fmt::ConfigJson;
 
 /// Blocks per `eth_getLogs` request when a configuration lookup starts. The window is halved
 /// whenever the RPC rejects a request, which covers providers that cap the block range or the
@@ -243,7 +247,7 @@ async fn config_for_commitment<P: Provider<TempoNetwork>>(
 
 /// Scans the configurable account precompile's logs backwards from `block` for the latest
 /// configuration event of `account`, which must match `commitment`.
-async fn config_from_logs<P: Provider<TempoNetwork>>(
+pub async fn config_from_logs<N: Network, P: Provider<N>>(
     provider: &P,
     account: Address,
     commitment: B256,
@@ -449,13 +453,12 @@ pub fn quorum(owners: &[ConfigurableAccountOwner], threshold: u8, largest: bool)
 /// Tells whether owners among `keys` can approve for an account with `config`, as
 /// [`ConfigurableAccountSigner::new`] selects them.
 pub fn reaches_threshold(config: &ConfigurableAccountConfig, keys: &[Address]) -> bool {
-    let mut local = config
+    let local = config
         .owners
         .iter()
         .filter(|owner| keys.contains(&owner.owner))
-        .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
+        .cloned()
         .collect::<Vec<_>>();
-    local.sort_by_key(|owner| owner.owner);
     !quorum(&local, config.threshold, false).is_empty()
 }
 
@@ -476,7 +479,7 @@ pub fn combine_approvals(
         let owner = approval.recover_signer(&digest).map_err(|_| {
             eyre::eyre!(
                 "signature {} does not verify against the owner digest {digest}; owners sign it \
-                 with `cast wallet sign --no-hash {digest}`",
+                 with `cast wallet sign --no-hash {digest}`, adding `--p256` for a raw P-256 owner",
                 index + 1
             )
         })?;
@@ -488,12 +491,11 @@ pub fn combine_approvals(
         by_owner.insert(owner, approval);
     }
 
-    let approvers = by_owner
-        .keys()
-        .map(|&owner| ConfigurableAccountOwner {
-            owner,
-            weight: config.owner_weight(owner).unwrap_or_default(),
-        })
+    let approvers = config
+        .owners
+        .iter()
+        .filter(|owner| by_owner.contains_key(&owner.owner))
+        .cloned()
         .collect::<Vec<_>>();
     let selected = quorum(&approvers, config.threshold, false);
     if selected.is_empty() {
@@ -560,7 +562,18 @@ fn parse_webauthn_assertion(json: &Value) -> Result<PrimitiveSignature> {
         if name == "clientDataJSON" && value.starts_with('{') {
             return Ok(value.as_bytes().to_vec());
         }
-        decode_binary(value).wrap_err_with(|| format!("invalid `{name}`"))
+        // 0x-prefixed hex, or base64url with or without padding.
+        let decoded = if value.starts_with("0x") {
+            hex::decode(value).map_err(eyre::Report::from)
+        } else {
+            const BASE64URL: GeneralPurpose = GeneralPurpose::new(
+                &URL_SAFE,
+                GeneralPurposeConfig::new()
+                    .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+            );
+            BASE64URL.decode(value).map_err(eyre::Report::from)
+        };
+        decoded.wrap_err_with(|| format!("invalid `{name}`"))
     };
 
     let public_key = field("publicKey")?;
@@ -593,64 +606,48 @@ fn parse_webauthn_assertion(json: &Value) -> Result<PrimitiveSignature> {
     }))
 }
 
-/// Decodes 0x-prefixed hex or base64url, with or without padding.
-fn decode_binary(value: &str) -> Result<Vec<u8>> {
-    if value.starts_with("0x") {
-        return Ok(hex::decode(value)?);
-    }
-    const BASE64URL: GeneralPurpose = GeneralPurpose::new(
-        &URL_SAFE,
-        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
-    );
-    Ok(BASE64URL.decode(value)?)
+/// Parses a hex P-256 private key.
+pub fn parse_p256_key(private_key: &str) -> Result<p256::ecdsa::SigningKey> {
+    hex::decode(private_key.trim())
+        .ok()
+        .filter(|key| key.len() == 32)
+        .and_then(|key| p256::ecdsa::SigningKey::from_slice(&key).ok())
+        .ok_or_else(|| eyre::eyre!("invalid P-256 private key: expected a 32-byte hex scalar"))
 }
 
-/// A configuration as `cast wallet owners --json` prints it, and as `forge script` saves it for
-/// owners on other machines.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConfigJson {
-    salt: B256,
-    version: u64,
-    threshold: u8,
-    owners: Vec<OwnerJson>,
+/// Signs the prehash `message` with the P-256 `key` and returns a low-s `(r, s)`, which Tempo's
+/// verifier requires and about half of raw ECDSA signatures are not.
+pub fn sign_p256_low_s(
+    key: &p256::ecdsa::SigningKey,
+    message: &[u8],
+) -> Result<(B256, B256), p256::ecdsa::Error> {
+    let signature: p256::ecdsa::Signature = key.sign_prehash(message)?;
+    let signature = signature.normalize_s().unwrap_or(signature);
+    let (r, s) = signature.split_bytes();
+    Ok((B256::from_slice(&r), B256::from_slice(&s)))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct OwnerJson {
-    owner: Address,
-    weight: u8,
+/// Returns the affine coordinates of the public key of the P-256 `key`.
+pub fn p256_public_key(key: &p256::ecdsa::SigningKey) -> (B256, B256) {
+    let point = key.verifying_key().to_encoded_point(false);
+    (B256::from_slice(point.x().unwrap()), B256::from_slice(point.y().unwrap()))
 }
 
-impl From<&ConfigurableAccountConfig> for ConfigJson {
-    fn from(config: &ConfigurableAccountConfig) -> Self {
-        Self {
-            salt: config.salt,
-            version: config.version,
-            threshold: config.threshold,
-            owners: config
-                .owners
-                .iter()
-                .map(|owner| OwnerJson { owner: owner.owner, weight: owner.weight })
-                .collect(),
-        }
-    }
-}
-
-impl TryFrom<ConfigJson> for ConfigurableAccountConfig {
-    type Error = eyre::Report;
-
-    /// Sorts the owners by address and validates the configuration.
-    fn try_from(json: ConfigJson) -> Result<Self> {
-        let ConfigJson { salt, version, threshold, owners } = json;
-        let mut owners = owners
-            .into_iter()
-            .map(|owner| ConfigurableAccountOwner { owner: owner.owner, weight: owner.weight })
-            .collect::<Vec<_>>();
-        owners.sort_by_key(|owner| owner.owner);
-        let config = Self { salt, version, threshold, owners };
-        config.validate().map_err(|err| eyre::eyre!("invalid configuration: {err}"))?;
-        Ok(config)
-    }
+/// Signs `digest` with the P-256 `key` as the `0x01` approval of a raw P-256 owner. The signature
+/// covers `digest` itself, without the SHA-256 pre-hash of WebCrypto keys.
+pub fn sign_p256(
+    key: &p256::ecdsa::SigningKey,
+    digest: &B256,
+) -> Result<PrimitiveSignature, p256::ecdsa::Error> {
+    let (r, s) = sign_p256_low_s(key, digest.as_slice())?;
+    let (pub_key_x, pub_key_y) = p256_public_key(key);
+    Ok(PrimitiveSignature::P256(P256SignatureWithPreHash {
+        r,
+        s,
+        pub_key_x,
+        pub_key_y,
+        pre_hash: false,
+    }))
 }
 
 /// Parses a configuration given as JSON, or as the path of a JSON file: `salt`, `version`,
@@ -759,13 +756,16 @@ pub fn stored_owner_keys(
     })
 }
 
-/// Signs the transactions of a configurable account with `0x05` signatures from local owner keys.
+/// Signs the transactions of a configurable account with `0x05` signatures from local owner keys,
+/// or, as an access key of another account (TIP-1111), with keychain V2 signatures that wrap them.
 #[derive(Clone, Debug)]
 pub struct ConfigurableAccountSigner {
     account: Address,
     config: ConfigurableAccountConfig,
     /// The approving owners, sorted by address, whose weight reaches the threshold.
     owners: Vec<ConfigurableAccountOwnerKey>,
+    /// The account that the configurable account signs for as an access key, if any.
+    parent: Option<Address>,
 }
 
 impl ConfigurableAccountSigner {
@@ -781,17 +781,12 @@ impl ConfigurableAccountSigner {
         keys: impl IntoIterator<Item = ConfigurableAccountOwnerKey>,
         hint: &str,
     ) -> Result<Self> {
-        let mut keys = keys
-            .into_iter()
-            .filter(|key| config.owner_weight(key.address()).is_some())
-            .map(|key| (key.address(), key))
-            .collect::<BTreeMap<_, _>>();
-        let local = keys
-            .keys()
-            .map(|&owner| ConfigurableAccountOwner {
-                owner,
-                weight: config.owner_weight(owner).unwrap_or_default(),
-            })
+        let mut keys = keys.into_iter().map(|key| (key.address(), key)).collect::<BTreeMap<_, _>>();
+        let local = config
+            .owners
+            .iter()
+            .filter(|owner| keys.contains_key(&owner.owner))
+            .cloned()
             .collect::<Vec<_>>();
         // The fewest local owners that the node accepts, as `combine_approvals` selects them.
         let selected = quorum(&local, config.threshold, false);
@@ -824,12 +819,25 @@ impl ConfigurableAccountSigner {
             );
         }
         let owners = selected.iter().filter_map(|owner| keys.remove(owner)).collect();
-        Ok(Self { account, config, owners })
+        Ok(Self { account, config, owners, parent: None })
+    }
+
+    /// Signs as an access key of `parent`, which authorized the account with key type
+    /// `configurable` (TIP-1111).
+    pub const fn with_parent(mut self, parent: Address) -> Self {
+        self.parent = Some(parent);
+        self
     }
 
     /// The configurable account.
     pub const fn account(&self) -> Address {
         self.account
+    }
+
+    /// The transaction sender: the account the access key signs for, else the configurable
+    /// account itself.
+    pub fn sender(&self) -> Address {
+        self.parent.unwrap_or(self.account)
     }
 
     /// The account's current configuration.
@@ -844,38 +852,69 @@ impl ConfigurableAccountSigner {
         simulation_spec(self.account, &self.config, &approvals)
     }
 
-    /// Makes `tx` a Tempo transaction from the account, whose gas estimate models the owners'
-    /// approvals.
+    /// Makes `tx` a Tempo transaction from the sender, whose gas estimate models the owners'
+    /// approvals. As an access key, the account is the request's `keyId`, so the node models its
+    /// quorum inside a keychain signature.
     pub fn prepare_request<N: Network>(&self, tx: &mut N::TransactionRequest)
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        prepare_request::<N>(tx, self.account, self.simulation_spec());
+        prepare_request::<N>(tx, self.sender(), self.simulation_spec());
+        if self.parent.is_some() {
+            tx.set_key_id(self.account);
+        }
     }
 
-    /// Signs a filled request with the owners' approvals.
+    /// Signs a filled request with the owners' approvals of its signature hash, as
+    /// [`Self::sign_hash`] does.
     pub async fn sign_request(&self, request: TempoTransactionRequest) -> Result<TempoTxEnvelope> {
         if let Some(from) = request.from() {
-            eyre::ensure!(
-                from == self.account,
-                "transaction sender {from} is not the configurable account {}",
-                self.account
-            );
+            match self.parent {
+                Some(parent) => eyre::ensure!(
+                    from == parent,
+                    "transaction sender {from} is not {parent}, which the configurable access key \
+                     {} signs for",
+                    self.account
+                ),
+                None => eyre::ensure!(
+                    from == self.account,
+                    "transaction sender {from} is not the configurable account {}",
+                    self.account
+                ),
+            }
         }
-        let tx = request.build_aa().map_err(|err| eyre::eyre!("{err}"))?;
-        let inner = tx.signature_hash();
+        let tx = request.build_aa().map_err(ca_error)?;
+        let signature = self.sign_hash(tx.signature_hash()).await?;
+        Ok(TempoTxEnvelope::AA(tx.into_signed(signature)))
+    }
+
+    /// Signs `hash`, such as a transaction or zone RPC token digest, with the owners' approvals of
+    /// `configurable_account_digest(hash, account, version)`: a `0x05` signature that recovers the
+    /// account.
+    ///
+    /// As an access key of `parent`, the owners approve the keychain V2 hash
+    /// `keccak256(0x04 || hash || parent)` instead, as Tempo and viem do, and the `0x05` signature
+    /// is wrapped in a keychain signature for `parent`.
+    pub async fn sign_hash(&self, hash: B256) -> Result<TempoSignature> {
+        let inner = match self.parent {
+            Some(parent) => KeychainSignature::signing_hash(hash, parent),
+            None => hash,
+        };
         let digest = configurable_account_digest(inner, self.account, self.config.version);
         let mut approvals = Vec::with_capacity(self.owners.len());
         for owner in &self.owners {
             approvals.push(owner.sign(&digest).await.wrap_err_with(|| {
-                format!("owner {} failed to approve the transaction", owner.address())
+                format!("owner {} failed to approve for {}", owner.address(), self.account)
             })?);
         }
         let signature =
             ConfigurableAccountSignature::try_new(self.account, self.config.clone(), approvals)
                 .map_err(ca_error)?;
         signature.verify_approvals(inner).map_err(ca_error)?;
-        Ok(TempoTxEnvelope::AA(tx.into_signed(TempoSignature::ConfigurableAccount(signature))))
+        Ok(match self.parent {
+            Some(parent) => TempoSignature::Keychain(KeychainSignature::new(parent, signature)),
+            None => TempoSignature::ConfigurableAccount(signature),
+        })
     }
 }
 
@@ -1003,7 +1042,7 @@ pub fn linked_account(keystore: &Path) -> Result<Option<(Address, Address)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{address, b256, keccak256};
     use alloy_provider::{ProviderBuilder as AlloyProviderBuilder, mock::Asserter};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
@@ -1094,6 +1133,21 @@ mod tests {
             panic!("expected a WebAuthn signature");
         };
         assert_eq!((signature.r, signature.s), (r, s));
+    }
+
+    /// P-256 approvals cover the digest itself and stay low-s, which Tempo's verifier requires
+    /// and about half of raw ECDSA signatures are not.
+    #[test]
+    fn p256_approvals_recover_the_owner() {
+        let key = p256::ecdsa::SigningKey::from_slice(&[0x22; 32]).unwrap();
+        for byte in 0..16 {
+            let digest = keccak256([byte]);
+            let signature = sign_p256(&key, &digest).unwrap();
+            assert!(matches!(&signature, PrimitiveSignature::P256(p256) if !p256.pre_hash));
+            assert_eq!(signature.recover_signer(&digest).unwrap(), PASSKEY_OWNER);
+        }
+        assert!(parse_p256_key("0x1234").is_err());
+        assert!(parse_p256_key(&format!("0x{}", "22".repeat(32))).is_ok());
     }
 
     /// The worst-case quorum is the largest one the node accepts: in address order it reaches the
@@ -1316,6 +1370,8 @@ mod tests {
             ConfigurableAccountOwnerKey::from(WalletSigner::Local(key.clone()))
         };
 
+        let addresses = keys.iter().map(|key| key.address()).collect::<Vec<_>>();
+        assert!(reaches_threshold(&config, &addresses));
         let signer =
             ConfigurableAccountSigner::new(account, config.clone(), keys.iter().map(wallet), "")
                 .unwrap();
@@ -1324,9 +1380,11 @@ mod tests {
             [heavy]
         );
 
-        // Nine weight-one owners reach the threshold of nine only past the limit.
+        // Nine weight-one owners reach the threshold of nine only past the limit, so `forge
+        // script` saves their transactions for offline owners.
         let mut config = config;
         config.owners.last_mut().unwrap().weight = 1;
+        assert!(!reaches_threshold(&config, &addresses));
         let owners = config.owners.iter().map(|owner| owner.owner.to_string()).collect::<Vec<_>>();
         let err = ConfigurableAccountSigner::new(
             account,

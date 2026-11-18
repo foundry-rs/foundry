@@ -8,7 +8,7 @@ mod rounding;
 
 use mul_div::{
     checked_product_guard_operands, full_mul_div_operands, mul_high_operands,
-    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq,
+    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq, word_division_operands,
 };
 use polynomial::polynomial_identity;
 
@@ -1256,7 +1256,12 @@ impl ConstraintContext {
                         (Some(bound), _) => (!bound.is_zero()).then(|| (right, bound - U256::ONE)),
                         _ => None,
                     },
-                    SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
+                    // `x != MAX => x <= MAX - 1`; normalized equalities put the constant on the
+                    // RHS.
+                    SymCmpOp::Eq => {
+                        (right.as_const() == Some(U256::MAX)).then(|| (left, U256::MAX - U256::ONE))
+                    }
+                    SymCmpOp::Slt | SymCmpOp::Sgt => None,
                 },
                 _ => None,
             },
@@ -1463,6 +1468,11 @@ impl ConstraintContext {
     ) -> Option<WordInterval> {
         match expr.kind() {
             SymExprKind::Const(value) => Some(WordInterval::exact(*value)),
+            // `~x == MAX - x`, which reverses unsigned order.
+            SymExprKind::Not(value) => {
+                let value = self.interval_cached(value, intervals, remaining)?;
+                Some(WordInterval { min: !value.max, max: !value.min })
+            }
             SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 let mask = left.as_const().or_else(|| right.as_const())?;
                 Some(WordInterval { min: U256::ZERO, max: mask })
@@ -1526,6 +1536,20 @@ impl ConstraintContext {
                     min: numerator.min / denominator.max,
                     max: numerator.max / denominator.min,
                 })
+            }
+            // `a % d <= a`, and `a % d < d` for a positive `d`.
+            SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) => {
+                let dividend = self.interval_cached(dividend, intervals, remaining);
+                let divisor = self
+                    .interval_cached(divisor, intervals, remaining)
+                    .filter(|divisor| !divisor.min.is_zero());
+                let max = match (dividend, divisor) {
+                    (Some(dividend), Some(divisor)) => dividend.max.min(divisor.max - U256::ONE),
+                    (Some(dividend), None) => dividend.max,
+                    (None, Some(divisor)) => divisor.max - U256::ONE,
+                    (None, None) => return None,
+                };
+                Some(WordInterval { min: U256::ZERO, max })
             }
             SymExprKind::BinOp(SymBinOp::Shr, value, shift) => {
                 let shift = shift.as_const()?;
@@ -2078,6 +2102,29 @@ impl ConstraintContext {
             && let SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) = condition.kind()
         {
             return left == numerator && right == denominator;
+        }
+        // For a symbolic d, normalization rewrites the zero check of EVM's `div(n, d)` to
+        // `d == 0 || n < d`, possibly with repeated terms.
+        if let Some((numerator, denominator)) = word_division_operands(operand)
+            && let SymBoolExprKind::Not(negated) = condition.kind()
+            && let SymBoolExprKind::And(terms) = negated.kind()
+        {
+            let (mut zero, mut below) = (false, false);
+            for term in terms.iter() {
+                let SymBoolExprKind::Not(term) = term.kind() else { return false };
+                if term.zero_check_operand() == Some(denominator) {
+                    zero = true;
+                } else if matches!(
+                    term.kind(),
+                    SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right)
+                        if left == numerator && right == denominator
+                ) {
+                    below = true;
+                } else {
+                    return false;
+                }
+            }
+            return zero && below;
         }
         false
     }
