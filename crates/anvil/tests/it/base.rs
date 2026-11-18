@@ -821,7 +821,7 @@ async fn base_eip8130_estimate_validates_sender() {
     }))
     .unwrap();
     let error = provider.estimate_gas(missing).await.unwrap_err();
-    assert!(error.to_string().contains("invalid EIP-8130 simulation request"), "{error}");
+    assert!(error.to_string().contains("no sender account"), "{error}");
 
     let explicit_sender = serde_json::from_value(serde_json::json!({
         "sender": sender,
@@ -841,7 +841,21 @@ async fn base_eip8130_estimate_validates_sender() {
     }))
     .unwrap();
     let error = provider.estimate_gas(mismatch).await.unwrap_err();
-    assert!(error.to_string().contains("invalid EIP-8130 simulation request"), "{error}");
+    assert!(error.to_string().contains("`sender` and `from` differ"), "{error}");
+
+    let calls_and_to = serde_json::from_value(serde_json::json!({
+        "from": sender,
+        "to": other,
+        "calls": [[{ "to": other, "data": "0x" }]],
+        "maxFeePerGas": "0x3b9aca00",
+        "gas": "0x30d40"
+    }))
+    .unwrap();
+    let error = provider.call(calls_and_to).await.unwrap_err();
+    assert!(
+        error.to_string().contains("set either `calls` or a top-level `to`/`value`/`data`"),
+        "{error}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

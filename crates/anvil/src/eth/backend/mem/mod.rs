@@ -3721,8 +3721,12 @@ impl<N: Network> Backend<N> {
                 // payer authentication blobs, so intrinsic gas prices the authentication scheme.
                 let simulation = request
                     .to_eip8130_simulation_tx(self.chain_id().to(), gas_limit)
-                    .ok()
-                    .and_then(|tx| tx.eip8130)
+                    .map_err(|err| {
+                        BlockchainError::InvalidTransactionRequest(format!(
+                            "invalid EIP-8130 simulation request: {err}"
+                        ))
+                    })?
+                    .eip8130
                     .ok_or_else(invalid)?;
                 let sender = request
                     .as_eip8130()

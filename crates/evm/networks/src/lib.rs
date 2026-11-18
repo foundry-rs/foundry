@@ -105,7 +105,7 @@ const BASE_PRECOMPILES: &[(&str, Address)] = &[
 /// from every function and are code-less on chain, so stubbing them would diverge — a contract
 /// guarding calls with an `isContract` probe would pass locally and revert on Base.
 ///
-/// The nonce manager separately receives a stub at Zenith from Base's own
+/// The nonce manager separately receives a stub at Everest from Base's own
 /// `ensure_eip8130_system_accounts` transition, for EIP-161 state clearing rather than for
 /// `extcodesize`. That transition owns it; this list must not.
 #[cfg(feature = "base")]
