@@ -527,11 +527,14 @@ impl CoverageReporter for BytecodeReporter {
         let no_source_elements = Vec::new();
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
 
-        for (contract_id, hits) in &report.bytecode_hits {
+        for ((contract_id, is_deployed_code), hits) in &report.bytecode_hits {
             let mut formatted = String::new();
 
-            let source_elements =
-                report.source_maps.get(contract_id).map(|sm| &sm.1).unwrap_or(&no_source_elements);
+            let source_elements = report
+                .source_maps
+                .get(contract_id)
+                .map(|sm| if *is_deployed_code { &sm.1 } else { &sm.0 })
+                .unwrap_or(&no_source_elements);
 
             let ops = InstIter::new(hits.bytecode()).with_pc();
             for ((pc, inst), source_element) in std::iter::zip(ops, source_elements) {
@@ -567,8 +570,9 @@ impl CoverageReporter for BytecodeReporter {
                     writeln!(formatted, "{hits} {code:40}")?;
                 }
             }
+            let extension = if *is_deployed_code { "asm" } else { "creation.asm" };
             fs::write(
-                self.destdir.join(&*contract_id.contract_name).with_extension("asm"),
+                self.destdir.join(&*contract_id.contract_name).with_extension(extension),
                 formatted,
             )?;
         }
