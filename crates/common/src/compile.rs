@@ -1187,13 +1187,14 @@ fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'s
 
 /// Returns the top-level dependency directory that contains `file`, relative to the root.
 ///
-/// An npm scope such as `node_modules/@scope/` holds packages, so its owner is the package.
+/// An npm scope such as `node_modules/@scope/` holds packages, so its owner is the package. Other
+/// `@` directories, such as Soldeer's `dependencies/@name-version/`, are packages themselves.
 fn dependency_owner<L>(paths: &ProjectPathsConfig<L>, file: &Path) -> Option<PathBuf> {
     paths.libraries.iter().find_map(|lib| {
         let lib = paths.root.join(lib);
         let mut components = file.strip_prefix(&lib).ok()?.components();
         let mut owner = lib.join(components.next()?);
-        if owner.file_name()?.to_string_lossy().starts_with('@') {
+        if lib.ends_with("node_modules") && owner.file_name()?.to_string_lossy().starts_with('@') {
             owner.push(components.next()?);
         }
         components.next()?;
@@ -1439,6 +1440,7 @@ mod tests {
         let paths = ProjectPathsConfig::builder()
             .root(&root)
             .lib(root.join("lib"))
+            .lib(root.join("node_modules"))
             .remapping(Remapping::from_str("lib/a/:@alias/=lib/a/src/").unwrap())
             .remapping(Remapping::from_str("lib/a/:File.sol=lib/a/src/Target.sol").unwrap())
             .build::<MultiCompilerLanguage>()
@@ -1457,7 +1459,10 @@ mod tests {
         // Dependency importers get a remapping scoped to their own top-level dependency.
         for (importer, scoped) in [
             ("lib/b/src/nested/Dep.sol", "lib/b/:@alias/=lib/a/src/"),
-            ("lib/@scope/c/src/Dep.sol", "lib/@scope/c/:@alias/=lib/a/src/"),
+            ("node_modules/@scope/c/src/Dep.sol", "node_modules/@scope/c/:@alias/=lib/a/src/"),
+            // Soldeer packages start with `@` but are not npm scopes.
+            ("lib/@pkg-1.0.0/src/Dep.sol", "lib/@pkg-1.0.0/:@alias/=lib/a/src/"),
+            ("lib/@pkg-1.0.0/Dep.sol", "lib/@pkg-1.0.0/:@alias/=lib/a/src/"),
         ] {
             assert_eq!(
                 remapping_candidates(&paths, import, &root.join(importer)),
