@@ -9,7 +9,7 @@ use heck::ToSnakeCase;
 use serde::de::Error as _;
 use std::{
     cell::OnceCell,
-    env,
+    env, io,
     path::{Path, PathBuf},
 };
 
@@ -996,5 +996,19 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
 
     fn profile(&self) -> Option<Profile> {
         Some(self.profile.clone())
+    }
+}
+
+/// A provider that fails with the error that prevented locating the project root, so extraction
+/// reports it instead of the figment conversion panicking.
+pub(crate) struct ProjectRootErrorProvider(pub(crate) io::Error);
+
+impl Provider for ProjectRootErrorProvider {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("project root")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        Err(Error::from(format!("could not determine project root: {}", self.0)))
     }
 }
