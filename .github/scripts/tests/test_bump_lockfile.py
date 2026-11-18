@@ -99,5 +99,74 @@ class BumpLockfileTests(unittest.TestCase):
                 self.assertEqual((self.project / "Cargo.lock").read_bytes(), self.baseline)
 
 
+class SyncPinTests(unittest.TestCase):
+    OLDER = "a" * 40
+    NEWER = "b" * 40
+    TEMPO = "c" * 40
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        # GitHub's compare API reports the head's status relative to the base.
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        gh.write_text(
+            "#!/bin/bash\n"
+            'case "$2" in\n'
+            f'  */compare/{self.OLDER}...{self.NEWER}) echo ahead ;;\n'
+            f'  */compare/{self.NEWER}...{self.OLDER}) echo behind ;;\n'
+            '  *) exit 1 ;;\n'
+            "esac\n"
+        )
+        gh.chmod(0o755)
+        self.env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
+        self.manifest = self.root / "Cargo.toml"
+        self.tempo_manifest = self.root / "tempo.toml"
+        self.notes = self.root / "notes.md"
+        self.notes.write_text("")
+        script = self.root / ".github/scripts/bump-tempo.sh"
+        script.parent.mkdir(parents=True)
+        source = (SCRIPTS / "bump-tempo.sh").read_text()
+        script.write_text(
+            source.removesuffix('main "$@"\n')
+            + f'sync_pin evm2 alloy-rs/evm2 https://github.com/DaniPopes/evm2 "{self.tempo_manifest}" "{self.notes}"\n'
+        )
+        self.script = script
+
+    def foundry_manifest(self, evm2):
+        return (
+            f'evm2 = {{ git = "https://github.com/alloy-rs/evm2", rev = "{evm2}" }}\n'
+            f'tempo-evm = {{ git = "https://github.com/tempoxyz/tempo", rev = "{self.TEMPO}" }}\n'
+            f"# alloy-rs/evm2 main at `{evm2[:7]}`.\n"
+            '[patch."https://github.com/alloy-rs/evm2"]\n'
+            f'evm2 = {{ git = "https://github.com/DaniPopes/evm2", rev = "{evm2}" }}\n'
+        )
+
+    def sync(self, foundry, tempo):
+        self.manifest.write_text(self.foundry_manifest(foundry))
+        self.tempo_manifest.write_text(
+            f'evm2 = {{ git = "https://github.com/alloy-rs/evm2", rev = "{self.TEMPO}" }}\n'
+            '[patch."https://github.com/alloy-rs/evm2"]\n'
+            f'evm2 = {{ git = "https://github.com/DaniPopes/evm2", rev = "{tempo}" }}\n'
+        )
+        result = subprocess.run(
+            ["bash", str(self.script)], env=self.env,
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_follows_newer_tempo_pin(self):
+        self.sync(foundry=self.OLDER, tempo=self.NEWER)
+        self.assertEqual(self.manifest.read_text(), self.foundry_manifest(self.NEWER))
+        self.assertIn(f"/compare/{self.OLDER}...{self.NEWER}", self.notes.read_text())
+
+    def test_keeps_newer_foundry_pin(self):
+        self.sync(foundry=self.NEWER, tempo=self.OLDER)
+        self.assertEqual(self.manifest.read_text(), self.foundry_manifest(self.NEWER))
+        self.assertIn("compare status: behind", self.notes.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()
