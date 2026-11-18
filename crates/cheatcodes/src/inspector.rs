@@ -2195,10 +2195,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             if let Some(mapping_slots) = &mut self.core.mapping_slots {
                 record_mapping_hash(mapping_slots, interp, pending);
             }
-            if self
-                .mapping_storage_store_hooks
-                .get(&pending.address)
-                .is_some_and(|hooks| !hooks.is_empty())
+            // Storage hooks resolve only mapping entries, whose slots are 64-byte hashes.
+            if pending.size == 0x40
+                && self
+                    .mapping_storage_store_hooks
+                    .get(&pending.address)
+                    .is_some_and(|hooks| !hooks.is_empty())
                 && self.active_storage_hook.is_none()
             {
                 record_mapping_hash(&mut self.storage_hook_mapping_slots, interp, pending);

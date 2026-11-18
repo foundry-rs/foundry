@@ -906,6 +906,11 @@ contract DynamicArrays {
         address[] list;
     }
 
+    struct Pair {
+        uint256 a;
+        uint256 b;
+    }
+
     uint256[] public nums;
     uint128[] public packed;
     bool[] public flags;
@@ -914,6 +919,8 @@ contract DynamicArrays {
     mapping(address => uint256[]) public byOwner;
     uint256[][] public nested;
     Item[][] internal grid;
+    // An element spanning several slots without an ABI type is not labeled as a whole.
+    Pair[2][] internal pairs;
 
     function push(address owner) public {
         nums.push(7);
@@ -929,6 +936,16 @@ contract DynamicArrays {
         nested[0].push(5);
         grid.push();
         grid[0].push(Item(3, address(0x9abc)));
+        pairs.push();
+        pairs[0][0].a = 1;
+    }
+}
+
+contract PackedFlags {
+    bool[] public flags;
+
+    function push() public {
+        flags.push(true);
     }
 }
 
@@ -974,6 +991,14 @@ contract StateDiffDynamicArrayTest is Test {
         set.add(address(0x1234));
         console.log(vm.getStateDiff());
     }
+
+    function test_packedArrayJson() public {
+        PackedFlags flags = new PackedFlags();
+
+        vm.startStateDiffRecording();
+        flags.push();
+        console.log(vm.getStateDiffJson());
+    }
 }
 "#,
     );
@@ -985,7 +1010,7 @@ contract StateDiffDynamicArrayTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 1 test for test/StateDiffDynamicArray.t.sol:StateDiffDynamicArrayTest
+Ran 2 tests for test/StateDiffDynamicArray.t.sol:StateDiffDynamicArrayTest
 [PASS] test_dynamicArrays() ([GAS])
 Logs:
   0x2e234DAe75C793f67A35089C9d99245E1C58470b
@@ -1006,12 +1031,14 @@ Logs:
   @ 0x0000000000000000000000000000000000000000000000000000000000000005 (holder.list, address[]): 0 → 1
   @ 0x0000000000000000000000000000000000000000000000000000000000000007 (nested, uint256[][]): 0 → 1
   @ 0x0000000000000000000000000000000000000000000000000000000000000008 (grid, DynamicArrays.Item[][]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000009 (pairs, DynamicArrays.Pair[2][]): 0 → 1
   @ 0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0 (holder.list[0], address): 0x0000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000001234
   @ 0x2497362b1265b72a2d08ffe21ad6eae809e05da456ede5913d1c8c28d6751f15 (byOwner[0x00000000000000000000000000000000000000AA], uint256[]): 0 → 1
   @ 0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563 (nums[0], uint256): 0 → 7
   @ 0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e564 (nums[1], uint256): 0 → 9
   @ 0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace (flags[0..31], bool[32]): [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false] → [true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]
   @ 0x607bca8f7c1c56da874da29cd62c3769b9880d38a258a91fc6dd1cfb6b4d1a8e (nested[0][0], uint256): 0 → 5
+  @ 0x6e1540171b6c0c960b71a7020d9f60077f6af931a8bbf590da0223dacf75c7af: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000001
   @ 0x9c973ba2c6604c7aed8b01a10af981baaad177814235fed50ee801a71cbd5eb7 (byOwner[0x00000000000000000000000000000000000000AA][0], uint256): 0 → 42
   @ 0xa66cc928b5edb82af9bd49922954155ab7b0942694bea4ce44661d9a8736c688 (nested[0], uint256[]): 0 → 1
   @ 0xa7c46294ffa3fad92dc8422b2e38b688ccf1b86172f5beaf864af9368d2844e5 (grid[0][0].a, uint256): 0 → 3
@@ -1022,9 +1049,13 @@ Logs:
   @ 0xf3f7a9fe364faab93b216da50a3214154f22a0a2b415b23a84c8169e8b636ee3 (grid[0], DynamicArrays.Item[]): 0 → 1
   
 
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] test_packedArrayJson() ([GAS])
+Logs:
+  {"0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f":{"label":null,"contract":"test/StateDiffDynamicArray.t.sol:PackedFlags","balanceDiff":null,"nonceDiff":null,"stateDiff":{"0x0000000000000000000000000000000000000000000000000000000000000000":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001","label":"flags","type":"bool[]","offset":0,"slot":"0","decoded":{"previousValue":"0","newValue":"1"}},"0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001","label":"flags[0..31]","type":"bool[32]","offset":0,"slot":"18569430475105882587588266137607568536673111973893317399460219858819262702947","decoded":{"previousValue":"[false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]","newValue":"[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]"}}}}}
 
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 }

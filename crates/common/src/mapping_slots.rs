@@ -6,6 +6,7 @@ use evm2::{
     EvmTypesHost,
     interpreter::{Interpreter, op},
 };
+use std::collections::BTreeMap;
 
 /// Provenance recovered for a Solidity mapping storage slot.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,8 +37,9 @@ pub struct MappingSlots {
 
     /// Holds the input of each 32-byte sha3 `sha3_result => data`. A dynamic array's elements
     /// start at the hash of its slot, so this locates arrays whose slot is itself computed, e.g.
-    /// a mapping value or an element of another array.
-    pub seen_word_sha3: B256HashMap<B256>,
+    /// a mapping value or an element of another array. Ordered to find the nearest hash at or
+    /// below a slot.
+    pub seen_word_sha3: BTreeMap<U256, B256>,
 }
 
 impl MappingSlots {
@@ -48,7 +50,7 @@ impl MappingSlots {
 
     /// Records the result and input word of a 32-byte `KECCAK256` operation.
     pub fn record_word_hash(&mut self, result: B256, word: B256) {
-        self.seen_word_sha3.insert(result, word);
+        self.seen_word_sha3.insert(result.into(), word);
     }
 
     /// Resolves a computed slot to its terminal mapping root and root-to-leaf keys.

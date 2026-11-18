@@ -45,8 +45,7 @@ pub struct SlotInfo {
     pub slot: String,
     /// For struct members, contains nested SlotInfo for each member
     ///
-    /// This is populated when a struct's members / fields are packed in a single slot, or with
-    /// the elements of a dynamic array packed into the slot, which decode as one array.
+    /// This is populated when a struct's members / fields are packed in a single slot.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub members: Option<Vec<Self>>,
     /// Decoded values (if available) - used for struct members
@@ -100,13 +99,10 @@ impl SlotInfo {
     /// Note: For decoding [`DynSolType::Bytes`] or [`DynSolType::String`] that span multiple slots,
     /// use [`SlotInfo::decode_bytes_or_string`].
     pub fn decode(&self, value: B256) -> Option<DynSolValue> {
-        // Dynamic array elements packed into the slot decode as one array of them.
-        if self.is_packed_array() {
-            return self
-                .members
-                .iter()
-                .flatten()
-                .map(|element| element.decode_packed(value))
+        // Array elements packed into the slot decode as one array of them.
+        if let Some((element, len, size)) = packed_array(&self.slot_type.dyn_sol_type) {
+            return (0..len)
+                .map(|i| decode_packed(element, i * size, value))
                 .collect::<Option<Vec<_>>>()
                 .map(DynSolValue::FixedArray);
         }
@@ -305,13 +301,14 @@ impl SlotInfo {
     /// For structs with members, it decodes each member individually.
     pub fn decode_values(&mut self, previous_value: B256, new_value: B256) {
         // If this is a struct with members, decode each member individually
-        if !self.is_packed_array()
-            && let Some(members) = &mut self.members
-        {
+        if let Some(members) = &mut self.members {
             for member in members.iter_mut() {
-                if let (Some(prev_val), Some(new_val)) =
-                    (member.decode_packed(previous_value), member.decode_packed(new_value))
-                {
+                let ty = &member.slot_type.dyn_sol_type;
+                let offset = member.offset as usize;
+                if let (Some(prev_val), Some(new_val)) = (
+                    decode_packed(ty, offset, previous_value),
+                    decode_packed(ty, offset, new_value),
+                ) {
                     member.decoded =
                         Some(DecodedSlotValues { previous_value: prev_val, new_value: new_val });
                 }
@@ -325,50 +322,6 @@ impl SlotInfo {
                 self.decoded = Some(DecodedSlotValues { previous_value: prev, new_value: new });
             }
         }
-    }
-
-    /// Whether the slot holds several elements of a dynamic array, each located by a member.
-    const fn is_packed_array(&self) -> bool {
-        self.members.is_some() && matches!(self.slot_type.dyn_sol_type, DynSolType::FixedArray(..))
-    }
-
-    /// Decodes the value packed into `word` at this slot's offset.
-    fn decode_packed(&self, word: B256) -> Option<DynSolValue> {
-        let offset = self.offset as usize;
-        let size = match &self.slot_type.dyn_sol_type {
-            DynSolType::Uint(bits) | DynSolType::Int(bits) => bits / 8,
-            DynSolType::Address => 20,
-            DynSolType::Bool => 1,
-            DynSolType::FixedBytes(size) => *size,
-            _ => 32, // Default to full word
-        };
-
-        let mut bytes = [0u8; 32];
-        if offset + size <= 32 {
-            // In Solidity storage, values are right-aligned
-            // For offset 0, we want the rightmost bytes
-            // For offset 16 (for a uint128), we want bytes 0-16
-            // For packed storage: offset 0 is at the rightmost position
-            // offset 0, size 16 -> read bytes 16-32 (rightmost)
-            // offset 16, size 16 -> read bytes 0-16 (leftmost)
-            let byte_start = 32 - offset - size;
-            // ABI signed integers must be sign-extended to a full word.
-            if matches!(self.slot_type.dyn_sol_type, DynSolType::Int(_))
-                && word.0[byte_start] & 0x80 != 0
-            {
-                bytes.fill(0xff);
-            }
-            // ABI fixed bytes are left-aligned, unlike integers and addresses.
-            let abi_start = if matches!(self.slot_type.dyn_sol_type, DynSolType::FixedBytes(_)) {
-                0
-            } else {
-                32 - size
-            };
-            bytes[abi_start..abi_start + size]
-                .copy_from_slice(&word.0[byte_start..byte_start + size]);
-        }
-
-        self.slot_type.dyn_sol_type.abi_decode(&bytes).ok()
     }
 }
 
@@ -573,16 +526,8 @@ impl SlotIdentifier {
         if depth >= MAX_DEPTH {
             return None;
         }
-        let mut candidates = mapping_slots
-            .seen_word_sha3
-            .iter()
-            .filter_map(|(data_start, array_slot)| {
-                let index_slot = slot.checked_sub(Into::<U256>::into(*data_start))?;
-                (index_slot < MAX_ARRAY_SLOTS).then_some((index_slot, *array_slot))
-            })
-            .collect::<Vec<_>>();
-        candidates.sort_unstable();
-        candidates.into_iter().find_map(|(_, array_slot)| {
+        let data_starts = slot.saturating_sub(MAX_ARRAY_SLOTS - U256::ONE)..=slot;
+        mapping_slots.seen_word_sha3.range(data_starts).rev().find_map(|(_, &array_slot)| {
             let array = self.identify_at_depth(&array_slot, Some(mapping_slots), depth + 1)?;
             let array_type = self.dynamic_array_type(&array.slot_type.label)?;
             let mut info = self.handle_dynamic_array(
@@ -649,23 +594,8 @@ impl SlotIdentifier {
             let element = element?;
             let per_slot = 32 / element_bytes;
             let first = index_slot * per_slot;
-            // The members only locate each element in the slot, see `SlotInfo::decode`.
-            let members = (0..per_slot)
-                .map(|i| SlotInfo {
-                    label: format!("{label}[{}]", first + i),
-                    slot_type: StorageTypeInfo {
-                        label: element_type.label.clone(),
-                        dyn_sol_type: element.clone(),
-                    },
-                    offset: (i * element_bytes) as i64,
-                    slot: slot_str.to_string(),
-                    members: None,
-                    decoded: None,
-                    keys: None,
-                })
-                .collect::<Vec<_>>();
             // The array length is unknown here, so the slot is labeled with the whole range of
-            // elements it can hold.
+            // elements it can hold, and decodes as an array of them, see `SlotInfo::decode`.
             return Some(SlotInfo {
                 label: format!("{label}[{first}..{}]", first + per_slot - 1),
                 slot_type: StorageTypeInfo {
@@ -677,7 +607,7 @@ impl SlotIdentifier {
                 },
                 offset: 0,
                 slot: slot_str.to_string(),
-                members: Some(members),
+                members: None,
                 decoded: None,
                 keys: None,
             });
@@ -720,13 +650,14 @@ impl SlotIdentifier {
                 slot_str,
             );
         }
+        // An element without an ABI equivalent is shown raw if it fills one slot; a slot of a
+        // larger one holds only a part of it.
+        let element = element
+            .cloned()
+            .or_else(|| (element_slots == 1).then_some(DynSolType::FixedBytes(32)))?;
         (slot == element_start).then(|| SlotInfo {
             label: element_label,
-            slot_type: StorageTypeInfo {
-                label: element_type.label.clone(),
-                // An element without an ABI equivalent is shown raw.
-                dyn_sol_type: element.cloned().unwrap_or(DynSolType::FixedBytes(32)),
-            },
+            slot_type: StorageTypeInfo { label: element_type.label.clone(), dyn_sol_type: element },
             offset: 0,
             slot: slot_str.to_string(),
             members: None,
@@ -1315,7 +1246,10 @@ impl SlotIdentifier {
             .filter_map(|(label, storage)| {
                 let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
                 let parsed_type = self.parsed_type(&storage.storage_type)?.clone();
-                let label = if let DynSolType::FixedArray(_, _) = &parsed_type {
+                // An array packed into the slot is labeled with the range of its elements.
+                let label = if let Some((_, len, _)) = packed_array(&parsed_type) {
+                    format!("{label}[0..{}]", len - 1)
+                } else if let DynSolType::FixedArray(_, _) = &parsed_type {
                     format!("{label}{}", get_array_base_indices(&parsed_type))
                 } else {
                     label
@@ -1442,6 +1376,51 @@ fn parse_sol_type(label: &str) -> Option<DynSolType> {
 /// Checks if a given type label represents a struct type.
 pub fn is_struct(s: &str) -> bool {
     s.starts_with("struct ")
+}
+
+/// The size in bytes of a value type that can share a slot with others.
+const fn packed_size(ty: &DynSolType) -> Option<usize> {
+    match ty {
+        DynSolType::Uint(bits) | DynSolType::Int(bits) => Some(*bits / 8),
+        DynSolType::Address => Some(20),
+        DynSolType::Bool => Some(1),
+        DynSolType::FixedBytes(size) => Some(*size),
+        _ => None,
+    }
+}
+
+/// The element type, length and element size of an array of several elements packed into one
+/// slot.
+fn packed_array(ty: &DynSolType) -> Option<(&DynSolType, usize, usize)> {
+    let DynSolType::FixedArray(element, len) = ty else { return None };
+    let size = packed_size(element)?;
+    (*len > 1 && size * len <= 32).then_some((element.as_ref(), *len, size))
+}
+
+/// Decodes the value of type `ty` packed into `word` at byte `offset`.
+fn decode_packed(ty: &DynSolType, offset: usize, word: B256) -> Option<DynSolValue> {
+    // Default to the full word.
+    let size = packed_size(ty).unwrap_or(32);
+
+    let mut bytes = [0u8; 32];
+    if offset + size <= 32 {
+        // In Solidity storage, values are right-aligned
+        // For offset 0, we want the rightmost bytes
+        // For offset 16 (for a uint128), we want bytes 0-16
+        // For packed storage: offset 0 is at the rightmost position
+        // offset 0, size 16 -> read bytes 16-32 (rightmost)
+        // offset 16, size 16 -> read bytes 0-16 (leftmost)
+        let byte_start = 32 - offset - size;
+        // ABI signed integers must be sign-extended to a full word.
+        if matches!(ty, DynSolType::Int(_)) && word.0[byte_start] & 0x80 != 0 {
+            bytes.fill(0xff);
+        }
+        // ABI fixed bytes are left-aligned, unlike integers and addresses.
+        let abi_start = if matches!(ty, DynSolType::FixedBytes(_)) { 0 } else { 32 - size };
+        bytes[abi_start..abi_start + size].copy_from_slice(&word.0[byte_start..byte_start + size]);
+    }
+
+    ty.abi_decode(&bytes).ok()
 }
 
 #[cfg(test)]
