@@ -174,7 +174,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub disable_block_gas_limit: bool,
 
-    /// Enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    /// Enable the tx gas limit checks as imposed by Osaka (EIP-7825) and Amsterdam (EIP-8037).
     #[arg(long)]
     pub enable_tx_gas_limit: bool,
 }
@@ -546,10 +546,12 @@ impl RunArgs {
         // the chain accepted.
         fork.evm_env.set_feature(EvmFeatures::BLOCK_GAS_LIMIT_CHECK, false);
 
-        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
+        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825) and
+        // Amsterdam (EIP-8037).
         // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
         if !self.enable_tx_gas_limit {
             fork.evm_env.version.tx_gas_limit_cap = u64::MAX;
+            fork.evm_env.version.tx_total_gas_cap = u64::MAX;
         }
 
         // Replays enforce the chain's contract size limits rather than Foundry's unlimited

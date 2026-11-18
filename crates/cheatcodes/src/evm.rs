@@ -1509,6 +1509,7 @@ impl Cheatcode for executeTransactionCall {
         }
         let default_version = EvmFactoryFor::<FEN>::default().version(env.spec, env.chain_id());
         env.version.tx_gas_limit_cap = default_version.tx_gas_limit_cap;
+        env.version.tx_total_gas_cap = default_version.tx_total_gas_cap;
         env.version.max_initcode_size = match ccx.state.core.config.evm_opts.env.code_size_limit {
             Some(code_size_limit) => code_size_limit.saturating_mul(2),
             None => default_version.max_initcode_size,
