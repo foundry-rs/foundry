@@ -109,3 +109,49 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]],
     );
 }
+
+#[forgetest]
+fn warns_about_imported_project_tests_outside_test_dir(prj: _, cmd: _) {
+    prj.update_config(|config| config.test = "test/unit".into());
+    prj.add_test(
+        "shared/Shared.t.sol",
+        r#"
+contract SharedTest {
+    function testShared() public pure {}
+}
+
+abstract contract SharedBase {
+    function testInherited() public pure {}
+}
+"#,
+    );
+    prj.add_test(
+        "unit/Unit.t.sol",
+        r#"
+import {SharedTest, SharedBase} from "../shared/Shared.t.sol";
+
+contract UnitTest is SharedBase {
+    function testUnit() public pure {}
+}
+"#,
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/unit/Unit.t.sol:UnitTest
+[PASS] testInherited() ([GAS])
+[PASS] testUnit() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]).stderr_eq(str![[r#"
+Warning: Skipping test contracts outside the configured `src`, `test` and `script` directories:
+	test/shared/Shared.t.sol:SharedTest
+They are compiled because other files import them, but do not run as test suites. To run them, set `test` (currently `test/unit`) to a directory that contains them.
+
+"#]]);
+}
