@@ -229,12 +229,14 @@ async fn can_get_header_by_number() {
     assert_eq!(header.transactions_root, block.header.transactions_root);
 
     // `size` and `totalDifficulty` belong to the block, not the header schema.
-    for tag in ["0x1", "pending"] {
-        let header: serde_json::Value =
-            provider.client().request("eth_getHeaderByNumber", (tag,)).await.unwrap();
-        assert_eq!(header.get("size"), None);
-        assert_eq!(header.get("totalDifficulty"), None);
-    }
+    assert_eq!(header.size, None);
+    assert_eq!(header.total_difficulty, None);
+
+    let pending: Option<AnyRpcHeader> =
+        provider.client().request("eth_getHeaderByNumber", ("pending",)).await.unwrap();
+    let pending = pending.unwrap();
+    assert_eq!(pending.size, None);
+    assert_eq!(pending.total_difficulty, None);
 
     let missing: Option<AnyRpcHeader> =
         provider.client().request("eth_getHeaderByNumber", ("0x2",)).await.unwrap();
@@ -262,11 +264,8 @@ async fn can_get_header_by_hash() {
     assert_eq!(header.hash, block.header.hash);
     assert_eq!(header.number, block.header.number);
     assert_eq!(header.transactions_root, block.header.transactions_root);
-
-    let header: serde_json::Value =
-        provider.client().request("eth_getHeaderByHash", (block.header.hash,)).await.unwrap();
-    assert_eq!(header.get("size"), None);
-    assert_eq!(header.get("totalDifficulty"), None);
+    assert_eq!(header.size, None);
+    assert_eq!(header.total_difficulty, None);
 
     let missing: Option<AnyRpcHeader> =
         provider.client().request("eth_getHeaderByHash", (B256::ZERO,)).await.unwrap();
