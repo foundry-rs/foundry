@@ -85,7 +85,7 @@ async fn new_filter_seeds_historic_logs_only_with_from_block() {
     let start = provider.get_block_number().await.unwrap() + 2;
     let future = Filter::new().address(*contract.address()).from_block(start);
     let future_id: String = provider.client().request("eth_newFilter", (future,)).await.unwrap();
-    contract
+    let before = contract
         .setValue("before range".to_string())
         .from(account)
         .send()
@@ -109,7 +109,7 @@ async fn new_filter_seeds_historic_logs_only_with_from_block() {
 
     let changes: Vec<Log> =
         provider.client().request("eth_getFilterChanges", (latest_id,)).await.unwrap();
-    assert_eq!(changes.len(), 2, "expected both new logs, got {changes:?}");
+    assert_eq!(changes, [before.inner.inner.logs(), receipt.inner.inner.logs()].concat());
 }
 
 #[tokio::test(flavor = "multi_thread")]
