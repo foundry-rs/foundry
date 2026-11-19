@@ -8380,13 +8380,17 @@ UPDATES        assert(x < 2 ** 128);
     );
     let output = cmd
         .args(["test", "--symbolic", "--json", "--symbolic-timeout", "2"])
-        .assert_failure()
+        .assert()
         .get_output()
         .stdout
         .clone();
     let result = json_test_result(&output, "checkChainedUpdates(uint128,uint112,uint112)");
-    assert_eq!(result["symbolic"]["status"], "incomplete", "{result}");
-    assert_eq!(result["symbolic"]["incomplete"]["kind"], "timeout", "{result}");
+    // The property holds, so a stronger engine may prove it; a regression hangs instead.
+    assert!(
+        result["symbolic"]["status"] == "pass"
+            || result["symbolic"]["incomplete"]["kind"] == "timeout",
+        "{result}"
+    );
 }
 
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
