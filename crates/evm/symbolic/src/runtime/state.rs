@@ -2218,6 +2218,8 @@ pub(crate) struct SymbolicWorldState {
     /// First base read of each symbolic key. Which `setUp` slot a key selects depends on the slot
     /// hashes the run has seen, so later reads reuse it.
     symbolic_key_base_reads: HashMap<(Address, SymExpr), SymExpr>,
+    /// The keys of `symbolic_key_base_reads` in the order they were first read.
+    symbolic_key_base_order: Vec<(Address, SymExpr)>,
     /// Treat accounts that are not created here and have no known code as unknown: their balance,
     /// code size and code hash are symbolic, and calls into them are abstracted.
     symbolic_accounts: bool,
@@ -2703,10 +2705,7 @@ impl SymbolicWorld {
                 let slot_value = SymExpr::constant(cx, slot_value);
                 value = key.clone().select_storage_write(cx, slot, slot_value, value);
             }
-            Arc::make_mut(&mut self.state)
-                .symbolic_key_base_reads
-                .insert((address, key.clone()), value.clone());
-            Ok(value)
+            Ok(self.record_symbolic_key_base(cx, address, key, value))
         }
     }
 
@@ -2768,11 +2767,23 @@ impl SymbolicWorld {
                 self.record_replay_storage_slot(symbol, source, slot);
                 self.record_replay_storage_slot(symbol, address, slot);
             }
-        } else if self.arbitrary_storage_all && copied_source.is_none() {
+            let value = SymExpr::get_var(cx, symbol);
+            if let Some(source) = copied_source {
+                self.sstore(source, key.clone(), value.clone());
+            }
+            return Some(value);
+        }
+        let value = match self.symbolic_key_base_reads.get(&(address, key.clone())) {
+            Some(value) => value.clone(),
+            None => {
+                let value = SymExpr::get_var(cx, symbol);
+                self.record_symbolic_key_base(cx, address, key, value)
+            }
+        };
+        if self.arbitrary_storage_all && copied_source.is_none() {
             // Generic storage replays reads at symbolic keys too.
             self.record_replay_symbolic_storage_key(symbol, address, key);
         }
-        let value = SymExpr::get_var(cx, symbol);
         if let Some(source) = copied_source {
             self.sstore(source, key.clone(), value.clone());
         }
@@ -2808,6 +2819,32 @@ impl SymbolicWorld {
             .entry(symbol)
             .or_default()
             .push((address, key.clone()));
+    }
+
+    /// Records the base value of the first read at the symbolic `key` of `address`.
+    ///
+    /// Keys that differ as terms can still name the same slot, such as `keccak(a)` and
+    /// `keccak(a & mask)` where `a` is an address, so the base reads the value of each earlier key
+    /// of the account wherever it equals that key.
+    fn record_symbolic_key_base(
+        &mut self,
+        cx: &mut SymCx,
+        address: Address,
+        key: &SymExpr,
+        mut value: SymExpr,
+    ) -> SymExpr {
+        for (earlier_address, earlier_key) in &self.symbolic_key_base_order {
+            if *earlier_address != address {
+                continue;
+            }
+            let earlier_value =
+                self.symbolic_key_base_reads[&(address, earlier_key.clone())].clone();
+            value = key.clone().select_storage_write(cx, earlier_key.clone(), earlier_value, value);
+        }
+        let state = Arc::make_mut(&mut self.state);
+        state.symbolic_key_base_reads.insert((address, key.clone()), value.clone());
+        state.symbolic_key_base_order.push((address, key.clone()));
+        value
     }
 
     pub(crate) fn merge_replay_metadata_from(&mut self, other: &Self) {

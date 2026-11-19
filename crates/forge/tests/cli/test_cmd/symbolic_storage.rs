@@ -448,6 +448,90 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
 }
 
+// Two terms can name the same arbitrary slot: a pranked `msg.sender` key is the
+// masked caller word, while solar, once its ABI decoder checked the high bits,
+// hashes an address argument word as is. Both must read the same value, under
+// `vm.setArbitraryStorage` and under the generic layout, while a wrong balance
+// claim still replays as a counterexample.
+#[forgetest_init]
+fn symbolic_arbitrary_storage_relates_equal_symbolic_keys(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_arbitrary_storage_relates_equal_symbolic_keys");
+
+    prj.add_test(
+        "SymbolicEqualKeys.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function prank(address sender) external;
+    function setArbitraryStorage(address target) external;
+}
+
+contract Balances {
+    mapping(address => uint256) balances;
+
+    function sub(uint256 value) external {
+        balances[msg.sender] -= value;
+    }
+
+    function balanceOfWord(uint256 account) external view returns (uint256 value) {
+        assembly {
+            mstore(0, account)
+            mstore(0x20, 0)
+            value := sload(keccak256(0, 0x40))
+        }
+    }
+}
+
+contract SymbolicEqualKeys {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    Balances immutable arbitrary = new Balances();
+    Balances immutable generic = new Balances();
+
+    function setUp() public {
+        vm.setArbitraryStorage(address(arbitrary));
+    }
+
+    function subtract(Balances balances, uint256 account, uint256 value) internal returns (uint256, uint256) {
+        vm.assume(account < 1 << 160);
+        uint256 balance = balances.balanceOfWord(account);
+        vm.assume(value != 0 && value <= balance);
+        vm.prank(address(uint160(account)));
+        balances.sub(value);
+        return (balance, balances.balanceOfWord(account));
+    }
+
+    function checkSenderKey(uint256 account, uint256 value) public {
+        (uint256 before, uint256 afterSub) = subtract(arbitrary, account, value);
+        assert(afterSub == before - value);
+    }
+
+    function checkSenderKeyWrong(uint256 account, uint256 value) public {
+        (uint256 before, uint256 afterSub) = subtract(arbitrary, account, value);
+        assert(afterSub == before);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "generic"
+    function checkSenderKeyGeneric(uint256 account, uint256 value) public {
+        (uint256 before, uint256 afterSub) = subtract(generic, account, value);
+        assert(afterSub == before - value);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicEqualKeys"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicEqualKeys.t.sol:SymbolicEqualKeys
+[PASS] checkSenderKey(uint256,uint256) ([METRICS])
+[PASS] checkSenderKeyGeneric(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: [..]] checkSenderKeyWrong(uint256,uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 // Reading an unwritten mapping at a symbolic key must yield a fresh symbolic
 // value, not a concrete zero. The assertion below claims that no caller is an
 // admin; because nothing has ever written to `isAdmin`, the solver can satisfy
