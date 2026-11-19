@@ -73,6 +73,8 @@ ignored_error_codes = [
     "transient-storage",
     "transfer-deprecated",
     "natspec-memory-safe-assembly-deprecated",
+    "code-size-amsterdam",
+    "init-code-size-amsterdam",
 ]
 ignored_error_codes_from = []
 ignored_warnings_from = []
@@ -2331,7 +2333,9 @@ fn test_default_config(prj: _, cmd: _) {
     "init-code-size",
     "transient-storage",
     "transfer-deprecated",
-    "natspec-memory-safe-assembly-deprecated"
+    "natspec-memory-safe-assembly-deprecated",
+    "code-size-amsterdam",
+    "init-code-size-amsterdam"
   ],
   "ignored_error_codes_from": [],
   "ignored_warnings_from": [],
