@@ -846,10 +846,14 @@ contract SymbolicFixedPointFee {
     uint256 constant WAD = 1e18;
     uint256 constant RATE = 3e15;
 
-    // The guards keep `x * y` from wrapping, so a fraction of at most one cannot exceed `x`.
-    function checkFractionBelowAmount(uint256 x, uint64 y) public pure {
+    // Each guard keeps `x * y` from wrapping, so a fraction of at most one cannot exceed `x`.
+    function checkMulWadBelowAmount(uint256 x, uint64 y) public pure {
         if (y > WAD) return;
         assert(FixedPointMathLib.mulWad(x, y) <= x);
+    }
+
+    function checkMulDivDownBelowAmount(uint256 x, uint64 y) public pure {
+        if (y > WAD) return;
         assert(FixedPointMathLib.mulDivDown(x, y, WAD) <= x);
     }
 
@@ -896,9 +900,13 @@ contract SymbolicFixedPointFee {
         assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
     }
 
-    let result = json_test_result(&output, "checkFractionBelowAmount(uint256,uint64)");
-    assert_eq!(result["symbolic"]["status"], "pass");
-    assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
+    for signature in
+        ["checkMulWadBelowAmount(uint256,uint64)", "checkMulDivDownBelowAmount(uint256,uint64)"]
+    {
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass", "{signature}");
+        assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0, "{signature}");
+    }
 
     let result = json_test_result(&output, "checkUnrelatedGuard(uint256,uint256,uint256)");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
