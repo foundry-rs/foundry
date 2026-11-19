@@ -2964,26 +2964,15 @@ impl TestArgs {
         config: &Config,
         gas_snapshots: &BTreeMap<String, BTreeMap<String, String>>,
     ) -> Result<()> {
-        let check = self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check);
-        let emit = self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit);
-        if !check && !emit {
-            return Ok(());
-        }
-        let gas_snapshots = gas_snapshots
-            .iter()
-            .map(|(group, snapshots)| {
-                gas_snapshot_path(&config.snapshots, group).map(|path| (group, snapshots, path))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        if check {
+        if self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
             let mut differences_found = false;
-            for (group, snapshots, path) in &gas_snapshots {
+            for (group, snapshots) in gas_snapshots {
+                let path = config.snapshots.join(format!("{group}.json"));
                 // If the snapshot file doesn't exist, we can't compare so we skip.
                 if !path.exists() {
                     continue;
                 }
-                let previous_snapshots: BTreeMap<String, String> = fs::read_json_file(path)?;
+                let previous_snapshots: BTreeMap<String, String> = fs::read_json_file(&path)?;
                 let diff = snapshots
                     .iter()
                     .filter_map(|(k, v)| {
@@ -3014,10 +3003,12 @@ impl TestArgs {
             }
         }
 
-        if emit {
-            for (_, snapshots, path) in gas_snapshots {
-                fs::create_dir_all(path.parent().expect("snapshot path has a parent"))?;
-                fs::write_pretty_json_file(&path, snapshots)?;
+        if self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
+            for (group, snapshots) in gas_snapshots {
+                // Groups may be nested, such as `core/Pool`.
+                let path = config.snapshots.join(format!("{group}.json"));
+                fs::create_dir_all(path.parent().unwrap_or(&config.snapshots))?;
+                fs::write_pretty_json_file(&path, &snapshots)?;
             }
         }
         Ok(())
@@ -3833,29 +3824,6 @@ impl JunitOutput {
             }
         }
     }
-}
-
-/// Resolves a snapshot path, rejecting symlinks below the user-configured snapshots root.
-fn gas_snapshot_path(root: &Path, group: &str) -> Result<PathBuf> {
-    let relative = PathBuf::from(format!("{group}.json"));
-    let path = root.join(&relative);
-    let mut current = root.to_path_buf();
-    for component in relative.components() {
-        current.push(component);
-        match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                bail!("gas snapshot path traverses a symlink: {}", current.display());
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-            Err(error) => {
-                return Err(error).wrap_err_with(|| {
-                    format!("failed to inspect gas snapshot path {}", current.display())
-                });
-            }
-        }
-    }
-    Ok(path)
 }
 
 #[cfg(test)]
