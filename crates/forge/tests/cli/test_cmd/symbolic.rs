@@ -8797,14 +8797,14 @@ contract SymbolicBoundedComplementTest {
         assert(shares * total / supply <= assets);
     }
 
-    // Scaling back by another total can create assets.
-    function checkVaultOtherTotal(uint128 assets, uint128 supply, uint128 total, uint128 other)
+    // Dividing the rounded product by another divisor can create assets.
+    function checkVaultOtherDivisor(uint256 assets, uint256 supply, uint256 total, uint256 other)
         public
         pure
     {
-        if (supply == 0 || total == 0) return;
-        uint256 shares = uint256(assets) * supply / total;
-        assert(shares * other / supply <= assets);
+        if (supply == 0 || total == 0 || other == 0) return;
+        uint256 shares = assets * supply / total;
+        assert(shares * total / other <= assets);
     }
 }
 "#,
@@ -8875,7 +8875,7 @@ contract SymbolicBoundedComplementTest {
         );
 
         let result =
-            json_test_result(&output, "checkVaultOtherTotal(uint128,uint128,uint128,uint128)");
+            json_test_result(&output, "checkVaultOtherDivisor(uint256,uint256,uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }

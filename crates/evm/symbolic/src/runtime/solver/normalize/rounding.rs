@@ -183,10 +183,6 @@ impl ConstraintContext {
                 if dividend == large {
                     return nonzero(divisor).then_some(false);
                 }
-                let range = self.interval(divisor)?;
-                if range.min.is_zero() {
-                    return None;
-                }
                 let bounded = |dividend: &SymExpr| {
                     let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
                         return false;
@@ -196,6 +192,10 @@ impl ConstraintContext {
                     } else if right == large {
                         left
                     } else {
+                        return false;
+                    };
+                    let Some(range) = self.interval(divisor).filter(|range| !range.min.is_zero())
+                    else {
                         return false;
                     };
                     (other == divisor
