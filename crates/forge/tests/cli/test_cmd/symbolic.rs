@@ -8489,7 +8489,15 @@ contract SymbolicVestingSchedule {
         assert(uint256(total) * (t - s) / d <= total);
     }
 
-    function checkElapsedWithoutOrder(uint64 s, uint64 t) public pure {
+    function checkElapsedBeforeStart(uint256 s, uint256 d, uint64 t, uint256 total) public pure {
+        unchecked {
+            require(total <= 1 && t < 10 && s >= 10 && d > 0 && t < s + d);
+            assert(total * (t - s) / d <= total);
+        }
+    }
+
+    function checkElapsedAgainstOrder(uint64 s, uint64 t) public pure {
+        require(t <= s);
         unchecked {
             assert(uint256(t) - s <= type(uint64).max);
         }
@@ -8517,11 +8525,18 @@ contract SymbolicVestingSchedule {
 
         for signature in [
             "checkVestedPastLongerEnd(uint64,uint32,uint128,uint64)",
-            "checkElapsedWithoutOrder(uint64,uint64)",
+            "checkElapsedBeforeStart(uint256,uint256,uint64,uint256)",
+            "checkElapsedAgainstOrder(uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
-            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
-            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
         }
     }
 }

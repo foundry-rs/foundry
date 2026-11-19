@@ -596,6 +596,8 @@ pub(super) struct ConstraintContext {
     non_wrapping_products: HashSet<(SymExpr, SymExpr)>,
     /// Conjuncts of the context, which decide `ite` conditions they assert or deny.
     facts: HashSet<SymBoolExpr>,
+    /// The words each word is asserted to be at most, by a `<=` or `<` conjunct.
+    order_facts: HashMap<SymExpr, Vec<SymExpr>>,
 }
 
 #[derive(Clone, Copy)]
@@ -676,6 +678,18 @@ impl ConstraintContext {
             context.record_lower_bound_constraint(constraint);
             context.record_unsigned_lower_bound_constraint(constraint, promote_unsigned_bounds);
             context.record_zero_mul_high(constraint);
+        }
+        for fact in &context.facts {
+            let (small, large) = match fact.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => (left, right),
+                SymBoolExprKind::Not(inner)
+                    if let SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) = inner.kind() =>
+                {
+                    (right, left)
+                }
+                _ => continue,
+            };
+            context.order_facts.entry(small.clone()).or_default().push(large.clone());
         }
         // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
         // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
@@ -1484,6 +1498,11 @@ impl ConstraintContext {
         self.interval(expr).map(|interval| (interval.min, interval.max))
     }
 
+    /// Returns the words that another conjunct asserts `small` is at most, including strict `<`.
+    fn asserted_upper_bounds(&self, small: &SymExpr) -> &[SymExpr] {
+        self.order_facts.get(small).map_or(&[], Vec::as_slice)
+    }
+
     fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
         let mut intervals = HashMap::default();
         let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
@@ -1559,15 +1578,6 @@ impl ConstraintContext {
                 }
                 let left = self.interval_cached(minuend, intervals, remaining)?;
                 let right = self.interval_cached(subtrahend, intervals, remaining)?;
-                // A retained `subtrahend <= minuend` rules out wrapping.
-                if left.min < right.max
-                    && self.asserted_order(subtrahend, &|large| large == minuend)
-                {
-                    return Some(WordInterval {
-                        min: left.min.saturating_sub(right.max),
-                        max: left.max.checked_sub(right.min)?,
-                    });
-                }
                 if left.max < right.min {
                     // Every subtraction wraps exactly once, so the unsigned image is contiguous.
                     return Some(WordInterval {
@@ -1576,7 +1586,11 @@ impl ConstraintContext {
                     });
                 }
                 if left.min < right.max {
-                    return None;
+                    // An asserted `subtrahend <= minuend` rules out wrapping.
+                    return self
+                        .asserted_upper_bounds(subtrahend)
+                        .contains(minuend)
+                        .then(|| WordInterval { min: U256::ZERO, max: left.max - right.min });
                 }
                 Some(WordInterval {
                     min: left.min.checked_sub(right.max)?,
