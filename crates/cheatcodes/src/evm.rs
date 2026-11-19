@@ -43,7 +43,6 @@ use foundry_evm_core::{
 };
 use foundry_evm_traces::TraceRequirements;
 use itertools::Itertools;
-use rand::Rng;
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
@@ -353,7 +352,7 @@ impl Cheatcode for loadCall {
                 let rand_value = ccx
                     .state
                     .cached_arbitrary_storage_value(target, slot.into())
-                    .unwrap_or_else(|| ccx.state.core.rng().random());
+                    .unwrap_or_else(|| ccx.state.draw_arbitrary_storage_value(target, slot.into()));
                 ccx.state.core.arbitrary_storage.as_mut().unwrap().save(
                     ccx.evm.state_mut(),
                     target,
@@ -365,7 +364,7 @@ impl Cheatcode for loadCall {
                 // If storage slot is untouched and load from a target that copies storage from
                 // a source address with arbitrary storage, then copy existing arbitrary value.
                 // If no arbitrary value generated yet, then the random one is saved and set.
-                let rand_value = ccx.state.core.rng().random();
+                let rand_value = ccx.state.draw_arbitrary_storage_value(target, slot.into());
                 value = ccx.state.core.arbitrary_storage.as_mut().unwrap().copy(
                     ccx.evm.state_mut(),
                     target,
