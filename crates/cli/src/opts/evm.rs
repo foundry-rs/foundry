@@ -322,7 +322,8 @@ pub struct EnvArgs {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub disable_block_gas_limit: bool,
 
-    /// Whether to enable tx gas limit checks as imposed by Osaka (EIP-7825).
+    /// Whether to enable tx gas limit checks as imposed by Osaka (EIP-7825) and
+    /// Amsterdam (EIP-8037).
     #[arg(long, visible_alias = "tx-gas-limit")]
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub enable_tx_gas_limit: bool,

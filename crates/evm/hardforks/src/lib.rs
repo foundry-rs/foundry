@@ -185,7 +185,7 @@ impl FoundryHardfork {
             return Some(Self::Ethereum(fork));
         }
         #[cfg(feature = "base")]
-        if let Some(fork) = base_upgrade_from_chain_and_timestamp(chain_id, timestamp) {
+        if let Some(fork) = BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp) {
             return Some(Self::Base(fork));
         }
         #[cfg(feature = "optimism")]
@@ -755,33 +755,6 @@ pub fn ethereum_hardfork_from_block_tag(block: impl Into<BlockNumberOrTag>) -> E
     EthereumHardfork::from_mainnet_block_number(num)
 }
 
-/// Cobalt activation timestamp on Base mainnet (2026-09-30 18:00 UTC).
-#[cfg(feature = "base")]
-const BASE_MAINNET_COBALT_TIMESTAMP: u64 = 1_790_791_200;
-
-/// Cobalt activation timestamp on Base Sepolia (2026-09-23 18:00 UTC).
-#[cfg(feature = "base")]
-const BASE_SEPOLIA_COBALT_TIMESTAMP: u64 = 1_790_186_400;
-
-/// Returns the Base upgrade active on `chain_id` at `timestamp`.
-///
-/// The pinned `foundry-rs/base` snapshot leaves Cobalt unscheduled on Base mainnet and Base
-/// Sepolia, so its schedule ends at Beryl. This completes the lookup with the Cobalt activation
-/// timestamps from `base/base`, and defers to the snapshot once it schedules anything past Beryl.
-#[cfg(feature = "base")]
-pub fn base_upgrade_from_chain_and_timestamp(chain_id: u64, timestamp: u64) -> Option<BaseUpgrade> {
-    let upgrade = BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp)?;
-    let cobalt_activation = match chain_id {
-        8453 => BASE_MAINNET_COBALT_TIMESTAMP,
-        84532 => BASE_SEPOLIA_COBALT_TIMESTAMP,
-        _ => return Some(upgrade),
-    };
-    if upgrade == BaseUpgrade::Beryl && timestamp >= cobalt_activation {
-        return Some(BaseUpgrade::Cobalt);
-    }
-    Some(upgrade)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1215,11 +1188,11 @@ mod tests {
             let sepolia_config = UpgradeConfig::BASE_SEPOLIA;
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(8453, u64::MAX),
-                Some(FoundryHardfork::Base(BaseUpgrade::Cobalt))
+                Some(FoundryHardfork::Base(BaseUpgrade::Denim))
             );
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(84532, u64::MAX),
-                Some(FoundryHardfork::Base(BaseUpgrade::Cobalt))
+                Some(FoundryHardfork::Base(BaseUpgrade::Denim))
             );
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(8453, mainnet_config.base.azul.unwrap()),
@@ -1247,9 +1220,8 @@ mod tests {
 
         #[test]
         fn test_base_hardfork_activates_cobalt_on_known_chains() {
-            for (chain_id, activation) in
-                [(8453, BASE_MAINNET_COBALT_TIMESTAMP), (84532, BASE_SEPOLIA_COBALT_TIMESTAMP)]
-            {
+            // Base mainnet: 2026-09-30 18:00 UTC. Base Sepolia: 2026-09-23 18:00 UTC.
+            for (chain_id, activation) in [(8453, 1_790_791_200), (84532, 1_790_186_400)] {
                 assert_eq!(
                     FoundryHardfork::from_chain_and_timestamp(chain_id, activation - 1),
                     Some(FoundryHardfork::Base(BaseUpgrade::Beryl)),
@@ -1265,7 +1237,6 @@ mod tests {
                     Some(FoundryHardfork::Base(BaseUpgrade::Cobalt))
                 );
             }
-            assert_eq!(base_upgrade_from_chain_and_timestamp(1, u64::MAX), None);
         }
 
         #[test]

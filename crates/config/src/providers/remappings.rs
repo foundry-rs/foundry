@@ -95,10 +95,17 @@ impl Remappings {
         }
 
         if self.remappings.iter().any(|existing| {
+            let same_context = match (&existing.context, &remapping.context) {
+                (Some(existing), Some(context)) => {
+                    existing.len() == context.len() && context_starts_with(existing, context)
+                }
+                (None, None) => true,
+                _ => false,
+            };
             if remapping.name.ends_with(".sol") {
                 // For .sol files, only prevent duplicate source names in the same context
                 return existing.name == remapping.name
-                    && existing.context == remapping.context
+                    && same_context
                     && existing.path == remapping.path;
             }
 
@@ -112,8 +119,7 @@ impl Remappings {
             // the namespace.
             // Compare without one optional trailing slash so `pkg` and `pkg/` denote the same
             // alias while preserving significant repeated slashes.
-            remapping_name_is_prefix(&existing.name, &remapping.name)
-                && existing.context == remapping.context
+            remapping_name_is_prefix(&existing.name, &remapping.name) && same_context
         }) {
             return false;
         };
@@ -910,7 +916,15 @@ fn sort_by_context_specificity(remappings: &mut [Remapping]) {
             .components()
             .count()
             .cmp(&Path::new(a_context).components().count())
-            .then_with(|| a_context.cmp(b_context))
+            .then_with(|| {
+                #[cfg(windows)]
+                {
+                    // Equivalent contexts must retain declaration order before deduplication.
+                    a_context.replace('\\', "/").cmp(&b_context.replace('\\', "/"))
+                }
+                #[cfg(not(windows))]
+                a_context.cmp(b_context)
+            })
     });
 }
 
@@ -1903,7 +1917,7 @@ mod tests {
             );
             assert_eq!(
                 config.warnings[1].to_string(),
-                "Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `shared/=lib/a/src/pinned/` to your root remappings."
+                "Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Imports of `shared/` from the root or other dependencies may resolve differently. Adding `shared/=lib/a/src/pinned/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:shared/=<target>`."
             );
             assert_eq!(
                 config
@@ -1979,7 +1993,7 @@ mod tests {
                 if scoped {
                     assert_eq!(
                         config.warnings[0].to_string(),
-                        "Dependency remapping `pkg/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `pkg/=lib/a/src/` to your root remappings."
+                        "Dependency remapping `pkg/=lib/a/src/` now applies only within `lib/a/`. Imports of `pkg/` from the root or other dependencies may resolve differently. Adding `pkg/=lib/a/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:pkg/=<target>`."
                     );
                 }
                 assert!(
@@ -2131,5 +2145,31 @@ mod tests {
             );
             Ok(())
         });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn remapping_precedence_accepts_mixed_windows_separators() {
+        let declared = Remapping {
+            context: Some(r"C:\workspace\lib/a\".to_string()),
+            name: "shared/".to_string(),
+            path: "lib/a/src/pinned/".to_string(),
+        };
+        let discovered = Remapping {
+            context: Some("C:/workspace/lib/a/".to_string()),
+            name: "shared/".to_string(),
+            path: "lib/a/lib/shared/src/".to_string(),
+        };
+        let mut contextual = vec![declared.clone(), discovered.clone()];
+        sort_by_context_specificity(&mut contextual);
+        let mut remappings = Remappings::new();
+        remappings.extend(contextual);
+        assert_eq!(remappings.clone().into_inner(), vec![declared.clone()]);
+
+        // Directory boundaries and longer contexts remain significant Solidity prefixes.
+        let distinct = ["C:/workspace/lib/a", "C:/workspace/lib/abc/", "C:/workspace/lib/a/lib/x/"]
+            .map(|context| Remapping { context: Some(context.to_string()), ..discovered.clone() });
+        remappings.extend(distinct.to_vec());
+        assert_eq!(remappings.into_inner(), [vec![declared], distinct.to_vec()].concat());
     }
 }

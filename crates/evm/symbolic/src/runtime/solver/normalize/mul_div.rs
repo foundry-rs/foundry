@@ -5,11 +5,11 @@ use super::*;
 /// Newton steps that lift the `(3 * d) ^ 2` seed, an inverse modulo `2**4`, to `2**256`.
 const MIN_NEWTON_STEPS: usize = 6;
 
-/// Returns `(a, b)` when `expr` computes the high word of `a * b` from `mulmod(a, b, MAX)`.
-pub(super) fn mul_high_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
-    let SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) = expr.kind() else {
-        return None;
-    };
+/// Returns `(a, b)` when `minuend - subtrahend` is the high word of `a * b`.
+pub(super) fn mul_high_operands<'a>(
+    minuend: &'a SymExpr,
+    subtrahend: &'a SymExpr,
+) -> Option<(&'a SymExpr, &'a SymExpr)> {
     // `(mm - lo) - lt(mm, lo)`.
     if let SymExprKind::BinOp(SymBinOp::Sub, mm, lo) = minuend.kind()
         && is_less_than_word(subtrahend, mm, lo)

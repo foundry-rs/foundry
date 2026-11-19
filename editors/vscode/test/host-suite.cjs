@@ -109,6 +109,22 @@ async function run() {
   await document.save();
   assert.equal(await readFile(sourcePath, "utf8"), expected);
 
+  // VS Code registers its own save participants, including format on save, only once the
+  // workbench is restored, which can happen after this suite starts. The final newline
+  // participant is registered together with format on save, so wait for it with a plaintext
+  // probe that uses the `[plaintext]` files.insertFinalNewline workspace setting.
+  const probe = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, "save-participants.txt");
+  await writeFile(probe.fsPath, "");
+  const probeDocument = await vscode.workspace.openTextDocument(probe);
+  let probeAttempt = 0;
+  await eventually(async () => {
+    const probeEdit = new vscode.WorkspaceEdit();
+    probeEdit.replace(probe, new vscode.Range(probeDocument.positionAt(0), probeDocument.positionAt(probeDocument.getText().length)), `probe ${probeAttempt++}`);
+    assert.ok(await vscode.workspace.applyEdit(probeEdit));
+    assert.ok(await probeDocument.save());
+    return (await readFile(probe.fsPath, "utf8")).endsWith("\n");
+  }, "VS Code save participants");
+
   // A language override must suppress the legacy hook so VS Code formats only once.
   await vscode.workspace.getConfiguration().update("[solidity]", {
     "editor.formatOnSave": true,

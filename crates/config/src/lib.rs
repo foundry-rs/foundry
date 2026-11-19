@@ -610,7 +610,8 @@ pub struct Config {
     /// Whether to disable the block gas limit checks.
     pub disable_block_gas_limit: bool,
 
-    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825) and
+    /// Amsterdam (EIP-8037).
     pub enable_tx_gas_limit: bool,
 
     /// Deprecated address-label alias; use [`TracingConfig::labels`].
@@ -2435,6 +2436,17 @@ impl Config {
     /// ```
     pub fn figment_with_root(root: impl AsRef<Path>) -> Figment {
         Self::with_root(root.as_ref()).into()
+    }
+
+    /// Returns the figment of the project that contains the current directory, with `providers`.
+    ///
+    /// If the project root cannot be determined, for example because the current directory cannot
+    /// be read, extracting from the returned figment fails with that error.
+    pub fn current_project_figment(providers: FigmentProviders) -> Figment {
+        match find_project_root(None) {
+            Ok(root) => Self::with_root(&root).to_figment(providers),
+            Err(err) => Figment::from(ProjectRootErrorProvider(err)),
+        }
     }
 
     #[doc(hidden)]
@@ -10222,5 +10234,18 @@ mod tests {
             assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
             Ok(())
         });
+    }
+
+    #[test]
+    fn project_root_error_fails_extraction_after_merges() {
+        let figment = Figment::from(ProjectRootErrorProvider(io::Error::from(
+            io::ErrorKind::PermissionDenied,
+        )))
+        .merge(("eth_rpc_url", "http://localhost:8545"));
+        let err = Config::from_provider(figment).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "failed to extract foundry config:\nfoundry config error: could not determine project root: permission denied\n"
+        );
     }
 }
