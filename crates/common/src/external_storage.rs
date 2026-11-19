@@ -414,7 +414,9 @@ struct CachedStorageLayout {
 }
 
 /// Current [`CachedStorageLayout`] format.
-const CACHE_VERSION: u32 = 3;
+///
+/// Version 3 layouts may have been compiled from responses in the legacy shared mainnet cache.
+const CACHE_VERSION: u32 = 4;
 
 /// Path of the cache entry for `address`.
 fn cache_path(cache_dir: &Path, address: Address) -> PathBuf {

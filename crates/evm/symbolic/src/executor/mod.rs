@@ -192,7 +192,10 @@ impl SymbolicExecutor {
                     });
                 }
                 CallStatus::Success => {
-                    let reason = if expected.matched_any() || executor.internal_expect_revert {
+                    let reason = if expected.matched_any()
+                        || expected.deeper_frame_ran()
+                        || executor.internal_expect_revert
+                    {
                         "next call did not revert as expected"
                     } else {
                         DEPTH_REASON
@@ -203,11 +206,68 @@ impl SymbolicExecutor {
                         unmet_expected_revert: Some(reason),
                     });
                 }
+                // A frame ran deeper, so Forge's depth check passes and a matching revert is
+                // handled like a failed call below. A mismatch reverts with Forge's
+                // `CheatcodeError`, which the caller can catch. Like Forge, `vm.assumeNoRevert`
+                // handles the revert first.
+                CallStatus::Revert
+                    if expected.deeper_frame_ran() && parent.expected_revert.is_none() =>
+                {
+                    // Forge halts a constructor whose runtime is rejected, a status this arm does
+                    // not model.
+                    if outcome.state.frame.is_constructor {
+                        return Err(SymbolicError::Unsupported(
+                            "symbolic vm.expectRevert pending in a constructor",
+                        ));
+                    }
+                    let reverter = expected.reverted_by(
+                        failed_callee,
+                        outcome.state.first_failed_callee.or(failed_callee),
+                    );
+                    let constraints = parent.constraints.len();
+                    if assume_no_revert.is_some()
+                        || self.expected_revert_matches(
+                            &mut parent,
+                            &expected,
+                            reverter,
+                            &outcome.state.frame.return_data,
+                        )?
+                    {
+                        parent.expected_revert = Some(expected);
+                        parent.first_failed_callee = outcome.state.first_failed_callee;
+                    } else if parent.constraints.len() != constraints {
+                        return Err(SymbolicError::Unsupported(
+                            "ambiguous symbolic vm.expectRevert match",
+                        ));
+                    } else {
+                        const REASON: &str = "symbolic vm.expectRevert mismatch data";
+                        let return_data = &outcome.state.frame.return_data;
+                        if return_data.len_word.as_const().is_none() {
+                            return Err(SymbolicError::Unsupported(REASON));
+                        }
+                        let retdata = return_data.read_concrete(&mut self.cx, REASON)?.into();
+                        let no_contracts = None;
+                        let known_contracts = executor
+                            .cheatcodes
+                            .map_or(&no_contracts, |cheats| &cheats.config.available_artifacts);
+                        let error = expected
+                            .mismatch_error(reverter, &retdata, known_contracts)
+                            .ok_or(SymbolicError::Unsupported(REASON))?;
+                        outcome.state.frame.return_data =
+                            SymReturnData::from_concrete_bytes(&mut self.cx, error.abi_encode());
+                    }
+                }
                 CallStatus::Revert
                     if !executor.internal_expect_revert && !expected.matched_any() =>
                 {
                     outcome.state.frame.return_data =
                         error_string_return_data(&mut self.cx, DEPTH_REASON);
+                }
+                // Forge's depth check also passes for a halt, which it matches like a revert.
+                CallStatus::ExceptionalHalt if expected.deeper_frame_ran() => {
+                    return Err(SymbolicError::Unsupported(
+                        "symbolic vm.expectRevert pending at an exceptional halt",
+                    ));
                 }
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {}
             }
@@ -293,7 +353,15 @@ impl SymbolicExecutor {
                 });
             }
             match outcome.status {
-                CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
+                // Like Forge's internal expect-revert mode, a call that succeeds leaves the
+                // expectation pending for a later revert.
+                CallStatus::Success => {
+                    return Ok(JoinedCallOutcome::Success {
+                        parent,
+                        child: outcome.state,
+                        unmet_expected_revert: None,
+                    });
+                }
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
                     let reverter = expected.reverted_by(failed_callee, parent.first_failed_callee);
                     if !self.expected_revert_matches(

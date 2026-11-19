@@ -67,24 +67,13 @@ const GAS_CAP_HINT: &str = "the node may cap the gas of a whole simulation reque
 /// so that the other owners approve its transactions elsewhere.
 #[derive(Clone, Debug)]
 pub struct OfflineOwners {
-    account: Address,
-    config: ConfigurableAccountConfig,
+    pub(crate) account: Address,
+    pub(crate) config: ConfigurableAccountConfig,
     /// The local owner keys, which approve when the transactions are saved.
-    keys: Vec<ConfigurableAccountOwnerKey>,
+    pub(crate) keys: Vec<ConfigurableAccountOwnerKey>,
 }
 
 impl OfflineOwners {
-    /// Returns the owners of `account`, or `None` when the local `keys` form a quorum themselves:
-    /// they reach its threshold with at most the number of signatures Tempo accepts.
-    pub fn new(
-        account: Address,
-        config: ConfigurableAccountConfig,
-        keys: Vec<ConfigurableAccountOwnerKey>,
-    ) -> Option<Self> {
-        let owners = keys.iter().map(ConfigurableAccountOwnerKey::address).collect::<Vec<_>>();
-        (!reaches_threshold(&config, &owners)).then_some(Self { account, config, keys })
-    }
-
     /// Makes `tx` a Tempo transaction from the account. The owners that will approve are not
     /// known yet, so its gas models the largest quorum.
     fn prepare_request<N: Network>(&self, tx: &mut N::TransactionRequest)
@@ -150,8 +139,8 @@ pub(crate) struct Awaiting<'a, N: Network> {
 /// simulated in order up to the last one with offline owners, in one block or else one per block,
 /// so that each gas limit succeeds after the operations before it, which are not sent yet. Fails
 /// when one of them fails, when they fit neither in one block nor in as many blocks as a node
-/// simulates, or when one would change its account's configuration before another transaction of
-/// the account.
+/// simulates, when one would change its account's configuration before another transaction of
+/// the account, or when an account already sent the nonce planned for its first transaction.
 pub(crate) async fn prepare<'a, N: Network>(
     sequence: &ScriptSequenceKind<N>,
     sequence_index: usize,
@@ -173,12 +162,28 @@ where
     let transactions = &transactions[..=last];
 
     let mut requests = Vec::with_capacity(transactions.len());
+    let mut accounts = BTreeSet::new();
     for (position, (kind, is_fixed_gas_limit, index)) in transactions.iter().enumerate() {
         let planned = &sequence.sequences()[sequence_index].transactions[*index];
         let mut request = match kind {
             SendTransactionKind::OfflineOwners(tx, owners) => {
                 let mut tx = tx.clone();
                 owners.prepare_request::<N>(&mut tx);
+                // The account's transactions sent before its first one here have lower nonces, so
+                // a next nonce above the planned one means the account spent it elsewhere.
+                // `export` checks that it is equal once they are sent.
+                if accounts.insert(owners.account) {
+                    let nonce = tx.nonce().context("transaction is missing its planned nonce")?;
+                    let next = provider.get_transaction_count(owners.account).await?;
+                    if nonce < next {
+                        bail!(
+                            "transaction {index} of {} was planned with nonce {nonce}, but the \
+                             account already sent nonce {nonce}, as its next nonce is {next}; \
+                             broadcast the script anew with --start-fresh",
+                            owners.account
+                        );
+                    }
+                }
                 // The owners approve with the account's current configuration, which this
                 // transaction would change for the ones after it.
                 if updates_config(tx.to(), tx.input())
@@ -582,11 +587,36 @@ where
             sequence.rpc_url(sequence_index),
         )?
         .build()?;
-        for entry in &sequence.sequences()[sequence_index].awaiting_owners {
-            if !unsent.contains(&entry.index) {
+        let entries = || {
+            sequence.sequences()[sequence_index]
+                .awaiting_owners
+                .iter()
+                .filter(|entry| unsent.contains(&entry.index))
+        };
+        // The next nonce of each account, or `None` when its configuration changed. The unsent
+        // transactions of an account share one configuration, as one export saved them together
+        // and a void drops all of them, so it is read once per account.
+        let mut next_nonces = HashMap::<_, _>::default();
+        for entry in entries() {
+            if next_nonces.contains_key(&entry.account) {
                 continue;
             }
-            if let Some(reason) = void_reason(&provider, entry).await? {
+            let (_, owners_config, ..) = decode_entry(entry)?;
+            let next_nonce = if has_config(&provider, entry.account, &owners_config).await? {
+                Some(provider.get_transaction_count(entry.account).await?)
+            } else {
+                None
+            };
+            next_nonces.insert(entry.account, next_nonce);
+        }
+        // Read after the accounts, so that a deadline that passes meanwhile is not missed.
+        let latest = provider
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await?
+            .context("the latest block is missing")?;
+        for entry in entries() {
+            if let Some(reason) = void_reason(entry, next_nonces[&entry.account], latest.header())?
+            {
                 sh_warn!(
                     "{reason} after transaction {} was saved for the owners of {}, so their \
                      approvals are void; the unsent transactions are saved again for the owners \
@@ -615,18 +645,21 @@ where
 
 /// Tells why a saved transaction can no longer be sent with its owners' approvals: its
 /// account's configuration or nonce, its deadline or the base fee changed on chain.
+/// `next_nonce` is the account's next nonce, or `None` when its configuration changed, and
+/// `latest` the latest block, read after them.
 ///
 /// The account's planned nonces cannot change, so a spent nonce fails here.
-async fn void_reason(
-    provider: &RootProvider<TempoNetwork>,
+fn void_reason(
     entry: &AwaitingOwners,
+    next_nonce: Option<u64>,
+    latest: &impl BlockHeader,
 ) -> Result<Option<String>> {
-    let (tx, owners_config, ..) = decode_entry(entry)?;
+    let (tx, ..) = decode_entry(entry)?;
     let account = entry.account;
-    if !has_config(provider, account, &owners_config).await? {
+    let Some(next_nonce) = next_nonce else {
         return Ok(Some(format!("the configuration of {account} changed")));
-    }
-    if provider.get_transaction_count(account).await? > tx.nonce {
+    };
+    if next_nonce > tx.nonce {
         bail!(
             "{account} sent nonce {} after transaction {} was saved for its owners, so their \
              approvals are void, and the remaining transactions cannot be sent with the nonces \
@@ -635,16 +668,12 @@ async fn void_reason(
             entry.index
         );
     }
-    let latest = provider
-        .get_block_by_number(BlockNumberOrTag::Latest)
-        .await?
-        .context("the latest block is missing")?;
     if let Some(valid_before) = tx.valid_before
-        && latest.header().timestamp() >= valid_before.get()
+        && latest.timestamp() >= valid_before.get()
     {
         return Ok(Some(format!("its deadline {valid_before} passed")));
     }
-    if let Some(base_fee) = latest.header().base_fee_per_gas()
+    if let Some(base_fee) = latest.base_fee_per_gas()
         && u128::from(base_fee) > tx.max_fee_per_gas
     {
         return Ok(Some(format!(
@@ -770,54 +799,13 @@ where
     }
     lines.push(
         "\nEach owner signs every digest without hashing it again, with `cast wallet sign \
-         --no-hash <DIGEST>` and their wallet options, or with a passkey: a WebAuthn assertion \
-         whose challenge is the digest, saved as JSON with the credential's public key. Then send \
+         --no-hash <DIGEST>` and their wallet options (`--p256 --private-key <KEY>` for a raw \
+         P-256 owner), or with a passkey: a WebAuthn assertion whose challenge is the digest, \
+         saved as JSON with the credential's public key. Then send \
          the transactions by running the same command with `--resume` instead of `--broadcast`, \
          adding `--tempo.owner-signature <SIGNATURE>` for each approval. Approvals are kept once \
          given, so they can be collected over several runs."
             .to_string(),
     );
     Ok(lines.join("\n"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_signer_local::PrivateKeySigner;
-    use foundry_wallets::WalletSigner;
-    use std::sync::Arc;
-    use tempo_primitives::transaction::ConfigurableAccountOwner;
-
-    /// Nine local weight-1 owners reach threshold 9 by weight, but Tempo accepts at most eight
-    /// signatures, so the offline weight-9 owner approves.
-    #[test]
-    fn local_owners_beyond_signature_limit_are_offline() {
-        let signers = (1..=10u8)
-            .map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap())
-            .collect::<Vec<_>>();
-        let mut owners = signers
-            .iter()
-            .enumerate()
-            .map(|(i, signer)| ConfigurableAccountOwner {
-                owner: signer.address(),
-                weight: if i == 9 { 9 } else { 1 },
-            })
-            .collect::<Vec<_>>();
-        owners.sort_by_key(|owner| owner.owner);
-        let config =
-            ConfigurableAccountConfig { salt: B256::ZERO, version: 0, threshold: 9, owners };
-        let keys = |count: usize| {
-            signers[..count]
-                .iter()
-                .map(|signer| {
-                    ConfigurableAccountOwnerKey::Wallet(Arc::new(WalletSigner::Local(
-                        signer.clone(),
-                    )))
-                })
-                .collect::<Vec<_>>()
-        };
-        let account = Address::repeat_byte(0x42);
-        assert!(OfflineOwners::new(account, config.clone(), keys(9)).is_some());
-        assert!(OfflineOwners::new(account, config, keys(10)).is_none());
-    }
 }

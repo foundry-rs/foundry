@@ -1,4 +1,5 @@
 use figment::Profile;
+use foundry_compilers::artifacts::remappings::RelativeRemapping;
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf};
 
@@ -70,6 +71,14 @@ pub enum Warning {
         /// The selected profile that does not exist
         profile: String,
     },
+    /// A formerly global dependency declaration now applies only within its owner, while root
+    /// imports of its alias still resolve, to another target.
+    ScopedDependencyRemapping {
+        /// The original alias and target with their generated owner context.
+        remapping: RelativeRemapping,
+        /// Where root imports of the alias resolve now, relative to the root.
+        resolved: String,
+    },
 }
 
 impl fmt::Display for Warning {
@@ -121,6 +130,19 @@ impl fmt::Display for Warning {
                 write!(
                     f,
                     "Found unknown `{key}` config key in section `{section}` defined in {source}."
+                )
+            }
+            Self::ScopedDependencyRemapping { remapping, resolved } => {
+                let mut global = remapping.clone();
+                let context = global.context.take().unwrap_or_default();
+                let alias = &global.name;
+                write!(
+                    f,
+                    "Dependency remapping `{global}` now applies only within `{context}`. Root \
+                     imports of `{alias}` now resolve to `{resolved}` instead. Adding `{global}` \
+                     to your root remappings restores the previous resolution for the whole \
+                     project, including other dependencies; to keep a dependency's own target, \
+                     also add `<dependency>/:{alias}=<target>`."
                 )
             }
             Self::UnknownProfile { profile } => {

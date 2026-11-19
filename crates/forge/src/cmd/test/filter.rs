@@ -246,6 +246,28 @@ impl ProjectPathsAwareFilter {
         };
         normalize(failure_path) == normalize(contract_path)
     }
+
+    /// Returns whether `path` matches the CLI path filters and lies inside the project root,
+    /// outside its libraries and `node_modules`, but in none of the roots that test discovery
+    /// runs.
+    pub fn is_outside_test_roots(&self, path: &Path) -> bool {
+        let relative_path = path.strip_prefix(&self.paths.root).unwrap_or(path);
+        let path = normalize_path(&self.paths.root.join(path));
+        self.args_filter.matches_path(relative_path)
+            && path.strip_prefix(&self.paths.root).is_ok_and(|project_path| {
+                !project_path.components().any(|component| component.as_os_str() == "node_modules")
+            })
+            && !self.paths.has_library_ancestor(&path)
+            && !self.is_in_test_roots(&path)
+    }
+
+    /// Returns whether the normalized absolute `path` is under a root that test discovery runs.
+    fn is_in_test_roots(&self, path: &Path) -> bool {
+        [&self.paths.sources, &self.paths.tests, &self.paths.scripts]
+            .into_iter()
+            .chain(&self.external_compiler_roots)
+            .any(|dir| path.starts_with(self.paths.root.join(dir)))
+    }
 }
 
 impl FileFilter for ProjectPathsAwareFilter {
@@ -276,11 +298,7 @@ impl TestFilter for ProjectPathsAwareFilter {
         // Imported dependencies are compiled too, but only project files may run as test suites.
         // Normalize `..` without resolving links, which the compiler's walker preserves.
         let path = normalize_path(&self.paths.root.join(path));
-        [&self.paths.sources, &self.paths.tests, &self.paths.scripts]
-            .into_iter()
-            .chain(&self.external_compiler_roots)
-            .any(|dir| path.starts_with(self.paths.root.join(dir)))
-            && !self.paths.has_library_ancestor(&path)
+        self.is_in_test_roots(&path) && !self.paths.has_library_ancestor(&path)
     }
 
     fn matches_test_function_kind_in_contract(

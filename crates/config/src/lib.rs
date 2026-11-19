@@ -234,10 +234,15 @@ pub struct Config {
     pub out: PathBuf,
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
-    /// Remappings to use for this repo
+    /// Remappings to use for this repo.
     #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
+    ///
+    /// Defaults to `true`. Dependency declarations that conflict with root paths or other
+    /// dependency mappings are scoped to their owner, with a configuration warning. Unique aliases
+    /// remain global. Dependencies with source directories outside their package retain their
+    /// existing declaration scope.
     pub auto_detect_remappings: bool,
     /// Library addresses to link.
     ///
@@ -605,7 +610,8 @@ pub struct Config {
     /// Whether to disable the block gas limit checks.
     pub disable_block_gas_limit: bool,
 
-    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825) and
+    /// Amsterdam (EIP-8037).
     pub enable_tx_gas_limit: bool,
 
     /// Deprecated address-label alias; use [`TracingConfig::labels`].
@@ -1202,6 +1208,19 @@ impl Config {
                     .unwrap_or_else(|_| Cow::Borrowed(&self.libs)),
                 root,
                 remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+                project_paths: [("src", &self.src), ("test", &self.test), ("script", &self.script)]
+                    .into_iter()
+                    .map(|(key, default)| {
+                        figment.extract_inner::<PathBuf>(key).unwrap_or_else(|_| default.clone())
+                    })
+                    .collect(),
+                include_paths: figment
+                    .extract_inner::<Vec<PathBuf>>("include_paths")
+                    .unwrap_or_else(|_| self.include_paths.clone()),
+                warnings: match figment.extract_inner::<Vec<Warning>>("__warnings") {
+                    Err(error) if error.missing() => Ok(Vec::new()),
+                    warnings => warnings,
+                },
             };
             figment = figment.merge(remappings);
         }
@@ -2420,6 +2439,17 @@ impl Config {
     /// ```
     pub fn figment_with_root(root: impl AsRef<Path>) -> Figment {
         Self::with_root(root.as_ref()).into()
+    }
+
+    /// Returns the figment of the project that contains the current directory, with `providers`.
+    ///
+    /// If the project root cannot be determined, for example because the current directory cannot
+    /// be read, extracting from the returned figment fails with that error.
+    pub fn current_project_figment(providers: FigmentProviders) -> Figment {
+        match find_project_root(None) {
+            Ok(root) => Self::with_root(&root).to_figment(providers),
+            Err(err) => Figment::from(ProjectRootErrorProvider(err)),
+        }
     }
 
     #[doc(hidden)]
@@ -5730,7 +5760,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.set_env(
                 "FOUNDRY_LIBRARIES",
-                "[src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222]",
+                " [src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222,]\n",
             );
             let config = Config::load().unwrap();
 
@@ -5756,6 +5786,31 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn can_parse_empty_libraries() {
+        for env_var in ["DAPP_LIBRARIES", "FOUNDRY_LIBRARIES"] {
+            for value in ["", "[]", "[ ]", "[\t\n]", " [,]\n"] {
+                figment::Jail::expect_with(|jail| {
+                    jail.create_file(
+                        "foundry.toml",
+                        r#"
+                        [profile.default]
+                        libraries = ["src/A.sol:A:0x1111111111111111111111111111111111111111"]
+                        "#,
+                    )?;
+                    assert_eq!(Config::load().unwrap().libraries.len(), 1);
+
+                    jail.set_env(env_var, value);
+                    let config = Config::load().unwrap();
+                    assert!(config.libraries.is_empty(), "{env_var}={value:?}");
+                    assert!(config.parsed_libraries().unwrap().libs.is_empty());
+
+                    Ok(())
+                });
+            }
+        }
     }
 
     #[test]
@@ -9906,6 +9961,7 @@ mod tests {
                 report = ["summary", "lcov"]
                 lcov_version = "2.2.0"
                 ir_minimum = true
+                keep_optimizer = true
                 report_file = "out/lcov.info"
                 include_libs = true
                 exclude_tests = true
@@ -9919,6 +9975,7 @@ mod tests {
             );
             assert_eq!(config.coverage.lcov_version, semver::Version::new(2, 2, 0));
             assert!(config.coverage.ir_minimum);
+            assert!(config.coverage.keep_optimizer);
             assert_eq!(
                 config.coverage.report_file.as_deref(),
                 Some(std::path::Path::new("out/lcov.info"))
@@ -10180,5 +10237,18 @@ mod tests {
             assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
             Ok(())
         });
+    }
+
+    #[test]
+    fn project_root_error_fails_extraction_after_merges() {
+        let figment = Figment::from(ProjectRootErrorProvider(io::Error::from(
+            io::ErrorKind::PermissionDenied,
+        )))
+        .merge(("eth_rpc_url", "http://localhost:8545"));
+        let err = Config::from_provider(figment).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "failed to extract foundry config:\nfoundry config error: could not determine project root: permission denied\n"
+        );
     }
 }

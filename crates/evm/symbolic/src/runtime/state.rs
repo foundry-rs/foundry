@@ -1,7 +1,11 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
 use evm2::interpreter::gas::CALL_STIPEND;
-use foundry_evm::{core::backend::GLOBAL_FAIL_SLOT, inspectors::cheatcodes::ExpectedCallType};
+use foundry_common::contracts::ContractsByArtifact;
+use foundry_evm::{
+    core::backend::GLOBAL_FAIL_SLOT,
+    inspectors::cheatcodes::{Error, ExpectedCallType, expect_revert_mismatch},
+};
 use std::collections::BTreeSet;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
@@ -46,6 +50,10 @@ pub(crate) struct PathState {
     /// Backward jumps taken per destination and return addresses on the stack.
     pub(crate) loop_jumps: HashMap<(usize, Vec<usize>), u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
+    /// Whether a calling frame has a pending `vm.expectRevert`, which Forge tracks globally, so
+    /// this frame cannot set another. Storage hook callbacks start without it, as Forge sets the
+    /// pending expectation aside while they run.
+    pub(crate) outer_expected_revert: bool,
     /// Account of the first call, or reverting CREATE, that failed in or below this frame since
     /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
     pub(crate) first_failed_callee: Option<Address>,
@@ -54,6 +62,8 @@ pub(crate) struct PathState {
     pub(crate) first_reverted_callee: Option<Address>,
     /// Assertion cheatcodes set this even when their revert is caught by the handler.
     pub(crate) assertion_failed: bool,
+    /// Pc of the memory access beyond `memory_limit` or the host word that halted this path.
+    pub(crate) memory_halt_pc: Option<usize>,
     /// Set when a top-level revert fails the path through its data or a failed `vm.assert*`, or
     /// when the path ends with the global fail slot set.
     pub(crate) failed_at_end: bool,
@@ -139,9 +149,11 @@ impl PathState {
             needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
+            outer_expected_revert: false,
             first_failed_callee: None,
             first_reverted_callee: None,
             assertion_failed: false,
+            memory_halt_pc: None,
             failed_at_end: false,
             assume_no_revert_next_call: None,
             expected_emit: None,
@@ -314,6 +326,7 @@ impl PathState {
         // semantics unless the callee sets its own prank.
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
+        child.outer_expected_revert = self.outer_expected_revert || self.expected_revert.is_some();
         child.expected_revert = None;
         child.first_failed_callee = None;
         child.first_reverted_callee = None;
@@ -335,6 +348,7 @@ impl PathState {
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
         let mut child = self.child(frame);
         child.storage_hook_active = true;
+        child.outer_expected_revert = false;
         child.recorded_logs = None;
         child.access_record = None;
         child.expected_emit = None;
@@ -595,6 +609,7 @@ impl PathState {
                 | SymExprKind::Keccak { .. }
                 | SymExprKind::Hash { .. } => None,
                 SymExprKind::Not(_) => None,
+                SymExprKind::TernOp(SymTernOp::MulDiv, _, _, _) => None,
                 SymExprKind::TernOp(_, _, _, modulus) => match modulus.as_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
                     Some(modulus) => usize::try_from(modulus - U256::ONE).ok(),
@@ -692,7 +707,8 @@ impl PathState {
                     | SymBinOp::SRem
                     | SymBinOp::Or
                     | SymBinOp::Xor
-                    | SymBinOp::Sar => None,
+                    | SymBinOp::Sar
+                    | SymBinOp::MulHigh => None,
                 },
             }
         });
@@ -1440,12 +1456,15 @@ pub(crate) struct ExpectedRevert {
     reverter: Option<SymExpr>,
     count: u64,
     remaining: u64,
+    /// Whether a frame ran below the frame that set the expectation without consuming it, which
+    /// passes Forge's `max_depth > depth` check when that frame reverts.
+    deeper_frame_ran: bool,
 }
 
 impl ExpectedRevert {
     pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, count: u64) -> Self {
         let count = count.max(1);
-        Self { data, reverter, count, remaining: count }
+        Self { data, reverter, count, remaining: count, deeper_frame_ran: false }
     }
 
     pub(crate) const fn has_reverter(&self) -> bool {
@@ -1536,6 +1555,42 @@ impl ExpectedRevert {
             }
         }
         Some(SymBoolExpr::and(cx, conditions))
+    }
+
+    /// Returns the error Forge reverts with when a revert of `retdata`, first failing in
+    /// `reverted_by`, does not meet this expectation, or `None` when it does or the expectation
+    /// is symbolic.
+    pub(crate) fn mismatch_error(
+        &self,
+        reverted_by: Option<Address>,
+        retdata: &Bytes,
+        known_contracts: &Option<ContractsByArtifact>,
+    ) -> Option<Error> {
+        let (reason, partial_match) = match &self.data {
+            ExpectedRevertData::Any => (None, false),
+            ExpectedRevertData::Prefix(data) => (Some(data.as_concrete_slice()?), true),
+            ExpectedRevertData::Exact(data) => (Some(data.as_concrete_slice()?), false),
+        };
+        let reverter = match &self.reverter {
+            Some(reverter) => Some(word_to_address(reverter.as_const()?)),
+            None => None,
+        };
+        expect_revert_mismatch(
+            reason,
+            partial_match,
+            reverter,
+            reverted_by,
+            retdata,
+            known_contracts,
+        )
+    }
+
+    pub(crate) const fn mark_deeper_frame_ran(&mut self) {
+        self.deeper_frame_ran = true;
+    }
+
+    pub(crate) const fn deeper_frame_ran(&self) -> bool {
+        self.deeper_frame_ran
     }
 }
 
@@ -1803,6 +1858,22 @@ impl FunctionMock {
 
     pub(crate) const fn target(&self) -> Address {
         self.target
+    }
+
+    /// The condition for this mock to match a call whose code address is `code_address`, with
+    /// `calldata` matching its data in full or as the selector.
+    pub(crate) fn code_match_condition(
+        &self,
+        cx: &mut SymCx,
+        code_address: &SymExpr,
+        calldata: &SymBytes,
+    ) -> Option<SymBoolExpr> {
+        if self.data.len() != calldata.len() && self.data.len() != 4 {
+            return None;
+        }
+        let data_condition = calldata.prefix_condition(cx, &self.data)?;
+        let callee_condition = SymBoolExpr::eq(cx, self.callee.clone(), code_address.clone());
+        Some(SymBoolExpr::and(cx, vec![callee_condition, data_condition]))
     }
 
     pub(crate) fn match_condition(
@@ -2395,34 +2466,42 @@ impl SymbolicWorld {
             .collect()
     }
 
+    /// Returns the storage values of `model` at the slots replay applies. With `reject_aliases`,
+    /// symbolic keys that resolve to one slot but need different values are an error; otherwise
+    /// the first value wins.
     pub(crate) fn replay_storage_assignments(
         &self,
         model: &SymbolicModel,
+        reject_aliases: bool,
     ) -> Result<Vec<SymbolicStorageAssignment>, SymbolicError> {
         let mut assignments = std::collections::BTreeMap::<(Address, U256), U256>::new();
+        let mut assign = |address, slot, value, reject_conflict: bool| match assignments
+            .entry((address, slot))
+        {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(value);
+                Ok(())
+            }
+            std::collections::btree_map::Entry::Occupied(entry)
+                if *entry.get() == value || !reject_conflict =>
+            {
+                Ok(())
+            }
+            std::collections::btree_map::Entry::Occupied(_) => Err(SymbolicError::Solver(
+                "conflicting symbolic storage replay assignments".to_string(),
+            )),
+        };
         for (symbol, slots) in &self.replay_storage_slots {
             let Some(value) = model.get(symbol).copied() else { continue };
             for slot in slots {
-                match assignments.entry((slot.address, slot.slot)) {
-                    std::collections::btree_map::Entry::Vacant(entry) => {
-                        entry.insert(value);
-                    }
-                    std::collections::btree_map::Entry::Occupied(entry)
-                        if *entry.get() == value => {}
-                    std::collections::btree_map::Entry::Occupied(_) => {
-                        return Err(SymbolicError::Solver(
-                            "conflicting symbolic storage replay assignments".to_string(),
-                        ));
-                    }
-                }
+                assign(slot.address, slot.slot, value, true)?;
             }
         }
-        // Replay validates aliases between symbolic keys that take the same concrete value.
         for (symbol, reads) in &self.replay_symbolic_storage_keys {
             let Some(value) = model.get(symbol).copied() else { continue };
             for (address, key) in reads {
                 if let Some(slot) = key.eval_model_if_complete(model)? {
-                    assignments.entry((*address, slot)).or_insert(value);
+                    assign(*address, slot, value, reject_aliases)?;
                 }
             }
         }
@@ -2701,8 +2780,10 @@ impl SymbolicWorld {
                 self.record_replay_storage_slot(symbol, source, slot);
                 self.record_replay_storage_slot(symbol, address, slot);
             }
-        } else if self.arbitrary_storage_all && copied_source.is_none() {
-            // Generic storage replays reads at symbolic keys too.
+        } else if copied_source.is_none()
+            && (self.arbitrary_storage_all || overwrite_arbitrary_storage == Some(true))
+        {
+            // Storage that ignores setUp values replays reads at symbolic keys too.
             self.record_replay_symbolic_storage_key(symbol, address, key);
         }
         let value = SymExpr::get_var(cx, symbol);

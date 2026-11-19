@@ -2777,3 +2777,241 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
         }
     }
 }
+
+#[cfg(feature = "monad")]
+#[forgetest]
+fn monad_isolated_calls_preserve_execution_gas(prj: _, cmd: _) {
+    prj.add_test(
+        "MonadGas.t.sol",
+        r#"
+contract MonadGasChild {
+    function noop() external pure {}
+    function fail() external pure { revert(); }
+}
+
+contract MonadGasTest {
+    function test_repeated_calls_and_creates() public {
+        uint256 before = gasleft();
+        for (uint256 i; i < 3; ++i) {
+            MonadGasChild child = new MonadGasChild();
+            child.noop();
+            try child.fail() { revert("expected revert"); } catch {}
+        }
+        require(gasleft() > before / 2, "receipt charge consumed parent gas");
+    }
+}
+"#,
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        cmd.forge_fuse()
+            .args(["test", "--network", "monad", "--mc", "MonadGasTest", "--gas-limit", "10000000"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadGas.t.sol:MonadGasTest
+[PASS] test_repeated_calls_and_creates() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[cfg(feature = "monad")]
+#[forgetest_init]
+fn monad_storage_warmth_cheatcodes(prj: _, cmd: _) {
+    prj.add_test(
+        "MonadStorageWarmth.t.sol",
+        include_str!("../../fixtures/MonadStorageWarmth.t.sol"),
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.hardfork = Some("monad:MonadTen".parse().unwrap());
+            config.isolate = isolate;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--network", "monad", "--mc", "MonadStorageWarmthTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 12 tests for test/MonadStorageWarmth.t.sol:MonadStorageWarmthTest
+[PASS] test_arbitrary_storage_retains_page_warmth() ([GAS])
+[PASS] test_cool_clears_loaded_pages() ([GAS])
+[PASS] test_copy_storage_retains_native_page_warmth() ([GAS])
+[PASS] test_explicit_slot_warmth_updates_page() ([GAS])
+[PASS] test_isolation_resets_native_page_warmth() ([GAS])
+[PASS] test_isolation_resets_page_write_charges() ([GAS])
+[PASS] test_load_warms_only_its_page() ([GAS])
+[PASS] test_snapshot_restores_page_warmth() ([GAS])
+[PASS] test_store_preserves_first_write_charge() ([GAS])
+[PASS] test_store_seeds_warm_pages() ([GAS])
+[PASS] test_store_warmth_reverts_with_frame() ([GAS])
+[PASS] test_warmth_preserves_write_and_growth_accounting() ([GAS])
+Suite result: ok. 12 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+
+    for hardfork in ["monad:MonadNine", "prague"] {
+        prj.update_config(|config| config.hardfork = Some(hardfork.parse().unwrap()));
+        let network = if hardfork == "prague" { "ethereum" } else { "monad" };
+        cmd.forge_fuse()
+            .args(["test", "--network", network, "--mc", "StorageSlotWarmthTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadStorageWarmth.t.sol:StorageSlotWarmthTest
+[PASS] test_store_retains_slot_warmth_before_monad_ten() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[forgetest_init]
+fn isolated_calls_retain_calldata_floor(prj: _, cmd: _) {
+    prj.add_test(
+        "IsolatedFloor.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract IsolatedFloorTest is Test {
+    address constant TARGET = address(0xBEEF1);
+
+    function setUp() public {
+        vm.etch(TARGET, hex"00");
+    }
+
+    function test_calldata_floor_with_sufficient_gas() public {
+        checkCalldataFloor(100_000);
+    }
+
+    function test_calldata_floor_with_tight_gas() public {
+        checkCalldataFloor(1_000);
+    }
+
+    function checkCalldataFloor(uint256 gasLimit) internal {
+        bytes memory data = new bytes(1_000);
+        for (uint256 i; i < data.length; ++i) data[i] = 0x01;
+        (bool success,) = TARGET.call{gas: gasLimit}(data);
+        assertTrue(success);
+        assertEq(vm.snapshotGasLastCall("calldataFloor"), 61_000);
+    }
+}
+"#,
+    );
+    for (network, hardfork) in [
+        ("ethereum", "prague"),
+        #[cfg(feature = "monad")]
+        ("monad", "monad:MonadTen"),
+    ] {
+        prj.update_config(|config| {
+            config.evm_version = EvmVersion::Prague;
+            config.hardfork = Some(hardfork.parse().unwrap());
+            config.isolate = true;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--network", network, "--mc", "IsolatedFloorTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/IsolatedFloor.t.sol:IsolatedFloorTest
+[PASS] test_calldata_floor_with_sufficient_gas() ([GAS])
+[PASS] test_calldata_floor_with_tight_gas() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[cfg(feature = "monad")]
+#[forgetest_init]
+async fn monad_storage_warmth_survives_fork_switch(prj: _, cmd: _) {
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_monad()).await;
+    prj.add_test(
+        "MonadStorageWarmth.t.sol",
+        include_str!("../../fixtures/MonadStorageWarmth.t.sol"),
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.hardfork = Some("monad:MonadTen".parse().unwrap());
+            config.isolate = isolate;
+        });
+        cmd.forge_fuse().env("MONAD_WARMTH_RPC", handle.http_endpoint());
+        cmd.args(["test", "--network", "monad", "--mc", "MonadForkStorageWarmthTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadStorageWarmth.t.sol:MonadForkStorageWarmthTest
+[PASS] test_fork_switch_retains_persistent_page_warmth() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+// Test transactions enforce Amsterdam's EIP-8037 total gas cap only with `enable_tx_gas_limit`.
+#[forgetest]
+fn test_amsterdam_tx_total_gas_cap(prj: _, cmd: _) {
+    prj.add_test(
+        "TxTotalGasCap.t.sol",
+        r#"
+interface Vm {
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+}
+
+contract TxTotalGasCapTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_over_tx_total_gas_cap() public view {
+        uint256 start = gasleft();
+        // Expanding memory to 48 MB costs more than 2^32 - 1 gas.
+        assembly {
+            mstore(48000000, 1)
+        }
+        require(start - gasleft() > type(uint32).max, "used too little gas");
+    }
+
+    // Signed transactions keep the spec's caps.
+    function test_execute_transaction_keeps_tx_total_gas_cap() public {
+        // Legacy call to 0xdead with a 2^32 gas limit, signed for chain 31337 by the first anvil key:
+        // cast mktx --legacy --chain 31337 --nonce 0 --gas-price 1 --gas-limit 4294967296
+        //   --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+        //   0x000000000000000000000000000000000000dEaD
+        try vm.executeTransaction(
+            hex"f864800185010000000094000000000000000000000000000000000000dead808082f4f6a046c7ace55fa7045f4c340d19623983d1d82aea7b644707759ce1bab3fe5bba33a073747c4b28bec5df83d8fb254b4914e4bf94270b277bec1990980289b1340812"
+        ) {
+            revert("executed over the cap");
+        } catch (bytes memory reason) {
+            require(keccak256(reason) == keccak256(abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.executeTransaction: transaction execution failed: transaction validation error: transaction gas limit (4294967296) is greater than the cap (4294967295)"
+            )), "wrong error");
+        }
+    }
+}
+"#,
+    );
+
+    prj.update_config(|config| {
+        config.hardfork = Some("amsterdam".parse().unwrap());
+        config.gas_limit = (1u64 << 33).into();
+    });
+    cmd.args(["test", "--mc", "TxTotalGasCapTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/TxTotalGasCap.t.sol:TxTotalGasCapTest
+[PASS] test_execute_transaction_keeps_tx_total_gas_cap() ([GAS])
+[PASS] test_over_tx_total_gas_cap() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    prj.update_config(|config| config.enable_tx_gas_limit = true);
+    cmd.forge_fuse().args(["test", "--mc", "TxTotalGasCapTest"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/TxTotalGasCap.t.sol:TxTotalGasCapTest
+[FAIL: EVM error; transaction validation error: transaction [GAS_LIMIT] is greater than the cap (4294967295)] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

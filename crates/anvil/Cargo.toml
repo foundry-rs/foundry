@@ -58,10 +58,11 @@ tempo-dkg-onchain-artifacts.workspace = true
 # Base
 base-common-chains = { workspace = true, optional = true, features = ["std"] }
 base-common-consensus = { workspace = true, optional = true, features = ["k256", "serde", "std"] }
-base-common-eip8130 = { workspace = true, optional = true, features = ["std"] }
+base-common-base-tx = { workspace = true, optional = true, features = ["std"] }
 base-common-genesis = { workspace = true, optional = true, features = ["std"] }
-base-common-rpc-types = { workspace = true, optional = true, features = ["eip8130", "serde", "std"] }
+base-common-rpc-types = { workspace = true, optional = true, features = ["base-tx", "serde", "std"] }
 base-consensus-upgrades = { workspace = true, optional = true, features = ["std"] }
+base-execution-base-tx = { workspace = true, optional = true }
 base-protocol = { workspace = true, optional = true, features = ["std"] }
 
 # alloy
@@ -157,10 +158,11 @@ monad = [
 base = [
     "dep:base-common-chains",
     "dep:base-common-consensus",
-    "dep:base-common-eip8130",
+    "dep:base-common-base-tx",
     "dep:base-common-genesis",
     "dep:base-common-rpc-types",
     "dep:base-consensus-upgrades",
+    "dep:base-execution-base-tx",
     "dep:base-protocol",
     "dep:op-alloy-consensus",
     "dep:base-evm2",

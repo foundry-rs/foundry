@@ -2,7 +2,7 @@
 
 use crate::eth::backend::db::{AccountInfo, Bytecode, DatabaseResult, Db};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, KECCAK256_EMPTY, U256};
+use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
 
 /// Genesis settings
 #[derive(Clone, Debug, Default)]
@@ -43,6 +43,14 @@ impl GenesisConfig {
             }
         }
         Ok(())
+    }
+
+    /// Returns whether the `genesis.json` alloc sets storage `slot` of `address`.
+    pub fn allocates_storage(&self, address: Address, slot: U256) -> bool {
+        self.genesis_init
+            .as_ref()
+            .and_then(|genesis| genesis.alloc.get(&address)?.storage.as_ref())
+            .is_some_and(|storage| storage.contains_key(&B256::from(slot)))
     }
 
     /// Converts a [`GenesisAccount`] to an [`AccountInfo`]

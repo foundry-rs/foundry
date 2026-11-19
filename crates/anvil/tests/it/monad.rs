@@ -1,6 +1,6 @@
 use alloy_consensus::{
-    SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559, TxLegacy,
-    transaction::TxEip7702,
+    Receipt, ReceiptEnvelope, SidecarBuilder, SignableTransaction, SimpleCoder, Transaction,
+    TxEip1559, TxLegacy, TxType, Typed2718, proofs::calculate_receipt_root, transaction::TxEip7702,
 };
 use alloy_eips::{
     calc_next_block_base_fee,
@@ -16,18 +16,22 @@ use alloy_provider::{
     ext::{DebugApi, TraceApi},
 };
 use alloy_rpc_types::{
-    AccessList, AccessListItem, Authorization, BlockId, BlockNumberOrTag, Index,
+    AccessList, AccessListItem, Authorization, BlockId, BlockNumberOrTag, BlockOverrides, Index,
     TransactionRequest,
     anvil::Forking,
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverride},
     trace::{
-        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
+        geth::{
+            GethDebugBuiltInTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions,
+            GethTrace,
+        },
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{Action, TraceResults, TraceType},
     },
 };
 use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_sol_types::{SolCall, SolEvent};
@@ -149,7 +153,8 @@ async fn monad_ten_deduplicates_access_list_storage_pages() {
         api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_access_list_probe_code(2, 1))
             .await
             .unwrap();
-        let same_page = provider.create_access_list(&storage_gas_probe_call()).await.unwrap();
+        let request = storage_gas_probe_call().with_gas_limit(100_000);
+        let same_page = provider.create_access_list(&request).await.unwrap();
         assert_eq!(
             same_page.access_list,
             AccessList::from(vec![AccessListItem {
@@ -157,11 +162,15 @@ async fn monad_ten_deduplicates_access_list_storage_pages() {
                 storage_keys: expected_same_page_keys,
             }])
         );
+        let same_page_estimate = provider
+            .estimate_gas(request.clone().with_access_list(same_page.access_list))
+            .await
+            .unwrap();
 
         api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_access_list_probe_code(129, 1))
             .await
             .unwrap();
-        let different_page = provider.create_access_list(&storage_gas_probe_call()).await.unwrap();
+        let different_page = provider.create_access_list(&request).await.unwrap();
         assert_eq!(
             different_page.access_list,
             AccessList::from(vec![AccessListItem {
@@ -169,7 +178,14 @@ async fn monad_ten_deduplicates_access_list_storage_pages() {
                 storage_keys: vec![one, page_one],
             }])
         );
+        let different_page_estimate = provider
+            .estimate_gas(request.with_access_list(different_page.access_list))
+            .await
+            .unwrap();
+        assert_eq!(different_page_estimate - same_page_estimate, gas_delta);
         assert_eq!(different_page.gas_used - same_page.gas_used, U256::from(gas_delta));
+        assert_eq!(same_page.gas_used, U256::from(same_page_estimate));
+        assert_eq!(different_page.gas_used, U256::from(different_page_estimate));
     }
 }
 
@@ -2622,4 +2638,351 @@ fn large_contract_init_code(runtime_len: usize) -> Bytes {
     code.extend_from_slice(&[0x60, 0x00, 0xf3]);
     code.resize(HEADER_LEN + runtime_len as usize, 0);
     Bytes::from(code)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_estimates_consumption_and_receipts_charge_the_limit() {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // PUSH0; POP; STOP consumes four gas beyond the transaction's intrinsic cost.
+    api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, bytes!("5f5000")).await.unwrap();
+    for limit in [100_000, 1_000_000] {
+        let request = storage_gas_probe_call().with_from(sender).with_gas_limit(limit);
+        assert_eq!(provider.estimate_gas(request.clone()).await.unwrap(), 21_004);
+        let access_list = provider.create_access_list(&request).await.unwrap();
+        assert_eq!(access_list.error, None);
+        assert!(access_list.access_list.is_empty());
+        assert_eq!(access_list.gas_used, U256::from(21_004));
+        let receipt =
+            provider.send_transaction(request).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.gas_used(), limit);
+        let block =
+            provider.get_block_by_hash(receipt.block_hash().unwrap()).await.unwrap().unwrap();
+        assert_eq!(block.header.gas_used, limit);
+    }
+
+    // Access-list gas still reports consumption for reverted calls.
+    api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, bytes!("5f5ffd")).await.unwrap();
+    for limit in [100_000, 1_000_000] {
+        let request = storage_gas_probe_call().with_from(sender).with_gas_limit(limit);
+        let access_list = provider.create_access_list(&request).await.unwrap();
+        assert_eq!(access_list.error.as_deref(), Some("execution reverted"));
+        assert_eq!(access_list.gas_used, U256::from(21_004));
+    }
+
+    for code in [bytes!("5f5ffd"), bytes!("fe")] {
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, code).await.unwrap();
+        let receipt = provider
+            .send_transaction(storage_gas_probe_call().with_from(sender).with_gas_limit(100_000))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(!receipt.status());
+        assert_eq!(receipt.gas_used(), 100_000);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_simulate_reports_charged_gas() {
+    const BLOCK_GAS: u64 = 30_000_000;
+    const GWEI: u128 = 1_000_000_000;
+    let config = NodeConfig::test_monad().with_gas_limit(Some(BLOCK_GAS)).with_base_fee(Some(0));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let call = |to, gas: Option<u64>| {
+        let request = TransactionRequest::default().from(sender).to(to);
+        match gas {
+            Some(gas) => request.gas_limit(gas),
+            None => request,
+        }
+    };
+    let block = |gas_limit: Option<u64>, calls: Vec<TransactionRequest>| SimBlock {
+        block_overrides: gas_limit
+            .map(|gas_limit| BlockOverrides { gas_limit: Some(gas_limit), ..Default::default() }),
+        calls,
+        ..Default::default()
+    };
+    let probe = STORAGE_GAS_PROBE_ADDRESS;
+    let to = ROLLBACK_RECIPIENT;
+    let calldata = Bytes::from(vec![1; 1000]);
+    // Charged gas is reported, while block and request budgets count consumption. Each expected
+    // call is `(charged gas, consumed gas, status)`. Receipts sum the
+    // charges, while headers sum consumption.
+    let cases = vec![
+        // Explicit limits, including a calldata floor, a revert and an exceptional halt.
+        (
+            Bytes::new(),
+            vec![block(None, vec![call(probe, Some(100_000)), call(probe, Some(200_000))])],
+            Ok(vec![vec![(100_000, 21_000, true), (200_000, 21_000, true)]]),
+        ),
+        (
+            Bytes::new(),
+            vec![block(
+                None,
+                vec![
+                    call(probe, Some(100_000)).input(calldata.clone().into()),
+                    call(probe, Some(200_000)).input(calldata.clone().into()),
+                ],
+            )],
+            Ok(vec![vec![(100_000, 61_000, true), (200_000, 61_000, true)]]),
+        ),
+        (
+            bytes!("5f5ffd"),
+            vec![block(None, vec![call(probe, Some(100_000)), call(probe, Some(200_000))])],
+            Ok(vec![vec![(100_000, 21_004, false), (200_000, 21_004, false)]]),
+        ),
+        (
+            bytes!("fe"),
+            vec![block(None, vec![call(probe, Some(100_000)), call(probe, Some(200_000))])],
+            Ok(vec![vec![(100_000, 100_000, false), (200_000, 200_000, false)]]),
+        ),
+        // Calls without gas, including fee-paying ones, resolve the block gas left by consumption.
+        (
+            Bytes::new(),
+            vec![block(
+                None,
+                vec![call(to, None).value(U256::ONE).gas_price(7), call(to, None).value(U256::ONE)],
+            )],
+            Ok(vec![vec![(BLOCK_GAS, 21_000, true), (BLOCK_GAS - 21_000, 21_000, true)]]),
+        ),
+        (
+            Bytes::new(),
+            vec![block(
+                None,
+                vec![
+                    call(to, None).input(calldata.clone().into()),
+                    call(to, None).input(calldata.clone().into()),
+                ],
+            )],
+            Ok(vec![vec![(BLOCK_GAS, 61_000, true), (BLOCK_GAS - 61_000, 61_000, true)]]),
+        ),
+        (
+            Bytes::new(),
+            vec![block(Some(100_000), vec![call(to, Some(40_000)), call(to, None)])],
+            Ok(vec![vec![(40_000, 21_000, true), (79_000, 21_000, true)]]),
+        ),
+        // Two transfers fit a 100k block although they charge 120k.
+        (
+            Bytes::new(),
+            vec![block(Some(100_000), vec![call(to, Some(60_000)), call(to, Some(60_000))])],
+            Ok(vec![vec![(60_000, 21_000, true), (60_000, 21_000, true)]]),
+        ),
+        (
+            Bytes::new(),
+            vec![block(Some(100_000), vec![call(to, Some(60_000)); 3])],
+            Err("block gas limit exceeded: remaining 58000, requested 60000"),
+        ),
+        // Charges across blocks exceed the 50M request budget, which only consumption spends.
+        // Full-block charges raise later base fees, so these calls pay a fee.
+        (
+            Bytes::new(),
+            vec![block(None, vec![call(to, None).value(U256::ONE).gas_price(10 * GWEI)]); 3],
+            Ok(vec![vec![(BLOCK_GAS, 21_000, true)]; 3]),
+        ),
+        (
+            bytes!("fe"),
+            vec![
+                block(None, vec![call(probe, None).gas_price(10 * GWEI)]),
+                block(None, vec![call(to, None).gas_price(10 * GWEI)]),
+                block(None, vec![call(to, None).gas_price(10 * GWEI)]),
+            ],
+            Ok(vec![
+                vec![(BLOCK_GAS, BLOCK_GAS, false)],
+                vec![(20_000_000, 21_000, true)],
+                vec![(19_979_000, 21_000, true)],
+            ]),
+        ),
+    ];
+    for (code, blocks, expected) in cases {
+        api.anvil_set_code(probe, code).await.unwrap();
+        for validation in [false, true] {
+            let result = provider
+                .simulate(&SimulatePayload {
+                    block_state_calls: blocks.clone(),
+                    validation,
+                    return_full_transactions: true,
+                    ..Default::default()
+                })
+                .await;
+            let expected = match &expected {
+                Ok(expected) => expected,
+                Err(message) => {
+                    let error = result.unwrap_err();
+                    let error = error.as_error_resp().unwrap();
+                    assert_eq!(error.code, -38015);
+                    assert_eq!(error.message, *message);
+                    continue;
+                }
+            };
+            let blocks = result.unwrap();
+            assert_eq!(blocks.len(), expected.len());
+            for (block, expected) in blocks.iter().zip(expected) {
+                assert_eq!(block.calls.len(), expected.len());
+                let transactions = block.inner.transactions.as_transactions().unwrap();
+                let mut cumulative_gas_used = 0;
+                let mut consumed_gas = 0;
+                let mut receipts = Vec::new();
+                for ((call, tx), &(charged, consumed, status)) in
+                    block.calls.iter().zip(transactions).zip(expected)
+                {
+                    assert_eq!(call.status, status);
+                    assert_eq!(call.gas_used, charged);
+                    assert_eq!(tx.gas_limit(), charged);
+                    // Execution measurements include the calldata floor and exceptional halts.
+                    assert_eq!(call.max_used_gas, Some(consumed));
+                    cumulative_gas_used += charged;
+                    consumed_gas += consumed;
+                    let receipt =
+                        Receipt { status: status.into(), cumulative_gas_used, logs: vec![] };
+                    receipts.push(ReceiptEnvelope::from_typed(
+                        TxType::try_from(tx.ty()).unwrap(),
+                        receipt.with_bloom(),
+                    ));
+                }
+                // Headers report consumption and stay within the block gas limit.
+                assert_eq!(block.inner.header.gas_used, consumed_gas);
+                assert!(block.inner.header.gas_used <= block.inner.header.gas_limit);
+                assert_eq!(block.inner.header.receipts_root, calculate_receipt_root(&receipts));
+            }
+        }
+    }
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_debug_traces_report_charged_gas() {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let call_tracer = GethDebugTracingOptions::default()
+        .with_tracer(GethDebugBuiltInTracerType::CallTracer.into());
+    api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, bytes!("5f5000")).await.unwrap();
+    let trace: TraceResults = provider
+        .client()
+        .request(
+            "trace_call",
+            (
+                storage_gas_probe_call().with_from(sender).with_gas_limit(1_000_000),
+                vec![TraceType::Trace],
+                BlockId::latest(),
+            ),
+        )
+        .await
+        .unwrap();
+    // Parity call frames exclude intrinsic transaction gas.
+    assert_eq!(root_trace_gas(&trace), 4);
+
+    // Only root summaries report the charge; nested frames and opcode steps keep consumption.
+    // Forward gas to the child at 0x2004 with no value, input or output.
+    api.anvil_set_code(BALANCE_PROBE_ADDRESS, bytes!("5f5f5f5f5f6120045af100")).await.unwrap();
+    let request =
+        TransactionRequest::default().from(sender).to(BALANCE_PROBE_ADDRESS).gas_limit(100_000);
+    let trace = provider
+        .debug_trace_call(
+            request.clone().into(),
+            BlockId::latest(),
+            GethDebugTracingCallOptions::default().with_tracing_options(call_tracer.clone()),
+        )
+        .await
+        .unwrap();
+    let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+    assert_eq!(frame.gas, U256::from(100_000));
+    assert_eq!(frame.gas_used, U256::from(100_000));
+    assert_eq!(frame.calls.len(), 1);
+    assert_eq!(frame.calls[0].to, Some(STORAGE_GAS_PROBE_ADDRESS));
+    assert_eq!(frame.calls[0].gas_used, U256::from(4));
+    assert!(frame.calls[0].gas < frame.gas);
+    let trace = provider
+        .debug_trace_call(
+            request.clone().into(),
+            BlockId::latest(),
+            GethDebugTracingCallOptions::default(),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
+    assert_eq!(frame.gas, 100_000);
+    let child_steps = frame.struct_logs.iter().filter(|step| step.depth == 2).collect::<Vec<_>>();
+    assert_eq!(child_steps.len(), 3);
+    assert_eq!(child_steps.iter().map(|step| step.gas_cost).sum::<u64>(), 4);
+
+    // Mined traces report the receipt charge, like geth's top-level frame.
+    let receipt =
+        provider.send_transaction(request.into()).await.unwrap().get_receipt().await.unwrap();
+    assert_eq!(receipt.gas_used(), 100_000);
+    let hash = receipt.transaction_hash;
+    let trace =
+        provider.debug_trace_transaction(hash, GethDebugTracingOptions::default()).await.unwrap();
+    let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
+    assert_eq!(frame.gas, 100_000);
+    let trace = provider.debug_trace_transaction(hash, call_tracer).await.unwrap();
+    let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+    assert_eq!(frame.gas, U256::from(100_000));
+    assert_eq!(frame.gas_used, U256::from(100_000));
+    assert_eq!(frame.calls.len(), 1);
+    assert_eq!(frame.calls[0].gas_used, U256::from(4));
+    assert!(frame.calls[0].gas < frame.gas);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_bundle_separates_consumption_from_charged_fees() {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = wallets[1].address();
+    let coinbase = wallets[2].address();
+    let balance = provider.get_balance(coinbase).await.unwrap();
+    let base_fee = api.base_fee().unwrap().unwrap().to::<u64>();
+    let tip = 7;
+    let mut txs = Vec::new();
+    for nonce in 0..2 {
+        let mut tx = TxEip1559 {
+            chain_id: provider.get_chain_id().await.unwrap(),
+            nonce,
+            gas_limit: 100_000,
+            max_fee_per_gas: u128::from(base_fee) + tip,
+            max_priority_fee_per_gas: tip,
+            to: coinbase.into(),
+            value: U256::from(nonce + 1),
+            ..Default::default()
+        };
+        let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+        txs.push(tx.into_signed(signature).encoded_2718().into());
+    }
+    let response: EthCallBundleResponse = provider
+        .client()
+        .request(
+            "eth_callBundle",
+            (EthCallBundle {
+                txs,
+                block_number: 1,
+                state_block_number: BlockNumberOrTag::Latest,
+                coinbase: Some(coinbase),
+                ..Default::default()
+            },),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.total_gas_used, 42_000);
+    assert_eq!(response.gas_fees, U256::from(200_000 * tip));
+    assert_eq!(response.eth_sent_to_coinbase, U256::from(3));
+    assert_eq!(response.coinbase_diff, response.gas_fees + U256::from(3));
+    // Charged gas, not consumption, prices the bundle.
+    assert_eq!(response.bundle_gas_price, U256::from(tip));
+    assert_eq!(response.results.len(), 2);
+    for (index, result) in response.results.iter().enumerate() {
+        assert_eq!(result.from_address, sender);
+        assert_eq!(result.gas_used, 21_000);
+        assert_eq!(result.gas_fees, U256::from(100_000 * tip));
+        assert_eq!(result.eth_sent_to_coinbase, U256::from(index + 1));
+        assert_eq!(result.revert, None);
+    }
+    assert_eq!(provider.get_balance(coinbase).await.unwrap(), balance);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
 }

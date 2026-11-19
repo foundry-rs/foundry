@@ -146,6 +146,11 @@ impl CreateArgs {
                  --tempo.sponsor-signer or --tempo.sponsor-sig"
             );
         }
+        // Tempo rejects keychain transactions whose first call is a CREATE.
+        eyre::ensure!(
+            self.tx.tempo.configurable_access_key.is_none(),
+            "--tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE"
+        );
 
         // Resolve chain early so we can dispatch to the correct network type.
         let chain = if let Some(chain) = self.chain_id() {
@@ -183,26 +188,16 @@ impl CreateArgs {
             );
             None
         } else {
-            let config = self.load_config()?;
-            let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-            let signers = signer.take().map(Arc::new).into_iter().collect::<Vec<_>>();
-            let linked = self.tx.tempo.linked_account(&self.eth.wallet)?;
-            let account = self
-                .tx
+            self.tx
                 .tempo
                 .configurable_account_signer(
-                    &provider,
-                    self.eth.wallet.from,
-                    linked,
-                    &signers,
+                    &self.load_config()?,
+                    &self.eth.wallet,
+                    &mut signer,
                     "forge create needs the owner keys locally: pass the other owners with \
                      --tempo.owner, or keep them in the Tempo Accounts store.",
                 )
-                .await?;
-            if account.is_none() {
-                signer = signers.into_iter().next().and_then(Arc::into_inner);
-            }
-            account
+                .await?
         };
 
         // Never deploy from an account other than the one explicitly selected by the user. Unlocked

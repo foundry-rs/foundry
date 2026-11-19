@@ -4,6 +4,7 @@ use crate::{
     Chain, Config, NamedChain,
     resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate},
 };
+use alloy_primitives::keccak256;
 use figment::{
     Error, Metadata, Profile, Provider,
     providers::Env,
@@ -15,6 +16,7 @@ use std::{
     collections::BTreeMap,
     fmt,
     ops::{Deref, DerefMut},
+    path::PathBuf,
     time::Duration,
 };
 
@@ -330,7 +332,9 @@ impl ResolvedEtherscanConfig {
     }
 
     /// Returns the corresponding `foundry_block_explorers::Client`, configured with the `api_url`,
-    /// `api_key` and cache
+    /// `api_key` and cache.
+    ///
+    /// Responses are cached for 24 hours using the cache directory for this chain or endpoint.
     pub fn into_client(
         self,
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
@@ -349,10 +353,8 @@ impl ResolvedEtherscanConfig {
         no_proxy: bool,
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
     {
-        let Self { api_url, browser_url, key: api_key, chain } = self;
-
-        let chain = chain.unwrap_or_default();
-        let cache = Config::foundry_etherscan_chain_cache_dir(chain);
+        let cache = self.explorer_cache_dir();
+        let Self { api_url, browser_url, key: api_key, .. } = self;
 
         if let Some(cache_path) = &cache {
             // we also create the `sources` sub dir here
@@ -381,6 +383,29 @@ impl ResolvedEtherscanConfig {
             client_builder = client_builder.with_url(&api_url)?;
         }
         client_builder.build()
+    }
+
+    /// Returns the directory to cache responses from this explorer's endpoint in.
+    ///
+    /// A config that names its chain is cached under that chain's directory. Mainnet uses a new
+    /// subdirectory to avoid legacy chain-less entries. A config without a chain can point at any
+    /// endpoint, so its responses are keyed by the endpoint instead: the explorer crate derives
+    /// cache file names from the contract address alone, and putting such responses under a chain's
+    /// directory would serve them to that chain's lookups of the same address.
+    fn explorer_cache_dir(&self) -> Option<PathBuf> {
+        if let Some(chain) = self.chain {
+            let cache_dir = Config::foundry_etherscan_chain_cache_dir(chain)?;
+            return Some(if chain == Chain::mainnet() {
+                // Older chain-less clients wrote into this directory via their mainnet fallback.
+                cache_dir.join("client-v2")
+            } else {
+                cache_dir
+            });
+        }
+
+        // Keep URL credentials and query parameters out of persistent filesystem paths.
+        let digest = keccak256(self.api_url.as_bytes());
+        Some(Config::foundry_etherscan_cache_dir()?.join(format!("endpoint-{digest:x}")))
     }
 }
 
@@ -596,5 +621,27 @@ mod tests {
             config.is_err(),
             "Should fail: chains without default Etherscan URLs require custom URL"
         );
+    }
+
+    #[test]
+    fn chainless_explorers_get_their_own_cache_dirs() {
+        // Responses are cached by address alone, so chain-less entries must neither share
+        // mainnet's directory nor each other's.
+        let cache_dir = |url: &str| {
+            let config = EtherscanConfig {
+                chain: None,
+                url: Some(url.to_string()),
+                key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+            }
+            .resolve(Some("mychain"))
+            .unwrap();
+            assert_eq!(config.chain, None);
+            config.explorer_cache_dir().unwrap()
+        };
+
+        let first = cache_dir("https://api.example.com/api?chainid=1");
+        assert_ne!(first, Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap());
+        assert_ne!(first, cache_dir("https://api.example.com/api?chainid=2"));
+        assert_eq!(first, cache_dir("https://api.example.com/api?chainid=1"));
     }
 }

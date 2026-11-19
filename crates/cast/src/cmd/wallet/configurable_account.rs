@@ -141,15 +141,16 @@ const TEMPO_MAINNET: u64 = 4217;
 
 /// Asks the configured RPC for its Tempo hardfork. Returns `None` for a non-Tempo chain.
 async fn rpc_tempo_hardfork(config: &Config) -> Result<Option<(String, Option<TempoHardfork>)>> {
-    // Key generation stays fast with an unreachable or non-Tempo RPC: one short attempt each.
+    // Key generation stays fast with an unreachable or non-Tempo RPC: one short attempt each. The
+    // chain ID comes first so that an unreachable RPC fails on one request, not on each query.
     let provider = ProviderBuilder::<TempoNetwork>::from_config(config)?
         .max_retry(0)
         .timeout(Duration::from_secs(5))
         .build()?;
+    let chain = Chain::from_id(provider.get_chain_id().await?);
     if let Ok(hardfork) = active_tempo_hardfork(&provider).await {
         return Ok(Some(("the RPC chain".to_string(), Some(hardfork))));
     }
-    let chain = Chain::from_id(provider.get_chain_id().await?);
     Ok(chain.is_tempo().then(|| scheduled_hardfork(chain)))
 }
 
@@ -373,7 +374,8 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
             "the wallet {} has weight {signer_weight} in {account}, which requires {}. Collect \
              the owners' approvals instead:\n  cast mktx {CONFIGURABLE_ACCOUNT_ADDRESS} {} --from \
              {account} --raw-unsigned --tempo.digest\nthen `cast wallet sign --no-hash <DIGEST>` \
-             on each owner's machine, `cast wallet assemble`, and `cast publish`",
+             (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet \
+             assemble`, and `cast publish`",
             signer.address(),
             current.threshold,
             hex::encode_prefixed(&calldata),
@@ -528,10 +530,11 @@ pub struct AssembleArgs {
 
     /// Owner approvals of the digest that `cast mktx --tempo.digest` prints.
     ///
-    /// Each one is a hex signature from `cast wallet sign --no-hash` (or a hex Tempo P-256 or
-    /// WebAuthn signature), a JSON signature, or a WebAuthn assertion made with a passkey in a
-    /// browser: a JSON object with `authenticatorData`, `clientDataJSON` and `signature`
-    /// (top-level or under `response`) and the credential's `publicKey`, as base64url or hex.
+    /// Each one is a hex signature from `cast wallet sign --no-hash` (`--p256` for a raw P-256
+    /// owner), a hex Tempo P-256 or WebAuthn signature, a JSON signature, or a WebAuthn assertion
+    /// made with a passkey in a browser: a JSON object with `authenticatorData`, `clientDataJSON`
+    /// and `signature` (top-level or under `response`) and the credential's `publicKey`, as
+    /// base64url or hex.
     /// The assertion's challenge is the digest. A value naming a file is read from it.
     #[arg(required = true, value_name = "SIGNATURE")]
     signatures: Vec<String>,

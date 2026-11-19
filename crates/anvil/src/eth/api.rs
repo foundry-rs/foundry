@@ -125,13 +125,13 @@ use tokio::{
 #[cfg(feature = "base")]
 use crate::eth::backend::mem::eip8130_max_fee_charge;
 #[cfg(feature = "base")]
+use base_common_base_tx::{IntrinsicGas, NonceManagerSlots as NonceManagerStorage};
+#[cfg(feature = "base")]
 use base_common_consensus::{
-    EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE, Eip8130Constants, Eip8130Signed,
+    BASE_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE, TxBaseConstants, TxBaseSigned,
 };
 #[cfg(feature = "base")]
-use base_common_eip8130::{IntrinsicGas, NonceManagerSlots as NonceManagerStorage};
-#[cfg(feature = "base")]
-use base_common_rpc_types::{BaseTransactionRequest, Eip8130Nonce};
+use base_common_rpc_types::{BaseTransactionRequest, TxBaseNonce};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -148,6 +148,14 @@ type LifecycleTransition = BoxFuture<'static, ()>;
 struct TransactionFeeDefaults {
     gas_price: u128,
     blob_gas_price: u128,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct MineDetailedTestHook {
+    first_block_mined: tokio::sync::Notify,
+    before_block_reads: tokio::sync::Notify,
+    resume: tokio::sync::Notify,
 }
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
@@ -186,6 +194,8 @@ pub struct EthApi<N: Network> {
     lifecycle: mpsc::Sender<LifecycleTransition>,
     /// Serializes automatic nonce assignment through pool insertion for each sender.
     nonce_locks: Arc<RwLock<HashMap<Address, Arc<tokio::sync::Mutex<()>>>>>,
+    #[cfg(test)]
+    mine_detailed_test_hook: Option<Arc<MineDetailedTestHook>>,
 }
 
 impl<N: Network> Clone for EthApi<N> {
@@ -205,6 +215,8 @@ impl<N: Network> Clone for EthApi<N> {
             net_listening: self.net_listening,
             lifecycle: self.lifecycle.clone(),
             nonce_locks: self.nonce_locks.clone(),
+            #[cfg(test)]
+            mine_detailed_test_hook: self.mine_detailed_test_hook.clone(),
         }
     }
 }
@@ -250,6 +262,8 @@ impl<N: Network> EthApi<N> {
             transaction_order: Arc::new(RwLock::new(transactions_order)),
             lifecycle,
             nonce_locks: Default::default(),
+            #[cfg(test)]
+            mine_detailed_test_hook: None,
         }
     }
 
@@ -3131,7 +3145,7 @@ impl EthApi<FoundryNetwork> {
         let block_request = self.block_request(block_number).await?;
         let timestamp = self.backend.block_request_timestamp(&block_request).await?;
         self.backend.ensure_base_eip8130_active_at(timestamp)?;
-        if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+        if nonce_key == TxBaseConstants::NONCE_KEY_MAX {
             return Err(RpcError::invalid_params(
                 "nonce_key NONCE_KEY_MAX selects the expiring-nonce channel which has no \
                  per-channel counter",
@@ -3144,7 +3158,7 @@ impl EthApi<FoundryNetwork> {
             .backend
             .storage_at(NonceManagerStorage::ADDRESS, slot, Some(block_request))
             .await?;
-        Ok(Eip8130Nonce::decode_channel_nonce(word.into()))
+        Ok(TxBaseNonce::decode_channel_nonce(word.into()))
     }
 
     /// Returns the number of transactions in a block with given block number.
@@ -3620,7 +3634,7 @@ impl EthApi<FoundryNetwork> {
         if self.backend.is_base()
             && serde_json::to_value(&request)
                 .and_then(serde_json::from_value::<BaseTransactionRequest>)
-                .is_ok_and(|request| request.as_eip8130().is_some())
+                .is_ok_and(|request| request.as_base_tx().is_some())
         {
             let timestamp = self.backend.block_request_timestamp(&block_request).await?;
             self.backend.ensure_base_eip8130_active_at(timestamp)?;
@@ -3850,7 +3864,7 @@ impl EthApi<FoundryNetwork> {
         if self.backend.is_base()
             && serde_json::to_value(&request)
                 .and_then(serde_json::from_value::<BaseTransactionRequest>)
-                .is_ok_and(|request| request.as_eip8130().is_some())
+                .is_ok_and(|request| request.as_base_tx().is_some())
         {
             let timestamp = self.backend.block_request_timestamp(&block_request).await?;
             self.backend.ensure_base_eip8130_active_at(timestamp)?;
@@ -3859,6 +3873,7 @@ impl EthApi<FoundryNetwork> {
             ));
         }
 
+        self.backend.prefetch_impersonated_configurable_accounts([request.from]).await;
         self.backend
             .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
                 let mut cache_db = CacheDB::new(&*state);
@@ -4442,12 +4457,16 @@ impl EthApi<FoundryNetwork> {
         }
 
         self.on_blocking_task(|this| async move {
+            // Hold the mining lock for the whole run, so a concurrent chain-height mutation cannot
+            // unwind blocks this call already mined, and so an interval's time increase stays
+            // paired with the block it was applied for.
+            let _mining_guard = this.backend.lock_mining_owned().await;
             // mine all the blocks
             for _ in 0..blocks.saturating_to::<u64>() {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 let pending_increase =
                     interval.map(|interval| this.backend.time().apply_time_increase(interval));
-                if let Err(error) = this.mine_one_with_timestamp_pinning(pin_timestamp).await {
+                if let Err(error) = this.mine_one_locked(pin_timestamp).await {
                     if let Some(pending) = pending_increase {
                         this.backend.time().revert_time_increase(pending);
                     }
@@ -4864,7 +4883,15 @@ impl EthApi<FoundryNetwork> {
     pub async fn evm_mine_detailed(&self, opts: Option<MineOptions>) -> Result<Vec<AnyRpcBlock>> {
         node_info!("evm_mine_detailed");
 
-        let mined_blocks = self.do_evm_mine(opts).await?;
+        // Keep the mining lock for the block reads below: the chain height this reports must still
+        // cover every block that was just mined.
+        let (mined_blocks, _mining_guard) = self.do_evm_mine(opts).await?;
+
+        #[cfg(test)]
+        if let Some(hook) = &self.mine_detailed_test_hook {
+            hook.before_block_reads.notify_one();
+            hook.resume.notified().await;
+        }
 
         let mut blocks = Vec::with_capacity(mined_blocks as usize);
 
@@ -5049,12 +5076,15 @@ impl EthApi<FoundryNetwork> {
 }
 
 impl EthApi<FoundryNetwork> {
-    /// Executes the `evm_mine` and returns the number of blocks mined
-    async fn do_evm_mine(&self, opts: Option<MineOptions>) -> Result<u64> {
+    /// Executes the `evm_mine` and returns the number of blocks mined, along with the mining lock
+    /// they were mined under so a caller can keep reading the chain it just extended.
+    async fn do_evm_mine(
+        &self,
+        opts: Option<MineOptions>,
+    ) -> Result<(u64, tokio::sync::OwnedMutexGuard<()>)> {
         let mut blocks_to_mine = 1u64;
-
-        if let Some(opts) = opts {
-            let timestamp = match opts {
+        let next_timestamp = if let Some(opts) = opts {
+            match opts {
                 MineOptions::Timestamp(timestamp) => timestamp,
                 MineOptions::Options { timestamp, blocks } => {
                     if let Some(blocks) = blocks {
@@ -5062,25 +5092,40 @@ impl EthApi<FoundryNetwork> {
                     }
                     timestamp
                 }
-            };
-            if let Some(timestamp) = timestamp {
-                // timestamp was explicitly provided to be the next timestamp
-                self.evm_set_next_block_timestamp(timestamp)?;
             }
-        }
+        } else {
+            None
+        };
 
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
-        self.on_blocking_task(|this| async move {
-            // mine all the blocks
-            for _ in 0..blocks_to_mine {
-                this.mine_one().await?;
-            }
-            Ok(())
-        })
-        .await?;
+        //
+        // Hold the mining lock for the whole run instead of re-taking it per block, so that no
+        // concurrent chain-height mutation can unwind blocks this call already mined, and so the
+        // requested next-block timestamp cannot be consumed by another block producer first.
+        let mining_guard = self
+            .on_blocking_task(|this| async move {
+                let mining_guard = this.backend.lock_mining_owned().await;
+                if let Some(timestamp) = next_timestamp {
+                    // timestamp was explicitly provided to be the next timestamp
+                    this.evm_set_next_block_timestamp(timestamp)?;
+                }
+                #[cfg(test)]
+                let mut first_block_hook = this.mine_detailed_test_hook.as_ref();
+                // mine all the blocks
+                for _ in 0..blocks_to_mine {
+                    this.mine_one_locked(false).await?;
+                    #[cfg(test)]
+                    if let Some(hook) = first_block_hook.take() {
+                        hook.first_block_mined.notify_one();
+                        hook.resume.notified().await;
+                    }
+                }
+                Ok(mining_guard)
+            })
+            .await?;
 
-        Ok(blocks_to_mine)
+        Ok((blocks_to_mine, mining_guard))
     }
 
     async fn do_estimate_gas(
@@ -5103,6 +5148,7 @@ impl EthApi<FoundryNetwork> {
             return Ok(fork.estimate_gas_raw(&request, Some(number.into())).await?);
         }
 
+        self.backend.prefetch_impersonated_configurable_accounts([request.from]).await;
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
@@ -5132,6 +5178,7 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<u128> {
         let block_request = self.block_request(block_number).await?;
+        self.backend.prefetch_impersonated_configurable_accounts([request.from()]).await;
         self.on_blocking_task(|this| async move {
             this.backend
                 .with_database_at_and_context(Some(block_request), |state, block, monad_context| {
@@ -5250,11 +5297,12 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
-        self.mine_one_with_timestamp_pinning(false).await
+        let _mining = self.backend.lock_mining().await;
+        self.mine_one_locked(false).await
     }
 
-    async fn mine_one_with_timestamp_pinning(&self, pin_timestamp: bool) -> Result<()> {
-        let _mining = self.backend.lock_mining().await;
+    /// Mines exactly one block while the caller holds the mining lock.
+    async fn mine_one_locked(&self, pin_timestamp: bool) -> Result<()> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let outcome = self.backend.mine_block_locked(transactions, pin_timestamp).await?;
 
@@ -5527,7 +5575,7 @@ impl EthApi<FoundryNetwork> {
                 self.ensure_eip8130_payer_reservation(pending, &provides).await?;
                 return Ok(None);
             }
-            if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            if tx.nonce_key == TxBaseConstants::NONCE_KEY_MAX {
                 let replay_id = tx.replay_id(*pending.sender());
                 let slot = NonceManagerStorage::expiring_nonce_seen_slot(replay_id);
                 let word =
@@ -5551,7 +5599,7 @@ impl EthApi<FoundryNetwork> {
                     )
                 })?;
             let word = self.backend.storage_at(NonceManagerStorage::ADDRESS, slot, None).await?;
-            let state_nonce = Eip8130Nonce::decode_channel_nonce(word.into()).to::<u64>();
+            let state_nonce = TxBaseNonce::decode_channel_nonce(word.into()).to::<u64>();
             if tx.nonce_sequence < state_nonce {
                 return Err(InvalidTransactionError::NonceTooLow.into());
             }
@@ -5616,12 +5664,10 @@ impl EthApi<FoundryNetwork> {
         let payer = incoming.tx().payer.unwrap_or(*pending.sender());
         // Payer authentication is metered on top of the gas limit, so each reservation includes
         // its worst-case cost.
-        let max_fee_charge = |signed: &Eip8130Signed| {
-            let payer_auth = IntrinsicGas::max_payer_auth_cost(signed)
-                .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
+        let max_fee_charge = |signed: &TxBaseSigned| {
             Ok::<_, BlockchainError>(eip8130_max_fee_charge(
                 signed.tx().gas_limit,
-                payer_auth,
+                IntrinsicGas::payer_auth_cost_of(signed),
                 signed.tx().max_fee_per_gas,
             ))
         };
@@ -5913,7 +5959,7 @@ fn txpool_transaction_key(pending_transaction: &PendingTransaction<FoundryTxEnve
     match pending_transaction.transaction.as_ref() {
         #[cfg(feature = "base")]
         FoundryTxEnvelope::Eip8130(signed) if !signed.tx().nonce_key.is_zero() => {
-            if signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            if signed.tx().nonce_key == TxBaseConstants::NONCE_KEY_MAX {
                 return signed.tx().replay_id(*pending_transaction.sender()).to_string();
             }
             format!("{}:{}", signed.tx().nonce_key, signed.tx().nonce_sequence)
@@ -6025,6 +6071,49 @@ mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
     use foundry_evm_core::constants::HARDHAT_CONSOLE_ADDRESS;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn evm_mine_detailed_handles_concurrent_rollback() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let (mut api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+            let hook = Arc::new(MineDetailedTestHook::default());
+            api.mine_detailed_test_hook = Some(hook.clone());
+
+            let mining_api = api.clone();
+            let mining = tokio::spawn(async move {
+                mining_api
+                    .evm_mine_detailed(Some(MineOptions::Options {
+                        timestamp: None,
+                        blocks: Some(3),
+                    }))
+                    .await
+            });
+
+            hook.first_block_mined.notified().await;
+            let rollback = api.anvil_rollback(Some(1));
+            tokio::pin!(rollback);
+            assert!(futures::poll!(rollback.as_mut()).is_pending());
+
+            hook.resume.notify_one();
+            tokio::select! {
+                result = rollback.as_mut() => panic!("rollback completed during multi-block mining: {result:?}"),
+                () = hook.before_block_reads.notified() => {}
+            }
+            assert!(futures::poll!(rollback.as_mut()).is_pending());
+
+            hook.resume.notify_one();
+            let blocks = mining.await.unwrap().unwrap();
+            rollback.await.unwrap();
+
+            assert_eq!(
+                blocks.iter().map(|block| block.header.number).collect::<Vec<_>>(),
+                [1, 2, 3]
+            );
+            assert_eq!(api.backend.best_number(), 2);
+        })
+        .await
+        .unwrap();
+    }
 
     #[cfg(feature = "base")]
     #[tokio::test(flavor = "multi_thread")]

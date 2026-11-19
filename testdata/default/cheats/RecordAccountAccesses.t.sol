@@ -205,6 +205,19 @@ contract Proxy {
     }
 }
 
+contract Child {
+    constructor() payable {}
+}
+
+/// @notice Deploys contracts, funding each with 1 wei
+contract Factory {
+    function deploy(uint256 count) public {
+        for (uint256 i; i < count; i++) {
+            new Child{value: 1}();
+        }
+    }
+}
+
 /// @notice Test that the cheatcode correctly records account accesses
 contract RecordAccountAccessesTest is Test {
     NestedRunner runner;
@@ -255,6 +268,78 @@ contract RecordAccountAccessesTest is Test {
                 reverted: false
             })
         );
+    }
+
+    /// @notice Nonce and balance changes made by delegated code belong to the executing context
+    ///         (the proxy), not to the implementation whose code is run.
+    function testCreateInDelegateCall() public {
+        Factory impl = new Factory();
+        Proxy proxy = new Proxy(address(impl));
+        vm.deal(address(proxy), 2);
+
+        vm.startStateDiffRecording();
+        Factory(address(proxy)).deploy(2);
+        string memory json = vm.getStateDiffJson();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+
+        assertEq(vm.getNonce(address(proxy)), 3);
+        assertEq(vm.getNonce(address(impl)), 1);
+        assertEq(address(proxy).balance, 0);
+
+        assertEq(called.length, 4, "incorrect length");
+
+        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call), "incorrect kind");
+        assertEq(called[0].account, address(proxy), "incorrect account");
+        assertEq(called[0].oldNonce, 1, "incorrect proxy oldNonce");
+        assertEq(called[0].newNonce, 3, "incorrect proxy newNonce");
+        assertEq(called[0].oldBalance, 2, "incorrect proxy oldBalance");
+        assertEq(called[0].newBalance, 0, "incorrect proxy newBalance");
+
+        assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.DelegateCall), "incorrect kind");
+        assertEq(called[1].account, address(impl), "incorrect account");
+        assertEq(called[1].oldNonce, 1, "incorrect impl oldNonce");
+        assertEq(called[1].newNonce, 1, "incorrect impl newNonce");
+        assertEq(called[1].oldBalance, 0, "incorrect impl oldBalance");
+        assertEq(called[1].newBalance, 0, "incorrect impl newBalance");
+
+        assertEq(toUint(called[2].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
+        assertEq(called[2].accessor, address(proxy), "incorrect accessor");
+        assertEq(toUint(called[3].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
+        assertEq(called[3].accessor, address(proxy), "incorrect accessor");
+
+        string memory proxyKey = string.concat(".", vm.toLowercase(vm.toString(address(proxy))));
+        assertEq(vm.parseJsonUint(json, string.concat(proxyKey, ".nonceDiff.previousValue")), 1);
+        assertEq(vm.parseJsonUint(json, string.concat(proxyKey, ".nonceDiff.newValue")), 3);
+        assertEq(vm.parseJsonUint(json, string.concat(proxyKey, ".balanceDiff.previousValue")), 2);
+        assertEq(vm.parseJsonUint(json, string.concat(proxyKey, ".balanceDiff.newValue")), 0);
+        assertTrue(
+            !vm.keyExistsJson(json, string.concat(".", vm.toLowercase(vm.toString(address(impl))))),
+            "implementation must not appear in the state diff"
+        );
+    }
+
+    /// @notice A `vm.mockFunction` redirect runs the mock's code in the target's context, so the
+    ///         call's nonce and balance changes are the target's.
+    function testCreateInMockedFunction() public {
+        Factory target = new Factory();
+        Factory mock = new Factory();
+        vm.mockFunction(address(target), address(mock), abi.encodeCall(Factory.deploy, (2)));
+        vm.deal(address(target), 2);
+
+        vm.startStateDiffRecording();
+        target.deploy(2);
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+
+        assertEq(vm.getNonce(address(target)), 3);
+        assertEq(vm.getNonce(address(mock)), 1);
+        assertEq(address(target).balance, 0);
+
+        assertEq(called.length, 3, "incorrect length");
+        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call), "incorrect kind");
+        assertEq(called[0].oldNonce, 1, "incorrect oldNonce");
+        assertEq(called[0].newNonce, 3, "incorrect newNonce");
+        assertEq(called[0].oldBalance, 2, "incorrect oldBalance");
+        assertEq(called[0].newBalance, 0, "incorrect newBalance");
     }
 
     /// @notice Test normal, non-nested storage accesses

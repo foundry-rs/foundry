@@ -1,7 +1,7 @@
 use super::{init::InitArgs, install::DependencyInstallOpts};
 use alloy_primitives::{Address, Bytes, ChainId, TxHash};
 use clap::{Parser, ValueEnum, ValueHint};
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use forge_verify::sourcify::SOURCIFY_URL;
 use foundry_block_explorers::{
     Client,
@@ -31,7 +31,7 @@ use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap},
     fs::read_dir,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     time::Duration,
 };
 use tracing::trace;
@@ -530,15 +530,6 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     let lib_dir = &path_config.libraries[0];
     // Optional dir, if found in src
     let node_modules_dir = &root.join("node_modules");
-    let contract_name = Path::new(&meta.contract_name);
-    let mut components = contract_name.components();
-    eyre::ensure!(
-        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
-        "invalid contract name: {:?}",
-        meta.contract_name
-    );
-    let source_tree = meta.source_tree();
-
     // then we move the sources to the correct directories
     // we will first load existing remappings if necessary
     //  make sure this happens before dumping sources
@@ -546,10 +537,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 
     // first we dump the sources to a temporary directory
     let tmp_dump_dir = root.join("raw_sources");
-    let contract_dir = tmp_dump_dir.join(contract_name);
-    source_tree
-        .write_to(&tmp_dump_dir)
-        .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
+    let contract_dir = tmp_dump_dir.join(&meta.contract_name);
+    meta.source_tree()?.write_to(&tmp_dump_dir).wrap_err("failed to dump sources")?;
 
     // check whether we need to re-organize directories in the original sources, since we do not
     // want to put all the sources in the `src` directory if the original directory structure is
@@ -1217,7 +1206,10 @@ mod tests {
 
             let err = dump_sources(&meta, &root, false).unwrap_err();
 
-            assert_eq!(err.to_string(), format!("invalid contract name: {contract_name:?}"));
+            assert_eq!(
+                err.to_string(),
+                format!("invalid contract name from explorer: {contract_name:?}")
+            );
             assert!(victim_file.exists());
             assert!(!root.join("raw_sources").exists());
             assert!(!root.join("src/outside.sol").exists());

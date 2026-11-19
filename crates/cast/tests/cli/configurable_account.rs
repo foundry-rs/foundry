@@ -10,6 +10,7 @@ use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use anvil::NodeConfig;
+use axum::{Router, http::StatusCode, routing::post};
 use base64::Engine;
 use foundry_cli::utils::parse_json;
 use foundry_common::{provider::RetryProvider, tempo::configurable_account::single_owner_account};
@@ -17,8 +18,14 @@ use foundry_evm::core::tempo::ALPHA_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, assert_data_eq, util::OutputExt};
 use p256::ecdsa::{SigningKey, signature::Signer as _};
 use sha2::{Digest, Sha256};
-use std::str::FromStr;
-use tempo_contracts::precompiles::ITIP20;
+use std::{
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+use tempo_contracts::precompiles::{ITIP20, PATH_USD_ADDRESS};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::{
     TempoTxEnvelope,
@@ -75,26 +82,9 @@ fn passkey_assertion(key: &SigningKey, challenge: B256) -> serde_json::Value {
     })
 }
 
-fn passkey_owner(key: &SigningKey) -> Address {
-    let point = key.verifying_key().to_encoded_point(false);
-    derive_p256_address(
-        &B256::from_slice(point.x().unwrap()),
-        &B256::from_slice(point.y().unwrap()),
-    )
-}
-
-/// Runs `cast wallet new` with `args` and returns its stdout and stderr.
-fn wallet_new(cmd: &mut TestCommand, args: &[&str]) -> (String, String) {
-    wallet_new_with_env(cmd, args, &[])
-}
-
-/// Runs `cast wallet new` with `args` and the environment `env`.
-/// `ETH_RPC_URL` and `CHAIN` are cleared unless `env` sets them.
-fn wallet_new_with_env(
-    cmd: &mut TestCommand,
-    args: &[&str],
-    env: &[(&str, &str)],
-) -> (String, String) {
+/// Runs `cast wallet new` with `args` and the environment `env`, and returns its stdout and
+/// stderr. `ETH_RPC_URL` and `CHAIN` are cleared unless `env` sets them.
+fn wallet_new(cmd: &mut TestCommand, args: &[&str], env: &[(&str, &str)]) -> (String, String) {
     cmd.cast_fuse().args(["wallet", "new"]).args(args);
     cmd.unset_env("ETH_RPC_URL");
     cmd.unset_env("CHAIN");
@@ -116,15 +106,9 @@ async fn tempo_t14_wallet_new_defaults_to_configurable_account(prj: _, cmd: _) {
     let (_t13_api, t13) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T13.into()))).await;
     let (_eth_api, eth) = anvil::spawn(NodeConfig::test()).await;
-    let t14_rpc = t14.http_endpoint();
+    let (t14_rpc, t13_rpc, eth_rpc) =
+        (t14.http_endpoint(), t13.http_endpoint(), eth.http_endpoint());
 
-    let assert_eoa = |stdout: &str| {
-        let [address, key] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
-            panic!("expected an EOA record, got {stdout}");
-        };
-        let signer = PrivateKeySigner::from_str(key).unwrap();
-        assert_eq!(Address::from_str(address).unwrap(), signer.address());
-    };
     let assert_account = |stdout: &str| {
         let [account, key, owner] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
             panic!("expected a configurable account record, got {stdout}");
@@ -134,94 +118,68 @@ async fn tempo_t14_wallet_new_defaults_to_configurable_account(prj: _, cmd: _) {
         assert_eq!(Address::from_str(account).unwrap(), single_owner_account(owner).unwrap());
     };
 
-    // The default on a T14 Tempo RPC is a configurable account.
-    let (stdout, stderr) = wallet_new(&mut cmd, &["--rpc-url", &t14_rpc]);
-    assert_account(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
+    // A T14 Tempo RPC, given or from `ETH_RPC_URL`, creates a configurable account, by default or
+    // with `--configurable-account`.
+    let accounts = [
+        (vec!["--rpc-url", t14_rpc.as_str()], vec![]),
+        (vec!["--configurable-account", "--rpc-url", t14_rpc.as_str()], vec![]),
+        (vec!["--configurable-account"], vec![("ETH_RPC_URL", t14_rpc.as_str())]),
+    ];
+    for (args, env) in accounts {
+        let (stdout, stderr) = wallet_new(&mut cmd, &args, &env);
+        assert_account(&stdout);
+        assert_data_eq!(
+            stderr,
+            str![[r#"
 Successfully created new Tempo configurable account.
 Address:     [..]
 Owner key:   [..]
 Private key: [..]
 
 "#]]
-    );
+        );
+    }
 
-    // No Tempo signal: a plain key, without consulting any RPC. Only `--configurable-account`
-    // says why.
-    let (stdout, stderr) = wallet_new(&mut cmd, &[]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-    let (stdout, stderr) = wallet_new(&mut cmd, &["--configurable-account"]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA.
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // A Tempo RPC with T14 active.
-    let (stdout, stderr) = wallet_new(&mut cmd, &["--configurable-account", "--rpc-url", &t14_rpc]);
-    assert_account(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Successfully created new Tempo configurable account.
-Address:     [..]
-Owner key:   [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // A `CHAIN` that is not a chain, such as one an app's `.env` sets, does not break key
-    // generation, but it is still a Tempo signal for `--configurable-account`.
-    let (stdout, _) = wallet_new_with_env(&mut cmd, &[], &[("CHAIN", "local")]);
-    assert_eoa(&stdout);
-    let (stdout, stderr) =
-        wallet_new_with_env(&mut cmd, &["--configurable-account"], &[("CHAIN", "4217")]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Tempo T14 is not active on chain tempo; creating an EOA.
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // A non-Tempo `CHAIN` creates a plain key before a T14 Tempo RPC is asked, as `--chain` does.
-    let (stdout, stderr) = wallet_new_with_env(
-        &mut cmd,
-        &["--configurable-account", "--rpc-url", &t14_rpc],
-        &[("CHAIN", "1")],
-    );
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
+    // Otherwise a plain key is created, and only `--configurable-account` says why. Without a
+    // Tempo signal no RPC is consulted. A `CHAIN` that is not a chain, such as one an app's `.env`
+    // sets, does not break key generation, and a non-Tempo `CHAIN` creates a plain key before a
+    // T14 Tempo RPC is asked, as `--chain` does. The compiled schedule does not activate T14 on
+    // Tempo mainnet yet.
+    let no_signal =
+        "No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA.\n";
+    let mainnet = "Tempo T14 is not active on chain tempo; creating an EOA.\n";
+    let eoas = [
+        (vec![], vec![], ""),
+        (vec!["--configurable-account"], vec![], no_signal),
+        (vec![], vec![("CHAIN", "local")], "...\n"),
+        (vec!["--configurable-account"], vec![("CHAIN", "4217")], mainnet),
+        (vec!["--configurable-account", "--rpc-url", t14_rpc.as_str()], vec![("CHAIN", "1")], ""),
+        (vec!["--rpc-url", t14_rpc.as_str(), "--eoa"], vec![], ""),
+        (vec!["--rpc-url", t13_rpc.as_str()], vec![], ""),
+        (vec!["--rpc-url", eth_rpc.as_str()], vec![], ""),
+        (vec!["--chain", "1"], vec![], ""),
+        (
+            vec!["--configurable-account", "--rpc-url", t13_rpc.as_str()],
+            vec![],
+            "Tempo T14 is not active on the RPC chain; creating an EOA.\n",
+        ),
+        (vec!["--configurable-account", "--rpc-url", eth_rpc.as_str()], vec![], no_signal),
+        (vec!["--configurable-account", "--chain", "4217"], vec![], mainnet),
+    ];
+    for (args, env, reason) in eoas {
+        let (stdout, stderr) = wallet_new(&mut cmd, &args, &env);
+        let [address, key] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
+            panic!("expected an EOA record for {args:?}, got {stdout}");
+        };
+        let signer = PrivateKeySigner::from_str(key).unwrap();
+        assert_eq!(Address::from_str(address).unwrap(), signer.address());
+        assert_data_eq!(
+            stderr,
+            format!(
+                "{reason}Successfully created new keypair.\nAddress:     [..]\nPrivate key: [..]\n"
+            )
+        );
+    }
 
     // An explicit `--chain` is still validated.
     cmd.cast_fuse().args(["wallet", "new", "--chain", "locla"]);
@@ -255,83 +213,7 @@ Error: invalid CHAIN: environment variable was not valid unicode: [..]
 "#]]);
     }
 
-    // `--eoa` opts out on a T14 Tempo RPC.
-    let (stdout, stderr) = wallet_new(&mut cmd, &["--rpc-url", &t14_rpc, "--eoa"]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // A Tempo RPC before T14, a non-Tempo RPC and a non-Tempo chain create a plain key; only
-    // `--configurable-account` says why.
-    for args in [
-        &["--rpc-url", &t13.http_endpoint()][..],
-        &["--rpc-url", &eth.http_endpoint()],
-        &["--chain", "1"],
-    ] {
-        let (stdout, stderr) = wallet_new(&mut cmd, args);
-        assert_eoa(&stdout);
-        assert_data_eq!(
-            stderr,
-            str![[r#"
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-        );
-    }
-    let (stdout, stderr) =
-        wallet_new(&mut cmd, &["--configurable-account", "--rpc-url", &t13.http_endpoint()]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Tempo T14 is not active on the RPC chain; creating an EOA.
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-    let (stdout, stderr) =
-        wallet_new(&mut cmd, &["--configurable-account", "--rpc-url", &eth.http_endpoint()]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-No Tempo chain was given (--chain, CHAIN, an RPC or foundry.toml); creating an EOA.
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // The compiled schedule does not activate T14 on Tempo mainnet yet.
-    let (stdout, stderr) = wallet_new(&mut cmd, &["--configurable-account", "--chain", "4217"]);
-    assert_eoa(&stdout);
-    assert_data_eq!(
-        stderr,
-        str![[r#"
-Tempo T14 is not active on chain tempo; creating an EOA.
-Successfully created new keypair.
-Address:     [..]
-Private key: [..]
-
-"#]]
-    );
-
-    // `ETH_RPC_URL` and `foundry.toml` are Tempo signals too.
-    let (stdout, _) =
-        wallet_new_with_env(&mut cmd, &["--configurable-account"], &[("ETH_RPC_URL", &t14_rpc)]);
-    assert_account(&stdout);
+    // `foundry.toml` is a Tempo signal too.
     std::fs::write(
         prj.root().join("foundry.toml"),
         format!("[profile.default]\neth_rpc_url = \"{t14_rpc}\"\n"),
@@ -343,7 +225,7 @@ Private key: [..]
 
     // JSON names the account `address` and adds its owner key.
     let (stdout, _) =
-        wallet_new(&mut cmd, &["--json", "--configurable-account", "--rpc-url", &t14_rpc]);
+        wallet_new(&mut cmd, &["--json", "--configurable-account", "--rpc-url", &t14_rpc], &[]);
     let record = &json_data(&stdout)[0];
     let owner = Address::from_str(record["owner"].as_str().unwrap()).unwrap();
     assert_eq!(
@@ -353,8 +235,9 @@ Private key: [..]
 }
 
 /// A new account adds a passkey owner, then its owners sign on separate machines:
-/// `mktx --raw-unsigned --tempo.digest`, `wallet sign --no-hash` and a browser WebAuthn assertion,
-/// `wallet assemble`, then `publish`.
+/// `mktx --raw-unsigned --tempo.digest`, `wallet sign --no-hash` and either a browser WebAuthn
+/// assertion or `wallet sign --no-hash --p256` with the passkey's raw key, `wallet assemble`, then
+/// `publish`.
 #[casttest]
 async fn tempo_t14_wallet_configurable_account_multi_party_flow(prj: _, cmd: _) {
     let (api, handle) =
@@ -405,7 +288,11 @@ Error: [..] is not registered yet, so its owners and the gas of its registration
 
     // The first transaction registers the 1-of-1 account and adds the passkey at threshold 2.
     let passkey = SigningKey::from_slice(&[0x22; 32]).unwrap();
-    let passkey_owner = passkey_owner(&passkey);
+    let point = passkey.verifying_key().to_encoded_point(false);
+    let passkey_owner = derive_p256_address(
+        &B256::from_slice(point.x().unwrap()),
+        &B256::from_slice(point.y().unwrap()),
+    );
     cmd.cast_fuse()
         .args(["wallet", "owners", "add", &account, &passkey_owner.to_string()])
         .args(["--threshold", "2", "--private-key", &key, "--rpc-url", &rpc])
@@ -443,61 +330,117 @@ Error: [..] is not registered yet, so its owners and the gas of its registration
         .stderr_eq(str![[r#"
 Error: the wallet [..] has weight 1 in [..], which requires 2. Collect the owners' approvals instead:
   cast mktx 0xAACC000000000000000000000000000000000000 [..] --from [..] --raw-unsigned --tempo.digest
-then `cast wallet sign --no-hash <DIGEST>` on each owner's machine, `cast wallet assemble`, and `cast publish`
+then `cast wallet sign --no-hash <DIGEST>` (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet assemble`, and `cast publish`
 
 "#]]);
 
-    // The multi-party flow.
-    let stdout = cmd
-        .cast_fuse()
-        .args(["mktx", &target, "--from", &account, "--raw-unsigned", "--tempo.digest"])
-        .args(["--rpc-url", &rpc, "--tempo.fee-token", &fee_token])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    let [unsigned, digest] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
-        panic!("expected the unsigned transaction and the digest, got {stdout}");
-    };
-    let digest = B256::from_str(digest).unwrap();
+    // The multi-party flow, once with the passkey's browser assertion and once with its raw
+    // P-256 key: the owner address is the same, signing with `wallet sign --no-hash --p256`.
+    for p256 in [false, true] {
+        let stdout = cmd
+            .cast_fuse()
+            .args(["mktx", &target, "--from", &account, "--raw-unsigned", "--tempo.digest"])
+            .args(["--rpc-url", &rpc, "--tempo.fee-token", &fee_token])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let [unsigned, digest] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
+            panic!("expected the unsigned transaction and the digest, got {stdout}");
+        };
+        let digest = B256::from_str(digest).unwrap();
 
-    let owner_signature = cmd
-        .cast_fuse()
-        .args(["wallet", "sign", "--no-hash", &digest.to_string(), "--private-key", &key])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    let assertion = prj.root().join("passkey-assertion.json");
-    std::fs::write(&assertion, passkey_assertion(&passkey, digest).to_string()).unwrap();
-
-    // An approval of another digest is rejected.
-    let wrong = passkey_assertion(&passkey, B256::repeat_byte(1)).to_string();
-    cmd.cast_fuse()
-        .args(["wallet", "assemble", unsigned, owner_signature.trim(), &wrong])
-        .args(["--from", &account, "--rpc-url", &rpc])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Error: signature 2 does not verify against the owner digest [..]; owners sign it with `cast wallet sign --no-hash [..]`
+        let owner_signature = cmd
+            .cast_fuse()
+            .args(["wallet", "sign", "--no-hash", &digest.to_string(), "--private-key", &key])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let approval = if p256 {
+            // A default keystore from the environment does not get in the way of the raw key.
+            cmd.cast_fuse()
+                .args(["wallet", "sign", "--no-hash", "--p256", &digest.to_string()])
+                .args(["--private-key", &hex::encode_prefixed(passkey.to_bytes())]);
+            cmd.env("ETH_KEYSTORE_ACCOUNT", "dev");
+            cmd.assert_success().get_output().stdout_lossy().trim().to_string()
+        } else {
+            // An approval of another digest is rejected.
+            let wrong = passkey_assertion(&passkey, B256::repeat_byte(1)).to_string();
+            cmd.cast_fuse()
+                .args(["wallet", "assemble", unsigned, owner_signature.trim(), &wrong])
+                .args(["--from", &account, "--rpc-url", &rpc])
+                .assert_failure()
+                .stderr_eq(str![[r#"
+Error: signature 2 does not verify against the owner digest [..]; owners sign it with `cast wallet sign --no-hash [..]`, adding `--p256` for a raw P-256 owner
 
 "#]]);
+            let assertion = prj.root().join("passkey-assertion.json");
+            std::fs::write(&assertion, passkey_assertion(&passkey, digest).to_string()).unwrap();
+            assertion.to_string_lossy().into_owned()
+        };
 
-    let raw = cmd
-        .cast_fuse()
-        .args(["wallet", "assemble", unsigned, owner_signature.trim()])
-        .arg(&assertion)
-        .args(["--from", &account, "--rpc-url", &rpc])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(raw.trim().starts_with("0x76"), "{raw}");
-    cmd.cast_fuse().args(["publish", raw.trim(), "--rpc-url", &rpc]).assert_success();
+        let raw = cmd
+            .cast_fuse()
+            .args(["wallet", "assemble", unsigned, owner_signature.trim(), &approval])
+            .args(["--from", &account, "--rpc-url", &rpc])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert!(raw.trim().starts_with("0x76"), "{raw}");
+        cmd.cast_fuse().args(["publish", raw.trim(), "--rpc-url", &rpc]).assert_success();
 
-    let block = provider.get_block_number().await.unwrap();
-    let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
-    assert_eq!(receipts.last().unwrap().from(), Address::from_str(&account).unwrap());
-    // Without the owners' key types, the estimate covers two maximum-size WebAuthn approvals,
-    // which one secp256k1 approval and one passkey assertion stay below.
-    let (gas_limit, gas_used) = last_tx_gas(&provider).await;
-    assert!(gas_used < gas_limit, "{gas_used} >= {gas_limit}");
+        let block = provider.get_block_number().await.unwrap();
+        let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        assert_eq!(receipts.last().unwrap().from(), Address::from_str(&account).unwrap());
+        // Without the owners' key types, the estimate covers two maximum-size WebAuthn
+        // approvals, which one secp256k1 approval and one passkey or P-256 approval stay below.
+        let (gas_limit, gas_used) = last_tx_gas(&provider).await;
+        assert!(gas_used < gas_limit, "{gas_used} >= {gas_limit}");
+    }
+
+    // `--p256` needs `--no-hash` and a raw P-256 key, not another signer.
+    let hash = B256::ZERO.to_string();
+    let p256_errors = [
+        (
+            vec!["--p256", hash.as_str(), "--private-key", key.as_str()],
+            str![[r#"
+error: the following required arguments were not provided:
+  --no-hash
+
+Usage: cast[..] wallet sign --no-hash --p256 [..]<MESSAGE>
+
+For more information, try '--help'.
+
+"#]],
+        ),
+        (
+            vec!["--no-hash", "--p256", hash.as_str(), "--ledger"],
+            str![[r#"
+error: the argument '--p256' cannot be used with '--ledger'
+
+Usage: cast[..] wallet sign --no-hash --p256 [..]<MESSAGE>
+
+For more information, try '--help'.
+
+"#]],
+        ),
+        (
+            vec!["--no-hash", "--p256", hash.as_str()],
+            str![[r#"
+Error: --p256 signs with a raw P-256 private key; pass it with --private-key or --interactive
+
+"#]],
+        ),
+        (
+            vec!["--no-hash", "--p256", hash.as_str(), "--private-key", "0x1234"],
+            str![[r#"
+Error: invalid P-256 private key: expected a 32-byte hex scalar
+
+"#]],
+        ),
+    ];
+    for (args, stderr) in p256_errors {
+        cmd.cast_fuse().args(["wallet", "sign"]).args(args).assert_failure().stderr_eq(stderr);
+    }
 }
 
 /// `owners remove` and `owners threshold` send `updateConfig` signed by an owner that reaches the
@@ -564,7 +507,7 @@ async fn tempo_t14_wallet_owners_remove_and_threshold(cmd: _) {
         .stderr_eq(str![[r#"
 Error: the wallet 0x77952Ce83Ca3cad9F7AdcFabeDA85Bd2F1f52008 has weight 1 in 0xC114fe44bdC44dDE8b76b033D0C49ab350a80B20, which requires 3. Collect the owners' approvals instead:
   cast mktx 0xAACC000000000000000000000000000000000000 [..] --from 0xC114fe44bdC44dDE8b76b033D0C49ab350a80B20 --raw-unsigned --tempo.digest
-then `cast wallet sign --no-hash <DIGEST>` on each owner's machine, `cast wallet assemble`, and `cast publish`
+then `cast wallet sign --no-hash <DIGEST>` (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet assemble`, and `cast publish`
 
 "#]]);
 }
@@ -785,7 +728,59 @@ async fn tempo_t14_send_detects_configurable_account(cmd: _) {
     };
     assert_eq!(signed.signature().as_configurable_account().unwrap().signatures().len(), 2);
     cmd.cast_fuse().args(["publish", raw.trim(), "--rpc-url", &rpc]).assert_success();
-    assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(account));
+    let receipt = last_receipt(&provider).await;
+    assert_eq!(receipt["from"], serde_json::json!(account));
+
+    // `decode-transaction` and `tx` show the account, its configuration and the owner of each
+    // approval, recovered from the owner digest, instead of the signature's opaque RLP.
+    let owners = keys.each_ref().map(|key| key.address());
+    let details = serde_json::json!({
+        "account": account,
+        "config": serde_json::from_str::<serde_json::Value>(&config).unwrap(),
+        "approvals": [
+            { "type": "secp256k1", "owner": owners[0], "weight": 1 },
+            { "type": "secp256k1", "owner": owners[2], "weight": 1 },
+        ],
+    });
+    let hash = receipt["transactionHash"].as_str().unwrap();
+    for args in [&["decode-transaction", raw.trim()][..], &["tx", hash, "--rpc-url", &rpc]] {
+        let output =
+            cmd.cast_fuse().args(args).arg("--json").assert_success().get_output().stdout_lossy();
+        assert_eq!(json_data(&output)["configurableAccountSignature"], details, "{args:?}");
+    }
+    let human = format!(
+        "\
+...
+tempoSignature       configurableAccount
+configurableAccount  {account}
+configSalt           {salt}
+configVersion        0
+threshold            2
+owners               [
+\t{} (weight 1)
+\t{} (weight 1)
+\t{} (weight 1)
+]
+approvals            [
+\t{} (secp256k1, weight 1)
+\t{} (secp256k1, weight 1)
+]
+...
+",
+        owners[0],
+        owners[1],
+        owners[2],
+        owners[0],
+        owners[2],
+        salt = B256::repeat_byte(0x07),
+    );
+    for network in [None, Some("tempo")] {
+        cmd.cast_fuse()
+            .args(["tx", hash, "--rpc-url", &rpc])
+            .args(network.map(|network| ["--network", network]).into_iter().flatten())
+            .assert_success()
+            .stdout_eq(human.clone());
+    }
 
     cmd.cast_fuse()
         .args(["batch-send", "--call", &target, "--call", &target, "--from", &account_arg])
@@ -927,8 +922,10 @@ async fn tempo_t14_send_from_linked_keystore(prj: _, cmd: _) {
 
     // The link is not listed as an account.
     cmd.cast_fuse().env("HOME", home);
-    cmd.args(["wallet", "list"]);
-    assert_eq!(cmd.assert_success().get_output().stdout_lossy(), "linked (Local)\n");
+    cmd.args(["wallet", "list"]).assert_success().stdout_eq(str![[r#"
+linked (Local)
+
+"#]]);
 
     for address in [account, owner] {
         for api in [&api, &t13_api] {
@@ -978,4 +975,134 @@ async fn tempo_t14_send_from_linked_keystore(prj: _, cmd: _) {
     // Before T14 the keystore sends from its key.
     assert_data_eq!(send(&t13.http_endpoint(), &keystore), paying);
     assert_eq!(last_receipt(&t13.http_provider()).await["from"], serde_json::json!(owner));
+}
+
+/// `cast tempo zone deposit` from a configurable account approves the portal and calls its
+/// `deposit` on Tempo L1 with `0x05` signatures from the account, as `cast send` does, while a
+/// plain key keeps sending secp256k1 transactions. The portal is a stub that returns the secp256k1
+/// generator as its encryption key.
+#[casttest]
+async fn tempo_t14_zone_deposit_from_configurable_account(cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = two_of_three();
+    let eoa = handle.dev_wallets().next().unwrap();
+    for address in [account, eoa.address()] {
+        for token in [ALPHA_USD_ADDRESS, PATH_USD_ADDRESS] {
+            api.anvil_deal_tip20(address, token, U256::from(1_000_000_000_000u64)).await.unwrap();
+        }
+    }
+    // `mstore(0, Gx)`, `mstore(0x20, 2)`, `return(0, 0x60)`: `(x, yParity, keyIndex 0)`.
+    let portal = Address::repeat_byte(0x50);
+    let code = hex::decode(
+        "7f79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798600052600260205260606000f3",
+    )
+    .unwrap();
+    api.anvil_set_code(portal, code.into()).await.unwrap();
+
+    let deposit = ["tempo", "zone", "deposit", "--portal", &portal.to_string()];
+    let common = ["--amount", "1000", "--approve", "--rpc-url", &rpc];
+    let last_tx = || async {
+        let block = provider.get_block_number().await.unwrap();
+        let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let raw = provider
+            .raw_request::<_, alloy_primitives::Bytes>(
+                "eth_getRawTransactionByHash".into(),
+                (receipts.last().unwrap().transaction_hash(),),
+            )
+            .await
+            .unwrap();
+        TempoTxEnvelope::decode_2718_exact(&raw).unwrap()
+    };
+    let allowance = |owner: Address| {
+        let provider = provider.clone();
+        async move {
+            let call = ITIP20::allowanceCall { owner, spender: portal };
+            let output = provider
+                .raw_request::<_, alloy_primitives::Bytes>(
+                    "eth_call".into(),
+                    (serde_json::json!({
+                        "to": PATH_USD_ADDRESS,
+                        "data": alloy_primitives::Bytes::from(call.abi_encode()),
+                    }),),
+                )
+                .await
+                .unwrap();
+            U256::from_be_slice(&output)
+        }
+    };
+
+    cmd.cast_fuse()
+        .args(deposit)
+        .args(["--from", &account.to_string(), "--private-key", &private_key(&keys[0])])
+        .args(["--tempo.owner", &format!("private-key://{}", private_key(&keys[1]))])
+        .args(["--tempo.config", &config])
+        .args(common)
+        .assert_success()
+        .stderr_eq(format!(
+            "Sending as Tempo configurable account {account}\nApproving 1000 for {portal}\n\
+             Deposit submitted on L1; zone processing is asynchronous.\n"
+        ));
+    let receipt = last_receipt(&provider).await;
+    assert_eq!(receipt["from"], serde_json::json!(account));
+    assert_eq!(receipt["to"], serde_json::json!(portal));
+    let TempoTxEnvelope::AA(signed) = last_tx().await else {
+        panic!("expected a Tempo transaction");
+    };
+    assert_eq!(signed.signature().as_configurable_account().unwrap().signatures().len(), 2);
+    // The account, not an owner key, approved the portal.
+    assert_eq!(allowance(account).await, U256::from(1000));
+    assert_eq!(allowance(keys[0].address()).await, U256::ZERO);
+
+    cmd.cast_fuse()
+        .args(deposit)
+        .args(["--private-key", &private_key(&eoa)])
+        .args(common)
+        .assert_success()
+        .stderr_eq(format!(
+            "Approving 1000 for {portal}\nDeposit submitted on L1; zone processing is \
+             asynchronous.\n"
+        ));
+    assert_eq!(last_receipt(&provider).await["from"], serde_json::json!(eoa.address()));
+    // As before configurable accounts, the key sends a plain secp256k1 transaction.
+    assert!(!matches!(last_tx().await, TempoTxEnvelope::AA(_)));
+}
+
+/// `cast wallet new` sends one request to an RPC that fails, so an unreachable RPC delays key
+/// generation by one timeout rather than one per query, and a plain key is still created.
+#[casttest]
+async fn wallet_new_asks_failing_rpc_once(cmd: _) {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let counter = requests.clone();
+    let app = Router::new().route(
+        "/",
+        post(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            async { StatusCode::SERVICE_UNAVAILABLE }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let (stdout, stderr) = wallet_new(&mut cmd, &[], &[("ETH_RPC_URL", &rpc)]);
+    let [address, key] = stdout.trim().split('\t').collect::<Vec<_>>()[..] else {
+        panic!("expected an EOA record, got {stdout}");
+    };
+    let signer = PrivateKeySigner::from_str(key).unwrap();
+    assert_eq!(Address::from_str(address).unwrap(), signer.address());
+    assert_data_eq!(
+        stderr,
+        str![[r#"
+Warning: Could not ask the RPC for its chain ([..]); using the configured chain
+Successfully created new keypair.
+Address:     [..]
+Private key: [..]
+
+"#]]
+    );
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    server.abort();
 }

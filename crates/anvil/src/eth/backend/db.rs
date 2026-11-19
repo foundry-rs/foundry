@@ -12,7 +12,7 @@ use alloy_primitives::{
     Address, B256, Bytes, KECCAK256_EMPTY, U256, keccak256,
     map::{AddressMap, B256Map, U256Map},
 };
-use alloy_rpc_types::{BlockId, BlockOverrides, state::AccountOverride};
+use alloy_rpc_types::{BlockOverrides, state::AccountOverride};
 use anvil_core::eth::{
     block::Block,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
@@ -218,9 +218,10 @@ impl From<&AccountInfo> for SnapshotAccount {
 impl From<SnapshotAccount> for AccountInfo {
     fn from(account: SnapshotAccount) -> Self {
         let code = account.code.filter(|code| !code.is_empty()).map(Bytecode::new_raw);
-        let mut info = Self::new(account.balance, account.nonce, account.code_hash, code);
-        info.extension = account.extension.into();
-        info
+        Self {
+            extension: account.extension.into(),
+            ..Self::new(account.balance, account.nonce, account.code_hash, code)
+        }
     }
 }
 
@@ -840,10 +841,8 @@ impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for Box<T> {
     }
 }
 
-/// Helper trait to reset the DB if it's forked.
+/// Helper trait to access the fork cache of the DB if it's forked.
 pub trait MaybeForkedDatabase {
-    fn maybe_reset(&mut self, _urls: Vec<String>, block_number: BlockId) -> Result<(), String>;
-
     fn maybe_flush_cache(&self) -> Result<(), String>;
 
     fn maybe_inner(&self) -> Result<&BlockchainDb, String>;
@@ -914,15 +913,19 @@ pub trait Db: MaybeFullDatabase + MaybeForkedDatabase + Send + Sync {
             // nonces to prevent collisions
             let nonce = std::cmp::max(old_account_nonce, account.nonce);
 
-            let mut info = AccountInfo::new(
-                account.balance,
-                nonce,
-                // set automatically from the code.
-                KECCAK256_EMPTY,
-                (!account.code.is_empty()).then(|| Bytecode::new_raw(account.code)),
+            self.insert_account(
+                addr,
+                AccountInfo {
+                    extension: account.extension.into(),
+                    ..AccountInfo::new(
+                        account.balance,
+                        nonce,
+                        // set automatically from the code.
+                        KECCAK256_EMPTY,
+                        (!account.code.is_empty()).then(|| Bytecode::new_raw(account.code)),
+                    )
+                },
             );
-            info.extension = account.extension.into();
-            self.insert_account(addr, info);
 
             for (k, v) in account.storage {
                 self.set_storage_at(addr, k, v)?;
@@ -1124,10 +1127,6 @@ impl MaybeFullDatabase for EmptyDb {
 }
 
 impl<T> MaybeForkedDatabase for CacheDB<T> {
-    fn maybe_reset(&mut self, _urls: Vec<String>, _block_number: BlockId) -> Result<(), String> {
-        Err("not supported".to_string())
-    }
-
     fn maybe_flush_cache(&self) -> Result<(), String> {
         Err("not supported".to_string())
     }
@@ -1733,7 +1732,7 @@ mod test {
         );
         let (backend, handler) = SharedBackend::new(provider, remote.clone(), None);
         drop(handler);
-        let mut db = ForkedDatabase::new(backend, remote);
+        let mut db = ForkedDatabase::new(backend, remote, true);
         let cached = Address::with_last_byte(1);
         let uncached = Address::with_last_byte(2);
         let original = AccountInfo { nonce: 7, balance: U256::ONE, ..Default::default() };

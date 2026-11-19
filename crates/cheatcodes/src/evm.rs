@@ -7,7 +7,7 @@ use crate::{
 use alloy_consensus::{Transaction as _, Typed2718, transaction::SignerRecoverable};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{
-    Address, B256, Bytes, U256, hex, keccak256,
+    Address, B256, Bytes, U256, b256, hex, keccak256,
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
@@ -20,11 +20,11 @@ use evm2::{
     registry::HandlerError,
 };
 use foundry_common::{
-    TransactionMaybeSigned,
+    EIP1967_IMPLEMENTATION_SLOT, TransactionMaybeSigned,
     fs::{read_json_file, write_json_file},
     slot_identifier::{
         ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
-        SlotInfo,
+        SlotInfo, identify_eip1967_slot,
     },
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
@@ -43,11 +43,10 @@ use foundry_evm_core::{
 };
 use foundry_evm_traces::TraceRequirements;
 use itertools::Itertools;
-use rand::Rng;
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
-    path::Path,
+    path::{Component, Path},
     str::FromStr,
 };
 
@@ -141,7 +140,7 @@ struct SlotStateDiff {
     /// Current storage value.
     new_value: B256,
     /// Storage layout metadata (variable name, type, offset).
-    /// Only present when contract has storage layout output.
+    /// Only present when contract has storage layout output, or for the EIP-1967 proxy slots.
     /// This includes decoded values when available.
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     slot_info: Option<SlotInfo>,
@@ -223,7 +222,7 @@ impl Display for AccountStateDiffs {
                             f,
                             "@ {slot} ({}, {}): {} → {}",
                             slot_info.label,
-                            slot_info.slot_type.dyn_sol_type,
+                            slot_info.slot_type,
                             slot_changes.previous_value,
                             slot_changes.new_value
                         )?;
@@ -233,7 +232,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "    {} ({}): {} → {}",
                                 member.label,
-                                member.slot_type.dyn_sol_type,
+                                member.slot_type,
                                 format_token_raw(&decoded.previous_value),
                                 format_token_raw(&decoded.new_value)
                             )?;
@@ -246,7 +245,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "@ {slot} ({}, {}): {} → {}",
                                 slot_info.label,
-                                slot_info.slot_type.dyn_sol_type,
+                                slot_info.slot_type,
                                 format_token_raw(&decoded.previous_value),
                                 format_token_raw(&decoded.new_value)
                             )?;
@@ -256,7 +255,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "@ {slot} ({}, {}): {} → {}",
                                 slot_info.label,
-                                slot_info.slot_type.dyn_sol_type,
+                                slot_info.slot_type,
                                 slot_changes.previous_value,
                                 slot_changes.new_value
                             )?;
@@ -353,7 +352,7 @@ impl Cheatcode for loadCall {
                 let rand_value = ccx
                     .state
                     .cached_arbitrary_storage_value(target, slot.into())
-                    .unwrap_or_else(|| ccx.state.core.rng().random());
+                    .unwrap_or_else(|| ccx.state.draw_arbitrary_storage_value(target, slot.into()));
                 ccx.state.core.arbitrary_storage.as_mut().unwrap().save(
                     ccx.evm.state_mut(),
                     target,
@@ -365,7 +364,7 @@ impl Cheatcode for loadCall {
                 // If storage slot is untouched and load from a target that copies storage from
                 // a source address with arbitrary storage, then copy existing arbitrary value.
                 // If no arbitrary value generated yet, then the random one is saved and set.
-                let rand_value = ccx.state.core.rng().random();
+                let rand_value = ccx.state.draw_arbitrary_storage_value(target, slot.into());
                 value = ccx.state.core.arbitrary_storage.as_mut().unwrap().copy(
                     ccx.evm.state_mut(),
                     target,
@@ -1509,6 +1508,7 @@ impl Cheatcode for executeTransactionCall {
         }
         let default_version = EvmFactoryFor::<FEN>::default().version(env.spec, env.chain_id());
         env.version.tx_gas_limit_cap = default_version.tx_gas_limit_cap;
+        env.version.tx_total_gas_cap = default_version.tx_total_gas_cap;
         env.version.max_initcode_size = match ccx.state.core.config.evm_opts.env.code_size_limit {
             Some(code_size_limit) => code_size_limit.saturating_mul(2),
             None => default_version.max_initcode_size,
@@ -1747,7 +1747,7 @@ fn inner_value_snapshot<FEN: FoundryEvmNetwork>(
     name: Option<String>,
     value: String,
 ) -> Result {
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value);
 
@@ -1760,7 +1760,7 @@ fn inner_last_gas_snapshot<FEN: FoundryEvmNetwork>(
     name: Option<String>,
     value: u64,
 ) -> Result {
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value.to_string());
 
@@ -1777,7 +1777,7 @@ fn inner_start_gas_snapshot<FEN: FoundryEvmNetwork>(
         bail!("gas snapshot was already started with group: {group} and name: {name}");
     }
 
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_metering.gas_records.push(GasRecord {
         group: group.clone(),
@@ -1849,12 +1849,29 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
     ccx: &CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
     name: Option<String>,
-) -> (String, String) {
-    let group = group.unwrap_or_else(|| {
-        ccx.state.core.config.running_artifact.clone().expect("expected running contract").name
-    });
+) -> Result<(String, String)> {
+    let group = match group {
+        Some(group) => {
+            ensure!(
+                is_valid_snapshot_group(&group),
+                "invalid snapshot group name `{group}`: expected a relative path without empty, `.` or `..` components"
+            );
+            group
+        }
+        None => {
+            ccx.state.core.config.running_artifact.clone().expect("expected running contract").name
+        }
+    };
     let name = name.unwrap_or_else(|| "default".to_string());
-    (group, name)
+    Ok((group, name))
+}
+
+/// Returns whether `group` is a relative path without empty or dot components.
+fn is_valid_snapshot_group(group: &str) -> bool {
+    // Check the original components because `Path::components` normalizes dots and separators.
+    group.split(std::path::is_separator).all(|component| {
+        matches!(Path::new(component).components().next(), Some(Component::Normal(name)) if name == component)
+    })
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
@@ -2496,6 +2513,10 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
                                     },
                                 )
                             });
+                            // Proxies write the EIP-1967 slots from assembly constants, which no
+                            // layout covers.
+                            let slot_info =
+                                slot_info.or_else(|| identify_eip1967_slot(&storage_access.slot));
 
                             slot_state_diff.insert(SlotStateDiff {
                                 previous_value: storage_access.previousValue,
@@ -2526,12 +2547,9 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     state_diffs
 }
 
-/// EIP-1967 implementation storage slot
-const EIP1967_IMPL_SLOT: &str = "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
-
 /// EIP-1822 UUPS implementation storage slot: keccak256("PROXIABLE")
-const EIP1822_PROXIABLE_SLOT: &str =
-    "c5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7";
+const EIP1822_PROXIABLE_SLOT: B256 =
+    b256!("0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7");
 
 /// Helper function to get the contract data from the deployed code at an address.
 fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
@@ -2559,16 +2577,16 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
     }
 
     // Fall back to known proxy artifacts when exact matching is impossible.
-    let hex_str = hex::encode(&code_bytes);
+    let contains_slot = |slot: B256| code_bytes.windows(32).any(|word| word == slot.as_slice());
     let find_by_suffix =
         |suffix: &str| artifacts.iter().find(|(a, _)| a.identifier().ends_with(suffix));
     if detect_proxy
-        && hex_str.contains(EIP1967_IMPL_SLOT)
+        && contains_slot(EIP1967_IMPLEMENTATION_SLOT)
         && let Some(result) = find_by_suffix(":TransparentUpgradeableProxy")
     {
         return Some(result);
     } else if detect_proxy
-        && hex_str.contains(EIP1822_PROXIABLE_SLOT)
+        && contains_slot(EIP1822_PROXIABLE_SLOT)
         && let Some(result) = find_by_suffix(":UUPSUpgradeable")
     {
         return Some(result);
@@ -2620,5 +2638,45 @@ mod tests {
             "- state diff:\n\
 @ 0x0000000000000000000000000000000000000000000000000000000000000000 (data, (bool,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000001\n    paused (bool): false → false\n"
         );
+    }
+
+    #[test]
+    fn validates_snapshot_groups() {
+        for group in [
+            "Group",
+            "a.b",
+            "group with spaces",
+            "..hidden",
+            "core/someContract",
+            "periphery/someContract.v1",
+        ] {
+            assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
+        }
+        for group in [
+            "",
+            ".",
+            "..",
+            "../settings",
+            "./a",
+            "/tmp/settings",
+            "a/",
+            "a/.",
+            "a/./b",
+            "a/../b",
+            "a//b",
+        ] {
+            assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
+
+        #[cfg(unix)]
+        assert!(is_valid_snapshot_group(r"core\someContract"));
+
+        #[cfg(windows)]
+        {
+            assert!(is_valid_snapshot_group(r"core\someContract"));
+            for group in [r"C:\settings", r"C:settings", r"\settings", r"core\..\settings", "a:b"] {
+                assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+            }
+        }
     }
 }

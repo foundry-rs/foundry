@@ -337,6 +337,48 @@ checked-result approach from
 to one EVM query family; it does not change the configured exploration bounds or
 the meaning of `PASS`.
 
+### Full-precision `mulDiv`
+
+The 512-bit `mulDiv` of Uniswap `FullMath`, OpenZeppelin `Math`, and solady
+`FixedPointMathLib` divides through a Newton inverse that SMT solvers cannot
+decide. Before querying the solver, the normalizer recognizes two exact shapes:
+
+- the high word `mulmod(a, b, not(0)) - a * b - lt(mulmod(..), a * b)`, in both
+  the v4/OpenZeppelin and solady arrangements, becomes the high word of the
+  512-bit product `a * b`;
+- the full quotient, built from `mulmod(a, b, d)`, the lowest set bit of `d`,
+  and at least six Newton steps over the `(3 * d) ^ 2` seed, becomes
+  `floor(a * b / d)` computed over 512 bits, but only when the other path
+  constraints contain the library's `d > high(a * b)` check, under which the
+  algorithm computes exactly that value.
+
+Recognition is structural: every operand must bind the same `a`, `b`, and `d`,
+and any other shape, such as fewer Newton steps, is left unchanged. For any
+nonzero `d` the algorithm computes `floor(a * b / d)` modulo `2**256`; requiring
+the library's check keeps the rewrite to inputs where that quotient fits a word.
+The rounding-up variants, such as `mulDivRoundingUp` and `fullMulDivUp`, add one
+on a nonzero `mulmod(a, b, d)`, which construction folds to zero when `d` is
+`a` or `b`. Two guards around these libraries are also rewritten exactly:
+solady's fast-path check `iszero(mul(or(iszero(x), eq(div(x * y, x), y)), d))`
+becomes `high(x * y) != 0 || d == 0`, and an overflow check that a quotient plus
+a constant is zero becomes a comparison of the quotient itself, where
+`n / d == MAX` holds only for `d == 1` and `n == MAX`. The replacement terms are emitted
+to SMT as 512-bit bit-vector arithmetic. Local order rules prove that the
+quotient is monotone in its factors when the larger quotient fits a word, that
+`floor(a * b / d) * d <= a * b`, and that full products ordered this way order
+their high words, and their low words when the high words are equal or the
+products are equal. They also use the Euclidean relation
+`a * b == q * d + mulmod(a, b, d)` with `mulmod(a, b, d) < d`. When the path
+asserts a zero remainder, a quotient `q` that fits a word is also the ceiling;
+when it asserts a nonzero one, `q + 1` is at most the ceiling. A `q + 1` that
+fits and does not wrap is at least the ceiling, so `a * b <= (q + 1) * d` for
+`d != 0`. This makes the rounding-up variants monotone and bounds
+`ceil(a * b / d) * d` below by `a * b`. A path where `q + 1` wraps is
+infeasible when a product at least as large, with the same divisor, has a zero
+remainder and a quotient that fits a word. Models are still validated against
+the original bytecode terms and counterexamples are still replayed. Other
+properties of these terms go to the solver and can time out.
+
 ## Writing Symbolic Tests
 
 Stateless symbolic tests use ordinary ABI parameters. The executor creates
@@ -582,10 +624,16 @@ token balances, token allowances, and oracle prices. Do not blanket-mark the
 invariant harness or protocol state as arbitrary; that can create unreachable
 states and counterexamples that concrete replay rejects.
 
-Replay currently materializes only concrete storage slots observed during
-symbolic execution. Dependency storage keyed by symbolic calldata is still
-explored symbolically, but it can replay-filter to `Incomplete` or `mismatch`
-instead of a confirmed counterexample if the required slot is not concrete.
+Replay uses the storage values of the solver model at the slots observed during
+symbolic execution, for single-call tests and invariant sequences alike. On
+arbitrary-storage accounts, a value is used only where concrete arbitrary storage
+would draw a random one, so slots fixed in `setUp` by `vm.store` or a read keep
+their values. Slots keyed by symbolic calldata are replayed only when the storage
+ignores its `setUp` values: under the generic storage layout or for
+`vm.setArbitraryStorage(address, true)`. A counterexample whose model needs a
+different value than concrete execution provides, such as different values for
+two keys that resolve to the same slot, replay-filters to `Incomplete` or
+`mismatch` instead of a confirmed counterexample.
 
 ## Equivalence Checking
 
@@ -968,12 +1016,12 @@ Known incomplete, bounded, or approximate surfaces include:
 | Area | Current behavior |
 |---|---|
 | Call depth limit | Calls and creates beyond the 1024 call depth limit fail, as on a node. As in concrete `forge test`, the depth counts from the first frame of the current transaction: under isolation, a `CALL` or `CREATE` from the test, handler, or invariant frame starts a new one, while any other call or create stays in the current transaction. A `vm.deployCode` constructor always starts a fresh depth budget. Reaching the limit nests 1024 frames, which needs a larger `--symbolic-max-paths` and `--symbolic-max-depth` than the defaults. Concrete replay with the default gas limit runs out of gas first, so a counterexample that depends on reaching the limit can fail replay and report incomplete. |
-| Gas-dependent behavior | The engine does not use gas to prove properties, except precompile costs as described under Precompiles. A raw `GAS` / `gasleft()` value is tolerated only as the direct gas operand to a CALL-family opcode and is not used to model gas availability. Explicit or computed CALL-family gas caps report incomplete, including the caps emitted by Solidity `send` and `transfer`. Branches on observed gas may be explored through local solver witnesses, but they never produce counterexamples: arithmetic, call targets/values, calldata/returndata, memory/log offsets or sizes, `expectCall` gas matching, or counterexample models derived from observed gas report incomplete. Non-observable gas metering helpers are accepted as no-ops; observable gas read/snapshot helpers such as `lastCallGas`, `lastFrameGas`, `snapshotGasLastCall`, `snapshotGasLastFrame`, and `stopSnapshotGas` report incomplete and should not be used as symbolic properties. |
+| Gas-dependent behavior | The engine does not use gas to prove properties, except precompile costs as described under Precompiles. A raw `GAS` / `gasleft()` value is tolerated only as the direct gas operand to a CALL-family opcode and is not used to model gas availability. Explicit or computed CALL-family gas caps report incomplete, including the caps emitted by Solidity `send` and `transfer`. Branches on observed gas may be explored through local solver witnesses, but they never produce counterexamples: arithmetic, call targets/values, calldata/returndata, memory/log offsets or sizes, `expectCall` gas matching, or counterexample models derived from observed gas report incomplete. Non-observable gas metering helpers are accepted as no-ops; observable gas read/snapshot helpers such as `lastCallGas`, `lastFrameGas`, `snapshotGasLastCall`, `snapshotGasLastFrame`, and `stopSnapshotGas` report incomplete and should not be used as symbolic properties. A counterexample whose concrete replay runs out of gas, including at the `SSTORE` stipend check or while paying for memory, did not replay the modeled failure and reports incomplete, unless a soft assertion failed first or the modeled failure is a memory access beyond `memory_limit` that the replay runs out of gas paying for at the same instruction. |
 | `SELFDESTRUCT` | Pre-Cancun deletion is modeled. Cancun/EIP-6780 is modeled for concrete beneficiaries: contracts created in the current top-level symbolic transaction are deleted, while existing contracts transfer balance and halt without deleting code or storage. Unresolved symbolic Cancun beneficiaries report incomplete. |
 | Symbolic account/code queries | `BALANCE`, `EXTCODESIZE`, `EXTCODEHASH`, and `EXTCODECOPY` on symbolic addresses are scoped to the engine's known symbolic/overlay/code-cache candidates plus the documented empty-account fallback. They do not prove quantified properties over every possible fork/backend account. |
 | Cheatcode writes through symbolic addresses | `vm.deal` and `vm.store` through an address that the path does not fix also write each account the run knows, such as the test contract, `setUp` deployments, and the cheatcode address, under the condition that the address names it, so they do not add paths. Later balance, storage, code, and nonce reads through that address see the account it names. A call to the address, or another cheatcode that takes it as an argument, such as `vm.prank`, or as an integer equal to it, first forks once per known account the address may name. `vm.etch`, `vm.setNonce`, and `vm.setNonceUnsafe` need concrete code and nonces, so they fork the same way, up to 32 accounts, and `vm.store` forks over known precompiles, where it reverts. Each fork can multiply the path count, so tests that use such an address in several of these ways may need a larger `--symbolic-max-paths`. Accounts the run has not seen yet are not candidates. |
 | Symbolic CALL targets | Concrete targets and symbolic targets constrained to known deployed contracts or precompiles active on the current hardfork are supported. By default, a feasible symbolic target outside the known candidate set reports incomplete. With `symbolic_call_targets = true`, the outside-candidate branch is modeled as an empty-account/no-code successful call, including value transfer for `CALL`; it does not model arbitrary unknown external code or custom/future precompiles. Symbolic cheatcode addresses/selectors still report incomplete. |
-| Symbolic CREATE / CREATE2 inputs | Concrete initcode and common bounded symbolic CREATE2 address expressions are supported. Symbolic runtime sizes and unsupported symbolic initcode shapes report incomplete. |
+| Symbolic CREATE / CREATE2 inputs | Concrete initcode and common bounded symbolic CREATE2 address expressions are supported. Symbolic runtime sizes, symbolic initcode sizes that may exceed the EIP-3860 initcode size limit, and unsupported symbolic initcode shapes report incomplete. |
 | ABI and calldata shape limits | Primitive ABI types, arrays, tuples, structs, bytes, and strings are supported within configured dynamic length and calldata byte limits. Unsupported ABI types, invalid ABI shapes, or calldata exceeding configured budgets report incomplete or config errors. |
 | Dynamic memory and copy bounds | Many symbolic memory, calldata, returndata, and `MCOPY`/`RETURNDATACOPY` sizes are supported when bounded by configuration or solver-proved limits. Accesses beyond the configured `memory_limit`, and `RETURNDATACOPY` ranges beyond the return data, halt exceptionally as in concrete execution. Symbolic sizes that stay within memory but exceed the configured copy bounds report incomplete. |
 | Opcode activation | Implemented opcodes follow the active EVM version. An opcode used before its activation fork causes an exceptional halt, matching concrete execution. |
@@ -981,8 +1029,8 @@ Known incomplete, bounded, or approximate surfaces include:
 | Symbolic hashing and `KECCAK256` | Concrete hashes are computed exactly. Symbolic `KECCAK256` is represented by deterministic opaque terms plus Solidity-storage-layout heuristics for common mapping and dynamic-array keys. For storage keys `keccak(...) + offset`, offsets below `2^64` are assumed not to alias fixed slots or other hash bases; larger offsets are compared exactly, so an index bounded only by an abstract array length may report incomplete. A constant slot only counts as `keccak(...) + offset` when the run computed that hash concretely or when it is a mapping root from a deployed contract's storage layout hashed with a source literal, a backend account address, or a bytecode constant, which covers slots the optimizer folds for constant keys (one nested level) and first-level mapping entries that `setUp` wrote at such keys; other constants are fixed slots. A symbolic hash of constant input length compared with a hash computed concretely during the run, or with a symbolic hash over a different constant input length, is decided by comparing inputs, assuming no collisions. Proof obligations that depend on cryptographic facts such as non-zero hashes, collision resistance, or preimage resistance are not proof-grade and may report incomplete or produce replay-filtered candidates. |
 | Symbolic storage base values | Writes and later reads through symbolic keys are modeled, with Solidity-layout heuristics for common mapping/dynamic-array keys. Reads of previously-unwritten symbolic keys select among the backend's cached slots of the account, such as the slots `setUp` wrote, and read an abstract storage variable elsewhere by default, or zero under the zero-init storage layout. A cached mapping entry is only matched when its slot hash is known as described for `KECCAK256`; other cached slots and storage the backend has not loaded read the fallback value. Proofs involving unknown existing storage are scoped to the selected `symbolic.storage_layout`. |
 | Precompiles | Canonical precompiles are recognized according to the active EVM version, including the Prague BLS12-381 precompiles `0x0b`-`0x11` and Osaka P256VERIFY `0x100`; an address that is not a precompile on the active hardfork, such as KZG `0x0a` before Cancun, falls back to normal empty-account behavior. Precompile addresses use normal account emptiness checks for `EXTCODEHASH`. Concrete inputs for every active precompile execute the corresponding revm precompile for the active hardfork with the most gas a `gasleft()` call can forward under the test gas limit, plus the stipend when it may send value. A precompile that costs more fails as out of gas; costs below that bound are assumed to fit the gas the caller has left. Symbolic modexp and BLAKE2f inputs are checked against the same gas, with each symbolic byte of a length header or round count taken over its full range; other symbolic precompile costs are assumed to fit. Symbolic identity is byte-precise; symbolic hash/modexp outputs are deterministic opaque terms or fixed-length symbolic outputs, not full cryptographic/algebraic models. Symbolic ecrecover returns empty data for invalid recovery IDs and models both empty and 32-byte returndata when recovery is uncertain; the recovered address remains an opaque term. Symbolic modexp and BLAKE2f inputs whose cost may or may not exceed that bound, symbolic BN254 inputs, and symbolic BLAKE2f final flags report incomplete because precompile success depends on validity checks the symbolic model does not prove. KZG `0x0a` concrete inputs execute the revm KZG precompile exactly. Symbolic KZG calls model broad exact failures such as invalid input length and version/hash mismatches where known, plus selected replayable success/failure witnesses. Any remaining feasible symbolic KZG space reports incomplete rather than being treated as proved safe. Symbolic inputs to BLS12-381 and P256VERIFY report incomplete. Other symbolic length headers, symbolic modexp output lengths, out-of-bounds symbolic inputs, and future/custom precompiles are not fully modeled. |
-| Hard arithmetic | Bit-vector arithmetic is modeled through SMT. Forge canonicalizes small polynomial equalities over the exact 256-bit EVM word ring, including identities that wrap, and proves unsigned monotonic product and same-divisor quotient comparisons when path bounds show that every product fits in 256 bits. It first explores branches decided by those local checks and bounded concrete witnesses, then sends the remaining hard-arithmetic branches to the configured SMT solver. Expansion and fallback time are deliberately bounded; division, unsupported `EXP` base/exponent shapes, larger polynomials, and other solver-intractable nonlinear expressions can report incomplete or timeout. |
-| Cheatcode surface | The common testing cheatcodes listed below are modeled for safe concrete/symbolic forms. Unsupported Foundry/VM compatibility cheatcodes, value-bearing cheatcode calls, delegatecall prank forms, symbolic `expectCall` gas, unsupported symbolic `vm.bound` ranges, and unsupported symbolic `assumeNoRevert` decodes/overlaps or ambiguous matches report incomplete. |
+| Hard arithmetic | Bit-vector arithmetic is modeled through SMT. Forge canonicalizes small polynomial equalities over the exact 256-bit EVM word ring, including identities that wrap, and proves unsigned monotonic product and same-divisor quotient comparisons when path bounds show that every product fits in 256 bits. It recognizes the 512-bit `mulDiv` algorithm as described under Full-precision `mulDiv`. It first explores branches decided by those local checks and bounded concrete witnesses, then sends the remaining hard-arithmetic branches to the configured SMT solver. Expansion and fallback time are deliberately bounded; division, unsupported `EXP` base/exponent shapes, larger polynomials, and other solver-intractable nonlinear expressions can report incomplete or timeout. |
+| Cheatcode surface | The common testing cheatcodes listed below are modeled for safe concrete/symbolic forms. Unsupported Foundry/VM compatibility cheatcodes, value-bearing cheatcode calls, delegatecall prank forms, symbolic `expectCall` gas, unsupported symbolic `vm.bound` ranges, unsupported symbolic `assumeNoRevert` decodes/overlaps or ambiguous matches, `expectRevert` mismatches that a caller can catch with ambiguous or symbolic data, and an `expectRevert` a nested frame leaves pending after its `assumeNoRevert` report incomplete. |
 | Approximate/no-op cheatcodes | Some recognized Foundry helpers are accepted but not semantically checked under symbolic execution, including non-observable gas metering helpers, access-list/warm/cool helpers, `allowCheatcodes`, `sleep`, and breakpoints. Observable EVM-version helpers, gas snapshot/read helpers, and safe-memory expectation helpers report incomplete instead of fabricating results or silently accepting assertions. |
 | Fork mutation during symbolic execution | Fork-backed setup is allowed before symbolic execution. Creating forks, selecting a different fork, or rolling/mutating fork blocks during symbolic execution is restricted and reports incomplete unless it stays on the already active fork in the supported form. |
 | Filesystem, JSON/TOML, and prompt-shaped inputs | Environment reads and `ffi` are supported for concrete values and commands, with `ffi` gated by Forge's existing `--ffi` setting. Missing or unparsable env values, disabled or failing FFI, non-UTF8 stdout, artifact lookup failures, filesystem access, JSON/TOML parsing or serialization, and interactive prompt cheatcodes report incomplete. |

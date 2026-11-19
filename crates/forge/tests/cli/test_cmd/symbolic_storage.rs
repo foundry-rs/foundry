@@ -1,5 +1,10 @@
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, str, util::OutputExt};
+use foundry_compilers::artifacts::EvmVersion;
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
+use foundry_test_utils::{
+    forgetest_init, str,
+    util::{OTHER_SOLC_VERSION, OutputExt},
+};
 
 use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
 use crate::skip_unless_z3;
@@ -431,7 +436,7 @@ contract SymbolicGenericStorage {
     .stdout_eq(str![[r#"
 ...
 Ran 2 tests for test/SymbolicGenericStorage.t.sol:SymbolicGenericStorage
-[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNativeGenericStorage(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNativeGenericStorage(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSvmArbitraryStorage(address) ([METRICS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
@@ -856,4 +861,595 @@ Ran 9 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
 Suite result: FAILED. 3 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
+}
+
+// Each solver model takes the `assert(false)` branch with a nonzero unwritten balance, but the
+// concrete replay reads zero and runs out of gas in a loop, at the SSTORE sentry, or while
+// expanding memory. The engine does not model gas, so those halts do not confirm the model and
+// the run must report incomplete. A replay that failed a soft assertion before running out of
+// gas still confirms it, and so does a modeled memory-limit halt that replays as out of gas at the
+// same instruction, but not one whose replay runs out of gas elsewhere or within the limit.
+#[forgetest_init]
+fn symbolic_replay_out_of_gas_is_incomplete(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_replay_out_of_gas_is_incomplete");
+
+    prj.add_test(
+        "SymbolicReplayOutOfGas.t.sol",
+        r#"
+contract SymbolicReplayOutOfGas {
+    mapping(address => uint256) balanceOf;
+
+    function checkReplayOutOfGas(address owner) public view {
+        if (balanceOf[owner] == 0) {
+            uint256 acc;
+            for (uint256 i; i < 5000; i++) {
+                acc += i;
+            }
+            require(acc != 1);
+            return;
+        }
+        assert(false);
+    }
+
+    function checkReplayOutOfGasBeforeMemoryHalt(address owner) public view {
+        if (balanceOf[owner] == 0) {
+            uint256 acc;
+            for (uint256 i; i < 5000; i++) {
+                acc += i;
+            }
+            require(acc != 1);
+            return;
+        }
+        assembly {
+            mstore(0x10000000000, 1)
+        }
+    }
+
+    function checkReplayOutOfGasAtMemoryHalt(address owner) public view {
+        uint256 offset = balanceOf[owner] == 0 ? 0x100000 : 0x10000000000;
+        assembly {
+            mstore(offset, 1)
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicReplayGasHalts.t.sol",
+        r#"
+interface Vm {
+    function assertTrue(bool condition) external pure;
+}
+
+contract SymbolicReplayGasHalts {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    mapping(address => uint256) balanceOf;
+    uint256 counter;
+
+    function checkReplaySstoreOutOfGas(address owner) public {
+        if (balanceOf[owner] == 0) {
+            for (uint256 i; i < 5000; i++) {
+                counter = i + 1;
+            }
+            return;
+        }
+        assert(false);
+    }
+
+    function checkReplayMemoryOutOfGas(address owner) public view {
+        if (balanceOf[owner] == 0) {
+            assembly {
+                mstore(0x100000, 1)
+            }
+            return;
+        }
+        assert(false);
+    }
+
+    /// forge-config: default.assertions_revert = false
+    function checkSoftAssertThenOutOfGas(uint256 x) public pure {
+        vm.assertTrue(x != 7);
+        assembly {
+            mstore(0x100000, 1)
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicReplayOutOfGas",
+        "--gas-limit",
+        "300000",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicReplayOutOfGas.t.sol:SymbolicReplayOutOfGas
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplayOutOfGas(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplayOutOfGasAtMemoryHalt(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplayOutOfGasBeforeMemoryHalt(address) ([METRICS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicReplayGasHalts",
+        "--gas-limit",
+        "300000",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicReplayGasHalts.t.sol:SymbolicReplayGasHalts
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplayMemoryOutOfGas(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of gas] checkReplaySstoreOutOfGas(address) ([METRICS])
+[FAIL: EvmError: MemoryOOG; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[7]] checkSoftAssertThenOutOfGas(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Concrete execution charges copy gas before it checks `memory_limit`, so the modeled
+    // memory-limit halt replays as out of gas and still confirms and minimizes the model.
+    prj.add_test(
+        "SymbolicReplayMemoryLimit.t.sol",
+        r#"
+contract SymbolicReplayMemoryLimit {
+    function checkNewBytes(uint256 n) public pure {
+        bytes memory b = new bytes(n);
+        assert(b.length == n);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicReplayMemoryLimit",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicReplayMemoryLimit.t.sol:SymbolicReplayMemoryLimit
+[FAIL: EvmError: OutOfGas; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[11453013985 [1.145e10]]] checkNewBytes(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A build without storage layouts after an edit keeps the cached symbolic profile, so the next
+// symbolic run must recompile the artifacts it wrote without layouts.
+#[forgetest_init]
+fn symbolic_recompiles_cached_artifacts_without_storage_layouts(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_recompiles_cached_artifacts_without_storage_layouts");
+
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.ast = true;
+    });
+    // A source without contracts has an artifact without a layout, which must stay cached.
+    prj.add_source("Helpers.sol", "function five() pure returns (uint256) { return 5; }");
+    let source = r#"
+import {five} from "../src/Helpers.sol";
+
+contract FoldedStore {
+    mapping(uint256 => uint256) public values;
+
+    function set(uint256 key, uint256 value) external {
+        values[key] = value;
+    }
+
+    function readFive() external view returns (uint256) {
+        return values[five()];
+    }
+}
+
+contract SymbolicStaleLayout {
+    FoldedStore store = new FoldedStore();
+
+    function checkFoldedSlotAliases(uint256 key) public {
+        store.set(key, 1);
+        assert(store.readFive() == 0);
+    }
+}
+"#;
+    prj.add_test("SymbolicStaleLayout.t.sol", source);
+    let args = ["test", "--symbolic", "--match-contract", "SymbolicStaleLayout"];
+    assert_symbolic_witness(cmd.args(args)).failure().stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]]);
+
+    prj.add_test("SymbolicStaleLayout.t.sol", &format!("{source}// Edited.\n"));
+    cmd.forge_fuse().arg("build").assert_success();
+
+    assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]]);
+
+    // The recompiled artifacts have layouts, so the next run reuses them.
+    assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/SymbolicStaleLayout.t.sol:SymbolicStaleLayout
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]]);
+}
+
+// A filtered symbolic run must only recompile the artifacts of the compiler profiles it uses, or
+// the cache keeps pointing at deleted artifacts of other profiles and every run recompiles. The
+// kept artifact of the other profile has no layout, so it must take the default profile's layout.
+#[forgetest_init]
+fn symbolic_keeps_cached_artifacts_of_other_profiles(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_keeps_cached_artifacts_of_other_profiles");
+
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.ast = true;
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "cancun".to_string(),
+            via_ir: None,
+            evm_version: Some(EvmVersion::Cancun),
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "test/Cancun.t.sol".parse().unwrap(),
+            version: None,
+            via_ir: None,
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: Some(EvmVersion::Cancun),
+        }];
+    });
+    let source = r#"
+function five() pure returns (uint256) {
+    return 5;
+}
+
+contract FoldedStore {
+    mapping(uint256 => uint256) public values;
+
+    function set(uint256 key, uint256 value) external {
+        values[key] = value;
+    }
+
+    function readFive() external view returns (uint256) {
+        return values[five()];
+    }
+}
+"#;
+    prj.add_source("FoldedStore.sol", source);
+    prj.add_test(
+        "Default.t.sol",
+        r#"
+import {FoldedStore} from "../src/FoldedStore.sol";
+
+interface Vm {
+    function deployCode(string calldata artifactPath) external returns (address);
+}
+
+contract SymbolicDefaultProfile {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    FoldedStore store = FoldedStore(vm.deployCode("FoldedStore.sol:FoldedStore:cancun"));
+
+    function checkFoldedSlotAliases(uint256 key) public {
+        store.set(key, 1);
+        assert(store.readFive() == 0);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Cancun.t.sol",
+        r#"
+import {FoldedStore} from "../src/FoldedStore.sol";
+
+contract CancunProfile {
+    FoldedStore store = new FoldedStore();
+}
+"#,
+    );
+    let failure = str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]];
+    assert_symbolic_witness(cmd.args(["test", "--symbolic"])).failure().stdout_eq(failure.clone());
+
+    prj.add_source("FoldedStore.sol", &format!("{source}// Edited.\n"));
+    cmd.forge_fuse().arg("build").assert_success();
+
+    let args = ["test", "--symbolic", "--match-path", "test/Default.t.sol"];
+    assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(failure).stderr_eq(
+        str![[r#"
+Recompiling cached artifacts without storage layouts...
+...
+"#]],
+    );
+    assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]]);
+}
+
+// When filtered roots hit solc error 2449, the retry compiles every root and can select another
+// solc version, so the stale artifacts of that compilation must be recompiled.
+#[forgetest_init]
+fn symbolic_recompiles_cached_artifacts_after_source_order_fallback(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_recompiles_cached_artifacts_after_source_order_fallback");
+
+    prj.update_config(|config| {
+        config.solc = None;
+        config.optimizer = Some(true);
+        config.ast = true;
+    });
+    let source = r#"
+pragma solidity ^0.8.24;
+
+function five() pure returns (uint256) {
+    return 5;
+}
+
+contract FoldedStore {
+    mapping(uint256 => uint256) public values;
+
+    function set(uint256 key, uint256 value) external {
+        values[key] = value;
+    }
+
+    function readFive() external view returns (uint256) {
+        return values[five()];
+    }
+}
+"#;
+    prj.add_source("FoldedStore.sol", source);
+    prj.add_test(
+        "SymbolicFallback.t.sol",
+        r#"
+pragma solidity ^0.8.24;
+import {FoldedStore} from "../src/FoldedStore.sol";
+
+contract SymbolicFallback {
+    FoldedStore store = new FoldedStore();
+
+    function checkFoldedSlotAliases(uint256 key) public {
+        store.set(key, 1);
+        assert(store.readFive() == 0);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "helpers/Base.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./Derived.sol";
+contract Base {}
+"#,
+    );
+    prj.add_test(
+        "helpers/Derived.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./Base.sol";
+contract Derived is Base {}
+"#,
+    );
+    // Without this root, solc visits the import cycle in the order that produces error 2449. It
+    // also pins the shared sources to another solc version in the retry.
+    prj.add_test(
+        "Anchor.t.sol",
+        &format!(
+            r#"
+pragma solidity ={OTHER_SOLC_VERSION};
+import "./helpers/Derived.sol";
+import {{SymbolicFallback}} from "./SymbolicFallback.t.sol";
+contract Anchor {{}}
+"#
+        ),
+    );
+    let expected = str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFoldedSlotAliases(uint256) ([METRICS])
+...
+"#]];
+    assert_symbolic_witness(cmd.args(["test", "--symbolic"])).failure().stdout_eq(expected.clone());
+
+    prj.add_source("FoldedStore.sol", &format!("{source}// Edited.\n"));
+    cmd.forge_fuse().arg("build").assert_success();
+
+    let args = ["test", "--symbolic", "--match-path", "test/SymbolicFallback.t.sol"];
+    assert_symbolic_witness(cmd.forge_fuse().args(args)).failure().stdout_eq(expected);
+}
+
+// A counterexample that depends on arbitrary storage, including a mapping slot keyed by calldata,
+// replays only when replay applies the solver model's storage instead of fresh arbitrary values.
+// Replay draws the modeled values only where arbitrary storage would draw a fresh one, so slots
+// that setUp fixed, nonzero slots read with `vm.load`, and storage that the test itself makes
+// arbitrary keep their values, and the first read of a copy still writes back to its source.
+#[forgetest_init]
+fn symbolic_single_call_replays_arbitrary_storage(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_single_call_replays_arbitrary_storage");
+
+    prj.add_test(
+        "SymbolicStorageReplay.t.sol",
+        r#"
+interface Vm {
+    function assertGe(uint256 left, uint256 right) external pure;
+    function assume(bool condition) external pure;
+    function setArbitraryStorage(address target, bool overwrite) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
+    function copyStorage(address from, address to) external;
+}
+
+interface Svm {
+    function enableSymbolicStorage(address target) external;
+}
+
+contract Token {
+    uint256 public totalSupply;
+    mapping(address => uint256) public balanceOf;
+
+    function mint(address to, uint256 amount) external {
+        totalSupply += amount;
+        unchecked {
+            balanceOf[to] += amount;
+        }
+    }
+}
+
+contract Box {
+    uint256 public val;
+    mapping(uint256 => uint256) public values;
+
+    function set(uint256 value) external {
+        val = value;
+    }
+}
+
+contract SymbolicStorageReplay {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Svm constant svm = Svm(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+    Token token;
+    Token concreteToken;
+    Token pinnedToken;
+    Box readBox;
+    uint256 seen;
+    Box loadBox;
+    Box copySource;
+    Box copyTarget;
+
+    function setUp() public {
+        token = new Token();
+        concreteToken = new Token();
+        pinnedToken = new Token();
+        vm.setArbitraryStorage(address(token), true);
+        vm.setArbitraryStorage(address(pinnedToken), true);
+        vm.store(address(pinnedToken), bytes32(0), bytes32(uint256(5)));
+
+        readBox = new Box();
+        vm.setArbitraryStorage(address(readBox), true);
+        seen = readBox.val();
+
+        loadBox = new Box();
+        loadBox.set(5);
+        vm.setArbitraryStorage(address(loadBox), true);
+
+        copySource = new Box();
+        copyTarget = new Box();
+        vm.setArbitraryStorage(address(copySource), true);
+        vm.copyStorage(address(copySource), address(copyTarget));
+    }
+
+    function checkMint(uint256 amount, address account) public {
+        uint256 balanceBefore = token.balanceOf(account);
+        token.mint(account, amount);
+        vm.assertGe(token.balanceOf(account), balanceBefore);
+    }
+
+    function checkMintNonZero(uint256 amount, address account) public {
+        vm.assume(amount != 0);
+        uint256 balanceBefore = token.balanceOf(account);
+        token.mint(account, amount);
+        vm.assertGe(token.balanceOf(account), balanceBefore);
+    }
+
+    // Arbitrary storage keeps a value that setUp already read, so the assertion cannot fail.
+    function checkSetUpRead() public view {
+        assert(readBox.val() == seen);
+    }
+
+    // `vm.load` keeps a nonzero slot of arbitrary storage, so the assertion cannot fail.
+    function checkLoad() public view {
+        assert(uint256(vm.load(address(loadBox), bytes32(0))) == 5);
+    }
+
+    // Both reads use one slot, so they cannot take the values the assertion needs.
+    function checkAliased(uint256 a, uint256 b) public view {
+        uint256 x = readBox.values(a);
+        uint256 y = readBox.values(b);
+        vm.assume(a == b && a < 10);
+        if (x == 42 && y == 99) assert(false);
+        if (x == 42 || y == 99) revert("ordinary revert");
+    }
+
+    // The first read of the copy writes its value back to the source.
+    function checkCopyWriteBack() public {
+        copySource.set(5);
+        uint256 value = copyTarget.val();
+        if (value != 5) assert(copySource.val() != value);
+    }
+
+    // Arbitrary storage keeps a slot written with `vm.store`, so the assertion cannot fail.
+    function checkPinnedSlot() public view {
+        assert(pinnedToken.totalSupply() == 5);
+    }
+
+    // The storage was concrete when the call started, so the first assertion cannot fail.
+    function checkStorageMadeArbitraryByTest() public {
+        assert(concreteToken.totalSupply() == 0);
+        svm.enableSymbolicStorage(address(concreteToken));
+        if (concreteToken.totalSupply() == 7) assert(false);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
+...
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkAliased(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCopyWriteBack() ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkLoad() ([METRICS])
+[FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMint(uint256,address) ([METRICS])
+[FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMintNonZero(uint256,address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkPinnedSlot() ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSetUpRead() ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkStorageMadeArbitraryByTest() ([METRICS])
+...
+"#]]);
+
+    let artifact_dir =
+        prj.root().join("cache/symbolic/test_SymbolicStorageReplay_t_sol_SymbolicStorageReplay");
+    let mut artifacts = std::fs::read_dir(artifact_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    artifacts.sort();
+    assert_eq!(artifacts.len(), 3, "{artifacts:?}");
+    for artifact in artifacts {
+        assert_symbolic_witness(cmd.forge_fuse().args([
+            "test",
+            "--replay-symbolic-artifact",
+            artifact.to_str().unwrap(),
+        ]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: [..]assertion failed[..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check[..] ([GAS])
+...
+"#]]);
+    }
 }

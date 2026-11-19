@@ -561,10 +561,40 @@ impl SymbolicExecutor {
                             .iter()
                             .map(|ret| ret.bytes.eval_model(&mut self.cx, &model).map(Bytes::from))
                             .collect::<Result<_, _>>()?;
+                        // Conflicting assignments replay without storage, leaving replay to
+                        // reject the counterexample if it depends on them. Storage the test
+                        // itself made arbitrary was concrete when the call started, so replay
+                        // does not set it either.
+                        let generic =
+                            matches!(self.config.storage_layout, SymbolicStorageLayout::Generic);
+                        let executor = &input.executor;
+                        let storage = state
+                            .world
+                            .replay_storage_assignments(&model, true)
+                            .inspect_err(|err| debug!(%err, "skipping symbolic storage replay"))
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|assignment| {
+                                generic
+                                    || executor
+                                        .arbitrary_storage_targets
+                                        .iter()
+                                        .map(|(target, _)| target)
+                                        .chain(
+                                            executor
+                                                .arbitrary_storage_copies
+                                                .iter()
+                                                .map(|(target, _)| target),
+                                        )
+                                        .any(|target| *target == assignment.address)
+                            })
+                            .collect();
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
                             calldata,
                             svm_returns,
+                            memory_halt_pc: state.memory_halt_pc,
+                            storage,
                             // A path that failed at a cheatcode expectation or failed a
                             // `vm.expectEmit` would also fail if the test caught that failure
                             // and then reverted, whatever the revert data.
