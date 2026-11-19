@@ -201,40 +201,8 @@ impl BroadcastReader {
     {
         let reader = Self { tx_type: vec![CallKind::Create, CallKind::Create2], ..self.clone() };
         let broadcasts = reader.read_all::<N>()?;
-        let label = reader.latest_labeled_deployment(&broadcasts)?;
-        let Some(broadcast) = reader
-            .filter_and_sort(broadcasts)
-            .into_iter()
-            .max_by_key(|broadcast| broadcast.timestamp)
-        else {
-            return label.ok_or_else(|| eyre::eyre!("No broadcasts found"));
-        };
-        let targets = reader.into_tx_receipts(broadcast);
-        let Some((tx, _)) = targets.first() else {
-            bail!("no deployment found for {} on chain {}", self.contract_name, self.chain_id);
-        };
-        let name = tx.contract_address.unwrap_or_default();
-
-        if let Some(label) = label
-            && label != name
-        {
-            bail!(
-                "{} is the label of {label} and the contract name of {name} on chain {}",
-                self.contract_name,
-                self.chain_id
-            );
-        }
-        Ok(name)
-    }
-
-    /// Returns the address labeled with the contract name of this reader in the latest broadcast
-    /// that has a confirmed deployment with that label.
-    fn latest_labeled_deployment<N: Network>(
-        &self,
-        broadcasts: &[ScriptSequence<N>],
-    ) -> Result<Option<Address>> {
         let query = Some(self.contract_name.as_str());
-        let Some((_, addresses)) = broadcasts
+        let label = broadcasts
             .iter()
             .filter(|broadcast| broadcast.chain == self.chain_id)
             .filter_map(|broadcast| {
@@ -266,20 +234,42 @@ impl BroadcastReader {
                 (!addresses.is_empty()).then_some((broadcast.timestamp, addresses))
             })
             .max_by_key(|(timestamp, _)| *timestamp)
+            .map(|(_, addresses)| {
+                let [address] = addresses[..] else {
+                    let addresses = addresses.iter().map(Address::to_string).collect::<Vec<_>>();
+                    bail!(
+                        "label {} matches multiple deployments on chain {}: {}",
+                        self.contract_name,
+                        self.chain_id,
+                        addresses.join(", ")
+                    );
+                };
+                Ok(address)
+            })
+            .transpose()?;
+        let Some(broadcast) = reader
+            .filter_and_sort(broadcasts)
+            .into_iter()
+            .max_by_key(|broadcast| broadcast.timestamp)
         else {
-            return Ok(None);
+            return label.ok_or_else(|| eyre::eyre!("No broadcasts found"));
         };
+        let targets = reader.into_tx_receipts(broadcast);
+        let Some((tx, _)) = targets.first() else {
+            bail!("no deployment found for {} on chain {}", self.contract_name, self.chain_id);
+        };
+        let name = tx.contract_address.unwrap_or_default();
 
-        let [address] = addresses[..] else {
-            let addresses = addresses.iter().map(Address::to_string).collect::<Vec<_>>();
+        if let Some(label) = label
+            && label != name
+        {
             bail!(
-                "label {} matches multiple deployments on chain {}: {}",
+                "{} is the label of {label} and the contract name of {name} on chain {}",
                 self.contract_name,
-                self.chain_id,
-                addresses.join(", ")
+                self.chain_id
             );
-        };
-        Ok(Some(address))
+        }
+        Ok(name)
     }
 }
 
@@ -453,12 +443,7 @@ mod tests {
     }
 
     fn lookup(reader: &BroadcastReader) -> Result<Address, String> {
-        let result = reader.read_latest_deployment::<Ethereum>().map_err(|err| err.to_string());
-        assert_eq!(
-            result,
-            reader.read_latest_deployment::<AnyNetwork>().map_err(|err| err.to_string())
-        );
-        result
+        reader.read_latest_deployment::<AnyNetwork>().map_err(|err| err.to_string())
     }
 
     #[test]
