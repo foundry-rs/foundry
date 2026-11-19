@@ -8951,3 +8951,56 @@ contract SymbolicFallbackBackjump {
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
     assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
 }
+
+// Wrapping addition and subtraction cancel, so these identities need no solver.
+#[forgetest_init]
+fn symbolic_cancels_wrapping_add_and_sub(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_cancels_wrapping_add_and_sub");
+
+    prj.add_test(
+        "SymbolicAddSubCancel.t.sol",
+        r#"
+contract SymbolicAddSubCancel {
+    function checkAddThenSub(uint256 x, uint256 a) public pure {
+        unchecked {
+            assert((x + a) - x == a);
+            assert((x + a) - a == x);
+        }
+    }
+
+    function checkSubThenAdd(uint256 x, uint256 a) public pure {
+        unchecked {
+            assert((x - a) + a == x);
+            assert(a + (x - a) == x);
+        }
+    }
+
+    function checkSubOfSub(uint256 x, uint256 a) public pure {
+        unchecked {
+            assert(x - (x - a) == a);
+        }
+    }
+}
+"#,
+    );
+
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicAddSubCancel"])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+
+        for test in ["checkAddThenSub", "checkSubThenAdd", "checkSubOfSub"] {
+            let result = json_test_result(&output, &format!("{test}(uint256,uint256)"));
+            assert_eq!(result["symbolic"]["status"], "pass", "{test} optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{test} optimized={optimized}"
+            );
+        }
+    }
+}

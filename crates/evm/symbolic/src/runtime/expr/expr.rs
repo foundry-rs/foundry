@@ -346,6 +346,20 @@ fn euclidean_sum_dividend<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<&
     })
 }
 
+/// Returns `a` for the sum `(a - b) + b` in either operand order.
+///
+/// Word addition and subtraction wrap modulo 2^256, so the terms cancel for every operand.
+fn cancelled_difference_minuend<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<&'a SymExpr> {
+    [(left, right), (right, left)].into_iter().find_map(|(difference, term)| {
+        match difference.kind() {
+            SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) if subtrahend == term => {
+                Some(minuend)
+            }
+            _ => None,
+        }
+    })
+}
+
 fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
     if bytes.len() < 32 {
         return None;
@@ -550,6 +564,9 @@ impl SymExpr {
                     } else if let Some(dividend) = euclidean_sum_dividend(&left, &right) {
                         // `(a / d) * d + a % d => a`.
                         dividend.clone()
+                    } else if let Some(minuend) = cancelled_difference_minuend(&left, &right) {
+                        // `(a - b) + b => a`.
+                        minuend.clone()
                     } else {
                         Self::from_kind(cx, SymExprKind::BinOp(binop, left, right))
                     }
@@ -564,6 +581,17 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a - a => 0`.
                 _ if left == right => Self::zero(cx),
+                // `(a + b) - a => b` and `(a + b) - b => a`.
+                (SymExprKind::BinOp(SymBinOp::Add, augend, addend), _) if *augend == right => {
+                    addend.clone()
+                }
+                (SymExprKind::BinOp(SymBinOp::Add, augend, addend), _) if *addend == right => {
+                    augend.clone()
+                }
+                // `a - (a - b) => b`.
+                (_, SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend)) if *minuend == left => {
+                    subtrahend.clone()
+                }
                 // `a - a % d => (a / d) * d`.
                 (_, SymExprKind::BinOp(SymBinOp::URem, dividend, divisor)) if *dividend == left => {
                     let quotient = Self::binop(cx, SymBinOp::UDiv, left, divisor.clone());
@@ -2675,5 +2703,32 @@ mod tests {
         });
         assert_eq!(result, ControlFlow::Break(42));
         assert_eq!(visits, 2);
+    }
+
+    // Wrapping addition and subtraction cancel for every operand, whichever side the shared term
+    // lands on after the sum's operands are ordered.
+    #[test]
+    fn binop_cancels_wrapping_add_and_sub() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
+
+        for (a, b) in [(&x, &y), (&y, &x), (&x, &product), (&product, &x)] {
+            let sum = SymExpr::binop(&mut cx, SymBinOp::Add, a.clone(), b.clone());
+            assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Sub, sum.clone(), a.clone()), *b);
+            assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Sub, sum, b.clone()), *a);
+
+            let difference = SymExpr::binop(&mut cx, SymBinOp::Sub, a.clone(), b.clone());
+            assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Add, difference.clone(), b.clone()), *a);
+            assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Add, b.clone(), difference.clone()), *a);
+            assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Sub, a.clone(), difference), *b);
+        }
+
+        // Unrelated terms keep their shape.
+        let z = SymExpr::var(&mut cx, "z");
+        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
+        let kept = SymExpr::binop(&mut cx, SymBinOp::Sub, sum, z);
+        assert!(matches!(kept.kind(), SymExprKind::BinOp(SymBinOp::Sub, _, _)));
     }
 }
