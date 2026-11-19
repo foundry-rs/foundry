@@ -2462,34 +2462,42 @@ impl SymbolicWorld {
             .collect()
     }
 
+    /// Returns the storage values of `model` at the slots replay applies. With `reject_aliases`,
+    /// symbolic keys that resolve to one slot but need different values are an error; otherwise
+    /// the first value wins.
     pub(crate) fn replay_storage_assignments(
         &self,
         model: &SymbolicModel,
+        reject_aliases: bool,
     ) -> Result<Vec<SymbolicStorageAssignment>, SymbolicError> {
         let mut assignments = std::collections::BTreeMap::<(Address, U256), U256>::new();
+        let mut assign = |address, slot, value, reject_conflict: bool| match assignments
+            .entry((address, slot))
+        {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(value);
+                Ok(())
+            }
+            std::collections::btree_map::Entry::Occupied(entry)
+                if *entry.get() == value || !reject_conflict =>
+            {
+                Ok(())
+            }
+            std::collections::btree_map::Entry::Occupied(_) => Err(SymbolicError::Solver(
+                "conflicting symbolic storage replay assignments".to_string(),
+            )),
+        };
         for (symbol, slots) in &self.replay_storage_slots {
             let Some(value) = model.get(symbol).copied() else { continue };
             for slot in slots {
-                match assignments.entry((slot.address, slot.slot)) {
-                    std::collections::btree_map::Entry::Vacant(entry) => {
-                        entry.insert(value);
-                    }
-                    std::collections::btree_map::Entry::Occupied(entry)
-                        if *entry.get() == value => {}
-                    std::collections::btree_map::Entry::Occupied(_) => {
-                        return Err(SymbolicError::Solver(
-                            "conflicting symbolic storage replay assignments".to_string(),
-                        ));
-                    }
-                }
+                assign(slot.address, slot.slot, value, true)?;
             }
         }
-        // Replay validates aliases between symbolic keys that take the same concrete value.
         for (symbol, reads) in &self.replay_symbolic_storage_keys {
             let Some(value) = model.get(symbol).copied() else { continue };
             for (address, key) in reads {
                 if let Some(slot) = key.eval_model_if_complete(model)? {
-                    assignments.entry((*address, slot)).or_insert(value);
+                    assign(*address, slot, value, reject_aliases)?;
                 }
             }
         }

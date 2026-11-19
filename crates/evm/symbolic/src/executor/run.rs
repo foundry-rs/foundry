@@ -569,7 +569,7 @@ impl SymbolicExecutor {
                         let executor = &input.executor;
                         let storage = state
                             .world
-                            .replay_storage_assignments(&model)
+                            .replay_storage_assignments(&model, true)
                             .inspect_err(|err| debug!(%err, "skipping symbolic storage replay"))
                             .unwrap_or_default()
                             .into_iter()

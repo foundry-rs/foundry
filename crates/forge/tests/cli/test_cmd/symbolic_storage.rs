@@ -1236,8 +1236,9 @@ contract Anchor {{}}
 
 // A counterexample that depends on arbitrary storage, including a mapping slot keyed by calldata,
 // replays only when replay applies the solver model's storage instead of fresh arbitrary values.
-// Replay must not set slots that setUp wrote with `vm.store`, nor storage that the test itself
-// makes arbitrary.
+// Replay draws the modeled values only where arbitrary storage would draw a fresh one, so slots
+// that setUp fixed, nonzero slots read with `vm.load`, and storage that the test itself makes
+// arbitrary keep their values, and the first read of a copy still writes back to its source.
 #[forgetest_init]
 fn symbolic_single_call_replays_arbitrary_storage(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_single_call_replays_arbitrary_storage");
@@ -1250,6 +1251,8 @@ interface Vm {
     function assume(bool condition) external pure;
     function setArbitraryStorage(address target, bool overwrite) external;
     function store(address target, bytes32 slot, bytes32 value) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
+    function copyStorage(address from, address to) external;
 }
 
 interface Svm {
@@ -1268,12 +1271,26 @@ contract Token {
     }
 }
 
+contract Box {
+    uint256 public val;
+    mapping(uint256 => uint256) public values;
+
+    function set(uint256 value) external {
+        val = value;
+    }
+}
+
 contract SymbolicStorageReplay {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     Svm constant svm = Svm(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
     Token token;
     Token concreteToken;
     Token pinnedToken;
+    Box readBox;
+    uint256 seen;
+    Box loadBox;
+    Box copySource;
+    Box copyTarget;
 
     function setUp() public {
         token = new Token();
@@ -1282,6 +1299,19 @@ contract SymbolicStorageReplay {
         vm.setArbitraryStorage(address(token), true);
         vm.setArbitraryStorage(address(pinnedToken), true);
         vm.store(address(pinnedToken), bytes32(0), bytes32(uint256(5)));
+
+        readBox = new Box();
+        vm.setArbitraryStorage(address(readBox), true);
+        seen = readBox.val();
+
+        loadBox = new Box();
+        loadBox.set(5);
+        vm.setArbitraryStorage(address(loadBox), true);
+
+        copySource = new Box();
+        copyTarget = new Box();
+        vm.setArbitraryStorage(address(copySource), true);
+        vm.copyStorage(address(copySource), address(copyTarget));
     }
 
     function checkMint(uint256 amount, address account) public {
@@ -1295,6 +1325,32 @@ contract SymbolicStorageReplay {
         uint256 balanceBefore = token.balanceOf(account);
         token.mint(account, amount);
         vm.assertGe(token.balanceOf(account), balanceBefore);
+    }
+
+    // Arbitrary storage keeps a value that setUp already read, so the assertion cannot fail.
+    function checkSetUpRead() public view {
+        assert(readBox.val() == seen);
+    }
+
+    // `vm.load` keeps a nonzero slot of arbitrary storage, so the assertion cannot fail.
+    function checkLoad() public view {
+        assert(uint256(vm.load(address(loadBox), bytes32(0))) == 5);
+    }
+
+    // Both reads use one slot, so they cannot take the values the assertion needs.
+    function checkAliased(uint256 a, uint256 b) public view {
+        uint256 x = readBox.values(a);
+        uint256 y = readBox.values(b);
+        vm.assume(a == b && a < 10);
+        if (x == 42 && y == 99) assert(false);
+        if (x == 42 || y == 99) revert("ordinary revert");
+    }
+
+    // The first read of the copy writes its value back to the source.
+    function checkCopyWriteBack() public {
+        copySource.set(5);
+        uint256 value = copyTarget.val();
+        if (value != 5) assert(copySource.val() != value);
     }
 
     // Arbitrary storage keeps a slot written with `vm.store`, so the assertion cannot fail.
@@ -1314,9 +1370,13 @@ contract SymbolicStorageReplay {
 
     assert_symbolic_witness(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
 ...
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkAliased(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCopyWriteBack() ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkLoad() ([METRICS])
 [FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMint(uint256,address) ([METRICS])
 [FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMintNonZero(uint256,address) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkPinnedSlot() ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSetUpRead() ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkStorageMadeArbitraryByTest() ([METRICS])
 ...
 "#]]);
@@ -1328,7 +1388,7 @@ contract SymbolicStorageReplay {
         .map(|entry| entry.unwrap().path())
         .collect::<Vec<_>>();
     artifacts.sort();
-    assert_eq!(artifacts.len(), 2, "{artifacts:?}");
+    assert_eq!(artifacts.len(), 3, "{artifacts:?}");
     for artifact in artifacts {
         assert_symbolic_witness(cmd.forge_fuse().args([
             "test",
@@ -1338,7 +1398,7 @@ contract SymbolicStorageReplay {
         .failure()
         .stdout_eq(str![[r#"
 ...
-[FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMint[..] ([GAS])
+[FAIL: [..]assertion failed[..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check[..] ([GAS])
 ...
 "#]]);
     }

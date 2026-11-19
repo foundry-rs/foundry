@@ -2738,11 +2738,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         stats: SymbolicStats,
         symbolic_config: &SymbolicConfig,
     ) -> (TestStatus, Option<String>, Option<CounterExample>, SymbolicResult) {
-        // Arbitrary storage keeps a slot that setUp wrote with `vm.store`, so replay must not
-        // overwrite it with the model's value.
+        // Arbitrary storage never draws a slot again once setUp fixed it with `vm.store` or a
+        // read, which a copy caches under its source, so the artifact leaves those slots out.
         if let Some(cheats) = self.executor.inspector().cheatcodes.as_ref() {
             storage.retain(|assignment| {
+                let cached_address = cheats
+                    .arbitrary_storage_copied_target_sources()
+                    .find(|(target, _)| *target == assignment.address)
+                    .map_or(assignment.address, |(_, source)| source);
                 !cheats.is_arbitrary_storage_slot_explicit(assignment.address, assignment.slot)
+                    && cheats
+                        .cached_arbitrary_storage_value(cached_address, assignment.slot)
+                        .is_none()
             });
         }
         let symbolic_counterexample = SymbolicCounterexample {
@@ -6197,20 +6204,25 @@ fn replayed_memory_halt<FEN: FoundryEvmNetwork>(
             .is_some_and(|(halt_pc, end)| halt_pc == pc && end > U256::from(memory_limit))
 }
 
-/// Applies the setup storage of a symbolic counterexample, so arbitrary-storage reads return the
-/// modeled values instead of fresh ones.
+/// Applies the setup storage of a symbolic counterexample. Arbitrary storage draws the modeled
+/// values instead of random ones, keeping its own rules for when a slot is drawn; other storage,
+/// such as under the generic layout, is written directly.
 fn apply_symbolic_storage<FEN: FoundryEvmNetwork>(
     executor: &mut Executor<FEN>,
     storage: &[SymbolicStorageAssignment],
 ) -> Result<()> {
     for assignment in storage {
-        executor.set_storage_slot(assignment.address, assignment.slot, assignment.value)?;
-        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
-            cheats.cache_arbitrary_storage_value(
+        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
+            && (cheats.has_arbitrary_storage(&assignment.address)
+                || cheats.is_arbitrary_storage_copy(&assignment.address))
+        {
+            cheats.set_arbitrary_storage_replay_value(
                 assignment.address,
                 assignment.slot,
                 assignment.value,
             );
+        } else {
+            executor.set_storage_slot(assignment.address, assignment.slot, assignment.value)?;
         }
     }
     Ok(())
