@@ -24,7 +24,7 @@ use crate::{
         },
         fees::{
             FeeDetails, FeeHistoryCache, FeeHistoryCacheItem, MIN_SUGGESTED_PRIORITY_FEE,
-            REWARD_PERCENTILE_RESOLUTION, create_fee_history_cache_item,
+            create_fee_history_cache_item,
         },
         macros::node_info,
         miner::FixedBlockTimeMiner,
@@ -301,7 +301,7 @@ impl<N: Network> EthApi<N> {
             .backend
             .mined_block_hash_by_number(block_number)
             .and_then(|hash| cache.get(&block_number).filter(|item| item.block_hash == hash))
-            .and_then(|item| item.rewards.iter().copied().min());
+            .and_then(|item| item.transactions.first().map(|&(_, reward)| reward));
 
         latest_tip
             .or_else(|| {
@@ -310,7 +310,7 @@ impl<N: Network> EthApi<N> {
                     .filter(|(number, item)| {
                         self.backend.mined_block_hash_by_number(**number) == Some(item.block_hash)
                     })
-                    .flat_map(|(_, item)| item.rewards.iter().copied())
+                    .filter_map(|(_, item)| item.transactions.first().map(|&(_, reward)| reward))
                     .min()
             })
             .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
@@ -1578,11 +1578,7 @@ impl<N: Network> EthApi<N> {
 
                 // requested percentiles
                 if !reward_percentiles.is_empty() {
-                    let mut block_rewards = Vec::new();
-                    for p in &reward_percentiles {
-                        block_rewards.push(reward_at_percentile(&item.rewards, *p));
-                    }
-                    rewards.push(block_rewards);
+                    rewards.push(item.rewards(&reward_percentiles));
                 }
             }
         }
@@ -6225,11 +6221,6 @@ fn merge_pre_fork_fee_history(
     response.blob_gas_used_ratio.resize(count, 0.0);
 }
 
-fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
-    let index = (percentile * REWARD_PERCENTILE_RESOLUTION).round() as usize;
-    rewards.get(index).copied().unwrap_or_default()
-}
-
 /// The block a simulation builds on.
 enum SimulationBase {
     /// A block that predates the fork, simulated by the fork's upstream.
@@ -6500,16 +6491,6 @@ mod tests {
         for percentiles in [vec![], vec![0.0, 100.0]] {
             api.fee_history(U256::ONE, BlockNumber::Latest, percentiles).await.unwrap();
         }
-    }
-
-    #[test]
-    fn fractional_reward_percentiles_use_cache_resolution() {
-        let rewards = (0..=200).collect::<Vec<_>>();
-
-        assert_eq!(reward_at_percentile(&rewards, 0.0), 0);
-        assert_eq!(reward_at_percentile(&rewards, 0.5), 1);
-        assert_eq!(reward_at_percentile(&rewards, 1.0), 2);
-        assert_eq!(reward_at_percentile(&rewards, 100.0), 200);
     }
 
     #[test]
