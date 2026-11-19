@@ -8490,6 +8490,18 @@ contract SymbolicWeightedAverage {
         uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - beta)) / WAD;
         assert(next <= cap);
     }
+
+    function checkEmaWrappingComplement(uint128 price, uint128 ema, uint64 alpha, uint128 cap)
+        public
+        pure
+    {
+        require(price <= cap && ema <= cap);
+        uint256 next;
+        unchecked {
+            next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        }
+        assert(next <= cap);
+    }
 }
 "#,
     );
@@ -8519,6 +8531,7 @@ contract SymbolicWeightedAverage {
             "checkEmaWeightsOverBudget(uint128,uint128,uint64,uint64,uint128)",
             "checkEmaPriceAboveCap(uint128,uint128,uint64,uint128)",
             "checkEmaOtherComplement(uint128,uint128,uint64,uint64,uint128)",
+            "checkEmaWrappingComplement(uint128,uint128,uint64,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
