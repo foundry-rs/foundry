@@ -190,7 +190,13 @@ impl ConstraintContext {
         // division guards, so a symbolic divisor's Euclidean sum is not folded to `x`. That sum is
         // `x` and cannot wrap, so `b <= ~a`.
         if let SymExprKind::Not(base) = large.kind()
-            && euclidean_sum_dividend(base, small).is_some()
+            && (euclidean_sum_dividend(base, small).is_some()
+                || self.shares_whole(base, small, intervals, remaining).is_some())
+        {
+            return Some(false);
+        }
+        if let SymExprKind::BinOp(SymBinOp::Add, first, second) = small.kind()
+            && self.shares_whole(first, second, intervals, remaining) == Some(large)
         {
             return Some(false);
         }
@@ -293,6 +299,52 @@ impl ConstraintContext {
                 .then_some(false),
             _ => None,
         }
+    }
+
+    /// Returns `w` for the shares `w * a / k` and `w * b / k` of a nonzero `k` once `a + b <= k`.
+    /// Their floors sum to at most `w * (a + b) / k <= w`, so the sum cannot wrap, and a wrapped
+    /// product only shrinks its share.
+    fn shares_whole<'a>(
+        &self,
+        first: &'a SymExpr,
+        second: &'a SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> Option<&'a SymExpr> {
+        let (first, divisor) = first.udiv_operands()?;
+        let (second, other_divisor) = second.udiv_operands()?;
+        let (SymExprKind::BinOp(SymBinOp::Mul, w1, a1), SymExprKind::BinOp(SymBinOp::Mul, w2, b2)) =
+            (first.kind(), second.kind())
+        else {
+            return None;
+        };
+        let (whole, a, b) =
+            [(w1, a1, w2, b2), (w1, a1, b2, w2), (a1, w1, w2, b2), (a1, w1, b2, w2)]
+                .into_iter()
+                .find_map(|(whole, a, other, b)| (whole == other).then_some((whole, a, b)))?;
+        let min = self.interval_cached(divisor, intervals, remaining)?.min;
+        if divisor != other_divisor || min.is_zero() {
+            return None;
+        }
+        let a_max = self.interval_cached(a, intervals, remaining)?.max;
+        let b_max = self.interval_cached(b, intervals, remaining)?.max;
+        // `a + b` does not wrap, so the sum bound below holds over the integers.
+        let sum_max = a_max.checked_add(b_max)?;
+        let is_sum = |expr: &SymExpr| {
+            matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::Add, x, y)
+                if (x == a && y == b) || (x == b && y == a))
+        };
+        (sum_max <= min || is_sum(divisor) || self.facts.iter().any(|fact| match fact.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => {
+                is_sum(left) && right == divisor
+            }
+            SymBoolExprKind::Not(inner) => matches!(
+                inner.kind(),
+                SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) if left == divisor && is_sum(right)
+            ),
+            _ => false,
+        }))
+        .then_some(whole)
     }
 
     /// Returns whether another conjunct asserts `small <= large`, including strict `<`.
