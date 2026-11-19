@@ -61,6 +61,25 @@ fn tx_to_request_json(cmd: _) {
 "#]]);
 }
 
+// tests that `v` is the RPC value, not `27` plus the parity
+#[casttest]
+fn tx_field_v(cmd: _) {
+    let rpc = next_http_rpc_endpoint();
+
+    cmd.args([
+        "tx",
+        "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
+        "v",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+37
+
+"#]]);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/10740>
 #[cfg(feature = "optimism")]
 #[casttest]
