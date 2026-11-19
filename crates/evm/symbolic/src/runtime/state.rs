@@ -2486,11 +2486,19 @@ impl SymbolicWorld {
                 }
             }
         }
-        // Replay validates aliases between symbolic keys that take the same concrete value.
+        // Replay validates aliases between symbolic keys that take the same concrete value. Keys
+        // that do read the base value related to the earlier keys, so any of them assigns the slot.
         for (symbol, reads) in &self.replay_symbolic_storage_keys {
-            let Some(value) = model.get(symbol).copied() else { continue };
+            let Some(symbol_value) = model.get(symbol).copied() else { continue };
             for (address, key) in reads {
                 if let Some(slot) = key.eval_model_if_complete(model)? {
+                    let value = self
+                        .symbolic_key_base_reads
+                        .get(&(*address, key.clone()))
+                        .map(|base| base.eval_model_if_complete(model))
+                        .transpose()?
+                        .flatten()
+                        .unwrap_or(symbol_value);
                     assignments.entry((*address, slot)).or_insert(value);
                 }
             }

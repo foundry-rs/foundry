@@ -2696,6 +2696,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 args,
                 calldata,
                 svm_returns,
+                storage,
                 memory_halt_pc,
                 stats,
             } => self.replay_symbolic_counterexample(
@@ -2703,6 +2704,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 args,
                 calldata,
                 svm_returns,
+                &storage,
                 memory_halt_pc,
                 stats,
                 &symbolic_config,
@@ -2725,6 +2727,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         args: Vec<DynSolValue>,
         calldata: Bytes,
         svm_returns: Vec<Bytes>,
+        storage: &[SymbolicStorageAssignment],
         memory_halt_pc: Option<usize>,
         stats: SymbolicStats,
         symbolic_config: &SymbolicConfig,
@@ -2751,6 +2754,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let replay = self
             .clone_executor_with_svm_returns(&svm_returns)
+            .and_then(|executor| apply_symbolic_storage(executor, storage))
             .map_err(EvmError::from)
             .and_then(|executor| {
                 executor.call(
@@ -5829,18 +5833,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self,
         storage: &[SymbolicStorageAssignment],
     ) -> Result<Executor<FEN>> {
-        let mut executor = self.clone_invariant_executor();
-        for assignment in storage {
-            executor.set_storage_slot(assignment.address, assignment.slot, assignment.value)?;
-            if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
-                cheats.cache_arbitrary_storage_value(
-                    assignment.address,
-                    assignment.slot,
-                    assignment.value,
-                );
-            }
-        }
-        Ok(executor)
+        apply_symbolic_storage(self.clone_invariant_executor(), storage)
     }
 
     fn build_fuzz_state(&self, invariant: bool, func: Option<&Function>) -> EvmFuzzState {
@@ -5902,6 +5895,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
         EvmFuzzState::new(&self.setup.deployed_libs, &db, config, Some(literals))
     }
+}
+
+/// Applies the setup-storage values of a symbolic counterexample to `executor`, including the
+/// arbitrary storage values its cheatcodes would otherwise make up.
+fn apply_symbolic_storage<FEN: FoundryEvmNetwork>(
+    mut executor: Executor<FEN>,
+    storage: &[SymbolicStorageAssignment],
+) -> Result<Executor<FEN>> {
+    for assignment in storage {
+        executor.set_storage_slot(assignment.address, assignment.slot, assignment.value)?;
+        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+            cheats.cache_arbitrary_storage_value(
+                assignment.address,
+                assignment.slot,
+                assignment.value,
+            );
+        }
+    }
+    Ok(executor)
 }
 
 fn fuzzer_with_cases(seed: Option<U256>, cases: u32, max_global_rejects: u32) -> TestRunner {

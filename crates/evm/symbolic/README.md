@@ -624,10 +624,11 @@ token balances, token allowances, and oracle prices. Do not blanket-mark the
 invariant harness or protocol state as arbitrary; that can create unreachable
 states and counterexamples that concrete replay rejects.
 
-Replay currently materializes only concrete storage slots observed during
-symbolic execution. Dependency storage keyed by symbolic calldata is still
-explored symbolically, but it can replay-filter to `Incomplete` or `mismatch`
-instead of a confirmed counterexample if the required slot is not concrete.
+Replay materializes the storage slots a counterexample read, at concrete keys and,
+under the generic layout, at symbolic keys. Storage of a `vm.setArbitraryStorage`
+account keyed by symbolic calldata is still explored symbolically, but it can
+replay-filter to `Incomplete` or `mismatch` instead of a confirmed
+counterexample, since replay does not materialize that slot.
 
 ## Equivalence Checking
 

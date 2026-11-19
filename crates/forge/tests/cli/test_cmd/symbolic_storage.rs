@@ -436,7 +436,7 @@ contract SymbolicGenericStorage {
     .stdout_eq(str![[r#"
 ...
 Ran 2 tests for test/SymbolicGenericStorage.t.sol:SymbolicGenericStorage
-[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNativeGenericStorage(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: [..]] checkNativeGenericStorage(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSvmArbitraryStorage(address) ([METRICS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
@@ -515,6 +515,12 @@ contract SymbolicEqualKeys {
         (uint256 before, uint256 afterSub) = subtract(generic, account, value);
         assert(afterSub == before - value);
     }
+
+    /// forge-config: default.symbolic.storage_layout = "generic"
+    function checkSenderKeyGenericWrong(uint256 account, uint256 value) public {
+        (uint256 before, uint256 afterSub) = subtract(generic, account, value);
+        assert(afterSub == before);
+    }
 }
 "#,
     );
@@ -523,11 +529,12 @@ contract SymbolicEqualKeys {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicEqualKeys.t.sol:SymbolicEqualKeys
+Ran 4 tests for test/SymbolicEqualKeys.t.sol:SymbolicEqualKeys
 [PASS] checkSenderKey(uint256,uint256) ([METRICS])
 [PASS] checkSenderKeyGeneric(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: [..]] checkSenderKeyGenericWrong(uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: [..]] checkSenderKeyWrong(uint256,uint256) ([METRICS])
-Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

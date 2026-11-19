@@ -560,10 +560,12 @@ impl SymbolicExecutor {
                             .iter()
                             .map(|ret| ret.bytes.eval_model(&mut self.cx, &model).map(Bytes::from))
                             .collect::<Result<_, _>>()?;
+                        let storage = state.world.replay_storage_assignments(&model)?;
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
                             calldata,
                             svm_returns,
+                            storage,
                             memory_halt_pc: state.memory_halt_pc,
                             stats: self.stats_with_paths(*completed_paths + 1),
                         });
