@@ -8433,6 +8433,58 @@ UPDATES        assert(x < 2 ** 128);
     );
 }
 
+// Converting through a price and back never gains: `x * 1e18 / p * p / 1e18 <= x`. The rounded
+// product keeps the EVM `DIV` zero-divisor guard until the path facts resolve it.
+#[forgetest_init]
+fn symbolic_proves_price_round_trip(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_price_round_trip");
+    prj.add_test(
+        "SymbolicPriceRoundTrip.t.sol",
+        r#"
+contract SymbolicPriceRoundTrip {
+    function checkRoundTrip(uint128 x, uint128 price) public pure {
+        require(price != 0);
+        uint256 units = uint256(x) * 1e18 / price;
+        assert(units * price / 1e18 <= x);
+    }
+
+    function checkOtherPrice(uint128 x, uint128 price, uint128 other) public pure {
+        require(price != 0 && other != 0);
+        uint256 units = uint256(x) * 1e18 / price;
+        assert(units * other / 1e18 <= x);
+    }
+
+    function checkScaleMismatch(uint128 x, uint128 price) public pure {
+        require(price != 0);
+        uint256 units = uint256(x) * 1e18 / price;
+        assert(units * price / 1e17 <= x);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicPriceRoundTrip"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkRoundTrip(uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+
+        for signature in
+            ["checkOtherPrice(uint128,uint128,uint128)", "checkScaleMismatch(uint128,uint128)"]
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A

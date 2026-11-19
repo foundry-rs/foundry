@@ -6,7 +6,7 @@
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
     SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
-    rounded_product_operands,
+    word_division_operands,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -268,10 +268,13 @@ impl ConstraintContext {
                         && self.mul_cannot_overflow_256(left, right)
                 };
                 // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
-                // is bounded by `n / d`.
+                // is bounded by `n / d`. The EVM `DIV` may still carry its `t == 0` guard.
                 let peeled = match dividend.kind() {
                     SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                        rounded_product_operands(left, right).map(|(n, _)| n)
+                        [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
+                            word_division_operands(quotient)
+                                .and_then(|(n, t)| (t == factor).then_some(n))
+                        })
                     }
                     _ => None,
                 };
