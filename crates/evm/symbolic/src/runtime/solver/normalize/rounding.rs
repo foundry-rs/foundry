@@ -5,7 +5,8 @@
 
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
-    SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, rounded_product_operands,
+    SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
+    rounded_product_operands,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -141,7 +142,8 @@ impl ConstraintContext {
     /// Decides a comparison between a division result and one of its operands.
     ///
     /// With a nonzero divisor, `a % d < d` and `a / d <= a`. For every divisor, `a % d <= a` and
-    /// `(a / d) * d <= a`, and `x * y / k <= x` once `y <= k` and `x * y` cannot wrap.
+    /// `(a / d) * d <= a`, and `x * y / k <= x` once `y <= k` and `x * y` cannot wrap. The
+    /// Euclidean split `(a / d) * d + a % d` cannot wrap, so its checked addition never overflows.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -170,6 +172,12 @@ impl ConstraintContext {
 
     /// Returns whether a division shape proves `small <= large`, and whether the order is strict.
     fn division_order(&self, small: &SymExpr, large: &SymExpr) -> Option<bool> {
+        // `(x / d) * d + x % d` is exactly `x`, so the addition cannot wrap: `b <= ~a`.
+        if let SymExprKind::Not(base) = large.kind()
+            && euclidean_sum_dividend(base, small).is_some()
+        {
+            return Some(false);
+        }
         let nonzero =
             |expr: &SymExpr| self.interval(expr).is_some_and(|range| !range.min.is_zero());
         match small.kind() {

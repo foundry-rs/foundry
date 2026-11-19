@@ -7677,6 +7677,28 @@ contract RoundedProductTest {
         assert(value - value % 1e18 == value / 1e18 * 1e18);
     }
 
+    // The checked addition cannot overflow because the sum is exactly `value`.
+    function checkSymbolicEuclideanIdentity(uint256 value, uint256 divisor) external pure {
+        if (divisor == 0) return;
+        assert(value / divisor * divisor + value % divisor == value);
+    }
+
+    function euclideanSum(uint256 value, uint256 divisor, uint256 other)
+        external
+        pure
+        returns (uint256)
+    {
+        return value / divisor * divisor + value % other;
+    }
+
+    // Another divisor's remainder can push the sum past the word.
+    function checkMixedEuclideanSum(uint256 value, uint256 divisor, uint256 other) external view {
+        if (divisor == 0 || other == 0) return;
+        (bool ok,) =
+            address(this).staticcall(abi.encodeCall(this.euclideanSum, (value, divisor, other)));
+        assert(ok);
+    }
+
     function checkNarrowFloorError(uint128 value) external pure {
         uint128 rounded = value / 1000 * 1000;
         assert(rounded <= value);
@@ -7715,7 +7737,7 @@ contract RoundedProductTest {
             "--symbolic-timeout",
             "30",
             "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee|SlippageMinimum|TransferConservation)",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|BasisPointsFee|SlippageMinimum|TransferConservation)",
         ])
         .assert_success();
         let output = cmd
@@ -7727,7 +7749,7 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError)",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|MixedEuclideanSum)",
             ])
             .assert_failure()
             .get_output()
@@ -7741,6 +7763,9 @@ contract RoundedProductTest {
                 "{test}, optimized={optimized}"
             );
         }
+        let result = json_test_result(&output, "checkMixedEuclideanSum(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
 }
 

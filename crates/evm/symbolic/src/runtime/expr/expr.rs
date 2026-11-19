@@ -336,7 +336,10 @@ pub(crate) fn rounded_product_operands<'a>(
 }
 
 /// Returns `a` for the Euclidean sum `(a / d) * d + a % d` in either operand order.
-fn euclidean_sum_dividend<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<&'a SymExpr> {
+pub(in crate::runtime) fn euclidean_sum_dividend<'a>(
+    left: &'a SymExpr,
+    right: &'a SymExpr,
+) -> Option<&'a SymExpr> {
     [(left, right), (right, left)].into_iter().find_map(|(product, remainder)| {
         let SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) = remainder.kind() else {
             return None;
