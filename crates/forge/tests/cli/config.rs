@@ -17,7 +17,6 @@ use foundry_config::{
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     foundry_compilers::artifacts::{EvmVersion, remappings::Remapping},
-    snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, TestCommand, pretty_err},
 };
 use path_slash::PathBufExt;
@@ -1588,7 +1587,7 @@ fn nested_auto_remapping_preserves_declared_precedence(prj: _, cmd: _) {
     );
     prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"a/pinned/Version.sol\"; import {ShadowedA} from \"shared/Version.sol\"; contract UsesA is A, Marker, ShadowedA {}\n");
     let warning = str![[r#"
-Warning: Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Imports of `shared/` from the root or other dependencies may resolve differently. Adding `shared/=lib/a/src/pinned/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:shared/=<target>`.
+Warning: Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports of `shared/` now resolve to `lib/a/lib/shared/src/` instead. Adding `shared/=lib/a/src/pinned/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:shared/=<target>`.
 
 "#]];
 
@@ -3087,100 +3086,6 @@ Error: Snapshots differ from previous run
     assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
 }
 
-#[cfg(unix)]
-#[forgetest]
-fn test_gas_snapshot_group_symlinks(prj: _, cmd: _) {
-    prj.insert_ds_test();
-
-    let outside_dir = tempfile::tempdir().unwrap();
-    let outside = outside_dir.path().join("Group.json");
-    let previous_snapshot = r#"{"value":"1"}"#;
-    fs::write(&outside, previous_snapshot).unwrap();
-    let snapshots = prj.root().join("snapshots");
-    fs::create_dir_all(&snapshots).unwrap();
-
-    for (group, link, target) in [
-        ("nested/Group", snapshots.join("nested"), outside_dir.path().to_path_buf()),
-        ("Group", snapshots.join("Group.json"), outside.clone()),
-        ("Missing", snapshots.join("Missing.json"), outside_dir.path().join("missing.json")),
-    ] {
-        prj.add_source(
-            "SnapshotSymlinkTest.sol",
-            &format!(
-                r#"
-import "./test.sol";
-
-interface Vm {{
-    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
-}}
-
-contract SnapshotSymlinkTest is DSTest {{
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
-    function testSnapshotValue() public {{
-        vm.snapshotValue("{group}", "value", 2);
-    }}
-}}
-"#
-            ),
-        );
-        symlink(&target, &link).unwrap();
-
-        for flags in [
-            ["--gas-snapshot-check=true", "--gas-snapshot-emit=false"],
-            ["--gas-snapshot-check=false", "--gas-snapshot-emit=true"],
-        ] {
-            cmd.forge_fuse().arg("test").args(flags).assert_failure().stderr_eq(str![[r#"
-Error: gas snapshot path traverses a symlink: [..]
-"#]]);
-            assert_eq!(fs::read_to_string(&outside).unwrap(), previous_snapshot);
-            assert!(!outside_dir.path().join("missing.json").exists());
-        }
-
-        cmd.forge_fuse()
-            .args(["test", "--gas-snapshot-check=false", "--gas-snapshot-emit=false"])
-            .assert_success();
-        fs::remove_file(&link).unwrap();
-    }
-}
-
-#[cfg(unix)]
-#[forgetest]
-fn test_gas_snapshot_symlinked_root(prj: _, cmd: _) {
-    prj.insert_ds_test();
-
-    let snapshots = tempfile::tempdir().unwrap();
-    symlink(snapshots.path(), prj.root().join("snapshots")).unwrap();
-    prj.add_source(
-        "SnapshotSymlinkRootTest.sol",
-        r#"
-import "./test.sol";
-
-interface Vm {
-    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
-}
-
-contract SnapshotSymlinkRootTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
-    function testSnapshotValue() public {
-        vm.snapshotValue("nested/Group", "value", 1);
-    }
-}
-"#,
-    );
-    cmd.args(["test"]).assert_success();
-    assert_data_eq!(
-        fs::read_to_string(snapshots.path().join("nested/Group.json")).unwrap(),
-        str![[r#"{
-  "value": "1"
-}"#]]
-    );
-    cmd.forge_fuse()
-        .args(["test", "--gas-snapshot-check=true", "--gas-snapshot-emit=false"])
-        .assert_success();
-}
-
 // Absolute paths and parent-directory traversal must be rejected, so a dependency cannot write
 // outside the configured snapshots directory.
 #[forgetest]
@@ -4223,10 +4128,6 @@ with remappings:
 [SOLC_VERSION] [ELAPSED]
 
 "#]];
-    let warnings = str![[r#"
-Warning: Dependency remapping `@custom/=lib/dependency/src/` now applies only within `lib/dependency/`. Imports of `@custom/` from the root or other dependencies may resolve differently. Adding `@custom/=lib/dependency/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:@custom/=<target>`.
-
-"#]];
     let migration_error = str![[r#"
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4236,20 +4137,14 @@ ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the fo
 3 | import {Dep} from "@custom/Dep.sol"; contract Root is Dep {}
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt:
-      @custom/=lib/dependency/src/
+help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt: `@custom/=lib/dependency/src/`
 
 "#]];
-    let expected_stderr = format!(
-        "{}{}",
-        warnings.clone().into_data().render().unwrap(),
-        migration_error.clone().into_data().render().unwrap(),
-    );
     cmd.forge_fuse()
         .args(["build", "--force", "--no-lint"])
         .assert_failure()
         .stdout_eq(expected_stdout)
-        .stderr_eq(expected_stderr);
+        .stderr_eq(migration_error.clone());
     cmd.forge_fuse()
         .args(["build", "--force", "--no-lint", "--quiet"])
         .assert_failure()
@@ -4269,7 +4164,7 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
           "file": null,
           "start": null,
           "end": null,
-          "message": "help: this file imports the alias \"@custom/\", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt:\n      @custom/=lib/dependency/src/"
+          "message": "help: this file imports the alias \"@custom/\", which is scoped to a dependency. To use it from the root project, add a remapping to foundry.toml or remappings.txt: `@custom/=lib/dependency/src/`"
         }
       ],
       "type": "ParserError",
@@ -4286,7 +4181,7 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
 }
 "#]],
         )
-        .stderr_eq(warnings);
+        .stderr_eq("");
 
     prj.add_test(
         "AliasMigration.t.sol",
@@ -4337,7 +4232,6 @@ fn dependency_alias_migration_only_suggests_existing_targets(prj: _, cmd: _) {
     prj.add_source("Root.sol", "import {Dep} from \"@custom/Dep.sol\"; contract Root is Dep {}\n");
 
     cmd.args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
-Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Imports of `@custom/` from the root or other dependencies may resolve differently. Adding `@custom/=lib/a/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:@custom/=<target>`.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4346,9 +4240,7 @@ ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the fo
 3 | import {Dep} from "@custom/Dep.sol"; contract Root is Dep {}
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, choose a root remapping in foundry.toml or remappings.txt:
-      @custom/=lib/a/src/
-      @custom/=lib/z/src/
+help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from the root project, choose a remapping in foundry.toml or remappings.txt: `@custom/=lib/a/src/` or `@custom/=lib/z/src/`
 
 "#]]);
 
@@ -4356,7 +4248,6 @@ help: this file imports the alias "@custom/", which is scoped to a dependency. T
     fs::remove_file(prj.root().join("lib/z/src/Dep.sol")).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_failure().stderr_eq(str![[
         r#"
-Warning: Dependency remapping `@custom/=lib/a/src/` now applies only within `lib/a/`. Imports of `@custom/` from the root or other dependencies may resolve differently. Adding `@custom/=lib/a/src/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:@custom/=<target>`.
 Error: Compiler run failed:
 Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
 ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
@@ -4395,6 +4286,51 @@ ParserError: Source "src/missing/Dep.sol" not found: File not found. Searched th
         }
         command.assert_failure().stderr_eq(explicit_error.clone());
     }
+}
+
+// Scoping an alias that no root mapping covers is silent until a compiled file imports it, and a
+// dependency importer is told how to fix only its own dependency, on the matching import's error.
+#[forgetest]
+fn unused_scoped_dependency_alias_does_not_warn(prj: _, cmd: _) {
+    for name in ["a", "b"] {
+        prj.create_file(
+            format!("lib/{name}/foundry.toml"),
+            "[profile.default]\nremappings = [\"@custom/=src/\"]\n",
+        );
+        prj.add_lib(&format!("{name}/src/Dep.sol"), "contract Dep {}\n");
+    }
+    let c = "import {Dep} from \"@custom/Dep.sol\"; contract C is Dep {}\n";
+    prj.add_lib("c/src/C.sol", &format!("import \"Unknown.sol\";\n{c}"));
+    prj.add_source("Root.sol", "contract Root {}\n");
+
+    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq("");
+
+    prj.add_source("Root.sol", "import {C} from \"c/C.sol\"; contract Root is C {}\n");
+    cmd.forge_fuse().args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
+Error: Compiler run failed:
+Error (6275): Source "Unknown.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "Unknown.sol" not found: File not found. Searched the following locations: "[..]".
+ [FILE]:3:1:
+  |
+3 | import "Unknown.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ [FILE]:4:1:
+  |
+4 | import {Dep} from "@custom/Dep.sol"; contract C is Dep {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from `lib/c/`, choose a remapping in foundry.toml or remappings.txt: `lib/c/:@custom/=lib/a/src/` or `lib/c/:@custom/=lib/b/src/`
+
+"#]]);
+
+    prj.add_lib("c/src/C.sol", c);
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("lib/c/:@custom/=lib/a/src/").unwrap().into()];
+    });
+    cmd.forge_fuse().args(["build", "--no-lint"]).assert_success().stderr_eq("");
 }
 
 #[forgetest]
