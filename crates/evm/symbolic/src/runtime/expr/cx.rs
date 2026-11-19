@@ -16,6 +16,11 @@ pub(crate) struct SymCx {
     ///
     /// Keys are strong hash-consed handles, so the map is bounded like the SAT cache.
     solver_normalized_words: HashMap<SymExpr, SymExpr>,
+    /// The `PUSH` immediates and the candidate mapping keys of each deployed contract with a
+    /// storage layout.
+    folded_slot_keys: Vec<(HashSet<U256>, Arc<[U256]>)>,
+    /// Outcomes of searching a constant slot among the values of a mapping entry, keyed by both.
+    folded_slot_searches: HashMap<(U256, SymExpr), Option<bool>>,
 }
 
 struct SymCxCache {
@@ -48,6 +53,8 @@ impl SymCx {
             concrete_keccak_preimages: BTreeMap::new(),
             cache: SymCxCache { zero, one, bool_true, bool_false, bytes_empty },
             solver_normalized_words: HashMap::default(),
+            folded_slot_keys: Vec::new(),
+            folded_slot_searches: HashMap::default(),
         }
     }
 
@@ -107,6 +114,48 @@ impl SymCx {
         hash: U256,
     ) -> Option<Arc<[SymExpr]>> {
         self.concrete_keccak_preimages.get(&hash).cloned()
+    }
+
+    pub(in crate::runtime) fn add_folded_slot_keys(
+        &mut self,
+        constants: HashSet<U256>,
+        keys: Vec<U256>,
+    ) {
+        self.folded_slot_keys.push((constants, keys.into()));
+    }
+
+    /// Returns the candidate keys of the contracts whose code pushes `slot`, or `None` when no
+    /// such contract is known.
+    pub(in crate::runtime::expr) fn folded_slot_keys(&self, slot: U256) -> Option<Vec<U256>> {
+        let mut keys = self
+            .folded_slot_keys
+            .iter()
+            .filter(|(constants, _)| constants.contains(&slot))
+            .flat_map(|(_, keys)| keys.iter().copied())
+            .collect::<Vec<_>>();
+        if keys.is_empty() {
+            return None;
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        Some(keys)
+    }
+
+    pub(in crate::runtime::expr) fn folded_slot_search(
+        &self,
+        slot: U256,
+        entry: &SymExpr,
+    ) -> Option<Option<bool>> {
+        self.folded_slot_searches.get(&(slot, entry.clone())).copied()
+    }
+
+    pub(in crate::runtime::expr) fn record_folded_slot_search(
+        &mut self,
+        slot: U256,
+        entry: SymExpr,
+        found: Option<bool>,
+    ) {
+        self.folded_slot_searches.insert((slot, entry), found);
     }
 
     /// Returns the closest recorded concrete hash below `value` that `value` is a storage layout

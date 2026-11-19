@@ -9,15 +9,16 @@
 //! hashed with every candidate key: the source literals, the addresses of the backend's accounts,
 //! and the contract's `PUSH` immediates. The nested level of a nested mapping is a product over
 //! the literals and immediates, so it is searched only when the run accesses a large constant slot
-//! that the contract's code pushes, and only the match is recorded. A registered preimage is a
-//! real one, so this adds no unsoundness; constants that no candidate produces, such as ERC-1967
-//! and ERC-7201 roots, stay fixed slots.
+//! that the contract's code pushes, and only the match is recorded. A constant slot compared with
+//! a mapping entry is searched among the values that entry takes over the candidate keys, at every
+//! level of its hash chain. A registered preimage is a real one, so this adds no unsoundness;
+//! constants that no candidate produces, such as ERC-1967 and ERC-7201 roots, stay fixed slots.
 
 use super::*;
 use foundry_common::slot_identifier::{ENCODING_INPLACE, ENCODING_MAPPING};
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 
-const MAX_NESTED_MAPPING_HASHES: usize = 1 << 18;
+pub(super) const MAX_NESTED_MAPPING_HASHES: usize = 1 << 18;
 
 /// Candidate keys and storage layouts of the deployed contracts, kept to resolve the nested level
 /// of a folded mapping slot on demand.
@@ -96,6 +97,7 @@ impl FoldedSlots {
                         return folded;
                     }
                 }
+                cx.add_folded_slot_keys(constants.clone(), keys.clone());
                 folded.contracts.push(FoldedContract { layout: layout.clone(), keys, constants });
             }
         }
@@ -249,7 +251,7 @@ fn key_fits(ty: &StorageType, key: U256) -> bool {
 }
 
 /// Returns `keccak(key . slot)` and its 64-byte preimage.
-fn mapping_preimage(key: U256, slot: U256) -> (U256, [u8; 64]) {
+pub(super) fn mapping_preimage(key: U256, slot: U256) -> (U256, [u8; 64]) {
     let mut bytes = [0u8; 64];
     bytes[..32].copy_from_slice(B256::from(key).as_slice());
     bytes[32..].copy_from_slice(B256::from(slot).as_slice());
@@ -257,7 +259,7 @@ fn mapping_preimage(key: U256, slot: U256) -> (U256, [u8; 64]) {
 }
 
 /// Records `keccak(key . slot)` with its preimage and returns the hash.
-fn record_mapping_preimage(cx: &mut SymCx, key: U256, slot: U256) -> U256 {
+pub(super) fn record_mapping_preimage(cx: &mut SymCx, key: U256, slot: U256) -> U256 {
     let (hash, bytes) = mapping_preimage(key, slot);
     record_preimage_bytes(cx, hash, &bytes);
     hash
