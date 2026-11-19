@@ -8179,6 +8179,13 @@ contract SymbolicUniswapV2 {
         assert(UniswapV2Library.getAmountOut(amountIn, rIn, rOut) < rOut);
     }
 
+    function checkWrappedProductBelowX(uint256 x, uint112 y, uint112 z) public pure {
+        require(x > 0 && z > 0);
+        unchecked {
+            assert(x * y / (uint256(y) + z) < x);
+        }
+    }
+
     function checkOutWithEmptyReserveIn(uint112 amountIn, uint112 rIn, uint112 rOut) public pure {
         require(amountIn > 0 && rOut > 0);
         uint256 inFee = uint256(amountIn) * 997;
@@ -8217,8 +8224,13 @@ contract SymbolicUniswapV2 {
             .stdout
             .clone();
 
-        let result = json_test_result(&output, "checkOutBelowReserve(uint112,uint112,uint112)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in [
+            "checkOutBelowReserve(uint112,uint112,uint112)",
+            "checkWrappedProductBelowX(uint256,uint112,uint112)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
 
         for signature in [
             "checkOutWithEmptyReserveIn(uint112,uint112,uint112)",

@@ -141,7 +141,8 @@ impl ConstraintContext {
     /// Decides a comparison between a division result and one of its operands.
     ///
     /// With a nonzero divisor, `a % d < d` and `a / d <= a`. For every divisor, `a % d <= a` and
-    /// `(a / d) * d <= a`, and `x * y / k <= x` once `y <= k` and `x * y` cannot wrap.
+    /// `(a / d) * d <= a`, and `x * y / k <= x` once `y <= k` and `x * y` cannot wrap. With a
+    /// nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly for nonzero `x` and `z`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -195,16 +196,21 @@ impl ConstraintContext {
                 };
                 // When `y + z` is nonzero and does not wrap, `x * y / (y + z) <= x`, strictly once
                 // `x` and `z` are nonzero, since `x * y < x * (y + z)`. A wrapped product only
-                // shrinks the dividend.
+                // shrinks the dividend. `UDiv` by zero is all ones, so the divisor must be nonzero.
                 if let SymExprKind::BinOp(SymBinOp::Add, a, b) = divisor.kind()
-                    && let Some(rest) = (a == other).then_some(b).or((b == other).then_some(a))
-                    && self
-                        .interval(other)
-                        .zip(self.interval(rest))
-                        .is_some_and(|(other, rest)| other.max.checked_add(rest.max).is_some())
+                    && let Some(rest) = if a == other {
+                        Some(b)
+                    } else if b == other {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                    && let Some(other) = self.interval(other)
+                    && let Some(rest) = self.interval(rest)
+                    && other.max.checked_add(rest.max).is_some()
                     && nonzero(divisor)
                 {
-                    return Some(nonzero(large) && nonzero(rest));
+                    return Some(nonzero(large) && !rest.min.is_zero());
                 }
                 let divisor = self.interval(divisor)?;
                 (!divisor.min.is_zero()
