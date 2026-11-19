@@ -8270,6 +8270,36 @@ contract SymbolicUniswapV2 {
     }
 }
 
+// Each checked `x -= x * y / (y + z)` asks whether the quotient stays below the previous `x`,
+// whose interval nests every earlier update. That analysis must share one node budget; with a
+// fresh budget per level, its work doubles per update and outlives the symbolic timeout.
+#[forgetest_init]
+fn symbolic_bounds_chained_sum_divisor_updates(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_bounds_chained_sum_divisor_updates");
+    let updates = "        x -= x * y / (uint256(y) + z);\n".repeat(24);
+    prj.add_test(
+        "SymbolicChainedUpdates.t.sol",
+        &r#"
+contract SymbolicChainedUpdates {
+    function checkChainedUpdates(uint128 x0, uint112 y, uint112 z) public pure {
+        uint256 x = x0;
+UPDATES        assert(x < 2 ** 128);
+    }
+}
+"#
+        .replace("UPDATES", &updates),
+    );
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--symbolic-timeout", "2"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkChainedUpdates(uint128,uint112,uint112)");
+    assert_eq!(result["symbolic"]["status"], "incomplete", "{result}");
+    assert_eq!(result["symbolic"]["incomplete"]["kind"], "timeout", "{result}");
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A
