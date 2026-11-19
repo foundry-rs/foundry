@@ -1301,7 +1301,7 @@ impl Cheatcode for getStorageSlotCall {
         let slot = U256::from_str(&storage.slot).map_err(|_| {
             fmt_err!("invalid slot {} format for variable {variableName}", storage.slot)
         })?;
-        let offset = u64::try_from(storage.offset).map(U256::from).map_err(|_| {
+        let offset = U256::try_from(storage.offset).map_err(|_| {
             fmt_err!("invalid offset {} for variable {variableName}", storage.offset)
         })?;
         let number_of_bytes = U256::from_str(&storage_type.number_of_bytes).map_err(|_| {
@@ -1313,34 +1313,6 @@ impl Cheatcode for getStorageSlotCall {
 
         Ok((slot, offset, number_of_bytes).abi_encode_params())
     }
-}
-
-/// Finds a variable by its (case-insensitive) label in the storage layout of the contract at
-/// `target`, returning its storage entry and type.
-fn find_storage_variable<FEN: FoundryEvmNetwork>(
-    ccx: &mut CheatsCtxt<'_, '_, FEN>,
-    target: Address,
-    variable_name: &str,
-) -> Result<(Storage, StorageType)> {
-    let storage_layout = get_contract_data(ccx, target, true)
-        .and_then(|(_, data)| data.storage_layout.clone())
-        .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
-
-    trace!(storage = ?storage_layout.storage, "fetched storage");
-
-    let variable_name_lower = variable_name.to_lowercase();
-    let storage = storage_layout
-        .storage
-        .iter()
-        .find(|s| s.label.to_lowercase() == variable_name_lower)
-        .ok_or_else(|| fmt_err!("variable '{variable_name}' not found in storage layout"))?;
-
-    let storage_type = storage_layout
-        .types
-        .get(&storage.storage_type)
-        .ok_or_else(|| fmt_err!("storage type not found for variable {variable_name}"))?;
-
-    Ok((storage.clone(), storage_type.clone()))
 }
 
 impl Cheatcode for getStorageAccessesCall {
@@ -2503,6 +2475,36 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
 
     // Fallback to fuzzy matching if exact match fails
     artifacts.find_by_deployed_code(&code_bytes)
+}
+
+/// Finds a variable by its label in the storage layout of the contract at `target`, returning its
+/// storage entry and type.
+///
+/// The label is matched case-insensitively.
+fn find_storage_variable<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    target: Address,
+    variable_name: &str,
+) -> Result<(Storage, StorageType)> {
+    let storage_layout = get_contract_data(ccx, target, true)
+        .and_then(|(_, data)| data.storage_layout.clone())
+        .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
+
+    trace!(storage = ?storage_layout.storage, "fetched storage");
+
+    let variable_name_lower = variable_name.to_lowercase();
+    let storage = storage_layout
+        .storage
+        .iter()
+        .find(|s| s.label.to_lowercase() == variable_name_lower)
+        .ok_or_else(|| fmt_err!("variable '{variable_name}' not found in storage layout"))?;
+
+    let storage_type = storage_layout
+        .types
+        .get(&storage.storage_type)
+        .ok_or_else(|| fmt_err!("storage type not found for variable {variable_name}"))?;
+
+    Ok((storage.clone(), storage_type.clone()))
 }
 
 #[cfg(test)]
