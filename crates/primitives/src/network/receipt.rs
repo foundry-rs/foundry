@@ -13,8 +13,6 @@ use super::optimism::build_deposit_receipt_envelope;
 #[cfg(feature = "base")]
 use alloy_consensus::ReceiptWithBloom;
 #[cfg(feature = "base")]
-use alloy_primitives::U64;
-#[cfg(feature = "base")]
 use base_common_consensus::BASE_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
 use base_common_consensus::TxBaseReceipt;
@@ -55,13 +53,7 @@ impl FoundryTxReceipt {
 
     /// Get block timestamp from other fields if present.
     pub fn block_timestamp(&self) -> Option<u64> {
-        self.0
-            .other
-            .get_deserialized::<U64>("blockTimestamp")
-            .transpose()
-            .ok()
-            .flatten()
-            .map(|ts| ts.to())
+        self.0.other.get_deserialized::<U64>("blockTimestamp")?.ok().map(|ts| ts.to())
     }
 }
 
@@ -252,5 +244,23 @@ mod tests {
         assert!(converted.0.inner.inner.is_unknown());
         assert_eq!(converted.0.inner.inner.ty(), 0x6a);
         assert_eq!(serde_json::to_value(&converted).unwrap()["type"], "0x6a");
+    }
+
+    #[test]
+    fn block_timestamp_reads_hex_and_legacy_decimal() {
+        let receipt: AnyTransactionReceipt = serde_json::from_value(serde_json::json!({
+            "type": "0x2", "status": "0x1", "cumulativeGasUsed": "0x1", "gasUsed": "0x1",
+            "effectiveGasPrice": "0x1", "logs": [], "logsBloom": alloy_primitives::Bloom::ZERO,
+            "transactionHash": B256::ZERO, "from": Address::ZERO
+        }))
+        .unwrap();
+        let receipt = FoundryTxReceipt::try_from(receipt).unwrap().0.inner;
+        let mut receipt = FoundryTxReceipt::with_timestamp(receipt, 0x6553f100);
+        assert_eq!(serde_json::to_value(&receipt).unwrap()["blockTimestamp"], "0x6553f100");
+        assert_eq!(receipt.block_timestamp(), Some(0x6553f100));
+
+        // Receipts from older Anvil versions encode the timestamp as a JSON number.
+        receipt.0.other.insert("blockTimestamp".into(), 1_700_000_000u64.into());
+        assert_eq!(receipt.block_timestamp(), Some(1_700_000_000));
     }
 }
