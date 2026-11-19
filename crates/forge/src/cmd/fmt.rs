@@ -236,6 +236,7 @@ impl FmtArgs {
                 Input::Stdin => _ = pcx.load_stdin(),
             }
             pcx.parse();
+            convert_solar_errors(compiler.dcx())?;
 
             let gcx = compiler.gcx();
             let fmt_config = Arc::new(config.fmt);

@@ -866,6 +866,7 @@ async fn can_verify_bytecode_tempo_aa_deployments(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // Constructor gas depends on the intrinsic gas of the whole batch, not only the creation call.
     prj.add_source("GasLeft.sol", "contract GasLeft { uint256 public immutable gas = gasleft(); }");
+    prj.add_source("Empty.sol", "contract Empty {}");
 
     let (api, handle) =
         anvil::spawn(anvil::NodeConfig::test_tempo().with_chain_id(Some(31337u64))).await;
@@ -984,6 +985,30 @@ async fn can_verify_bytecode_tempo_aa_deployments(prj: _, cmd: _) {
                 .args(network_args)
                 .assert_json_stdout(r#"[{"bytecode_type":"runtime", "match_type":"full"}]"#);
         }
+
+        // The replay deploys the local creation code in place of the AA call's.
+        cmd.forge_fuse()
+            .args([
+                "verify-bytecode",
+                &address,
+                "src/Empty.sol:Empty",
+                "--rpc-url",
+                &rpc,
+                "--verifier",
+                "etherscan",
+                "--verifier-url",
+                &url,
+                "--etherscan-api-key",
+                "test",
+                "--ignore",
+                "creation",
+                "--json",
+                "--network",
+                "tempo",
+            ])
+            .assert_json_stdout(
+                r#"[{"bytecode_type":"runtime", "match_type":null, "message":"Runtime code did not match - this may be due to varying compiler settings"}]"#,
+            );
         server.abort();
     }
 }

@@ -2,6 +2,9 @@
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+mod configurable_account;
+pub use configurable_account::{ConfigJson, add_configurable_account_details};
+
 mod console;
 pub use console::{ConsoleFmt, FormatSpec, console_format, console_table_format};
 

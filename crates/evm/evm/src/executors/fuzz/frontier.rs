@@ -4,9 +4,9 @@ use alloy_primitives::{
     Address, I256, U256,
     map::{Entry, HashMap},
 };
+use evm2::interpreter::op as opcode;
 use foundry_common::fs;
 use foundry_evm_fuzz::{BasicTxDetails, FuzzRunMetadata};
-use revm::bytecode::opcode;
 use serde::{Serialize, Serializer};
 use std::{
     path::Path,

@@ -13,13 +13,20 @@ use comfy_table::{
     Cell, Color, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
+use evm2::{
+    SpecId,
+    constants::{
+        MAX_CODE_SIZE, MAX_CODE_SIZE_AMSTERDAM, MAX_INITCODE_SIZE, MAX_INITCODE_SIZE_AMSTERDAM,
+    },
+};
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Error as SolcError, Severity, Source,
-        output_selection::OutputSelection, remappings::Remapping,
+        BytecodeObject, Contract, Error as SolcError, SecondarySourceLocation, Severity, Source,
+        output_selection::OutputSelection,
+        remappings::{RelativeRemapping, Remapping},
     },
     compilers::{
         CompilationError, Compiler,
@@ -31,9 +38,10 @@ use foundry_compilers::{
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
 };
-use foundry_config::Config;
+use foundry_config::{Config, providers::dependency_library_paths};
+use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
-use revm::primitives::{eip170, eip3860, hardfork::SpecId};
+use path_slash::PathExt;
 use solar::{
     ast::{Arena, ContractKind, ItemKind},
     interface::{Session, source_map::FileName},
@@ -355,6 +363,7 @@ impl ProjectCompiler {
             {
                 external.merge(&mut output)?;
             }
+            add_scoped_alias_diagnostics(&mut output, &project.paths);
             Ok(output)
         })
     }
@@ -562,14 +571,14 @@ impl ProjectCompiler {
 }
 
 // https://eips.ethereum.org/EIPS/eip-170
-const CONTRACT_RUNTIME_SIZE_LIMIT: usize = eip170::MAX_CODE_SIZE;
+const CONTRACT_RUNTIME_SIZE_LIMIT: usize = MAX_CODE_SIZE;
 
 // https://eips.ethereum.org/EIPS/eip-3860
-const CONTRACT_INITCODE_SIZE_LIMIT: usize = eip3860::MAX_INITCODE_SIZE;
+const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
 
 // https://eips.ethereum.org/EIPS/eip-7954
-const AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT: usize = 65_536;
-const AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT: usize = 131_072;
+const AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT: usize = MAX_CODE_SIZE_AMSTERDAM;
+const AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE_AMSTERDAM;
 
 const CONTRACT_RUNTIME_SIZE_WARN_THRESHOLD: usize = 18_000;
 const CONTRACT_INITCODE_SIZE_WARN_THRESHOLD: usize = 36_000;
@@ -596,7 +605,7 @@ impl ContractSizeLimits {
 
     /// Returns the protocol limits active for an EVM specification.
     pub const fn for_spec_id(spec_id: SpecId) -> Self {
-        if spec_id.is_enabled_in(SpecId::AMSTERDAM) {
+        if spec_id.enables(SpecId::AMSTERDAM) {
             Self::new(AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT, AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT)
         } else {
             Self::new(CONTRACT_RUNTIME_SIZE_LIMIT, CONTRACT_INITCODE_SIZE_LIMIT)
@@ -1176,9 +1185,163 @@ fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'s
     reason
 }
 
+/// Returns the innermost dependency directory that contains `file`, relative to the root.
+///
+/// Nested dependencies live in the library directories their parent configures. An npm scope such
+/// as `node_modules/@scope/` holds packages, so its owner is the package. Other `@` directories,
+/// such as Soldeer's `dependencies/@name-version/`, are packages themselves.
+fn dependency_owner<L>(paths: &ProjectPathsConfig<L>, file: &Path) -> Option<PathBuf> {
+    let mut libs = paths.libraries.iter().map(|lib| paths.root.join(lib)).collect::<Vec<_>>();
+    let mut owner = None;
+    loop {
+        let mut next = None;
+        for lib in &libs {
+            let Ok(rest) = file.strip_prefix(lib) else { continue };
+            let mut parts = rest.iter();
+            let Some(name) = parts.next() else { break };
+            let mut package = lib.join(name);
+            if lib.ends_with("node_modules") && name.to_string_lossy().starts_with('@') {
+                let Some(name) = parts.next() else { break };
+                package.push(name);
+            }
+            // A file directly in a library directory belongs to no package there.
+            if parts.next().is_some() {
+                next = Some(package);
+            }
+            break;
+        }
+        let Some(package) = next else { break };
+        libs = dependency_library_paths(&package);
+        owner = Some(package);
+    }
+    owner?.strip_prefix(&paths.root).ok().map(Path::to_path_buf)
+}
+
+/// Finds aliases restricted to dependency contexts that would resolve an import.
+///
+/// Root files get root remappings. Dependency files get remappings scoped to their innermost
+/// dependency, so the fix does not redirect the alias for the root or other dependencies.
+fn remapping_candidates<L: Clone>(
+    paths: &ProjectPathsConfig<L>,
+    import: &Path,
+    file: &Path,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let file = paths.root.join(file);
+    let mut candidates = BTreeMap::<_, BTreeSet<_>>::new();
+    let Some(cwd) = file.parent() else { return candidates };
+    let owner = dependency_owner(paths, &file);
+    // Library directories are a fallback of the source graph that the compiler does not share.
+    let mut candidate_paths = paths.clone();
+    candidate_paths.libraries.clear();
+    if !file.starts_with(&paths.root)
+        || (owner.is_none()
+            && paths.libraries.iter().any(|lib| file.starts_with(paths.root.join(lib))))
+        // An applicable root or CLI mapping remains authoritative, even if its target is missing.
+        || candidate_paths.resolve_library_import(cwd, import).is_some()
+    {
+        return candidates;
+    }
+    let scope = owner.map(|owner| format!("{}/:", owner.to_slash_lossy())).unwrap_or_default();
+
+    for remapping in &paths.remappings {
+        if let Some(context) = &remapping.context
+            && paths
+                .libraries
+                .iter()
+                .any(|lib| paths.root.join(context).starts_with(paths.root.join(lib)))
+        {
+            let mut global = remapping.clone();
+            global.context = None;
+            candidate_paths.remappings = vec![global.clone()];
+            if candidate_paths
+                .resolve_library_import(cwd, import)
+                .is_some_and(|target| target.is_file())
+            {
+                candidates.entry(global.name.clone()).or_default().insert(format!(
+                    "{scope}{}",
+                    RelativeRemapping::new(global, &paths.root).to_relative_remapping()
+                ));
+            }
+        }
+    }
+    candidates
+}
+
+/// Returns the import a compiler failed to find: solc reports it as 6275, Solar without a code.
+fn missing_import(error: &SolcError) -> Option<&str> {
+    let (import, _) = match error.error_code {
+        Some(6275) => error.message.strip_prefix("Source \"")?.split_once("\" not found")?,
+        None => error.message.strip_prefix("couldn't read ")?.split_once(": ")?,
+        _ => return None,
+    };
+    Some(import)
+}
+
+/// Adds actionable alias migration help to existing import errors, including JSON diagnostics.
+fn add_scoped_alias_diagnostics<C: Compiler<CompilerContract = Contract>>(
+    output: &mut ProjectCompileOutput<C>,
+    paths: &ProjectPathsConfig<C::Language>,
+) {
+    for error in &mut output.output_mut().errors {
+        // CompilationError has no mutable diagnostic accessors; reuse concrete solc errors.
+        let error = error as &mut dyn Any;
+        let error = if error.is::<SolcError>() {
+            error.downcast_mut::<SolcError>().unwrap()
+        } else if let Some(MultiCompilerError::Solc(error)) =
+            error.downcast_mut::<MultiCompilerError>()
+        {
+            error
+        } else {
+            continue;
+        };
+        // The compiler may reject an import that the source graph resolved through a fallback, so
+        // take the missing import from the error itself.
+        if let Some(import) = missing_import(error).map(PathBuf::from)
+            && let Some(location) = &error.source_location
+            && let file = paths.root.join(&location.file)
+            && let aliases = remapping_candidates(paths, &import, &file)
+            && !aliases.is_empty()
+        {
+            let importer = dependency_owner(paths, &file).map_or_else(
+                || "the root project".to_string(),
+                |owner| format!("`{}/`", owner.to_slash_lossy()),
+            );
+            for (alias, mappings) in aliases {
+                let action = if mappings.len() == 1 {
+                    "add a remapping to foundry.toml or remappings.txt"
+                } else {
+                    "choose a remapping in foundry.toml or remappings.txt"
+                };
+                // Text rendering restyles later `note:message` lines, which would corrupt
+                // remappings containing `:`, so list them on the help line.
+                let help = format!(
+                    "help: this file imports the alias {alias:?}, which is scoped to a dependency. \
+                     To use it from {importer}, {action}: {}",
+                    mappings.iter().map(|mapping| format!("`{mapping}`")).join(" or ")
+                );
+                error.secondary_source_locations.push(SecondarySourceLocation {
+                    file: None,
+                    start: None,
+                    end: None,
+                    message: Some(help.clone()),
+                });
+                // Keep the original message intact so text rendering does not print help twice.
+                let message = error.formatted_message.as_mut().unwrap_or(&mut error.message);
+                message.truncate(message.trim_end().len());
+                message.push_str("\n\n");
+                message.push_str(&help);
+                message.push('\n');
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_compilers::multi::MultiCompilerLanguage;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn parse_contract_identifiers() {
@@ -1277,5 +1440,73 @@ mod tests {
             sanitize_relative_path(Path::new("lib/openzeppelin")),
             Path::new("lib/openzeppelin")
         );
+    }
+
+    #[test]
+    fn remapping_candidates_respect_targets_choices_and_importers() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(root.join("lib/a/src")).unwrap();
+        fs::write(root.join("lib/a/src/Target.sol"), "contract Target {}\n").unwrap();
+        // A dependency can keep its nested dependencies in a directory the root does not use.
+        fs::create_dir_all(root.join("lib/d")).unwrap();
+        fs::write(root.join("lib/d/foundry.toml"), "[profile.default]\nlibs = [\"./vendor\"]\n")
+            .unwrap();
+        // The source graph resolves `File.sol` to this loose copy, but the compiler does not.
+        fs::write(root.join("lib/File.sol"), "contract Loose {}\n").unwrap();
+        let root = dunce::canonicalize(root).unwrap();
+        let paths = ProjectPathsConfig::builder()
+            .root(&root)
+            .lib(root.join("lib"))
+            .lib(root.join("node_modules"))
+            .remapping(Remapping::from_str("lib/a/:@alias/=lib/a/src/").unwrap())
+            .remapping(Remapping::from_str("lib/a/:File.sol=lib/a/src/Target.sol").unwrap())
+            .build::<MultiCompilerLanguage>()
+            .unwrap();
+        let file = root.join("src/Root.sol");
+        let import = Path::new("@alias/Target.sol");
+
+        assert_eq!(
+            remapping_candidates(&paths, Path::new("File.sol"), &file),
+            BTreeMap::from([(
+                "File.sol".to_string(),
+                BTreeSet::from(["File.sol=lib/a/src/Target.sol".to_string()])
+            )])
+        );
+
+        // Dependency importers get a remapping scoped to their own innermost dependency.
+        for (importer, scoped) in [
+            ("lib/b/src/nested/Dep.sol", "lib/b/:@alias/=lib/a/src/"),
+            // Nested dependencies own their files; a loose nested file belongs to its parent.
+            ("lib/b/lib/c/src/C.sol", "lib/b/lib/c/:@alias/=lib/a/src/"),
+            ("lib/b/lib/Loose.sol", "lib/b/:@alias/=lib/a/src/"),
+            ("lib/d/vendor/c/src/C.sol", "lib/d/vendor/c/:@alias/=lib/a/src/"),
+            ("lib/d/lib/c/src/C.sol", "lib/d/:@alias/=lib/a/src/"),
+            ("node_modules/@scope/c/src/Dep.sol", "node_modules/@scope/c/:@alias/=lib/a/src/"),
+            // Soldeer packages start with `@` but are not npm scopes.
+            ("lib/@pkg-1.0.0/src/Dep.sol", "lib/@pkg-1.0.0/:@alias/=lib/a/src/"),
+            ("lib/@pkg-1.0.0/Dep.sol", "lib/@pkg-1.0.0/:@alias/=lib/a/src/"),
+        ] {
+            fs::create_dir_all(root.join(importer).parent().unwrap()).unwrap();
+            assert_eq!(
+                remapping_candidates(&paths, import, &root.join(importer)),
+                BTreeMap::from([("@alias/".to_string(), BTreeSet::from([scoped.to_string()]))])
+            );
+        }
+
+        for (import, file) in [
+            (Path::new("@alias/Missing.sol"), file.clone()),
+            (import, root.join("lib/Loose.sol")),
+            (import, root.join("lib/a/src/Target.sol")),
+            (import, temp.path().join("Outside.sol")),
+        ] {
+            assert_eq!(remapping_candidates(&paths, import, &file), BTreeMap::new());
+        }
+
+        for explicit in ["@alias/=missing/", "src/:@alias/=missing/"] {
+            let mut paths = paths.clone();
+            paths.remappings.push(Remapping::from_str(explicit).unwrap());
+            assert_eq!(remapping_candidates(&paths, import, &file), BTreeMap::new());
+        }
     }
 }

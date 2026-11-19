@@ -178,7 +178,7 @@ where
         }
         let timestamp = now().as_millis();
         for path in [&lock.path, &paths.0, &paths.1] {
-            if path.exists() {
+            if path.symlink_metadata().is_ok() {
                 let archive = path.with_extension(format!("{timestamp}.json"));
                 std::fs::rename(path, &archive)?;
                 sh_status!("Archived `{}` to `{}`", path.display(), archive.display())?;
@@ -1001,11 +1001,12 @@ where
 /// Returns whether the previous execution at `paths` submitted anything and left an operation, on
 /// any chain, with neither a receipt nor a recorded revert. Without a recovery snapshot, progress
 /// saved before snapshots existed is read from the broadcast export. An unreadable snapshot counts
-/// as unfinished, as resume would refuse it too; an unreadable export counts as finished.
+/// as unfinished, as resume would refuse it too.
 ///
 /// Errors when a broadcast export written with a snapshot has such an operation but the snapshot
 /// is missing, for example in a checkout without `cache/`: only the snapshot records submission
-/// attempts, so the export cannot show a submission whose response was lost.
+/// attempts, so the export cannot show a submission whose response was lost. Without a snapshot,
+/// an existing but unreadable export of a non-dry run errors too, as it cannot show anything.
 fn previous_unfinished<N: Network>(
     snapshot: &Path,
     paths: &(PathBuf, PathBuf),
@@ -1039,11 +1040,23 @@ where
             foundry_common::fs::read_json_file::<ScriptSequence<N>>(&paths.0)
                 .map(|sequence| SequenceData::Single(Box::new(sequence)))
         };
-        let Ok(data) = data else { return Ok(false) };
         // Dry runs never submit. Their exports sit under `DRY_RUN_DIR`, as laid out by
         // `ScriptSequence::get_paths` and `MultiChainSequence::get_paths`.
         let dry_run = paths.0.ancestors().nth(if multi { 2 } else { 1 }).and_then(Path::file_name)
             == Some(DRY_RUN_DIR.as_ref());
+        let data = match data {
+            Ok(data) => data,
+            // A dangling link counts as an export, since publishing would follow it.
+            Err(_) if dry_run || paths.0.symlink_metadata().is_err() => return Ok(false),
+            Err(err) => {
+                return Err(err).wrap_err(format!(
+                    "the previous broadcast `{}` is unreadable and its recovery snapshot `{}` is missing, so forge cannot tell whether it left unfinished operations; pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending, or restore the snapshot and finish with `{}`",
+                    paths.0.display(),
+                    snapshot.display(),
+                    if multi { "--multi --resume" } else { "--resume" }
+                ));
+            }
+        };
         if data.has_recovery_generation() && !dry_run && incomplete(&data) {
             bail!(
                 "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so forge cannot tell which of its unfinished operations were sent; restore the snapshot and finish with `{}`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
@@ -1054,12 +1067,12 @@ where
         }
         (data, false)
     };
+    // Transactions saved for owners on other machines hold the approvals collected so far.
     let submitted = attempted
-        || data
-            .sequences()
-            .iter()
-            .flat_map(|sequence| &sequence.transactions)
-            .any(|tx| tx.hash.is_some());
+        || data.sequences().iter().any(|sequence| {
+            !sequence.awaiting_owners.is_empty()
+                || sequence.transactions.iter().any(|tx| tx.hash.is_some())
+        });
     Ok(submitted && incomplete(&data))
 }
 
@@ -1293,10 +1306,7 @@ mod tests {
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{
-        AASigned, TempoSignature,
-        transaction::{Call, PrimitiveSignature},
-    };
+    use tempo_primitives::{AASigned, TempoSignature, transaction::Call};
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -2132,11 +2142,8 @@ mod tests {
         let tx = request.build_aa().unwrap();
         let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
         Bytes::from(
-            TempoTxEnvelope::AA(AASigned::new_unhashed(
-                tx,
-                TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-            ))
-            .encoded_2718(),
+            TempoTxEnvelope::AA(AASigned::new_unhashed(tx, TempoSignature::from(signature)))
+                .encoded_2718(),
         )
     }
 

@@ -1,51 +1,22 @@
-//! A wrapper around `Backend` that is clone-on-write used for fuzzing.
+//! A clone-on-write wrapper around [`Backend`] used for fuzzing.
 
-use super::BackendError;
 use crate::{
-    FoundryInspectorExt,
-    backend::{
-        Backend, ContextUpdateFor, DatabaseExt, ForkAccountField, JournaledState, LocalForkId,
-        RevertStateSnapshotAction, diagnostic::RevertDiagnostic, existing_account,
-    },
-    evm::{
-        ChainFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
-        HaltReasonFor, SpecFor, TxEnvFor,
-    },
-    fork::{CreateFork, ForkId},
+    backend::Backend,
+    evm::{FoundryEvmFor, FoundryEvmNetwork},
 };
-use alloy_evm::Evm;
-use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256, TxKind, U256};
-use eyre::WrapErr;
-use foundry_fork_db::DatabaseError;
-use revm::{
-    Database, DatabaseCommit,
-    bytecode::Bytecode,
-    context::{ContextTr, Transaction},
-    context_interface::result::ResultAndState,
-    database::DatabaseRef,
-    primitives::AddressMap,
-    state::{Account, AccountInfo, EvmState},
+use alloy_primitives::{Address, TxKind};
+use std::{
+    borrow::Cow,
+    fmt::Debug,
+    ops::{Deref, DerefMut},
 };
-use std::{borrow::Cow, collections::BTreeMap, fmt::Debug};
 
-#[cfg(feature = "monad")]
-use crate::evm::MonadEvmNetwork;
-#[cfg(feature = "monad")]
-use alloy_evm::EvmEnv;
-#[cfg(feature = "monad")]
-use alloy_monad_evm::MonadEvmFactory;
-#[cfg(feature = "monad")]
-use monad_revm::{MonadChainContext, MonadHardfork};
-#[cfg(feature = "monad")]
-use revm::context::TxEnv;
-
-/// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
+/// A clone-on-write [`Backend`].
 ///
-/// Any changes made during its existence that affect the caching layer of the underlying Database
-/// will result in a clone of the initial Database. Therefore, this backend type is basically
-/// a clone-on-write `Backend`, where cloning is only necessary if cheatcodes will modify the
-/// `Backend`
+/// Reads and executions that discard their state ([`Backend::create_evm`]) borrow the wrapped
+/// backend. The first mutable access, such as a
+/// cheatcode that switches forks, clones it and applies the pending test initialization, so the
+/// original backend is never modified.
 ///
 /// Entire purpose of this type is for fuzzing. A test function fuzzer will repeatedly execute the
 /// function via immutable raw (no state changes) calls.
@@ -56,29 +27,14 @@ use revm::context::TxEnv;
 /// don't make use of them. Alternatively each test case would require its own `Backend` clone,
 /// which would add significant overhead for large fuzz sets even if the Database is not big after
 /// setup.
+#[derive(Clone, Debug)]
 pub struct CowBackend<'a, FEN: FoundryEvmNetwork> {
     /// The underlying `Backend`.
     ///
     /// No calls on the `CowBackend` will ever persistently modify the `backend`'s state.
     pub backend: Cow<'a, Backend<FEN>>,
-    /// Pending initialization params for the backend on first mutable access.
-    /// `None` means the backend has already been initialized for the current call.
-    pending_init: Option<(SpecFor<FEN>, Address, TxKind)>,
-}
-
-impl<FEN: FoundryEvmNetwork> Clone for CowBackend<'_, FEN> {
-    fn clone(&self) -> Self {
-        Self { backend: self.backend.clone(), pending_init: self.pending_init }
-    }
-}
-
-impl<FEN: FoundryEvmNetwork> Debug for CowBackend<'_, FEN> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CowBackend")
-            .field("backend", &self.backend)
-            .field("pending_init", &self.pending_init)
-            .finish()
-    }
+    /// Test initialization applied on first mutable access.
+    pending_init: Option<(Address, TxKind)>,
 }
 
 impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
@@ -87,364 +43,40 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         Self { backend: Cow::Borrowed(backend), pending_init: None }
     }
 
-    /// Executes the configured transaction of the `env` without committing state changes
-    ///
-    /// Note: in case there are any cheatcodes executed that modify the environment, this will
-    /// update the given `env` with the new values.
-    #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>>(
-        &mut self,
-        evm_env: &mut EvmEnvFor<FEN>,
-        tx_env: &mut TxEnvFor<FEN>,
-        inspector: I,
-    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
-        let chain_context = self.chain_context_for_synthetic_transaction(tx_env)?;
-        self.inspect_with_context(evm_env, tx_env, chain_context, inspector)
+    /// Records the caller and test contract of the next execution, applied with
+    /// [`Backend::initialize`] on first mutable access.
+    pub const fn initialize(&mut self, caller: Address, kind: TxKind) {
+        self.pending_init = Some((caller, kind));
     }
 
-    /// Executes the configured transaction with explicit network-specific context.
-    #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect_with_context<I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>>(
-        &mut self,
-        evm_env: &mut EvmEnvFor<FEN>,
-        tx_env: &mut TxEnvFor<FEN>,
-        chain_context: ChainFor<FEN>,
-        inspector: I,
-    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
-        // this is a new call to inspect with a new env, so even if we've cloned the backend
-        // already, we reset the initialized state
-        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
-
-        let factory = FEN::EvmFactory::default();
-        let mut evm = factory.create_foundry_evm_with_inspector(self, evm_env.clone(), inspector);
-        *evm.chain_mut() = chain_context;
-
-        let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
-
-        *tx_env = evm.tx().clone();
-        *evm_env = evm.finish().1;
-
-        Ok(res)
+    /// Returns whether the backend was cloned.
+    pub const fn is_owned(&self) -> bool {
+        matches!(self.backend, Cow::Owned(_))
     }
 
-    /// Returns whether there was a state snapshot failure in the backend.
-    ///
-    /// This is bubbled up from the underlying Copy-On-Write backend when a revert occurs.
-    pub fn has_state_snapshot_failure(&self) -> bool {
-        self.backend.has_state_snapshot_failure()
-    }
-
-    /// Returns a mutable instance of the Backend.
-    ///
-    /// If this is the first time this is called, the backed is cloned and initialized.
-    fn backend_mut(&mut self) -> &mut Backend<FEN> {
-        if let Some((spec_id, caller, tx_kind)) = self.pending_init.take() {
-            let backend = self.backend.to_mut();
-            backend.initialize(spec_id, caller, tx_kind);
-            return backend;
+    /// Parks accepted state on owned backends; leaves pending writes uncommitted.
+    pub fn park_detached(&mut self, evm: FoundryEvmFor<'_, FEN>) {
+        if let Cow::Owned(backend) = &mut self.backend {
+            backend.lifecycle.park_detached(evm);
+            backend.bal = None;
         }
-        self.backend.to_mut()
     }
 }
 
-#[cfg(feature = "monad")]
-impl CowBackend<'_, MonadEvmNetwork> {
-    /// Tries to execute a canonical system transaction with explicit network-specific context.
-    #[instrument(name = "inspect_system_replay", level = "debug", skip_all)]
-    pub fn try_inspect_system_replay_with_context<
-        I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, MonadEvmNetwork>>,
-    >(
-        &mut self,
-        evm_env: &mut EvmEnv<MonadHardfork>,
-        tx_env: &mut TxEnv,
-        chain_context: MonadChainContext,
-        inspector: &mut I,
-    ) -> eyre::Result<Option<ResultAndState<revm::context_interface::result::HaltReason>>> {
-        if crate::evm::protocol_system_call(tx_env)?.is_none() {
-            return Ok(None);
+impl<FEN: FoundryEvmNetwork> Deref for CowBackend<'_, FEN> {
+    type Target = Backend<FEN>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.backend
+    }
+}
+
+impl<FEN: FoundryEvmNetwork> DerefMut for CowBackend<'_, FEN> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let backend = self.backend.to_mut();
+        if let Some((caller, kind)) = self.pending_init.take() {
+            backend.initialize(caller, kind);
         }
-
-        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
-
-        let factory = MonadEvmFactory::default();
-        let mut evm = factory.create_nested_evm_with_inspector(self, evm_env.clone(), inspector);
-        *evm.chain_mut() = chain_context;
-        let result = evm.transact_raw(tx_env.clone())?;
-
-        // A successful specialized replay replaces the EVM transaction with its synthetic system
-        // call. Keep the canonical envelope in `tx_env`; ordinary execution uses
-        // `inspect_with_context` above and copies inspector mutations back normally.
-        *evm_env = evm.to_evm_env();
-
-        Ok(Some(result))
-    }
-}
-
-impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN> {
-    fn chain_context_for_synthetic_transaction(
-        &self,
-        tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ChainFor<FEN>> {
-        self.backend.chain_context_for_synthetic_transaction(tx)
-    }
-
-    fn snapshot_state(
-        &mut self,
-        journaled_state: &JournaledState,
-        evm_env: &EvmEnvFor<FEN>,
-    ) -> U256 {
-        self.backend_mut().snapshot_state(journaled_state, evm_env)
-    }
-
-    fn revert_state(
-        &mut self,
-        id: U256,
-        journaled_state: &JournaledState,
-        evm_env: &mut EvmEnvFor<FEN>,
-        caller: Address,
-        action: RevertStateSnapshotAction,
-    ) -> Option<JournaledState> {
-        self.backend_mut().revert_state(id, journaled_state, evm_env, caller, action)
-    }
-
-    fn delete_state_snapshot(&mut self, id: U256) -> bool {
-        // Snapshots can predate initialization; avoid cloning when the snapshot is missing.
-        if self.backend.state_snapshots().get(id).is_none() {
-            return false;
-        }
-        self.backend_mut().delete_state_snapshot(id)
-    }
-
-    fn delete_state_snapshots(&mut self) {
-        // Avoid cloning when there are no snapshots.
-        if self.backend.state_snapshots().is_empty() {
-            return;
-        }
-        self.backend_mut().delete_state_snapshots()
-    }
-
-    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
-        self.backend.to_mut().create_fork(fork)
-    }
-
-    fn create_fork_at_transaction(
-        &mut self,
-        fork: CreateFork,
-        transaction: B256,
-    ) -> eyre::Result<LocalForkId> {
-        self.backend.to_mut().create_fork_at_transaction(fork, transaction)
-    }
-
-    fn select_fork(
-        &mut self,
-        id: LocalForkId,
-        evm_env: &mut EvmEnvFor<FEN>,
-        tx_env: &mut TxEnvFor<FEN>,
-        journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
-        self.backend_mut().select_fork(id, evm_env, tx_env, journaled_state)
-    }
-
-    fn roll_fork(
-        &mut self,
-        id: Option<LocalForkId>,
-        block_number: u64,
-        evm_env: &mut EvmEnvFor<FEN>,
-        tx_env: &TxEnvFor<FEN>,
-        journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
-        self.backend_mut().roll_fork(id, block_number, evm_env, tx_env, journaled_state)
-    }
-
-    fn roll_fork_to_transaction(
-        &mut self,
-        id: Option<LocalForkId>,
-        transaction: B256,
-        evm_env: &mut EvmEnvFor<FEN>,
-        tx_env: &TxEnvFor<FEN>,
-        journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
-        self.backend_mut().roll_fork_to_transaction(
-            id,
-            transaction,
-            evm_env,
-            tx_env,
-            journaled_state,
-        )
-    }
-
-    fn transact(
-        &mut self,
-        id: Option<LocalForkId>,
-        transaction: B256,
-        evm_env: EvmEnvFor<FEN>,
-        outer_tx_env: &TxEnvFor<FEN>,
-        journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<
-            <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
-        >,
-    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
-        self.backend_mut().transact(
-            id,
-            transaction,
-            evm_env,
-            outer_tx_env,
-            journaled_state,
-            inspector,
-        )
-    }
-
-    fn transact_from_tx(
-        &mut self,
-        tx_env: TxEnvFor<FEN>,
-        evm_env: EvmEnvFor<FEN>,
-        journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<
-            <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
-        >,
-    ) -> eyre::Result<()> {
-        self.backend_mut().transact_from_tx(tx_env, evm_env, journaled_state, inspector)
-    }
-
-    fn active_fork_id(&self) -> Option<LocalForkId> {
-        self.backend.active_fork_id()
-    }
-
-    fn active_fork_url(&self) -> Option<String> {
-        self.backend.active_fork_url()
-    }
-
-    fn active_fork_options(&self) -> Option<CreateFork> {
-        self.backend.active_fork_options()
-    }
-
-    fn active_fork_source_chain_id(&self) -> Option<u64> {
-        self.backend.active_fork_source_chain_id()
-    }
-
-    fn active_fork_block_number(&self) -> Option<u64> {
-        self.backend.active_fork_block_number()
-    }
-
-    fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId> {
-        self.backend.ensure_fork(id)
-    }
-
-    fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
-        self.backend.ensure_fork_id(id)
-    }
-
-    fn diagnose_revert(&self, callee: Address, evm_state: &EvmState) -> Option<RevertDiagnostic> {
-        self.backend.diagnose_revert(callee, evm_state)
-    }
-
-    fn load_allocs(
-        &mut self,
-        allocs: &BTreeMap<Address, GenesisAccount>,
-        journaled_state: &mut JournaledState,
-    ) -> Result<(), BackendError> {
-        self.backend.to_mut().load_allocs(allocs, journaled_state)
-    }
-
-    fn clone_account(
-        &mut self,
-        source: &GenesisAccount,
-        target: &Address,
-        journaled_state: &mut JournaledState,
-    ) -> Result<(), BackendError> {
-        self.backend.to_mut().clone_account(source, target, journaled_state)
-    }
-
-    fn is_persistent(&self, acc: &Address) -> bool {
-        self.backend.is_persistent(acc)
-    }
-
-    fn refresh_fork_account(
-        &mut self,
-        address: Address,
-        field: ForkAccountField,
-        journaled_state: &mut JournaledState,
-    ) -> Result<(), BackendError> {
-        self.backend.to_mut().refresh_fork_account(address, field, journaled_state)
-    }
-
-    fn refresh_fork_storage(
-        &mut self,
-        address: Address,
-        slot: U256,
-        journaled_state: &mut JournaledState,
-    ) -> Result<(), BackendError> {
-        self.backend.to_mut().refresh_fork_storage(address, slot, journaled_state)
-    }
-
-    fn remove_persistent_account(&mut self, account: &Address) -> bool {
-        self.backend.to_mut().remove_persistent_account(account)
-    }
-
-    fn add_persistent_account(&mut self, account: Address) -> bool {
-        self.backend.to_mut().add_persistent_account(account)
-    }
-
-    fn allow_cheatcode_access(&mut self, account: Address) -> bool {
-        self.backend.to_mut().allow_cheatcode_access(account)
-    }
-
-    fn revoke_cheatcode_access(&mut self, account: &Address) -> bool {
-        self.backend.to_mut().revoke_cheatcode_access(account)
-    }
-
-    fn has_cheatcode_access(&self, account: &Address) -> bool {
-        self.backend.has_cheatcode_access(account)
-    }
-
-    fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
-        self.backend.to_mut().set_blockhash(block_number, block_hash);
-    }
-}
-
-impl<FEN: FoundryEvmNetwork> DatabaseRef for CowBackend<'_, FEN> {
-    type Error = DatabaseError;
-
-    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        DatabaseRef::basic_ref(self.backend.as_ref(), address)
-    }
-
-    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        DatabaseRef::code_by_hash_ref(self.backend.as_ref(), code_hash)
-    }
-
-    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        DatabaseRef::storage_ref(self.backend.as_ref(), address, index)
-    }
-
-    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
-        DatabaseRef::block_hash_ref(self.backend.as_ref(), number)
-    }
-}
-
-impl<FEN: FoundryEvmNetwork> Database for CowBackend<'_, FEN> {
-    type Error = DatabaseError;
-
-    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        let spec = self.pending_init.map_or(self.backend.inner.spec_id, |(spec, ..)| spec);
-        Ok(existing_account(spec, DatabaseRef::basic_ref(self, address)?))
-    }
-
-    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        DatabaseRef::code_by_hash_ref(self, code_hash)
-    }
-
-    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        DatabaseRef::storage_ref(self, address, index)
-    }
-
-    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
-        DatabaseRef::block_hash_ref(self, number)
-    }
-}
-
-impl<FEN: FoundryEvmNetwork> DatabaseCommit for CowBackend<'_, FEN> {
-    fn commit(&mut self, changes: AddressMap<Account>) {
-        self.backend.to_mut().commit(changes)
+        backend
     }
 }

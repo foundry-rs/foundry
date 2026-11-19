@@ -1,5 +1,5 @@
 use crate::{
-    BasicTxDetails, Fuzzer,
+    BasicTxDetails,
     invariant::{
         FuzzRunIdentifiedContracts, TargetedContract, TargetedContractEvent, TargetedContracts,
     },
@@ -9,25 +9,22 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, B256, Bytes, Log, U256, keccak256,
-    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, HashSet, IndexMap, IndexSet},
+    map::{AddressIndexSet, B256IndexSet, HashMap, HashSet, IndexMap, IndexSet},
+};
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountChanges, AccountInfo, CacheDB},
 };
 use foundry_common::{
     ignore_metadata_hash,
-    mapping_slots::MappingSlots,
     slot_identifier::{SlotIdentifier, SlotInfo},
 };
 use foundry_config::FuzzDictionaryConfig;
-use foundry_evm_core::{
-    bytecode::InstIter, eip2935::is_history_storage_address, utils::StateChangeset,
-};
-use revm::{
-    database::{CacheDB, DatabaseRef, DbAccount},
-    state::AccountInfo,
-};
+use foundry_evm_core::{bytecode::InstIter, eip2935::is_history_storage_address};
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
 
 #[cfg(test)]
-use revm::database::InMemoryDB;
+use evm2::evm::InMemoryDB;
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
 ///
@@ -77,23 +74,21 @@ impl EvmFuzzState {
         Self::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
     }
 
-    pub fn new<DB: DatabaseRef>(
+    /// Creates the dictionary seed from the accounts, code and storage accepted into `db`, such as
+    /// the overlay of an EVM's state after `setUp`.
+    pub fn new<DB>(
         deployed_libs: &[Address],
         db: &CacheDB<DB>,
         config: FuzzDictionaryConfig,
         literals: Option<&LiteralsDictionary>,
     ) -> Self {
-        // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
-        let mut accs = db.cache.accounts.iter().collect::<Vec<_>>();
-        accs.sort_by_key(|(address, _)| *address);
-
         // Create fuzz dictionary and insert values from db state. Literals go in first: the db
         // values seed the typed samples, which merges the literals in at that point.
         let mut dictionary = FuzzDictionary::new(config);
         if let Some(literals) = literals {
             dictionary.literal_values = literals.clone();
         }
-        dictionary.insert_db_values(accs);
+        dictionary.insert_db_values(db);
 
         Self { inner: Arc::new(dictionary), deployed_libs: deployed_libs.to_vec() }
     }
@@ -160,32 +155,23 @@ impl FuzzState {
         }
     }
 
-    pub fn collect_fuzzer_values(&self, fuzzer: &mut Fuzzer) {
-        if fuzzer.collected_values.is_empty() {
-            return;
-        }
-
-        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
-        let mut dict = inner.borrow_mut();
-        for value in fuzzer.collected_values.drain(..) {
-            dict.insert_value(value);
-        }
-    }
-
-    /// Collects state changes from a [StateChangeset] and logs into a worker state
-    /// according to the given [FuzzDictionaryConfig].
+    /// Collects the accounts and storage a call loaded, its output and its logs into a worker
+    /// state according to the given [FuzzDictionaryConfig].
+    ///
+    /// `state_changes` are the call's [`AccountChanges`], as returned by
+    /// `ExecutedTx::account_changes` or `PendingState::account_changes`.
     #[allow(clippy::too_many_arguments)]
-    pub fn collect_values_from_call(
+    pub fn collect_values_from_call<'a>(
         &self,
         fuzzed_contracts: &FuzzRunIdentifiedContracts,
         tx: &BasicTxDetails,
         result: &Bytes,
         logs: &[Log],
-        state_changeset: &StateChangeset,
+        state_changes: impl IntoIterator<Item = AccountChanges<'a>>,
         run_depth: u32,
-        mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
-        if logs.is_empty() && result.is_empty() && state_changeset.is_empty() {
+        let mut state_changes = state_changes.into_iter().peekable();
+        if logs.is_empty() && result.is_empty() && state_changes.peek().is_none() {
             return;
         }
 
@@ -203,7 +189,7 @@ impl FuzzState {
         if !result.is_empty() {
             dict.insert_result_values(target_function, result, run_depth);
         }
-        dict.insert_new_state_values(state_changeset, &targets, mapping_slots);
+        dict.insert_new_state_values(state_changes, &targets);
     }
 
     /// Collects the decoded result of a view call into the fuzz dictionary.
@@ -333,7 +319,7 @@ pub struct FuzzDictionary {
     /// Parsed storage layout identifiers keyed by the layout allocation.
     slot_identifiers: HashMap<usize, SlotIdentifier>,
     /// Cached non-mapping storage slot identification keyed by layout allocation and slot.
-    slot_info_cache: HashMap<(usize, B256), Option<SlotInfo>>,
+    slot_info_cache: HashMap<(usize, B256), Option<Arc<SlotInfo>>>,
 
     misses: usize,
     hits: usize,
@@ -395,21 +381,33 @@ impl FuzzDictionary {
 
     /// Insert values from initial db state into fuzz dictionary.
     /// These values are persisted across invariant runs.
-    fn insert_db_values(&mut self, db_state: Vec<(&Address, &DbAccount)>) {
-        for (address, account) in db_state {
-            if is_history_storage_address(address) {
+    fn insert_db_values<DB>(&mut self, db: &CacheDB<DB>) {
+        let cache = &db.cache;
+        // Accounts whose storage changed without changing their info only have a storage entry.
+        // Sort addresses to ensure deterministic dictionary generation from the same setUp state.
+        let mut addresses =
+            cache.accounts.keys().chain(cache.storage.keys()).copied().collect::<Vec<_>>();
+        addresses.sort_unstable();
+        addresses.dedup();
+        for address in addresses {
+            if is_history_storage_address(&address) {
                 continue;
             }
 
             // Insert basic account information
             self.insert_value(address.into_word());
-            self.insert_address_sample(*address);
-            // Insert push bytes
-            self.insert_push_bytes_values(address, &account.info);
+            self.insert_address_sample(address);
+            // Insert push bytes. The cache stores code separately, keyed by code hash.
+            if let Some(Some(info)) = cache.accounts.get(&address) {
+                let code = info.code.as_ref().or_else(|| cache.contracts.get(&info.code_hash));
+                self.insert_push_bytes_values(&address, info, code);
+            }
             // Insert storage values.
-            if self.config.include_storage {
+            if self.config.include_storage
+                && let Some(storage) = cache.storage.get(&address)
+            {
                 // Sort storage values before inserting to ensure deterministic dictionary.
-                let mut values = account.storage.iter().collect::<Vec<_>>();
+                let mut values = storage.slots.iter().collect::<Vec<_>>();
                 values.sort_unstable_by_key(|(slot, _)| **slot);
                 for (slot, value) in values {
                     self.insert_storage_value(slot, value, None);
@@ -536,18 +534,18 @@ impl FuzzDictionary {
         false
     }
 
-    /// Insert values from call state changeset into fuzz dictionary.
+    /// Insert values from the accounts and storage loaded by a call into fuzz dictionary.
     /// These values are removed at the end of current run.
-    fn insert_new_state_values(
+    fn insert_new_state_values<'a>(
         &mut self,
-        state_changeset: &StateChangeset,
+        state_changes: impl IntoIterator<Item = AccountChanges<'a>>,
         targets: &TargetedContracts,
-        mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
         // Sort accounts before inserting to ensure deterministic dictionary.
-        let mut accounts = state_changeset.iter().collect::<Vec<_>>();
-        accounts.sort_unstable_by_key(|(address, _)| **address);
-        for (address, account) in accounts {
+        let mut accounts = state_changes.into_iter().collect::<Vec<_>>();
+        accounts.sort_unstable_by_key(|changes| changes.address);
+        for changes in accounts {
+            let address = &changes.address;
             if is_history_storage_address(address) {
                 continue;
             }
@@ -556,9 +554,13 @@ impl FuzzDictionary {
             self.insert_value(address.into_word());
             self.insert_address_sample(*address);
             // Insert push bytes.
-            self.insert_push_bytes_values(address, &account.info);
+            if let Some(info) = changes.current {
+                let code = changes.code.map(|(_, code)| code).or(info.code.as_ref());
+                self.insert_push_bytes_values(address, info, code);
+            }
             // Insert storage values.
-            if self.config.include_storage && !account.storage.is_empty() {
+            let storage = &changes.storage.slots;
+            if self.config.include_storage && !storage.is_empty() {
                 let slot_identifier_key = targets.get(address).and_then(|contract| {
                     contract.storage_layout.as_ref().map(|layout| {
                         let key = Arc::as_ptr(layout) as usize;
@@ -568,47 +570,46 @@ impl FuzzDictionary {
                         key
                     })
                 });
-                trace!(
-                    "{address:?} has mapping_slots {}",
-                    mapping_slots.is_some_and(|m| m.contains_key(address))
-                );
-                let mapping_slots = mapping_slots.and_then(|m| m.get(address));
                 // Sort storage values before inserting to ensure deterministic dictionary.
-                let mut storage = account.storage.iter().collect::<Vec<_>>();
+                let mut storage = storage.iter().collect::<Vec<_>>();
                 storage.sort_unstable_by_key(|(slot, _)| **slot);
                 for (slot, value) in storage {
+                    let value = value.value.current;
                     let slot_info = slot_identifier_key.and_then(|key| {
                         let slot = B256::from(*slot);
-                        let value_word = B256::from(value.present_value());
-                        self.identify_storage_slot(key, slot, mapping_slots)
-                            .filter(|slot_info| slot_info.decode(value_word).is_some())
+                        let value_word = B256::from(value);
+                        // A dynamic array's slot, also as an element of a fixed array, holds its
+                        // length, which no parameter samples by the array type, so keep it untyped.
+                        // So is a slot packing several array elements, which decodes as an array of
+                        // them and is no sample of one.
+                        self.identify_storage_slot(key, slot).filter(|slot_info| {
+                            let mut ty = &slot_info.slot_type.dyn_sol_type;
+                            while let DynSolType::FixedArray(inner, _) = ty {
+                                ty = inner;
+                            }
+                            !matches!(ty, DynSolType::Array(_))
+                                && slot_info.decode(value_word).is_some_and(|value| {
+                                    !matches!(value, DynSolValue::FixedArray(_))
+                                })
+                        })
                     });
-                    self.insert_storage_value(slot, &value.present_value(), slot_info);
+                    self.insert_storage_value(slot, &value, slot_info.as_deref());
                 }
             }
         }
     }
 
-    fn identify_storage_slot(
-        &mut self,
-        key: usize,
-        slot: B256,
-        mapping_slots: Option<&MappingSlots>,
-    ) -> Option<SlotInfo> {
-        if mapping_slots.is_some() {
-            return self
-                .slot_identifiers
-                .get(&key)
-                .and_then(|identifier| identifier.identify(&slot, mapping_slots));
-        }
-
+    fn identify_storage_slot(&mut self, key: usize, slot: B256) -> Option<Arc<SlotInfo>> {
         let cache_key = (key, slot);
         if let Some(slot_info) = self.slot_info_cache.get(&cache_key) {
             return slot_info.clone();
         }
 
-        let slot_info =
-            self.slot_identifiers.get(&key).and_then(|identifier| identifier.identify(&slot, None));
+        let slot_info = self
+            .slot_identifiers
+            .get(&key)
+            .and_then(|identifier| identifier.identify(&slot, None))
+            .map(Arc::new);
         if self.slot_info_cache.len() < MAX_SLOT_INFO_CACHE_ENTRIES {
             self.slot_info_cache.insert(cache_key, slot_info.clone());
         }
@@ -618,19 +619,24 @@ impl FuzzDictionary {
     /// Insert values from push bytes into fuzz dictionary.
     /// Values are collected only once for a given bytecode.
     /// If values are newly collected then they are removed at the end of current run.
-    fn insert_push_bytes_values(&mut self, address: &Address, account_info: &AccountInfo) {
+    fn insert_push_bytes_values(
+        &mut self,
+        address: &Address,
+        account_info: &AccountInfo,
+        code: Option<&Bytecode>,
+    ) {
         if !self.config.include_push_bytes {
             return;
         }
 
-        let Some(code) = &account_info.code else {
+        let Some(code) = code else {
             return;
         };
         self.insert_address(*address);
         if self.values_full() {
             return;
         }
-        if self.push_bytecode_hashes.insert(account_info.code_hash()) {
+        if self.push_bytecode_hashes.insert(account_info.code_hash) {
             self.collect_push_bytes(ignore_metadata_hash(code.original_byte_slice()));
         }
     }
@@ -655,7 +661,7 @@ impl FuzzDictionary {
 
     /// Insert values from single storage slot and storage value into fuzz dictionary.
     /// Uses [`SlotIdentifier`] to identify storage slots types.
-    fn insert_storage_value(&mut self, slot: &U256, value: &U256, slot_info: Option<SlotInfo>) {
+    fn insert_storage_value(&mut self, slot: &U256, value: &U256, slot_info: Option<&SlotInfo>) {
         let slot = B256::from(*slot);
         let value_word = B256::from(*value);
 
@@ -668,7 +674,7 @@ impl FuzzDictionary {
                 self.seed_samples();
             }
             self.sample_values
-                .entry(slot_info.slot_type.dyn_sol_type)
+                .entry(slot_info.slot_type.dyn_sol_type.clone())
                 .or_default()
                 .insert(value_word);
         } else {
@@ -819,21 +825,21 @@ impl FuzzDictionary {
             self.seed_samples();
         }
         for sample in sample_values {
-            self.insert_sample_value(sample, limit);
+            self.insert_sample_value(&sample, limit);
         }
     }
 
     /// Inserts one decoded value. Composite values are recorded whole under their canonical type
     /// and their nested values are recorded recursively, so every leaf also feeds its own typed
     /// bucket instead of being dropped.
-    fn insert_sample_value(&mut self, sample: DynSolValue, limit: u32) {
-        match &sample {
+    fn insert_sample_value(&mut self, sample: &DynSolValue, limit: u32) {
+        match sample {
             DynSolValue::Tuple(inner)
             | DynSolValue::Array(inner)
             | DynSolValue::FixedArray(inner)
             | DynSolValue::CustomStruct { tuple: inner, .. } => {
                 for value in inner {
-                    self.insert_sample_value(value.clone(), limit);
+                    self.insert_sample_value(value, limit);
                 }
                 self.insert_composite_value(sample, limit);
             }
@@ -867,7 +873,7 @@ impl FuzzDictionary {
 
     /// Records a whole composite value under its canonical ABI type, evicting the oldest entry
     /// of that type once `limit` entries are stored.
-    fn insert_composite_value(&mut self, value: DynSolValue, limit: u32) {
+    fn insert_composite_value(&mut self, value: &DynSolValue, limit: u32) {
         // A value whose type depends on an empty dynamic array has no element type to key on.
         let Some(ty) = value.as_type().map(canonical_type) else { return };
         let key = keccak256(value.abi_encode());
@@ -878,7 +884,7 @@ impl FuzzDictionary {
         if values.len() >= (limit as usize).max(1) {
             values.shift_remove_index(0);
         }
-        values.insert(key, value);
+        values.insert(key, value.clone());
     }
 
     /// Returns whole composite values previously observed for the given type.
@@ -979,11 +985,8 @@ mod tests {
     use super::*;
     use crate::strategies::LiteralMaps;
     use alloy_json_abi::{Event, JsonAbi};
+    use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
     use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
-    use revm::{
-        bytecode::Bytecode,
-        state::{Account, EvmStorageSlot, TransactionId},
-    };
 
     fn account_with_code(raw: &'static [u8]) -> AccountInfo {
         AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from_static(raw)))
@@ -1062,10 +1065,18 @@ mod tests {
         let mut dictionary = FuzzDictionary::default();
         let account = account_with_code(&[0x60, 0x01]);
 
-        dictionary.insert_push_bytes_values(&Address::repeat_byte(0x11), &account);
+        dictionary.insert_push_bytes_values(
+            &Address::repeat_byte(0x11),
+            &account,
+            account.code.as_ref(),
+        );
         let hits_after_first_scan = dictionary.hits;
 
-        dictionary.insert_push_bytes_values(&Address::repeat_byte(0x22), &account);
+        dictionary.insert_push_bytes_values(
+            &Address::repeat_byte(0x22),
+            &account,
+            account.code.as_ref(),
+        );
 
         assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
         assert_eq!(dictionary.addresses.len(), 2);
@@ -1077,8 +1088,9 @@ mod tests {
         let mut dictionary = FuzzDictionary::default();
         let address = Address::repeat_byte(0x22);
 
-        dictionary.insert_push_bytes_values(&address, &account_with_code(&[0x60, 0x01]));
-        dictionary.insert_push_bytes_values(&address, &account_with_code(&[0x60, 0x04]));
+        for account in [account_with_code(&[0x60, 0x01]), account_with_code(&[0x60, 0x04])] {
+            dictionary.insert_push_bytes_values(&address, &account, account.code.as_ref());
+        }
 
         assert_eq!(dictionary.addresses.len(), 1);
         assert_eq!(dictionary.push_bytecode_hashes.len(), 2);
@@ -1092,12 +1104,13 @@ mod tests {
         let address = Address::repeat_byte(0x33);
         let account_without_code = AccountInfo { code: None, ..Default::default() };
 
-        dictionary.insert_push_bytes_values(&address, &account_without_code);
+        dictionary.insert_push_bytes_values(&address, &account_without_code, None);
 
         assert!(!dictionary.addresses.contains(&address));
         assert_eq!(dictionary.push_bytecode_hashes.len(), 0);
 
-        dictionary.insert_push_bytes_values(&address, &account_with_code(&[0x60, 0x04]));
+        let account = account_with_code(&[0x60, 0x04]);
+        dictionary.insert_push_bytes_values(&address, &account, account.code.as_ref());
 
         assert!(dictionary.addresses.contains(&address));
         assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
@@ -1112,13 +1125,21 @@ mod tests {
         dictionary.db_push_bytecode_hashes = dictionary.push_bytecode_hashes.len();
 
         let account = account_with_code(&[0x60, 0x01]);
-        dictionary.insert_push_bytes_values(&Address::repeat_byte(0x11), &account);
+        dictionary.insert_push_bytes_values(
+            &Address::repeat_byte(0x11),
+            &account,
+            account.code.as_ref(),
+        );
         assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
 
         dictionary.revert();
         assert_eq!(dictionary.push_bytecode_hashes.len(), 0);
 
-        dictionary.insert_push_bytes_values(&Address::repeat_byte(0x22), &account);
+        dictionary.insert_push_bytes_values(
+            &Address::repeat_byte(0x22),
+            &account,
+            account.code.as_ref(),
+        );
         assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
         assert!(dictionary.state_values.contains(&B256::with_last_byte(1)));
     }
@@ -1169,9 +1190,12 @@ mod tests {
     fn history_storage_account_is_excluded_from_initial_dictionary() {
         let mut db = InMemoryDB::default();
         let code = Bytecode::new_raw(Bytes::from_static(&[0x61, 0x01, 0x23, 0x00]));
-        db.insert_account_info(HISTORY_STORAGE_ADDRESS, AccountInfo::default().with_code(code));
-        db.insert_account_storage(HISTORY_STORAGE_ADDRESS, U256::from(7), U256::from(0xdead_u64))
-            .unwrap();
+        db.insert_account_info(&HISTORY_STORAGE_ADDRESS, AccountInfo::default().with_code(code));
+        db.insert_account_storage(
+            &HISTORY_STORAGE_ADDRESS,
+            &U256::from(7),
+            &U256::from(0xdead_u64),
+        );
 
         let state = EvmFuzzState::new(&[], &db, FuzzDictionaryConfig::default(), None);
 
@@ -1181,6 +1205,51 @@ mod tests {
             assert!(!dict.values().contains(&B256::with_last_byte(7)));
             assert!(!dict.values().contains(&B256::from(U256::from(0xdead_u64))));
         });
+    }
+
+    #[test]
+    fn db_seed_reads_cached_code_and_storage_only_accounts() {
+        let (contract, storage_only) = (Address::repeat_byte(0x11), Address::repeat_byte(0x22));
+        let mut db = InMemoryDB::default();
+        // The cache moves the code into its contracts map.
+        db.insert_account_info(&contract, account_with_code(&[0x61, 0x01, 0x23, 0x00]));
+        db.insert_account_storage(&storage_only, &U256::from(7), &U256::from(0xdead_u64));
+
+        let state = EvmFuzzState::new(&[], &db, FuzzDictionaryConfig::default(), None);
+
+        state.with_dictionary(|dict| {
+            for value in [
+                contract.into_word(),
+                B256::from(U256::from(0x123)),
+                storage_only.into_word(),
+                B256::with_last_byte(7),
+                B256::from(U256::from(0xdead_u64)),
+            ] {
+                assert!(dict.values().contains(&value), "{value}");
+            }
+            assert_eq!(dict.addresses().iter().copied().collect::<Vec<_>>(), [contract]);
+        });
+    }
+
+    #[test]
+    fn call_values_come_from_loaded_accounts_and_storage() {
+        let address = Address::repeat_byte(0x11);
+        let mut state = evm2::evm::PendingState::default();
+        state.insert_account(address, None, Some(account_with_code(&[0x61, 0x01, 0x23, 0x00])));
+        state.insert_storage(address, U256::from(7), U256::ZERO, U256::from(0xbeef_u64));
+        let mut dictionary = FuzzDictionary::default();
+
+        dictionary.insert_new_state_values(state.account_changes(), &TargetedContracts::new());
+
+        for value in [
+            address.into_word(),
+            B256::from(U256::from(0x123)),
+            B256::with_last_byte(7),
+            B256::from(U256::from(0xbeef_u64)),
+        ] {
+            assert!(dictionary.values().contains(&value), "{value}");
+        }
+        assert!(dictionary.addresses().contains(&address));
     }
 
     #[test]
@@ -1217,18 +1286,17 @@ mod tests {
             |i: u64, j: u64| (U256::from(i * 0x100 + j), U256::from(i * 0x10000 + j * 0x10));
         let address = |i: u64| Address::repeat_byte(i as u8 * 0x11);
 
-        let mut state_changeset = StateChangeset::default();
+        let mut state = evm2::evm::PendingState::default();
         for i in [3, 1, 4, 2] {
-            let storage = [3, 1, 2].map(|j| {
+            state.insert_account(address(i), None, Some(AccountInfo::default()));
+            for j in [3, 1, 2] {
                 let (slot, value) = entry(i, j);
-                (slot, EvmStorageSlot::new(value, TransactionId::ZERO))
-            });
-            state_changeset
-                .insert(address(i), Account::default().with_storage(storage.into_iter()));
+                state.insert_storage(address(i), slot, U256::ZERO, value);
+            }
         }
 
         let mut dictionary = FuzzDictionary::default();
-        dictionary.insert_new_state_values(&state_changeset, &TargetedContracts::new(), None);
+        dictionary.insert_new_state_values(state.account_changes(), &TargetedContracts::new());
 
         let mut expected = vec![B256::ZERO];
         for i in 1..=4 {
@@ -1244,19 +1312,118 @@ mod tests {
 
     #[test]
     fn touched_account_addresses_become_typed_address_samples() {
-        let mut state_changeset = StateChangeset::default();
+        let mut state = evm2::evm::PendingState::default();
         for i in 1..=3u8 {
-            state_changeset.insert(Address::repeat_byte(i), Account::default());
+            state.insert_account(Address::repeat_byte(i), None, Some(AccountInfo::default()));
         }
 
         let mut dictionary = FuzzDictionary::default();
-        dictionary.insert_new_state_values(&state_changeset, &TargetedContracts::new(), None);
+        dictionary.insert_new_state_values(state.account_changes(), &TargetedContracts::new());
 
         let samples = dictionary.samples(&DynSolType::Address).unwrap();
         for i in 1..=3u8 {
             assert!(samples.contains(&Address::repeat_byte(i).into_word()));
         }
         assert!(dictionary.samples(&DynSolType::Uint(256)).is_none_or(|s| s.is_empty()));
+    }
+
+    #[test]
+    fn dynamic_array_lengths_stay_untyped_storage_values() {
+        let storage = |label: &str, slot: &str, ty: &str| Storage {
+            ast_id: 1,
+            contract: "C".into(),
+            label: label.into(),
+            offset: 0,
+            slot: slot.into(),
+            storage_type: ty.into(),
+        };
+        let ty = |encoding: &str, label: &str, bytes: &str, base: Option<&str>| StorageType {
+            encoding: encoding.into(),
+            key: None,
+            label: label.into(),
+            number_of_bytes: bytes.into(),
+            value: None,
+            other: base.map(|base| ("base".to_string(), base.into())).into_iter().collect(),
+        };
+        let layout = StorageLayout {
+            storage: vec![
+                storage("nums", "0", "t_array(t_uint256)dyn_storage"),
+                storage("x", "1", "t_uint256"),
+                storage("pairs", "2", "t_array(t_array(t_uint256)dyn_storage)2_storage"),
+                storage("grid", "4", "t_array(t_array(t_struct(Item))dyn_storage)dyn_storage"),
+                storage("packed", "5", "t_array(t_uint128)dyn_storage"),
+            ],
+            types: [
+                (
+                    "t_array(t_uint256)dyn_storage".into(),
+                    ty("dynamic_array", "uint256[]", "32", Some("t_uint256")),
+                ),
+                ("t_uint256".into(), ty("inplace", "uint256", "32", None)),
+                (
+                    "t_array(t_array(t_uint256)dyn_storage)2_storage".into(),
+                    ty("inplace", "uint256[][2]", "64", Some("t_array(t_uint256)dyn_storage")),
+                ),
+                (
+                    "t_array(t_array(t_struct(Item))dyn_storage)dyn_storage".into(),
+                    ty(
+                        "dynamic_array",
+                        "struct C.Item[][]",
+                        "32",
+                        Some("t_array(t_struct(Item))dyn_storage"),
+                    ),
+                ),
+                (
+                    "t_array(t_struct(Item))dyn_storage".into(),
+                    ty("dynamic_array", "struct C.Item[]", "32", Some("t_struct(Item)")),
+                ),
+                (
+                    "t_array(t_uint128)dyn_storage".into(),
+                    ty("dynamic_array", "uint128[]", "32", Some("t_uint128")),
+                ),
+                ("t_uint128".into(), ty("inplace", "uint128", "16", None)),
+            ]
+            .into(),
+        };
+        let address = Address::repeat_byte(0x42);
+        let mut contract = TargetedContract::new("C".into(), JsonAbi::default());
+        contract.storage_layout = Some(Arc::new(layout));
+        let mut targets = TargetedContracts::new();
+        targets.insert(address, contract);
+
+        // `nums`, `x`, `pairs[1]`, `grid`, `grid[0]` and `packed[0..1]`.
+        let data_start = |slot: u64| Into::<U256>::into(keccak256(B256::from(U256::from(slot))));
+        let packed = (U256::from(6) << 128) | U256::from(5);
+        let mut state = evm2::evm::PendingState::default();
+        state.insert_account(address, None, Some(AccountInfo::default()));
+        for (slot, value) in [
+            (U256::ZERO, U256::from(5)),
+            (U256::ONE, U256::from(7)),
+            (U256::from(3), U256::from(9)),
+            (U256::from(4), U256::from(15)),
+            (data_start(4), U256::from(12)),
+            (data_start(5), packed),
+        ] {
+            state.insert_storage(address, slot, U256::ZERO, value);
+        }
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.insert_new_state_values(state.account_changes(), &targets);
+
+        // Lengths and their neighbours are sampled for any parameter, like other words.
+        for length in [4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16] {
+            assert!(dictionary.values().contains(&B256::from(U256::from(length))), "{length}");
+        }
+        // So is a slot of packed array elements, which is no sample of one element.
+        assert!(dictionary.values().contains(&B256::from(packed)));
+        assert!(dictionary.samples(&DynSolType::Uint(128)).is_none_or(|s| s.is_empty()));
+        // The account itself is an address sample; storage adds only `x`.
+        assert!(
+            dictionary
+                .sample_values
+                .keys()
+                .all(|ty| matches!(ty, DynSolType::Address | DynSolType::Uint(256)))
+        );
+        let uints = dictionary.samples(&DynSolType::Uint(256)).unwrap();
+        assert_eq!(uints.iter().copied().collect::<Vec<_>>(), [B256::from(U256::from(7))]);
     }
 
     #[test]
@@ -1269,7 +1436,7 @@ mod tests {
 
         let mut db = InMemoryDB::default();
         let account = Address::repeat_byte(0x42);
-        db.insert_account_info(account, AccountInfo::default());
+        db.insert_account_info(&account, AccountInfo::default());
 
         let state = EvmFuzzState::new(&[], &db, FuzzDictionaryConfig::default(), Some(&literals));
         state.with_dictionary(|dict| {

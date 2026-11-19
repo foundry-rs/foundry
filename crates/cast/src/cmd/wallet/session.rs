@@ -23,14 +23,14 @@ use std::{
     process::{Command, ExitStatus},
 };
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
-use tempo_contracts::precompiles::IAccountKeychain;
+use tempo_contracts::precompiles::{ACCOUNT_KEYCHAIN_ADDRESS, IAccountKeychain};
 use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule};
 use tokio::signal;
 
 use crate::{
     cmd::{
         keychain::{
-            KeychainTxOutcome, resolve_keychain_root_signer, send_keychain_tx_with_root_signer,
+            KeychainTxOutcome, resolve_keychain_root_signer, send_precompile_tx_with_root_signer,
         },
         print_json_or,
         tempo_policy_args::{
@@ -568,17 +568,22 @@ async fn revoke(
     let root_signer =
         resolve_keychain_root_signer(&send_tx, Some(entry.root_account), false).await?;
     let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
-    let outcome =
-        send_keychain_tx_with_root_signer(calldata, tx, &send_tx, root_signer, force, || {
-            retire_session_entry(session_id).map(drop)
-        })
-        .await
-        .and_then(|outcome| {
-            if outcome == KeychainTxOutcome::PrintedSponsorHash {
-                eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
-            }
-            Ok(outcome)
-        });
+    let outcome = send_precompile_tx_with_root_signer(
+        ACCOUNT_KEYCHAIN_ADDRESS,
+        calldata,
+        tx,
+        &send_tx,
+        root_signer,
+        force,
+        || retire_session_entry(session_id).map(drop),
+    )
+    .await
+    .and_then(|outcome| {
+        if outcome == KeychainTxOutcome::PrintedSponsorHash {
+            eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
+        }
+        Ok(outcome)
+    });
     let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(err) => {

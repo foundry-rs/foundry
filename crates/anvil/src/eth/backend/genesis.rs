@@ -1,10 +1,8 @@
 //! Genesis settings
 
-use crate::eth::backend::db::Db;
+use crate::eth::backend::db::{AccountInfo, Bytecode, DatabaseResult, Db};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, U256};
-use foundry_evm::backend::DatabaseResult;
-use revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY, state::AccountInfo};
+use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
 
 /// Genesis settings
 #[derive(Clone, Debug, Default)]
@@ -25,14 +23,8 @@ impl GenesisConfig {
     /// Returns fresh `AccountInfo`s for the configured `accounts`
     pub fn account_infos(&self) -> impl Iterator<Item = (Address, AccountInfo)> + '_ {
         self.accounts.iter().copied().map(|address| {
-            let info = AccountInfo {
-                balance: self.balance,
-                code_hash: KECCAK_EMPTY,
-                // we set this to empty so `Database::code_by_hash` doesn't get called
-                code: Some(Default::default()),
-                nonce: 0,
-                account_id: None,
-            };
+            // The default account carries empty code, so `code_by_hash` doesn't get called.
+            let info = AccountInfo::default().with_balance(self.balance);
             (address, info)
         })
     }
@@ -53,16 +45,23 @@ impl GenesisConfig {
         Ok(())
     }
 
+    /// Returns whether the `genesis.json` alloc sets storage `slot` of `address`.
+    pub fn allocates_storage(&self, address: Address, slot: U256) -> bool {
+        self.genesis_init
+            .as_ref()
+            .and_then(|genesis| genesis.alloc.get(&address)?.storage.as_ref())
+            .is_some_and(|storage| storage.contains_key(&B256::from(slot)))
+    }
+
     /// Converts a [`GenesisAccount`] to an [`AccountInfo`]
     fn genesis_to_account_info(&self, acc: &GenesisAccount) -> AccountInfo {
         let GenesisAccount { code, balance, nonce, .. } = acc.clone();
         let code = code.map(Bytecode::new_raw);
-        AccountInfo {
+        AccountInfo::new(
             balance,
-            nonce: nonce.unwrap_or_default(),
-            code_hash: code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
+            nonce.unwrap_or_default(),
+            code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK256_EMPTY),
             code,
-            account_id: None,
-        }
+        )
     }
 }

@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U64, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
 use alloy_signer::Signer;
+use alloy_sol_types::SolCall;
 use alloy_transport::TransportError;
 use clap::Args;
 use eyre::{Result, WrapErr};
@@ -21,13 +22,18 @@ use foundry_common::{
     get_pretty_receipt_w_reason_attr,
     provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     shell,
-    tempo::ensure_expiring_nonce_discriminator_active,
+    tempo::{
+        ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
+        mark_sponsored_gas_estimation,
+    },
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
-use tempo_alloy::accounts::TempoAccountsWallet;
+use tempo_alloy::{accounts::TempoAccountsWallet, chainspec::hardfork::TempoHardfork};
+use tempo_contracts::precompiles::{INonce, NONCE_PRECOMPILE_ADDRESS};
+use tempo_primitives::transaction::TEMPO_EXPIRING_NONCE_KEY;
 
 #[derive(Debug, Clone, Args)]
 pub struct SendTxOpts {
@@ -486,6 +492,8 @@ struct TxBuilderInner<N: Network, P> {
     eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     /// Optional percentage applied to provider gas estimates.
     gas_estimate_multiplier: Option<u64>,
+    /// Whether a Tempo fee payer will sponsor the transaction.
+    sponsored: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -580,6 +588,7 @@ where
                 browser: false,
                 eip1559_fee_estimate: config.eip1559_fee_estimate,
                 gas_estimate_multiplier: None,
+                sponsored: tx_opts.tempo.is_sponsored(),
                 chain,
                 etherscan_api_key,
                 etherscan_api_url,
@@ -746,25 +755,29 @@ where
             let gas_request =
                 (fees_are_complete && self.access_list.is_none() && self.tx.gas_limit().is_none())
                     .then(|| self.tx.clone());
-            let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier) = (
+            let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier, sponsored) = (
                 self.blob,
                 self.legacy,
                 self.browser,
                 self.eip1559_fee_estimate,
                 self.gas_estimate_multiplier,
+                self.sponsored,
             );
             let Self { provider, tx, .. } = &mut self;
             let provider = &*provider;
             let (tx_nonce, (), gas_limit) = tokio::try_join!(
-                Self::resolve_nonce(provider, from, tx.nonce()),
+                Self::resolve_nonce(provider, from, tx.nonce(), tx.nonce_key()),
                 Self::fill_fees(provider, tx, blob, legacy, browser, eip1559_fee_estimate),
                 async {
                     match gas_request {
-                        Some(request) => {
-                            Self::estimate_gas(provider, request, gas_estimate_multiplier)
-                                .await
-                                .map(Some)
-                        }
+                        Some(request) => Self::estimate_gas(
+                            provider,
+                            request,
+                            gas_estimate_multiplier,
+                            sponsored,
+                        )
+                        .await
+                        .map(Some),
                         None => Ok(None),
                     }
                 },
@@ -774,7 +787,10 @@ where
             }
             Some(tx_nonce)
         } else if fill || !self.auth.is_empty() {
-            Some(Self::resolve_nonce(&self.provider, from, self.tx.nonce()).await?)
+            Some(
+                Self::resolve_nonce(&self.provider, from, self.tx.nonce(), self.tx.nonce_key())
+                    .await?,
+            )
         } else {
             None
         };
@@ -813,8 +829,13 @@ where
             } else {
                 self.tx.clone()
             };
-            let estimated =
-                Self::estimate_gas(&self.provider, request, self.gas_estimate_multiplier).await?;
+            let estimated = Self::estimate_gas(
+                &self.provider,
+                request,
+                self.gas_estimate_multiplier,
+                self.sponsored,
+            )
+            .await?;
             self.tx.set_gas_limit(estimated);
         }
 
@@ -822,10 +843,37 @@ where
     }
 
     /// Resolves the transaction nonce. Returns the existing nonce or fetches one from the provider.
-    async fn resolve_nonce(provider: &P, from: Address, nonce: Option<u64>) -> Result<u64> {
-        match nonce {
-            Some(nonce) => Ok(nonce),
-            None => Ok(provider.get_transaction_count(from).await?),
+    ///
+    /// A Tempo nonce key other than the protocol key `0` selects a 2D nonce lane with its own
+    /// counter in the Nonce Manager precompile. From T1 on, the expiring nonce key has no counter:
+    /// its nonce is a discriminator that defaults to `0`. Before T1 it is an ordinary lane.
+    async fn resolve_nonce(
+        provider: &P,
+        from: Address,
+        nonce: Option<u64>,
+        nonce_key: Option<U256>,
+    ) -> Result<u64> {
+        if let Some(nonce) = nonce {
+            return Ok(nonce);
+        }
+        match nonce_key {
+            Some(TEMPO_EXPIRING_NONCE_KEY)
+                if !matches!(
+                    is_tempo_hardfork_active(provider, TempoHardfork::T1).await,
+                    Ok(false)
+                ) =>
+            {
+                Ok(0)
+            }
+            Some(nonce_key) if !nonce_key.is_zero() => {
+                let call = INonce::getNonceCall { account: from, nonceKey: nonce_key };
+                let request = N::TransactionRequest::default()
+                    .with_to(NONCE_PRECOMPILE_ADDRESS)
+                    .with_input(call.abi_encode());
+                let output = provider.call(request).await?;
+                Ok(INonce::getNonceCall::abi_decode_returns(&output)?)
+            }
+            _ => Ok(provider.get_transaction_count(from).await?),
         }
     }
 
@@ -843,13 +891,21 @@ where
         for auth in std::mem::take(&mut self.auth) {
             signed_auths.push(match auth {
                 CliAuthorizationList::Address(address) => {
-                    let auth = Authorization {
-                        chain_id: U256::from(self.chain.id()),
-                        nonce: tx_nonce + 1,
-                        address,
-                    };
                     let signer =
                         sender.as_signer().expect("address-based authorization requires a signer");
+                    let authority = signer.address();
+                    // Authorizations apply after the transaction's nonce. Only a protocol-nonce
+                    // transaction bumps the sender's account nonce first; a Tempo nonce lane or
+                    // expiring nonce leaves it unchanged.
+                    let nonce = if authority == sender.address()
+                        && self.tx.nonce_key().is_none_or(|key| key.is_zero())
+                    {
+                        tx_nonce + 1
+                    } else {
+                        self.provider.get_transaction_count(authority).await?
+                    };
+                    let auth =
+                        Authorization { chain_id: U256::from(self.chain.id()), nonce, address };
                     let signature = signer.sign_hash(&auth.signature_hash()).await?;
                     auth.into_signed(signature)
                 }
@@ -880,9 +936,13 @@ where
     /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
     async fn estimate_gas(
         provider: &P,
-        request: N::TransactionRequest,
+        mut request: N::TransactionRequest,
         multiplier: Option<u64>,
+        sponsored: bool,
     ) -> Result<u64> {
+        if sponsored {
+            mark_sponsored_gas_estimation(provider, &mut request).await;
+        }
         let err = match provider.estimate_gas(request).await {
             Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier),
             Err(err) => err,
