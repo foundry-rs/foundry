@@ -4416,10 +4416,7 @@ async fn test_fork_get_account() {
         assert_eq!(proof.storage_proof[0].value, slot);
         assert_eq!(proof.storage_proof[1].value, U256::ZERO);
         assert_storage_proofs(&proof);
-        // The pending map only holds the pending block's changes, so its proof is built locally.
-        if block != BlockId::pending() {
-            assert_eq!(proof.storage_hash, fork_root);
-        }
+        assert_eq!(proof.storage_hash, fork_root);
     }
 
     // Touching another slot caches the account locally; the untouched slot must still resolve.
@@ -4429,6 +4426,11 @@ async fn test_fork_get_account() {
     assert_eq!(proof.storage_proof[0].value, slot);
     assert_eq!(proof.storage_proof[1].value, U256::ONE);
     assert_storage_proofs(&proof);
+    // Pending inherits the local root even though the pending block leaves the account unchanged.
+    let latest = provider.get_account(target).await.unwrap();
+    assert_ne!(latest.storage_root, fork_root);
+    let pending = provider.get_account(target).block_id(BlockId::pending()).await.unwrap();
+    assert_eq!(pending, latest);
 }
 
 fn assert_storage_proofs(proof: &EIP1186AccountProofResponse) {

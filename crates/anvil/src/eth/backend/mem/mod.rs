@@ -7674,12 +7674,15 @@ where
         address: Address,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
     ) -> Result<TrieAccount, BlockchainError> {
+        let pending_root = self.pending_base_storage_root(address, &block_request).await;
         let (info, storage_root, fork) = self
             .with_database_at(block_request, |block_db, _| -> Result<_, BlockchainError> {
                 let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-                let storage_root = db.get(&address).map(|account| storage_root(&account.storage));
+                let storage_root =
+                    db.get(&address).map(|account| storage_root(&account.storage)).or(pending_root);
                 let info = block_db.basic_ref(address)?.unwrap_or_default();
-                // Accounts without code have no storage, so only contracts need the fork root.
+                // Only contracts take the fork root. A codeless account with storage, such as an
+                // EOA that cleared its EIP-7702 delegation, reports an empty root instead.
                 let fork = if storage_root.is_none() && !info.is_empty_code_hash() {
                     self.get_fork().map(|fork| {
                         let block = fork.block_number();
@@ -7698,6 +7701,20 @@ where
         };
         Ok(TrieAccount::new(info.nonce, info.balance, storage_root, info.code_hash)
             .with_extension(AccountExtension::copy_from_slice(&info.extension)))
+    }
+
+    /// Returns the local storage root of an account that a pending request inherits from the
+    /// current state, since the pending map only holds the pending block's changes.
+    async fn pending_base_storage_root(
+        &self,
+        address: Address,
+        block_request: &Option<BlockRequest<FoundryTxEnvelope>>,
+    ) -> Option<B256> {
+        if !matches!(block_request, Some(BlockRequest::Pending(_))) {
+            return None;
+        }
+        let db = self.db.read().await;
+        db.maybe_as_full_db()?.get(&address).map(|account| storage_root(&account.storage))
     }
 
     pub async fn get_account_info_at_block(
@@ -7800,7 +7817,7 @@ where
             }
         }
 
-        let is_pending = matches!(block_request, Some(BlockRequest::Pending(_)));
+        let pending_local = self.pending_base_storage_root(address, &block_request).await.is_some();
         let proof =
             self.with_database_at(block_request, |block_db, _| -> Result<_, BlockchainError> {
                 trace!(target: "backend", "get proof for {:?} at {:?}", address, block_number);
@@ -7810,9 +7827,8 @@ where
                 };
                 let info = block_db.basic_ref(address)?;
                 // A fork contract without local changes is unchanged since the fork block, so the
-                // fork proves it against the same storage root `eth_getAccount` reports. The
-                // pending map only holds the pending block's changes, so it cannot tell that.
-                if !is_pending
+                // fork proves it against the same storage root `eth_getAccount` reports.
+                if !pending_local
                     && !db.contains_key(&address)
                     && info.as_ref().is_some_and(|info| !info.is_empty_code_hash())
                 {
