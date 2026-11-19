@@ -1763,7 +1763,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Draws a value for a slot of an arbitrary-storage address or copied target: its replay
     /// value, or a random one.
-    pub fn draw_arbitrary_storage_value(&mut self, address: Address, slot: U256) -> U256 {
+    pub(crate) fn draw_arbitrary_storage_value(&mut self, address: Address, slot: U256) -> U256 {
         self.core
             .arbitrary_storage
             .as_ref()
@@ -4378,14 +4378,25 @@ mod tests {
         assert!(cheats.should_overwrite_arbitrary_storage(&target, slot));
 
         cheats.mark_arbitrary_storage_slot_explicit(target, slot);
+        cheats
+            .core
+            .arbitrary_storage
+            .as_mut()
+            .unwrap()
+            .values
+            .get_mut(&target)
+            .unwrap()
+            .insert(slot, U256::from(42));
         assert!(cheats.is_arbitrary_storage_slot_explicit(target, slot));
+        assert_eq!(cheats.cached_arbitrary_storage_value(target, slot), Some(U256::from(42)));
 
-        // Re-registering clears the overwrite mode and explicit slots.
+        // Re-registering clears the overwrite mode, explicit slots, and cached values.
         Vm::setArbitraryStorage_0Call { target }.apply_context(&mut cheats.core).unwrap();
         assert_eq!(
             cheats.arbitrary_storage_target_overwrite_modes().collect_vec(),
             [(target, false)]
         );
         assert!(!cheats.is_arbitrary_storage_slot_explicit(target, slot));
+        assert_eq!(cheats.cached_arbitrary_storage_value(target, slot), None);
     }
 }

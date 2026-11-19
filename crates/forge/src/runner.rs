@@ -2742,10 +2742,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // read, which a copy caches under its source, so the artifact leaves those slots out.
         if let Some(cheats) = self.executor.inspector().cheatcodes.as_ref() {
             storage.retain(|assignment| {
-                let cached_address = cheats
-                    .arbitrary_storage_copied_target_sources()
-                    .find(|(target, _)| *target == assignment.address)
-                    .map_or(assignment.address, |(_, source)| source);
+                let cached_address = if cheats.has_arbitrary_storage(&assignment.address) {
+                    assignment.address
+                } else {
+                    cheats
+                        .arbitrary_storage_copied_target_sources()
+                        .find(|(target, _)| *target == assignment.address)
+                        .map_or(assignment.address, |(_, source)| source)
+                };
                 !cheats.is_arbitrary_storage_slot_explicit(assignment.address, assignment.slot)
                     && cheats
                         .cached_arbitrary_storage_value(cached_address, assignment.slot)
