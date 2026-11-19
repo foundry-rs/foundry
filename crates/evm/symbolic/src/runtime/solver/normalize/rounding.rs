@@ -207,7 +207,7 @@ impl ConstraintContext {
         }
     }
 
-    /// Returns whether a retained conjunct asserts `small <= large`, including strict `<`.
+    /// Returns whether another conjunct asserts `small <= large`, including strict `<`.
     fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
         self.facts.iter().any(|fact| match fact.kind() {
             SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => {
