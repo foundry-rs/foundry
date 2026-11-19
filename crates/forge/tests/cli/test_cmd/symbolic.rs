@@ -8265,6 +8265,134 @@ contract SymbolicCeilDivTest {
     }
 }
 
+// Uniswap V2's `getAmountOut` (GPL-3.0) divides `x * y` by `y + z`, which stays below `x` when
+// `x` and `z` are nonzero and the sum does not wrap, so a swap never drains the output reserve.
+#[forgetest_init]
+fn symbolic_proves_uniswap_v2_amount_out_below_reserve(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_uniswap_v2_amount_out_below_reserve");
+    prj.add_test(
+        "SymbolicUniswapV2.t.sol",
+        r#"
+library UniswapV2Library {
+    function getAmountOut(uint256 amountIn, uint256 reserveIn, uint256 reserveOut)
+        internal
+        pure
+        returns (uint256 amountOut)
+    {
+        require(amountIn > 0, "INSUFFICIENT_INPUT_AMOUNT");
+        require(reserveIn > 0 && reserveOut > 0, "INSUFFICIENT_LIQUIDITY");
+        uint256 amountInWithFee = amountIn * 997;
+        uint256 numerator = amountInWithFee * reserveOut;
+        uint256 denominator = reserveIn * 1000 + amountInWithFee;
+        amountOut = numerator / denominator;
+    }
+}
+
+contract SymbolicUniswapV2 {
+    function checkOutBelowReserve(uint112 amountIn, uint112 rIn, uint112 rOut) public pure {
+        assert(UniswapV2Library.getAmountOut(amountIn, rIn, rOut) < rOut);
+    }
+
+    function checkWrappedProductBelowX(uint256 x, uint112 y, uint112 z) public pure {
+        require(x > 0 && z > 0);
+        unchecked {
+            assert(x * y / (uint256(y) + z) < x);
+        }
+    }
+
+    function checkOutWithEmptyReserveIn(uint112 amountIn, uint112 rIn, uint112 rOut) public pure {
+        require(amountIn > 0 && rOut > 0);
+        uint256 inFee = uint256(amountIn) * 997;
+        assert(inFee * rOut / (uint256(rIn) * 1000 + inFee) < rOut);
+    }
+
+    function checkOutWithEmptyReserveOut(uint112 amountIn, uint112 rIn, uint112 rOut) public pure {
+        require(amountIn > 0 && rIn > 0);
+        uint256 inFee = uint256(amountIn) * 997;
+        assert(inFee * rOut / (uint256(rIn) * 1000 + inFee) < rOut);
+    }
+
+    function checkOutWithOtherFee(uint112 amountIn, uint112 rIn, uint112 rOut) public pure {
+        require(amountIn > 0 && rIn > 0 && rOut > 0);
+        uint256 inFee = uint256(amountIn) * 997;
+        assert(inFee * rOut / (uint256(rIn) * 1000 + uint256(amountIn) * 996) < rOut);
+    }
+
+    function checkOutWithWrappingSum(uint112 amountIn, uint256 rIn, uint112 rOut) public pure {
+        require(amountIn > 0 && rIn > 0 && rOut > 0);
+        unchecked {
+            uint256 inFee = uint256(amountIn) * 997;
+            assert(inFee * rOut / (rIn + inFee) < rOut);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicUniswapV2"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkOutBelowReserve(uint112,uint112,uint112)",
+            "checkWrappedProductBelowX(uint256,uint112,uint112)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkOutWithEmptyReserveIn(uint112,uint112,uint112)",
+            "checkOutWithEmptyReserveOut(uint112,uint112,uint112)",
+            "checkOutWithOtherFee(uint112,uint112,uint112)",
+            "checkOutWithWrappingSum(uint112,uint256,uint112)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
+// Each checked `x -= x * y / (y + z)` asks whether the quotient stays below the previous `x`,
+// whose interval nests every earlier update. That analysis must share one node budget; with a
+// fresh budget per level, its work doubles per update and outlives the symbolic timeout.
+#[forgetest_init]
+fn symbolic_bounds_chained_sum_divisor_updates(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_bounds_chained_sum_divisor_updates");
+    let updates = "        x -= x * y / (uint256(y) + z);\n".repeat(24);
+    prj.add_test(
+        "SymbolicChainedUpdates.t.sol",
+        &r#"
+contract SymbolicChainedUpdates {
+    function checkChainedUpdates(uint128 x0, uint112 y, uint112 z) public pure {
+        uint256 x = x0;
+UPDATES        assert(x < 2 ** 128);
+    }
+}
+"#
+        .replace("UPDATES", &updates),
+    );
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--symbolic-timeout", "2"])
+        .assert()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkChainedUpdates(uint128,uint112,uint112)");
+    // The property holds, so a stronger engine may prove it; a regression hangs instead.
+    assert!(
+        result["symbolic"]["status"] == "pass"
+            || result["symbolic"]["incomplete"]["kind"] == "timeout",
+        "{result}"
+    );
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A
