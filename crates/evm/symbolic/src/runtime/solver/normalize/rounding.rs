@@ -275,7 +275,37 @@ impl ConstraintContext {
                     }
                     _ => None,
                 };
-                (peeled.is_some_and(&mut bounded) || bounded(dividend)).then_some(false)
+                // Rounding up adds at most `d - 1`, so `(x * y + c) / d <= x` still holds once
+                // `c <= d - 1`; a wrapped sum only shrinks the dividend.
+                let rounded_up = match dividend.kind() {
+                    SymExprKind::BinOp(SymBinOp::Add, a, b) => {
+                        [(a, b), (b, a)].into_iter().any(|(product, addend)| {
+                            let below_divisor = match addend.kind() {
+                                SymExprKind::BinOp(SymBinOp::Sub, value, one) => {
+                                    value == divisor && one.as_const() == Some(U256::ONE)
+                                }
+                                _ => self
+                                    .interval(addend)
+                                    .zip(self.interval(divisor))
+                                    .is_some_and(|(addend, divisor)| addend.max < divisor.min),
+                            };
+                            below_divisor && bounded(product)
+                        })
+                    }
+                    // `(x * y + d) - 1`. A wrapped sum is smaller, and a sum that wraps to zero
+                    // gives `MAX == x * y + d - 1` exactly.
+                    SymExprKind::BinOp(SymBinOp::Sub, sum, one)
+                        if one.as_const() == Some(U256::ONE)
+                            && let SymExprKind::BinOp(SymBinOp::Add, a, b) = sum.kind()
+                            && let Some(product) =
+                                (a == divisor).then_some(b).or((b == divisor).then_some(a)) =>
+                    {
+                        bounded(product)
+                    }
+                    _ => false,
+                };
+                (rounded_up || peeled.is_some_and(&mut bounded) || bounded(dividend))
+                    .then_some(false)
             }
             // `(x / d) * k <= (x / d) * d <= x` once `k <= d`, so the product cannot wrap; a zero
             // `d` forces a zero product.

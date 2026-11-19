@@ -8433,6 +8433,92 @@ UPDATES        assert(x < 2 ** 128);
     );
 }
 
+// A fee rounded up adds less than one divisor, so it stays at most the amount once the rate is at
+// most the divisor: `(x * y + d - 1) / d <= x`.
+#[forgetest_init]
+fn symbolic_proves_rounded_up_fee_bound(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_rounded_up_fee_bound");
+    prj.add_test(
+        "SymbolicRoundedUpFee.t.sol",
+        r#"
+contract SymbolicRoundedUpFee {
+    function checkFeeBelowAmount(uint128 amount, uint16 bps) public pure {
+        require(bps <= 10_000);
+        assert((uint256(amount) * bps + 9_999) / 10_000 <= amount);
+    }
+
+    function checkMulDivUpBelowAmount(uint128 x, uint128 y, uint128 d) public pure {
+        require(d != 0 && y <= d);
+        assert((uint256(x) * y + d - 1) / d <= x);
+    }
+
+    function checkParenthesizedAddend(uint128 x, uint128 y, uint128 d) public pure {
+        require(d != 0 && y <= d);
+        assert((uint256(x) * y + (uint256(d) - 1)) / d <= x);
+    }
+
+    function checkAddendTooLarge(uint128 amount, uint16 bps) public pure {
+        require(bps <= 10_000);
+        assert((uint256(amount) * bps + 10_000) / 10_000 <= amount);
+    }
+
+    function checkRateTooLarge(uint128 amount, uint16 bps) public pure {
+        require(bps <= 10_001);
+        assert((uint256(amount) * bps + 9_999) / 10_000 <= amount);
+    }
+
+    function checkOtherAddend(uint128 x, uint128 y, uint128 d, uint128 e) public pure {
+        require(d != 0 && y <= d && e != 0);
+        assert((uint256(x) * y + e - 1) / d <= x);
+    }
+
+    function checkUnderflowingSubtrahend(uint128 x, uint128 y, uint128 d, uint256 c)
+        public
+        pure
+    {
+        require(d != 0 && y <= d);
+        uint256 rounded;
+        unchecked {
+            rounded = (uint256(x) * y + d - c) / d;
+        }
+        assert(rounded <= x);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicRoundedUpFee"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkFeeBelowAmount(uint128,uint16)",
+            "checkMulDivUpBelowAmount(uint128,uint128,uint128)",
+            "checkParenthesizedAddend(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0, "{signature}");
+        }
+
+        for signature in [
+            "checkAddendTooLarge(uint128,uint16)",
+            "checkRateTooLarge(uint128,uint16)",
+            "checkOtherAddend(uint128,uint128,uint128,uint128)",
+            "checkUnderflowingSubtrahend(uint128,uint128,uint128,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A
