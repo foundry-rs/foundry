@@ -2480,7 +2480,8 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
 /// Finds a variable by its label in the storage layout of the contract at `target`, returning its
 /// storage entry and type.
 ///
-/// The label is matched case-insensitively.
+/// An exact match takes precedence, since Solidity names are case-sensitive; otherwise the label
+/// is matched case-insensitively.
 fn find_storage_variable<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     target: Address,
@@ -2492,11 +2493,14 @@ fn find_storage_variable<FEN: FoundryEvmNetwork>(
 
     trace!(storage = ?storage_layout.storage, "fetched storage");
 
-    let variable_name_lower = variable_name.to_lowercase();
     let storage = storage_layout
         .storage
         .iter()
-        .find(|s| s.label.to_lowercase() == variable_name_lower)
+        .find(|s| s.label == variable_name)
+        .or_else(|| {
+            let variable_name_lower = variable_name.to_lowercase();
+            storage_layout.storage.iter().find(|s| s.label.to_lowercase() == variable_name_lower)
+        })
         .ok_or_else(|| fmt_err!("variable '{variable_name}' not found in storage layout"))?;
 
     let storage_type = storage_layout

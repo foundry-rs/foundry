@@ -20,6 +20,9 @@ contract StorageContract {
     string public shortString; // Slot 8 (less than 32 bytes)
     string public longString; // Slot 9 (32+ bytes, will use multiple slots)
 
+    // Differs from `value` only by case
+    uint256 public Value; // Slot 10
+
     function setShortBytes(bytes memory _data) public {
         shortBytes = _data;
     }
@@ -87,5 +90,15 @@ contract GetStorageSlotsTest is Test {
         assertEq(slots[2], dataStart + 1);
         assertEq(slots[3], dataStart + 2);
         assertEq(slots[4], dataStart + 3);
+    }
+
+    function testGetStorageSlotsExactNameTakesPrecedence() public {
+        uint256[] memory slots = vm.getStorageSlots(address(storageContract), "value");
+        assertEq(slots.length, 1);
+        assertEq(slots[0], 0);
+
+        slots = vm.getStorageSlots(address(storageContract), "Value");
+        assertEq(slots.length, 1);
+        assertEq(slots[0], 10);
     }
 }

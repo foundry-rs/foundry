@@ -15,6 +15,7 @@ contract StorageSlotLayout {
     uint128[] public smallItems; // slot 6
     uint256[3] public fixedItems; // slots 7..9
     string public name; // slot 10
+    uint256 public A; // slot 11, differs from `a` only by case
 
     /// @custom:storage-location erc7201:example.storage.SlotLayout
     struct NamespacedStorage {
@@ -159,6 +160,11 @@ contract GetStorageSlotTest is Test {
 
     function testVariableNameIsCaseInsensitive() public {
         assertLocation("BALANCES", 3, 0, 32);
+    }
+
+    function testExactNameTakesPrecedence() public {
+        assertLocation("a", 1, 0, 8);
+        assertLocation("A", 11, 0, 32);
     }
 
     function testUnknownVariable() public {
