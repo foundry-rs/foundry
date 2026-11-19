@@ -869,9 +869,9 @@ impl<T: UIfmt> UIfmt for WithOtherFields<T> {
 #[serde(untagged)]
 #[expect(missing_docs)]
 pub enum EthValue {
+    B256(B256),
     U64(U64),
     Address(Address),
-    B256(B256),
     U256(U256),
     U64Array(Vec<U64>),
     U256Array(Vec<U256>),
@@ -1862,6 +1862,18 @@ yParity              0"
 sendCount            167975
 sendRoot             0x01792d292f41d0057682f0b7179026f90a3a43639781e466e63158c6264e94a7
 sourceHash           0x81eb2a6760bd5a843c3a3e8c02bc5643c95b778d6923e05acb504ae8ed426816
+"
+        );
+
+        // Arbitrum Sepolia block 0x1, before the first L2 to L1 send.
+        let fields: OtherFields = serde_json::from_value(serde_json::json!({
+            "sendRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        }))
+        .unwrap();
+        assert_eq!(
+            fields.pretty(),
+            "
+sendRoot             0x0000000000000000000000000000000000000000000000000000000000000000
 "
         );
     }
