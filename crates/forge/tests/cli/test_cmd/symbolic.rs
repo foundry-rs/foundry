@@ -8657,6 +8657,62 @@ contract FullPrecisionMulDivTest {
     }
 }
 
+// Solmate's `mulDivUp` adds `r != 0` to the floor quotient, so the engine compares
+// `ite(r != 0, q + 1, q)` against `q`.
+#[forgetest_init]
+fn symbolic_proves_rounded_up_quotient_bounds(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_rounded_up_quotient_bounds");
+
+    prj.add_test(
+        "SymbolicRoundedUp.t.sol",
+        r#"
+contract SymbolicRoundedUpTest {
+    function mulDivDown(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            if iszero(mul(d, iszero(mul(y, gt(x, div(not(0), y)))))) { revert(0, 0) }
+            z := div(mul(x, y), d)
+        }
+    }
+
+    function mulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            if iszero(mul(d, iszero(mul(y, gt(x, div(not(0), y)))))) { revert(0, 0) }
+            z := add(gt(mod(mul(x, y), d), 0), div(mul(x, y), d))
+        }
+    }
+
+    function checkRoundsUp(uint128 x, uint128 y, uint128 d) public pure {
+        if (d == 0) return;
+        assert(mulDivUp(x, y, d) >= mulDivDown(x, y, d));
+    }
+
+    // An exact quotient rounds to itself.
+    function checkAlwaysRoundsUp(uint128 x, uint128 y, uint128 d) public pure {
+        if (d == 0) return;
+        assert(mulDivUp(x, y, d) > mulDivDown(x, y, d));
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicRoundedUp"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkRoundsUp(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkAlwaysRoundsUp(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+    }
+}
+
 #[forgetest_init]
 fn symbolic_proves_checked_mul_of_symbolic_quotient(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_checked_mul_of_symbolic_quotient");
