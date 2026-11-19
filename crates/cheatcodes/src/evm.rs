@@ -2498,8 +2498,7 @@ fn find_storage_variable<FEN: FoundryEvmNetwork>(
         .iter()
         .find(|s| s.label == variable_name)
         .or_else(|| {
-            let variable_name_lower = variable_name.to_lowercase();
-            storage_layout.storage.iter().find(|s| s.label.to_lowercase() == variable_name_lower)
+            storage_layout.storage.iter().find(|s| s.label.eq_ignore_ascii_case(variable_name))
         })
         .ok_or_else(|| fmt_err!("variable '{variable_name}' not found in storage layout"))?;
 
