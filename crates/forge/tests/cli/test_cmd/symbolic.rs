@@ -8176,6 +8176,95 @@ contract SymbolicSqrt {
     );
 }
 
+// OpenZeppelin's `Math.ceilDiv` rounds up as `(a - 1) / b + 1` for a nonzero `a`, with a ternary
+// in v4 and a selector multiply in v5.
+#[forgetest_init]
+fn symbolic_proves_ceil_div_bounds(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_ceil_div_bounds");
+
+    prj.add_test(
+        "SymbolicCeilDiv.t.sol",
+        r#"
+library SafeCast {
+    function toUint(bool b) internal pure returns (uint256 u) {
+        assembly ("memory-safe") {
+            u := iszero(iszero(b))
+        }
+    }
+}
+
+library Math {
+    function ceilDiv(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a == 0 ? 0 : (a - 1) / b + 1;
+    }
+
+    function ceilDivV5(uint256 a, uint256 b) internal pure returns (uint256) {
+        if (b == 0) revert();
+        unchecked {
+            return SafeCast.toUint(a > 0) * ((a - 1) / b + 1);
+        }
+    }
+}
+
+contract SymbolicCeilDivTest {
+    function checkCeilDivAboveFloor(uint256 a, uint256 b) public pure {
+        if (b == 0) return;
+        assert(Math.ceilDiv(a, b) >= a / b);
+        assert(Math.ceilDivV5(a, b) >= a / b);
+    }
+
+    // Selecting on another value can zero a positive quotient.
+    function checkCeilDivSelectedByOtherValue(uint256 a, uint256 c, uint256 b) public pure {
+        if (b == 0) return;
+        uint256 up;
+        unchecked {
+            up = SafeCast.toUint(c > 0) * ((a - 1) / b + 1);
+        }
+        assert(up >= a / b);
+    }
+
+    // An exact quotient rounds to itself.
+    function checkCeilDivAlwaysAboveFloor(uint256 a, uint256 b) public pure {
+        if (a == 0 || b == 0) return;
+        assert(Math.ceilDiv(a, b) > a / b);
+    }
+
+    function checkCeilDivOfOtherValue(uint256 a, uint256 c, uint256 b) public pure {
+        if (c == 0 || b == 0) return;
+        assert(Math.ceilDiv(c, b) >= a / b);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicCeilDiv"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkCeilDivAboveFloor(uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        for signature in [
+            "checkCeilDivAlwaysAboveFloor(uint256,uint256)",
+            "checkCeilDivOfOtherValue(uint256,uint256,uint256)",
+            "checkCeilDivSelectedByOtherValue(uint256,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A
