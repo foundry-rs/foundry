@@ -1214,6 +1214,9 @@ impl Config {
                         figment.extract_inner::<PathBuf>(key).unwrap_or_else(|_| default.clone())
                     })
                     .collect(),
+                include_paths: figment
+                    .extract_inner::<Vec<PathBuf>>("include_paths")
+                    .unwrap_or_else(|_| self.include_paths.clone()),
                 warnings: match figment.extract_inner::<Vec<Warning>>("__warnings") {
                     Err(error) if error.missing() => Ok(Vec::new()),
                     warnings => warnings,
