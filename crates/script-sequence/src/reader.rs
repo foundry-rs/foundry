@@ -23,7 +23,6 @@ pub struct BroadcastReader {
     chain_id: u64,
     tx_type: Vec<CallKind>,
     broadcast_path: PathBuf,
-    match_labels: bool,
 }
 
 impl BroadcastReader {
@@ -38,7 +37,6 @@ impl BroadcastReader {
             chain_id,
             tx_type: Default::default(),
             broadcast_path: broadcast_path.to_path_buf(),
-            match_labels: false,
         })
     }
 
@@ -49,9 +47,7 @@ impl BroadcastReader {
     }
 
     fn matches_filters<N: Network>(&self, tx: &TransactionWithMetadata<N>) -> bool {
-        let name_filter = tx.contract_name.as_ref().is_some_and(|cn| *cn == self.contract_name)
-            || (self.match_labels
-                && tx.label.as_ref().is_some_and(|label| *label == self.contract_name));
+        let name_filter = tx.contract_name.as_ref().is_some_and(|cn| *cn == self.contract_name);
         let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.call_kind);
         name_filter && type_filter
     }
@@ -63,6 +59,14 @@ impl BroadcastReader {
     /// project-root/broadcast/{script_name}.s.sol/{chain_id}/*.json
     /// project-root/broadcast/multi/{multichain_script_name}.s.sol-{timestamp}/deploy.json
     pub fn read<N: Network>(&self) -> eyre::Result<Vec<ScriptSequence<N>>>
+    where
+        N::TxEnvelope: for<'d> Deserialize<'d>,
+    {
+        Ok(self.filter_and_sort(self.read_all()?))
+    }
+
+    /// Reads every broadcast in the broadcast directory without applying the filters.
+    fn read_all<N: Network>(&self) -> eyre::Result<Vec<ScriptSequence<N>>>
     where
         N::TxEnvelope: for<'d> Deserialize<'d>,
     {
@@ -105,8 +109,6 @@ impl BroadcastReader {
                 broadcasts.push(broadcast);
             }
         }
-
-        let broadcasts = self.filter_and_sort(broadcasts);
 
         Ok(broadcasts)
     }
@@ -184,32 +186,100 @@ impl BroadcastReader {
         targets
     }
 
-    /// Returns the most recent deployment matching a contract name or exact label on this chain.
+    /// Returns the most recent deployment whose contract name or exact `vm.label` is the
+    /// contract name of this reader.
     ///
-    /// Only creation transactions with receipts in the latest matching broadcast are considered.
-    /// Contract-name matches retain their existing block-number ordering. If a label matches,
-    /// multiple matching deployments in that broadcast are ambiguous and return an error.
+    /// Contract names resolve as before: the highest-block confirmed CREATE or CREATE2 in the
+    /// latest broadcast with a matching transaction. Labels resolve in the latest broadcast with a
+    /// confirmed labeled deployment, including contracts created by other contracts, and must name
+    /// a single address there. A label equal to its deployment's own contract name is ignored.
+    /// When a broadcast has a matching contract name, the contract name decides, and a label that
+    /// resolves to a different deployment is an error.
     pub fn read_latest_deployment<N: Network>(&self) -> Result<Address>
     where
         N::TxEnvelope: for<'d> Deserialize<'d>,
     {
-        let reader = Self {
-            tx_type: vec![CallKind::Create, CallKind::Create2],
-            match_labels: true,
-            ..self.clone()
+        let reader = Self { tx_type: vec![CallKind::Create, CallKind::Create2], ..self.clone() };
+        let broadcasts = reader.read_all::<N>()?;
+        let label = reader.latest_labeled_deployment(&broadcasts)?;
+        let Some(broadcast) = reader
+            .filter_and_sort(broadcasts)
+            .into_iter()
+            .max_by_key(|broadcast| broadcast.timestamp)
+        else {
+            return label.ok_or_else(|| eyre::eyre!("No broadcasts found"));
         };
-        let broadcast = reader.read_latest::<N>()?;
         let targets = reader.into_tx_receipts(broadcast);
+        let Some((tx, _)) = targets.first() else {
+            bail!("no deployment found for {} on chain {}", self.contract_name, self.chain_id);
+        };
+        let name = tx.contract_address.unwrap_or_default();
 
-        if targets.len() > 1
-            && targets.iter().any(|(tx, _)| tx.label.as_ref() == Some(&self.contract_name))
+        if let Some(label) = label
+            && label != name
         {
-            bail!("ambiguous deployment for {} on chain {}", self.contract_name, self.chain_id);
+            bail!(
+                "{} is the label of {label} and the contract name of {name} on chain {}",
+                self.contract_name,
+                self.chain_id
+            );
         }
+        Ok(name)
+    }
 
-        targets.first().map(|(tx, _)| tx.contract_address.unwrap_or_default()).ok_or_else(|| {
-            eyre::eyre!("no deployment found for {} on chain {}", self.contract_name, self.chain_id)
-        })
+    /// Returns the address labeled with the contract name of this reader in the latest broadcast
+    /// that has a confirmed deployment with that label.
+    fn latest_labeled_deployment<N: Network>(
+        &self,
+        broadcasts: &[ScriptSequence<N>],
+    ) -> Result<Option<Address>> {
+        let query = Some(self.contract_name.as_str());
+        let Some((_, addresses)) = broadcasts
+            .iter()
+            .filter(|broadcast| broadcast.chain == self.chain_id)
+            .filter_map(|broadcast| {
+                let addresses = broadcast
+                    .transactions
+                    .iter()
+                    .filter(|tx| {
+                        tx.hash.is_some_and(|hash| {
+                            broadcast.receipts.iter().any(|r| r.transaction_hash() == hash)
+                        })
+                    })
+                    .flat_map(|tx| {
+                        let created = tx.call_kind.is_any_create().then_some((
+                            tx.contract_name.as_deref(),
+                            tx.label.as_deref(),
+                            tx.contract_address,
+                        ));
+                        created.into_iter().chain(tx.additional_contracts.iter().map(|contract| {
+                            (
+                                contract.contract_name.as_deref(),
+                                contract.label.as_deref(),
+                                Some(contract.address),
+                            )
+                        }))
+                    })
+                    .filter(|&(name, label, _)| label == query && name != query)
+                    .filter_map(|(.., address)| address)
+                    .collect::<Vec<_>>();
+                (!addresses.is_empty()).then_some((broadcast.timestamp, addresses))
+            })
+            .max_by_key(|(timestamp, _)| *timestamp)
+        else {
+            return Ok(None);
+        };
+
+        let [address] = addresses[..] else {
+            let addresses = addresses.iter().map(Address::to_string).collect::<Vec<_>>();
+            bail!(
+                "label {} matches multiple deployments on chain {}: {}",
+                self.contract_name,
+                self.chain_id,
+                addresses.join(", ")
+            );
+        };
+        Ok(Some(address))
     }
 }
 
@@ -232,6 +302,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AdditionalContract;
     use alloy_network::{AnyNetwork, Ethereum};
     use alloy_primitives::{B256, Bloom};
     use foundry_common::TransactionMaybeSigned;
@@ -355,12 +426,24 @@ mod tests {
         sequence
     }
 
+    fn merge(
+        sequences: impl IntoIterator<Item = ScriptSequence<Ethereum>>,
+    ) -> ScriptSequence<Ethereum> {
+        let mut merged = ScriptSequence { timestamp: 1, chain: 1, ..Default::default() };
+        for sequence in sequences {
+            merged.transactions.extend(sequence.transactions);
+            merged.receipts.extend(sequence.receipts);
+        }
+        merged
+    }
+
     fn deployment_lookup(
         test_name: &str,
         name: &str,
         broadcasts: &[ScriptSequence<Ethereum>],
     ) -> BroadcastReader {
         let root = std::env::temp_dir().join(format!("{test_name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
         let dir = root.join("Counter.s.sol").join("1");
         std::fs::create_dir_all(&dir).unwrap();
         for (index, broadcast) in broadcasts.iter().enumerate() {
@@ -369,89 +452,99 @@ mod tests {
         BroadcastReader::new(name.to_string(), 1, &root).unwrap()
     }
 
+    fn lookup(reader: &BroadcastReader) -> Result<Address, String> {
+        let result = reader.read_latest_deployment::<Ethereum>().map_err(|err| err.to_string());
+        assert_eq!(
+            result,
+            reader.read_latest_deployment::<AnyNetwork>().map_err(|err| err.to_string())
+        );
+        result
+    }
+
     #[test]
     fn deployment_lookup_resolves_exact_labels() {
-        let first = Address::with_last_byte(1);
-        let second = Address::with_last_byte(2);
-        let mut sequence = confirmed_deployment(first, Some("UsdcPool"), 1);
-        let other = confirmed_deployment(second, Some("WethPool"), 2);
-        sequence.transactions.extend(other.transactions);
-        sequence.receipts.extend(other.receipts);
+        let (usdc, weth) = (Address::with_last_byte(1), Address::with_last_byte(2));
+        let sequence = merge([
+            confirmed_deployment(usdc, Some("UsdcPool"), 1),
+            confirmed_deployment(weth, Some("WethPool"), 2),
+        ]);
         let reader = deployment_lookup("deployment-label", "UsdcPool", &[sequence]);
 
-        assert_eq!(reader.read_latest_deployment::<Ethereum>().unwrap(), first);
-        assert_eq!(reader.read_latest_deployment::<AnyNetwork>().unwrap(), first);
+        assert_eq!(lookup(&reader), Ok(usdc));
         assert!(reader.read::<Ethereum>().unwrap().is_empty());
-        assert!(
-            BroadcastReader::new("usdcpool".to_string(), 1, &reader.broadcast_path)
-                .unwrap()
-                .read_latest_deployment::<Ethereum>()
-                .is_err()
-        );
+        let lowercase = BroadcastReader::new("usdcpool".to_string(), 1, &reader.broadcast_path);
+        assert!(lookup(&lowercase.unwrap()).is_err());
 
         std::fs::remove_dir_all(reader.broadcast_path).unwrap();
     }
 
     #[test]
-    fn deployment_lookup_preserves_legacy_contract_names() {
-        let first = Address::with_last_byte(1);
-        let second = Address::with_last_byte(2);
-        let mut sequence = confirmed_deployment(first, None, 1);
-        let other = confirmed_deployment(second, None, 2);
-        sequence.transactions.extend(other.transactions);
-        sequence.receipts.extend(other.receipts);
-        let reader = deployment_lookup("deployment-legacy", "Counter", &[sequence]);
+    fn deployment_lookup_preserves_contract_names_with_own_name_labels() {
+        let (labeled, latest) = (Address::with_last_byte(1), Address::with_last_byte(2));
+        let unlabeled =
+            merge([confirmed_deployment(labeled, None, 1), confirmed_deployment(latest, None, 2)]);
+        let reader = deployment_lookup("deployment-legacy", "Counter", &[unlabeled]);
+        assert_eq!(lookup(&reader), Ok(latest));
+        std::fs::remove_dir_all(reader.broadcast_path).unwrap();
 
-        assert_eq!(reader.read_latest_deployment::<Ethereum>().unwrap(), second);
-
+        let labeled = merge([
+            confirmed_deployment(labeled, Some("Counter"), 1),
+            confirmed_deployment(latest, Some("Counter"), 2),
+        ]);
+        let reader = deployment_lookup("deployment-own-name", "Counter", &[labeled]);
+        assert_eq!(lookup(&reader), Ok(latest));
         std::fs::remove_dir_all(reader.broadcast_path).unwrap();
     }
 
     #[test]
     fn deployment_lookup_rejects_duplicate_labels() {
-        let mut sequence = confirmed_deployment(Address::with_last_byte(1), Some("Pool"), 1);
-        let other = confirmed_deployment(Address::with_last_byte(2), Some("Pool"), 2);
-        sequence.transactions.extend(other.transactions);
-        sequence.receipts.extend(other.receipts);
+        let sequence = merge([
+            confirmed_deployment(Address::with_last_byte(1), Some("Pool"), 1),
+            confirmed_deployment(Address::with_last_byte(2), Some("Pool"), 2),
+        ]);
         let reader = deployment_lookup("deployment-duplicate-label", "Pool", &[sequence]);
 
         assert_eq!(
-            reader.read_latest_deployment::<Ethereum>().unwrap_err().to_string(),
-            "ambiguous deployment for Pool on chain 1"
+            lookup(&reader),
+            Err("label Pool matches multiple deployments on chain 1: \
+                 0x0000000000000000000000000000000000000001, \
+                 0x0000000000000000000000000000000000000002"
+                .to_string())
         );
 
         std::fs::remove_dir_all(reader.broadcast_path).unwrap();
     }
 
     #[test]
-    fn deployment_lookup_rejects_label_contract_name_collisions() {
-        let mut sequence = confirmed_deployment(Address::with_last_byte(1), Some("Counter"), 1);
-        let other = confirmed_deployment(Address::with_last_byte(2), None, 2);
-        sequence.transactions.extend(other.transactions);
-        sequence.receipts.extend(other.receipts);
-        let reader = deployment_lookup("deployment-name-collision", "Counter", &[sequence]);
+    fn deployment_lookup_rejects_labels_naming_another_contract_in_any_run() {
+        let (labeled, named) = (Address::with_last_byte(1), Address::with_last_byte(2));
+        let label = confirmed_deployment(labeled, Some("Token"), 1);
+        let mut name = confirmed_deployment(named, None, 2);
+        name.transactions[0].contract_name = Some("Token".to_string());
+        let error = Err("Token is the label of 0x0000000000000000000000000000000000000001 and \
+                         the contract name of 0x0000000000000000000000000000000000000002 on chain 1"
+            .to_string());
 
-        assert_eq!(
-            reader.read_latest_deployment::<Ethereum>().unwrap_err().to_string(),
-            "ambiguous deployment for Counter on chain 1"
-        );
+        for (test_name, older, mut newer) in [
+            ("deployment-newer-name", label.clone(), name.clone()),
+            ("deployment-newer-label", name.clone(), label.clone()),
+        ] {
+            newer.timestamp = 2;
+            let reader = deployment_lookup(test_name, "Token", &[older, newer]);
+            assert_eq!(lookup(&reader), error);
+            std::fs::remove_dir_all(reader.broadcast_path).unwrap();
+        }
 
+        let mut unconfirmed = name;
+        unconfirmed.receipts.clear();
+        let reader =
+            deployment_lookup("deployment-unconfirmed-name", "Token", &[label, unconfirmed]);
+        assert_eq!(lookup(&reader), Err("no deployment found for Token on chain 1".to_string()));
         std::fs::remove_dir_all(reader.broadcast_path).unwrap();
     }
 
     #[test]
-    fn deployment_lookup_allows_a_label_equal_to_its_own_contract_name() {
-        let address = Address::with_last_byte(1);
-        let sequence = confirmed_deployment(address, Some("Counter"), 1);
-        let reader = deployment_lookup("deployment-own-name", "Counter", &[sequence]);
-
-        assert_eq!(reader.read_latest_deployment::<Ethereum>().unwrap(), address);
-
-        std::fs::remove_dir_all(reader.broadcast_path).unwrap();
-    }
-
-    #[test]
-    fn deployment_lookup_uses_the_latest_matching_run_on_the_selected_chain() {
+    fn deployment_lookup_uses_the_latest_labeled_run_on_the_selected_chain() {
         let older = confirmed_deployment(Address::with_last_byte(1), Some("Pool"), 1);
         let address = Address::with_last_byte(2);
         let mut newer = confirmed_deployment(address, Some("Pool"), 2);
@@ -460,27 +553,46 @@ mod tests {
         let mut other_chain = confirmed_deployment(Address::with_last_byte(3), Some("Pool"), 3);
         other_chain.timestamp = 3;
         other_chain.chain = 2;
-        let reader =
-            deployment_lookup("deployment-recent-label", "Pool", &[older, newer, other_chain]);
+        let mut unconfirmed = deployment(Address::with_last_byte(4));
+        unconfirmed.transactions[0].label = Some("Pool".to_string());
+        unconfirmed.timestamp = 4;
+        let reader = deployment_lookup(
+            "deployment-recent-label",
+            "Pool",
+            &[older, newer, other_chain, unconfirmed],
+        );
 
-        assert_eq!(reader.read_latest_deployment::<Ethereum>().unwrap(), address);
+        assert_eq!(lookup(&reader), Ok(address));
 
         std::fs::remove_dir_all(reader.broadcast_path).unwrap();
     }
 
     #[test]
-    fn deployment_lookup_ignores_calls_and_transactions_without_receipts() {
-        let address = Address::with_last_byte(1);
-        let mut sequence = confirmed_deployment(address, Some("Pool"), 1);
-        let mut call = confirmed_deployment(Address::with_last_byte(2), Some("Pool"), 2);
-        call.transactions[0].call_kind = CallKind::Call;
-        sequence.transactions.extend(call.transactions);
-        sequence.receipts.extend(call.receipts);
-        let pending = confirmed_deployment(Address::with_last_byte(3), Some("Pool"), 3);
+    fn deployment_lookup_resolves_labeled_factory_contracts() {
+        let pool = Address::with_last_byte(2);
+        let mut sequence = confirmed_deployment(Address::with_last_byte(1), None, 1);
+        sequence.transactions[0].call_kind = CallKind::Call;
+        sequence.transactions[0].label = Some("Pool".to_string());
+        sequence.transactions[0].additional_contracts.push(AdditionalContract {
+            contract_name: Some("Pool".to_string()),
+            address: Address::with_last_byte(3),
+            label: Some("Pool".to_string()),
+            ..Default::default()
+        });
+        sequence.transactions[0].additional_contracts.push(AdditionalContract {
+            contract_name: Some("Pool".to_string()),
+            address: pool,
+            label: Some("UsdcPool".to_string()),
+            ..Default::default()
+        });
+        let pending = confirmed_deployment(Address::with_last_byte(4), Some("UsdcPool"), 3);
+        let mut sequence = merge([sequence]);
         sequence.transactions.extend(pending.transactions);
-        let reader = deployment_lookup("deployment-label-filters", "Pool", &[sequence]);
+        let reader = deployment_lookup("deployment-factory-label", "UsdcPool", &[sequence]);
 
-        assert_eq!(reader.read_latest_deployment::<Ethereum>().unwrap(), address);
+        assert_eq!(lookup(&reader), Ok(pool));
+        let own_name = BroadcastReader::new("Pool".to_string(), 1, &reader.broadcast_path);
+        assert_eq!(lookup(&own_name.unwrap()), Err("No broadcasts found".to_string()));
 
         std::fs::remove_dir_all(reader.broadcast_path).unwrap();
     }

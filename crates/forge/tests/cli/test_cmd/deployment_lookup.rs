@@ -9,11 +9,9 @@ fn deployment_lookup_by_label(prj: _, cmd: _) {
     let deployments = [
         ("Counter", Some("UsdcPool"), "CREATE"),
         ("Counter", Some("WethPool"), "CREATE2"),
-        ("Legacy", None, "CREATE"),
-        ("Duplicate", Some("Pool"), "CREATE"),
-        ("Duplicate", Some("Pool"), "CREATE"),
-        ("Counter", Some("Collision"), "CREATE"),
-        ("Collision", None, "CREATE"),
+        ("Counter", Some("Counter"), "CREATE"),
+        ("Counter", Some("Token"), "CREATE"),
+        ("Token", None, "CREATE"),
     ];
     let mut transactions = Vec::new();
     let mut receipts = Vec::new();
@@ -50,7 +48,7 @@ fn deployment_lookup_by_label(prj: _, cmd: _) {
             "contractAddress": address,
         }));
     }
-    let dir = prj.root().join("broadcast/Counter.s.sol/31337");
+    let dir = prj.root().join("broadcast/Counter.s.sol/1");
     std::fs::create_dir_all(&dir).unwrap();
     foundry_common::fs::write_json_file(
         &dir.join("run-1.json"),
@@ -61,7 +59,7 @@ fn deployment_lookup_by_label(prj: _, cmd: _) {
             "pending": [],
             "returns": {},
             "timestamp": 1,
-            "chain": 31337,
+            "chain": 1,
         }),
     )
     .unwrap();
@@ -76,34 +74,23 @@ contract DeploymentLookupTest is DSTest {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     function test_labels() public {
-        vm.chainId(31337);
+        vm.chainId(1);
         assertEq(vm.getDeployment("UsdcPool"), address(1));
-        assertEq(vm.getDeployment("UsdcPool", 31337), address(1));
-        assertEq(vm.getDeployment("WethPool"), address(2));
-        assertEq(vm.getDeployment("WethPool", 31337), address(2));
+        assertEq(vm.getDeployment("WethPool", 1), address(2));
     }
 
     function test_contract_names() public {
-        assertEq(vm.getDeployment("Counter", 31337), address(6));
-        assertEq(vm.getDeployment("Legacy", 31337), address(3));
-        assertEq(vm.getDeployments("Counter", 31337).length, 3);
-        assertEq(vm.getDeployments("UsdcPool", 31337).length, 0);
+        vm.chainId(1);
+        assertEq(vm.getDeployment("Counter"), address(4));
+        assertEq(vm.getDeployments("Counter", 1).length, 4);
+        assertEq(vm.getDeployments("UsdcPool", 1).length, 0);
     }
 
-    function test_duplicate_labels() public {
-        vm.chainId(31337);
-        vm._expectCheatcodeRevert("ambiguous deployment for Pool on chain 31337");
-        vm.getDeployment("Pool");
-        vm._expectCheatcodeRevert("ambiguous deployment for Pool on chain 31337");
-        vm.getDeployment("Pool", 31337);
-    }
-
-    function test_name_collision() public {
-        vm.chainId(31337);
-        vm._expectCheatcodeRevert("ambiguous deployment for Collision on chain 31337");
-        vm.getDeployment("Collision");
-        vm._expectCheatcodeRevert("ambiguous deployment for Collision on chain 31337");
-        vm.getDeployment("Collision", 31337);
+    function test_label_naming_another_contract() public {
+        vm._expectCheatcodeRevert(
+            "Token is the label of 0x0000000000000000000000000000000000000004 and the contract name of 0x0000000000000000000000000000000000000005 on chain 1"
+        );
+        vm.getDeployment("Token", 1);
     }
 }
 "#,
@@ -111,12 +98,11 @@ contract DeploymentLookupTest is DSTest {
 
     cmd.args(["test", "--mc", "DeploymentLookupTest"]).assert_success().stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/DeploymentLookup.sol:DeploymentLookupTest
+Ran 3 tests for test/DeploymentLookup.sol:DeploymentLookupTest
 [PASS] test_contract_names() ([GAS])
-[PASS] test_duplicate_labels() ([GAS])
+[PASS] test_label_naming_another_contract() ([GAS])
 [PASS] test_labels() ([GAS])
-[PASS] test_name_collision() ([GAS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
