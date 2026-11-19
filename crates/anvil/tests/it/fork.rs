@@ -4562,7 +4562,21 @@ async fn test_memory_reset_restores_selected_blob_schedule_in_both_directions() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_get_account() {
-    let (api, handle) = spawn(fork_config()).await;
+    // Fork a local origin, which can prove any of its blocks, unlike archive RPCs with a proof
+    // window.
+    let (origin_api, origin) = spawn(NodeConfig::test()).await;
+    let target = address!("0x00000000000000000000000000000000000c0de1");
+    origin_api.anvil_set_code(target, bytes!("00")).await.unwrap();
+    origin_api.anvil_set_balance(target, U256::from(1)).await.unwrap();
+    for (slot, value) in [(0, 0x2a), (1, 0x2b)] {
+        let (slot, value) = (B256::with_last_byte(slot), B256::with_last_byte(value));
+        origin_api.anvil_set_storage_at(target, slot.into(), value).await.unwrap();
+    }
+    origin_api.mine_one().await.unwrap();
+    let origin_root = origin.http_provider().get_account(target).await.unwrap().storage_root;
+
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin.http_endpoint()))).await;
     let provider = handle.http_provider();
 
     let accounts = handle.dev_accounts().collect::<Vec<_>>();
@@ -4578,20 +4592,20 @@ async fn test_fork_get_account() {
     assert_eq!(alice_acc_init.balance, alice_bal);
     assert_eq!(alice_acc_init.nonce, alice_nonce);
 
-    // WETH has fork state that was never touched locally.
-    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let balance = provider.get_balance(weth).await.unwrap();
-    let nonce = provider.get_transaction_count(weth).await.unwrap();
-    let code_hash = keccak256(provider.get_code_at(weth).await.unwrap());
-    let slot = provider.get_storage_at(weth, U256::ZERO).await.unwrap();
+    // The target has fork state that was never touched locally.
+    let balance = provider.get_balance(target).await.unwrap();
+    let nonce = provider.get_transaction_count(target).await.unwrap();
+    let code_hash = keccak256(provider.get_code_at(target).await.unwrap());
+    let slot = provider.get_storage_at(target, U256::ZERO).await.unwrap();
     assert!(!balance.is_zero());
     assert!(!slot.is_zero());
     let expected = (balance, nonce, code_hash);
 
-    let fork_proof = provider.get_proof(weth, vec![]).number(init_block).await.unwrap();
+    let fork_proof = provider.get_proof(target, vec![]).number(init_block).await.unwrap();
     let fork_root = fork_proof.storage_hash;
     assert_ne!(fork_root, EMPTY_ROOT_HASH);
-    let account = provider.get_account(weth).await.unwrap();
+    assert_eq!(fork_root, origin_root);
+    let account = provider.get_account(target).await.unwrap();
     assert_eq!((account.balance, account.nonce, account.code_hash), expected);
     assert_eq!(account.storage_root, fork_root);
 
@@ -4622,22 +4636,26 @@ async fn test_fork_get_account() {
     // Retain a post-fork historical state as well as the current head.
     api.mine_one().await.unwrap();
     for block in [BlockId::number(init_block + 1), BlockId::latest(), BlockId::pending()] {
-        let account = provider.get_account(weth).block_id(block).await.unwrap();
+        let account = provider.get_account(target).block_id(block).await.unwrap();
         assert_eq!((account.balance, account.nonce, account.code_hash), expected);
         assert_eq!(account.storage_root, fork_root);
-        // Slot 99 is unused by WETH, so its proof must be an exclusion proof.
+        // Slot 99 is unused, so its proof must be an exclusion proof.
         let keys = vec![B256::ZERO, B256::with_last_byte(99)];
-        let proof = provider.get_proof(weth, keys).block_id(block).await.unwrap();
+        let proof = provider.get_proof(target, keys).block_id(block).await.unwrap();
         assert_eq!((proof.balance, proof.nonce, proof.code_hash), expected);
         assert_eq!(proof.storage_proof[0].value, slot);
         assert_eq!(proof.storage_proof[1].value, U256::ZERO);
         assert_storage_proofs(&proof);
+        // The pending map only holds the pending block's changes, so its proof is built locally.
+        if block != BlockId::pending() {
+            assert_eq!(proof.storage_hash, fork_root);
+        }
     }
 
     // Touching another slot caches the account locally; the untouched slot must still resolve.
     let touched = B256::with_last_byte(100);
-    api.anvil_set_storage_at(weth, touched.into(), B256::with_last_byte(1)).await.unwrap();
-    let proof = provider.get_proof(weth, vec![B256::ZERO, touched]).await.unwrap();
+    api.anvil_set_storage_at(target, touched.into(), B256::with_last_byte(1)).await.unwrap();
+    let proof = provider.get_proof(target, vec![B256::ZERO, touched]).await.unwrap();
     assert_eq!(proof.storage_proof[0].value, slot);
     assert_eq!(proof.storage_proof[1].value, U256::ONE);
     assert_storage_proofs(&proof);
