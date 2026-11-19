@@ -4661,6 +4661,9 @@ async fn test_fork_get_account() {
     assert_ne!(latest.storage_root, fork_root);
     let pending = provider.get_account(target).block_id(BlockId::pending()).await.unwrap();
     assert_eq!(pending, latest);
+    let pending = provider.get_proof(target, vec![B256::ZERO]).block_id(BlockId::pending());
+    let latest = provider.get_proof(target, vec![B256::ZERO]).await.unwrap();
+    assert_eq!(pending.await.unwrap().storage_hash, latest.storage_hash);
 }
 
 fn assert_storage_proofs(proof: &EIP1186AccountProofResponse) {
