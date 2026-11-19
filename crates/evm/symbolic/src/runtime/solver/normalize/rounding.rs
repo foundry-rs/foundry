@@ -183,6 +183,30 @@ impl ConstraintContext {
                 if dividend == large {
                     return nonzero(divisor).then_some(false);
                 }
+                // `x / d <= (x - 1) / d + 1` for `d >= 1`, as in OpenZeppelin's `ceilDiv`: for
+                // `x >= 1` the quotients differ by at most one and the sum cannot wrap, and
+                // `0 / d` is zero. SMT's `x / 0` is all ones, so `d` must be nonzero.
+                let ceiling = match large.kind() {
+                    // OpenZeppelin v5 selects zero for `x == 0`, where `x / d` is zero too.
+                    SymExprKind::Ite(condition, value, zero)
+                        if zero.as_const() == Some(U256::ZERO)
+                            && let SymBoolExprKind::Not(inner) = condition.kind()
+                            && inner.zero_check_operand() == Some(dividend) =>
+                    {
+                        value
+                    }
+                    _ => large,
+                };
+                if let SymExprKind::BinOp(SymBinOp::Add, quotient, increment) = ceiling.kind()
+                    && increment.as_const() == Some(U256::ONE)
+                    && let Some((predecessor, other)) = quotient.udiv_operands()
+                    && other == divisor
+                    && let SymExprKind::BinOp(SymBinOp::Sub, value, decrement) = predecessor.kind()
+                    && decrement.as_const() == Some(U256::ONE)
+                    && value == dividend
+                {
+                    return nonzero(divisor).then_some(false);
+                }
                 let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
                     return None;
                 };
