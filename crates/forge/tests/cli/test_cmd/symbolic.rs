@@ -7691,7 +7691,7 @@ contract RoundedProductTest {
         return value / divisor * divisor + value % other;
     }
 
-    // Another divisor's remainder can push the sum past the word.
+    // Another divisor's remainder can push the sum past the word, so the guard must not match it.
     function checkMixedEuclideanSum(uint256 value, uint256 divisor, uint256 other) external view {
         if (divisor == 0 || other == 0) return;
         (bool ok,) =

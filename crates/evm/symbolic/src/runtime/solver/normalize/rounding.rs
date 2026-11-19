@@ -143,7 +143,8 @@ impl ConstraintContext {
     ///
     /// With a nonzero divisor, `a % d < d` and `a / d <= a`. For every divisor, `a % d <= a` and
     /// `(a / d) * d <= a`, and `x * y / k <= x` once `y <= k` and `x * y` cannot wrap. The
-    /// Euclidean split `(a / d) * d + a % d` cannot wrap, so its checked addition never overflows.
+    /// Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the other's
+    /// complement.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -172,7 +173,9 @@ impl ConstraintContext {
 
     /// Returns whether a division shape proves `small <= large`, and whether the order is strict.
     fn division_order(&self, small: &SymExpr, large: &SymExpr) -> Option<bool> {
-        // `(x / d) * d + x % d` is exactly `x`, so the addition cannot wrap: `b <= ~a`.
+        // The overflow rewrite turns a checked `a + b` into `~a < b` before `d != 0` resolves the
+        // division guards, so a symbolic divisor's Euclidean sum is not folded to `x`. That sum is
+        // `x` and cannot wrap, so `b <= ~a`.
         if let SymExprKind::Not(base) = large.kind()
             && euclidean_sum_dividend(base, small).is_some()
         {
