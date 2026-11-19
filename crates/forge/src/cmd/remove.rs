@@ -6,7 +6,7 @@ use foundry_cli::{
     utils::{Git, LoadConfig},
 };
 use foundry_config::impl_figment_convert_basic;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// CLI arguments for `forge remove`.
 #[derive(Clone, Debug, Parser)]
@@ -32,15 +32,14 @@ impl RemoveArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
         let (root, paths, _) = super::update::dependencies_paths(&self.dependencies, &config)?;
-        let git_modules = root.join(".git/modules");
         let git = Git::new(&root);
+        let git_modules = git.git_path(Path::new("modules"))?;
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
         let _synced = lockfile.sync(config.install_lib_dir())?;
 
         // remove all the dependencies by invoking `git rm` only once with all the paths
         git.rm(self.force, &paths)?;
 
-        // remove all the dependencies from .git/modules
         for (Dependency { name, tag, .. }, path) in self.dependencies.iter().zip(&paths) {
             // Get the URL from git submodule config instead of using the parsed dependency URL
             let url = git.submodule_url(path).unwrap_or(None);
