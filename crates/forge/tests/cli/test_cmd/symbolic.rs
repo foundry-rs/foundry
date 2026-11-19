@@ -8174,6 +8174,7 @@ library Math {
     }
 
     function ceilDivV5(uint256 a, uint256 b) internal pure returns (uint256) {
+        if (b == 0) revert();
         unchecked {
             return SafeCast.toUint(a > 0) * ((a - 1) / b + 1);
         }

@@ -141,7 +141,8 @@ impl ConstraintContext {
     /// Decides a comparison between a division result and one of its operands.
     ///
     /// With a nonzero divisor, `a % d < d` and `a / d <= a`. For every divisor, `a % d <= a` and
-    /// `(a / d) * d <= a`, and `x * y / k <= x` once `y <= k` and `x * y` cannot wrap.
+    /// `(a / d) * d <= a`, and `x * y / k <= x` once `y <= k` and `x * y` cannot wrap. With a
+    /// nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected by `a != 0`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
