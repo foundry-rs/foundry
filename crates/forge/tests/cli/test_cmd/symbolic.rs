@@ -7677,6 +7677,28 @@ contract RoundedProductTest {
         assert(value - value % 1e18 == value / 1e18 * 1e18);
     }
 
+    // The checked addition cannot overflow because the sum is exactly `value`.
+    function checkSymbolicEuclideanIdentity(uint256 value, uint256 divisor) external pure {
+        if (divisor == 0) return;
+        assert(value / divisor * divisor + value % divisor == value);
+    }
+
+    function euclideanSum(uint256 value, uint256 divisor, uint256 other)
+        external
+        pure
+        returns (uint256)
+    {
+        return value / divisor * divisor + value % other;
+    }
+
+    // Another divisor's remainder can push the sum past the word, so the guard must not match it.
+    function checkMixedEuclideanSum(uint256 value, uint256 divisor, uint256 other) external view {
+        if (divisor == 0 || other == 0) return;
+        (bool ok,) =
+            address(this).staticcall(abi.encodeCall(this.euclideanSum, (value, divisor, other)));
+        assert(ok);
+    }
+
     function checkNarrowFloorError(uint128 value) external pure {
         uint128 rounded = value / 1000 * 1000;
         assert(rounded <= value);
@@ -7715,7 +7737,7 @@ contract RoundedProductTest {
             "--symbolic-timeout",
             "30",
             "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee|SlippageMinimum|TransferConservation)",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|BasisPointsFee|SlippageMinimum|TransferConservation)",
         ])
         .assert_success();
         let output = cmd
@@ -7727,7 +7749,7 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError)",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|MixedEuclideanSum)",
             ])
             .assert_failure()
             .get_output()
@@ -7741,6 +7763,9 @@ contract RoundedProductTest {
                 "{test}, optimized={optimized}"
             );
         }
+        let result = json_test_result(&output, "checkMixedEuclideanSum(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
 }
 
@@ -8751,6 +8776,62 @@ contract FullPrecisionMulDivTest {
     }
 }
 
+// Solmate's `mulDivUp` adds `r != 0` to the floor quotient, so the engine compares
+// `ite(r != 0, q + 1, q)` against `q`.
+#[forgetest_init]
+fn symbolic_proves_rounded_up_quotient_bounds(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_rounded_up_quotient_bounds");
+
+    prj.add_test(
+        "SymbolicRoundedUp.t.sol",
+        r#"
+contract SymbolicRoundedUpTest {
+    function mulDivDown(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            if iszero(mul(d, iszero(mul(y, gt(x, div(not(0), y)))))) { revert(0, 0) }
+            z := div(mul(x, y), d)
+        }
+    }
+
+    function mulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            if iszero(mul(d, iszero(mul(y, gt(x, div(not(0), y)))))) { revert(0, 0) }
+            z := add(gt(mod(mul(x, y), d), 0), div(mul(x, y), d))
+        }
+    }
+
+    function checkRoundsUp(uint128 x, uint128 y, uint128 d) public pure {
+        if (d == 0) return;
+        assert(mulDivUp(x, y, d) >= mulDivDown(x, y, d));
+    }
+
+    // An exact quotient rounds to itself.
+    function checkAlwaysRoundsUp(uint128 x, uint128 y, uint128 d) public pure {
+        if (d == 0) return;
+        assert(mulDivUp(x, y, d) > mulDivDown(x, y, d));
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicRoundedUp"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkRoundsUp(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkAlwaysRoundsUp(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+    }
+}
+
 #[forgetest_init]
 fn symbolic_proves_checked_mul_of_symbolic_quotient(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_checked_mul_of_symbolic_quotient");
@@ -8905,6 +8986,24 @@ contract SymbolicBoundedComplementTest {
         (bool ok,) = address(this).staticcall(abi.encodeCall(this.remainderMul, (x, d, k)));
         assert(ok);
     }
+
+    // `shares <= total`, so a pro-rata share of `reward` is at most `reward`.
+    function checkProRataShare(uint256 reward, uint256 shares, uint256 total) public pure {
+        if (total == 0 || shares > total) return;
+        assert(reward * shares / total <= reward);
+    }
+
+    // `reward < total` bounds the other factor, so the share is at most `shares`.
+    function checkProRataStrictShare(uint256 reward, uint256 shares, uint256 total) public pure {
+        if (reward >= total) return;
+        assert(reward * shares / total <= shares);
+    }
+
+    // `shares >= total` does not bound the share.
+    function checkProRataAboveTotal(uint256 reward, uint256 shares, uint256 total) public pure {
+        if (total == 0 || shares < total) return;
+        assert(reward * shares / total <= reward);
+    }
 }
 "#,
     );
@@ -8963,6 +9062,24 @@ contract SymbolicBoundedComplementTest {
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
 
         let result = json_test_result(&output, "checkWideRemainderMul(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkProRataShare(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkProRataStrictShare(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkProRataAboveTotal(uint256,uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
@@ -9066,4 +9183,57 @@ contract SymbolicFallbackBackjump {
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
     assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
+}
+
+// Wrapping addition and subtraction cancel, so these identities need no solver.
+#[forgetest_init]
+fn symbolic_cancels_wrapping_add_and_sub(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_cancels_wrapping_add_and_sub");
+
+    prj.add_test(
+        "SymbolicAddSubCancel.t.sol",
+        r#"
+contract SymbolicAddSubCancel {
+    function checkAddThenSub(uint256 x, uint256 a) public pure {
+        unchecked {
+            assert((x + a) - x == a);
+            assert((x + a) - a == x);
+        }
+    }
+
+    function checkSubThenAdd(uint256 x, uint256 a) public pure {
+        unchecked {
+            assert((x - a) + a == x);
+            assert(a + (x - a) == x);
+        }
+    }
+
+    function checkSubOfSub(uint256 x, uint256 a) public pure {
+        unchecked {
+            assert(x - (x - a) == a);
+        }
+    }
+}
+"#,
+    );
+
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicAddSubCancel"])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+
+        for test in ["checkAddThenSub", "checkSubThenAdd", "checkSubOfSub"] {
+            let result = json_test_result(&output, &format!("{test}(uint256,uint256)"));
+            assert_eq!(result["symbolic"]["status"], "pass", "{test} optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{test} optimized={optimized}"
+            );
+        }
+    }
 }

@@ -5,7 +5,7 @@
 
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
-    SymCmpOp, SymExpr, SymExprKind, U256, WordInterval,
+    SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -143,7 +143,8 @@ impl ConstraintContext {
     /// With a nonzero divisor, `a % d < d` and `a / d <= a`. For every divisor, `a % d <= a` and
     /// `(a / d) * k <= a` once `k <= d`, and `x * y / k <= x` once `y <= k` and `x * y` cannot
     /// wrap. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly for nonzero
-    /// `x` and `z`.
+    /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
+    /// other's complement.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -172,6 +173,14 @@ impl ConstraintContext {
 
     /// Returns whether a division shape proves `small <= large`, and whether the order is strict.
     fn division_order(&self, small: &SymExpr, large: &SymExpr) -> Option<bool> {
+        // The overflow rewrite turns a checked `a + b` into `~a < b` before `d != 0` resolves the
+        // division guards, so a symbolic divisor's Euclidean sum is not folded to `x`. That sum is
+        // `x` and cannot wrap, so `b <= ~a`.
+        if let SymExprKind::Not(base) = large.kind()
+            && euclidean_sum_dividend(base, small).is_some()
+        {
+            return Some(false);
+        }
         let nonzero =
             |expr: &SymExpr| self.interval(expr).is_some_and(|range| !range.min.is_zero());
         match small.kind() {
@@ -213,9 +222,10 @@ impl ConstraintContext {
                 {
                     return Some(nonzero(large) && !rest.min.is_zero());
                 }
-                let divisor = self.interval(divisor)?;
-                (!divisor.min.is_zero()
-                    && self.interval(other)?.max <= divisor.min
+                let range = self.interval(divisor)?;
+                (!range.min.is_zero()
+                    && (self.interval(other).is_some_and(|other| other.max <= range.min)
+                        || self.asserts_less_or_equal(other, divisor))
                     && self.mul_cannot_overflow_256(left, right))
                 .then_some(false)
             }
@@ -236,6 +246,20 @@ impl ConstraintContext {
                 .then_some(false),
             _ => None,
         }
+    }
+
+    /// Returns whether another conjunct asserts `small <= large`, including strict `<`.
+    fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
+        self.facts.iter().any(|fact| match fact.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => {
+                left == small && right == large
+            }
+            SymBoolExprKind::Not(inner) => matches!(
+                inner.kind(),
+                SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) if left == large && right == small
+            ),
+            _ => false,
+        })
     }
 
     /// Bounds a subtraction only when the relation proves it cannot underflow.
