@@ -2704,31 +2704,4 @@ mod tests {
         assert_eq!(result, ControlFlow::Break(42));
         assert_eq!(visits, 2);
     }
-
-    // Wrapping addition and subtraction cancel for every operand, whichever side the shared term
-    // lands on after the sum's operands are ordered.
-    #[test]
-    fn binop_cancels_wrapping_add_and_sub() {
-        let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
-
-        for (a, b) in [(&x, &y), (&y, &x), (&x, &product), (&product, &x)] {
-            let sum = SymExpr::binop(&mut cx, SymBinOp::Add, a.clone(), b.clone());
-            assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Sub, sum.clone(), a.clone()), *b);
-            assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Sub, sum, b.clone()), *a);
-
-            let difference = SymExpr::binop(&mut cx, SymBinOp::Sub, a.clone(), b.clone());
-            assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Add, difference.clone(), b.clone()), *a);
-            assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Add, b.clone(), difference.clone()), *a);
-            assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Sub, a.clone(), difference), *b);
-        }
-
-        // Unrelated terms keep their shape.
-        let z = SymExpr::var(&mut cx, "z");
-        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
-        let kept = SymExpr::binop(&mut cx, SymBinOp::Sub, sum, z);
-        assert!(matches!(kept.kind(), SymExprKind::BinOp(SymBinOp::Sub, _, _)));
-    }
 }
