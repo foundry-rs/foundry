@@ -864,11 +864,12 @@ impl<T: UIfmt> UIfmt for WithOtherFields<T> {
     }
 }
 
-/// Various numerical ethereum types used for pretty printing
+/// Various ethereum value types used for pretty printing.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 #[expect(missing_docs)]
 pub enum EthValue {
+    // Must stay first: `U64` and `U256` also accept 64-digit hex strings.
     B256(B256),
     U64(U64),
     Address(Address),
