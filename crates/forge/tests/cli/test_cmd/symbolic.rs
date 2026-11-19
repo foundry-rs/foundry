@@ -832,11 +832,39 @@ library FixedPointMathLib {
             z := div(mul(x, y), 1000000000000000000)
         }
     }
+
+    // Solmate's guard: `y == 0 || x <= MAX / y`.
+    function mulDivDown(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            if iszero(mul(d, iszero(mul(y, gt(x, div(not(0), y)))))) { revert(0, 0) }
+            z := div(mul(x, y), d)
+        }
+    }
 }
 
 contract SymbolicFixedPointFee {
     uint256 constant WAD = 1e18;
     uint256 constant RATE = 3e15;
+
+    // Each guard keeps `x * y` from wrapping, so a fraction of at most one cannot exceed `x`.
+    function checkMulWadBelowAmount(uint256 x, uint64 y) public pure {
+        if (y > WAD) return;
+        assert(FixedPointMathLib.mulWad(x, y) <= x);
+    }
+
+    function checkMulDivDownBelowAmount(uint256 x, uint64 y) public pure {
+        if (y > WAD) return;
+        assert(FixedPointMathLib.mulDivDown(x, y, WAD) <= x);
+    }
+
+    // A guard that another word can skip does not bound `x`.
+    function checkUnrelatedGuard(uint256 x, uint256 y, uint256 skip) public pure {
+        require(y >= 2);
+        assembly {
+            if mul(skip, gt(x, div(not(0), y))) { revert(0, 0) }
+        }
+        assert(x <= type(uint256).max / 2);
+    }
 
     function checkMinimumFee(uint128 amount, uint128 minimum) public pure {
         uint256 fee = FixedPointMathLib.mulWad(amount, RATE);
@@ -861,7 +889,7 @@ contract SymbolicFixedPointFee {
 
     let output = cmd
         .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicFixedPointFee"])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .stdout
         .clone();
@@ -871,6 +899,18 @@ contract SymbolicFixedPointFee {
         assert_eq!(result["symbolic"]["status"], "pass");
         assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
     }
+
+    for signature in
+        ["checkMulWadBelowAmount(uint256,uint64)", "checkMulDivDownBelowAmount(uint256,uint64)"]
+    {
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass", "{signature}");
+        assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0, "{signature}");
+    }
+
+    let result = json_test_result(&output, "checkUnrelatedGuard(uint256,uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
 }
 
 #[forgetest_init]
