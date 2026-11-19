@@ -12,7 +12,14 @@ use alloy_primitives::{
 use alloy_rlp::Encodable;
 use anvil_core::eth::transaction::PendingTransaction;
 use parking_lot::RwLock;
-use std::{cmp::Ordering, collections::BTreeSet, fmt, str::FromStr, sync::Arc, time::Instant};
+use std::{
+    cmp::{Ordering, Reverse},
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    str::FromStr,
+    sync::Arc,
+    time::Instant,
+};
 
 /// A unique identifying marker for a transaction
 pub type TxMarker = Vec<u8>;
@@ -32,6 +39,9 @@ pub enum TransactionOrder {
     /// determined by their internal id
     Fifo,
     /// This means that it prioritizes transactions based on the fees paid to the miner.
+    ///
+    /// Transactions are ranked by their effective miner tip at the base fee of the block being
+    /// built.
     #[default]
     Fees,
 }
@@ -41,7 +51,10 @@ impl TransactionOrder {
     pub fn priority<T: Transaction>(&self, tx: &T) -> TransactionPriority {
         match self {
             Self::Fifo => TransactionPriority::default(),
-            Self::Fees => TransactionPriority(tx.max_fee_per_gas()),
+            Self::Fees => TransactionPriority {
+                max_fee_per_gas: tx.max_fee_per_gas(),
+                max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+            },
         }
     }
 }
@@ -65,7 +78,19 @@ impl FromStr for TransactionOrder {
 /// The `TransactionPriority` determines the ordering of two transactions that have all their
 /// markers satisfied.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TransactionPriority(pub u128);
+pub struct TransactionPriority {
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: Option<u128>,
+}
+
+impl TransactionPriority {
+    /// Returns the effective miner tip at the given base fee, see
+    /// [`Transaction::effective_tip_per_gas`].
+    fn effective_tip(&self, base_fee: u64) -> u128 {
+        let fee = self.max_fee_per_gas.saturating_sub(base_fee as u128);
+        self.max_priority_fee_per_gas.map_or(fee, |tip| fee.min(tip))
+    }
+}
 
 /// Internal Transaction type
 #[derive(Clone, PartialEq, Eq)]
@@ -90,7 +115,7 @@ impl<T> PoolTransaction<T> {
             pending_transaction: transaction,
             requires: vec![],
             provides: vec![],
-            priority: TransactionPriority(0),
+            priority: TransactionPriority { max_fee_per_gas: 0, max_priority_fee_per_gas: None },
             is_replay: false,
         }
     }
@@ -147,7 +172,7 @@ where
             pending_transaction,
             requires: vec![],
             provides: vec![],
-            priority: TransactionPriority(0),
+            priority: TransactionPriority::default(),
             is_replay: false,
         })
     }
@@ -255,12 +280,10 @@ impl<T> PendingTransactions<T> {
             if let Some(waiting_tx) = self.waiting_queue.remove(&hash) {
                 self.waiting_markers.remove(&waiting_tx.transaction.provides);
                 for marker in waiting_tx.missing_markers {
-                    let remove = if let Some(required) = self.required_markers.get_mut(&marker) {
+                    let remove = self.required_markers.get_mut(&marker).is_some_and(|required| {
                         required.remove(&hash);
                         required.is_empty()
-                    } else {
-                        false
-                    };
+                    });
                     if remove {
                         self.required_markers.remove(&marker);
                     }
@@ -414,17 +437,24 @@ impl<T: fmt::Debug> fmt::Debug for PendingPoolTransaction<T> {
 pub struct TransactionsIterator<T> {
     all: HashMap<TxHash, ReadyTransaction<T>>,
     awaiting: HashMap<TxHash, (usize, PoolTransactionRef<T>)>,
-    independent: BTreeSet<PoolTransactionRef<T>>,
-    _invalid: HashSet<TxHash>,
+    /// Independent transactions keyed by their effective tip at `base_fee`, then arrival order.
+    independent: BTreeMap<(u128, Reverse<u64>), PoolTransactionRef<T>>,
+    base_fee: u64,
 }
 
 impl<T> TransactionsIterator<T> {
+    /// Adds an independent transaction ranked at the iterator's base fee.
+    fn insert_independent(&mut self, tx_ref: PoolTransactionRef<T>) {
+        let tip = tx_ref.transaction.priority.effective_tip(self.base_fee);
+        self.independent.insert((tip, Reverse(tx_ref.id)), tx_ref);
+    }
+
     /// Depending on number of satisfied requirements insert given ref
     /// either to awaiting set or to best set.
     fn independent_or_awaiting(&mut self, satisfied: usize, tx_ref: PoolTransactionRef<T>) {
         if satisfied >= tx_ref.transaction.requires.len() {
             // If we have satisfied all deps insert to best
-            self.independent.insert(tx_ref);
+            self.insert_independent(tx_ref);
         } else {
             // otherwise we're still awaiting for some deps
             self.awaiting.insert(tx_ref.transaction.hash(), (satisfied, tx_ref));
@@ -437,8 +467,7 @@ impl<T> Iterator for TransactionsIterator<T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let best = self.independent.iter().next_back()?.clone();
-            let best = self.independent.take(&best)?;
+            let (_, best) = self.independent.pop_last()?;
             let hash = best.transaction.hash();
 
             let ready =
@@ -504,14 +533,18 @@ impl<T> ReadyTransactions<T> {
         }
     }
 
-    /// Returns an iterator over all transactions
-    pub fn get_transactions(&self) -> TransactionsIterator<T> {
-        TransactionsIterator {
+    /// Returns an iterator over all transactions, ranked at the given base fee.
+    pub fn get_transactions(&self, base_fee: u64) -> TransactionsIterator<T> {
+        let mut iter = TransactionsIterator {
             all: self.ready_tx.read().clone(),
-            independent: self.independent_transactions.clone(),
+            independent: Default::default(),
+            base_fee,
             awaiting: Default::default(),
-            _invalid: Default::default(),
+        };
+        for tx_ref in &self.independent_transactions {
+            iter.insert_independent(tx_ref.clone());
         }
+        iter
     }
 
     /// Clears the internal state
@@ -641,7 +674,7 @@ impl<T> ReadyTransactions<T> {
         while let Some(hash) = tx_hashes.pop() {
             if let Some(mut tx) = ready.remove(&hash) {
                 let invalidated = tx.transaction.transaction.provides.iter().filter(|mark| {
-                    marker_filter.as_ref().map(|filter| !filter.contains(&**mark)).unwrap_or(true)
+                    marker_filter.as_ref().is_none_or(|filter| !filter.contains(&**mark))
                 });
 
                 let mut removed_some_marks = false;

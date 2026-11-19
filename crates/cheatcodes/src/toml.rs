@@ -1,7 +1,7 @@
 //! Implementations of [`Toml`](spec::Group::Toml) cheatcodes.
 
 use crate::{
-    Cheatcode, Cheatcodes, Result,
+    Cheatcode, CheatcodesCore, Result,
     Vm::*,
     json::{
         check_json_key_exists, parse_json, parse_json_coerce, parse_json_coerce_default,
@@ -12,20 +12,19 @@ use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
 use foundry_common::{fmt::StructDefinitions, fs};
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::evm::FoundryEvmNetwork;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
 impl Cheatcode for keyExistsTomlCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { toml, key } = self;
         check_json_key_exists(&toml_to_json_string(toml)?, key)
     }
 }
 
 impl Cheatcode for parseToml_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml } = self;
         parse_toml(
             toml,
@@ -36,7 +35,7 @@ impl Cheatcode for parseToml_0Call {
 }
 
 impl Cheatcode for parseToml_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, key } = self;
         parse_toml(
             toml,
@@ -49,14 +48,14 @@ impl Cheatcode for parseToml_1Call {
 macro_rules! impl_parse_toml {
     ($call:ident, $call_with_default:ident, $ty:expr) => {
         impl Cheatcode for $call {
-            fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+            fn apply_context_free(&self) -> Result {
                 let Self { toml, key } = self;
                 parse_toml_coerce(toml, key, &$ty)
             }
         }
 
         impl Cheatcode for $call_with_default {
-            fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+            fn apply_context_free(&self) -> Result {
                 let Self { toml, key, defaultValue } = self;
                 parse_toml_coerce_default(toml, key, &$ty, defaultValue)
             }
@@ -108,7 +107,7 @@ impl_parse_toml!(
 );
 
 impl Cheatcode for parseTomlType_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, typeDescription } = self;
         parse_toml_coerce(
             toml,
@@ -123,7 +122,7 @@ impl Cheatcode for parseTomlType_0Call {
 }
 
 impl Cheatcode for parseTomlType_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, key, typeDescription } = self;
         parse_toml_coerce(
             toml,
@@ -138,7 +137,7 @@ impl Cheatcode for parseTomlType_1Call {
 }
 
 impl Cheatcode for parseTomlTypeArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, key, typeDescription } = self;
         let ty = resolve_type(
             typeDescription,
@@ -149,14 +148,14 @@ impl Cheatcode for parseTomlTypeArrayCall {
 }
 
 impl Cheatcode for parseTomlKeysCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { toml, key } = self;
         parse_toml_keys(toml, key)
     }
 }
 
 impl Cheatcode for writeToml_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, path } = self;
         let value =
             serde_json::from_str(json).unwrap_or_else(|_| JsonValue::String(json.to_owned()));
@@ -167,7 +166,7 @@ impl Cheatcode for writeToml_0Call {
 }
 
 impl Cheatcode for writeToml_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json: value, path, valueKey } = self;
 
         // Read and parse the TOML file, keeping its formatting and comments.
@@ -255,6 +254,8 @@ fn json_to_toml_value(json: JsonValue) -> TomlValue {
         JsonValue::String(s) => TomlValue::String(s),
         JsonValue::Number(n) => match n.as_i64() {
             Some(i) => TomlValue::Integer(i),
+            // TOML integers are i64, keep larger ones as strings instead of lossy floats.
+            None if n.is_u64() => TomlValue::String(n.to_string()),
             None => match n.as_f64() {
                 Some(f) => TomlValue::Float(f),
                 None => TomlValue::String(n.to_string()),
@@ -447,6 +448,19 @@ chain_id = 8453
         let mut document = parse_toml_document(toml)?;
         upsert_toml_value(&mut document, value, key)?;
         Ok(document.to_string())
+    }
+
+    #[test]
+    fn write_toml_keeps_u64_above_i64_max() {
+        let toml = format_json_to_toml(serde_json::json!({ "amount": u64::MAX })).unwrap();
+        assert_eq!(toml, "amount = \"18446744073709551615\"\n");
+        let value = parse_toml_coerce(&toml, ".amount", &DynSolType::Uint(256)).unwrap();
+        assert_eq!(value, alloy_primitives::U256::from(u64::MAX).abi_encode());
+
+        assert_eq!(
+            upsert("", "9223372036854775809", ".amount").unwrap(),
+            "amount = \"9223372036854775809\"\n"
+        );
     }
 
     #[test]

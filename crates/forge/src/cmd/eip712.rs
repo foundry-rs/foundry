@@ -51,6 +51,8 @@ impl Eip712Args {
         let project = config.solar_project()?;
         let mut output = ProjectCompiler::new().files([self.target_path]).compile(&project)?;
         let compiler = output.parser_mut().solc_mut().compiler_mut();
+        // Solc validates the source version; Solar only provides type information.
+        compiler.dcx().set_allowed_diagnostic_codes(["5333".into()]);
         compiler.enter_mut(|compiler| -> Result<()> {
             let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
             let gcx = compiler.gcx();

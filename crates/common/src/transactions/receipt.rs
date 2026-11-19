@@ -87,7 +87,7 @@ where
         if let Some(block_hash) = self.receipt.block_hash() {
             let mut call_request: N::TransactionRequest = transaction.as_ref().clone().into();
             call_request.set_from(transaction.from());
-            match provider.call(call_request).block(BlockId::Hash(block_hash.into())).await {
+            match provider.call(call_request).block(BlockId::hash(block_hash)).await {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),
                 Ok(_) => {
                     eyre::bail!("no revert reason as transaction succeeded");

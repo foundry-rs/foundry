@@ -32,7 +32,7 @@ impl<T> HashConsed<T> {
     /// for distinct nodes with the same hash; structurally equal values share one node.
     #[inline]
     pub(in crate::runtime::expr) fn identity_cmp(&self, other: &Self) -> Ordering {
-        self.inner.hash.cmp(&other.inner.hash).then_with(|| {
+        self.stable_hash_cmp(other).then_with(|| {
             let left = Arc::as_ptr(&self.inner);
             let right = Arc::as_ptr(&other.inner);
             left.cmp(&right)
@@ -68,27 +68,12 @@ impl<T> Hash for HashConsed<T> {
     }
 }
 
-impl<T: PartialOrd> PartialOrd for HashConsed<T> {
-    #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.value().partial_cmp(other.value())
-    }
-}
-
-impl<T: Ord> Ord for HashConsed<T> {
-    #[inline]
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.value().cmp(other.value())
-    }
-}
-
 impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.value().fmt(f)
     }
 }
 
-type HashConsHasher = FixedState;
 const MIN_GC_THRESHOLD: usize = 1024;
 
 /// Hash-consing table for sharing structurally equal immutable values.
@@ -99,7 +84,7 @@ const MIN_GC_THRESHOLD: usize = 1024;
 /// grow the table without bound.
 pub(in crate::runtime) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
-    hash_builder: HashConsHasher,
+    hash_builder: FixedState,
     gc_threshold: usize,
 }
 
@@ -118,7 +103,7 @@ impl<T> HashCons<T> {
     pub(in crate::runtime) fn new() -> Self {
         Self {
             table: HashTable::new(),
-            hash_builder: HashConsHasher::default(),
+            hash_builder: FixedState::default(),
             gc_threshold: MIN_GC_THRESHOLD,
         }
     }
@@ -142,7 +127,7 @@ impl<T: Eq + Hash> HashCons<T> {
             match self.table.entry(
                 hash,
                 |entry| {
-                    if entry.hash != hash {
+                    if entry.hash() != hash {
                         return false;
                     }
                     match entry.value.upgrade() {

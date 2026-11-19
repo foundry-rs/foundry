@@ -12,6 +12,7 @@ use async_lsp::{
         WorkspaceFolder, WorkspaceSymbolParams, WorkspaceSymbolResponse,
     },
 };
+use foundry_common::fs::canonicalize_path;
 use std::{
     fs, thread,
     time::{Duration, Instant},
@@ -35,10 +36,10 @@ const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
 fn lsp_vscode_opens_current_project_with_bundled_extension(prj: _, cmd: _) {
     let home = tempfile::tempdir().unwrap();
     let executables = tempfile::tempdir().unwrap();
-    let project = dunce::canonicalize(prj.root()).unwrap();
+    let project = canonicalize_path(prj.root()).unwrap();
     let forge = executables.path().join("standalone forge");
     fs::hard_link(env!("CARGO_BIN_EXE_forge"), &forge).unwrap();
-    let forge = dunce::canonicalize(forge).unwrap();
+    let forge = canonicalize_path(forge).unwrap();
     let code = executables.path().join("code");
     fs::write(
         &code,
@@ -94,7 +95,7 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
         .map(|pair| Path::new(pair[1]))
         .expect("VS Code must use a dedicated profile");
     let session = user_data.parent().unwrap();
-    let durable_session = dunce::canonicalize(session).unwrap();
+    let durable_session = canonicalize_path(session).unwrap();
     let data_home = if cfg!(target_os = "macos") {
         home.path().join("Library/Application Support")
     } else {
@@ -102,7 +103,7 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
     };
     assert_eq!(
         durable_session.parent().unwrap(),
-        dunce::canonicalize(data_home.join("foundry/lsp/vscode")).unwrap()
+        canonicalize_path(data_home.join("foundry/lsp/vscode")).unwrap()
     );
     assert!(fs::symlink_metadata(session).unwrap().file_type().is_symlink());
     let extensions = arguments
@@ -209,7 +210,7 @@ fn lsp_vscode_sessions_follow_resolved_editor(prj: _, cmd: _) {
         cmd.env("PATH", search_path);
         cmd.env("FORGE_LSP_TEST_SESSION", &captured_session);
         cmd.args(["lsp", "--code-path"]).arg(code).assert_empty_stdout();
-        dunce::canonicalize(fs::read_to_string(&captured_session).unwrap()).unwrap()
+        canonicalize_path(fs::read_to_string(&captured_session).unwrap()).unwrap()
     };
     let stable_path = stable.parent().unwrap();
     let insiders_path = insiders.parent().unwrap();
@@ -252,7 +253,7 @@ printf '%s' "$VSCODE_PORTABLE" > "$FORGE_LSP_TEST_SESSION"
         cmd.env("FORGE_LSP_TEST_SESSION", &captured_session);
         cmd.args(["lsp", "--code-path"]).arg(code).assert_empty_stdout();
         assert_eq!(fs::read_to_string(&captured_launcher).unwrap(), code.to_str().unwrap());
-        dunce::canonicalize(fs::read_to_string(&captured_session).unwrap()).unwrap()
+        canonicalize_path(fs::read_to_string(&captured_session).unwrap()).unwrap()
     };
     let stable_session = launch(&stable);
     let insiders_session = launch(&insiders);
@@ -360,7 +361,7 @@ fn lsp_indexes_closed_tests_and_scripts(prj: _) {
         for (path, source) in &files {
             prj.create_file(path, source);
         }
-        let root = dunce::canonicalize(prj.root()).unwrap();
+        let root = canonicalize_path(prj.root()).unwrap();
         let locations: Vec<_> = files
             .iter()
             .map(|(path, source)| {
@@ -658,7 +659,7 @@ fn lsp_reports_unsaved_diagnostics_and_resolves_definition(prj: _) {
     prj.create_file("foundry.toml", "[profile.default]\nsrc = \"src\"\n");
     let saved = "contract Saved {}\n";
     prj.create_file("src/Example.sol", saved);
-    let project_root = dunce::canonicalize(prj.root()).unwrap();
+    let project_root = canonicalize_path(prj.root()).unwrap();
     let path = project_root.join("src/Example.sol");
     let uri = Url::from_file_path(&path).unwrap();
     let empty_path = tempfile::tempdir().unwrap();
@@ -750,7 +751,7 @@ fn lsp_formats_unsaved_document_with_nested_foundry_config(prj: _) {
     );
     let saved = "contract Saved {}\n";
     prj.create_file("nested/src/Example.sol", saved);
-    let project_root = dunce::canonicalize(prj.root()).unwrap();
+    let project_root = canonicalize_path(prj.root()).unwrap();
     let path = project_root.join("nested/src/Example.sol");
     let uri = Url::from_file_path(&path).unwrap();
     let empty_path = tempfile::tempdir().unwrap();

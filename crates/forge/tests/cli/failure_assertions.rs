@@ -131,6 +131,7 @@ fn expect_call_tests_should_fail(prj: _, cmd: _) {
 [SOLC_VERSION] [ELAPSED]
 ...
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0xc290d6910000000000000000000000000000000000000000000000000000000000000002, value 1 to be called 1 time, but was called 0 times] testShouldFailExpectCallValue() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 1 time, but the call reverted instead; ensure you're testing the happy path when using `expectCall`] testShouldFailExpectCallWhenTestHalts() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithData() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000003 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithMoreParameters() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, gas 25000 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithNoValueAndWrongGas() ([GAS])
@@ -140,7 +141,7 @@ fn expect_call_tests_should_fail(prj: _, cmd: _) {
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x3fc7c698 to be called 1 time, but was called 0 times] testShouldFailExpectInnerCall() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 3 times, but was called 2 times] testShouldFailExpectMultipleCallsWithDataAdditive() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 to be called 1 time, but was called 0 times] testShouldFailExpectSelectorCall() ([GAS])
-Suite result: FAILED. 0 passed; 10 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#,
     );
@@ -192,10 +193,12 @@ fn expect_create_tests_should_fail(prj: _, cmd: _) {
 [FAIL: expected CREATE2 call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreate2WrongBytecode() ([GAS])
 [FAIL: expected CREATE2 call by address 0x0000000000000000000000000000000000000000 for bytecode [..] but not found] testShouldFailExpectCreate2WrongDeployer() ([GAS])
 [FAIL: expected CREATE2 call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreate2WrongScheme() ([GAS])
+[FAIL: expected CREATE call by address [..] for bytecode 0x but not found] testShouldFailExpectCreateNestedHalt() ([GAS])
+[FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode 0x but not found] testShouldFailExpectCreateReverted() ([GAS])
 [FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreateWrongBytecode() ([GAS])
 [FAIL: expected CREATE call by address 0x0000000000000000000000000000000000000000 for bytecode [..] but not found] testShouldFailExpectCreateWrongDeployer() ([GAS])
 [FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreateWrongScheme() ([GAS])
-Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 10 failed; 0 skipped; [ELAPSED]
 ...
 
 "#]]);

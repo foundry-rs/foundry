@@ -33,9 +33,9 @@
 </tspan>
     <tspan x="10px" y="136px"><tspan>Traces:</tspan>
 </tspan>
-    <tspan x="10px" y="154px"><tspan>  [218890] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">setUp</tspan><tspan>()</tspan>
+    <tspan x="10px" y="154px"><tspan>  [218902] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">setUp</tspan><tspan>()</tspan>
 </tspan>
-    <tspan x="10px" y="172px"><tspan>    ├─ [156801] </tspan><tspan class="fg-yellow">→ new</tspan><tspan> Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f</tspan>
+    <tspan x="10px" y="172px"><tspan>    ├─ [156813] </tspan><tspan class="fg-yellow">→ new</tspan><tspan> Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f</tspan>
 </tspan>
     <tspan x="10px" y="190px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Return]</tspan><tspan> 481 bytes of code</tspan>
 </tspan>

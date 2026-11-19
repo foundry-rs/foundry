@@ -1,7 +1,6 @@
 //! Helpers to automatically fix configuration warnings.
 
-use crate::{Config, Warning};
-use figment::providers::Env;
+use crate::{Config, Warning, providers::TomlFileProvider};
 use std::{
     fs, io,
     ops::{Deref, DerefMut},
@@ -158,6 +157,14 @@ fn fix_toml_non_strict_profiles(
 /// Fix foundry.toml files. Making sure any implicit profile `[name]` becomes
 /// `[profile.name]`. Return any warnings
 pub fn fix_tomls() -> Vec<Warning> {
+    fix_tomls_with_root(".")
+}
+
+/// Fixes the global TOML and the local TOML selected by `FOUNDRY_CONFIG` or `root/foundry.toml`.
+///
+/// Relative `FOUNDRY_CONFIG` paths are relative to the current working directory, as when loading
+/// configuration. This only parses TOML, so invalid configuration values do not prevent migration.
+pub fn fix_tomls_with_root(root: impl AsRef<Path>) -> Vec<Warning> {
     let mut warnings = vec![];
 
     let tomls = {
@@ -165,9 +172,9 @@ pub fn fix_tomls() -> Vec<Warning> {
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
             tomls.push(global_toml);
         }
-        let local_toml = PathBuf::from(
-            Env::var("FOUNDRY_CONFIG").unwrap_or_else(|| Config::FILE_NAME.to_string()),
-        );
+        let local_toml =
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.as_ref().join(Config::FILE_NAME))
+                .file();
         if local_toml.exists() {
             tomls.push(local_toml);
         } else {

@@ -1,6 +1,7 @@
 //! CLI tests for estimate commands.
 
 use super::*;
+use alloy_primitives::bytes;
 
 // tests that `cast estimate` is working correctly.
 #[casttest]
@@ -136,7 +137,7 @@ async fn estimate_eip7702_auth_disclosure_accepted_and_forced(cmd: _) {
     let endpoint = handle.http_endpoint();
     api.anvil_set_code(
         address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
-        "0x602a5f5260205ff3".parse().unwrap(),
+        bytes!("0x602a5f5260205ff3"),
     )
     .await
     .unwrap();

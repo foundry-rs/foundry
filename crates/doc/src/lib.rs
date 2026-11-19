@@ -7,6 +7,7 @@ extern crate tracing;
 
 mod builder;
 mod hir_ext;
+mod markdown;
 mod render;
 mod utils;
 mod vocs;

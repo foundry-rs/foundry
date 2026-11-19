@@ -6,6 +6,7 @@ use alloy_provider::Provider;
 use axum::{Json, Router, extract::Query};
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand, TestProject,
     etherscan::fetch_etherscan_source_flattened,
@@ -865,8 +866,10 @@ async fn can_verify_bytecode_tempo_aa_deployments(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // Constructor gas depends on the intrinsic gas of the whole batch, not only the creation call.
     prj.add_source("GasLeft.sol", "contract GasLeft { uint256 public immutable gas = gasleft(); }");
+    prj.add_source("Empty.sol", "contract Empty {}");
 
-    let (api, handle) = anvil::spawn(anvil::NodeConfig::test_tempo()).await;
+    let (api, handle) =
+        anvil::spawn(anvil::NodeConfig::test_tempo().with_chain_id(Some(31337u64))).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
     let wallet = handle.dev_wallets().next().unwrap();
@@ -956,11 +959,39 @@ async fn can_verify_bytecode_tempo_aa_deployments(prj: _, cmd: _) {
 
         // The runtime replay must keep the lane's own nonce and the full batch. AA creation code
         // is not read from the batched calls yet, so only runtime is compared.
+        for (networks, network_args) in [
+            (NetworkConfigs::default(), &[][..]),
+            (NetworkConfigs::with_tempo(), &[][..]),
+            (NetworkConfigs::with_ethereum(), &["--network", "tempo"][..]),
+        ] {
+            prj.update_config(|config| config.networks = networks);
+            cmd.forge_fuse()
+                .args([
+                    "verify-bytecode",
+                    &address,
+                    contract,
+                    "--rpc-url",
+                    &rpc,
+                    "--verifier",
+                    "etherscan",
+                    "--verifier-url",
+                    &url,
+                    "--etherscan-api-key",
+                    "test",
+                    "--ignore",
+                    "creation",
+                    "--json",
+                ])
+                .args(network_args)
+                .assert_json_stdout(r#"[{"bytecode_type":"runtime", "match_type":"full"}]"#);
+        }
+
+        // The replay deploys the local creation code in place of the AA call's.
         cmd.forge_fuse()
             .args([
                 "verify-bytecode",
                 &address,
-                contract,
+                "src/Empty.sol:Empty",
                 "--rpc-url",
                 &rpc,
                 "--verifier",
@@ -972,8 +1003,12 @@ async fn can_verify_bytecode_tempo_aa_deployments(prj: _, cmd: _) {
                 "--ignore",
                 "creation",
                 "--json",
+                "--network",
+                "tempo",
             ])
-            .assert_json_stdout(r#"[{"bytecode_type":"runtime", "match_type":"full"}]"#);
+            .assert_json_stdout(
+                r#"[{"bytecode_type":"runtime", "match_type":null, "message":"Runtime code did not match - this may be due to varying compiler settings"}]"#,
+            );
         server.abort();
     }
 }

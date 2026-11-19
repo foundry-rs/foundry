@@ -309,10 +309,8 @@ fn parse_halmos_array_lengths(value: &str) -> Result<HalmosArrayLengths, String>
             if name.is_empty() {
                 return Err(format!("missing name in --array-lengths `{value}`"));
             }
-            named.insert(
-                name.to_string(),
-                parse_halmos_length_set(lengths.trim(), "--array-lengths")?,
-            );
+            named
+                .insert(name.to_string(), parse_halmos_lengths(lengths.trim(), "--array-lengths")?);
         }
         if named.is_empty() {
             return Err("missing value for --array-lengths".to_string());

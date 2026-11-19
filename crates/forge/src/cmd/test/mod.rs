@@ -28,10 +28,12 @@ use crate::{
     workspace,
 };
 use alloy_json_abi::JsonAbi;
+use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
 use dialoguer::{Select, console::Term};
+use evm2::interpreter::opcode::OpCode;
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs, TracingArgs},
@@ -41,17 +43,19 @@ use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
     compile::{ProjectCompiler, compile_abi_project_cached},
     external_compiler::is_external_artifact,
-    fs, sh_status, sh_warn, shell,
+    fs,
+    fs::canonicalize_path,
+    sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
-    Artifact, ArtifactId, ProjectCompileOutput,
+    Artifact, ArtifactId, Graph, ProjectCompileOutput,
     artifacts::{
-        BytecodeObject, ConfigurableContractArtifact, Libraries,
+        BytecodeObject, ConfigurableContractArtifact, Libraries, Source, ast::NodeType,
         output_selection::ContractOutputSelection,
     },
     compilers::{
         Language,
-        multi::{MultiCompiler, MultiCompilerLanguage},
+        multi::{MultiCompiler, MultiCompilerLanguage, MultiCompilerParser},
     },
     utils::source_files_iter,
 };
@@ -64,15 +68,13 @@ use foundry_config::{
     filter::GlobMatcher,
     fs_permissions::FsAccessPermission,
 };
-use foundry_debugger::{Debugger, DebuggerLayout};
+use foundry_debugger::{DebuggerBuilder, ensure_dump_dir};
 use foundry_evm::{
-    core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
-    },
+    backend::Backend,
+    core::evm::{EthEvmNetwork, EvmFactoryFor, FoundryEvmNetwork, TempoEvmNetwork},
     executors::{ExecutorBuilder, ShowmapDomain},
-    fork::ResolvedFork,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
-    opts::EvmOpts,
+    opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{
         backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
         trace_arena_at_depth,
@@ -83,10 +85,9 @@ use foundry_tui::tui_mode;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use rand::Rng;
 use regex::Regex;
-use revm::{bytecode::opcode::OpCode, context::Transaction};
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc::channel},
@@ -184,10 +185,12 @@ fn fuzz_minimize_pass<FEN: FoundryEvmNetwork>(
     let target_count = count_fuzz_minimize_targets(&runner, filter);
     let replay = move |filter: &ProjectPathsAwareFilter, fuzz_minimize| -> Result<()> {
         let mut runner = runner.clone();
+        // Release forks that this replay creates when the replay ends.
+        runner.backend = runner.backend.clone_with_fork_scope()?;
         runner.tcfg.fuzz_minimize = Some(fuzz_minimize);
         for (suite, suite_result) in runner.test_collect(filter)? {
             for (test, test_result) in suite_result.test_results {
-                if test_result.status == TestStatus::Failure {
+                if test_result.status.is_failure() {
                     bail!(
                         "fuzz minimization replay failed for {suite}::{test}: {}",
                         test_result.reason.as_deref().unwrap_or("unknown error")
@@ -510,10 +513,6 @@ pub struct TestArgs {
     #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "evm_profile", "decode_internal", "rerun"])]
     debug: bool,
 
-    /// Debugger layout to use.
-    #[arg(long = "debug-layout", requires = "debug", value_enum)]
-    debug_layout: Option<DebuggerLayout>,
-
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
     /// A flame graph is used to visualize which functions or operations within the smart contract
@@ -561,11 +560,14 @@ pub struct TestArgs {
     #[command(flatten)]
     tracing: TracingArgs,
 
-    /// Dumps all debugger steps to file.
+    /// Writes a SolDB trace and source bundle to a directory.
+    ///
+    /// Read the bundle with SolDB tools, for example:
+    /// `soldb profile --trace-file <PATH>/trace.json --contracts <PATH>/contracts.json`.
     #[arg(
         long,
         requires = "debug",
-        value_hint = ValueHint::FilePath,
+        value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
     dump: Option<PathBuf>,
@@ -856,7 +858,11 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_SYMBOLIC_CHECK_INVARIANT_FRONTIERS")]
     pub symbolic_check_invariant_frontiers: bool,
 
-    /// Maximum number of fuzz branch frontiers to try for one symbolic test.
+    /// Assist invariant campaigns with one bounded live symbolic worker.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_LIVE")]
+    pub symbolic_live: bool,
+
+    /// Maximum number of imported or live branch frontiers to try per test.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_FRONTIER_LIMIT", value_name = "COUNT")]
     pub symbolic_frontier_limit: Option<usize>,
 
@@ -1115,6 +1121,17 @@ pub struct TestArgs {
     // TODO: evaluate if we can relax the conflict with replay_symbolic_artifact
     #[arg(long, conflicts_with_all = ["mutate", "replay_symbolic_artifact"])]
     pub brutalize: bool,
+
+    /// Make every cheatcode that opens a network connection fail. `forge properties` sets it for
+    /// generated tests.
+    #[arg(long, hide = true)]
+    pub no_network: bool,
+
+    /// Let inline config only lower fuzz and invariant runs, depth, and rejects and change a few
+    /// settings that steer them. `forge properties` and `forge exploit` set it for generated
+    /// tests.
+    #[arg(long, hide = true)]
+    pub restrict_inline_config: bool,
 }
 
 impl TestArgs {
@@ -1224,8 +1241,25 @@ impl TestArgs {
                 None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
             });
         }
-        if self.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+        // `--json` and `--junit` keep stdout for the report, so logs are captured into it.
+        if shell::is_json() || self.junit {
+            config.live_logs = false;
+        }
+        // The debugger labels slots from the layout, and symbolic execution learns the mapping
+        // roots behind constant-folded slots from it.
+        if (self.debug || config.symbolic.enabled)
+            && !config.extra_output.contains(&ContractOutputSelection::StorageLayout)
+        {
             config.extra_output.push(ContractOutputSelection::StorageLayout);
+        }
+        if self.debug {
+            // Full build infos keep the sources the compiler saw, which dynamic test linking
+            // rewrites in test files.
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
         }
     }
 
@@ -1313,6 +1347,48 @@ impl TestArgs {
                     "`{flag}` only applies to {engine} tests; no matched {engine} tests were found."
                 )?;
             }
+        }
+        Ok(())
+    }
+
+    /// Warns about test contracts that the project compiles from outside its `src`, `test` and
+    /// `script` directories and `libs`, since they no longer run as test suites.
+    fn warn_skipped_test_suites(
+        &self,
+        output: &ProjectCompileOutput,
+        config: &Config,
+        inline_config: &InlineConfig,
+        filter: &ProjectPathsAwareFilter,
+    ) -> Result<()> {
+        let matcher = TestFunctionMatcher::new(config, inline_config, None);
+        let mut skipped = output
+            .artifact_ids()
+            .filter_map(|(id, artifact)| {
+                let abi = artifact.abi.as_ref()?;
+                let id = id.with_stripped_file_prefixes(&config.root);
+                (filter.is_outside_test_roots(&id.source)
+                    && filter.matches_contract(&id.name)
+                    && is_runnable_test_contract(output, config, &id, artifact, abi)
+                    && matcher
+                        .test_functions(id.identifier(), abi, |contract_id, func, kind| {
+                            filter.matches_test_function_kind_in_contract(contract_id, func, kind)
+                        })
+                        .next()
+                        .is_some())
+                .then(|| id.identifier())
+            })
+            .collect::<Vec<_>>();
+        skipped.sort();
+        skipped.dedup();
+        if !skipped.is_empty() {
+            sh_warn!(
+                "Skipping test contracts outside the configured `src`, `test` and `script` directories:\n\t{}\n\
+                 They are compiled because other files import them, but do not run as test \
+                 suites. To run them, set `test` (currently `{}`) to a directory that contains \
+                 them.",
+                skipped.join("\n\t"),
+                config.test.strip_prefix(&config.root).unwrap_or(&config.test).display(),
+            )?;
         }
         Ok(())
     }
@@ -1595,6 +1671,9 @@ impl TestArgs {
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
         self.ensure_mutation_mode_compatible(false)?;
+        if let Some(dir) = &self.dump {
+            ensure_dump_dir(dir)?;
+        }
         let compiled = self.compile_project().await?;
         self.run_tests(
             &compiled.project_root,
@@ -1640,9 +1719,12 @@ impl TestArgs {
 
     async fn compile_project(&mut self) -> Result<CompiledTestProject> {
         // Merge all configs.
-        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
+        evm_opts.no_network = self.no_network;
 
         self.install_missing_dependencies(&mut config)?;
+        // After the install, which can reload the config.
+        config.restrict_inline_config = self.restrict_inline_config;
         let brutalized_workspace =
             if self.brutalize { Some(self.brutalize_workspace(&mut config)?) } else { None };
         let should_mutate = self.mutate.is_some();
@@ -1677,12 +1759,15 @@ impl TestArgs {
         }
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let compiler = ProjectCompiler::new()
-            .external_compilers(&config)
-            .dynamic_test_linking(config.dynamic_test_linking)
-            .quiet(shell::is_json() || self.junit);
+        let compiler = || {
+            ProjectCompiler::new()
+                .allow_linked_libraries(config.allow_linked_libraries || self.list)
+                .external_compilers(&config)
+                .dynamic_test_linking(config.dynamic_test_linking)
+                .quiet(shell::is_json() || self.junit)
+        };
         let (output, selected_sources, inline_config) = if self.list {
-            let compiler = compiler.external_artifacts(false);
+            let compiler = compiler().external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
                 && config.extra_output.is_empty()
@@ -1705,16 +1790,102 @@ impl TestArgs {
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
-            let compiler = if filter.is_empty() {
-                compiler
-            } else {
-                compiler.source_order_fallback(
-                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
-                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
-                    ),
-                )
+            let compile = |files: &BTreeSet<PathBuf>| {
+                let compiler = if filter.is_empty() {
+                    compiler()
+                } else {
+                    compiler().source_order_fallback(
+                        source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                            .chain(source_files_iter(
+                                &config.test,
+                                MultiCompilerLanguage::FILE_EXTENSIONS,
+                            )),
+                    )
+                };
+                compiler.files(files.iter().cloned()).compile(&project)
             };
-            let output = compiler.files(files.clone()).compile(&project);
+            let mut output = compile(&files);
+            let mut reresolved = false;
+            // A build without storage layouts keeps a cached profile that requested them, so its
+            // artifacts are reused here without layouts. Delete them so they are recompiled.
+            // Artifacts of sources without contracts never have layouts, and their AST has no
+            // contract definition.
+            while config.extra_output.contains(&ContractOutputSelection::StorageLayout)
+                && let Ok(compiled) = &output
+            {
+                let mut stale = compiled
+                    .cached_artifacts()
+                    .iter()
+                    .flat_map(|(source, artifacts)| {
+                        artifacts.values().flatten().map(move |file| (source, file))
+                    })
+                    .filter(|(_, file)| {
+                        file.artifact.storage_layout.is_none()
+                            && file.artifact.ast.as_ref().is_none_or(|ast| {
+                                ast.nodes
+                                    .iter()
+                                    .any(|node| node.node_type == NodeType::ContractDefinition)
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                if stale.is_empty() {
+                    break;
+                }
+                // Cached artifacts of other profiles are reused for every source in scope, but
+                // only the profiles compiled from these roots are rewritten. Deleting any other
+                // artifact would leave the cache pointing at a missing file, and every later build
+                // would recompile. The roots are those of the compilation that produced the output,
+                // which differ from `files` after a source order fallback.
+                let graph = compiled.graph();
+                let roots = graph
+                    .source_files()
+                    .map(|id| graph.node_path(id).to_path_buf())
+                    .collect::<BTreeSet<_>>();
+                let scope = Graph::<MultiCompilerParser>::resolve_sources(
+                    &project.paths,
+                    Source::read_all(&roots)?,
+                )?
+                .into_sources_by_version(&project)?
+                .sources
+                .into_values()
+                .flatten()
+                .flat_map(|(version, sources, (profile, _))| {
+                    sources.into_iter().map(move |(path, _)| (path, version.clone(), profile))
+                })
+                .collect::<HashSet<_>>();
+                // Resolving the roots again can pick another compiler version than the compilation
+                // that produced the output, such as one it installed. The recompile would not
+                // rewrite stale artifacts of the old version, so recompile once with the new
+                // versions instead of deleting them.
+                if !reresolved
+                    && stale.iter().any(|(source, file)| {
+                        !scope
+                            .iter()
+                            .any(|(path, version, _)| path == *source && *version == file.version)
+                    })
+                {
+                    reresolved = true;
+                    output = compile(&roots);
+                    continue;
+                }
+                stale.retain(|(source, file)| {
+                    scope.contains(&(
+                        (*source).clone(),
+                        file.version.clone(),
+                        file.profile.as_str(),
+                    ))
+                });
+                if stale.is_empty() {
+                    break;
+                }
+                if !(shell::is_json() || self.junit) {
+                    sh_status!("Recompiling cached artifacts without storage layouts...")?;
+                }
+                for (_, file) in stale {
+                    fs::remove_file(&file.file)?;
+                }
+                output = compile(&roots);
+            }
             let output = if should_mutate {
                 output.wrap_err(
                     "Mutation testing compiler profile failed to compile before applying mutations",
@@ -1773,13 +1944,14 @@ impl TestArgs {
             };
             let config = Arc::new(config);
             passes.push(dispatch_network!(&evm_opts, |Net| {
+                let backend = spawn_backend::<Net>(&config, &evm_opts)?;
                 let runner = self
                     .build_runner::<Net>(
                         config,
                         evm_opts,
                         &output,
                         execution,
-                        None,
+                        backend,
                         ExecutorBuilder::<Net>::new(),
                     )
                     .await?;
@@ -1831,6 +2003,7 @@ impl TestArgs {
             filter,
             &execution.multi_network,
         )?;
+        self.warn_skipped_test_suites(output, &config, &execution.inline_config, filter)?;
 
         let mut filter = filter.clone();
         self.apply_gas_report_overrides(&mut config, &mut evm_opts);
@@ -1871,190 +2044,194 @@ impl TestArgs {
         config.networks = evm_opts.networks;
         let verbosity = evm_opts.verbosity;
 
-        // Clone config and evm_opts before dispatch (needed for mutation testing).
-        let config_for_mutation = config.clone();
-        let evm_opts_for_mutation = evm_opts.clone();
-        let mutation_fork =
-            if self.mutate.is_some() { evm_opts.resolve_fork().await? } else { None };
+        let build_info_dir = config.project_paths::<MultiCompilerLanguage>().build_infos;
+        // Box each network's run so the dispatch arms' locals stay off this frame.
+        dispatch_network!(&evm_opts, |Net| {
+            Box::pin(async {
+                let backend = spawn_backend::<Net>(&config, &evm_opts)?;
+                // Retain the baseline inputs for the mutation campaign.
+                let config_for_mutation = config.clone();
+                let evm_opts_for_mutation = evm_opts.clone();
 
-        // Run each distinct per-test network annotation as a separate pass and merge results.
-        let override_networks =
-            execution.inline_config.referenced_override_networks(&config.profile);
-        let is_multi_pass = !override_networks.is_empty();
-        let multi_pass_timer = Instant::now();
-        let (default_pass, override_passes) = network_passes(config, evm_opts, &override_networks);
-        let (libraries, mut outcome) = self
-            .run_network_pass(
-                default_pass,
-                output,
-                &mut filter,
-                execution.clone(),
-                mutation_fork.as_ref(),
-            )
-            .await?;
-        for pass in override_passes {
-            let (_, pass_outcome) =
-                self.run_network_pass(pass, output, &mut filter, execution.clone(), None).await?;
-            merge_outcomes(&mut outcome, pass_outcome);
-        }
-        if is_multi_pass {
-            // Per-pass summaries are suppressed in `run_tests_inner`.
-            self.print_summary(&outcome, multi_pass_timer.elapsed())?;
-        }
-
-        // Record failures once after merging all network passes, including successful runs.
-        persist_run_failures(&config_for_mutation, &outcome);
-
-        if let Some(replay) = &execution.replay_symbolic_artifact {
-            let target = &replay.artifact.test;
-            match outcome.tests().count() {
-                0 => bail!(
-                    "symbolic artifact target `{}::{}` was not found",
-                    target.contract,
-                    target.test
-                ),
-                1 => {}
-                replayed => bail!(
-                    "symbolic artifact target `{}::{}` matched {replayed} tests; replay requires exactly one target",
-                    target.contract,
-                    target.test
-                ),
-            }
-        }
-
-        if let Some(path) = &self.json_file {
-            let mut results =
-                outcome.json_file_results.take().unwrap_or_else(|| outcome.results.clone());
-            prepare_results_for_json(&mut results, verbosity, json_trace_depth);
-            fs::write_json_file(path, &results)?;
-        }
-
-        if let Some(trace_output) = trace_output {
-            self.render_trace_output(trace_output, &mut outcome).await?;
-        }
-
-        if self.debug {
-            // Get first non-empty suite result. We will have only one such entry.
-            let (_, _, test_result) =
-                outcome.remove_first().ok_or_eyre("no tests were executed")?;
-            let sources =
-                ContractSources::from_project_output(output, project_root, Some(&libraries))?;
-
-            // Prefer execution traces for normal debug runs, but when execution never starts
-            // (for example if `setUp()` reverts), fall back to available setup/deployment traces.
-            let mut traces = test_result
-                .traces
-                .iter()
-                .filter(|(kind, _)| kind.is_execution())
-                .cloned()
-                .collect::<Vec<_>>();
-            if traces.is_empty() {
-                traces = test_result.traces.clone();
-            }
-            if let Some(decoder) = &outcome.last_run_decoder {
-                for (_, arena) in &mut traces {
-                    decode_trace_arena(arena, decoder).await;
+                // Run each distinct per-test network annotation as a separate pass and merge
+                // results.
+                let override_networks =
+                    execution.inline_config.referenced_override_networks(&config.profile);
+                let is_multi_pass = !override_networks.is_empty();
+                let multi_pass_timer = Instant::now();
+                let (default_pass, override_passes) =
+                    network_passes(config, evm_opts, &override_networks);
+                let default_config = Arc::new(default_pass.config);
+                let default_verbosity = default_pass.evm_opts.verbosity;
+                let runner = self
+                    .build_runner::<Net>(
+                        default_config.clone(),
+                        default_pass.evm_opts,
+                        output,
+                        TestExecutionOptions {
+                            multi_network: default_pass.multi_network,
+                            ..execution.clone()
+                        },
+                        backend.clone(),
+                        ExecutorBuilder::<Net>::new(),
+                    )
+                    .await?;
+                let libraries = runner.libraries.clone();
+                let mut outcome = self
+                    .run_tests_inner(runner, default_config, default_verbosity, &mut filter, output)
+                    .await?;
+                for pass in override_passes {
+                    let (_, pass_outcome) =
+                        self.run_network_pass(pass, output, &mut filter, execution.clone()).await?;
+                    merge_outcomes(&mut outcome, pass_outcome);
                 }
-            }
+                if is_multi_pass {
+                    // Per-pass summaries are suppressed in `run_tests_inner`.
+                    self.print_summary(&outcome, multi_pass_timer.elapsed())?;
+                }
 
-            let mut builder = Debugger::builder()
-                .traces(traces)
-                .sources(sources)
-                .breakpoints(test_result.breakpoints)
-                .layout(self.debug_layout.unwrap_or_default());
-            if let Some(decoder) = &outcome.last_run_decoder {
-                builder = builder.decoder(decoder);
-            }
-            if let Some(known_contracts) = &outcome.known_contracts {
-                builder = builder.known_contracts(known_contracts);
-            }
-            let mut debugger = builder.build();
-            if let Some(dump_path) = &self.dump {
-                debugger.dump_to_file(dump_path)?;
-            } else {
-                debugger.try_run_tui()?;
-            }
-        }
+                // Record failures once after merging all network passes, including successful runs.
+                persist_run_failures(&config_for_mutation, &outcome);
 
-        // All tests have been run once before reaching this point
-        if let Some(mutate) = &self.mutate {
-            if outcome.failed() > 0 {
-                bail!(
-                    "Mutation testing compiler profile failed its unmutated baseline run; \
-                     adjust `--mutation-via-ir` / `--mutation-optimizer-runs` or fix the tests \
-                     before running mutation testing"
-                );
-            }
-            // A green baseline that ran zero non-skipped tests would report every compileable
-            // mutant as `Alive`, so hard-error instead of producing a misleading report.
-            if outcome.successes().next().is_none() {
-                bail!(
-                    "Mutation testing requires at least one passing baseline test; the current \
-                     filter/path selection matched zero non-skipped tests. Loosen `--match-test` / \
-                     `--match-contract` / `--match-path` or check the project layout."
-                );
-            }
-            // Clap can't express this conflict because `--mutate` takes an optional list of paths.
-            if !mutate.is_empty() && self.mutate_path.is_some() {
-                bail!(
-                    "`--mutate-path <PATTERN>` cannot be combined with explicit paths passed to `--mutate`; pass either paths or a glob pattern, not both"
-                );
-            }
-            // The mutation runner builds a single-pass `MultiContractRunner` and does not honor
-            // inline per-test network annotations, which would silently run tests on the wrong
-            // network and produce false survivors / kills.
-            if is_multi_pass {
-                bail!(
-                    "Mutation testing does not yet support inline per-test network overrides \
-                     (found {} annotated network(s)). Re-run without `--mutate` or remove the \
-                     per-test network annotations.",
-                    override_networks.len()
-                );
-            }
-            ensure_mutation_workspace_safe(&config_for_mutation)?;
+                if let Some(replay) = &execution.replay_symbolic_artifact {
+                    let target = &replay.artifact.test;
+                    match outcome.tests().count() {
+                        0 => bail!(
+                            "symbolic artifact target `{}::{}` was not found",
+                            target.contract,
+                            target.test
+                        ),
+                        1 => {}
+                        replayed => bail!(
+                            "symbolic artifact target `{}::{}` matched {replayed} tests; replay requires exactly one target",
+                            target.contract,
+                            target.test
+                        ),
+                    }
+                }
 
-            let json_output = shell::is_json();
-            let selected_sources_relative = execution
-                .selected_sources
-                .iter()
-                .filter_map(|path| {
-                    path.strip_prefix(&config_for_mutation.root).ok().map(PathBuf::from)
-                })
-                .collect::<Vec<_>>();
-            let mutation_config = MutationRunConfig {
-                mutate_paths: mutate.clone(),
-                mutate_path_pattern: self.mutate_path.clone(),
-                mutate_contract_pattern: self.mutate_contract.clone(),
-                num_workers: self.mutation_jobs.unwrap_or(0),
-                show_progress: self.show_progress,
-                json_output,
-                // Carry the filter the baseline actually used (positional path shorthand folded
-                // into `path_pattern`, `--rerun` failures injected into `test_pattern`) and its
-                // isolation flag so every mutant exercises the exact same test set.
-                filter_args: filter.args().clone(),
-                rerun_failures: filter.rerun_failures().map(<[RerunFailure]>::to_vec),
-                selected_sources_relative,
-                isolate: evm_opts_for_mutation.isolate,
-            };
-            let result = run_mutation_testing(
-                Arc::new(config_for_mutation),
-                output,
-                evm_opts_for_mutation,
-                mutation_fork,
-                mutation_config,
-            )
-            .await?;
-            if result.cancelled {
-                std::process::exit(130);
-            }
-            if json_output {
-                let json_output = result.summary.to_json_output(result.duration_secs);
-                sh_println!("{}", serde_json::to_string(&json_output)?)?;
-            }
-            outcome = TestOutcome::empty(None, true);
-        }
+                if let Some(path) = &self.json_file {
+                    let mut results =
+                        outcome.json_file_results.take().unwrap_or_else(|| outcome.results.clone());
+                    prepare_results_for_json(&mut results, verbosity, json_trace_depth);
+                    fs::write_json_file(path, &results)?;
+                }
 
-        Ok(outcome)
+                if let Some(trace_output) = trace_output {
+                    self.render_trace_output(trace_output, &mut outcome).await?;
+                }
+
+                if self.debug {
+                    // Get first non-empty suite result. We will have only one such entry.
+                    let (_, _, test_result) =
+                        outcome.remove_first().ok_or_eyre("no tests were executed")?;
+                    let mut sources = ContractSources::from_project_output(
+                        output,
+                        project_root,
+                        Some(&libraries),
+                    )?;
+                    sources.insert_compiled_sources(&build_info_dir);
+
+                    let mut builder = DebuggerBuilder::new()
+                        .traces(test_result.traces)
+                        .sources(sources)
+                        .breakpoints(test_result.breakpoints);
+                    if let Some(decoder) = &outcome.last_run_decoder {
+                        builder = builder.decoder(decoder);
+                    }
+                    if let Some(known_contracts) = &outcome.known_contracts {
+                        builder = builder.known_contracts(known_contracts);
+                    }
+                    builder.run(self.dump.as_deref())?;
+                }
+
+                // All tests have been run once before reaching this point
+                if let Some(mutate) = &self.mutate {
+                    if outcome.failed() > 0 {
+                        bail!(
+                            "Mutation testing compiler profile failed its unmutated baseline run; \
+                         adjust `--mutation-via-ir` / `--mutation-optimizer-runs` or fix the tests \
+                         before running mutation testing"
+                        );
+                    }
+                    // A green baseline that ran zero non-skipped tests would report every
+                    // compileable mutant as `Alive`, so hard-error instead of producing a
+                    // misleading report.
+                    if outcome.successes().next().is_none() {
+                        bail!(
+                            "Mutation testing requires at least one passing baseline test; the \
+                             current filter/path selection matched zero non-skipped tests. Loosen \
+                             `--match-test` / `--match-contract` / `--match-path` or check the \
+                             project layout."
+                        );
+                    }
+                    // Clap can't express this conflict because `--mutate` takes an optional list of
+                    // paths.
+                    if !mutate.is_empty() && self.mutate_path.is_some() {
+                        bail!(
+                            "`--mutate-path <PATTERN>` cannot be combined with explicit paths passed to `--mutate`; pass either paths or a glob pattern, not both"
+                        );
+                    }
+                    // The mutation runner builds a single-pass `MultiContractRunner` and does not
+                    // honor inline per-test network annotations, which would silently run tests on
+                    // the wrong network and produce false survivors / kills.
+                    if is_multi_pass {
+                        bail!(
+                            "Mutation testing does not yet support inline per-test network \
+                             overrides (found {} annotated network(s)). Re-run without `--mutate` \
+                             or remove the per-test network annotations.",
+                            override_networks.len()
+                        );
+                    }
+                    ensure_mutation_workspace_safe(&config_for_mutation)?;
+
+                    let json_output = shell::is_json();
+                    let selected_sources_relative = execution
+                        .selected_sources
+                        .iter()
+                        .filter_map(|path| {
+                            path.strip_prefix(&config_for_mutation.root).ok().map(PathBuf::from)
+                        })
+                        .collect::<Vec<_>>();
+                    let mutation_config = MutationRunConfig {
+                        mutate_paths: mutate.clone(),
+                        mutate_path_pattern: self.mutate_path.clone(),
+                        mutate_contract_pattern: self.mutate_contract.clone(),
+                        num_workers: self.mutation_jobs.unwrap_or(0),
+                        show_progress: self.show_progress,
+                        json_output,
+                        // Carry the filter the baseline actually used (positional path shorthand
+                        // folded into `path_pattern`, `--rerun` failures injected into
+                        // `test_pattern`) and its isolation flag so every mutant exercises the
+                        // exact same test set.
+                        filter_args: filter.args().clone(),
+                        rerun_failures: filter.rerun_failures().map(<[RerunFailure]>::to_vec),
+                        selected_sources_relative,
+                        isolate: evm_opts_for_mutation.isolate,
+                    };
+                    let result = run_mutation_testing(
+                        Arc::new(config_for_mutation),
+                        output,
+                        evm_opts_for_mutation,
+                        backend,
+                        ExecutorBuilder::<Net>::new(),
+                        mutation_config,
+                    )
+                    .await?;
+                    if result.cancelled {
+                        std::process::exit(130);
+                    }
+                    if json_output {
+                        let json_output = result.summary.to_json_output(result.duration_secs);
+                        sh_println!("{}", serde_json::to_string(&json_output)?)?;
+                    }
+                    outcome = TestOutcome::empty(None, true);
+                }
+
+                Ok::<_, eyre::Report>(outcome)
+            })
+            .await
+        })
     }
 
     /// Renders the flamegraph, flamechart or EVM profile of the single executed test.
@@ -2087,21 +2264,20 @@ impl TestArgs {
                 .ok_or_else(|| eyre::eyre!("{no_tests}"))?;
         let contract = suite_name.split(':').next_back().unwrap();
         let test_name = test_name.trim_end_matches("()");
-        let (_, arena) = test_result
-            .traces
-            .iter_mut()
-            .find(|(kind, _)| *kind == TraceKind::Execution)
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "cannot generate {label} for {contract}::{test_name}: no execution trace \
+        let (_, arena) =
+            test_result.traces.iter_mut().find(|(kind, _)| kind.is_execution()).ok_or_else(
+                || {
+                    eyre::eyre!(
+                        "cannot generate {label} for {contract}::{test_name}: no execution trace \
                      (test may have failed in setUp/constructor or been skipped)"
-                )
-            })?;
+                    )
+                },
+            )?;
         decode_trace_arena(arena, &decoder).await;
 
         match trace_output {
             TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
-                let mut folded_stack_trace = folded_stack_trace::build(arena, self.evm.isolate);
+                let mut folded_stack_trace = folded_stack_trace::build(arena);
                 let flame_chart = trace_output == TraceOutputKind::Flamechart;
                 if flame_chart {
                     folded_stack_trace.reverse();
@@ -2126,8 +2302,7 @@ impl TestArgs {
                 }
             }
             TraceOutputKind::EvmProfile(EvmProfileFormat::Speedscope) => {
-                let profile =
-                    speedscope::builder::build(arena, test_name, contract, self.evm.isolate);
+                let profile = speedscope::builder::build(arena, test_name, contract);
                 let profile_json = serde_json::to_vec(&profile)?;
                 let profile_path = format!("cache/evm_profile_{contract}_{test_name}.json");
                 fs::write(&profile_path, &profile_json)?;
@@ -2147,20 +2322,12 @@ impl TestArgs {
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         execution: TestExecutionOptions,
-        resolved_fork: Option<&ResolvedFork>,
+        backend: Backend<FEN>,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<MultiContractRunner<FEN>> {
-        let (evm_env, tx_env, fork) = if let Some(fork) = resolved_fork {
-            let (evm_env, tx_env) = evm_opts
-                .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(Some(fork))
-                .await?;
-            (evm_env, tx_env, Some(fork.clone()))
-        } else {
-            evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?
-        };
-        let fork_context = fork.as_ref().map(|fork| fork.context());
+        let (evm_env, tx) = backend.env(&evm_opts).await?;
         let create2_deployer_available =
-            evm_opts.can_use_create2_deployer_resolved(fork.as_ref()).await?;
+            backend.can_use_create2_deployer(evm_opts.create2_deployer).await?;
 
         MultiContractRunnerBuilder::new(config.clone(), execution.inline_config)
             .set_debug(self.debug)
@@ -2168,9 +2335,6 @@ impl TestArgs {
             .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork_resolved(&config, evm_env.cfg_env.chain_id, fork.as_ref()))
-            .with_fork_chain_id(fork_context.map(|context| context.source_chain_id))
-            .with_fork_hardfork(fork_context.and_then(|context| context.hardfork))
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .set_coverage(execution.coverage)
@@ -2181,7 +2345,7 @@ impl TestArgs {
             .with_fuzz_input(execution.fuzz_input)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .with_create2_deployer_available(create2_deployer_available)
-            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts, executor_builder)
+            .build::<FEN, MultiCompiler>(output, evm_env, tx, evm_opts, backend, executor_builder)
     }
 
     /// Builds the runner for one network pass and runs its tests.
@@ -2191,20 +2355,20 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
-        resolved_fork: Option<&ResolvedFork>,
     ) -> Result<(Libraries, TestOutcome)> {
         let NetworkPass { config, evm_opts, multi_network } = pass;
         let execution = TestExecutionOptions { multi_network, ..execution };
         let verbosity = evm_opts.verbosity;
         let config = Arc::new(config);
         dispatch_network!(&evm_opts, |Net| {
+            let backend = spawn_backend::<Net>(&config, &evm_opts)?;
             let runner = self
                 .build_runner::<Net>(
                     config.clone(),
                     evm_opts,
                     output,
                     execution,
-                    resolved_fork,
+                    backend,
                     ExecutorBuilder::<Net>::new(),
                 )
                 .await?;
@@ -2441,9 +2605,9 @@ impl TestArgs {
         }
 
         let remote_chain = runner
-            .fork
-            .is_some()
-            .then(|| runner.tcfg.fork_chain_id.or(runner.tx_env.chain_id()))
+            .backend
+            .is_forked_mode()
+            .then(|| runner.tcfg.fork_chain_id.or(runner.tcfg.tx.chain_id()))
             .flatten()
             .map(Into::into);
         let known_contracts = runner.known_contracts.clone();
@@ -2489,7 +2653,7 @@ impl TestArgs {
             builder =
                 builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
-        // The debugger resolves frame identities before decoding internal calls.
+        // SolDB decodes internal calls from compiler sources.
         if decode_internal && !self.debug {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
@@ -2598,7 +2762,7 @@ impl TestArgs {
 
                 // We shouldn't break out of the outer loop directly here so that we finish
                 // processing the remaining tests and print the suite summary.
-                any_test_failed |= result.status == TestStatus::Failure;
+                any_test_failed |= result.status.is_failure();
 
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
@@ -2650,7 +2814,7 @@ impl TestArgs {
                     && test_failed
                     && trace_verbosity >= 3
                     && let Some((_, arena)) =
-                        result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
+                        result.traces.iter().find(|(kind, _)| kind.is_execution())
                 {
                     let builder = backtrace_builder.get_or_insert_with(|| {
                         BacktraceBuilder::new(
@@ -2669,20 +2833,29 @@ impl TestArgs {
                 if let Some(gas_report) = &mut gas_report {
                     gas_report.analyze(result.traces.iter().map(|(_, a)| &a.arena), &decoder).await;
 
-                    for trace in &result.gas_report_traces {
+                    if !result.gas_report_traces.is_empty() {
                         decoder.clear_addresses();
 
-                        // Re-execute setup and deployment traces to collect identities created in
-                        // setUp and constructor.
+                        // Identify the setup and deployment traces once to collect identities
+                        // created in setUp and constructor; every sampled run starts from them.
                         for (kind, arena) in &result.traces {
-                            if !matches!(kind, TraceKind::Execution) {
+                            if !kind.is_execution() {
                                 decoder.identify_scoped(arena, &mut identifier);
                             }
                         }
+                        let identities = decoder.address_identities();
 
-                        for arena in trace {
-                            decoder.identify_scoped(arena, &mut identifier);
-                            gas_report.analyze([arena], &decoder).await;
+                        // Only a run that identified an address changed the decoder.
+                        let mut identified = false;
+                        for trace in &result.gas_report_traces {
+                            if std::mem::take(&mut identified) {
+                                decoder.restore_address_identities(&identities);
+                            }
+
+                            for arena in trace {
+                                identified |= decoder.identify_scoped(arena, &mut identifier);
+                                gas_report.analyze([arena], &decoder).await;
+                            }
                         }
                     }
                 }
@@ -2703,10 +2876,6 @@ impl TestArgs {
                 }
             }
 
-            if !gas_snapshots.is_empty() {
-                self.check_and_write_gas_snapshots(&config, &gas_snapshots)?;
-            }
-
             // Print suite summary.
             if !silent && has_tests {
                 sh_println!("{}", suite_result.summary())?;
@@ -2720,6 +2889,12 @@ impl TestArgs {
                 break;
             }
         }
+
+        // Check and write snapshots once all suites are in, since a group can span several suites.
+        if !gas_snapshots.is_empty() {
+            self.check_and_write_gas_snapshots(&config, &gas_snapshots)?;
+        }
+
         let regressions =
             self.emit_symbolic_regressions(&config, &known_contracts, &mut outcome.results)?;
         if !silent {
@@ -2797,8 +2972,7 @@ impl TestArgs {
                 if !path.exists() {
                     continue;
                 }
-                let previous_snapshots: BTreeMap<String, String> =
-                    fs::read_json_file(&path).expect("Failed to read snapshots from disk");
+                let previous_snapshots: BTreeMap<String, String> = fs::read_json_file(&path)?;
                 let diff = snapshots
                     .iter()
                     .filter_map(|(k, v)| {
@@ -2830,13 +3004,11 @@ impl TestArgs {
         }
 
         if self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
-            fs::create_dir_all(&config.snapshots)?;
             for (group, snapshots) in gas_snapshots {
-                fs::write_pretty_json_file(
-                    &config.snapshots.join(format!("{group}.json")),
-                    &snapshots,
-                )
-                .expect("Failed to write gas snapshots to disk");
+                // Groups may be nested, such as `core/Pool`.
+                let path = config.snapshots.join(format!("{group}.json"));
+                fs::create_dir_all(path.parent().unwrap_or(&config.snapshots))?;
+                fs::write_pretty_json_file(&path, &snapshots)?;
             }
         }
         Ok(())
@@ -2936,7 +3108,7 @@ fn ensure_mutation_workspace_safe(config: &Config) -> Result<()> {
     let root = &config.root;
     let canonicalize_through_existing_ancestor = |path: &Path| -> PathBuf {
         let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
-        if let Ok(canon) = dunce::canonicalize(&resolved) {
+        if let Ok(canon) = canonicalize_path(&resolved) {
             return canon;
         }
         let mut missing = Vec::new();
@@ -2947,7 +3119,7 @@ fn ensure_mutation_workspace_safe(config: &Config) -> Result<()> {
             let Some(parent) = ancestor.parent() else { break };
             ancestor = parent;
         }
-        let mut canon = dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.into());
+        let mut canon = canonicalize_path(ancestor).unwrap_or_else(|_| ancestor.into());
         canon.extend(missing.iter().rev());
         canon
     };
@@ -3110,6 +3282,7 @@ impl Provider for TestArgs {
             "use_fuzz_corpus" => self.symbolic_use_fuzz_corpus.then_some(true),
             "corpus_seed_limit" => self.symbolic_corpus_seed_limit,
             "use_fuzz_frontiers" => self.symbolic_use_fuzz_frontiers.then_some(true),
+            "live" => self.symbolic_live.then_some(true),
             "check_invariant_frontiers" =>
                 self.symbolic_check_invariant_frontiers.then_some(true),
             "frontier_limit" => self.symbolic_frontier_limit,
@@ -3155,6 +3328,30 @@ impl Provider for TestArgs {
             dict.insert("mutation".to_string(), mutation.into());
         }
         Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+/// Spawns the backend of a test run, starting on the configured fork, if any.
+fn spawn_backend<FEN: FoundryEvmNetwork>(
+    config: &Config,
+    evm_opts: &EvmOpts,
+) -> Result<Backend<FEN>> {
+    // Configure the hardfork before seeding network state, using the resolved fork.
+    let configure_env = |env: &mut _, context| {
+        resolve_execution_spec::<EvmFactoryFor<FEN>>(
+            config.evm_version,
+            config.hardfork,
+            env,
+            context,
+            None,
+        );
+    };
+    if let Some(fork) = evm_opts.get_fork(config, evm_opts.env.chain_id.unwrap_or_default(), None) {
+        Backend::spawn_fork(fork, configure_env)
+    } else {
+        let mut env = evm_opts.local_evm_env::<FEN>();
+        configure_env(&mut env, ExecutionSpecContext::Local);
+        Backend::spawn(None, env)
     }
 }
 
@@ -3298,16 +3495,14 @@ fn matching_fuzz_replay_targets(
         let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
         for func in abi.functions() {
             let kind = matcher.test_function_kind(&contract, func, generated_symbolic_regression);
-            if !matches!(kind, TestFunctionKind::FuzzTest { .. })
+            if !kind.is_fuzz_test()
                 || !filter.matches_test_function_kind_in_contract(&contract, func, kind)
             {
                 continue;
             }
             let function_config = inline_config_for(config, inline_config, &contract, Some(func))?;
-            if matches!(
-                effective_test_function_kind(kind, &function_config, func),
-                TestFunctionKind::FuzzTest { .. }
-            ) && func.selector() == selector
+            if effective_test_function_kind(kind, &function_config, func).is_fuzz_test()
+                && func.selector() == selector
             {
                 targets.push((contract.clone(), func.signature()));
             }
@@ -3635,6 +3830,14 @@ impl JunitOutput {
 mod tests {
     use super::*;
 
+    #[test]
+    fn parses_opcode_names_exactly() {
+        assert_eq!(parse_opcode("SSTORE"), Ok(OpCode::SSTORE));
+        assert_eq!(parse_opcode("PUSH32"), Ok(OpCode::PUSH32));
+        assert_eq!(parse_opcode("sstore"), Err("invalid opcode: sstore".to_string()));
+        assert_eq!(parse_opcode("NOPE"), Err("invalid opcode: NOPE".to_string()));
+    }
+
     /// Parses `args` with the given environment variables set, restoring the previous values.
     fn parse_with_env(vars: &[(&str, &str)], args: &[&str]) -> TestArgs {
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -3898,6 +4101,7 @@ mod tests {
         args.apply_test_config_overrides(&mut config);
 
         assert_eq!(config.extra_output, vec![ContractOutputSelection::StorageLayout]);
+        assert!(config.build_info);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::{init::InitArgs, install::DependencyInstallOpts};
 use alloy_primitives::{Address, Bytes, ChainId, TxHash};
 use clap::{Parser, ValueEnum, ValueHint};
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use forge_verify::sourcify::SOURCIFY_URL;
 use foundry_block_explorers::{
     Client,
@@ -14,7 +14,7 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{Git, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, fs};
+use foundry_common::{compile::ProjectCompiler, fs, fs::canonicalize_path};
 use foundry_compilers::{
     ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{
@@ -31,7 +31,7 @@ use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap},
     fs::read_dir,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     time::Duration,
 };
 use tracing::trace;
@@ -189,7 +189,7 @@ impl CloneArgs {
         Self::init_an_empty_project(&root, install).await?;
         // canonicalize the root path
         // note that at this point, the root directory must have been created
-        let root = dunce::canonicalize(&root)?;
+        let root = canonicalize_path(&root)?;
 
         // step 3. parse the metadata
         Self::parse_metadata(&meta, chain, &root, no_remappings_txt, keep_directory_structure)
@@ -530,15 +530,6 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     let lib_dir = &path_config.libraries[0];
     // Optional dir, if found in src
     let node_modules_dir = &root.join("node_modules");
-    let contract_name = Path::new(&meta.contract_name);
-    let mut components = contract_name.components();
-    eyre::ensure!(
-        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
-        "invalid contract name: {:?}",
-        meta.contract_name
-    );
-    let source_tree = meta.source_tree();
-
     // then we move the sources to the correct directories
     // we will first load existing remappings if necessary
     //  make sure this happens before dumping sources
@@ -546,10 +537,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 
     // first we dump the sources to a temporary directory
     let tmp_dump_dir = root.join("raw_sources");
-    let contract_dir = tmp_dump_dir.join(contract_name);
-    source_tree
-        .write_to(&tmp_dump_dir)
-        .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
+    let contract_dir = tmp_dump_dir.join(&meta.contract_name);
+    meta.source_tree()?.write_to(&tmp_dump_dir).wrap_err("failed to dump sources")?;
 
     // check whether we need to re-organize directories in the original sources, since we do not
     // want to put all the sources in the `src` directory if the original directory structure is
@@ -1101,7 +1090,7 @@ impl ExplorerClient for SourcifyClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
+    use alloy_primitives::{address, hex};
     use foundry_compilers::CompilerContract;
     use foundry_test_utils::rpc::next_etherscan_api_key;
 
@@ -1217,7 +1206,10 @@ mod tests {
 
             let err = dump_sources(&meta, &root, false).unwrap_err();
 
-            assert_eq!(err.to_string(), format!("invalid contract name: {contract_name:?}"));
+            assert_eq!(
+                err.to_string(),
+                format!("invalid contract name from explorer: {contract_name:?}")
+            );
             assert!(victim_file.exists());
             assert!(!root.join("raw_sources").exists());
             assert!(!root.join("src/outside.sol").exists());
@@ -1240,8 +1232,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolves_sparklend_proxy_implementation() {
-        let proxy = "0xC02aB1A5eaA8d1B114EF786D9bde108cD4364359".parse().unwrap();
-        let implementation = "0x6175ddec3b9b38c88157c10a01ed4a3fa8639cc6".parse().unwrap();
+        let proxy = address!("0xC02aB1A5eaA8d1B114EF786D9bde108cD4364359");
+        let implementation = address!("0x6175ddec3b9b38c88157c10a01ed4a3fa8639cc6");
         let proxy_meta = contract_metadata(
             "InitializableImmutableAdminUpgradeabilityProxy",
             true,
@@ -1268,8 +1260,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolves_solidity_implementation_from_vyper_proxy() {
-        let proxy = "0x0000000000000000000000000000000000000001".parse().unwrap();
-        let implementation = "0x0000000000000000000000000000000000000002".parse().unwrap();
+        let proxy = Address::with_last_byte(1);
+        let implementation = Address::with_last_byte(2);
         let mut proxy_meta = contract_metadata("VyperProxy", true, Some(implementation));
         proxy_meta.items[0].compiler_version = "vyper:0.3.10".to_string();
         let implementation_meta = contract_metadata("Implementation", false, None);
@@ -1293,9 +1285,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_stops_at_direct_proxy_implementation() {
-        let first = "0x0000000000000000000000000000000000000001".parse().unwrap();
-        let second = "0x0000000000000000000000000000000000000002".parse().unwrap();
-        let third = "0x0000000000000000000000000000000000000003".parse().unwrap();
+        let first = Address::with_last_byte(1);
+        let second = Address::with_last_byte(2);
+        let third = Address::with_last_byte(3);
         let first_meta = contract_metadata("FirstProxy", true, Some(second));
         let second_meta = contract_metadata("SecondProxy", true, Some(third));
         let mut client = super::MockExplorerClient::new();
@@ -1385,7 +1377,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "this test is used to dump mock data from Etherscan"]
     async fn test_dump_mock_data() {
-        let address: Address = "0x9d27527Ada2CF29fBDAB2973cfa243845a08Bd3F".parse().unwrap();
+        let address = address!("0x9d27527Ada2CF29fBDAB2973cfa243845a08Bd3F");
         let data_folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../testdata/etherscan")
             .join(address.to_string());
@@ -1415,7 +1407,7 @@ mod tests {
         CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default())
             .await
             .unwrap();
-        project_root = dunce::canonicalize(&project_root).unwrap();
+        project_root = canonicalize_path(&project_root).unwrap();
         CloneArgs::parse_metadata(&meta, Chain::mainnet(), &project_root, false, false)
             .await
             .unwrap();
@@ -1438,49 +1430,49 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_single_file_contract() {
-        let address = "0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193".parse().unwrap();
+        let address = address!("0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193");
         one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_optimization_details() {
-        let address = "0x8B3D32cf2bb4d0D16656f4c0b04Fa546274f1545".parse().unwrap();
+        let address = address!("0x8B3D32cf2bb4d0D16656f4c0b04Fa546274f1545");
         one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_libraries() {
-        let address = "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec".parse().unwrap();
+        let address = address!("0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec");
         one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_metadata() {
-        let address = "0x71356E37e0368Bd10bFDbF41dC052fE5FA24cD05".parse().unwrap();
+        let address = address!("0x71356E37e0368Bd10bFDbF41dC052fE5FA24cD05");
         one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn flaky_test_clone_contract_with_relative_import() {
-        let address = "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".parse().unwrap();
+        let address = address!("0x3a23F943181408EAC424116Af7b7790c94Cb97a5");
         one_test_case(address, false).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_original_remappings() {
-        let address = "0x9ab6b21cdf116f611110b048987e58894786c244".parse().unwrap();
+        let address = address!("0x9ab6b21cdf116f611110b048987e58894786c244");
         one_test_case(address, false).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_relative_import2() {
-        let address = "0x044b75f554b886A065b9567891e45c79542d7357".parse().unwrap();
+        let address = address!("0x044b75f554b886A065b9567891e45c79542d7357");
         one_test_case(address, false).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_nested_src() {
-        let address = "0x9d27527Ada2CF29fBDAB2973cfa243845a08Bd3F".parse().unwrap();
+        let address = address!("0x9d27527Ada2CF29fBDAB2973cfa243845a08Bd3F");
         one_test_case(address, false).await
     }
 

@@ -25,7 +25,7 @@ async fn monad_call_trace_uses_monad_evm_network(cmd: _) {
     let (_api, handle) = anvil::spawn(config).await;
     let endpoint = handle.http_endpoint();
     let reserve_balance_address = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
-    let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
+    let input = hex::encode_prefixed(MONAD_DIPPED_INTO_RESERVE_SELECTOR);
     let output = cmd
         .args([
             "call",
@@ -55,7 +55,7 @@ async fn monad_call_trace_resolves_effective_hardfork(cmd: _) {
     let (_api, monad_eight_handle) = anvil::spawn(config).await;
     let monad_eight_endpoint = monad_eight_handle.http_endpoint();
     let reserve_balance_address = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
-    let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
+    let input = hex::encode_prefixed(MONAD_DIPPED_INTO_RESERVE_SELECTOR);
 
     let monad_eight = cmd
         .args([
@@ -398,19 +398,16 @@ async fn monad_run_traces_protocol_system_call(cmd: _) {
     let endpoint = handle.http_endpoint();
     let tx_hash = receipt.transaction_hash;
     let tx_hash_string = tx_hash.to_string();
-    let original =
-        cmd.args(["run", &tx_hash_string, "--rpc-url", &endpoint, "--quick"]).assert_failure();
-    let original = original.get_output();
-    assert!(
-        original.stderr_lossy().contains("invalid Monad protocol system transaction"),
-        "{}",
-        original.stderr_lossy()
-    );
-    assert!(
-        !original.stdout_lossy().contains("Staking::syscallSnapshot()"),
-        "{}",
-        original.stdout_lossy()
-    );
+    cmd.args(["run", &tx_hash_string, "--rpc-url", &endpoint, "--quick"])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: EVM error
+
+Context:
+- invalid Monad protocol transaction: expected a legacy envelope, got type 2
+
+"#]]);
 
     let canonical_endpoint =
         foundry_test_utils::rpc::spawn_canonical_monad_system_rpc(endpoint.clone(), tx_hash).await;
@@ -528,7 +525,7 @@ async fn monad_fork_trace_evm_version_override(prj: _, cmd: _) {
     let endpoint = handle.http_endpoint();
     let from = handle.dev_accounts().next().unwrap();
     let target = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
-    let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
+    let input = hex::encode_prefixed(MONAD_DIPPED_INTO_RESERVE_SELECTOR);
     cmd.args([
         "call",
         &target,

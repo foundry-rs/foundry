@@ -46,6 +46,15 @@ contract MappingHookTarget {
         require(!success);
         assembly { sstore(slot, value) }
     }
+
+    /// Returns the gas an SLOAD of `slot` costs, and the value so the load is kept.
+    function loadCost(bytes32 slot) external view returns (uint256 cost, uint256 value) {
+        assembly {
+            let start := gas()
+            value := sload(slot)
+            cost := sub(start, gas())
+        }
+    }
 }
 
 contract MappingHookImplementation {
@@ -177,6 +186,7 @@ contract MappingStorageHooksTest is Test {
         (success,) = address(this).call(abi.encodeCall(this.storeThenRevert, (address(0xBEEF), 9)));
         vm.assertFalse(success);
         assertEq(calls, 0);
+        assertEq(ghost[1], 0);
         assertEq(target.balances(address(0xBEEF)), 0);
     }
 
@@ -213,7 +223,54 @@ contract MappingStorageHooksTest is Test {
         (success, data) = address(target).call(abi.encodeCall(target.setBalance, (address(0xA11CE), 3)));
         vm.assertFalse(success);
         assertEq(data, abi.encodeWithSignature("Error(string)", "hook revert"));
+        assertEq(calls, 0);
+        assertEq(ghost[1], 0);
         assertEq(target.balances(address(0xA11CE)), 0);
+
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
+        target.setBalance(address(0xA11CE), 4);
+        assertEq(calls, 1);
+        assertEq(seenOld, bytes32(0));
+        assertEq(ghost[1], 4);
+        assertEq(target.balances(address(0xA11CE)), 4);
+    }
+
+    function testCallbackInvalidPropagates() public {
+        bool success;
+        bytes memory data;
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onInvalid.selector);
+        (success, data) = address(target).call(abi.encodeCall(target.setBalance, (address(0xA11CE), 3)));
+        vm.assertFalse(success);
+        assertEq(data, "");
+        assertEq(calls, 0);
+        assertEq(ghost[1], 0);
+        assertEq(target.balances(address(0xA11CE)), 0);
+
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
+        target.setBalance(address(0xA11CE), 4);
+        assertEq(calls, 1);
+        assertEq(seenOld, bytes32(0));
+        assertEq(ghost[1], 4);
+        assertEq(target.balances(address(0xA11CE)), 4);
+    }
+
+    function testCallbackOutOfGasPropagates() public {
+        bool success;
+        bytes memory data;
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onOutOfGas.selector);
+        (success, data) = address(target).call{gas: 1_000_000}(abi.encodeCall(target.setBalance, (address(0xA11CE), 3)));
+        vm.assertFalse(success);
+        assertEq(data, "");
+        assertEq(calls, 0);
+        assertEq(ghost[1], 0);
+        assertEq(target.balances(address(0xA11CE)), 0);
+
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
+        target.setBalance(address(0xA11CE), 4);
+        assertEq(calls, 1);
+        assertEq(seenOld, bytes32(0));
+        assertEq(ghost[1], 4);
+        assertEq(target.balances(address(0xA11CE)), 4);
     }
 
     function testCallbackRejectsExternalSpoofing() public {
@@ -286,8 +343,25 @@ contract MappingStorageHooksTest is Test {
     }
 
     function onRevert(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        calls = 99;
+        ghost[1] = 99;
         revert("hook revert");
     }
+
+    function onInvalid(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        calls = 99;
+        ghost[1] = 99;
+        assembly {
+            invalid()
+        }
+    }
+
+    function onOutOfGas(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        calls = 99;
+        ghost[1] = 99;
+        while (true) {}
+    }
+
     function onRaw(address, bytes32, bytes32, bytes32) external onlyStorageHook {}
 
     function onZeroMemory(address, bytes32 slot, bytes32, bytes32[] calldata callbackKeys, bytes32, bytes32)
@@ -310,5 +384,44 @@ contract MappingStorageHooksTest is Test {
         assembly {
             root := ghost.slot
         }
+    }
+}
+
+/// forge-config: default.isolate = false
+contract MappingStorageHooksNonIsolatedTest is MappingStorageHooksTest {
+    MappingHookTarget probe;
+
+    /// The callback is instrumentation: it must not cool warmth set before it, nor drop warmth
+    /// it sets itself through cheatcodes.
+    function testCallbackKeepsOtherWarmth() public {
+        probe = new MappingHookTarget();
+        probe.loadCost(bytes32(uint256(1)));
+        probe.loadCost(bytes32(uint256(2)));
+        vm.cool(address(probe));
+        vm.warmSlot(address(probe), bytes32(uint256(1)));
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onWarmProbe.selector);
+        target.setBalance(address(this), 1);
+        assertLt(probeCost(1), 1000, "warmth set before the callback was cooled");
+        assertLt(probeCost(2), 1000, "warmth set in the callback was cooled");
+    }
+
+    /// Accesses the callback makes stay cold for the hooked frame.
+    function testCallbackAccessesStayCold() public {
+        probe = new MappingHookTarget();
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onLoadProbe.selector);
+        target.setBalance(address(this), 1);
+        assertGt(probeCost(1), 2000, "callback warmth leaked into the hooked frame");
+    }
+
+    function onWarmProbe(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        vm.warmSlot(address(probe), bytes32(uint256(2)));
+    }
+
+    function onLoadProbe(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        probe.loadCost(bytes32(uint256(1)));
+    }
+
+    function probeCost(uint256 slot) internal view returns (uint256 cost) {
+        (cost,) = probe.loadCost(bytes32(slot));
     }
 }

@@ -152,9 +152,6 @@ impl FlowState {
 /// A place written by an assignment, paired with the expression it receives.
 type Pair<'gcx> = (Option<ValueKey>, Option<&'gcx Expr<'gcx>>);
 
-/// The `s` argument of an `ecrecover` call.
-type Signature<'gcx> = &'gcx Expr<'gcx>;
-
 struct Analyzer<'gcx> {
     gcx: Gcx<'gcx>,
     returns: &'gcx [VariableId],
@@ -317,7 +314,7 @@ impl<'gcx> Analyzer<'gcx> {
     fn ecrecover_call(
         &self,
         expr: &'gcx Expr<'gcx>,
-    ) -> Option<(&'gcx Expr<'gcx>, Signature<'gcx>)> {
+    ) -> Option<(&'gcx Expr<'gcx>, &'gcx Expr<'gcx>)> {
         let expr = expr.peel_parens();
         let ExprKind::Call(callee, args) = &expr.kind else { return None };
         let callee = self.gcx.resolved_builtin(callee.peel_parens());
@@ -385,12 +382,12 @@ impl<'gcx> Analyzer<'gcx> {
                 };
                 Some(U256::MAX >> (256 - size.bits()))
             }
-            _ => self.gcx.try_eval_const(expr).ok()?.as_u256(),
+            _ => self.gcx.const_eval().eval_int(expr).ok()?.as_u256(),
         }
     }
 
     fn const_bool(&self, expr: &Expr<'_>) -> Option<bool> {
-        match self.gcx.try_eval_const_value(expr).ok()? {
+        match self.gcx.const_eval().eval_expr(expr).ok()? {
             ConstValue::Bool(value) => Some(*value),
             _ => None,
         }
@@ -601,7 +598,7 @@ impl<'gcx> Analyzer<'gcx> {
                         continue;
                     };
                     let proves_low = match op {
-                        BinOpKind::Lt => bound <= SECP256K1_HALF_ORDER + U256::from(1),
+                        BinOpKind::Lt => bound <= SECP256K1_HALF_ORDER + U256::ONE,
                         BinOpKind::Le | BinOpKind::Eq => bound <= SECP256K1_HALF_ORDER,
                         _ => false,
                     };
@@ -705,7 +702,7 @@ impl<'gcx> Analyzer<'gcx> {
                 }
                 !is_exit_call(self.gcx, expr)
             }
-            StmtKind::AssemblyBlock(_) | StmtKind::Err(_) => {
+            StmtKind::AssemblyBlock(..) | StmtKind::Err(_) => {
                 // Inline assembly is opaque and may observe any local before changing it. Flush
                 // deferred recoveries before discarding facts so assembly cannot hide a warning.
                 self.use_all_pending();

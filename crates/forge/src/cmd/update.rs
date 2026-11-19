@@ -6,6 +6,7 @@ use foundry_cli::{
     opts::Dependency,
     utils::{Git, LoadConfig},
 };
+use foundry_common::fs::canonicalize_path;
 use foundry_config::{Config, impl_figment_convert_basic};
 use std::path::{Path, PathBuf};
 use yansi::Paint;
@@ -74,28 +75,70 @@ impl UpdateArgs {
                 .strip_prefix(&root)
                 .wrap_err("Dependency path is not relative to the repository root")?;
 
-            if let Ok(mut dep_id) = DepIdentifier::resolve_type(&git, dep_path, override_tag) {
-                // Store the previous state before overriding
-                let prev = foundry_lock.get(rel_path).cloned();
-
-                // If it's a branch, mark it as overridden so it gets updated below
-                if let DepIdentifier::Branch { .. } = dep_id {
-                    dep_id.mark_override();
+            // Resolve every override before changing dependency worktrees or the lockfile.
+            let mut dep_id = (|| -> Result<DepIdentifier> {
+                let dependency_git = git.root(dep_path);
+                let canonical_root = canonicalize_path(&root)?;
+                if !dunce::canonicalize(dep_path).is_ok_and(|path| {
+                    path.starts_with(&canonical_root)
+                        && dependency_git.is_repo_root().unwrap_or(false)
+                }) {
+                    eyre::bail!(
+                        "Dependency at `{}` is not an initialized Git submodule worktree",
+                        rel_path.display()
+                    );
                 }
-
-                // Update the lockfile
-                foundry_lock.override_dep(rel_path, dep_id)?;
-
-                // Only track as updated if there was a previous dependency
-                if let Some(prev) = prev {
-                    prev_dep_ids.insert(rel_path.to_owned(), prev);
+                let resolve = || -> Result<DepIdentifier> {
+                    let remote_branch = format!("origin/{override_tag}");
+                    if !git.has_tag(override_tag, dep_path)?
+                        && dependency_git
+                            .remote_branches()?
+                            .lines()
+                            .any(|branch| branch.trim() == remote_branch)
+                    {
+                        return Ok(DepIdentifier::Branch {
+                            name: override_tag.clone(),
+                            rev: git.get_rev(format!("refs/remotes/{remote_branch}"), dep_path)?,
+                            r#override: false,
+                        });
+                    }
+                    let dep_id = DepIdentifier::resolve_type(&git, dep_path, override_tag)?;
+                    if dep_id.is_branch() {
+                        // Branch updates below require a corresponding origin branch.
+                        git.get_rev(format!("refs/remotes/{remote_branch}"), dep_path)?;
+                    }
+                    Ok(dep_id)
+                };
+                match resolve() {
+                    Ok(dep_id) => Ok(dep_id),
+                    Err(_) => {
+                        // Newly published refs may not be available locally yet. Fetching must
+                        // not check out anything before all overrides have been validated.
+                        dependency_git.fetch(false, "origin", None::<&str>)?;
+                        resolve()
+                    }
                 }
-            } else {
-                sh_warn!(
-                    "Could not r#override submodule at {} with tag {}, try using forge install",
-                    rel_path.display(),
-                    override_tag
-                )?;
+            })()
+            .wrap_err_with(|| {
+                format!(
+                    "Failed to resolve ref `{override_tag}` for dependency `{}`",
+                    rel_path.display()
+                )
+            })?;
+            // Store the previous state before overriding
+            let prev = foundry_lock.get(rel_path).cloned();
+
+            // If it's a branch, mark it as overridden so it gets updated below
+            if let DepIdentifier::Branch { .. } = dep_id {
+                dep_id.mark_override();
+            }
+
+            // Update the lockfile
+            foundry_lock.override_dep(rel_path, dep_id)?;
+
+            // Only track as updated if there was a previous dependency
+            if let Some(prev) = prev {
+                prev_dep_ids.insert(rel_path.to_owned(), prev);
             }
         }
 
@@ -116,7 +159,7 @@ impl UpdateArgs {
             git.submodule_foreach(false, "git submodule update --init --progress --recursive")?;
         }
 
-        let canonical_root = dunce::canonicalize(&root)?;
+        let canonical_root = canonicalize_path(&root)?;
         let mut checkout_paths = foundry_lock
             .iter()
             .map(|(path, _)| path)

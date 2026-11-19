@@ -198,7 +198,7 @@ contract StateDiffStorageLayoutTest is Test {
         assertTrue(vm.contains(stateDiffJson, '"label":"addresses[0]"'));
         assertTrue(vm.contains(stateDiffJson, '"label":"addresses[1]"'));
 
-        assertTrue(vm.contains(stateDiffJson, '"label":"flags[0]"'));
+        assertTrue(vm.contains(stateDiffJson, '"label":"flags[0..4]"'));
 
         assertTrue(vm.contains(stateDiffJson, '"label":"hashes[0]"'));
         assertTrue(vm.contains(stateDiffJson, '"label":"hashes[1]"'));

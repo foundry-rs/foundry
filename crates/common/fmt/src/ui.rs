@@ -1,10 +1,12 @@
 //! Helper trait and functions to format Ethereum types.
 
+use crate::configurable_account::ConfigurableAccountSignatureDetails;
 use alloy_consensus::{
-    BlockHeader, Eip658Value, Signed, Transaction as TxTrait, TxEip1559, TxEip2930,
+    BlockHeader, Eip658Value, Signed, Transaction as TxTrait, TxEip1559, TxEip2930, TxEip4844,
     TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, TxReceipt, Typed2718,
     transaction::TxHashRef,
 };
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{
     AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope,
     BlockResponse, Network, ReceiptResponse, primitives::HeaderResponse,
@@ -16,7 +18,6 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use revm::context_interface::transaction::SignedAuthorization;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
 use tempo_alloy::{
@@ -29,7 +30,7 @@ use tempo_alloy::{
 
 #[cfg(feature = "base")]
 use base_common_consensus::{
-    BaseReceipt, BaseTxEnvelope, Eip8130Signed, TxDeposit as BaseTxDeposit,
+    BaseReceipt, BaseTxEnvelope, TxBaseSigned, TxDeposit as BaseTxDeposit,
 };
 #[cfg(feature = "base")]
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction as BaseRpcTransaction};
@@ -447,7 +448,6 @@ input                {}",
 
 impl UIfmt for TxEip4844Variant {
     fn pretty(&self) -> String {
-        use alloy_consensus::TxEip4844;
         let tx: &TxEip4844 = match self {
             Self::TxEip4844(tx) => tx,
             Self::TxEip4844WithSidecar(tx) => tx.tx(),
@@ -559,7 +559,7 @@ input                {}",
 }
 
 #[cfg(feature = "base")]
-impl UIfmt for Eip8130Signed {
+impl UIfmt for TxBaseSigned {
     fn pretty(&self) -> String {
         let tx = self.tx();
         // `calls` is grouped into phases, and `accountChanges` can be long, so both are summarized
@@ -668,6 +668,13 @@ impl UIfmt for TempoSignature {
 
 impl UIfmt for AASigned {
     fn pretty(&self) -> String {
+        // A configurable account signature serializes as its opaque RLP encoding, so it is shown
+        // decoded instead.
+        let signature =
+            match ConfigurableAccountSignatureDetails::from_tx(self.tx(), self.signature()) {
+                Some(details) => details.pretty(),
+                None => self.signature().pretty(),
+            };
         format!(
             "
 hash                 {}
@@ -677,7 +684,7 @@ tempoSignature       {}",
             self.hash().pretty(),
             self.tx().ty(),
             self.tx().pretty().trim_start(),
-            self.signature().pretty(),
+            signature,
         )
     }
 }
@@ -726,7 +733,7 @@ impl UIfmt for BaseTxEnvelope {
             Self::Eip1559(tx) => tx.pretty(),
             Self::Eip7702(tx) => tx.pretty(),
             Self::Deposit(tx) => tx.inner().pretty(),
-            Self::Eip8130(tx) => tx.pretty(),
+            Self::Base(tx) => tx.pretty(),
         }
     }
 }
@@ -736,15 +743,27 @@ impl UIfmt for AnyTxEnvelope {
         match self {
             Self::Ethereum(envelop) => envelop.pretty(),
             Self::Unknown(tx) => {
+                // Tempo transactions reach here when not fetched as Tempo, with their
+                // configurable account signature as opaque RLP among the fields.
+                let details = serde_json::to_value(tx.inner.fields())
+                    .ok()
+                    .and_then(|fields| ConfigurableAccountSignatureDetails::from_json(&fields));
+                let mut fields = tx.inner.fields().clone();
+                if details.is_some() {
+                    fields.remove("signature");
+                }
                 format!(
                     "
 hash                 {}
 type               {:#x}
-{}
+{}{}
                     ",
                     tx.hash.pretty(),
                     tx.ty(),
-                    tx.inner.fields.pretty().trim_start(),
+                    fields.pretty().trim_start(),
+                    details
+                        .map(|details| format!("tempoSignature       {}\n", details.pretty()))
+                        .unwrap_or_default(),
                 )
             }
         }
@@ -1096,7 +1115,7 @@ feeToken             {}",
 
 impl UIfmtReceiptExt for TempoTransactionReceipt {
     fn logs_pretty(&self) -> String {
-        serde_json::to_string(self.inner.inner.logs()).unwrap_or_default()
+        receipt_logs_pretty(&self.inner)
     }
 
     fn logs_bloom_pretty(&self) -> String {
@@ -1283,15 +1302,15 @@ fn fmt_timestamp(timestamp: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use alloy_network::Ethereum;
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, address, bytes};
     use alloy_rpc_types::Authorization;
     use similar_asserts::assert_eq;
-    use std::str::FromStr;
 
     #[cfg(feature = "base")]
-    use base_common_consensus::{Call as BaseCall, TxEip8130};
+    use base_common_consensus::{Call as BaseCall, TxBase};
 
     #[test]
     fn format_date_time() {
@@ -1322,8 +1341,8 @@ mod tests {
     #[cfg(feature = "base")]
     #[test]
     fn can_pretty_print_eip8130_transaction() {
-        let base_call = BaseCall { to: Address::ZERO, data: Bytes::new() };
-        let tx = TxEip8130 {
+        let base_call = BaseCall { to: Address::ZERO, value: U256::ZERO, data: Bytes::new() };
+        let tx = TxBase {
             chain_id: 8453,
             sender: Some(Address::with_last_byte(0x11)),
             payer: Some(Address::with_last_byte(0x22)),
@@ -1339,7 +1358,7 @@ mod tests {
             ..Default::default()
         };
         let signed =
-            Eip8130Signed::new(tx, Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02]));
+            TxBaseSigned::new(tx, Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02]));
 
         assert_eq!(
             signed.pretty().trim(),
@@ -1412,7 +1431,7 @@ payerAuth            0x02"
             "0x18bcfe568c8"
         );
         assert!(pretty.contains(&format!("logs                 {logs}")), "{pretty}");
-        assert_eq!(receipt.logs_bloom_pretty(), receipt.inner.inner.bloom().pretty());
+        assert_eq!(receipt.logs_bloom_pretty(), receipt_logs_bloom_pretty(&receipt.inner));
         assert!(pretty.contains("l1Fee                24681034813"), "{pretty}");
         assert!(pretty.contains("operatorFeeScalar    1"), "{pretty}");
         assert!(pretty.contains("depositNonce         9055505"), "{pretty}");
@@ -1769,19 +1788,12 @@ yParity              0"
     fn uifmt_option_bytes() {
         assert_eq!(None::<Bytes>.pretty(), "");
         assert_eq!(
-            Bytes::from_str("0x0000000000000000000000000000000000000000000000000000000000000064")
-                .unwrap()
-                .pretty(),
+            bytes!("0x0000000000000000000000000000000000000000000000000000000000000064").pretty(),
             "0x0000000000000000000000000000000000000000000000000000000000000064",
         );
         assert_eq!(
-            Some(
-                Bytes::from_str(
-                    "0x0000000000000000000000000000000000000000000000000000000000000064"
-                )
-                .unwrap()
-            )
-            .pretty(),
+            Some(bytes!("0x0000000000000000000000000000000000000000000000000000000000000064"))
+                .pretty(),
             "0x0000000000000000000000000000000000000000000000000000000000000064",
         );
     }
@@ -1789,7 +1801,7 @@ yParity              0"
     #[test]
     fn test_pretty_tx_attr() {
         let block = r#"{"number":"0x3","hash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","parentHash":"0x689c70c080ca22bc0e681694fa803c1aba16a69c8b6368fed5311d279eb9de90","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionsRoot":"0x7270c1c4440180f2bd5215809ee3d545df042b67329499e1ab97eb759d31610d","stateRoot":"0x29f32984517a7d25607da485b23cefabfd443751422ca7e603395e1de9bc8a4b","receiptsRoot":"0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2","miner":"0x0000000000000000000000000000000000000000","difficulty":"0x0","totalDifficulty":"0x0","extraData":"0x","size":"0x3e8","gasLimit":"0x6691b7","gasUsed":"0x5208","timestamp":"0x5ecedbb9","transactions":[{"hash":"0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067","nonce":"0x2","blockHash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","blockNumber":"0x3","transactionIndex":"0x0","from":"0xfdcedc3bfca10ecb0890337fbdd1977aba84807a","to":"0xdca8ce283150ab773bcbeb8d38289bdb5661de1e","value":"0x0","gas":"0x15f90","gasPrice":"0x4a817c800","input":"0x","v":"0x25","r":"0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88","s":"0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"}],"uncles":[]}"#;
-        let block: <Ethereum as Network>::BlockResponse = serde_json::from_str(block).unwrap();
+        let block: Block = serde_json::from_str(block).unwrap();
         let txs = match block.transactions() {
             BlockTransactions::Full(txes) => txes,
             _ => panic!("not full transactions"),
@@ -1865,7 +1877,7 @@ yParity              0"
           }
         );
 
-        let block: <Ethereum as Network>::BlockResponse = serde_json::from_value(json).unwrap();
+        let block: Block = serde_json::from_value(json).unwrap();
 
         assert_eq!(None, get_pretty_block_attr::<Ethereum>(&block, ""));
         assert_eq!(
@@ -1999,8 +2011,8 @@ l1GasUsed            1600
     #[test]
     fn test_uifmt_for_signed_authorization() {
         let inner = Authorization {
-            chain_id: U256::from(1),
-            address: "0x000000000000000000000000000000000000dead".parse::<Address>().unwrap(),
+            chain_id: U256::ONE,
+            address: address!("0x000000000000000000000000000000000000dead"),
             nonce: 42,
         };
         let signed_authorization =
@@ -2163,8 +2175,7 @@ to                   0x20C0000000000000000000000000000000000000
             "contractAddress": null
         });
 
-        let receipt: <Ethereum as Network>::ReceiptResponse =
-            serde_json::from_value(receipt_json).unwrap();
+        let receipt: TransactionReceipt = serde_json::from_value(receipt_json).unwrap();
 
         // Test basic receipt attributes
         assert_eq!(

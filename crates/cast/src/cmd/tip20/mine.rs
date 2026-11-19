@@ -9,11 +9,11 @@ use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::utils::get_chain;
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
-use foundry_evm::hardfork::TempoHardfork;
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use std::time::{Duration, Instant};
 use tempo_alloy::{
     TempoNetwork,
+    chainspec::hardfork::TempoHardfork,
     contracts::precompiles::{ADDRESS_REGISTRY_ADDRESS, IAddressRegistry},
 };
 use tempo_primitives::{MasterId, TempoAddressExt, UserTag};
@@ -172,8 +172,7 @@ pub(crate) async fn register_virtual_master(
             config.eip1559_fee_estimate,
         )
         .await?;
-        tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut tx, Some(sender))
-            .await?;
+        tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(sender)).await?;
         let raw_tx = tx.sign_with_tempo_wallet(&prepared).await?;
         cast_send_raw(&provider, &raw_tx, send_tx.sync).await?
     } else {
@@ -189,8 +188,7 @@ pub(crate) async fn register_virtual_master(
             config.eip1559_fee_estimate,
         )
         .await?;
-        tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut tx, Some(sender))
-            .await?;
+        tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(sender)).await?;
         let cast = CastTxSender::new(&signer_provider);
         if send_tx.sync {
             let (tx_hash, receipt) = cast.send_sync(tx).await?;
@@ -206,8 +204,7 @@ pub(crate) async fn register_virtual_master(
         Some(_) => {}
         None if quiet => {
             if !send_tx.cast_async {
-                let hash = format!("{tx_hash:#x}");
-                cast.receipt(hash, None, send_tx.confirmations, Some(timeout), false).await?;
+                cast.sent_tx_receipt(tx_hash, send_tx.confirmations, timeout).await?;
             }
         }
         None => {
@@ -254,7 +251,7 @@ mod tests {
     #[test]
     fn derives_master_id_and_zero_tag_address() {
         let master = address!("0x1234567890123456789012345678901234567890");
-        let salt = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+        let salt = B256::with_last_byte(1);
         let output = derive(master, salt);
 
         assert_eq!(

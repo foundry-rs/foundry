@@ -29,6 +29,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | getBlobBaseFeeCall::SELECTOR
         | getBlockNumberCall::SELECTOR
         | getBlockTimestampCall::SELECTOR
+        | getSlotNumberCall::SELECTOR
         | pauseGasMeteringCall::SELECTOR
         | resumeGasMeteringCall::SELECTOR
         | resetGasMeteringCall::SELECTOR
@@ -109,6 +110,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | deleteStateSnapshotCall::SELECTOR
         | warpCall::SELECTOR
         | rollCall::SELECTOR
+        | rollSlotCall::SELECTOR
         | prevrandao_0Call::SELECTOR
         | prevrandao_1Call::SELECTOR
         | feeCall::SELECTOR
@@ -406,6 +408,26 @@ pub(crate) fn complete_cheatcode_call(
     Ok(())
 }
 
+/// Completes a cheatcode call that reverts with `return_data`, which can be the reverter of a
+/// pending `vm.expectRevert` or `vm.assumeNoRevert`, including one this frame set.
+pub(crate) fn revert_cheatcode_call(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    out_offset: SymExpr,
+    out_size: &BoundedCopySize,
+    return_data: SymReturnData,
+) -> Result<(), SymbolicError> {
+    state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
+    state.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
+    if let Some(assumption) = &mut state.assume_no_revert_next_call {
+        assumption.reverted_by.get_or_insert(CHEATCODE_ADDRESS);
+    }
+    state.return_data = return_data;
+    state.copy_call_output_offset(cx, out_offset, out_size)?;
+    state.stack.push(SymExpr::zero(cx))?;
+    Ok(())
+}
+
 pub(crate) fn storage_slots_abi_array(cx: &mut SymCx, slots: Vec<SymExpr>) -> SymbolicAbiValue {
     SymbolicAbiValue::Array {
         elements: slots
@@ -453,7 +475,7 @@ pub(crate) fn hex_nibble_ascii(cx: &mut SymCx, nibble: SymExpr) -> SymExpr {
         SymExpr::constant(cx, U256::from(byte))
     } else {
         let ten = SymExpr::constant(cx, U256::from(10));
-        let condition = SymBoolExpr::cmp(cx, SymCmpOp::Ult, nibble.clone(), ten);
+        let condition = SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Ult, &nibble, ten);
         let zero = SymExpr::constant(cx, U256::from(b'0'));
         let digit = SymExpr::binop(cx, SymBinOp::Add, nibble.clone(), zero);
         let alpha_base = SymExpr::constant(cx, U256::from(b'a' - 10));
@@ -512,13 +534,24 @@ pub(crate) fn read_abi_address_or_symbolic_slot_arg(
     Ok(state.address_or_symbolic_slot(cx, word))
 }
 
+/// Reads an address argument as a word, pinned to its constant when path constraints force one.
+pub(crate) fn read_abi_address_word_arg(
+    cx: &mut SymCx,
+    state: &PathState,
+    args_offset: usize,
+    index: usize,
+) -> Result<SymExpr, SymbolicError> {
+    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    Ok(state.constrained_word(cx, &word).map_or(word, |value| SymExpr::constant(cx, value)))
+}
+
 pub(crate) fn read_abi_address_word_or_symbolic_slot_arg(
     cx: &mut SymCx,
     state: &mut PathState,
     args_offset: usize,
     index: usize,
 ) -> Result<(Address, SymExpr), SymbolicError> {
-    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?.address_operand(cx);
     let address = state.address_or_symbolic_slot(cx, word.clone());
     Ok((address, word))
 }
@@ -782,8 +815,7 @@ pub(crate) fn dyn_potential_revert(
     };
 
     let reverter = dyn_address(reverter)?;
-    let reverter =
-        (reverter != Address::ZERO).then(|| SymExpr::constant(cx, address_word(reverter)));
+    let reverter = (!reverter.is_zero()).then(|| SymExpr::constant(cx, address_word(reverter)));
     let revert_data = SymBytes::concrete(cx, dyn_bytes(revert_data)?);
     let data = if dyn_bool(partial_match)? {
         ExpectedRevertData::Prefix(revert_data)
@@ -835,68 +867,32 @@ pub(crate) fn parse_env_array(
     delimiter: &str,
     ty: &DynSolType,
 ) -> Result<DynSolValue, SymbolicError> {
-    if delimiter.is_empty() {
-        return Err(SymbolicError::Unsupported("symbolic env delimiter"));
+    // Like Forge, elements are trimmed and an empty first element gives an empty array.
+    let mut values = value.split(delimiter).map(str::trim).peekable();
+    if values.peek().is_some_and(|first| first.is_empty()) {
+        return Ok(DynSolValue::Array(Vec::new()));
     }
-    value
-        .split(delimiter)
+    values
         .map(|value| parse_env_value(value, ty))
         .collect::<Result<Vec<_>, _>>()
         .map(DynSolValue::Array)
 }
 
 pub(crate) fn parse_env_value(value: &str, ty: &DynSolType) -> Result<DynSolValue, SymbolicError> {
-    match ty {
-        DynSolType::Bool => Ok(DynSolValue::Bool(parse_env_bool(value)?)),
-        DynSolType::Uint(256) => Ok(DynSolValue::Uint(parse_env_uint(value)?, 256)),
-        DynSolType::Int(256) => Ok(DynSolValue::Int(I256::from_raw(parse_env_int(value)?), 256)),
-        DynSolType::Address => Ok(DynSolValue::Address(parse_env_address(value)?)),
-        DynSolType::FixedBytes(32) => Ok(DynSolValue::FixedBytes(
-            B256::from(parse_env_bytes32(value)?.to_be_bytes::<32>()),
-            32,
-        )),
-        DynSolType::String => Ok(DynSolValue::String(value.to_string())),
-        DynSolType::Bytes => Ok(DynSolValue::Bytes(parse_env_bytes(value)?)),
-        _ => Err(SymbolicError::Unsupported("symbolic env type")),
+    // Forge's env cheatcodes use the same parser.
+    parse_value(value, ty).map_err(|_| SymbolicError::Unsupported("symbolic env parse"))
+}
+
+/// Reads an environment variable like Forge's `envOr` cheatcodes: `None` only when it is not
+/// set, and an error when it is not valid unicode.
+pub(crate) fn env_var(name: &str) -> Result<Option<String>, SymbolicError> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(SymbolicError::Unsupported("symbolic env var not unicode"))
+        }
     }
-}
-
-pub(crate) fn parse_env_uint(value: &str) -> Result<U256, SymbolicError> {
-    value.parse::<U256>().map_err(|_| SymbolicError::Unsupported("symbolic env uint parse"))
-}
-
-pub(crate) fn parse_env_int(value: &str) -> Result<U256, SymbolicError> {
-    if let Some(value) = value.strip_prefix('-') {
-        let magnitude = parse_env_uint(value)?;
-        Ok(U256::ZERO.wrapping_sub(magnitude))
-    } else {
-        parse_env_uint(value)
-    }
-}
-
-pub(crate) fn parse_env_bool(value: &str) -> Result<bool, SymbolicError> {
-    match value {
-        "true" | "1" | "TRUE" | "True" => Ok(true),
-        "false" | "0" | "FALSE" | "False" => Ok(false),
-        _ => Err(SymbolicError::Unsupported("symbolic env bool parse")),
-    }
-}
-
-pub(crate) fn parse_env_bytes(value: &str) -> Result<Vec<u8>, SymbolicError> {
-    let value = value.strip_prefix("0x").unwrap_or(value);
-    hex::decode(value).map_err(|_| SymbolicError::Unsupported("symbolic env bytes parse"))
-}
-
-pub(crate) fn parse_env_bytes32(value: &str) -> Result<U256, SymbolicError> {
-    let bytes = parse_env_bytes(value)?;
-    if bytes.len() != 32 {
-        return Err(SymbolicError::Unsupported("symbolic env bytes32 parse"));
-    }
-    Ok(U256::from_be_slice(&bytes))
-}
-
-pub(crate) fn parse_env_address(value: &str) -> Result<Address, SymbolicError> {
-    value.parse::<Address>().map_err(|_| SymbolicError::Unsupported("symbolic env address parse"))
 }
 
 pub(crate) fn private_key_signer(private_key: U256) -> Result<PrivateKeySigner, SymbolicError> {
@@ -914,7 +910,7 @@ pub(crate) fn sign_hash_words(
     digest: U256,
 ) -> Result<Vec<SymExpr>, SymbolicError> {
     let signer = private_key_signer(private_key)?;
-    let digest = B256::from(digest.to_be_bytes::<32>());
+    let digest = B256::from(digest);
     let sig = signer
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.sign"))?;
@@ -931,7 +927,7 @@ pub(crate) fn sign_compact_hash_words(
     digest: U256,
 ) -> Result<Vec<SymExpr>, SymbolicError> {
     let signer = private_key_signer(private_key)?;
-    let digest = B256::from(digest.to_be_bytes::<32>());
+    let digest = B256::from(digest);
     let sig = signer
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.signCompact"))?;

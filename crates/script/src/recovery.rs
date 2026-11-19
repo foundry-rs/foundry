@@ -1,10 +1,13 @@
-use crate::sequence::{SequenceData, completed_transaction_prefix};
+use crate::{
+    multi_sequence::MultiChainSequence,
+    sequence::{SequenceData, completed_transaction_prefix, operation_ordinal},
+};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_network::{Network, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_network::{Network, ReceiptResponse, TransactionBuilder, TransactionResponse};
+use alloy_primitives::{Address, B256, Bytes, TxKind, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
-use forge_script_sequence::TransactionWithMetadata;
+use forge_script_sequence::{DRY_RUN_DIR, ScriptSequence, TransactionWithMetadata, now};
 use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tempfile::NamedTempFile;
+use tempo_primitives::transaction::{TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -29,6 +33,10 @@ struct RecoveryPlan<N: Network> {
     generation: B256,
     multi: bool,
     batch: bool,
+    /// Tempo sponsor of the run that created the snapshot. Resume must not prepare new
+    /// transactions without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sponsor: Option<Address>,
     deployments: Vec<RecoveryDeployment<N>>,
     data: SequenceData<N>,
 }
@@ -85,11 +93,17 @@ pub(crate) enum DelegatedStatus {
     OutcomeUnknown,
 }
 
+/// For each operation by sequence and index, its fingerprint and the digest of the transaction
+/// last found to match it.
+type VerifiedOperations = Vec<Vec<Option<(B256, B256)>>>;
+
 /// Owns the authoritative recovery snapshot and its process-lifetime writer lock.
 pub(crate) struct RecoveryStore<N: Network> {
     path: PathBuf,
     _lock: RecoveryLock,
     plan: RecoveryPlan<N>,
+    /// Lets each save skip fingerprinting transactions that did not change since the last one.
+    verified: VerifiedOperations,
 }
 
 pub(crate) struct RecoveryLock {
@@ -117,7 +131,15 @@ where
         self.plan.batch
     }
 
-    pub(crate) fn create(mut data: SequenceData<N>, batch: bool) -> Result<Self> {
+    pub(crate) const fn sponsor(&self) -> Option<Address> {
+        self.plan.sponsor
+    }
+
+    pub(crate) fn create(
+        mut data: SequenceData<N>,
+        batch: bool,
+        sponsor: Option<Address>,
+    ) -> Result<Self> {
         let paths = data.paths();
         let lock = RecoveryLock::acquire(&paths)?;
         let pending = pending_path(&lock.path);
@@ -127,11 +149,42 @@ where
                 pending.display()
             );
         }
+        if previous_unfinished::<N>(&lock.path, &paths, data.is_multi())? {
+            bail!(
+                "the previous broadcast `{}` has unfinished operations; finish it with `{}`, or pass `--start-fresh` to archive it and broadcast anew",
+                paths.0.display(),
+                if data.is_multi() { "--multi --resume" } else { "--resume" }
+            );
+        }
         let generation = B256::random();
         data.set_recovery_generation(generation);
-        let plan = RecoveryPlan::new(data, batch, generation)?;
+        let plan = RecoveryPlan { sponsor, ..RecoveryPlan::new(data, batch, generation)? };
         write_snapshot(&lock.path, &plan)?;
         Self::finish_open(lock, plan)
+    }
+
+    /// Moves the unfinished progress of a previous execution of `data` to timestamped names, so
+    /// that a new execution can replace it.
+    pub(crate) fn archive_unfinished(data: &SequenceData<N>) -> Result<()> {
+        let paths = &data.paths();
+        let lock = RecoveryLock::acquire(paths)?;
+        // A crash mid-commit leaves the newest complete snapshot pending, as resume would find it.
+        let pending = pending_path(&lock.path);
+        if pending.exists() {
+            commit_pending_plan(&pending, &lock.path)?;
+        }
+        if matches!(previous_unfinished::<N>(&lock.path, paths, data.is_multi()), Ok(false)) {
+            return Ok(());
+        }
+        let timestamp = now().as_millis();
+        for path in [&lock.path, &paths.0, &paths.1] {
+            if path.symlink_metadata().is_ok() {
+                let archive = path.with_extension(format!("{timestamp}.json"));
+                std::fs::rename(path, &archive)?;
+                sh_status!("Archived `{}` to `{}`", path.display(), archive.display())?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn load(
@@ -153,7 +206,7 @@ where
         };
         plan.restore_sensitive();
         plan.data.set_paths(paths.clone());
-        plan.validate(batch)?;
+        plan.validate(batch, &mut Default::default())?;
         plan.validate_signed_payloads()?;
         if recover_pending {
             commit_pending_plan(&pending, &lock.path)?;
@@ -184,11 +237,11 @@ where
                 std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
             }
         }
-        Ok(Self { path: lock.path.clone(), _lock: lock, plan })
+        Ok(Self { path: lock.path.clone(), _lock: lock, plan, verified: Vec::new() })
     }
 
-    pub(crate) fn save(&self) -> Result<()> {
-        self.plan.validate(self.plan.batch)?;
+    pub(crate) fn save(&mut self) -> Result<()> {
+        self.plan.validate(self.plan.batch, &mut self.verified)?;
         write_snapshot(&self.path, &self.plan)
     }
 
@@ -270,6 +323,7 @@ where
         sequence: usize,
         index: usize,
         payload: Bytes,
+        sender_scoped_replay: bool,
     ) -> Result<B256>
     where
         N::TxEnvelope: SignerRecoverable,
@@ -285,14 +339,49 @@ where
             .get(index)
             .context("signed payload operation is not in the recovery snapshot")?;
         let transaction = &self.plan.data.sequences()[sequence].transactions[index];
-        let signed = validate_signed_payload::<N>(payload, transaction, deployment.chain)?;
+        let signed = validate_signed_payload::<N>(
+            payload,
+            transaction,
+            deployment.chain,
+            index,
+            operation_ordinal(self.plan.data.sequences(), sequence, index),
+        )?;
+        let id = operation.id;
+        // From T1B, expiring replay identities exclude sponsor signatures, so different envelopes
+        // can still be replays. Compare identities across all sequences of the same chain before
+        // recording an attempt the node would reject. Keep envelope hashes for receipt tracking.
+        let replay_hash = expiring_replay_hash(&signed.payload, sender_scoped_replay)?;
+        for attempt in self
+            .plan
+            .deployments
+            .iter()
+            .enumerate()
+            .filter(|(i, other)| {
+                *i == sequence || (replay_hash.is_some() && other.chain == deployment.chain)
+            })
+            .flat_map(|(_, other)| &other.attempts)
+        {
+            if !attempt.members.contains(&id)
+                && let AttemptKind::Signed { payload, .. } = &attempt.kind
+                && match replay_hash {
+                    Some(hash) => {
+                        expiring_replay_hash(&payload.payload, sender_scoped_replay)? == Some(hash)
+                    }
+                    None => payload.hash == signed.hash,
+                }
+            {
+                bail!(
+                    "transaction {index} is identical to an earlier transaction of this script ({}) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)",
+                    signed.hash
+                );
+            }
+        }
         if let Some(existing) = self.signed_payload(sequence, index) {
             if existing != &signed {
                 bail!("refusing to replace an existing signed payload");
             }
             return Ok(existing.hash);
         }
-        let id = operation.id;
         if deployment.attempts.iter().any(|attempt| attempt.members.contains(&id)) {
             bail!("refusing to replace an existing submission attempt");
         }
@@ -548,8 +637,8 @@ where
         if path.exists() {
             let existing: RecoveryPlan<N> = foundry_common::fs::read_json_file(path)
                 .wrap_err_with(|| format!("recovery snapshot `{}` is corrupt", path.display()))?;
-            existing.validate(self.plan.batch)?;
-            self.plan.validate(self.plan.batch)?;
+            existing.validate(self.plan.batch, &mut Default::default())?;
+            self.plan.validate(self.plan.batch, &mut Default::default())?;
             if serde_json::to_value(existing.deployments)?
                 != serde_json::to_value(&self.plan.deployments)?
             {
@@ -636,6 +725,7 @@ where
             generation,
             multi: data.is_multi(),
             batch,
+            sponsor: None,
             deployments,
             data,
         })
@@ -686,7 +776,9 @@ where
         Ok(())
     }
 
-    fn validate(&self, batch: bool) -> Result<()> {
+    /// Checks the snapshot's mode and generation, and that its operations still match the script's
+    /// transactions. `verified` caches matching transactions across calls.
+    fn validate(&self, batch: bool, verified: &mut VerifiedOperations) -> Result<()> {
         if self.version != RECOVERY_VERSION {
             bail!(
                 "unsupported recovery snapshot version {}; expected version {}",
@@ -705,15 +797,54 @@ where
         {
             bail!("recovery snapshot contains inconsistent generations");
         }
-        let mut saved = self.deployments.clone();
-        for deployment in &mut saved {
-            deployment.attempts.clear();
-        }
-        let expected = Self::new(self.data.clone(), self.batch, self.generation)?;
-        if serde_json::to_value(saved)? != serde_json::to_value(&expected.deployments)? {
+        if !self.operations_match(verified)? {
             bail!("recovery snapshot does not match the script operations; refusing to resume");
         }
         Ok(())
+    }
+
+    /// Returns true if the deployments are the ones [`Self::new`] would plan for the current
+    /// transactions, ignoring attempts.
+    ///
+    /// Fingerprinting dominates a save, so a transaction is fingerprinted again only when its
+    /// serialized form changed since it last matched its operation.
+    fn operations_match(&self, verified: &mut VerifiedOperations) -> Result<bool> {
+        let sequences = self.data.sequences();
+        if self.deployments.len() != sequences.len() {
+            return Ok(false);
+        }
+        verified.resize_with(sequences.len(), Vec::new);
+        for (sequence, ((deployment, data), verified)) in
+            self.deployments.iter().zip(sequences).zip(verified.iter_mut()).enumerate()
+        {
+            let sequence = u32::try_from(sequence).expect("too many sequences");
+            if deployment.chain != data.chain
+                || deployment.batch_id != self.batch.then_some(sequence)
+                || deployment.operations.len() != data.transactions.len()
+            {
+                return Ok(false);
+            }
+            verified.resize(data.transactions.len(), None);
+            for (index, ((operation, transaction), verified)) in
+                deployment.operations.iter().zip(&data.transactions).zip(verified).enumerate()
+            {
+                let index = u32::try_from(index).expect("too many operations");
+                if operation.id != (OperationId { sequence, index })
+                    || operation.rpc != transaction.rpc
+                {
+                    return Ok(false);
+                }
+                let digest = keccak256(serde_json::to_vec(transaction)?);
+                if *verified == Some((operation.fingerprint, digest)) {
+                    continue;
+                }
+                if operation_fingerprint(transaction)? != operation.fingerprint {
+                    return Ok(false);
+                }
+                *verified = Some((operation.fingerprint, digest));
+            }
+        }
+        Ok(true)
     }
 
     fn validate_signed_payloads(&self) -> Result<()>
@@ -806,6 +937,12 @@ where
                                 payload.payload.clone(),
                                 &data.transactions[operation.id.index as usize],
                                 deployment.chain,
+                                operation.id.index as usize,
+                                operation_ordinal(
+                                    self.data.sequences(),
+                                    sequence,
+                                    operation.id.index as usize,
+                                ),
                             )?
                         } else {
                             SignedPayload {
@@ -848,23 +985,9 @@ where
     transaction.rpc.clear();
     let transaction =
         serde_json::from_value::<TransactionWithMetadata<N>>(serde_json::to_value(transaction)?)?;
-    Ok(keccak256(serde_json::to_vec(&canonicalize(serde_json::to_value(transaction)?))?))
-}
-
-fn canonicalize(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Array(values) => {
-            serde_json::Value::Array(values.into_iter().map(canonicalize).collect())
-        }
-        serde_json::Value::Object(values) => {
-            let mut values = values.into_iter().collect::<Vec<_>>();
-            values.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-            serde_json::Value::Object(
-                values.into_iter().map(|(key, value)| (key, canonicalize(value))).collect(),
-            )
-        }
-        value => value,
-    }
+    let mut value = serde_json::to_value(transaction)?;
+    value.sort_all_objects();
+    Ok(keccak256(serde_json::to_vec(&value)?))
 }
 
 fn load_plan<N: Network>(path: &Path) -> Result<RecoveryPlan<N>>
@@ -873,6 +996,84 @@ where
 {
     foundry_common::fs::read_json_file(path)
         .wrap_err_with(|| format!("recovery snapshot `{}` is corrupt", path.display()))
+}
+
+/// Returns whether the previous execution at `paths` submitted anything and left an operation, on
+/// any chain, with neither a receipt nor a recorded revert. Without a recovery snapshot, progress
+/// saved before snapshots existed is read from the broadcast export. An unreadable snapshot counts
+/// as unfinished, as resume would refuse it too.
+///
+/// Errors when a broadcast export written with a snapshot has such an operation but the snapshot
+/// is missing, for example in a checkout without `cache/`: only the snapshot records submission
+/// attempts, so the export cannot show a submission whose response was lost. Without a snapshot,
+/// an existing but unreadable export of a non-dry run errors too, as it cannot show anything.
+fn previous_unfinished<N: Network>(
+    snapshot: &Path,
+    paths: &(PathBuf, PathBuf),
+    multi: bool,
+) -> Result<bool>
+where
+    N::TxEnvelope: for<'de> Deserialize<'de> + Serialize,
+{
+    let incomplete = |data: &SequenceData<N>| {
+        data.sequences().iter().any(|sequence| {
+            sequence.transactions.iter().any(|tx| {
+                !tx.hash.is_some_and(|hash| {
+                    sequence.reverted.contains(&hash)
+                        || sequence
+                            .receipts
+                            .iter()
+                            .any(|receipt| receipt.transaction_hash() == hash)
+                })
+            })
+        })
+    };
+    let (data, attempted) = if snapshot.exists() {
+        let Ok(plan) = load_plan::<N>(snapshot) else { return Ok(true) };
+        let attempted = plan.deployments.iter().any(|deployment| !deployment.attempts.is_empty());
+        (plan.data, attempted)
+    } else {
+        let data = if multi {
+            foundry_common::fs::read_json_file::<MultiChainSequence<N>>(&paths.0)
+                .map(SequenceData::Multi)
+        } else {
+            foundry_common::fs::read_json_file::<ScriptSequence<N>>(&paths.0)
+                .map(|sequence| SequenceData::Single(Box::new(sequence)))
+        };
+        // Dry runs never submit. Their exports sit under `DRY_RUN_DIR`, as laid out by
+        // `ScriptSequence::get_paths` and `MultiChainSequence::get_paths`.
+        let dry_run = paths.0.ancestors().nth(if multi { 2 } else { 1 }).and_then(Path::file_name)
+            == Some(DRY_RUN_DIR.as_ref());
+        let data = match data {
+            Ok(data) => data,
+            // A dangling link counts as an export, since publishing would follow it.
+            Err(_) if dry_run || paths.0.symlink_metadata().is_err() => return Ok(false),
+            Err(err) => {
+                return Err(err).wrap_err(format!(
+                    "the previous broadcast `{}` is unreadable and its recovery snapshot `{}` is missing, so forge cannot tell whether it left unfinished operations; pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending, or restore the snapshot and finish with `{}`",
+                    paths.0.display(),
+                    snapshot.display(),
+                    if multi { "--multi --resume" } else { "--resume" }
+                ));
+            }
+        };
+        if data.has_recovery_generation() && !dry_run && incomplete(&data) {
+            bail!(
+                "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so forge cannot tell which of its unfinished operations were sent; restore the snapshot and finish with `{}`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
+                snapshot.display(),
+                paths.0.display(),
+                if multi { "--multi --resume" } else { "--resume" }
+            );
+        }
+        (data, false)
+    };
+    // Transactions saved for owners on other machines hold the approvals collected so far.
+    let submitted = attempted
+        || data.sequences().iter().any(|sequence| {
+            !sequence.awaiting_owners.is_empty()
+                || sequence.transactions.iter().any(|tx| tx.hash.is_some())
+        });
+    Ok(submitted && incomplete(&data))
 }
 
 fn pending_path(path: &Path) -> PathBuf {
@@ -915,6 +1116,8 @@ fn validate_signed_payload<N: Network>(
     payload: Bytes,
     planned: &TransactionWithMetadata<N>,
     chain: u64,
+    index: usize,
+    ordinal: usize,
 ) -> Result<SignedPayload>
 where
     N::TxEnvelope: SignerRecoverable,
@@ -932,9 +1135,18 @@ where
         }
         TransactionMaybeSigned::Unsigned(_) => envelope.chain_id() == Some(chain),
     };
+    // The planned nonce is the sender's sequential nonce. A Tempo expiring nonce transaction
+    // never reads nonce state and is signed with 0 or, from T12, with its complete-plan ordinal as
+    // the TIP-1106 discriminator. Accept sequence-local indices from older recovery snapshots
+    // too.
+    let nonce = envelope.nonce();
+    let nonce_matches = transaction.nonce() == Some(nonce)
+        || ((nonce == 0 || nonce == ordinal as u64 || nonce == index as u64)
+            && <N::TransactionRequest as From<N::TxEnvelope>>::from(envelope.clone()).nonce_key()
+                == Some(TEMPO_EXPIRING_NONCE_KEY));
     if transaction.from() != Some(signer)
         || !chain_matches
-        || transaction.nonce() != Some(envelope.nonce())
+        || !nonce_matches
         || transaction.to() != envelope.to()
         || transaction.value().unwrap_or_default() != envelope.value()
         || transaction.input().cloned().unwrap_or_default() != *envelope.input()
@@ -975,8 +1187,10 @@ where
         || planned.chain_id() != Some(chain)
         || transaction.nonce() != planned.nonce().context("delegated request has no nonce")?
         || planned_tempo_aa != resolved_tempo_aa
+        // A missing `to` and `TxKind::Create` both describe a contract creation.
         || (!planned_tempo_aa
-            && (resolved.kind() != planned.kind()
+            && (resolved.kind().unwrap_or(TxKind::Create)
+                != planned.kind().unwrap_or(TxKind::Create)
                 || resolved.value().unwrap_or_default() != planned.value().unwrap_or_default()
                 || resolved.input().unwrap_or_default() != planned.input().unwrap_or_default()))
         || transaction.authorization_list().unwrap_or_default()
@@ -1066,18 +1280,33 @@ where
     Ok(())
 }
 
+/// Tempo replay protection excludes sponsor signatures from T1B onward.
+fn expiring_replay_hash(payload: &[u8], sender_scoped_replay: bool) -> Result<Option<B256>> {
+    if let Ok(TempoTxEnvelope::AA(tx)) = TempoTxEnvelope::decode_2718_exact(payload)
+        && tx.tx().is_expiring_nonce_tx()
+    {
+        return Ok(Some(if sender_scoped_replay {
+            tx.expiring_nonce_hash(tx.recover_signer()?)
+        } else {
+            *tx.hash()
+        }));
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_consensus::{
-        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, transaction::Recovered,
+        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, TxEip1559,
+        TxEnvelope, transaction::Recovered,
     };
     use alloy_network::Ethereum;
-    use alloy_primitives::{Bloom, TxKind, U256, hex};
+    use alloy_primitives::{Bloom, Signature, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{AASigned, TempoSignature, TempoTxEnvelope, transaction::Call};
+    use tempo_primitives::{AASigned, TempoSignature, transaction::Call};
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1085,6 +1314,9 @@ mod tests {
     const OTHER_SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505"
     );
+
+    const ROOT_PRIVATE_KEY: &str =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
     fn sequence(dir: &Path) -> SequenceData<Ethereum> {
         let mut transaction = TransactionWithMetadata::from_tx_request(
@@ -1094,7 +1326,7 @@ mod tests {
         let mut sequence = forge_script_sequence::ScriptSequence::default();
         sequence.transactions.push_back(transaction);
         sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
-        SequenceData::Single(sequence)
+        SequenceData::Single(Box::new(sequence))
     }
 
     fn signed_sequence(dir: &Path) -> SequenceData<Ethereum> {
@@ -1111,7 +1343,7 @@ mod tests {
             ..Default::default()
         };
         sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
-        SequenceData::Single(sequence)
+        SequenceData::Single(Box::new(sequence))
     }
 
     fn delegated_transaction(payload: &[u8]) -> (TransactionRequest, RpcTransaction) {
@@ -1134,10 +1366,8 @@ mod tests {
         request: TempoTransactionRequest,
         from: Address,
     ) -> RpcTransaction<TempoTxEnvelope> {
-        let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-            request.build_aa().unwrap(),
-            TempoSignature::default(),
-        ));
+        let envelope =
+            TempoTxEnvelope::AA(request.build_aa().unwrap().into_signed(TempoSignature::default()));
         RpcTransaction {
             inner: Recovered::new_unchecked(envelope, from),
             block_hash: None,
@@ -1146,6 +1376,56 @@ mod tests {
             effective_gas_price: None,
             block_timestamp: None,
         }
+    }
+
+    #[test]
+    fn expiring_signed_payload_accepts_complete_plan_ordinal_and_legacy_index() {
+        let signer = foundry_wallets::utils::create_local_signer(ROOT_PRIVATE_KEY).unwrap();
+        let request = expiring_request(signer.address(), 4217, 8);
+        let planned =
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(request.clone()));
+        for nonce in [0, 1, 3, 4] {
+            let mut request = request.clone();
+            request.inner.nonce = Some(nonce);
+            let payload = sign_tempo_payload(request, &signer);
+            assert_eq!(
+                validate_signed_payload::<TempoNetwork>(payload, &planned, 4217, 1, 3).is_ok(),
+                nonce != 4
+            );
+        }
+    }
+
+    #[test]
+    fn identical_expiring_payload_is_rejected_across_same_chain_sequences() {
+        let dir = tempfile::tempdir().unwrap();
+        let signer = foundry_wallets::utils::create_local_signer(ROOT_PRIVATE_KEY).unwrap();
+        // A -> B -> A: the planned nonce on A advances, the signed expiring nonce stays 0.
+        let deployments = [(4217, 0), (4218, 0), (4217, 1)]
+            .map(|(chain, nonce)| ScriptSequence::<TempoNetwork> {
+                chain,
+                transactions: [TransactionWithMetadata::from_tx_request(
+                    TransactionMaybeSigned::new(expiring_request(signer.address(), chain, nonce)),
+                )]
+                .into(),
+                ..Default::default()
+            })
+            .into();
+        let data = SequenceData::Multi(MultiChainSequence {
+            deployments,
+            path: dir.path().join("broadcast.json"),
+            sensitive_path: dir.path().join("cache.json"),
+            timestamp: 0,
+        });
+        let payload = sign_tempo_payload(expiring_request(signer.address(), 4217, 0), &signer);
+
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
+        let hash = store.persist_signed_payload(0, 0, payload.clone(), true).unwrap();
+        assert_eq!(
+            store.persist_signed_payload(2, 0, payload, true).unwrap_err().to_string(),
+            format!(
+                "transaction 0 is identical to an earlier transaction of this script ({hash}) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)"
+            )
+        );
     }
 
     fn sign_tempo_sponsor(
@@ -1168,7 +1448,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let paths = data.paths();
-        let store = RecoveryStore::create(data, false).unwrap();
+        let store = RecoveryStore::create(data, false, None).unwrap();
         let value: serde_json::Value = foundry_common::fs::read_json_file(&store.path).unwrap();
         assert_eq!(value["version"], RECOVERY_VERSION);
         assert_eq!(value["deployments"][0]["operations"][0]["id"]["sequence"], 0);
@@ -1187,7 +1467,7 @@ mod tests {
         let paths = data.paths();
         let hash = B256::repeat_byte(0x11);
         {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             let deployment = &mut store.data_mut().sequences_mut()[0];
             deployment.transactions[0].hash = Some(hash);
             deployment.pending.push(hash);
@@ -1213,7 +1493,7 @@ mod tests {
         let paths = data.paths();
         let hash = B256::repeat_byte(0x22);
         {
-            let mut store = RecoveryStore::create(data.clone(), false).unwrap();
+            let mut store = RecoveryStore::create(data.clone(), false, None).unwrap();
             store.data_mut().sequences_mut()[0].transactions[0].hash = Some(hash);
             store.save().unwrap();
         }
@@ -1230,7 +1510,7 @@ mod tests {
         let paths = data.paths();
         data.publish(&paths).unwrap();
         let snapshot = {
-            let store = RecoveryStore::create(data, false).unwrap();
+            let store = RecoveryStore::create(data, false, None).unwrap();
             store.path
         };
         std::fs::write(snapshot, b"{").unwrap();
@@ -1245,7 +1525,7 @@ mod tests {
         let paths = data.paths();
         let hash = B256::repeat_byte(0x33);
         let snapshot = {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             store.data_mut().sequences_mut()[0].pending.push(hash);
             write_plan(&pending_path(&store.path), &store.plan).unwrap();
             store.path.clone()
@@ -1260,8 +1540,19 @@ mod tests {
     #[test]
     fn changed_operations_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = RecoveryStore::create(sequence(dir.path()), false).unwrap();
+        let mut store = RecoveryStore::create(sequence(dir.path()), false, None).unwrap();
         store.data_mut().sequences_mut()[0].transactions.clear();
+        assert!(store.save().unwrap_err().to_string().contains("does not match"));
+    }
+
+    #[test]
+    fn save_rechecks_operations_changed_after_an_earlier_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = RecoveryStore::create(sequence(dir.path()), false, None).unwrap();
+        store.save().unwrap();
+        store.data_mut().sequences_mut()[0].transactions[0].hash = Some(B256::repeat_byte(0x11));
+        store.save().unwrap();
+        store.data_mut().sequences_mut()[0].transactions[0].function = Some("f()".to_string());
         assert!(store.save().unwrap_err().to_string().contains("does not match"));
     }
 
@@ -1270,7 +1561,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let source_paths = data.paths();
-        let mut store = RecoveryStore::create(data, false).unwrap();
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
         let destination = dir.path().join("broadcast-cache.json");
         let destination_snapshot = recovery_path_from_sensitive(&destination).unwrap();
         let paths = (dir.path().join("broadcasted.json"), destination);
@@ -1288,9 +1579,9 @@ mod tests {
         let data = signed_sequence(dir.path());
         let paths = data.paths();
         let expected_hash = {
-            let mut store = RecoveryStore::create(data, false).unwrap();
-            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into()).unwrap();
-            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
+            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into(), true).unwrap();
+            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into(), true).is_err());
             hash
         };
 
@@ -1303,10 +1594,10 @@ mod tests {
     #[test]
     fn signed_payload_is_bound_to_its_planned_operation() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
+        let mut store = RecoveryStore::create(signed_sequence(dir.path()), false, None).unwrap();
 
-        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.to_vec().into()).is_err());
-        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.to_vec().into()).is_err());
+        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into(), true).is_err());
+        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into(), true).is_err());
     }
 
     #[test]
@@ -1314,10 +1605,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let paths = data.paths();
-        let request = <Ethereum as Network>::TransactionRequest::default();
+        let request = TransactionRequest::default();
         let hash = B256::repeat_byte(0x42);
         {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             store.persist_delegated_request(0, 0, request).unwrap();
             store.persist_delegated_status(0, 0, DelegatedStatus::Pending { hash }).unwrap();
             assert!(store.persist_delegated_request(0, 0, Default::default()).is_err());
@@ -1349,6 +1640,111 @@ mod tests {
     }
 
     #[test]
+    fn delegated_resolution_matches_creations_by_kind() {
+        let from = Address::repeat_byte(0x11);
+        let transaction = |to: TxKind| {
+            let envelope = TxEnvelope::Eip1559(
+                TxEip1559 {
+                    chain_id: 1,
+                    gas_limit: 100_000,
+                    max_fee_per_gas: 1,
+                    max_priority_fee_per_gas: 1,
+                    to,
+                    input: Bytes::from_static(&[0x60, 0x00]),
+                    ..Default::default()
+                }
+                .into_signed(Signature::test_signature()),
+            );
+            RpcTransaction {
+                inner: Recovered::new_unchecked(envelope, from),
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                effective_gas_price: None,
+                block_timestamp: None,
+            }
+        };
+        // Serialize the planned request the same way the recovery snapshot stores it.
+        let planned = |to: TxKind| {
+            let mut request: TransactionRequest = transaction(to).inner.into_inner().into();
+            request.from = Some(from);
+            serde_json::from_value::<TransactionRequest>(serde_json::to_value(request).unwrap())
+                .unwrap()
+        };
+        let validate = |transaction: &RpcTransaction, planned: &TransactionRequest| {
+            validate_delegated_transaction::<Ethereum>(
+                transaction,
+                planned,
+                1,
+                transaction.tx_hash(),
+            )
+        };
+        let create = transaction(TxKind::Create);
+        let call = transaction(TxKind::Call(Address::repeat_byte(0x22)));
+        assert_eq!(planned(TxKind::Create).to, None);
+
+        validate(&create, &planned(TxKind::Create)).unwrap();
+        validate(&call, &planned(TxKind::Call(Address::repeat_byte(0x22)))).unwrap();
+        assert!(validate(&create, &planned(TxKind::Call(Address::repeat_byte(0x22)))).is_err());
+        assert!(validate(&call, &planned(TxKind::Create)).is_err());
+        assert!(validate(&call, &planned(TxKind::Call(Address::repeat_byte(0x33)))).is_err());
+    }
+
+    #[test]
+    fn delegated_tempo_resolution_matches_creations_by_kind() {
+        let from = Address::repeat_byte(0x11);
+        let transaction = |to: TxKind| {
+            let envelope = TempoTxEnvelope::Eip1559(
+                TxEip1559 {
+                    chain_id: 4217,
+                    gas_limit: 100_000,
+                    max_fee_per_gas: 1,
+                    max_priority_fee_per_gas: 1,
+                    to,
+                    input: Bytes::from_static(&[0x60, 0x00]),
+                    ..Default::default()
+                }
+                .into_signed(Signature::test_signature()),
+            );
+            RpcTransaction {
+                inner: Recovered::new_unchecked(envelope, from),
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                effective_gas_price: None,
+                block_timestamp: None,
+            }
+        };
+        // Serialize the planned request the same way the recovery snapshot stores it.
+        let planned = |to: TxKind| {
+            let mut request = <TempoTransactionRequest as From<_>>::from(transaction(to));
+            request.inner.from = Some(from);
+            serde_json::from_value::<TempoTransactionRequest>(
+                serde_json::to_value(request).unwrap(),
+            )
+            .unwrap()
+        };
+        let validate = |transaction: &RpcTransaction<TempoTxEnvelope>,
+                        planned: &TempoTransactionRequest| {
+            validate_delegated_transaction::<TempoNetwork>(
+                transaction,
+                planned,
+                4217,
+                transaction.tx_hash(),
+            )
+        };
+        let create = transaction(TxKind::Create);
+        let call = transaction(TxKind::Call(Address::repeat_byte(0x22)));
+        assert_eq!(planned(TxKind::Create).inner.to, None);
+        assert!(!planned(TxKind::Create).is_tempo_aa());
+
+        validate(&create, &planned(TxKind::Create)).unwrap();
+        validate(&call, &planned(TxKind::Call(Address::repeat_byte(0x22)))).unwrap();
+        assert!(validate(&create, &planned(TxKind::Call(Address::repeat_byte(0x22)))).is_err());
+        assert!(validate(&call, &planned(TxKind::Create)).is_err());
+    }
+
+    #[test]
     fn delegated_tempo_resolution_checks_nonce_domain_and_calls() {
         let from = Address::repeat_byte(0x11);
         let resolved = TempoTransactionRequest {
@@ -1365,7 +1761,7 @@ mod tests {
             calls: vec![
                 Call {
                     to: TxKind::Call(Address::repeat_byte(0x22)),
-                    value: U256::from(1),
+                    value: U256::ONE,
                     input: Bytes::from_static(&[0x12]),
                 },
                 Call {
@@ -1500,7 +1896,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let paths = data.paths();
-        let mut store = RecoveryStore::create(data, false).unwrap();
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
         store.persist_delegated_request(0, 0, Default::default()).unwrap();
         store.clear_delegated_request(0, 0).unwrap();
         assert!(store.delegated_status(0, 0).is_none());
@@ -1516,11 +1912,9 @@ mod tests {
         let paths = data.paths();
         let request = TransactionRequest::default();
         {
-            let mut store = RecoveryStore::create(data, true).unwrap();
-            store
-                .persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.to_vec().into())
-                .unwrap();
-            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            let mut store = RecoveryStore::create(data, true, None).unwrap();
+            store.persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.into()).unwrap();
+            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into(), true).is_err());
         }
 
         let store = load(&paths, true).unwrap();
@@ -1539,13 +1933,13 @@ mod tests {
             let data = signed_sequence(dir.path());
             let paths = data.paths();
             {
-                let mut store = RecoveryStore::create(data, true).unwrap();
+                let mut store = RecoveryStore::create(data, true, None).unwrap();
                 store
                     .persist_batch_signed_payload(
                         0,
                         0,
                         TransactionRequest::default(),
-                        SIGNED_TX.to_vec().into(),
+                        SIGNED_TX.into(),
                     )
                     .unwrap();
                 let deployment = &mut store.data_mut().sequences_mut()[0];
@@ -1564,7 +1958,7 @@ mod tests {
         let data = signed_sequence(dir.path());
         let paths = data.paths();
         {
-            let mut store = RecoveryStore::create(data, true).unwrap();
+            let mut store = RecoveryStore::create(data, true, None).unwrap();
             store.data_mut().sequences_mut()[0].pending.push(B256::repeat_byte(0x77));
             write_snapshot(&store.path, &store.plan).unwrap();
         }
@@ -1650,5 +2044,212 @@ mod tests {
 
         assert!(RecoveryStore::import(data, true, RecoveryLock::acquire(&paths).unwrap()).is_err());
         assert!(!snapshot.exists());
+    }
+
+    #[test]
+    fn expiring_replay_guard_ignores_sponsor_changes_and_keeps_discriminators() {
+        let dir = tempfile::tempdir().unwrap();
+        let sender = foundry_wallets::utils::create_local_signer(ROOT_PRIVATE_KEY).unwrap();
+        let sponsor = foundry_wallets::utils::create_local_signer(
+            "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0",
+        )
+        .unwrap();
+        let request = |nonce| expiring_request(sender.address(), 4217, nonce);
+        let data = SequenceData::Multi(MultiChainSequence {
+            deployments: [0, 1]
+                .map(|nonce| ScriptSequence::<TempoNetwork> {
+                    chain: 4217,
+                    transactions: [TransactionWithMetadata::from_tx_request(
+                        TransactionMaybeSigned::new(request(nonce)),
+                    )]
+                    .into(),
+                    ..Default::default()
+                })
+                .into(),
+            path: dir.path().join("broadcast.json"),
+            sensitive_path: dir.path().join("cache.json"),
+            timestamp: 0,
+        });
+        let payload = |nonce, sponsor: &_| {
+            let mut request = request(nonce);
+            sign_tempo_sponsor(&mut request, sender.address(), sponsor);
+            sign_tempo_payload(request, &sender)
+        };
+        let first = payload(0, &sender);
+        let duplicate = payload(0, &sponsor);
+        assert_ne!(
+            signed_payload_hash::<TempoNetwork>(&first).unwrap(),
+            signed_payload_hash::<TempoNetwork>(&duplicate).unwrap()
+        );
+        assert_eq!(
+            expiring_replay_hash(&first, true).unwrap(),
+            expiring_replay_hash(&duplicate, true).unwrap()
+        );
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
+        let first_hash = store.persist_signed_payload(0, 0, first, true).unwrap();
+        assert_eq!(store.signed_payload(0, 0).unwrap().hash, first_hash);
+        let snapshot = std::fs::read(&store.path).unwrap();
+        let duplicate_hash = signed_payload_hash::<TempoNetwork>(&duplicate).unwrap();
+        assert_eq!(
+            store.persist_signed_payload(1, 0, duplicate.clone(), true).unwrap_err().to_string(),
+            format!(
+                "transaction 0 is identical to an earlier transaction of this script ({duplicate_hash}) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)"
+            )
+        );
+        assert!(store.signed_payload(1, 0).is_none());
+        assert_eq!(std::fs::read(&store.path).unwrap(), snapshot);
+        // Older snapshots may already contain a conflicting durable attempt.
+        let id = store.plan.deployments[1].operations[0].id;
+        store.plan.deployments[1].attempts.push(SubmissionAttempt {
+            id: B256::random(),
+            members: vec![id],
+            kind: AttemptKind::Signed {
+                request: None,
+                payload: SignedPayload { payload: duplicate.clone(), hash: duplicate_hash },
+            },
+        });
+        assert!(store.persist_signed_payload(1, 0, duplicate.clone(), true).is_err());
+        store.plan.deployments[1].attempts.clear();
+        // T1/T1A use envelope hashes, so the differently sponsored payload is executable.
+        assert_eq!(store.persist_signed_payload(1, 0, duplicate, false).unwrap(), duplicate_hash);
+        store.plan.deployments[1].attempts.clear();
+        // T12 discriminators distinguish the second operation despite the sponsor change.
+        let distinct = payload(1, &sponsor);
+        let distinct_hash = signed_payload_hash::<TempoNetwork>(&distinct).unwrap();
+        assert_eq!(store.persist_signed_payload(1, 0, distinct, true).unwrap(), distinct_hash);
+        assert_eq!(store.signed_payload(1, 0).unwrap().hash, distinct_hash);
+    }
+
+    fn expiring_request(from: Address, chain_id: u64, nonce: u64) -> TempoTransactionRequest {
+        TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(from),
+                to: Some(TxKind::Call(Address::with_last_byte(2))),
+                chain_id: Some(chain_id),
+                nonce: Some(nonce),
+                gas: Some(100_000),
+                max_fee_per_gas: Some(10),
+                max_priority_fee_per_gas: Some(1),
+                ..Default::default()
+            },
+            nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY),
+            valid_before: std::num::NonZeroU64::new(100),
+            ..Default::default()
+        }
+    }
+
+    fn sign_tempo_payload(request: TempoTransactionRequest, signer: &impl SignerSync) -> Bytes {
+        let tx = request.build_aa().unwrap();
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        Bytes::from(
+            TempoTxEnvelope::AA(AASigned::new_unhashed(tx, TempoSignature::from(signature)))
+                .encoded_2718(),
+        )
+    }
+
+    #[test]
+    fn sponsor_survives_reload_and_defaults_to_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = sequence(dir.path());
+        let paths = data.paths();
+        let sponsor = Address::repeat_byte(0x55);
+        let snapshot = RecoveryStore::create(data, false, Some(sponsor)).unwrap().path;
+        let store = load(&paths, false).unwrap();
+        assert_eq!(store.sponsor(), Some(sponsor));
+        drop(store);
+
+        // Snapshots written before the sponsor was recorded load without one.
+        let mut value: serde_json::Value = foundry_common::fs::read_json_file(&snapshot).unwrap();
+        assert_eq!(value["sponsor"], serde_json::json!(sponsor));
+        value.as_object_mut().unwrap().remove("sponsor");
+        std::fs::write(&snapshot, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(load(&paths, false).unwrap().sponsor(), None);
+    }
+
+    #[test]
+    fn new_execution_refuses_unfinished_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = sequence(dir.path()).paths();
+        let refused = format!(
+            "the previous broadcast `{}` has unfinished operations; finish it with `--resume`, or pass `--start-fresh` to archive it and broadcast anew",
+            paths.0.display()
+        );
+        let create = || RecoveryStore::create(sequence(dir.path()), false, None).map(|_| ());
+
+        // Progress without any submission is replaced.
+        create().unwrap();
+        create().unwrap();
+
+        // A submission attempt makes it unfinished, also when its commit was interrupted.
+        let mut store = RecoveryStore::create(sequence(dir.path()), false, None).unwrap();
+        store.persist_delegated_request(0, 0, Default::default()).unwrap();
+        let snapshot = store.path.clone();
+        drop(store);
+        assert_eq!(create().unwrap_err().to_string(), refused);
+        std::fs::rename(&snapshot, pending_path(&snapshot)).unwrap();
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        assert!(!snapshot.exists() && !pending_path(&snapshot).exists());
+        create().unwrap();
+
+        // An unreadable snapshot is never silently replaced.
+        std::fs::write(&snapshot, "garbage").unwrap();
+        assert_eq!(create().unwrap_err().to_string(), refused);
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        create().unwrap();
+
+        // Without a snapshot, progress saved before snapshots existed is checked.
+        std::fs::remove_file(&snapshot).unwrap();
+        let mut legacy = sequence(dir.path());
+        legacy.sequences_mut()[0].transactions[0].hash = Some(B256::ZERO);
+        foundry_common::fs::write_json_file(&paths.0, &legacy.sequences()[0]).unwrap();
+        assert_eq!(create().unwrap_err().to_string(), refused);
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        assert!(!paths.0.exists());
+        create().unwrap();
+
+        // An export written with a snapshot cannot show a submission whose response was lost, so
+        // without its snapshot it blocks while any operation is incomplete, even without hashes.
+        std::fs::remove_file(&snapshot).unwrap();
+        let mut export = sequence(dir.path());
+        export.set_recovery_generation(B256::ZERO);
+        export.publish(&paths).unwrap();
+        assert_eq!(
+            create().unwrap_err().to_string(),
+            format!(
+                "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so forge cannot tell which of its unfinished operations were sent; restore the snapshot and finish with `--resume`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
+                snapshot.display(),
+                paths.0.display()
+            )
+        );
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        assert!(!paths.0.exists());
+        create().unwrap();
+
+        // A completed export without its snapshot does not block.
+        std::fs::remove_file(&snapshot).unwrap();
+        export.sequences_mut()[0].transactions[0].hash = Some(B256::ZERO);
+        export.sequences_mut()[0].reverted.push(B256::ZERO);
+        export.publish(&paths).unwrap();
+        create().unwrap();
+
+        // Dry runs never submit, so their exports never block, in either layout.
+        let single = sequence(dir.path());
+        let multi = SequenceData::Multi(MultiChainSequence {
+            deployments: single.sequences().to_vec(),
+            path: PathBuf::new(),
+            sensitive_path: PathBuf::new(),
+            timestamp: 0,
+        });
+        for (mut dry_run, export) in
+            [(single, "dry-run/run.json"), (multi, "multi/dry-run/Script.s.sol-latest/run.json")]
+        {
+            let export = dir.path().join(export);
+            let paths = (export.clone(), export.with_file_name("cache.json"));
+            std::fs::create_dir_all(export.parent().unwrap()).unwrap();
+            dry_run.set_recovery_generation(B256::ZERO);
+            dry_run.publish(&paths).unwrap();
+            dry_run.set_paths(paths);
+            RecoveryStore::create(dry_run, false, None).unwrap();
+        }
     }
 }

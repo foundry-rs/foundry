@@ -117,8 +117,7 @@ async fn test_solc_revert_example() {
 
     let contract = VendingMachine::deploy(&provider).await.unwrap();
 
-    let err =
-        contract.buy(U256::from(100)).value(U256::from(1)).from(sender).call().await.unwrap_err();
+    let err = contract.buy(U256::from(100)).value(U256::ONE).from(sender).call().await.unwrap_err();
     let s = err.to_string();
     assert!(s.contains("Not enough Ether provided."), "{s:?}");
 }
@@ -144,7 +143,7 @@ async fn test_another_revert_message() {
 
     let contract = Contract::deploy(&provider).await.unwrap();
 
-    let err = contract.setNumber(U256::from(0)).call().await.unwrap_err();
+    let err = contract.setNumber(U256::ZERO).call().await.unwrap_err();
     let s = err.to_string();
     assert!(s.contains("RevertStringFooBar"), "{s:?}");
 }

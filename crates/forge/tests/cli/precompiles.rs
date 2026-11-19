@@ -148,7 +148,7 @@ contract PrecompileTraceTest is Test {
         vm.mockFunction(address(0x100), address(0x02), callData);
         (bool success, bytes memory result) = address(0x100).call(callData);
         assertTrue(success);
-        assertEq(result.length, 0);
+        assertEq(result, abi.encodePacked(sha256(callData)));
     }
 
     function test_mocked_p256_call() public {
@@ -277,7 +277,7 @@ Traces:
         .stdout_eq(str![[r#"
 ...
     ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode()
-    │   └─ ← [Return]
+    │   └─ ← [Return] true
 ...
 "#]]);
 
@@ -369,7 +369,16 @@ contract PrecompileCheatcodeLoadTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--match-contract", "PrecompileCheatcodeLoadTest"]).assert_success();
+    cmd.args(["test", "--match-contract", "PrecompileCheatcodeLoadTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/PrecompileCheatcodeLoad.t.sol:PrecompileCheatcodeLoadTest
+[PASS] test_load_allows_precompile_target() ([GAS])
+[PASS] test_mutation_cheatcodes_reject_precompile_target() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -642,6 +651,164 @@ contract TempoT8CurrentCommitteeTest is Test {
     assert!(stdout.contains("← [Revert] Unauthorized()"), "{stdout}");
 }
 
+// Signatures made by the configurable account cheatcodes verify in the T14 precompiles.
+#[forgetest_init]
+fn tempo_t14_configurable_account_signatures_verify(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.networks = NetworkConfigs::with_tempo();
+        config.hardfork = Some("tempo:T14".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+
+    prj.add_test(
+        "TempoT14ConfigurableAccount.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+interface TempoVm {
+    struct ConfigurableAccountOwner { address owner; uint8 weight; }
+    struct ConfigurableAccountConfig { bytes32 salt; uint64 version; uint8 threshold; ConfigurableAccountOwner[] owners; }
+    enum OwnerKeyType { Secp256k1, P256, WebAuthn }
+    struct OwnerKey { OwnerKeyType keyType; uint256 privateKey; }
+
+    function deriveConfigurableAccount(ConfigurableAccountConfig calldata config) external pure returns (address account);
+    function signConfigurableAccount(uint256[] calldata privateKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);
+    function signConfigurableAccount(OwnerKey[] calldata ownerKeys, address account, ConfigurableAccountConfig calldata config, bytes32 digest) external pure returns (bytes memory signature);
+    function signKeychainConfigurableAccount(OwnerKey[] calldata ownerKeys, address configurableAccount, ConfigurableAccountConfig calldata config, address account, bytes32 digest) external pure returns (bytes memory signature);
+}
+
+interface IConfigurableAccount {
+    function deriveAccount(bytes32 salt, uint8 threshold, TempoVm.ConfigurableAccountOwner[] calldata owners) external pure returns (address account);
+}
+
+interface IAccountKeychain {
+    struct TokenLimit { address token; uint256 amount; uint64 period; }
+    struct SelectorRule { bytes4 selector; address[] recipients; }
+    struct CallScope { address target; SelectorRule[] selectorRules; }
+    struct KeyRestrictions { uint64 expiry; bool enforceLimits; TokenLimit[] limits; bool allowAnyCalls; CallScope[] allowedCalls; }
+
+    function authorizeKey(address keyId, uint8 signatureType, KeyRestrictions calldata config) external;
+}
+
+interface ISignatureVerifier {
+    function verifyConfigurableAccount(address account, bytes32 hash, bytes calldata signature) external view returns (bool);
+    function verifyKeychain(address account, bytes32 hash, bytes calldata signature) external view returns (bool);
+}
+
+contract TempoT14ConfigurableAccountTest is Test {
+    TempoVm constant tempoVm = TempoVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+    IConfigurableAccount constant precompile = IConfigurableAccount(address(bytes20(hex"aacc000000000000000000000000000000000000")));
+    IAccountKeychain constant keychain = IAccountKeychain(address(bytes20(hex"aaaaaaaa00000000000000000000000000000000")));
+    ISignatureVerifier constant verifier = ISignatureVerifier(address(bytes20(hex"5165300000000000000000000000000000000000")));
+
+    uint256 constant ALICE_PK = 0xA11CE;
+    uint256 constant P256_PK = 0xCA11;
+    uint256 constant WEBAUTHN_PK = 0xBEEF;
+    uint256 constant ROOT_PK = 0x5007;
+
+    TempoVm.ConfigurableAccountConfig config;
+    address account;
+    bytes32 digest = keccak256("tempo t14 configurable account");
+
+    function setUp() public {
+        // The WebAuthn, P-256 and secp256k1 owners, in ascending address order.
+        config.threshold = 2;
+        config.owners.push(TempoVm.ConfigurableAccountOwner(p256Owner(WEBAUTHN_PK), 1));
+        config.owners.push(TempoVm.ConfigurableAccountOwner(p256Owner(P256_PK), 1));
+        config.owners.push(TempoVm.ConfigurableAccountOwner(vm.addr(ALICE_PK), 1));
+        account = tempoVm.deriveConfigurableAccount(config);
+    }
+
+    function p256Owner(uint256 privateKey) internal pure returns (address) {
+        (uint256 x, uint256 y) = vm.publicKeyP256(privateKey);
+        return address(uint160(uint256(keccak256(abi.encode(x, y)))));
+    }
+
+    function ownerKeys() internal pure returns (TempoVm.OwnerKey[] memory keys) {
+        // The P-256 owner's address is above the WebAuthn owner's, so the cheatcode must sort,
+        // and it must drop Alice's key, whose third approval the verifier rejects with
+        // `ExcessSignatures`.
+        keys = new TempoVm.OwnerKey[](3);
+        keys[0] = TempoVm.OwnerKey(TempoVm.OwnerKeyType.P256, P256_PK);
+        keys[1] = TempoVm.OwnerKey(TempoVm.OwnerKeyType.Secp256k1, ALICE_PK);
+        keys[2] = TempoVm.OwnerKey(TempoVm.OwnerKeyType.WebAuthn, WEBAUTHN_PK);
+    }
+
+    function test_derived_account_matches_precompile() public view {
+        assertEq(precompile.deriveAccount(config.salt, config.threshold, config.owners), account);
+    }
+
+    function test_secp256k1_signature_verifies() public view {
+        uint256[] memory keys = new uint256[](1);
+        keys[0] = ALICE_PK;
+        // Alice alone reaches a threshold of one.
+        TempoVm.ConfigurableAccountConfig memory oneOfOne = config;
+        oneOfOne.threshold = 1;
+        address oneOfOneAccount = tempoVm.deriveConfigurableAccount(oneOfOne);
+        bytes memory signature = tempoVm.signConfigurableAccount(keys, oneOfOneAccount, oneOfOne, digest);
+        assertTrue(verifier.verifyConfigurableAccount(oneOfOneAccount, digest, signature));
+    }
+
+    function test_p256_and_webauthn_signature_verifies() public {
+        bytes memory signature = tempoVm.signConfigurableAccount(ownerKeys(), account, config, digest);
+        assertTrue(verifier.verifyConfigurableAccount(account, digest, signature));
+
+        vm.expectRevert(abi.encodeWithSignature("InvalidSignature()"));
+        verifier.verifyConfigurableAccount(account, keccak256("other"), signature);
+    }
+
+    function test_keychain_signature_with_configurable_access_key_verifies() public {
+        address root = vm.addr(ROOT_PK);
+        bytes memory signature = tempoVm.signKeychainConfigurableAccount(ownerKeys(), account, config, root, digest);
+        assertFalse(verifier.verifyKeychain(root, digest, signature));
+
+        IAccountKeychain.KeyRestrictions memory restrictions;
+        restrictions.expiry = type(uint64).max;
+        restrictions.allowAnyCalls = true;
+        vm.prank(root, root);
+        keychain.authorizeKey(account, 3, restrictions);
+        assertTrue(verifier.verifyKeychain(root, digest, signature));
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "TempoT14ConfigurableAccountTest"]).assert_success().stdout_eq(str![
+        [r#"
+...
+Ran 4 tests for test/TempoT14ConfigurableAccount.t.sol:TempoT14ConfigurableAccountTest
+[PASS] test_derived_account_matches_precompile() ([GAS])
+[PASS] test_keychain_signature_with_configurable_access_key_verifies() ([GAS])
+[PASS] test_p256_and_webauthn_signature_verifies() ([GAS])
+[PASS] test_secp256k1_signature_verifies() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]
+    ]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_derived_account_matches_precompile", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/TempoT14ConfigurableAccount.t.sol:TempoT14ConfigurableAccountTest
+[PASS] test_derived_account_matches_precompile() ([GAS])
+Traces:
+  [..] TempoT14ConfigurableAccountTest::test_derived_account_matches_precompile()
+    ├─ [..] ConfigurableAccount::deriveAccount(0x0000000000000000000000000000000000000000000000000000000000000000, 2, [(0x22F8f1c700f14B68f0B4987348685d08A67f8444, 1), (0x2529d5fD061c1d4E7350Bec775cE38FbB39a434a, 1), (0xe05fcC23807536bEe418f142D19fa0d21BB0cfF7, 1)]) [staticcall]
+    │   └─ ← [Return] 0xFf9A5F2996A1C7EA2F1739C754589F995BC688D1
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
 // tests transfer using celo precompile.
 // <https://github.com/foundry-rs/foundry/issues/11622>
 #[forgetest_init]
@@ -820,5 +987,14 @@ contract ArbSysGasTest is Test {
     );
 
     cmd.env("FOUNDRY_CHAIN_ID", "42161");
-    cmd.args(["test", "--mt", "test_arbsys_", "--isolate"]).assert_success();
+    cmd.args(["test", "--mt", "test_arbsys_", "--isolate"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/ArbSysGas.t.sol:ArbSysGasTest
+[PASS] test_arbsys_arb_block_number_gas() ([GAS])
+[PASS] test_arbsys_isolated_call_gas() ([GAS])
+[PASS] test_arbsys_isolated_create_gas() ([GAS])
+[PASS] test_arbsys_other_selector_uses_code() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

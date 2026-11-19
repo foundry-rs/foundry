@@ -256,9 +256,11 @@ async fn test_tempo_canary_fork_aa_tip20_transfer() {
 /// Sponsored AA transfers must keep replaying, see [`AA_SPONSORED_TRANSFER_WITH_MEMO`].
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_canary_fork_aa_sponsored_transfer_with_memo() {
+    // From T14 the handler checks that the fee payer's root key is not retired, which loads the
+    // cold fee payer and charges its account access (100 warm read + 2,500 cold surcharge).
     replay(AA_SPONSORED_TRANSFER_WITH_MEMO, TempoHardfork::latest())
         .await
-        .assert_matches_source(GasCheck::Exact);
+        .assert_matches_source(GasCheck::Offset(2_600));
 }
 
 /// Allowance pulls must keep replaying, see [`AA_TIP20_TRANSFER_FROM`].
@@ -496,7 +498,7 @@ async fn replay(pinned: PinnedTransaction, hardfork: TempoHardfork) -> Replayed 
         receipt
     };
     assert_eq!(
-        receipt.transaction_hash(),
+        receipt.tx_hash(),
         pinned.hash,
         "block {number} does not hold the pinned transaction {explorer}/receipt/{}",
         pinned.hash

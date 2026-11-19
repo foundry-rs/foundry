@@ -8,7 +8,7 @@ use crate::{
 use alloy_eips::BlockId;
 use alloy_network::{AnyNetwork, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
-    Address, B256, Bytes, U256,
+    Address, B256, Bytes, U256, address, bytes,
     hex::{self, FromHex},
 };
 use alloy_provider::{
@@ -36,10 +36,14 @@ use alloy_rpc_types::{
 use alloy_rpc_types_eth::AccountInfo;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
-use anvil::{NodeConfig, spawn};
+use anvil::{
+    NodeConfig, NodeHandle,
+    eth::{EthApi, backend::env::BlobExcessGasAndPrice},
+    spawn,
+};
 use axum::{Json, Router, routing::post};
-use foundry_evm::hardfork::EthereumHardfork;
-use revm::context_interface::block::BlobExcessGasAndPrice;
+use foundry_evm_hardforks::EthereumHardfork;
+use foundry_primitives::FoundryNetwork;
 use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -132,7 +136,7 @@ async fn test_trace_block_opcode_gas_local() {
         .unwrap();
     let by_hash: Option<BlockOpcodeGas> = handle
         .http_provider()
-        .raw_request("trace_blockOpcodeGas".into(), (BlockId::Hash(block_hash.into()),))
+        .raw_request("trace_blockOpcodeGas".into(), (BlockId::hash(block_hash),))
         .await
         .unwrap();
 
@@ -262,7 +266,7 @@ async fn test_trace_raw_transaction_rejects_code_sender() {
     let tx = TransactionRequest::default()
         .from(from)
         .to(accounts[1].address())
-        .value(U256::from(1))
+        .value(U256::ONE)
         .with_gas_limit(21_000)
         .max_fee_per_gas(20_000_000_000)
         .max_priority_fee_per_gas(1_000_000_000);
@@ -311,10 +315,7 @@ async fn test_debug_account_info_at_local() {
         .await
         .unwrap();
     let by_hash: Option<AccountInfo> = provider
-        .raw_request(
-            "debug_accountInfoAt".into(),
-            (BlockId::Hash(block_hash.into()), Index::from(0), to),
-        )
+        .raw_request("debug_accountInfoAt".into(), (BlockId::hash(block_hash), Index::from(0), to))
         .await
         .unwrap();
 
@@ -536,7 +537,7 @@ async fn test_trace_call_state_diff_created_account() {
             "storage": {
                 (B256::ZERO.to_string()): {"*": {
                     "from": B256::ZERO.to_string(),
-                    "to": B256::from(U256::from(42)).to_string(),
+                    "to": B256::with_last_byte(42).to_string(),
                 }},
             },
         }))
@@ -683,7 +684,7 @@ async fn test_trace_call_state_diff_selfdestruct_hardfork() {
         let from = handle.dev_wallets().next().unwrap().address();
         api.anvil_set_code(contract, Bytes::from_hex("0x33ff").unwrap()).await.unwrap();
         api.anvil_set_balance(contract, U256::from(7)).await.unwrap();
-        api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
+        api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(42)).await.unwrap();
 
         let traces =
             trace_call_state_diff(&provider, TransactionRequest::default().from(from).to(contract))
@@ -751,7 +752,7 @@ async fn test_trace_call_safe_at_fork_point() {
     assert_eq!(receipt3.block_number.unwrap(), fork_point_number + 1);
     assert_eq!(provider.get_block_number().await.unwrap(), fork_point_number);
 
-    let call_amount = U256::from(1);
+    let call_amount = U256::ONE;
     let call =
         WithOtherFields::new(TransactionRequest::default().to(to).value(call_amount).from(from));
 
@@ -759,10 +760,7 @@ async fn test_trace_call_safe_at_fork_point() {
     // never the upstream chain's post-fork block 2.
     let by_safe: TraceResults = provider
         .client()
-        .request(
-            "trace_call",
-            (call.clone(), vec![TraceType::StateDiff], BlockId::Number(BlockNumberOrTag::Safe)),
-        )
+        .request("trace_call", (call.clone(), vec![TraceType::StateDiff], BlockId::safe()))
         .await
         .unwrap();
     let by_number: TraceResults = provider
@@ -924,6 +922,222 @@ async fn test_trace_get_local() {
         .await
         .unwrap();
     assert_eq!(unknown, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_block_traces_reject_pending() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    api.mine_one().await.unwrap();
+
+    let pending = BlockId::pending();
+    let error = provider.trace_block(pending).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32602);
+    let error = provider.trace_replay_block_transactions(pending).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32602);
+
+    // Mined block tags still resolve.
+    provider.trace_block(BlockId::latest()).await.unwrap();
+    provider.trace_replay_block_transactions(BlockId::latest()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_calls_reject_conflicting_fields() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let client = handle.http_provider();
+    let client = client.client();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let input_error = "both \"data\" and \"input\" are set and not equal. Please use \"input\" to \
+                       pass transaction call data";
+    let fee_error = "both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified";
+
+    for (call, message) in [
+        (json!({ "from": from, "to": from, "data": "0x602a", "input": "0x6001" }), input_error),
+        (json!({ "from": from, "to": from, "gasPrice": "0x1", "maxFeePerGas": "0x2" }), fee_error),
+        (
+            json!({ "from": from, "to": from, "gasPrice": "0x1", "maxPriorityFeePerGas": "0x1" }),
+            fee_error,
+        ),
+    ] {
+        let simulate = json!({ "blockStateCalls": [{ "calls": [&call] }] });
+        let errors = [
+            client.request::<_, Value>("eth_call", (&call, "latest")).await.unwrap_err(),
+            client.request::<_, Value>("eth_estimateGas", (&call, "latest")).await.unwrap_err(),
+            client
+                .request::<_, Value>("trace_call", (&call, ["trace"], "latest"))
+                .await
+                .unwrap_err(),
+            client.request::<_, Value>("eth_simulateV1", (&simulate, "latest")).await.unwrap_err(),
+            client.request::<_, Value>("eth_sendTransaction", (&call,)).await.unwrap_err(),
+        ];
+        for error in errors {
+            let error = error.as_error_resp().unwrap();
+            assert_eq!((error.code, error.message.as_ref()), (-32602, message), "{call}");
+        }
+    }
+
+    let call = json!({ "from": from, "data": "0x602a", "input": "0x602a" });
+    client.request::<_, Value>("eth_call", (&call, "latest")).await.unwrap();
+    client.request::<_, Value>("trace_call", (&call, ["trace"], "latest")).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_omits_nested_precompile_calls() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    // Zero-value CALL to the identity precompile, then a zero-value CALL to 0xbeef.
+    let caller = Address::repeat_byte(0x42);
+    let code =
+        Bytes::from_hex("0x6000600060006000600060045af1506000600060006000600061beef5af15000")
+            .unwrap();
+    api.anvil_set_code(caller, code).await.unwrap();
+
+    let tx = TransactionRequest::default().from(from).to(caller);
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    let hash = receipt.transaction_hash;
+
+    let traces = provider.trace_transaction(hash).await.unwrap();
+    let traces = traces.into_iter().map(|trace| trace.trace).collect::<Vec<_>>();
+    assert_eq!(traces.len(), 2);
+    assert_eq!(traces[0].subtraces, 1);
+    assert_eq!(traces[1].trace_address, vec![0]);
+    let Action::Call(call) = &traces[1].action else { panic!("expected a call") };
+    assert_eq!(call.to, Address::left_padding_from(&[0xbe, 0xef]));
+
+    let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
+    assert_eq!(replay.trace, traces);
+
+    let block = provider.trace_block(receipt.block_number.unwrap().into()).await.unwrap();
+    assert_eq!(block.into_iter().map(|trace| trace.trace).collect::<Vec<_>>(), traces);
+
+    // Parity filtering must leave both children in the stored Geth call graph.
+    let geth = provider
+        .debug_trace_transaction(
+            hash,
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+    let GethTrace::CallTracer(frame) = geth else { panic!("expected a call trace") };
+    assert_eq!(
+        frame.calls.iter().map(|call| call.to.unwrap()).collect::<Vec<_>>(),
+        [Address::with_last_byte(4), Address::left_padding_from(&[0xbe, 0xef])]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_keeps_root_and_valued_precompile_calls() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let identity = Address::with_last_byte(4);
+
+    // CALL to the identity precompile forwarding 1 wei.
+    let caller = Address::repeat_byte(0x42);
+    api.anvil_set_code(caller, Bytes::from_hex("0x6000600060006000600160045af15000").unwrap())
+        .await
+        .unwrap();
+    // DELEGATECALL to the identity precompile, which inherits the frame's value.
+    let delegator = Address::repeat_byte(0x43);
+    api.anvil_set_code(delegator, Bytes::from_hex("0x600060006000600060045af45000").unwrap())
+        .await
+        .unwrap();
+
+    let tx = |to, value| TransactionRequest::default().from(from).to(to).value(U256::from(value));
+    for (tx, frames) in [
+        (tx(caller, 1), vec![caller, identity]),
+        (tx(delegator, 1), vec![delegator, identity]),
+        (tx(delegator, 0), vec![delegator]),
+        (tx(identity, 0).input(Bytes::from_static(b"echo").into()), vec![identity]),
+    ] {
+        let receipt =
+            provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+        let hash = receipt.transaction_hash;
+        let traces = provider.trace_transaction(hash).await.unwrap();
+        let traces = traces.into_iter().map(|trace| trace.trace).collect::<Vec<_>>();
+        let targets = traces
+            .iter()
+            .map(|trace| match &trace.action {
+                Action::Call(call) => call.to,
+                action => panic!("expected a call, got {action:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(targets, frames);
+
+        let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
+        assert_eq!(replay.trace, traces);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mined_precompile_traces_survive_chain_id_changes() {
+    let p256 = Address::left_padding_from(&[1, 0]);
+    let target = Address::left_padding_from(&[0xbe, 0xef]);
+    let caller = Address::repeat_byte(0x42);
+    for (chain_id, replacement, expected_targets) in
+        [(31_337u64, 56u64, vec![caller, p256, target]), (56u64, 31_337u64, vec![caller, target])]
+    {
+        let config = NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(1_718_863_501u64));
+        let (api, handle) = spawn(config.clone()).await;
+        let provider = handle.http_provider();
+        let from = handle.dev_wallets().next().unwrap().address();
+
+        // STATICCALL to 0x0100, then CALL to 0xbeef. BSC installs P256 after Haber.
+        api.anvil_set_code(
+            caller,
+            Bytes::from_hex("0x60006000600060006101005afa506000600060006000600061beef5af15000")
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(from).to(caller),
+            ))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let hash = receipt.transaction_hash;
+        let block = receipt.block_number.unwrap();
+        let before = provider.trace_transaction(hash).await.unwrap();
+        let targets = before
+            .iter()
+            .map(|trace| match &trace.trace.action {
+                Action::Call(call) => call.to,
+                action => panic!("expected a call, got {action:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(targets, expected_targets, "chain ID {chain_id}");
+        assert_eq!(before[0].trace.subtraces, before.len() - 1);
+        for (index, trace) in before[1..].iter().enumerate() {
+            assert_eq!(trace.trace.trace_address, vec![index]);
+        }
+
+        api.anvil_set_chain_id(replacement).await.unwrap();
+        assert_eq!(provider.trace_transaction(hash).await.unwrap(), before);
+        assert_eq!(provider.trace_block(block.into()).await.unwrap(), before);
+        assert_eq!(
+            provider
+                .trace_filter(&TraceFilter::default().from_block(block).to_block(block))
+                .await
+                .unwrap(),
+            before
+        );
+
+        // The execution marker must also survive serialization into a fresh node.
+        let state = api.anvil_dump_state(None).await.unwrap();
+        let (restored_api, restored_handle) = spawn(config.with_chain_id(Some(replacement))).await;
+        assert!(restored_api.anvil_load_state(state).await.unwrap());
+        assert_eq!(restored_handle.http_provider().trace_transaction(hash).await.unwrap(), before);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1276,7 +1490,7 @@ async fn test_debug_trace_call_state_override() {
 
     let tx = TransactionRequest::default()
         .from(wallets[1].address())
-        .to("0x1234567890123456789012345678901234567890".parse().unwrap());
+        .to(address!("0x1234567890123456789012345678901234567890"));
 
     let override_json = r#"{
             "0x1234567890123456789012345678901234567890": {
@@ -1381,7 +1595,7 @@ async fn test_debug_trace_transaction_reports_transaction_gas() {
 
     let first = provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(from).to(to).value(U256::from(1)).nonce(nonce),
+            TransactionRequest::default().from(from).to(to).value(U256::ONE).nonce(nonce),
         ))
         .await
         .unwrap();
@@ -1436,7 +1650,7 @@ async fn test_debug_trace_transaction_struct_logs_with_steps_tracing() {
     let transfer = TransactionRequest::default()
         .from(from)
         .to(accounts[1].address())
-        .value(U256::from(1))
+        .value(U256::ONE)
         .nonce(nonce);
     let _ = provider.send_transaction(WithOtherFields::new(transfer)).await.unwrap();
 
@@ -1467,14 +1681,14 @@ async fn test_debug_trace_transaction_struct_logs_with_steps_tracing() {
             .into_iter()
             .map(|log| (log.pc, log.op.into_owned(), log.stack.unwrap(), log.memory))
             .collect::<Vec<_>>();
-        let empty = memory.then(Vec::new);
+        // Like geth, struct logs leave out memory that is still empty.
         let stored = memory.then(|| vec![word.clone()]);
         assert_eq!(
             steps,
             [
-                (0, "PUSH1".to_string(), vec![], empty.clone()),
-                (2, "PUSH1".to_string(), vec![U256::from(0x2a)], empty.clone()),
-                (4, "MSTORE".to_string(), vec![U256::from(0x2a), U256::ZERO], empty),
+                (0, "PUSH1".to_string(), vec![], None),
+                (2, "PUSH1".to_string(), vec![U256::from(0x2a)], None),
+                (4, "MSTORE".to_string(), vec![U256::from(0x2a), U256::ZERO], None),
                 (5, "PUSH1".to_string(), vec![], stored.clone()),
                 (7, "PUSH1".to_string(), vec![U256::from(0x20)], stored.clone()),
                 (9, "RETURN".to_string(), vec![U256::from(0x20), U256::ZERO], stored),
@@ -1524,7 +1738,7 @@ async fn test_debug_trace_transaction_replays_blob_base_fee() {
 async fn test_trace_replays_report_unavailable_historical_state() {
     let (api, handle) = spawn(NodeConfig::test().with_steps_tracing(true)).await;
     let from = handle.dev_wallets().next().unwrap().address();
-    let tx = TransactionRequest::default().from(from).to(from).value(U256::from(1));
+    let tx = TransactionRequest::default().from(from).to(from).value(U256::ONE);
     let receipt = handle
         .http_provider()
         .send_transaction(WithOtherFields::new(tx))
@@ -1572,6 +1786,202 @@ async fn test_trace_replays_report_unavailable_historical_state() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_unknown_block_and_transaction() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let head = provider.get_block_number().await.unwrap();
+    let next = BlockId::number(head + 1);
+
+    let error = provider.trace_block(next).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32001);
+    let error = provider.trace_replay_block_transactions(next).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32001);
+
+    let replay = provider
+        .client()
+        .request::<_, Option<TraceResults>>(
+            "trace_replayTransaction",
+            (B256::ZERO, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, None);
+
+    let filter = TraceFilter::default().from_block(head).to_block(head + 1);
+    let error = provider.trace_filter(&filter).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32001);
+}
+
+/// Returns the error codes of `trace_call`, `trace_callMany` and `trace_rawTransaction` from
+/// `from` at `block`, with `None` for a call that succeeds.
+async fn trace_call_error_codes(
+    api: &EthApi<FoundryNetwork>,
+    handle: &NodeHandle,
+    from: Address,
+    block: &Value,
+) -> [Option<i64>; 3] {
+    let call = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(from)
+            .to(from)
+            .nonce(0)
+            .with_gas_limit(21_000)
+            .max_fee_per_gas(20_000_000_000)
+            .max_priority_fee_per_gas(1_000_000_000),
+    );
+    let raw_tx = api.sign_transaction(call.clone()).await.unwrap();
+    let provider = handle.http_provider();
+    let client = provider.client();
+    [
+        client.request::<_, Value>("trace_call", (&call, ["trace"], block)).await.err(),
+        client.request::<_, Value>("trace_callMany", ([(&call, ["trace"])], block)).await.err(),
+        client.request::<_, Value>("trace_rawTransaction", (&raw_tx, ["trace"], block)).await.err(),
+    ]
+    .map(|error| error.map(|error| error.as_error_resp().unwrap().code))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_calls_unknown_block() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let head = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let number = format!("{:#x}", head.header.number);
+    let next = format!("{:#x}", head.header.number + 1);
+
+    for block in [
+        json!("latest"),
+        json!(number),
+        json!({ "blockNumber": number }),
+        json!(head.header.hash),
+        json!({ "blockHash": head.header.hash }),
+    ] {
+        let codes = trace_call_error_codes(&api, &handle, from, &block).await;
+        assert_eq!(codes, [None; 3], "{block}");
+    }
+
+    for block in [
+        json!(next),
+        json!({ "blockNumber": next }),
+        json!(B256::ZERO),
+        json!({ "blockHash": B256::ZERO }),
+    ] {
+        let codes = trace_call_error_codes(&api, &handle, from, &block).await;
+        assert_eq!(codes, [Some(-32001); 3], "{block}");
+    }
+
+    // Methods outside the trace namespace keep reporting a block past the head as invalid params.
+    let call = WithOtherFields::new(TransactionRequest::default().from(from).to(from));
+    for method in ["eth_call", "eth_estimateGas"] {
+        let error =
+            provider.client().request::<_, Value>(method, (&call, &next)).await.unwrap_err();
+        assert_eq!(error.as_error_resp().unwrap().code, -32602, "{method}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_calls_before_genesis_block() {
+    let (api, handle) = spawn(NodeConfig::test().with_genesis_block_number(Some(100u64))).await;
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    let codes = trace_call_error_codes(&api, &handle, from, &json!("0x64")).await;
+    assert_eq!(codes, [None; 3]);
+    let codes = trace_call_error_codes(&api, &handle, from, &json!("0x63")).await;
+    assert_eq!(codes, [Some(-32001); 3]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_calls_unknown_fork_block_hash() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    origin_api.mine_one().await.unwrap();
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[2].address();
+
+    let fork_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.hash;
+    for block in
+        [json!("latest"), json!("0x1"), json!(fork_block), json!({ "blockHash": fork_block })]
+    {
+        let codes = trace_call_error_codes(&api, &handle, from, &block).await;
+        assert_eq!(codes, [None; 3], "{block}");
+    }
+
+    // Mine a local block, then replace the fork block upstream and mine on top of it.
+    api.mine_one().await.unwrap();
+    let local = provider.get_block(BlockId::number(2)).await.unwrap().unwrap().header.hash;
+    origin_api.anvil_rollback(Some(1)).await.unwrap();
+    let tx = TransactionRequest::default()
+        .from(accounts[0].address())
+        .to(accounts[1].address())
+        .value(U256::from(1));
+    origin.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
+    origin_api.mine_one().await.unwrap();
+    let replaced = origin.get_block(BlockId::number(1)).await.unwrap().unwrap().header.hash;
+    let upstream = origin.get_block(BlockId::number(2)).await.unwrap().unwrap().header.hash;
+    assert_ne!(replaced, fork_block);
+    assert_ne!(upstream, local);
+
+    for block in [json!(local), json!({ "blockHash": local })] {
+        let codes = trace_call_error_codes(&api, &handle, from, &block).await;
+        assert_eq!(codes, [None; 3], "{block}");
+    }
+
+    // Upstream blocks that replace the fork block or follow it are not part of the forked chain.
+    for block in [
+        json!(replaced),
+        json!({ "blockHash": replaced }),
+        json!(upstream),
+        json!({ "blockHash": upstream }),
+    ] {
+        let codes = trace_call_error_codes(&api, &handle, from, &block).await;
+        assert_eq!(codes, [Some(-32001); 3], "{block}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_fork_block() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let tx = WithOtherFields::new(
+        TransactionRequest::default()
+            .to(accounts[1].address())
+            .value(U256::from(1))
+            .from(accounts[0].address()),
+    );
+    origin_handle
+        .http_provider()
+        .send_transaction(tx.clone())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+    let fork_block = provider.get_block_number().await.unwrap();
+
+    // The fork block is not stored locally, so its traces come from the fork.
+    assert_eq!(provider.trace_block(BlockId::latest()).await.unwrap().len(), 1);
+    assert_eq!(provider.trace_replay_block_transactions(BlockId::latest()).await.unwrap().len(), 1);
+
+    provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let filter = TraceFilter::default().from_block(fork_block).to_block(fork_block + 1);
+    let blocks = provider
+        .trace_filter(&filter)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|trace| trace.block_number.unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(blocks, [fork_block, fork_block + 1]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_transaction_rejects_unknown_hash() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let error = handle
@@ -1591,7 +2001,7 @@ async fn test_debug_trace_call_tx_index_fork_lazy_state() {
     let provider = handle.http_provider();
     let from = handle.dev_wallets().next().unwrap().address();
 
-    let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1));
+    let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::ONE);
     let _ = provider
         .send_transaction(WithOtherFields::new(tx))
         .await
@@ -1601,7 +2011,7 @@ async fn test_debug_trace_call_tx_index_fork_lazy_state() {
         .unwrap();
     let block_number = provider.get_block_number().await.unwrap();
 
-    let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".parse().unwrap();
+    let usdc = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
     let total_supply = TransactionRequest::default()
         .from(from)
         .to(usdc)
@@ -1639,8 +2049,8 @@ async fn test_trace_address_fork() {
 
     let input = hex::decode("43bcfab60000000000000000000000006b175474e89094c44da98b954eedeac495271d0f0000000000000000000000000000000000000000000000e0bd811c8769a824b00000000000000000000000000000000000000000000000e0ae9925047d8440b60000000000000000000000002e4777139254ff76db957e284b186a4507ff8c67").unwrap();
 
-    let from: Address = "0x2e4777139254ff76db957e284b186a4507ff8c67".parse().unwrap();
-    let to: Address = "0xe2f2a5c287993345a840db3b0845fbc70f5935a5".parse().unwrap();
+    let from = address!("0x2e4777139254ff76db957e284b186a4507ff8c67");
+    let to = address!("0xe2f2a5c287993345a840db3b0845fbc70f5935a5");
     let tx = TransactionRequest::default()
         .to(to)
         .from(from)
@@ -1837,8 +2247,8 @@ async fn test_trace_address_fork2() {
 
     let input = hex::decode("30000003000000000000000000000000adda1059a6c6c102b0fa562b9bb2cb9a0de5b1f4000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000a300000004fffffffffffffffffffffffffffffffffffffffffffff679dc91ecfe150fb980c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2f4d2888d29d722226fafa5d9b24f9164c092421e000bb8000000000000004319b52bf08b65295d49117e790000000000000000000000000000000000000000000000008b6d9e8818d6141f000000000000000000000000000000000000000000000000000000086a23af210000000000000000000000000000000000000000000000000000000000").unwrap();
 
-    let from: Address = "0xa009fa1ac416ec02f6f902a3a4a584b092ae6123".parse().unwrap();
-    let to: Address = "0x99999999d116ffa7d76590de2f427d8e15aeb0b8".parse().unwrap();
+    let from = address!("0xa009fa1ac416ec02f6f902a3a4a584b092ae6123");
+    let to = address!("0x99999999d116ffa7d76590de2f427d8e15aeb0b8");
     let tx = TransactionRequest::default()
         .to(to)
         .from(from)
@@ -2093,6 +2503,39 @@ async fn test_trace_address_fork2() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_get_rejects_integer_indices() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let tx = TransactionRequest::default()
+        .to(accounts[1].address())
+        .value(U256::from(1))
+        .from(accounts[0].address());
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let error = provider
+        .client()
+        .request::<_, Option<LocalizedTransactionTrace>>("trace_get", (hash, [0]))
+        .await
+        .unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32602);
+
+    // Quantity strings are accepted.
+    provider
+        .client()
+        .request::<_, Option<LocalizedTransactionTrace>>("trace_get", (hash, ["0x0"]))
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
@@ -2105,6 +2548,7 @@ async fn test_trace_filter() {
 
     // Test default block ranges: omitted bounds both default to latest.
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: None,
         to_block: None,
         from_address: vec![],
@@ -2112,7 +2556,6 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Intersection,
         after: None,
         count: None,
-        block_hash: None,
     };
 
     for i in 0..=5 {
@@ -2136,6 +2579,7 @@ async fn test_trace_filter() {
 
     // Test filtering by address
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(provider.get_block_number().await.unwrap()),
         to_block: None,
         from_address: vec![from_two],
@@ -2143,7 +2587,6 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Intersection,
         after: None,
         count: None,
-        block_hash: None,
     };
 
     for i in 0..=5 {
@@ -2169,6 +2612,7 @@ async fn test_trace_filter() {
 
     // Test TraceActions
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(provider.get_block_number().await.unwrap()),
         to_block: None,
         from_address: vec![from, contract_addr],
@@ -2176,7 +2620,6 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Union,
         after: None,
         count: None,
-        block_hash: None,
     };
 
     // Execute call
@@ -2197,6 +2640,7 @@ async fn test_trace_filter() {
     // Test Range Error
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(latest),
         to_block: Some(latest + 301),
         from_address: vec![],
@@ -2204,7 +2648,6 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Union,
         after: None,
         count: None,
-        block_hash: None,
     };
 
     let traces = api.trace_filter(tracer).await;
@@ -2213,6 +2656,7 @@ async fn test_trace_filter() {
     // Test same from and to block is valid
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(latest),
         to_block: Some(latest),
         from_address: vec![],
@@ -2220,7 +2664,6 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Union,
         after: None,
         count: None,
-        block_hash: None,
     };
 
     let traces = api.trace_filter(tracer).await;
@@ -2229,6 +2672,7 @@ async fn test_trace_filter() {
     // Test invalid block range
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(latest + 10),
         to_block: Some(latest),
         from_address: vec![],
@@ -2236,7 +2680,6 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Union,
         after: None,
         count: None,
-        block_hash: None,
     };
 
     let traces = api.trace_filter(tracer).await;
@@ -2244,6 +2687,7 @@ async fn test_trace_filter() {
 
     // Test after and count
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(provider.get_block_number().await.unwrap()),
         to_block: None,
         from_address: vec![],
@@ -2251,7 +2695,6 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Union,
         after: Some(3),
         count: Some(5),
-        block_hash: None,
     };
 
     for i in 0..=10 {
@@ -2713,6 +3156,68 @@ fault: function(log) {}
     assert_eq!(actual, expected);
 }
 
+// The JS tracer must report steps like geth's struct logger: a call step before its child's steps,
+// with the forwarded gas in its cost, and depth starting at 1.
+#[cfg(feature = "js-tracer")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_transaction_js_tracer_matches_struct_logs() {
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_steps_tracing(true);
+    let (api, handle) = spawn(node_config).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let multicall_contract = Multicall::deploy(&provider).await.unwrap();
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let set_value = simple_storage_contract.setValue("bar".to_string());
+    let receipt = multicall_contract
+        .aggregate(vec![Multicall::Call {
+            target: *simple_storage_contract.address(),
+            callData: set_value.calldata().to_owned(),
+        }])
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let js_tracer_code = r#"
+{
+    steps: [],
+    step: function(log) {
+        this.steps.push([log.getPC(), log.op.toString(), log.getDepth(), log.getGas(), log.getCost()]);
+    },
+    fault: function(log) {},
+    result: function() { return this.steps; }
+}
+"#;
+    let js_trace = api
+        .debug_trace_transaction(hash, GethDebugTracingOptions::js_tracer(js_tracer_code))
+        .await
+        .unwrap()
+        .try_into_json_value()
+        .unwrap();
+    let js_steps = serde_json::from_value::<Vec<(u64, String, u64, u64, u64)>>(js_trace).unwrap();
+
+    let trace = api.debug_trace_transaction(hash, Default::default()).await.unwrap();
+    let GethTrace::Default(frame) = trace else { unreachable!("expected default trace") };
+    let struct_logs = frame
+        .struct_logs
+        .into_iter()
+        .map(|log| (log.pc, log.op.into_owned(), log.depth, log.gas, log.gas_cost))
+        .collect::<Vec<_>>();
+
+    let (call_idx, call) = js_steps.iter().enumerate().find(|(_, step)| step.1 == "CALL").unwrap();
+    assert_eq!(call.2, 1);
+    assert_eq!(js_steps[call_idx + 1].2, 2, "the child's steps must follow the CALL step");
+    assert_eq!(js_steps, struct_logs);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_tracer_debug_trace_call_pre_state_tracer() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -3034,6 +3539,18 @@ async fn test_trace_replay_transaction_fork() {
     }
     assert_eq!(replays[0].transaction_hash, hash);
     assert_eq!(replays[0], replays[1]);
+
+    // A hash unknown upstream as well is null.
+    let unknown = handle
+        .http_provider()
+        .client()
+        .request::<_, Option<TraceResultsWithTransactionHash>>(
+            "trace_replayTransaction",
+            (B256::ZERO, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3102,7 +3619,7 @@ async fn test_trace_replay_transaction_preserves_prefix_state() {
     )
     .await
     .unwrap();
-    api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(3))).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(3)).await.unwrap();
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let values = [5u64, 0, 13, 8];
@@ -3113,7 +3630,7 @@ async fn test_trace_replay_transaction_preserves_prefix_state() {
             .to(contract)
             .nonce(nonce as u64)
             .gas_limit(100_000)
-            .input(Bytes::copy_from_slice(&U256::from(value).to_be_bytes::<32>()).into());
+            .input(Bytes::from(U256::from(value).to_be_bytes::<32>()).into());
         hashes.push(api.send_transaction(WithOtherFields::new(tx)).await.unwrap());
     }
     api.mine_one().await.unwrap();
@@ -3256,7 +3773,7 @@ async fn test_debug_trace_block_without_history() {
                 Err(error) => TraceResult::Error { error: error.to_string(), tx_hash: Some(*hash) },
             };
             assert_eq!(
-                matches!(trace, TraceResult::Error { .. }),
+                trace.is_error(),
                 matches!(
                     options.tracer,
                     Some(GethDebugTracerType::BuiltInTracer(
@@ -3381,7 +3898,7 @@ async fn test_debug_trace_block() {
     let tx = WithOtherFields::new(tx);
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     let block_hash = receipt.block_hash.unwrap();
-    let block = api.backend.get_block(BlockId::Hash(block_hash.into())).unwrap();
+    let block = api.backend.get_block(BlockId::hash(block_hash)).unwrap();
 
     let mut rlp_block = Vec::new();
     block.encode(&mut rlp_block);
@@ -3409,5 +3926,137 @@ async fn test_debug_trace_block() {
         alloy_rpc_types::trace::geth::TraceResult::Error { error, .. } => {
             panic!("trace failed: {error}");
         }
+    }
+}
+
+// A tracer that fails to build is reported per transaction with its plain error text.
+#[cfg(feature = "js-tracer")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_block_invalid_js_tracer_error() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = crate::utils::http_provider(&handle.http_endpoint());
+    let from = handle.dev_accounts().next().unwrap();
+    let tx = TransactionRequest::default().from(from).to(from).value(U256::from(1));
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+
+    let traces = api
+        .debug_trace_block_by_number(
+            BlockNumberOrTag::Latest,
+            GethDebugTracingOptions::js_tracer("not a tracer"),
+        )
+        .await
+        .unwrap();
+
+    let [TraceResult::Error { error, tx_hash }] = traces.as_slice() else {
+        panic!("expected one trace error: {traces:?}");
+    };
+    assert_eq!(*tx_hash, Some(receipt.transaction_hash));
+    assert_eq!(
+        error,
+        "failed to evaluate JS code: SyntaxError: expected one of ')' or ',', got 'a' in CoverParenthesizedExpressionAndArrowParameterList at line 1, col 6 (native)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_root_gas() {
+    // Monad roots report the charged limit; Ethereum reports consumption.
+    for (config, charges_limit) in [
+        (NodeConfig::test(), false),
+        #[cfg(feature = "monad")]
+        (NodeConfig::test_monad(), true),
+    ] {
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+        let contract = Address::repeat_byte(0x55);
+        for limit in [100_000, 1_000_000] {
+            for (code, consumed, failed) in [
+                (bytes!("5f5000"), 21_004, false),
+                (bytes!("5f5ffd"), 21_004, true),
+                (bytes!("fe"), limit, true),
+            ] {
+                let expected = if charges_limit { limit } else { consumed };
+                api.anvil_set_code(contract, code).await.unwrap();
+                let request =
+                    TransactionRequest::default().from(sender).to(contract).gas_limit(limit);
+                let trace = provider
+                    .debug_trace_call(
+                        request.clone().into(),
+                        BlockId::latest(),
+                        GethDebugTracingCallOptions::default(),
+                    )
+                    .await
+                    .unwrap();
+                let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
+                assert_eq!(frame.gas, expected);
+                assert_eq!(frame.failed, failed);
+                assert_eq!(frame.struct_logs[0].gas, limit - 21_000);
+                let trace = provider
+                    .debug_trace_call(
+                        request.into(),
+                        BlockId::latest(),
+                        GethDebugTracingCallOptions::default().with_tracing_options(
+                            GethDebugTracingOptions::default()
+                                .with_tracer(GethDebugBuiltInTracerType::CallTracer.into()),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+                assert_eq!(frame.gas, U256::from(limit));
+                assert_eq!(frame.gas_used, U256::from(expected));
+                assert_eq!(frame.error.is_some(), failed);
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_tracer_mined_gas_limits() {
+    for (config, charged_gas) in [
+        (NodeConfig::test(), [21_000, 21_000]),
+        #[cfg(feature = "monad")]
+        (NodeConfig::test_monad(), [100_000, 200_000]),
+    ] {
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+        let limits = [100_000, 200_000];
+        api.anvil_set_auto_mine(false).await.unwrap();
+        let mut hashes = Vec::new();
+        for (nonce, limit) in limits.into_iter().enumerate() {
+            let tx = TransactionRequest::default()
+                .from(sender)
+                .to(Address::repeat_byte(0x55))
+                .nonce(nonce as u64)
+                .gas_limit(limit);
+            hashes.push(api.send_transaction(WithOtherFields::new(tx)).await.unwrap());
+        }
+        api.mine_one().await.unwrap();
+        let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        assert_eq!(block.header.gas_used, charged_gas.iter().sum::<u64>());
+        let options = GethDebugTracingOptions::default()
+            .with_tracer(GethDebugBuiltInTracerType::CallTracer.into());
+        let mut expected = Vec::new();
+        for ((hash, limit), gas_used) in hashes.into_iter().zip(limits).zip(charged_gas) {
+            let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+            assert_eq!(receipt.gas_used(), gas_used);
+            let trace = provider.debug_trace_transaction(hash, options.clone()).await.unwrap();
+            let GethTrace::CallTracer(frame) = &trace else { panic!("expected call trace") };
+            assert_eq!(frame.gas, U256::from(limit));
+            assert_eq!(frame.gas_used, U256::from(gas_used));
+            expected.push(TraceResult::Success { result: trace, tx_hash: Some(hash) });
+        }
+        assert_eq!(
+            provider
+                .debug_trace_block_by_number(BlockNumberOrTag::Latest, options.clone())
+                .await
+                .unwrap(),
+            expected,
+        );
+        assert_eq!(
+            provider.debug_trace_block_by_hash(block.header.hash, options).await.unwrap(),
+            expected,
+        );
     }
 }

@@ -17,7 +17,6 @@ pub(super) fn brutalize_cast(ty: &Type<'_>, arg_text: &str, mask: &str) -> Optio
             ElementaryType::FixedBytes(size) => brutalize_fixed_bytes(*size, arg_text, mask),
             ElementaryType::Bool => None,
             ElementaryType::Bytes | ElementaryType::String => None,
-            ElementaryType::Fixed(..) | ElementaryType::UFixed(..) => None,
         },
         _ => None,
     }

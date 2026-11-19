@@ -1,6 +1,7 @@
 //! CLI tests for wallet signing commands.
 
 use super::*;
+use alloy_rlp::Decodable;
 
 // tests that `cast wallet sign --json` wraps signature in envelope
 #[casttest]
@@ -303,8 +304,6 @@ fn wallet_sign_auth(cmd: _) {
 
 #[casttest]
 fn wallet_sign_auth_zero_chain_requires_confirmation(cmd: _) {
-    use alloy_rlp::Decodable;
-
     let delegate = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
     let private_key = "0x0000000000000000000000000000000000000000000000000000000000000001";
 
@@ -391,9 +390,6 @@ Continue anyway? [y/N] Aborted.
 // tests that `cast wallet sign-auth --self-broadcast` uses nonce + 1
 #[casttest]
 async fn wallet_sign_auth_self_broadcast(cmd: _) {
-    use alloy_rlp::Decodable;
-    use alloy_signer_local::PrivateKeySigner;
-
     let (_, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
     let endpoint = handle.http_endpoint();

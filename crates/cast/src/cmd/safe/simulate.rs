@@ -1,4 +1,5 @@
 use super::{
+    SafeRpcOpts,
     contracts::{ISafe, ISimulateTxAccessor, SIMULATE_TX_ACCESSOR_V1_4_1},
     deploy::ensure_contract,
     rpc_provider,
@@ -11,7 +12,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, SolValue};
 use clap::Args;
 use eyre::{Context, Result, ensure};
-use foundry_cli::{json::print_json_object, opts::RpcOpts};
+use foundry_cli::json::print_json_object;
 use serde_json::json;
 
 /// CLI arguments for `cast safe simulate`.
@@ -35,7 +36,7 @@ pub struct SimulateArgs {
     service: Box<SafeServiceOpts>,
 
     #[command(flatten)]
-    rpc: Box<RpcOpts>,
+    rpc: Box<SafeRpcOpts>,
 }
 
 impl SimulateArgs {
@@ -43,8 +44,8 @@ impl SimulateArgs {
         let Self { safe, safe_tx_hash, from, accessor, service, rpc } = self;
         let (provider, chain_id) = rpc_provider(&rpc).await?;
         let transaction = service.get_transaction(chain_id, "v2", safe_tx_hash).await?;
-        transaction.verify_hash(safe, &provider).await?;
-        transaction.show_transaction_summary()?;
+        transaction.verify_hash(safe, &provider, chain_id).await?;
+        transaction.show_transaction_summary(chain_id)?;
         ensure!(
             SafeTransaction::number(&transaction.gas_price, "gasPrice")?.is_zero(),
             "cannot simulate reimbursed Safe transactions (gasPrice > 0): SimulateTxAccessor does not enforce safeTxGas"
@@ -115,7 +116,7 @@ mod tests {
         let return_data = Bytes::from_static(b"result");
         let accessor_response = (U256::from(42), true, return_data.clone()).abi_encode_params();
         let mut revert_data = Vec::with_capacity(2 * U256::BYTES + accessor_response.len());
-        revert_data.extend_from_slice(&U256::from(1).to_be_bytes::<{ U256::BYTES }>());
+        revert_data.extend_from_slice(&U256::ONE.to_be_bytes::<{ U256::BYTES }>());
         revert_data.extend_from_slice(
             &U256::from(accessor_response.len()).to_be_bytes::<{ U256::BYTES }>(),
         );

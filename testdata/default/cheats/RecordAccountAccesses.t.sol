@@ -149,6 +149,11 @@ contract NestedStorer {
         slots[bytes32("nested_storer 3")]++;
         slots[bytes32("nested_storer 4")]++;
     }
+
+    function runThenWrite() external payable {
+        this.run();
+        slots[bytes32("nested_storer 5")]++;
+    }
 }
 
 /// @notice Helper contract that directly reads from and writes to storage
@@ -196,6 +201,19 @@ contract Proxy {
             switch result
             case 0 { revert(0, 0) }
             default { return(0, returndatasize()) }
+        }
+    }
+}
+
+contract Child {
+    constructor() payable {}
+}
+
+/// @notice Deploys contracts, funding each with 1 wei
+contract Factory {
+    function deploy(uint256 count) public {
+        for (uint256 i; i < count; i++) {
+            new Child{value: 1}();
         }
     }
 }
@@ -250,6 +268,78 @@ contract RecordAccountAccessesTest is Test {
                 reverted: false
             })
         );
+    }
+
+    /// @notice Nonce and balance changes made by delegated code belong to the executing context
+    ///         (the proxy), not to the implementation whose code is run.
+    function testCreateInDelegateCall() public {
+        Factory impl = new Factory();
+        Proxy proxy = new Proxy(address(impl));
+        vm.deal(address(proxy), 2);
+
+        vm.startStateDiffRecording();
+        Factory(address(proxy)).deploy(2);
+        string memory json = vm.getStateDiffJson();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+
+        assertEq(vm.getNonce(address(proxy)), 3);
+        assertEq(vm.getNonce(address(impl)), 1);
+        assertEq(address(proxy).balance, 0);
+
+        assertEq(called.length, 4, "incorrect length");
+
+        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call), "incorrect kind");
+        assertEq(called[0].account, address(proxy), "incorrect account");
+        assertEq(called[0].oldNonce, 1, "incorrect proxy oldNonce");
+        assertEq(called[0].newNonce, 3, "incorrect proxy newNonce");
+        assertEq(called[0].oldBalance, 2, "incorrect proxy oldBalance");
+        assertEq(called[0].newBalance, 0, "incorrect proxy newBalance");
+
+        assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.DelegateCall), "incorrect kind");
+        assertEq(called[1].account, address(impl), "incorrect account");
+        assertEq(called[1].oldNonce, 1, "incorrect impl oldNonce");
+        assertEq(called[1].newNonce, 1, "incorrect impl newNonce");
+        assertEq(called[1].oldBalance, 0, "incorrect impl oldBalance");
+        assertEq(called[1].newBalance, 0, "incorrect impl newBalance");
+
+        assertEq(toUint(called[2].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
+        assertEq(called[2].accessor, address(proxy), "incorrect accessor");
+        assertEq(toUint(called[3].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
+        assertEq(called[3].accessor, address(proxy), "incorrect accessor");
+
+        string memory proxyKey = string.concat(".", vm.toLowercase(vm.toString(address(proxy))));
+        assertEq(vm.parseJsonUint(json, string.concat(proxyKey, ".nonceDiff.previousValue")), 1);
+        assertEq(vm.parseJsonUint(json, string.concat(proxyKey, ".nonceDiff.newValue")), 3);
+        assertEq(vm.parseJsonUint(json, string.concat(proxyKey, ".balanceDiff.previousValue")), 2);
+        assertEq(vm.parseJsonUint(json, string.concat(proxyKey, ".balanceDiff.newValue")), 0);
+        assertTrue(
+            !vm.keyExistsJson(json, string.concat(".", vm.toLowercase(vm.toString(address(impl))))),
+            "implementation must not appear in the state diff"
+        );
+    }
+
+    /// @notice A `vm.mockFunction` redirect runs the mock's code in the target's context, so the
+    ///         call's nonce and balance changes are the target's.
+    function testCreateInMockedFunction() public {
+        Factory target = new Factory();
+        Factory mock = new Factory();
+        vm.mockFunction(address(target), address(mock), abi.encodeCall(Factory.deploy, (2)));
+        vm.deal(address(target), 2);
+
+        vm.startStateDiffRecording();
+        target.deploy(2);
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+
+        assertEq(vm.getNonce(address(target)), 3);
+        assertEq(vm.getNonce(address(mock)), 1);
+        assertEq(address(target).balance, 0);
+
+        assertEq(called.length, 3, "incorrect length");
+        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call), "incorrect kind");
+        assertEq(called[0].oldNonce, 1, "incorrect oldNonce");
+        assertEq(called[0].newNonce, 3, "incorrect newNonce");
+        assertEq(called[0].oldBalance, 2, "incorrect oldBalance");
+        assertEq(called[0].newBalance, 0, "incorrect newBalance");
     }
 
     /// @notice Test normal, non-nested storage accesses
@@ -1011,6 +1101,33 @@ contract RecordAccountAccessesTest is Test {
         );
     }
 
+    /// @notice Test that storage accesses after a nested call that resumed are recorded in the
+    ///         caller's own resume record
+    function testNestedStorageAfterResume() public {
+        vm.startStateDiffRecording();
+        nestedStorer.runThenWrite();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+        assertEq(called.length, 5, "incorrect account access length");
+
+        assertResumeEq(called[3], called[1]);
+        assertEq(called[3].storageAccesses.length, 2, "incorrect run resume storage length");
+
+        assertResumeEq(called[4], called[0]);
+        assertEq(called[4].storageAccesses.length, 2, "incorrect runThenWrite resume storage length");
+        assertIncrementEq(
+            called[4].storageAccesses[0],
+            called[4].storageAccesses[1],
+            Vm.StorageAccess({
+                account: address(nestedStorer),
+                slot: keccak256(abi.encodePacked(bytes32("nested_storer 5"), bytes32(0))),
+                isWrite: true,
+                previousValue: bytes32(uint256(0)),
+                newValue: bytes32(uint256(1)),
+                reverted: false
+            })
+        );
+    }
+
     /// @notice Test that constructor account and storage accesses are recorded, including reverts
     function testConstructorStorage() public {
         vm.startStateDiffRecording();
@@ -1182,16 +1299,79 @@ contract RecordAccountAccessesTest is Test {
         );
     }
 
+    /// @notice Test that a create that reverts or halts inside its frame records
+    ///         the unchanged nonce of the would-be deployed account
+    function testCreateFailedInFrameNonce() public {
+        bytes[2] memory initcodes = [
+            // Reverts.
+            abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true)),
+            // Halts on INVALID.
+            bytes(hex"fe")
+        ];
+        for (uint256 i; i < initcodes.length; ++i) {
+            vm.startStateDiffRecording();
+            create2or.create2(bytes32(0), initcodes[i]);
+            Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+            address child = deriveCreate2Address(address(create2or), bytes32(0), keccak256(initcodes[i]));
+            assertEq(called.length, 2, "incorrect length");
+            assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
+            assertEq(called[1].account, child, "incorrect account");
+            assertEq(called[1].newNonce, 0, "incorrect newNonce");
+            assertEq(vm.getNonce(child), 0, "incorrect child nonce");
+        }
+    }
+
+    /// @notice Test that a create into a pre-funded address records its balance
+    ///         as unchanged, whether the create reverts, succeeds or collides
+    function testCreatePrefundedBalance() public {
+        bytes[3] memory initcodes = [
+            // Reverts.
+            abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true)),
+            // Succeeds.
+            abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(false)),
+            // Collides with an account that has a nonce.
+            bytes(hex"00")
+        ];
+        for (uint256 i; i < initcodes.length; ++i) {
+            address child = deriveCreate2Address(address(create2or), bytes32(0), keccak256(initcodes[i]));
+            vm.deal(child, 123);
+            if (i == 2) vm.setNonce(child, 1);
+            vm.startStateDiffRecording();
+            create2or.create2(bytes32(0), initcodes[i]);
+            Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+            assertEq(called.length, 2, "incorrect length");
+            assertEq(called[1].account, child, "incorrect account");
+            assertEq(called[1].oldBalance, 123, "incorrect oldBalance");
+            assertEq(called[1].newBalance, 123, "incorrect newBalance");
+        }
+    }
+
+    /// @notice Test that a call that fails for lack of funds is recorded as reverted
+    function testCallOutOfFunds() public {
+        vm.startStateDiffRecording();
+        (bool success,) = address(1234).call{value: address(this).balance + 1}("");
+        assertTrue(!success);
+        Vm.AccountAccess[] memory called = vm.stopAndReturnStateDiff();
+        assertEq(called.length, 1, "incorrect length");
+        assertTrue(called[0].reverted, "call not reverted");
+    }
+
     /// @notice It is important to test SELFDESTRUCT behavior as long as there
     ///         are public networks that support the opcode, regardless of whether
     ///         or not Ethereum mainnet does.
     function testSelfDestruct() public {
+        vm.chainId(42);
         uint256 startingBalance = address(this).balance;
         this.startRecordingFromLowerDepth();
         address a = address(new SelfDestructor{value: 1 ether}(address(this)));
         address b = address(new SelfDestructor{value: 1 ether}(address(bytes20("doesn't exist yet"))));
+        // Changing chains must not rewrite previously recorded accesses.
+        vm.chainId(43);
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 5, "incorrect length");
+        for (uint256 i; i < called.length; ++i) {
+            assertEq(called[i].chainInfo.chainId, 42, "incorrect recorded chain");
+        }
         assertEq(
             called[1],
             Vm.AccountAccess({
@@ -1292,10 +1472,14 @@ contract RecordAccountAccessesTest is Test {
 
     /// @notice Test that EXT* opcodes are recorded as account accesses
     function testExtOpcodes() public {
+        vm.chainId(42);
         vm.startStateDiffRecording();
         extChecker.checkExts(address(1234));
         Vm.AccountAccess[] memory called = vm.stopAndReturnStateDiff();
         assertEq(called.length, 5, "incorrect length");
+        for (uint256 i; i < called.length; ++i) {
+            assertEq(called[i].chainInfo.chainId, 42, "incorrect recorded chain");
+        }
         // call to extChecker
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call));
         // extChecker checks

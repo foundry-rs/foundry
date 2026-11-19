@@ -553,6 +553,12 @@ contract WriteJsonTest is Test {
         simpleJson c;
     }
 
+    // Struct resolution for `vm.serialize*` must not recurse without end on self-referencing
+    // structs: https://github.com/foundry-rs/foundry/issues/18464
+    struct recursiveJson {
+        recursiveJson[] subtree;
+    }
+
     function test_serializeNotSimpleJson() public {
         string memory json3 = "json3";
         string memory path = "fixtures/Json/write_complex_test_serialize.json";
@@ -649,6 +655,52 @@ contract WriteJsonTest is Test {
         json = vm.readFile(path);
         uint256 value = abi.decode(vm.parseJson(json, ".parent.child.value"), (uint256));
         assertEq(value, 42);
+
+        vm.removeFile(path);
+    }
+
+    function test_writeJson_quotedObjectKeys() public {
+        string memory path = "fixtures/Json/write_test_quoted_keys.json";
+        vm.writeFile(path, '{"a.b":1,"x":{"0xAb.c":2}}');
+
+        vm.writeJson("3", path, '.["a.b"]');
+        vm.writeJson("4", path, "$['a.b']");
+        vm.writeJson("5", path, '.x["0xAb.c"]');
+        vm.writeJson("6", path, ".x.['0xAb.c']");
+
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonUint(json, '.["a.b"]'), 4);
+        assertEq(vm.parseJsonUint(json, "$['a.b']"), 4);
+        assertEq(vm.parseJsonUint(json, '.x["0xAb.c"]'), 6);
+        assertEq(vm.parseJsonUint(json, ".x.['0xAb.c']"), 6);
+        assertEq(vm.parseJsonKeys(json, "$").length, 2);
+        assertEq(vm.parseJsonKeys(json, ".x").length, 1);
+        vm.removeFile(path);
+    }
+
+    function test_writeJson_quotedKeysCreateAndRejectUnsupportedPaths() public {
+        string memory path = "fixtures/Json/write_test_quoted_keys_create.json";
+        vm.writeFile(path, "{}");
+
+        vm.writeJson("7", path, ".new['child.key'].value");
+        vm.writeJson("8", path, ".parent.child.value");
+
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonUint(json, ".new['child.key'].value"), 7);
+        assertEq(vm.parseJsonUint(json, ".parent.child.value"), 8);
+        assertEq(vm.parseJsonKeys(json, "$").length, 2);
+        assertEq(vm.parseJsonKeys(json, ".new").length, 1);
+        assertEq(vm.parseJsonKeys(json, ".new['child.key']").length, 1);
+        assertEq(vm.parseJsonKeys(json, ".parent").length, 1);
+        assertEq(vm.parseJsonKeys(json, ".parent.child").length, 1);
+
+        vm._expectCheatcodeRevert();
+        vm.writeJson("9", path, ".new[0]");
+        assertEq(vm.readFile(path), json);
+
+        vm._expectCheatcodeRevert();
+        vm.writeJson("9", path, ".new['unterminated]");
+        assertEq(vm.readFile(path), json);
 
         vm.removeFile(path);
     }

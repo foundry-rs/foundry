@@ -89,7 +89,7 @@ contract InitCodeHash {
 "#,
     );
 
-    let owner = address!("0x0000000000000000000000000000000000000001");
+    let owner = Address::with_last_byte(1);
     let bytecode = cmd
         .forge_fuse()
         .args(["inspect", "InitCodeHash", "bytecode"])
@@ -180,4 +180,21 @@ async fn compute_address(cmd: _) {
     ])
     .assert_success()
     .stdout_eq(format!("{}\n", Address::ZERO.create(0).to_checksum(None)));
+}
+
+// An unconstrained pattern returns the initial salt without relying on native-endian iteration.
+#[casttest]
+fn create2_wildcard_pattern(cmd: _) {
+    cmd.args([
+        "create2",
+        "--matching=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "--no-random",
+        "--init-code-hash=0x0000000000000000000000000000000000000000000000000000000000000000",
+        "-j1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x778a4590f20dB0c23cB7c1beFC8dA04549f2aa95	0x0000000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
 }

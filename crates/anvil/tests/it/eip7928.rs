@@ -19,7 +19,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use serde_json::{Value, json};
 use std::sync::atomic::Ordering;
@@ -120,14 +120,14 @@ async fn locally_mined_transactions_use_ordered_bal_indices() {
 
     let bal =
         provider.get_block_access_list_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    let sender = bal.iter().find(|account| account.address == from).unwrap();
+    let sender = bal.iter().find(|account| account.address() == from).unwrap();
     let indices =
-        sender.nonce_changes.iter().map(|change| change.block_access_index).collect::<Vec<_>>();
+        sender.nonce_changes.iter().map(|change| change.block_access_index()).collect::<Vec<_>>();
     assert_eq!(indices, [BlockAccessIndex::new(1), BlockAccessIndex::new(2)]);
 }
 
 fn account(bal: &BlockAccessList, address: Address) -> &AccountChanges {
-    bal.iter().find(|account| account.address == address).unwrap_or_else(|| {
+    bal.iter().find(|account| account.address() == address).unwrap_or_else(|| {
         panic!("{address} is missing from the block access list");
     })
 }
@@ -182,7 +182,7 @@ async fn locally_mined_block_access_list_records_every_phase() {
         sender_changes
             .balance_changes
             .iter()
-            .map(|change| change.block_access_index)
+            .map(|change| change.block_access_index())
             .collect::<Vec<_>>(),
         [index(1), index(2)]
     );
@@ -191,7 +191,7 @@ async fn locally_mined_block_access_list_records_every_phase() {
         beneficiary
             .balance_changes
             .iter()
-            .map(|change| change.block_access_index)
+            .map(|change| change.block_access_index())
             .collect::<Vec<_>>(),
         [index(1), index(2)]
     );
@@ -203,7 +203,7 @@ async fn locally_mined_block_access_list_records_every_phase() {
         [SlotChanges::new(
             U256::ZERO,
             vec![
-                StorageChange::new(index(1), U256::from(1)),
+                StorageChange::new(index(1), U256::ONE),
                 StorageChange::new(index(2), U256::from(2)),
             ],
         )]

@@ -4,7 +4,8 @@ use foundry_config::MutatorType;
 
 use super::{
     MutationContext, Mutator, assembly_mutator, assignment_mutator, binary_op_mutator,
-    delete_expression_mutator, elim_delegate_mutator, require_mutator, unary_op_mutator,
+    delete_expression_mutator, elim_delegate_mutator, function_body_mutator, require_mutator,
+    unary_op_mutator,
 };
 
 /// Registry of all available mutators (ie implementing the Mutator trait)
@@ -18,11 +19,6 @@ pub struct MutationGenerationResult {
 }
 
 impl MutatorRegistry {
-    #[cfg(test)]
-    pub fn default() -> Self {
-        Self::from_enabled(&MutatorType::all())
-    }
-
     pub fn from_enabled(enabled: &[MutatorType]) -> Self {
         let mut registry = Self { mutators: Vec::new() };
 
@@ -44,6 +40,9 @@ impl MutatorRegistry {
                 }
                 MutatorType::ElimDelegate => {
                     registry.mutators.push(Box::new(elim_delegate_mutator::ElimDelegateMutator));
+                }
+                MutatorType::FunctionBody => {
+                    registry.mutators.push(Box::new(function_body_mutator::FunctionBodyMutator));
                 }
                 MutatorType::Require => {
                     registry.mutators.push(Box::new(require_mutator::RequireMutator));

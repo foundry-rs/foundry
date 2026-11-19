@@ -646,7 +646,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
             }
             // Assembly can both overwrite locals and terminate the frame. Stop this path rather
             // than carrying facts across unmodeled instructions.
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
+            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) | StmtKind::Err(_) => {
                 return Vec::new();
             }
         }
@@ -691,7 +691,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
         value.refresh(state);
         self.use_value(&value);
         value.scalar = value.scalar.or_else(|| {
-            self.gcx.try_eval_const_value(expr).ok().and_then(|value| {
+            self.gcx.const_eval().eval_expr(expr).ok().and_then(|value| {
                 value.as_bool().map(Scalar::Bool).or_else(|| value.as_u256().map(Scalar::Uint))
             })
         });
@@ -772,7 +772,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
                     inner,
                     binary,
                     value.scalar,
-                    Some(Scalar::Uint(U256::from(1))),
+                    Some(Scalar::Uint(U256::ONE)),
                     state,
                 );
                 value.cheatcode = false;
@@ -1006,15 +1006,14 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
         Some((function, environments))
     }
 
-    /// Evaluates only the constant-address forms used by cheatcode declarations. The pinned
-    /// compiler's integer evaluator does not yet support general casts or keccak calls.
+    /// Evaluates the constant-address forms used by cheatcode declarations.
     fn constant_word(&self, expr: &Expr<'_>, depth: usize) -> Option<U256> {
         if depth >= 16 {
             return None;
         }
         let expr = expr.peel_parens();
-        if let Ok(value) = self.gcx.try_eval_const(expr) {
-            return value.as_u256();
+        if let Ok(value) = self.gcx.const_eval().eval_expr(expr) {
+            return value.as_word();
         }
         if let Some(id) = self.gcx.resolved_variable(expr) {
             let var = self.gcx.hir.variable(id);
@@ -1030,10 +1029,11 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
             {
                 let arg = args.exprs().next()?;
                 if self.gcx.resolved_builtin(callee) == Some(Builtin::Keccak256) {
-                    let ConstValue::String(bytes) = self.gcx.try_eval_const_value(arg).ok()? else {
+                    let ConstValue::Bytes(bytes, _) = self.gcx.const_eval().eval_expr(arg).ok()?
+                    else {
                         return None;
                     };
-                    return Some(U256::from_be_bytes(keccak256(bytes.as_byte_str()).0));
+                    return Some(keccak256(bytes.as_byte_str()).into());
                 }
                 let bits = self.cast_bits(callee)?;
                 let value = self.constant_word(arg, depth + 1)?;

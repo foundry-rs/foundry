@@ -1,8 +1,6 @@
 //! Commonly used constants.
 
-use alloy_eips::Typed2718;
-use alloy_network::AnyTxEnvelope;
-use alloy_primitives::{Address, B256, Signature, address};
+use alloy_primitives::{Address, B256, address, b256};
 use std::time::Duration;
 
 /// The dev chain-id, inherited from hardhat
@@ -10,9 +8,6 @@ pub const DEV_CHAIN_ID: u64 = 31337;
 
 /// The first four bytes of the call data for a function call specifies the function to be called.
 pub const SELECTOR_LEN: usize = 4;
-
-/// Maximum size in bytes (0x6000) that a contract can have.
-pub const CONTRACT_MAX_SIZE: usize = 24576;
 
 /// Default request timeout for http requests
 ///
@@ -46,8 +41,7 @@ pub const MONAD_SYSTEM_ADDRESS: Address = address!("0x6f49a8F621353f12378d0046E7
 ///
 /// These are legacy envelopes with `gasPrice = 0` and a receipt `gasUsed` of `0`, so replaying one
 /// as a regular transaction fails base fee validation and aborts the whole block replay.
-pub const HYPERLIQUID_SYSTEM_ADDRESS: Address =
-    address!("0x2222222222222222222222222222222222222222");
+pub const HYPERLIQUID_SYSTEM_ADDRESS: Address = Address::repeat_byte(0x22);
 
 /// MegaETH system address for `Set Slots` in the MegaETH oracle.
 ///
@@ -83,18 +77,18 @@ pub fn is_known_system_sender(sender: Address) -> bool {
     .contains(&sender)
 }
 
-pub fn is_impersonated_tx(tx: &AnyTxEnvelope) -> bool {
-    if let AnyTxEnvelope::Ethereum(tx) = tx {
-        return is_impersonated_sig(tx.signature(), tx.ty());
-    }
-    false
-}
+/// EIP-1967 proxy implementation slot:
+/// `bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)`.
+pub const EIP1967_IMPLEMENTATION_SLOT: B256 =
+    b256!("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc");
 
-pub fn is_impersonated_sig(sig: &Signature, ty: u8) -> bool {
-    let impersonated_sig =
-        Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false);
-    ty != SYSTEM_TRANSACTION_TYPE && (sig == &impersonated_sig || sig.r() == impersonated_sig.r())
-}
+/// EIP-1967 proxy admin slot: `bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1)`.
+pub const EIP1967_ADMIN_SLOT: B256 =
+    b256!("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103");
+
+/// EIP-1967 proxy beacon slot: `bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)`.
+pub const EIP1967_BEACON_SLOT: B256 =
+    b256!("0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50");
 
 #[cfg(test)]
 mod tests {

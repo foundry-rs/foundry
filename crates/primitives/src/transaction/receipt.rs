@@ -19,9 +19,9 @@ use tempo_primitives::TEMPO_TX_TYPE_ID;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom};
 
 #[cfg(feature = "base")]
-use base_common_consensus::Eip8130Receipt;
+use base_common_consensus::BASE_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
-use base_common_evm::EIP8130_TRANSACTION_TYPE;
+use base_common_consensus::TxBaseReceipt;
 
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{
@@ -49,7 +49,7 @@ pub enum FoundryReceiptEnvelope<T = Log> {
     Deposit(OpDepositReceiptWithBloom<T>),
     #[cfg(feature = "base")]
     #[serde(rename = "0x79")]
-    Eip8130(ReceiptWithBloom<Eip8130Receipt<T>>),
+    Eip8130(ReceiptWithBloom<TxBaseReceipt<T>>),
     #[serde(rename = "0x76")]
     Tempo(ReceiptWithBloom<Receipt<T>>),
     /// A receipt with a transaction type Foundry does not model.
@@ -68,7 +68,7 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
         cumulative_gas_used: u64,
         logs: impl IntoIterator<Item = alloy_rpc_types::Log>,
         tx_type: FoundryTxType,
-        #[cfg(feature = "base")] eip8130_phase_statuses: Vec<u8>,
+        #[cfg(feature = "base")] eip8130_committed_phases: u64,
         #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
         deposit_nonce: Option<u64>,
         #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
@@ -112,8 +112,12 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
             }
             #[cfg(feature = "base")]
             FoundryTxType::Eip8130 => Self::Eip8130(ReceiptWithBloom {
-                receipt: Eip8130Receipt::new(inner_receipt, eip8130_phase_statuses),
+                receipt: TxBaseReceipt::new(inner_receipt, eip8130_committed_phases),
                 logs_bloom,
+            }),
+            FoundryTxType::Celo => Self::Unknown(AnyReceiptEnvelope {
+                inner: ReceiptWithBloom { receipt: inner_receipt, logs_bloom },
+                r#type: super::CIP64_TX_TYPE,
             }),
             FoundryTxType::Tempo => {
                 Self::Tempo(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
@@ -168,12 +172,12 @@ impl<T> FoundryReceiptEnvelope<T> {
         matches!(self, Self::Eip8130(_))
     }
 
-    /// Returns EIP-8130 per-phase statuses, or an empty slice for other receipt types.
+    /// Returns the EIP-8130 committed phase count, or `None` for other receipt types.
     #[cfg(feature = "base")]
-    pub fn eip8130_phase_statuses(&self) -> &[u8] {
+    pub const fn eip8130_committed_phases(&self) -> Option<u64> {
         match self {
-            Self::Eip8130(receipt) => &receipt.receipt.phase_statuses,
-            _ => &[],
+            Self::Eip8130(receipt) => Some(receipt.receipt.committed_phases),
+            _ => None,
         }
     }
 
@@ -253,7 +257,7 @@ impl<T> FoundryReceiptEnvelope<T> {
             ),
             #[cfg(feature = "base")]
             Self::Eip8130(r) => {
-                FoundryReceiptEnvelope::Eip8130(r.map_receipt(|r: Eip8130Receipt<T>| r.map_logs(f)))
+                FoundryReceiptEnvelope::Eip8130(r.map_receipt(|r: TxBaseReceipt<T>| r.map_logs(f)))
             }
             Self::Tempo(r) => FoundryReceiptEnvelope::Tempo(r.map_logs(f)),
             Self::Unknown(r) => FoundryReceiptEnvelope::Unknown(AnyReceiptEnvelope {
@@ -276,18 +280,18 @@ impl<T> FoundryReceiptEnvelope<T> {
     /// Return the receipt's bloom.
     pub const fn logs_bloom(&self) -> &Bloom {
         match self {
-            Self::Legacy(t) => &t.logs_bloom,
-            Self::Eip2930(t) => &t.logs_bloom,
-            Self::Eip1559(t) => &t.logs_bloom,
-            Self::Eip4844(t) => &t.logs_bloom,
-            Self::Eip7702(t) => &t.logs_bloom,
+            Self::Legacy(t) => t.bloom_ref(),
+            Self::Eip2930(t) => t.bloom_ref(),
+            Self::Eip1559(t) => t.bloom_ref(),
+            Self::Eip4844(t) => t.bloom_ref(),
+            Self::Eip7702(t) => t.bloom_ref(),
             #[cfg(feature = "optimism")]
-            Self::PostExec(t) => &t.logs_bloom,
+            Self::PostExec(t) => t.bloom_ref(),
             #[cfg(any(feature = "base", feature = "optimism"))]
-            Self::Deposit(t) => &t.logs_bloom,
+            Self::Deposit(t) => t.bloom_ref(),
             #[cfg(feature = "base")]
-            Self::Eip8130(t) => &t.logs_bloom,
-            Self::Tempo(t) => &t.logs_bloom,
+            Self::Eip8130(t) => t.bloom_ref(),
+            Self::Tempo(t) => t.bloom_ref(),
             Self::Unknown(t) => &t.inner.logs_bloom,
         }
     }
@@ -494,9 +498,9 @@ impl From<FoundryReceiptEnvelope<alloy_rpc_types::Log>> for OtsReceipt {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::{Address, B256, Bytes, LogData, hex};
-    use std::str::FromStr;
+    use alloy_primitives::{Address, B256, Bytes, LogData, address, b256, hex};
 
     fn receipt_for(tx_type: FoundryTxType) -> FoundryReceiptEnvelope {
         FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
@@ -505,7 +509,7 @@ mod tests {
             Vec::new(),
             tx_type,
             #[cfg(feature = "base")]
-            Vec::new(),
+            0,
             None,
             None,
         )
@@ -544,7 +548,7 @@ mod tests {
 
         // Varied payload so encodings differ beyond the type byte.
         let logs = vec![Log {
-            address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
+            address: Address::with_last_byte(0x11),
             data: LogData::new_unchecked(
                 vec![B256::repeat_byte(0x22)],
                 Bytes::from_static(&[0x01, 0x02, 0x03]),
@@ -585,7 +589,7 @@ mod tests {
 
     fn unknown_receipt(ty: u8) -> FoundryReceiptEnvelope {
         let logs = vec![Log {
-            address: Address::from_str("0000000000000000000000000000000000000064").unwrap(),
+            address: Address::with_last_byte(0x64),
             data: LogData::new_unchecked(
                 vec![B256::repeat_byte(0x33)],
                 Bytes::from_static(&[0xaa, 0xbb]),
@@ -661,22 +665,22 @@ mod tests {
 
     #[cfg(feature = "base")]
     #[test]
-    fn eip8130_receipt_preserves_phase_statuses_outside_consensus_encoding() {
+    fn eip8130_receipt_commits_committed_phases_to_consensus_encoding() {
         let receipt = FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
             false,
             42_000,
             Vec::new(),
             FoundryTxType::Eip8130,
-            vec![0x01, 0x00],
+            1,
             None,
             None,
         )
         .map_logs(|log| log.inner);
-        assert_eq!(receipt.eip8130_phase_statuses(), &[0x01, 0x00]);
+        assert_eq!(receipt.eip8130_committed_phases(), Some(1));
 
         let encoded = receipt.encoded_2718();
         let decoded = FoundryReceiptEnvelope::decode_2718(&mut encoded.as_slice()).unwrap();
-        assert!(decoded.eip8130_phase_statuses().is_empty());
+        assert_eq!(decoded.eip8130_committed_phases(), Some(1));
         assert_eq!(decoded.encoded_2718(), encoded);
     }
 
@@ -690,23 +694,21 @@ mod tests {
                 status: false.into(),
                 cumulative_gas_used: 0x1,
                 logs: vec![Log {
-                    address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
+                    address: Address::with_last_byte(0x11),
                     data: LogData::new_unchecked(
                         vec![
-                            B256::from_str(
-                                "000000000000000000000000000000000000000000000000000000000000dead",
-                            )
-                            .unwrap(),
-                            B256::from_str(
-                                "000000000000000000000000000000000000000000000000000000000000beef",
-                            )
-                            .unwrap(),
+                            b256!(
+                                "000000000000000000000000000000000000000000000000000000000000dead"
+                            ),
+                            b256!(
+                                "000000000000000000000000000000000000000000000000000000000000beef"
+                            ),
                         ],
-                        Bytes::from_str("0100ff").unwrap(),
+                        alloy_primitives::bytes!("0100ff"),
                     ),
                 }],
             },
-            logs_bloom: [0; 256].into(),
+            logs_bloom: Bloom::ZERO,
         });
 
         receipt.encode(&mut data);
@@ -725,23 +727,21 @@ mod tests {
                 status: false.into(),
                 cumulative_gas_used: 0x1,
                 logs: vec![Log {
-                    address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
+                    address: Address::with_last_byte(0x11),
                     data: LogData::new_unchecked(
                         vec![
-                            B256::from_str(
-                                "000000000000000000000000000000000000000000000000000000000000dead",
-                            )
-                            .unwrap(),
-                            B256::from_str(
-                                "000000000000000000000000000000000000000000000000000000000000beef",
-                            )
-                            .unwrap(),
+                            b256!(
+                                "000000000000000000000000000000000000000000000000000000000000dead"
+                            ),
+                            b256!(
+                                "000000000000000000000000000000000000000000000000000000000000beef"
+                            ),
                         ],
-                        Bytes::from_str("0100ff").unwrap(),
+                        alloy_primitives::bytes!("0100ff"),
                     ),
                 }],
             },
-            logs_bloom: [0; 256].into(),
+            logs_bloom: Bloom::ZERO,
         });
 
         let receipt = FoundryReceiptEnvelope::decode(&mut &data[..]).unwrap();
@@ -756,30 +756,26 @@ mod tests {
                 status: true.into(),
                 cumulative_gas_used: 157716,
                 logs: vec![Log {
-                    address: Address::from_str("20c0000000000000000000000000000000000000").unwrap(),
+                    address: address!("20c0000000000000000000000000000000000000"),
                     data: LogData::new_unchecked(
                         vec![
-                            B256::from_str(
-                                "8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
-                            )
-                            .unwrap(),
-                            B256::from_str(
-                                "000000000000000000000000566ff0f4a6114f8072ecdc8a7a8a13d8d0c6b45f",
-                            )
-                            .unwrap(),
-                            B256::from_str(
-                                "000000000000000000000000dec0000000000000000000000000000000000000",
-                            )
-                            .unwrap(),
+                            b256!(
+                                "8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+                            ),
+                            b256!(
+                                "000000000000000000000000566ff0f4a6114f8072ecdc8a7a8a13d8d0c6b45f"
+                            ),
+                            b256!(
+                                "000000000000000000000000dec0000000000000000000000000000000000000"
+                            ),
                         ],
-                        Bytes::from_str(
-                            "0000000000000000000000000000000000000000000000000000000000989680",
-                        )
-                        .unwrap(),
+                        alloy_primitives::bytes!(
+                            "0000000000000000000000000000000000000000000000000000000000989680"
+                        ),
                     ),
                 }],
             },
-            logs_bloom: [0; 256].into(),
+            logs_bloom: Bloom::ZERO,
         });
 
         assert_eq!(receipt.tx_type(), Some(FoundryTxType::Tempo));
@@ -804,7 +800,7 @@ mod tests {
     fn decode_tempo_receipt() {
         let receipt = FoundryReceiptEnvelope::Tempo(ReceiptWithBloom {
             receipt: Receipt { status: true.into(), cumulative_gas_used: 21000, logs: vec![] },
-            logs_bloom: [0; 256].into(),
+            logs_bloom: Bloom::ZERO,
         });
 
         // Encode and decode via 2718.
@@ -824,7 +820,7 @@ mod tests {
             vec![],
             FoundryTxType::Tempo,
             #[cfg(feature = "base")]
-            Vec::new(),
+            0,
             None,
             None,
         );
@@ -847,11 +843,11 @@ mod tests {
                 status: true.into(),
                 cumulative_gas_used: 21000,
                 logs: vec![Log {
-                    address: Address::from_str("20c0000000000000000000000000000000000000").unwrap(),
+                    address: address!("20c0000000000000000000000000000000000000"),
                     data: LogData::new_unchecked(vec![], Bytes::default()),
                 }],
             },
-            logs_bloom: [0; 256].into(),
+            logs_bloom: Bloom::ZERO,
         });
 
         // Map logs to a different type (just clone in this case)

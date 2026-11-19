@@ -1,6 +1,6 @@
 use crate::{
     hir_ext, render,
-    utils::{Deployment, git_source_url, read_deployments},
+    utils::{git_source_url, is_safe_output_path, read_deployments, relative_source_path},
     vocs,
 };
 use eyre::Result;
@@ -12,9 +12,9 @@ use foundry_config::{
 use rayon::prelude::*;
 use solar::{config::CompilerStage, sema::Compiler};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fs,
-    path::{Component, PathBuf},
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -113,12 +113,12 @@ impl DocBuilder {
         sources.sort_by(|(a, _), (b, _)| a.cmp(b));
         let sources_count = sources.len();
 
-        let repo = self.config.repository.clone();
-        let commit = self.commit.clone();
-        let deployments_cfg = self.deployments.clone();
-        let root = self.root.clone();
+        let repo = self.config.repository.as_deref();
+        let commit = self.commit.as_deref();
+        let deployments_cfg = &self.deployments;
+        let root = &self.root;
 
-        let all_pages = compiler.enter_mut(|compiler| -> eyre::Result<Vec<PathBuf>> {
+        let results = compiler.enter_mut(|compiler| -> Result<Vec<RenderResult>> {
             if compiler.gcx().stage() < Some(CompilerStage::Lowering)
                 && compiler.lower_asts().is_err()
             {
@@ -134,12 +134,10 @@ impl DocBuilder {
                 .map(|(p, _)| if p.is_absolute() { p.clone() } else { root.join(p) })
                 .collect();
 
-            let name_to_page = hir_ext::build_name_to_page(gcx, &root, &allowed_sources);
+            let name_to_page = hir_ext::build_name_to_page(gcx, root, &allowed_sources);
 
             // Render each source in parallel.
-            // Each entry is `(rendered_pages, panicked_user_source)`. A panicked
-            // non-library source is recorded so we can fail the build at the end.
-            type RenderResult = (Option<Vec<(PathBuf, String)>>, Option<PathBuf>);
+            // Record panicked user sources so we can fail after writing successful pages.
             let results: Vec<RenderResult> = sources
                 .par_iter()
                 .map(|(path, from_library)| -> RenderResult {
@@ -149,181 +147,66 @@ impl DocBuilder {
                         if !from_library {
                             warn!("AST source not found for {}", abs_path.display());
                         }
-                        return (None, None);
+                        return Ok(Vec::new());
                     };
                     let Some(ast) = &ast_source.ast else {
                         if !from_library {
                             warn!("AST missing for {}", abs_path.display());
                         }
-                        return (None, None);
+                        return Ok(Vec::new());
                     };
 
                     // For sources outside the project root (e.g. library deps that live under a
                     // different prefix), synthesise a safe relative path so that
                     // `pages_dir.join(rel_out_path)` can never escape the docs tree.
-                    let rel_path = if let Ok(p) = abs_path.strip_prefix(&root) {
-                        p.to_path_buf()
-                    } else {
-                        let comps: Vec<_> = abs_path.components().collect();
-                        let start = comps.len().saturating_sub(3);
-                        let tail: PathBuf = comps[start..].iter().collect();
-                        PathBuf::from("lib").join(tail)
-                    };
+                    let rel_path = relative_source_path(root, &abs_path);
 
                     // Git source link (skipped on library files).
                     let git_url = if *from_library {
                         None
                     } else {
-                        repo.as_deref().and_then(|r| {
-                            git_source_url(r, commit.as_deref().unwrap_or("HEAD"), &root, &abs_path)
+                        repo.and_then(|r| {
+                            git_source_url(r, commit.unwrap_or("HEAD"), root, &abs_path)
                         })
                     };
 
                     // Deployments for this source's contracts.
-                    let deployments_map: HashMap<String, Vec<Deployment>> = match &deployments_cfg {
-                        Some(dir_opt) => {
-                            let entries = read_deployments(&root, dir_opt.as_deref(), &rel_path);
-                            // All deployments belong to the contract sharing the
-                            // file stem (legacy behaviour).
-                            if entries.is_empty() {
-                                HashMap::new()
-                            } else if let Some(stem) = rel_path.file_stem().and_then(|s| s.to_str())
-                            {
-                                let mut m = HashMap::new();
-                                m.insert(stem.to_string(), entries);
-                                m
-                            } else {
-                                HashMap::new()
-                            }
-                        }
-                        None => HashMap::new(),
-                    };
+                    // The legacy lookup is per file stem, so this source has one deployment list.
+                    let deployments = deployments_cfg.as_ref().map_or_else(Vec::new, |dir| {
+                        read_deployments(root, dir.as_deref(), &rel_path)
+                    });
 
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         render::source(
                             ast,
                             &ast_source.file,
-                            gcx.sess.source_map(),
                             &rel_path,
                             &abs_path,
-                            &root,
                             gcx,
                             &name_to_page,
                             git_url.as_deref(),
-                            &deployments_map,
+                            &deployments,
                         )
                     }));
                     match result {
-                        Ok(pages) => (Some(pages), None),
+                        Ok(pages) => Ok(pages),
                         Err(_) => {
                             // Ignore failures from library files; surface user errors.
                             if *from_library {
                                 debug!("rendering failed for library file {}", abs_path.display());
-                                (None, None)
+                                Ok(Vec::new())
                             } else {
                                 error!("rendering panicked for {}", abs_path.display());
-                                (None, Some(abs_path))
+                                Err(abs_path)
                             }
                         }
                     }
                 })
                 .collect();
 
-            // Split rendered pages from panicked user sources.
-            let mut failed: Vec<PathBuf> = Vec::new();
-            let mut all_rel: Vec<PathBuf> = Vec::new();
-            for (pages, panicked) in results {
-                if let Some(p) = panicked {
-                    failed.push(p);
-                }
-                if let Some(page_list) = pages {
-                    for (rel_out_path, content) in page_list {
-                        // Reject any output path that would escape the docs tree.
-                        if rel_out_path.is_absolute()
-                            || rel_out_path.components().any(|c| {
-                                matches!(
-                                    c,
-                                    Component::ParentDir
-                                        | Component::RootDir
-                                        | Component::Prefix(_)
-                                )
-                            })
-                        {
-                            warn!("skipping unsafe output path: {}", rel_out_path.display());
-                            continue;
-                        }
-                        let abs_out = pages_dir.join(&rel_out_path);
-                        if let Some(parent) = abs_out.parent() {
-                            fs::create_dir_all(parent)?;
-                        }
-                        fs::write(&abs_out, content)?;
-                        info!("wrote {}", abs_out.display());
-                        all_rel.push(rel_out_path);
-                    }
-                }
-            }
-            all_rel.sort();
-
-            // Fail the build if any non-library source panicked during render.
-            if !failed.is_empty() {
-                let list = failed
-                    .iter()
-                    .map(|p| format!("  - {}", p.display()))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                eyre::bail!(
-                    "forge doc: rendering panicked for {} source file(s):\n{list}",
-                    failed.len()
-                );
-            }
-
-            // Prune stale `.mdx` pages using a manifest of previously generated
-            // files. This covers every generated subtree (including library pages
-            // outside `src/`), while never touching user-authored pages that were
-            // never listed in the manifest.
-            let manifest_path = pages_dir.join(".forge-doc-manifest");
-            let prev_generated: HashSet<PathBuf> = if manifest_path.exists() {
-                fs::read_to_string(&manifest_path)
-                    .unwrap_or_default()
-                    .lines()
-                    .filter(|l| !l.is_empty())
-                    .map(PathBuf::from)
-                    .collect()
-            } else {
-                // No manifest: do not prune. The manifest is the ownership boundary for
-                // generated pages; without it, user-authored pages are indistinguishable.
-                HashSet::new()
-            };
-            let new_generated: HashSet<PathBuf> = all_rel.iter().cloned().collect();
-            for stale in prev_generated.difference(&new_generated) {
-                let safe = !stale.is_absolute()
-                    && !stale.components().any(|c| {
-                        matches!(
-                            c,
-                            Component::ParentDir | Component::Prefix(_) | Component::RootDir
-                        )
-                    });
-                if !safe {
-                    warn!("forge doc: ignoring unsafe manifest entry '{}'", stale.display());
-                    continue;
-                }
-                let stale_abs = pages_dir.join(stale);
-                if stale_abs.is_file() {
-                    debug!("pruning stale page {}", stale_abs.display());
-                    let _ = fs::remove_file(&stale_abs);
-                }
-            }
-            // Write new manifest.
-            {
-                let mut manifest_lines: Vec<String> =
-                    all_rel.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-                manifest_lines.sort();
-                fs::create_dir_all(&pages_dir)?;
-                fs::write(&manifest_path, manifest_lines.join("\n") + "\n")?;
-            }
-
-            Ok(all_rel)
+            Ok(results)
         })?;
+        let all_pages = write_pages(results, &pages_dir)?;
         let render_elapsed = render_started.elapsed();
 
         // Generate vocs site scaffolding.
@@ -346,5 +229,114 @@ impl DocBuilder {
             render_elapsed,
             site_elapsed,
         })
+    }
+}
+
+/// Successful pages or the path of a user source whose renderer panicked.
+type RenderResult = std::result::Result<Vec<(PathBuf, String)>, PathBuf>;
+
+/// Write successful pages, but do not change ownership or prune if a user source failed.
+fn write_pages(results: Vec<RenderResult>, pages_dir: &Path) -> Result<Vec<PathBuf>> {
+    // Split rendered pages from panicked user sources.
+    let mut failed: Vec<PathBuf> = Vec::new();
+    let mut all_rel: Vec<PathBuf> = Vec::new();
+    for result in results {
+        let page_list = match result {
+            Ok(pages) => pages,
+            Err(path) => {
+                failed.push(path);
+                continue;
+            }
+        };
+        for (rel_out_path, content) in page_list {
+            // Reject any output path that would escape the docs tree.
+            if !is_safe_output_path(&rel_out_path) {
+                warn!("skipping unsafe output path: {}", rel_out_path.display());
+                continue;
+            }
+            let abs_out = pages_dir.join(&rel_out_path);
+            if let Some(parent) = abs_out.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&abs_out, content)?;
+            info!("wrote {}", abs_out.display());
+            all_rel.push(rel_out_path);
+        }
+    }
+    all_rel.sort();
+
+    // Fail the build if any non-library source panicked during render.
+    if !failed.is_empty() {
+        let list =
+            failed.iter().map(|p| format!("  - {}", p.display())).collect::<Vec<_>>().join("\n");
+        eyre::bail!("forge doc: rendering panicked for {} source file(s):\n{list}", failed.len());
+    }
+    update_manifest(pages_dir, &all_rel)?;
+    Ok(all_rel)
+}
+
+/// The manifest is the ownership boundary: only previously generated pages can be pruned.
+fn update_manifest(pages_dir: &Path, all_rel: &[PathBuf]) -> Result<()> {
+    // Prune stale `.mdx` pages using a manifest of previously generated
+    // files. This covers every generated subtree (including library pages
+    // outside `src/`), while never touching user-authored pages that were
+    // never listed in the manifest.
+    let manifest_path = pages_dir.join(".forge-doc-manifest");
+    // Missing or unreadable manifests grant no ownership over existing pages.
+    let prev_generated = fs::read_to_string(&manifest_path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .collect::<HashSet<_>>();
+    let new_generated: HashSet<PathBuf> = all_rel.iter().cloned().collect();
+    for stale in prev_generated.difference(&new_generated) {
+        if !is_safe_output_path(stale) {
+            warn!("forge doc: ignoring unsafe manifest entry '{}'", stale.display());
+            continue;
+        }
+        let stale_abs = pages_dir.join(stale);
+        if stale_abs.is_file() {
+            debug!("pruning stale page {}", stale_abs.display());
+            let _ = fs::remove_file(&stale_abs);
+        }
+    }
+    // Write new manifest.
+    {
+        let mut manifest_lines: Vec<String> =
+            all_rel.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        manifest_lines.sort();
+        fs::create_dir_all(pages_dir)?;
+        fs::write(&manifest_path, manifest_lines.join("\n") + "\n")?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rendering_failure_keeps_previous_ownership() {
+        let dir = tempfile::tempdir().unwrap();
+        let pages = dir.path();
+        let manifest = pages.join(".forge-doc-manifest");
+        fs::write(&manifest, "old.mdx\n").unwrap();
+        fs::write(pages.join("old.mdx"), "old").unwrap();
+        let results = vec![
+            Ok(vec![(PathBuf::from("new.mdx"), "new".to_string())]),
+            Err(PathBuf::from("Broken.sol")),
+            Ok(vec![(PathBuf::from("after.mdx"), "after".to_string())]),
+        ];
+
+        let error = write_pages(results, pages).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "forge doc: rendering panicked for 1 source file(s):\n  - Broken.sol"
+        );
+        assert_eq!(fs::read_to_string(pages.join("new.mdx")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(pages.join("after.mdx")).unwrap(), "after");
+        assert_eq!(fs::read_to_string(pages.join("old.mdx")).unwrap(), "old");
+        assert_eq!(fs::read_to_string(manifest).unwrap(), "old.mdx\n");
     }
 }

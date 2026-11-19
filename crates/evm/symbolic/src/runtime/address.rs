@@ -14,12 +14,19 @@ impl SymExpr {
             format!("concrete-address:{:?}", word_to_address(value))
         } else {
             let expr = self.symbolic_address_canonical();
-            let bytes = expr
-                .address_byte_terms_for_equivalence()
-                .map(|bytes| format!("{bytes:?}"))
-                .unwrap_or_else(|| format!("{expr:?}"));
+            let identity = expr.address_byte_terms_for_equivalence().map_or_else(
+                || ExpressionDigests::identity([expr]),
+                |bytes| ExpressionDigests::identity(&bytes),
+            );
+            let bytes = format!("{identity:?}");
             format!("symbolic-address:{bytes}")
         }
+    }
+
+    /// Keeps the low 160 bits of a word, as the EVM reads an address operand.
+    pub(crate) fn address_operand(self, cx: &mut SymCx) -> Self {
+        let mask = Self::constant(cx, (U256::ONE << 160) - U256::ONE);
+        Self::binop(cx, SymBinOp::And, self, mask)
     }
 
     pub(crate) fn address_match_condition(&self, cx: &mut SymCx, address: Address) -> SymBoolExpr {
@@ -108,7 +115,7 @@ impl SymExpr {
     }
 
     fn is_address_mask(&self) -> bool {
-        self.as_const() == Some((U256::from(1) << 160) - U256::from(1))
+        self.as_const() == Some((U256::ONE << 160) - U256::ONE)
     }
 
     fn is_shift_96(&self) -> bool {
@@ -120,7 +127,7 @@ pub(crate) fn mask_bits(value: U256, bits: usize) -> U256 {
     if bits >= 256 {
         value
     } else {
-        let mask = (U256::from(1) << bits) - U256::from(1);
+        let mask = (U256::ONE << bits) - U256::ONE;
         value & mask
     }
 }

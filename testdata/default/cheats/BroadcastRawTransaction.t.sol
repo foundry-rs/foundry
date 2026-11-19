@@ -201,6 +201,213 @@ contract BroadcastRawTransactionTest is Test {
         assertEq(token.balanceOf(bob), 5);
         assertEq(token.balanceOf(charlie), 15);
     }
+
+    // Deployed outside the test transaction so only the reverted frame touches it.
+    MyERC20 revertedMintToken = new MyERC20();
+
+    function mintThenFailSignedTxThenRevert() external {
+        revertedMintToken.mint(1, address(this));
+        // Fails with "invalid chain ID" on the default chain id.
+        bytes memory signedTx =
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856";
+        try vm.broadcastRawTransaction(signedTx) {} catch {}
+        revert();
+    }
+
+    function test_failed_signed_tx_does_not_leak_reverted_state() public {
+        try this.mintThenFailSignedTxThenRevert() {} catch {}
+
+        // A successful signed tx reloads every journaled account from the backend.
+        vm.fee(1);
+        vm.chainId(1);
+        vm.deal(0x5316812db67073C4d4af8BB3000C5B86c2877e94, 1 ether);
+        vm.broadcastRawTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+
+        assertEq(revertedMintToken.balanceOf(address(this)), 0);
+    }
+
+    function mintThenSucceedSignedTxThenRevert() external {
+        revertedMintToken.mint(1, address(this));
+        vm.broadcastRawTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+        revert();
+    }
+
+    function test_successful_signed_tx_does_not_leak_reverted_state() public {
+        vm.fee(1);
+        vm.chainId(1);
+        vm.deal(0x5316812db67073C4d4af8BB3000C5B86c2877e94, 1 ether);
+        try this.mintThenSucceedSignedTxThenRevert() {} catch {}
+
+        assertEq(vm.getNonce(0x5316812db67073C4d4af8BB3000C5B86c2877e94), 1);
+        assertEq(0x5316812db67073C4d4af8BB3000C5B86c2877e94.balance, 1 ether - 21_000 * 100 - 17);
+        assertEq(0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6.balance, 17);
+
+        // A successful signed tx reloads every journaled account from the backend.
+        vm.deal(0x7ED31830602f9F7419307235c0610Fb262AA0375, 1 ether);
+        vm.broadcastRawTransaction(
+            hex"f8a5806483030d40945bf11839f61ef5cceeaf1f4153e44df5d02825f780b844095ea7b300000000000000000000000070cf146ab98ffd5de24e75dd7423f16181da8e13000000000000000000000000000000000000000000000000000000000000003225a0e25b9ef561d9a413b21755cc0e4bb6e80f2a88a8a52305690956130d612074dfa07bfd418bc2ad3c3f435fa531cdcdc64887f64ed3fb0d347d6b0086e320ad4eb1"
+        );
+
+        assertEq(revertedMintToken.balanceOf(address(this)), 0);
+    }
+
+    address constant FAILING_TARGET = address(0xFA11);
+
+    function test_execute_signed_tx_that_reverts() public {
+        vm.etch(FAILING_TARGET, hex"60006000fd");
+        executeFailingSignedTx(21_006, false, false);
+    }
+
+    function test_execute_signed_tx_that_halts() public {
+        vm.etch(FAILING_TARGET, hex"fe");
+        executeFailingSignedTx(100_000, false, false);
+    }
+
+    function test_reverted_signed_tx_inside_call() public {
+        vm.etch(FAILING_TARGET, hex"600960005560006000fd");
+        executeFailingSignedTx(43_112, true, false);
+    }
+
+    function test_halted_signed_tx_inside_call() public {
+        vm.etch(FAILING_TARGET, hex"6009600055fe");
+        executeFailingSignedTx(100_000, true, false);
+    }
+
+    function test_reverted_signed_tx_inside_reverting_call() public {
+        vm.etch(FAILING_TARGET, hex"600960005560006000fd");
+        executeFailingSignedTx(43_112, true, true);
+    }
+
+    function test_halted_signed_tx_inside_reverting_call() public {
+        vm.etch(FAILING_TARGET, hex"6009600055fe");
+        executeFailingSignedTx(100_000, true, true);
+    }
+
+    function broadcastFromNestedCall(bytes calldata signedTx, bool revertParent) external {
+        revertedMintToken.mint(1, address(this));
+        vm.broadcastRawTransaction(signedTx);
+        assertEq(revertedMintToken.balanceOf(address(this)), 1);
+        if (revertParent) revert("parent reverted");
+    }
+
+    // Broadcasts a transfer of 17 wei to `FAILING_TARGET` and checks the failed transaction is
+    // still charged while its value transfer is rolled back.
+    function executeFailingSignedTx(uint256 gasUsed, bool nested, bool revertParent) internal {
+        vm.fee(1);
+        vm.chainId(1);
+        uint256 privateKey = 1;
+        address sender = vm.addr(privateKey);
+        vm.deal(sender, 1 ether);
+
+        bytes memory signedTx = signTransfer("");
+        if (revertParent) {
+            try this.broadcastFromNestedCall(signedTx, true) {
+                revert("expected parent revert");
+            } catch Error(string memory reason) {
+                assertEq(reason, "parent reverted");
+            }
+        } else if (nested) {
+            this.broadcastFromNestedCall(signedTx, false);
+        } else {
+            vm.broadcastRawTransaction(signedTx);
+        }
+
+        assertEq(vm.getNonce(sender), 1);
+        assertEq(sender.balance, 1 ether - gasUsed * 100);
+        assertEq(FAILING_TARGET.balance, 0);
+        assertEq(vm.load(FAILING_TARGET, bytes32(0)), bytes32(0));
+
+        // The next transaction must see the committed nonce and remain usable after the failure.
+        vm.etch(FAILING_TARGET, "");
+        vm.broadcastRawTransaction(signTransfer(hex"01"));
+        assertEq(vm.getNonce(sender), 2);
+        assertEq(sender.balance, 1 ether - (gasUsed + 21_000) * 100 - 17);
+        assertEq(FAILING_TARGET.balance, 17);
+        // Check after the follow-up transaction reloads journaled accounts from the backend.
+        // Reading the token earlier would load it into the journal and mask a leaked parent write.
+        assertEq(revertedMintToken.balanceOf(address(this)), nested && !revertParent ? 1 : 0);
+    }
+
+    function test_signed_tx_calls_observed_once() public {
+        vm.fee(1);
+        vm.chainId(1);
+        vm.txGasPrice(7);
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = bytes32(uint256(0xbeef));
+        vm.blobhashes(hashes);
+
+        address from = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+        address to = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
+        vm.deal(from, 1 ether);
+        vm.etch(to, address(new RawTxRelay()).code);
+
+        // The transaction's root call and its subcall are each observed once.
+        vm.expectCall(to, 17, "", 1);
+        vm.expectCall(RELAY_TARGET, "", 1);
+        vm.recordLogs();
+
+        /*
+        Signed transaction:
+        TransactionRequest { from: Some(0x5316812db67073c4d4af8bb3000c5b86c2877e94), to: Some(Address(0x6fd0a0cff9a87adf51695b40b4fa267855a8f4c6)), gas: Some(200000), gas_price: Some(100), value: Some(17), data: None, nonce: Some(0), chain_id: Some(1) }
+        */
+        vm.broadcastRawTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1);
+        assertEq(logs[0].emitter, to);
+        assertEq(logs[0].data, abi.encode(uint256(100), bytes32(0)));
+        assertEq(tx.gasprice, 7);
+        assertEq(blobhash(0), hashes[0]);
+    }
+
+    function signTransfer(bytes memory nonce) internal pure returns (bytes memory) {
+        bytes[] memory fields = new bytes[](9);
+        fields[0] = nonce;
+        fields[1] = hex"64"; // Gas price.
+        fields[2] = hex"0186a0"; // Gas limit.
+        fields[3] = abi.encodePacked(FAILING_TARGET);
+        fields[4] = hex"11"; // Value.
+        fields[6] = hex"01"; // Chain ID.
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, keccak256(vm.toRlp(fields)));
+        fields[6] = abi.encodePacked(v + 10); // EIP-155 replay-protected v for chain ID 1.
+        fields[7] = trimLeadingZeros(r);
+        fields[8] = trimLeadingZeros(s);
+
+        return vm.toRlp(fields);
+    }
+
+    function trimLeadingZeros(bytes32 value) internal pure returns (bytes memory out) {
+        uint256 offset;
+        while (offset < 32 && value[offset] == bytes1(0)) {
+            offset++;
+        }
+        out = new bytes(32 - offset);
+        for (uint256 i; i < out.length; i++) {
+            out[i] = value[offset + i];
+        }
+    }
+}
+
+/// forge-config: default.isolate = false
+contract BroadcastRawTransactionNonIsolatedTest is BroadcastRawTransactionTest {}
+
+address constant RELAY_TARGET = address(0x2222);
+
+/// Emits a log and calls `RELAY_TARGET` whenever it is called.
+contract RawTxRelay {
+    event Relayed(uint256 gasPrice, bytes32 blobHash);
+
+    fallback() external payable {
+        emit Relayed(tx.gasprice, blobhash(0));
+        (bool success,) = RELAY_TARGET.call("");
+        require(success);
+    }
 }
 
 contract MyERC20 {

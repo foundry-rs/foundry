@@ -15,14 +15,14 @@ fn ens_lookup(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "lookup-address",
-        "0x28679A1a632125fbBf7A68d850E50623194A709E",
+        "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
         "--rpc-url",
         &eth_rpc_url,
         "--verify",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-emo.eth
+vitalik.eth
 
 "#]]);
 }
@@ -30,10 +30,10 @@ emo.eth
 #[casttest]
 fn ens_resolve(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
-    cmd.args(["resolve-name", "emo.eth", "--rpc-url", &eth_rpc_url, "--verify"])
+    cmd.args(["resolve-name", "vitalik.eth", "--rpc-url", &eth_rpc_url, "--verify"])
         .assert_success()
         .stdout_eq(str![[r#"
-0x28679A1a632125fbBf7A68d850E50623194A709E
+0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
 
 "#]]);
 }

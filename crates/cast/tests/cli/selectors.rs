@@ -1,5 +1,9 @@
-use foundry_test_utils::util::OutputExt;
-use std::path::Path;
+use super::*;
+
+#[cfg(not(windows))]
+use foundry_common::selectors::SelectorKind;
+#[cfg(not(windows))]
+use foundry_evm::traces::identifier::SignaturesCache;
 
 #[casttest]
 fn flaky_error_decode_with_openchain(prj: _, cmd: _) {
@@ -268,11 +272,24 @@ fn flaky_error_event_decode_with_cache(prj: _, cmd: _) {
 contract ContractWithCustomError {
     error AnotherValueTooHigh(uint256, address);
     event MyUniqueEventWithinLocalProject(uint256 a, address b);
+    struct Order { address who; uint256 amount; }
+    event MyUniqueStructEventWithinLocalProject(Order order);
 }
    "#,
     );
     // Build and cache project selectors.
     cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Assert struct events decode from the cache populated by build alone.
+    cmd.cast_fuse()
+        .args(["decode-event", "0x8230d1a1e87386c5af1fb9804c3d8fd63c22ba426ff297e2d2d1ccb59d63f48d0000000000000000000000000000000000000000000000000000000000d0004f000000000000000000000000000000000000000000000000000000000000004e"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueStructEventWithinLocalProject((address,uint256))
+(0x0000000000000000000000000000000000D0004F, 78)
+
+"#]]);
+
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
     // Assert cast can decode custom error with local cache.
@@ -285,6 +302,20 @@ AnotherValueTooHigh(uint256,address)
 0x0000000000000000000000000000000000D0004F
 
 "#]]);
+
+    // --json must not print the looked-up signature before the JSON payload (Fixes #17914).
+    cmd.cast_fuse()
+        .args([
+            "decode-error",
+            "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F",
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["101","0x0000000000000000000000000000000000D0004F"],"errors":[],"warnings":[]}
+
+"#]]);
+
     // Assert cast can decode event with local cache.
     cmd.cast_fuse()
         .args(["decode-event", "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"])
@@ -293,6 +324,122 @@ AnotherValueTooHigh(uint256,address)
 MyUniqueEventWithinLocalProject(uint256,address)
 78
 0x00000000000000000000000000000DD00000004e
+
+"#]]);
+
+    // --json must not print the looked-up signature before the JSON payload (Fixes #17914).
+    cmd.cast_fuse()
+        .args([
+            "decode-event",
+            "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e",
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["78","0x00000000000000000000000000000DD00000004e"],"errors":[],"warnings":[]}
+
+"#]]);
+}
+
+// `cast decode-event` without `--sig` keeps the indexed flags of a cached signature, so only the
+// non-indexed parameters are read from the data.
+#[forgetest_init]
+fn flaky_indexed_event_decode_with_cache(prj: _, cmd: _) {
+    prj.add_source(
+        "LocalIndexedEventContract",
+        r#"
+contract LocalIndexedEventContract {
+    event MyUniqueIndexedEventWithinLocalProject(address indexed by, uint256 amount);
+}
+   "#,
+    );
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    cmd.cast_fuse()
+        .args(["decode-event", "0xd96257df3e19ef03c9bfc10b0c1315c940b233ac2fa591bed28ece982b29a75e000000000000000000000000000000000000000000000000000000000000004e"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueIndexedEventWithinLocalProject(address,uint256)
+78
+
+"#]]);
+}
+
+// `cast 4byte`, `4byte-calldata` and `4byte-event` find signatures in the local cache that
+// `forge build` populates, like `decode-error` and `decode-event`. Cached library signatures such
+// as `f(LocalFourByteLib.E)` are printed as stored, not as their parsed `f(uint8)` form.
+#[forgetest_init]
+fn flaky_fourbyte_with_cache(prj: _, cmd: _) {
+    prj.add_source(
+        "LocalFourByteContract",
+        r#"
+contract LocalFourByteContract {
+    event MyUniqueFourByteEventWithinLocalProject(uint256 a);
+
+    function myUniqueFunctionWithinLocalProject(uint256 a) external {
+        emit MyUniqueFourByteEventWithinLocalProject(a);
+    }
+}
+
+library LocalFourByteLib {
+    enum E { A }
+
+    struct S { uint256 a; uint256 b; }
+
+    function myUniqueLibFunctionWithinLocalProject(E) external pure {}
+
+    function myUniqueLibStructWithinLocalProject(S calldata) external pure {}
+}
+   "#,
+    );
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    cmd.cast_fuse().args(["4byte", "0x27e1683f"]).assert_success().stdout_eq(str![[r#"
+myUniqueFunctionWithinLocalProject(uint256)
+
+"#]]);
+    cmd.cast_fuse()
+        .args([
+            "4byte-calldata",
+            "0x27e1683f0000000000000000000000000000000000000000000000000000000000000065",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1) "myUniqueFunctionWithinLocalProject(uint256)"
+101
+
+"#]]);
+    cmd.cast_fuse()
+        .args(["4byte-event", "0xeaf21cfaa6a9673327f6acfc4816bd0e1be30cfbb4bcf3bd6ac5a786aeba96a5"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueFourByteEventWithinLocalProject(uint256)
+
+"#]]);
+    cmd.cast_fuse().args(["4byte", "0x36e32338"]).assert_success().stdout_eq(str![[r#"
+myUniqueLibFunctionWithinLocalProject(LocalFourByteLib.E)
+
+"#]]);
+    cmd.cast_fuse()
+        .args([
+            "4byte-calldata",
+            "0x36e323380000000000000000000000000000000000000000000000000000000000000000",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1) "myUniqueLibFunctionWithinLocalProject(LocalFourByteLib.E)"
+0
+
+"#]]);
+    // `LocalFourByteLib.S` parses as `uint8`, which would decode only the first struct field.
+    cmd.cast_fuse()
+        .args([
+            "4byte-calldata",
+            "0x1c422ee300000000000000000000000000000000000000000000000000000000000003e80000000000000000000000000000000000000000000000000000000000000007",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No signatures found
 
 "#]]);
 }
@@ -340,4 +487,75 @@ fn signature_selector(cmd: _) {
         .args(["sig", "foo(address,uint256)"])
         .assert_success()
         .stdout_eq("0xbd0d639f\n");
+}
+
+// `dirs::home_dir()` ignores `HOME` on Windows, so the signature cache cannot be isolated there.
+#[cfg(not(windows))]
+#[casttest]
+fn event_decode_rejects_mismatched_cached_signature(prj: _, cmd: _) {
+    let selector = keccak256("Expected(uint256)");
+    let mut cache = SignaturesCache::default();
+    cache.insert(SelectorKind::Event(selector), "Other(uint256)".into());
+    cache.save(&prj.root().join(".foundry/cache/signatures"));
+
+    let data = format!("{selector}{}", hex::encode((U256::from(78),).abi_encode()));
+    cmd.env("HOME", prj.root());
+    cmd.args(["decode-event", &data])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+Other(uint256)
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: invalid event signature: expected 0x42d43c8775dfae639a33729abbd197262a51e5f0a31afc5914fbf109e1fd527f, got 0x080982c6f2efa9fb20abd1695f8727b5006db2695f6434c387b493cc04f8038d
+
+"#]]);
+}
+
+// Logs sharing a topic0 can index different parameters, like ERC-721, legacy and ERC-20
+// `Transfer`, so the cached indexed flags are only kept if the non-indexed parameters fill DATA.
+#[cfg(not(windows))]
+#[casttest]
+fn event_decode_checks_cached_indexed_flags_against_data(prj: _, cmd: _) {
+    let selector = keccak256("Transfer(address,address,uint256)");
+    let mut cache = SignaturesCache::default();
+    cache.insert(
+        SelectorKind::Event(selector),
+        "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)".into(),
+    );
+    cache.save(&prj.root().join(".foundry/cache/signatures"));
+
+    // ERC-721 logs index every parameter, so DATA is empty.
+    cmd.env("HOME", prj.root());
+    cmd.args(["decode-event", &selector.to_string()]).assert_success().stdout_eq(str![[r#"
+Transfer(address,address,uint256)
+
+"#]]);
+
+    // Legacy tokens index nothing, so every parameter is in DATA.
+    let data = (Address::with_last_byte(1), Address::with_last_byte(2), U256::from(5)).abi_encode();
+    cmd.cast_fuse().env("HOME", prj.root());
+    cmd.args(["decode-event", &format!("{selector}{}", hex::encode(data))])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Transfer(address,address,uint256)
+0x0000000000000000000000000000000000000001
+0x0000000000000000000000000000000000000002
+5
+
+"#]]);
+
+    // ERC-20 DATA has one word, which matches neither layout.
+    let data = format!("{selector}{}", hex::encode((U256::from(5),).abi_encode()));
+    cmd.cast_fuse().env("HOME", prj.root());
+    cmd.args(["decode-event", &data])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+Transfer(address,address,uint256)
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: ABI decoding failed: buffer overrun while deserializing
+
+"#]]);
 }

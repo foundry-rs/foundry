@@ -114,8 +114,9 @@ fn is_timestamp_time_bucket(gcx: Gcx<'_>, lhs: &Expr<'_>, rhs: &Expr<'_>) -> boo
     const SECONDS_PER_DAY: U256 = uint!(86400_U256);
     gcx.resolved_builtin(lhs) == Some(Builtin::BlockTimestamp)
         && gcx
-            .try_eval_const(rhs)
+            .const_eval()
+            .eval_int(rhs)
             .ok()
             .and_then(|v| v.as_u256())
-            .is_some_and(|v| v >= SECONDS_PER_DAY && v % SECONDS_PER_DAY == U256::ZERO)
+            .is_some_and(|v| v >= SECONDS_PER_DAY && (v % SECONDS_PER_DAY).is_zero())
 }

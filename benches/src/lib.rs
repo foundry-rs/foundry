@@ -34,15 +34,18 @@ pub struct RepoConfig {
     /// Optional extra arguments appended to every benchmark command for this
     /// repo (e.g. `--nmc BrokenTest` to skip a broken test contract).
     pub extra_args: Option<String>,
+    /// Optional path of the Foundry project inside the repository, for monorepos.
+    pub subdir: Option<String>,
 }
 
 impl FromStr for RepoConfig {
     type Err = eyre::Error;
 
-    /// Parse a repo spec of the form `org/repo[:rev][ <extra args...>]`.
+    /// Parse a repo spec of the form `org/repo[/subdir][:rev][ <extra args...>]`.
     ///
-    /// Anything after the first whitespace is treated as extra arguments
-    /// appended to every benchmark command for this repo.
+    /// An optional `subdir` selects the Foundry project inside a monorepo. Anything after the
+    /// first whitespace is treated as extra arguments appended to every benchmark command for
+    /// this repo.
     fn from_str(spec: &str) -> Result<Self> {
         let spec = spec.trim();
         // Anything after the first whitespace is per-repo extra args.
@@ -59,6 +62,10 @@ impl FromStr for RepoConfig {
         let (org, repo) = repo_path.split_once('/').ok_or_else(|| {
             eyre::eyre!("Invalid repo format '{spec}'. Expected 'org/repo' or 'org/repo:rev'")
         })?;
+        let (repo, subdir) = match repo.split_once('/') {
+            Some((repo, subdir)) => (repo, Some(subdir.trim_end_matches('/').to_string())),
+            None => (repo, None),
+        };
 
         // Inherit defaults from BENCHMARK_REPOS when available, otherwise build
         // a fresh config. Custom rev / extra args always override.
@@ -72,12 +79,17 @@ impl FromStr for RepoConfig {
                 repo: repo.to_string(),
                 rev: "main".to_string(),
                 extra_args: None,
+                subdir: None,
             });
 
         if let Some(rev) = custom_rev {
             config.rev = rev.to_string();
         }
+        if let Some(subdir) = &subdir {
+            config.name = format!("{}-{}", config.name, subdir.replace('/', "-"));
+        }
         config.extra_args = extra_args;
+        config.subdir = subdir;
 
         let _ = sh_println!("Parsed repo spec '{spec}' -> {config:?}");
         Ok(config)
@@ -88,11 +100,12 @@ impl FromStr for RepoConfig {
 pub fn default_benchmark_repos() -> Vec<RepoConfig> {
     vec![
         RepoConfig {
-            name: "ithacaxyz-account".to_string(),
-            org: "ithacaxyz".to_string(),
-            repo: "account".to_string(),
+            name: "morpho-blue".to_string(),
+            org: "morpho-org".to_string(),
+            repo: "morpho-blue".to_string(),
             rev: "main".to_string(),
             extra_args: None,
+            subdir: None,
         },
         RepoConfig {
             name: "solady".to_string(),
@@ -100,6 +113,7 @@ pub fn default_benchmark_repos() -> Vec<RepoConfig> {
             repo: "solady".to_string(),
             rev: "main".to_string(),
             extra_args: None,
+            subdir: None,
         },
     ]
 }
@@ -174,6 +188,12 @@ impl BenchmarkProject {
                 eyre::bail!("Git checkout failed for {}", config.name);
             }
         }
+
+        // Benchmark commands run from the Foundry project, which may live in a monorepo subdir.
+        let root_path = match &config.subdir {
+            Some(subdir) => root_path.join(subdir),
+            None => root_path.clone(),
+        };
 
         // Git submodules are already cloned via --recursive flag
         // But npm dependencies still need to be installed
@@ -936,5 +956,20 @@ mod tests {
             parse_forge_commit("forge 0.2.0 (123456abcdef 2023-01-01T00:00:00Z)"),
             Some("123456abcdef")
         );
+    }
+
+    #[test]
+    fn parses_repo_specs_with_subdir() {
+        let config =
+            "tempoxyz/tempo/crates/zones/contracts:abc123 --nmc Foo".parse::<RepoConfig>().unwrap();
+        assert_eq!(config.name, "tempoxyz-tempo-crates-zones-contracts");
+        assert_eq!((config.org.as_str(), config.repo.as_str()), ("tempoxyz", "tempo"));
+        assert_eq!(config.subdir.as_deref(), Some("crates/zones/contracts"));
+        assert_eq!(config.rev, "abc123");
+        assert_eq!(config.extra_args.as_deref(), Some("--nmc Foo"));
+
+        let config = "morpho-org/morpho-blue".parse::<RepoConfig>().unwrap();
+        assert_eq!(config.name, "morpho-blue");
+        assert_eq!(config.subdir, None);
     }
 }

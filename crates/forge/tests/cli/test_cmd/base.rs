@@ -5,12 +5,9 @@ use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::{
-    core::evm::{BaseEvmNetwork, TxEnvelopeFor},
-    hardforks::BaseUpgrade,
-};
+use base_common_consensus::{BaseTxEnvelope, TxBase, TxBaseSigned};
+use foundry_evm::hardforks::BaseUpgrade;
 use foundry_test_utils::util::OutputExt;
-use serde_json::json;
 
 #[forgetest]
 fn base_azul_excludes_beryl_precompiles(prj: _, cmd: _) {
@@ -27,7 +24,14 @@ fn base_azul_excludes_beryl_precompiles(prj: _, cmd: _) {
         "--match-test",
         "test_azul_excludes_beryl_precompiles",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/BaseEvm.t.sol:BaseEvmTest
+[PASS] test_azul_excludes_beryl_precompiles() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -43,7 +47,14 @@ fn base_defaults_to_azul(prj: _, cmd: _) {
         "--match-test",
         "test_azul_excludes_beryl_precompiles",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/BaseEvm.t.sol:BaseEvmTest
+[PASS] test_azul_excludes_beryl_precompiles() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -108,7 +119,17 @@ async fn base_fork_allows_stateful_precompile_writes(prj: _, cmd: _) {
         "BaseForkWritesTest",
         "-vvvv",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/BaseForkWrites.t.sol:BaseForkWritesTest
+[PASS] test_factory_is_code_less_and_still_callable() ([GAS])
+...
+[PASS] test_fork_activation_write() ([GAS])
+...
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -127,7 +148,17 @@ fn base_local_allows_stateful_precompile_writes(prj: _, cmd: _) {
         "BaseForkWritesTest",
         "-vvvv",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/BaseForkWrites.t.sol:BaseForkWritesTest
+[PASS] test_factory_is_code_less_and_still_callable() ([GAS])
+...
+[PASS] test_fork_activation_write() ([GAS])
+...
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -162,24 +193,24 @@ contract BaseScript {
 #[forgetest]
 fn base_execute_transaction_rejects_eip8130(prj: _, cmd: _) {
     let signer = PrivateKeySigner::from_bytes(&B256::with_last_byte(1)).unwrap();
-    let mut envelope = json!({
-        "type": "0x79",
-        "tx": {
-            "chainId": 8453, "sender": null, "payer": null,
-            "nonceKey": "0x0", "nonceSequence": 0,
-            "validAfter": 0, "validBefore": 0,
-            "maxPriorityFeePerGas": "0x0", "maxFeePerGas": "0x3b9aca00",
-            "gasLimit": 200000, "accountChanges": [], "calls": [], "metadata": "0x"
-        },
-        "senderAuth": "0x", "payerAuth": "0x"
-    });
-    let unsigned =
-        serde_json::from_value::<TxEnvelopeFor<BaseEvmNetwork>>(envelope.clone()).unwrap();
-    let signature = signer
-        .sign_hash_sync(&unsigned.as_eip8130().unwrap().tx().sender_signature_hash())
-        .unwrap();
-    envelope["senderAuth"] = json!(Bytes::from(signature.as_bytes().to_vec()));
-    let signed = serde_json::from_value::<TxEnvelopeFor<BaseEvmNetwork>>(envelope).unwrap();
+    let tx = TxBase {
+        chain_id: 8453,
+        sender: None,
+        nonce_key: U256::ZERO,
+        nonce_sequence: 0,
+        valid_after: 0,
+        valid_before: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 200_000,
+        account_changes: Vec::new(),
+        calls: Vec::new(),
+        metadata: Bytes::new(),
+        payer: None,
+    };
+    let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+    let signed =
+        BaseTxEnvelope::Base(TxBaseSigned::new(tx, signature.as_bytes().into(), Bytes::new()));
     assert_eq!(signed.recover_signer().unwrap(), signer.address());
     let mut raw = Vec::new();
     signed.network_encode(&mut raw);
@@ -224,7 +255,14 @@ contract BaseExecuteTransactionTest {{
         "--match-contract",
         "BaseExecuteTransactionTest",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/BaseExecuteTransaction.t.sol:BaseExecuteTransactionTest
+[PASS] test_rejects_eip8130_without_state_changes() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -326,7 +364,16 @@ contract BaseIsolatedFeesTest {
         "--match-contract",
         "BaseIsolatedFeesTest",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/BaseIsolatedFees.t.sol:BaseIsolatedFeesTest
+[PASS] test_create_does_not_credit_fee_vaults() ([GAS])
+[PASS] test_funded_caller_balance_is_unchanged() ([GAS])
+[PASS] test_zero_balance_caller_succeeds() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -453,7 +500,16 @@ contract BaseIsolatedSnapshotFeesTest {{
         "--match-contract",
         "BaseIsolatedSnapshotFeesTest",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/BaseIsolatedSnapshotFees.t.sol:BaseIsolatedSnapshotFeesTest
+[PASS] test_revert_and_delete_inside_isolated_helper_does_not_credit_fee_vaults() ([GAS])
+[PASS] test_revert_inside_isolated_helper_does_not_credit_fee_vaults() ([GAS])
+[PASS] test_snapshot_from_isolated_helper_does_not_disable_broadcast_fees() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -556,7 +612,17 @@ contract BaseForkIsolatedSnapshotFeeTest {{
         "--match-contract",
         "BaseForkIsolatedSnapshotFeeTest",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/BaseForkIsolatedSnapshotFee.t.sol:BaseForkIsolatedSnapshotFeeTest
+[PASS] test_explicit_fee_survives_fork_roll() ([GAS])
+[PASS] test_implicit_fee_follows_fork_roll() ([GAS])
+[PASS] test_repeated_restore_and_delete_keeps_implicit_fee_fork() ([GAS])
+[PASS] test_repeated_restore_keeps_implicit_fee_fork() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -657,5 +723,12 @@ contract BaseForkIsolatedReplayFeesTest {{
         "--match-contract",
         "BaseForkIsolatedReplayFeesTest",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/BaseForkIsolatedReplayFees.t.sol:BaseForkIsolatedReplayFeesTest
+[PASS] test_fork_inactive_hash_roll_from_isolated_helper_charges_replay_fees() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

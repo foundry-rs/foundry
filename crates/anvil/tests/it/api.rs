@@ -34,7 +34,7 @@ async fn can_get_block_number() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
     let block_num = api.block_number().unwrap();
-    assert_eq!(block_num, U256::from(0));
+    assert_eq!(block_num, U256::ZERO);
 
     let provider = handle.http_provider();
 
@@ -69,7 +69,7 @@ async fn can_dev_get_balance() {
 
     let address = handle.genesis_accounts().next().unwrap();
     let db = api.backend.get_db().write().await;
-    let mut first = Box::pin(api.anvil_add_balance(address, U256::from(1)));
+    let mut first = Box::pin(api.anvil_add_balance(address, U256::ONE));
     let mut second = Box::pin(api.anvil_add_balance(address, U256::from(2)));
     assert!(futures::poll!(first.as_mut()).is_pending());
     assert!(futures::poll!(second.as_mut()).is_pending());
@@ -217,7 +217,7 @@ async fn can_get_header_by_number() {
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
-    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
     provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
 
     let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
@@ -244,7 +244,7 @@ async fn can_get_header_by_hash() {
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
-    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
     provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
 
     let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
@@ -270,14 +270,13 @@ async fn can_resolve_safe_and_finalized_block_tags_with_configured_epoch_slots()
     let latest = provider.get_block_number().await.unwrap();
     assert_eq!(latest, 8);
 
-    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    let safe = provider.get_block(BlockId::safe()).await.unwrap().unwrap();
     assert_eq!(safe.header.number, latest - slots_in_an_epoch);
 
-    let finalized =
-        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    let finalized = provider.get_block(BlockId::finalized()).await.unwrap().unwrap();
     assert_eq!(finalized.header.number, latest - slots_in_an_epoch * 2);
 
-    let fee_history = api.fee_history(U256::from(1), BlockNumberOrTag::Safe, vec![]).await.unwrap();
+    let fee_history = api.fee_history(U256::ONE, BlockNumberOrTag::Safe, vec![]).await.unwrap();
     assert_eq!(fee_history.oldest_block, latest - slots_in_an_epoch);
 }
 
@@ -289,17 +288,16 @@ async fn can_resolve_safe_and_finalized_block_tags_to_genesis_before_configured_
     api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
 
-    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    let safe = provider.get_block(BlockId::safe()).await.unwrap().unwrap();
     assert_eq!(safe.header.number, genesis.header.number);
     assert_eq!(safe.header.hash, genesis.header.hash);
 
-    let finalized =
-        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    let finalized = provider.get_block(BlockId::finalized()).await.unwrap().unwrap();
     assert_eq!(finalized.header.number, genesis.header.number);
     assert_eq!(finalized.header.hash, genesis.header.hash);
 
     let fee_history =
-        api.fee_history(U256::from(1), BlockNumberOrTag::Finalized, vec![]).await.unwrap();
+        api.fee_history(U256::ONE, BlockNumberOrTag::Finalized, vec![]).await.unwrap();
     assert_eq!(fee_history.oldest_block, genesis.header.number);
 }
 
@@ -346,7 +344,7 @@ async fn can_get_pending_block() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_estimate_gas_with_undersized_max_fee_per_gas() {
+async fn rejects_estimate_gas_with_undersized_max_fee_per_gas() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumWallet = wallet.clone().into();
@@ -367,15 +365,17 @@ async fn can_estimate_gas_with_undersized_max_fee_per_gas() {
 
     assert!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas);
 
-    let estimated_gas = simple_storage_contract
+    let err = simple_storage_contract
         .setValue("new_value".to_string())
         .max_fee_per_gas(undersized_max_fee_per_gas.into())
         .from(wallet.address())
         .estimate_gas()
         .await
-        .unwrap();
-
-    assert!(estimated_gas > 0);
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "server returned an error response: error code -32003: max fee per gas less than block base fee"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -410,7 +410,7 @@ async fn can_call_on_pending_block() {
     // Ensure that we can get the block_number from the pending contract
     let Multicall::aggregateReturn { blockNumber: ret_block_number, .. } =
         contract.aggregate(vec![]).block(BlockId::pending()).call().await.unwrap();
-    assert_eq!(ret_block_number, U256::from(1));
+    assert_eq!(ret_block_number, U256::ONE);
 
     let accounts: Vec<Address> = handle.dev_wallets().map(|w| w.address()).collect();
 
@@ -418,7 +418,7 @@ async fn can_call_on_pending_block() {
         api.anvil_set_coinbase(accounts[i % accounts.len()]).await.unwrap();
         api.evm_set_block_gas_limit(U256::from(30_000_000 + i)).unwrap();
 
-        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
@@ -454,7 +454,7 @@ async fn can_call_on_pending_block() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_with_undersized_max_fee_per_gas() {
+async fn rejects_call_with_undersized_max_fee_per_gas() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumWallet = wallet.clone().into();
@@ -474,14 +474,48 @@ async fn can_call_with_undersized_max_fee_per_gas() {
 
     assert!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas);
 
-    let last_sender = simple_storage_contract
+    let err = simple_storage_contract
         .lastSender()
         .max_fee_per_gas(undersized_max_fee_per_gas.into())
         .from(wallet.address())
         .call()
         .await
-        .unwrap();
-    assert_eq!(last_sender, Address::ZERO);
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "server returned an error response: error code -32003: max fee per gas less than block base fee"
+    );
+}
+
+// Halts and invalid state overrides are reported with their messages and error codes.
+#[tokio::test(flavor = "multi_thread")]
+async fn reports_halt_and_state_override_errors() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let contract = Address::random();
+    api.anvil_set_code(contract, bytes!("fe")).await.unwrap();
+    let request = WithOtherFields::new(TransactionRequest::default().to(contract));
+
+    let result = api.create_access_list(request.clone(), None, None).await.unwrap();
+    assert_eq!(result.error.as_deref(), Some("invalid 0xFE opcode"));
+
+    let overrides = AddressHashMap::from_iter([(
+        contract,
+        AccountOverride {
+            state: Some(Default::default()),
+            state_diff: Some(Default::default()),
+            ..Default::default()
+        },
+    )]);
+    let error = provider.call(request).overrides(overrides).await.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!(error.code, -32602);
+    assert_eq!(
+        error.message,
+        format!(
+            "State override error: state and state_diff can't be used together for account {contract}"
+        )
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -662,7 +696,8 @@ async fn can_call_bundle() {
         let mut tx = TxEip1559 {
             chain_id: CHAIN_ID,
             nonce,
-            gas_limit: 21_000,
+            // Ethereum charges consumption even when the signed allowance is larger.
+            gas_limit: 100_000,
             max_fee_per_gas: fees.max_fee_per_gas,
             max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
             to: coinbase.into(),
@@ -712,8 +747,12 @@ async fn can_call_bundle() {
     assert_eq!(response.results.len(), 2);
     assert_eq!(response.results[0].from_address, sender);
     assert_eq!(response.results[0].to_address, Some(coinbase));
-    assert_eq!(response.results[0].eth_sent_to_coinbase, U256::from(1));
+    assert_eq!(response.results[0].eth_sent_to_coinbase, U256::ONE);
     assert_eq!(response.results[1].eth_sent_to_coinbase, U256::from(2));
+    for result in &response.results {
+        assert_eq!(result.gas_used, 21_000);
+        assert_eq!(result.gas_fees, result.gas_price * U256::from(result.gas_used));
+    }
     assert!(response.results.iter().all(|result| result.revert.is_none()));
 
     assert_eq!(provider.get_balance(coinbase).await.unwrap(), initial_coinbase_balance);
@@ -953,7 +992,7 @@ async fn can_send_tx_sync() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_code_by_hash_from_fork() {
     let (origin_api, origin) = spawn(NodeConfig::test()).await;
-    let code = Bytes::from(B256::random().to_vec());
+    let code = Bytes::from(B256::random());
     let code_hash = keccak256(&code);
     origin_api.anvil_set_code(Address::random(), code.clone()).await.unwrap();
     assert_eq!(origin_api.debug_code_by_hash(code_hash, None).await.unwrap(), Some(code.clone()));
@@ -1255,7 +1294,7 @@ async fn can_get_execution_witness() {
     assert_eq!(witness.headers.len(), number as usize);
     assert_eq!(keccak256(&witness.headers[0]), parent.header.hash);
 
-    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
     provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
 
     // Witnesses for older blocks are served from the state history.

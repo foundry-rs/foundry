@@ -150,7 +150,7 @@ async fn mines_successor_after_nonce_fast_forward() {
             hashes.push(*pending.tx_hash());
         }
 
-        api.anvil_set_nonce(sender, U256::from(1)).await.unwrap();
+        api.anvil_set_nonce(sender, U256::ONE).await.unwrap();
         if stale_gas_limit > 21_000 {
             api.evm_set_block_gas_limit(U256::from(21_000)).unwrap();
         }
@@ -348,7 +348,7 @@ async fn accepts_spend_after_funding_when_pool_checks_disabled() {
 
     // Recipient/spender is a random address with zero balance that we'll impersonate
     let spender = alloy_primitives::Address::random();
-    api.anvil_set_balance(spender, U256::from(0u64)).await.unwrap();
+    api.anvil_set_balance(spender, U256::ZERO).await.unwrap();
     api.anvil_impersonate_account(spender).await.unwrap();
 
     // Ensure tx1 (funding) has higher gas price so it's mined before tx2 within the same block
@@ -413,7 +413,7 @@ async fn queued_tx_replacement_removes_old_tx() {
             TransactionRequest::default()
                 .with_to(recipient)
                 .with_from(account)
-                .with_value(U256::from(1))
+                .with_value(U256::ONE)
                 .with_gas_price(gas_price)
                 .with_nonce(5),
         )
@@ -456,7 +456,7 @@ async fn queued_tx_replacement_removes_old_tx() {
             TransactionRequest::default()
                 .with_to(recipient)
                 .with_from(account)
-                .with_value(U256::from(1))
+                .with_value(U256::ONE)
                 .with_gas_price(gas_price_base)
                 .with_nonce(nonce),
         );
@@ -488,7 +488,7 @@ async fn anvil_drop_transaction_removes_queued_tx() {
         TransactionRequest::default()
             .with_to(recipient)
             .with_from(account)
-            .with_value(U256::from(1))
+            .with_value(U256::ONE)
             .with_gas_price(221435145689u128)
             .with_nonce(5),
     );
@@ -522,7 +522,7 @@ async fn anvil_drop_transaction_removes_nonce_dependents() {
             TransactionRequest::default()
                 .with_to(recipient)
                 .with_from(account)
-                .with_value(U256::from(1))
+                .with_value(U256::ONE)
                 .with_nonce(nonce),
         )
     };
@@ -562,7 +562,7 @@ async fn anvil_drop_transaction_removes_queued_nonce_dependents() {
             TransactionRequest::default()
                 .with_to(recipient)
                 .with_from(account)
-                .with_value(U256::from(1))
+                .with_value(U256::ONE)
                 .with_nonce(nonce),
         )
     };
@@ -596,7 +596,7 @@ async fn evm_revert_restores_transaction_pool() {
             TransactionRequest::default()
                 .with_to(recipient)
                 .with_from(sender)
-                .with_value(U256::from(1))
+                .with_value(U256::ONE)
                 .with_nonce(nonce),
         )
     };
@@ -633,7 +633,7 @@ async fn evm_revert_wakes_autominer_for_restored_transactions() {
             TransactionRequest::default()
                 .with_from(accounts[0].address())
                 .with_to(accounts[1].address())
-                .with_value(U256::from(1)),
+                .with_value(U256::ONE),
         ))
         .await
         .unwrap()

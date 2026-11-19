@@ -29,6 +29,9 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [features]
 default = ["optimism"]
 optimism = ["foundry-common/optimism"]

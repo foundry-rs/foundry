@@ -204,12 +204,11 @@ sol! {
         error NonPayable();
         error ProtocolNonceNotSupported();
         error InvalidNonceKey();
+        error InvalidReplayId();
         error NonceOverflow();
         error InvalidExpiringNonceExpiry();
         error ExpiringNonceReplay();
         error ExpiringNonceSetFull();
-
-        event NonceIncremented(address indexed account, uint256 indexed nonceKey, uint64 newNonce);
 
         function getNonce(address account, uint256 nonceKey) external view returns (uint64);
     }
@@ -238,9 +237,9 @@ mod tests {
         self as canonical, ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage,
         TxContextStorage,
     };
+    use evm2::interpreter::InstrStop;
     use foundry_evm_hardforks::{BaseUpgrade, FoundryHardfork};
     use foundry_evm_networks::NetworkConfigs;
-    use revm::interpreter::InstructionResult;
 
     #[tokio::test]
     async fn registered_abis_decode_base_precompile_calls() {
@@ -302,7 +301,7 @@ mod tests {
     async fn b20_transfer_with_memo_decodes_bool_output() {
         let call = super::IB20Extensions::transferWithMemoCall {
             to: Address::repeat_byte(0x11),
-            amount: U256::from(1),
+            amount: U256::ONE,
             memo: B256::repeat_byte(0x22),
         };
         let abi = super::IB20Extensions::abi::contract();
@@ -345,7 +344,7 @@ mod tests {
             address: ActivationRegistryStorage::ADDRESS,
             output: super::IActivationRegistry::NonPayable {}.abi_encode().into(),
             success: false,
-            status: Some(InstructionResult::Revert),
+            status: Some(InstrStop::Revert),
             ..Default::default()
         };
         let base = CallTraceDecoderBuilder::new()
@@ -661,8 +660,8 @@ mod tests {
             canonical::INonceManager::InvalidExpiringNonceExpiry::SELECTOR
         );
         assert_eq!(
-            super::INonceManager::NonceIncremented::SIGNATURE_HASH,
-            canonical::INonceManager::NonceIncremented::SIGNATURE_HASH
+            super::INonceManager::InvalidReplayId::SELECTOR,
+            canonical::INonceManager::InvalidReplayId::SELECTOR
         );
     }
 

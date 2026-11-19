@@ -207,7 +207,13 @@ contract FixtureReadTest is Test {
     );
 
     cmd.args(["test", "--brutalize", "--mt", "test_readFixture"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FixtureRead.t.sol:FixtureReadTest
+[PASS] test_readFixture() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -233,10 +239,22 @@ contract FixtureWriteTest is Test {
     );
 
     cmd.args(["test", "--mt", "test_writeFixture"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FixtureWrite.t.sol:FixtureWriteTest
+[PASS] test_writeFixture() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     cmd.forge_fuse().args(["test", "--brutalize", "--mt", "test_writeFixture"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FixtureWrite.t.sol:FixtureWriteTest
+[PASS] test_writeFixture() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -263,10 +281,22 @@ contract FixtureWriteFileTest is Test {
     );
 
     cmd.args(["test", "--mt", "test_writeFixtureFile"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FixtureWriteFile.t.sol:FixtureWriteFileTest
+[PASS] test_writeFixtureFile() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     cmd.forge_fuse().args(["test", "--brutalize", "--mt", "test_writeFixtureFile"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FixtureWriteFile.t.sol:FixtureWriteFileTest
+[PASS] test_writeFixtureFile() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -295,7 +325,13 @@ contract FixtureReadWriteFileTest is Test {
     );
 
     cmd.args(["test", "--brutalize", "--mt", "test_readWriteFixtureFile"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FixtureReadWriteFile.t.sol:FixtureReadWriteFileTest
+[PASS] test_readWriteFixtureFile() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -426,7 +462,13 @@ contract MemVulnTest is Test {
 
     // Brutalized test fails — memory past FMP is filled with junk
     cmd.forge_fuse().args(["test", "--brutalize", "--mc", "MemVulnTest"]);
-    cmd.assert_failure();
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/MemVuln.t.sol:MemVulnTest
+[FAIL: assertion failed: 73484773151519862809260092521038281836648321512035004033319242713382556117868 != 0] test_AllocAndRead() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Catches dirty scratch space: reading 0x00 without writing first
@@ -472,10 +514,22 @@ contract ScratchVulnTest is Test {
     );
 
     cmd.args(["test", "--mc", "ScratchVulnTest"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ScratchVuln.t.sol:ScratchVulnTest
+[PASS] test_readScratch() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     cmd.forge_fuse().args(["test", "--brutalize", "--mc", "ScratchVulnTest"]);
-    cmd.assert_failure();
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ScratchVuln.t.sol:ScratchVulnTest
+[FAIL: assertion failed: 51504957236947836658897895340570754371932386611139037127264554620328832223715 != 0] test_readScratch() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Catches dirty scratch space in the high half of the scratch word.
@@ -521,10 +575,22 @@ contract ScratchHighVulnTest is Test {
     );
 
     cmd.args(["test", "--mc", "ScratchHighVulnTest"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ScratchHighVuln.t.sol:ScratchHighVulnTest
+[PASS] test_readScratchHighHalf() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     cmd.forge_fuse().args(["test", "--brutalize", "--mc", "ScratchHighVulnTest"]);
-    cmd.assert_failure();
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ScratchHighVuln.t.sol:ScratchHighVulnTest
+[FAIL: assertion failed: 14726357621369198564833851212186037415 != 0] test_readScratchHighHalf() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Catches dirty upper bits from narrow value casts.
@@ -572,10 +638,22 @@ contract ValueBitsVulnTest is Test {
     );
 
     cmd.args(["test", "--mc", "ValueBitsVulnTest"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ValueBitsVuln.t.sol:ValueBitsVulnTest
+[PASS] test_rawBytes4IsClean() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     cmd.forge_fuse().args(["test", "--brutalize", "--mc", "ValueBitsVulnTest"]);
-    cmd.assert_failure();
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ValueBitsVuln.t.sol:ValueBitsVulnTest
+[FAIL: assertion failed: 8234104107246695022420661102507966550300666591269321702966366938159159807320 != 8234104107246695022420661102507966550300666591269321702959126607540084801536] test_rawBytes4IsClean() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -752,7 +830,14 @@ contract FilterTargetTest is Test {
     );
 
     cmd.args(["test", "--brutalize", "--mt", "test_add"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/FilterTarget.t.sol:FilterTargetTest
+[PASS] test_add() ([GAS])
+[PASS] test_addZero() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // --brutalize --rerun must read the original project's persisted failure list.
@@ -1017,5 +1102,11 @@ contract NestedCastsTest is Test {
     );
 
     cmd.args(["test", "--brutalize", "--mc", "NestedCastsTest"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/NestedCasts.t.sol:NestedCastsTest
+[PASS] test_nested() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

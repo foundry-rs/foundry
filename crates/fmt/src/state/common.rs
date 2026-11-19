@@ -48,7 +48,7 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.end();
             }
-            ast::LitKind::Number(_) | ast::LitKind::Rational(_) => {
+            ast::LitKind::Number(_) | ast::LitKind::BigNumber(_) | ast::LitKind::Rational(..) => {
                 self.print_num_literal(symbol.as_str(), is_yul);
             }
             ast::LitKind::Address(value) => self.word(value.to_string()),
@@ -106,14 +106,18 @@ impl<'ast> State<'_, 'ast> {
         let mut exp = &strip_underscores_if(strip_underscores, exp)[..];
         let mut fract = &strip_underscores_if(strip_underscores, fract)[..];
 
-        // strip any padded 0's
+        // strip any padded 0's, together with any underscores that would be left dangling
+        // (e.g. `1.5_0` -> `1.5`, not `1.5_`), since solc rejects leading/trailing underscores.
         let mut exp_sign = "";
         if is_dec {
-            val = val.trim_start_matches('0');
-            fract = fract.trim_end_matches('0');
+            val = val.trim_start_matches(['0', '_']);
+            fract = fract.trim_end_matches(['0', '_']);
             (exp_sign, exp) =
                 if let Some(exp) = exp.strip_prefix('-') { ("-", exp) } else { ("", exp) };
-            exp = exp.trim_start_matches('0');
+            // Preserve nonzero exponent prefixes: solc interprets leading-zero exponents as octal.
+            if exp.bytes().all(|b| b == b'0' || b == b'_') {
+                exp = "";
+            }
         }
 
         let mut out = String::with_capacity(source.len() * 2);
@@ -337,7 +341,7 @@ impl<'ast> State<'_, 'ast> {
             if let Some(last_style) = self.print_comments(span.lo(), cmnt_config) {
                 match (cmnt_style.is_mixed(), last_style.is_mixed()) {
                     (true, true) => {
-                        if format.breaks_cmnts {
+                        if format.breaks_with_comments() {
                             self.hardbreak();
                         } else {
                             self.space();
@@ -448,7 +452,7 @@ impl<'ast> State<'_, 'ast> {
             if self
                 .print_comments(get_span(value).lo(), CommentConfig::skip_ws().mixed_prev_space())
                 .is_some_and(|cmnt| cmnt.is_mixed())
-                && format.breaks_cmnts
+                && format.breaks_with_comments()
             {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
             }
@@ -480,7 +484,7 @@ impl<'ast> State<'_, 'ast> {
             }
 
             if !is_last
-                && format.breaks_cmnts
+                && format.breaks_with_comments()
                 && cmnt_before_next.is_some_and(|(cmnt_span, cmnt_style)| {
                     let disabled = self.inline_config.is_disabled(cmnt_span);
                     (cmnt_style.is_mixed() && !disabled) || (cmnt_style.is_isolated() && disabled)
@@ -597,7 +601,7 @@ impl<'ast> State<'_, 'ast> {
         match block_format {
             BlockFormat::NoBraces(None) => {
                 if !self.handle_span(self.cursor.span(block_lo), false) {
-                    self.print_comments(block_lo, CommentConfig::default());
+                    self.print_comments(block_lo, CommentConfig::skip_ws());
                 }
                 self.s.cbox(0);
             }
@@ -888,28 +892,28 @@ impl ListFormat {
     }
 
     pub(crate) const fn without_ind(mut self, without: bool) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.no_ind = without;
         }
         self
     }
 
     pub(crate) const fn break_single(mut self, value: bool) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.break_single = value;
         }
         self
     }
 
     pub(crate) const fn break_cmnts(mut self) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.breaks_cmnts = true;
         }
         self
     }
 
     pub(crate) const fn with_space(mut self) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.with_space = true;
         }
         self

@@ -2,7 +2,7 @@
 
 use crate::{
     lockfile::{DepIdentifier, DepMap, FOUNDRY_LOCK, Lockfile},
-    opts::Dependency,
+    opts::{Dependency, DependencyRefKind},
     utils::{Git, LoadConfig},
 };
 use clap::{Parser, ValueHint};
@@ -11,7 +11,6 @@ use foundry_common::fs;
 use foundry_config::{Config, impl_figment_convert_basic};
 use regex::Regex;
 use semver::Version;
-use soldeer_commands::{Command, Verbosity, commands::install::Install};
 use std::{
     io::{ErrorKind, IsTerminal},
     path::{Path, PathBuf},
@@ -19,6 +18,9 @@ use std::{
     sync::LazyLock,
 };
 use yansi::Paint;
+
+#[cfg(feature = "soldeer")]
+use soldeer_commands::{Command, Verbosity, commands::install::Install};
 
 static DEPENDENCY_VERSION_TAG_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
@@ -143,7 +145,34 @@ impl DependencyInstallOpts {
                     // checkout submodules at the revs recorded in `foundry.lock`
                     if let Some(out_of_sync) = &out_of_sync_deps {
                         for (rel_path, dep_id) in out_of_sync {
-                            git.checkout_at(dep_id.checkout_id(), &git.root.join(rel_path))?;
+                            let path = git.root.join(rel_path);
+                            git.checkout_at(dep_id.checkout_id(), &path).wrap_err_with(|| {
+                                let dep = rel_path.display();
+                                // `sync` also creates entries that are not recorded on disk.
+                                let mut on_disk = Lockfile::new(&config.root);
+                                let hint =
+                                    if on_disk.read().is_ok() && on_disk.get(rel_path).is_some() {
+                                        format!(
+                                            "\n`{dep}` is locked to {dep_id} in {FOUNDRY_LOCK}. If \
+                                             that ref is no longer available from the dependency's \
+                                             remote, update the `{dep}` entry in {FOUNDRY_LOCK}."
+                                        )
+                                    } else if let DepIdentifier::Branch { name, .. } = dep_id {
+                                        format!(
+                                            "\nBranch `{name}` comes from the `branch` setting for \
+                                             `{dep}` in .gitmodules. If it no longer exists on the \
+                                             dependency's remote, update .gitmodules; if it does, \
+                                             the local clone may be missing it, for example after \
+                                             a `--shallow` install."
+                                        )
+                                    } else {
+                                        String::new()
+                                    };
+                                format!(
+                                    "Failed to check out `{}` for dependency `{dep}`{hint}",
+                                    dep_id.checkout_id()
+                                )
+                            })?;
                         }
                     }
 
@@ -245,8 +274,22 @@ impl DependencyInstallOpts {
                 let mut new_insertion = false;
                 // Pin branch to submodule if branch is used
                 if let Some(tag_or_branch) = &installed_tag {
-                    // First, check if this tag has a branch
-                    dep_id = Some(DepIdentifier::resolve_type(&git, &path, tag_or_branch)?);
+                    dep_id = Some(match dep.ref_kind {
+                        Some(DependencyRefKind::Branch) => DepIdentifier::Branch {
+                            name: tag_or_branch.clone(),
+                            rev: git.root(&path).head()?,
+                            r#override: false,
+                        },
+                        Some(DependencyRefKind::Tag) => DepIdentifier::Tag {
+                            name: tag_or_branch.clone(),
+                            rev: git.root(&path).head()?,
+                            r#override: false,
+                        },
+                        Some(DependencyRefKind::Rev) => {
+                            DepIdentifier::Rev { rev: git.root(&path).head()?, r#override: false }
+                        }
+                        None => DepIdentifier::resolve_type(&git, &path, tag_or_branch)?,
+                    });
                     if git.has_branch(tag_or_branch, &path)?
                         && dep_id.as_ref().is_some_and(|id| id.is_branch())
                     {
@@ -254,14 +297,6 @@ impl DependencyInstallOpts {
                         git.set_submodule_branch(rel_path, tag_or_branch)?;
                         let root = Git::root_of(git.root)?;
                         git.root(&root).add_literal(Path::new(".gitmodules"))?;
-
-                        let rev = git.get_rev(tag_or_branch, &path)?;
-
-                        dep_id = Some(DepIdentifier::Branch {
-                            name: tag_or_branch.clone(),
-                            rev,
-                            r#override: false,
-                        });
                     }
 
                     trace!(?dep_id, ?tag_or_branch, "resolved dep id");
@@ -321,9 +356,14 @@ impl DependencyInstallOpts {
             sh_status!("{msg}")?;
 
             // Check if the dependency has soldeer.lock and install soldeer dependencies
-            if let Err(e) = install_soldeer_deps_if_needed(&path).await {
-                sh_warn!("Failed to install soldeer dependencies for {}: {e}", dep.name)?;
-            }
+            install_soldeer_deps_if_needed(&path).await.map_err(|e| {
+                eyre::eyre!(
+                    "Failed to install soldeer dependencies for {}: {e}\n\
+                     Run `forge soldeer install` in {} to retry.",
+                    dep.name,
+                    path.display()
+                )
+            })?;
         }
 
         // update `libs` in config if not included yet
@@ -350,6 +390,7 @@ pub fn install_missing_dependencies<E>(
 }
 
 /// Checks if a dependency has soldeer.lock and installs soldeer dependencies if needed.
+#[cfg(feature = "soldeer")]
 async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
     let soldeer_lock = dep_path.join("soldeer.lock");
 
@@ -374,6 +415,19 @@ async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
 
         result.map_err(|e| eyre::eyre!("Failed to run soldeer install: {e}"))?;
         sh_status!("    Soldeer dependencies installed successfully")?;
+    }
+
+    Ok(())
+}
+
+/// Warns that soldeer dependencies are not installed because soldeer support is not compiled in.
+#[cfg(not(feature = "soldeer"))]
+async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
+    if dep_path.join("soldeer.lock").exists() {
+        sh_warn!(
+            "    Found soldeer.lock, but this build does not include soldeer; \
+             skipping soldeer dependencies"
+        )?;
     }
 
     Ok(())
@@ -685,24 +739,36 @@ impl Installer<'_> {
         self.git.submodule_add(true, url, path)
     }
 
-    fn git_checkout(self, dep: &Dependency, path: &Path, recurse: bool) -> Result<String> {
+    fn git_checkout(self, dep: &Dependency, path: &Path, recurse: bool) -> Result<()> {
         // no need to checkout if there is no tag
-        let Some(mut tag) = dep.tag.clone() else { return Ok(String::new()) };
+        let Some(mut tag) = dep.tag.clone() else { return Ok(()) };
 
-        let mut is_branch = false;
-        // only try to match tag if current terminal is a tty
-        if std::io::stdout().is_terminal() {
+        // Only disambiguate unqualified refs in interactive terminals.
+        if dep.ref_kind.is_none() && std::io::stdout().is_terminal() {
             if tag.is_empty() {
                 tag = self.match_tag(&tag, path)?;
             } else if let Some(branch) = self.match_branch(&tag, path)? {
                 trace!(?tag, ?branch, "selecting branch for given tag");
                 tag = branch;
-                is_branch = true;
             }
         }
         let url = dep.url.as_ref().unwrap();
 
-        let res = self.git.root(path).checkout(recurse, &tag);
+        // Preserve explicit ref kinds. Unqualified tags use their full ref so a local branch
+        // with the same name cannot shadow them.
+        let checkout_ref = match dep.ref_kind {
+            Some(DependencyRefKind::Tag) => format!("refs/tags/{tag}"),
+            Some(DependencyRefKind::Branch | DependencyRefKind::Rev) => tag.clone(),
+            None if dep.tag.as_deref() == Some(tag.as_str()) && self.git.has_tag(&tag, path)? => {
+                format!("refs/tags/{tag}")
+            }
+            None => tag.clone(),
+        };
+        let res = if dep.ref_kind == Some(DependencyRefKind::Branch) {
+            self.git.root(path).checkout_branch(recurse, &tag)
+        } else {
+            self.git.root(path).checkout(recurse, checkout_ref)
+        };
         if let Err(mut e) = res {
             // remove dependency on failed checkout
             fs::remove_dir_all(path)?;
@@ -715,7 +781,7 @@ impl Installer<'_> {
             return Err(e);
         }
 
-        if is_branch { Ok(tag) } else { Ok(String::new()) }
+        Ok(())
     }
 
     /// disambiguate tag if it is a version tag

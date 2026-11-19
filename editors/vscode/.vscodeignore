@@ -8,6 +8,5 @@ scripts/**
 .vscodeignore
 tsconfig.json
 package-lock.json
-out/**/*.map
 bundle/**
 dist/**

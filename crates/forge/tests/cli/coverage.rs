@@ -685,6 +685,112 @@ contract AContractTest is DSTest {
 "#]]);
 }
 
+// A custom-error require whose success path reaches `INVALID` keeps path 0 as the failing side.
+#[forgetest]
+fn require_custom_error_then_invalid_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    error TooLarge(uint256 x);
+
+    function check(uint256 x) external pure {
+        require(x < 100, TooLarge(1));
+        assembly { invalid() }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        address(guard).call(abi.encodeCall(guard.check, (1)));
+        address(guard).call(abi.encodeCall(guard.check, (2)));
+        address(guard).call(abi.encodeCall(guard.check, (100)));
+    }
+}
+"#,
+    );
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Guard.sol
+DA:7,3
+FN:7,Guard.check
+FNDA:3,Guard.check
+DA:8,3
+BRDA:8,0,0,1
+BRDA:8,0,1,2
+DA:9,2
+FNF:1
+FNH:1
+LF:3
+LH:3
+BRF:2
+BRH:2
+end_of_record
+
+"#]],
+    );
+}
+
+// The failing side of a require is path 0 with solc and with solar, whose layout differs.
+#[forgetest]
+fn require_paths_solc_and_solar_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    function req(uint256 a) external pure returns (uint256) {
+        require(a < 100);
+        return a + 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        guard.req(1);
+        guard.req(2);
+        guard.req(3);
+    }
+}
+"#,
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    let report = str![[r#"
+TN:
+SF:src/Guard.sol
+DA:5,3
+FN:5,Guard.req
+FNDA:3,Guard.req
+DA:6,3
+BRDA:6,0,0,0
+BRDA:6,0,1,3
+DA:7,3
+FNF:1
+FNH:1
+LF:3
+LH:3
+BRF:2
+BRH:1
+end_of_record
+
+"#]];
+    assert_lcov(cmd.arg("coverage"), report.clone());
+    assert_lcov(cmd.forge_fuse().arg("coverage").arg("--use").arg(solar), report);
+}
+
 #[forgetest]
 fn line_hit_not_doubled(prj: _, cmd: _) {
     prj.insert_ds_test();
@@ -1482,7 +1588,6 @@ contract AContractTest is DSTest {
 
 #[forgetest]
 fn single_statement_loop(prj: _, cmd: _) {
-    // TODO(dani): the specific case of `if (x) continue/break` is not properly covered.
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1523,7 +1628,7 @@ contract AContractTest is DSTest {
     "#,
     );
 
-    // Assert 50% coverage for true branches.
+    // Both arms are taken.
     cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
 ...
 ╭-------------------+--------------+---------------+---------------+---------------╮
@@ -1536,20 +1641,20 @@ contract AContractTest is DSTest {
 
 "#]]);
 
-    // Assert 50% coverage for false branches.
+    // Neither arm is taken.
     cmd.forge_fuse()
         .arg("coverage")
         .args(["--mt", "testFalseCoverage"])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-╭-------------------+---------------+-----------------+---------------+---------------╮
-| File              | % Lines       | % Statements    | % Branches    | % Funcs       |
-+=====================================================================================+
-| src/AContract.sol | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
-|-------------------+---------------+-----------------+---------------+---------------|
-| Total             | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
-╰-------------------+---------------+-----------------+---------------+---------------╯
+╭-------------------+---------------+-----------------+-------------+---------------╮
+| File              | % Lines       | % Statements    | % Branches  | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (7/7) | 100.00% (10/10) | 0.00% (0/2) | 100.00% (1/1) |
+|-------------------+---------------+-----------------+-------------+---------------|
+| Total             | 100.00% (7/7) | 100.00% (10/10) | 0.00% (0/2) | 100.00% (1/1) |
+╰-------------------+---------------+-----------------+-------------+---------------╯
 
 "#]]);
 
@@ -2110,6 +2215,242 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+--------------+---------------╯
 
 "#]]);
+}
+
+// Path 0 of a ternary is its false arm and path 1 its true arm, whichever side of the jump the
+// compiler puts each on. solc's legacy pipeline jumps to the true arm, while `--ir-minimum` and
+// Solar jump to the false arm of some ternaries.
+#[forgetest]
+fn ternary_paths_follow_arms(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function clamp(uint256 x) external pure returns (uint256) {
+        return x > 99 ? 5 : 4;
+    }
+
+    function sub(uint256 a, uint256 b, uint256 c) external pure returns (uint256) {
+        return a + b > c ? a + b - c : 0;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external view {
+        a.clamp(100);
+        a.sub(1, 1, 5);
+    }
+}
+"#,
+    );
+
+    // `clamp` takes its true arm only and `sub` its false arm only.
+    let expected = str![[r#"
+...
+BRDA:6,0,0,0
+BRDA:6,0,1,1
+...
+BRDA:10,1,0,1
+BRDA:10,1,1,0
+...
+"#]];
+    assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").args(["--no-isolate", "--ir-minimum"]),
+        expected.clone(),
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").arg("--no-isolate").arg("--use").arg(&solar),
+        expected,
+    );
+}
+
+// A branch path counts the times control took its edge, even when its arm has no code of its own.
+// The jump of `if (i == 3) { break; }` is the arm, whichever side of it each compiler puts the loop
+// exit on. Its arm runs once in the 6 times the jump runs, so swapped or summed counts differ. The
+// same holds without braces and for the `break` of an `else if`.
+#[forgetest]
+fn if_paths_count_jump_edges(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function stop(uint256 n) external pure returns (uint256 s) {
+        for (uint256 i = 0; i < n; i++) {
+            if (i == 3) {
+                break;
+            }
+            s += i;
+        }
+    }
+
+    function unbraced(uint256 n) external pure returns (uint256 s) {
+        for (uint256 i = 0; i < n; i++) {
+            if (i == 3) break;
+            s += i;
+        }
+    }
+
+    function chain(uint256 n) external pure returns (uint256 s) {
+        for (uint256 i = 0; i < n; i++) {
+            if (i == 1) {
+                s += 1;
+            } else if (i == 3) {
+                break;
+            }
+            s += 10;
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external view {
+        a.stop(10);
+        a.stop(2);
+        a.unbraced(10);
+        a.unbraced(2);
+        a.chain(10);
+        a.chain(2);
+    }
+}
+"#,
+    );
+
+    let expected = str![[r#"
+...
+BRDA:7,0,0,1
+...
+BRDA:16,1,0,1
+...
+BRDA:23,2,0,2
+BRDA:23,2,1,4
+...
+BRDA:25,3,0,1
+...
+"#]];
+    assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").args(["--no-isolate", "--ir-minimum"]),
+        expected.clone(),
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").arg("--no-isolate").arg("--use").arg(&solar),
+        expected,
+    );
+}
+
+// An `else if` arm that only calls an internal function has no code of its own once the optimizer
+// inlines the function, whose code the source map attributes to the function. The called function
+// still tells the two sides of the jump apart, so each path counts its own edge: the arms run 1, 2,
+// 4, 8 and 16 times, so swapped, dropped or summed counts differ.
+#[forgetest]
+fn if_else_if_paths_follow_called_functions_solc_and_solar_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Chain.sol",
+        r#"
+contract Chain {
+    enum Kind { Payable, NonPayable, Zero, Precompile, Forge }
+
+    uint256 public total;
+
+    function check(Kind kind) external {
+        if (kind == Kind.Payable) {
+            addOne();
+        } else if (kind == Kind.NonPayable) {
+            addTwo();
+        } else if (kind == Kind.Zero) {
+            addThree();
+        } else if (kind == Kind.Precompile) {
+            addFour();
+        } else if (kind == Kind.Forge) {
+            addFive();
+        }
+    }
+
+    function addOne() internal {
+        total += 1;
+    }
+
+    function addTwo() internal {
+        total += 2;
+    }
+
+    function addThree() internal {
+        total += 3;
+    }
+
+    function addFour() internal {
+        total += 4;
+    }
+
+    function addFive() internal {
+        total += 5;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Chain.t.sol",
+        r#"
+import "../src/Chain.sol";
+
+contract ChainTest {
+    function testPaths() public {
+        Chain chain = new Chain();
+        chain.check(Chain.Kind.Payable);
+        for (uint256 i = 0; i < 2; i++) chain.check(Chain.Kind.NonPayable);
+        for (uint256 i = 0; i < 4; i++) chain.check(Chain.Kind.Zero);
+        for (uint256 i = 0; i < 8; i++) chain.check(Chain.Kind.Precompile);
+        for (uint256 i = 0; i < 16; i++) chain.check(Chain.Kind.Forge);
+    }
+}
+"#,
+    );
+
+    let expected = str![[r#"
+...
+BRDA:10,0,0,1
+BRDA:10,0,1,30
+...
+BRDA:12,1,0,2
+BRDA:12,1,1,28
+...
+BRDA:14,2,0,4
+BRDA:14,2,1,24
+...
+BRDA:16,3,0,8
+BRDA:16,3,1,16
+...
+BRDA:18,4,0,16
+...
+"#]];
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
+    assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
 }
 
 #[forgetest]
@@ -2703,6 +3044,132 @@ contract AContract {
 "#]]);
 }
 
+// `--keep-optimizer` keeps the optimizer, which folds away the always-true `x == x` condition.
+#[forgetest]
+fn keep_optimizer(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public y;
+
+    function f(uint256 x) public {
+        if (x == x) {
+            y = 2;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_f() public {
+        new AContract().f(1);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--optimize"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+
+    // The Solar compiler folds the condition away as well.
+    let solar = prj.ensure_foundry_bin("solar");
+    cmd.forge_fuse().arg("coverage").arg("--use").arg(&solar).assert_success().stdout_eq(str![[
+        r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#
+    ]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--optimize", "--use"])
+        .arg(&solar)
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--keep-optimizer", "--ir-minimum"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: `ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.coverage.keep_optimizer = true;
+        config.optimizer = Some(true);
+    });
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+---------------+---------------╮
+| File              | % Lines       | % Statements | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+--------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 50.00% (1/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+---------------+---------------╯
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.coverage.keep_optimizer = false;
+        config.coverage.ir_minimum = true;
+    });
+    cmd.forge_fuse().args(["coverage", "--keep-optimizer"]).assert_failure().stderr_eq(str![[r#"
+Error: `ir_minimum` (`--ir-minimum`) and `keep_optimizer` (`--keep-optimizer`) cannot both be enabled
+
+"#]]);
+}
+
 #[forgetest]
 fn no_artifacts_written(prj: _, cmd: _) {
     prj.insert_ds_test();
@@ -3135,19 +3602,52 @@ contract Counter {
         "CounterTest.sol",
         r#"
 import "./test.sol";
-import {Counter} from "./Counter.sol";
+import {Counter, LibCounter} from "./Counter.sol";
+
+interface Vm {
+    function etch(address target, bytes calldata code) external;
+}
 
 contract CounterTest is DSTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
     function testIncrement() public {
         Counter counter = new Counter();
         counter.increment();
+    }
+
+    function testRelinked() public {
+        Counter counter = new Counter();
+        address original = address(LibCounter);
+        address replacement = address(0x1234567890123456789012345678901234567890);
+        vm.etch(replacement, original.code);
+        bytes memory code = address(counter).code;
+        bytes20 oldAddress = bytes20(original);
+        bytes20 newAddress = bytes20(replacement);
+        uint256 patches;
+        for (uint256 i; i + 20 <= code.length; ++i) {
+            bool matchAddress = true;
+            for (uint256 j; j < 20; ++j) {
+                if (code[i + j] != oldAddress[j]) matchAddress = false;
+            }
+            if (matchAddress) {
+                for (uint256 j; j < 20; ++j) code[i + j] = newAddress[j];
+                ++patches;
+                i += 19;
+            }
+        }
+        require(patches == 1, "expected one library link");
+        vm.etch(address(counter), code);
+        counter.increment();
+        require(counter.number() == 1);
     }
 }
     "#,
     );
 
-    // Assert 100% coverage for linked libraries.
-    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+    // Assert 100% coverage for both original and relocated library links.
+    for test in ["testIncrement", "testRelinked"] {
+        cmd.forge_fuse().args(["coverage", "--mt", test]).assert_success().stdout_eq(str![[r#"
 ...
 ╭-----------------+---------------+---------------+------------+---------------╮
 | File            | % Lines       | % Statements  | % Branches | % Funcs       |
@@ -3158,6 +3658,7 @@ contract CounterTest is DSTest {
 ╰-----------------+---------------+---------------+------------+---------------╯
 ...
 "#]]);
+    }
 }
 
 // <https://github.com/foundry-rs/foundry/issues/10422>
@@ -3644,6 +4145,268 @@ end_of_record
     );
 }
 
+// Path 0 of a Yul `if` is the side that enters its body, and the `if` owns its own jump, not those
+// of the branches and loops in its body, with solc and with solar, whose layouts differ.
+#[forgetest]
+fn yul_if_paths_solc_and_solar_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    uint256 public stored;
+
+    function reverting(uint256 a) external pure {
+        assembly { if iszero(a) { revert(0, 0) } }
+    }
+
+    function storing(uint256 a) external {
+        assembly {
+            if lt(a, 100) { sstore(stored.slot, a) sstore(add(stored.slot, 1), a) }
+        }
+    }
+
+    function leaving(uint256 a) external pure returns (uint256 r) {
+        assembly {
+            function f(x) -> y {
+                if lt(x, 5) { y := 1 leave }
+            }
+            r := f(a)
+        }
+    }
+
+    function nested(uint256 a, uint256 b) external {
+        assembly {
+            if a {
+                if b { sstore(stored.slot, 1) }
+            }
+        }
+    }
+
+    function scan(bytes memory hay, uint256 needle, uint256 h) external pure returns (uint256 found) {
+        assembly {
+            let end := add(add(hay, 0x20), mload(hay))
+            let i := add(hay, 0x20)
+            for {} lt(i, end) {} {
+                if iszero(eq(byte(0, mload(i)), needle)) {
+                    if h {
+                        if iszero(eq(byte(0, mload(add(i, 1))), h)) {
+                            mstore(0x00, i)
+                            i := add(i, 1)
+                            continue
+                        }
+                    }
+                    found := add(found, 100)
+                }
+                i := add(i, 1)
+            }
+        }
+    }
+
+    function spin(uint256 a, uint256 n) external pure returns (uint256 i) {
+        assembly {
+            if a {
+                for {} lt(i, n) {} { i := add(i, 1) }
+            }
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        guard.reverting(5);
+        guard.reverting(6);
+        guard.reverting(7);
+        try guard.reverting(0) {} catch {}
+        guard.storing(1);
+        guard.storing(2);
+        guard.storing(3);
+        guard.storing(200);
+        guard.leaving(1);
+        guard.leaving(2);
+        guard.leaving(9);
+        guard.nested(1, 1);
+        guard.nested(1, 0);
+        guard.nested(0, 1);
+        guard.nested(0, 0);
+        guard.nested(0, 0);
+        guard.spin(1, 3);
+        guard.spin(1, 2);
+        guard.spin(0, 5);
+        guard.spin(0, 5);
+        guard.spin(0, 5);
+        guard.scan(hex"0102030201", 2, 0);
+        guard.scan(hex"0102030201", 2, 1);
+        guard.scan(hex"0102030201", 2, 3);
+        guard.scan(hex"0303", 2, 3);
+        guard.scan(hex"0202", 2, 3);
+    }
+}
+"#,
+    );
+    let solar = prj.ensure_foundry_bin("solar");
+    let report = str![[r#"
+TN:
+SF:src/Guard.sol
+DA:7,4
+FN:7,Guard.reverting
+FNDA:4,Guard.reverting
+DA:8,4
+BRDA:8,0,0,1
+BRDA:8,0,1,3
+DA:11,4
+FN:11,Guard.storing
+FNDA:4,Guard.storing
+DA:13,4
+BRDA:13,1,0,3
+BRDA:13,1,1,1
+DA:17,3
+FN:17,Guard.leaving
+FNDA:3,Guard.leaving
+DA:19,3
+FN:19,Guard.f
+FNDA:3,Guard.f
+DA:20,3
+BRDA:20,2,0,2
+BRDA:20,2,1,1
+DA:22,3
+DA:26,5
+FN:26,Guard.nested
+FNDA:5,Guard.nested
+DA:28,5
+BRDA:28,3,0,2
+BRDA:28,3,1,3
+DA:29,2
+BRDA:29,4,0,1
+BRDA:29,4,1,1
+DA:34,5
+FN:34,Guard.scan
+FNDA:5,Guard.scan
+DA:36,5
+DA:37,5
+DA:38,24
+DA:39,19
+BRDA:39,5,0,11
+BRDA:39,5,1,8
+DA:40,11
+BRDA:40,6,0,8
+BRDA:40,6,1,3
+DA:41,8
+BRDA:41,7,0,7
+BRDA:41,7,1,1
+DA:42,7
+DA:43,7
+DA:44,7
+DA:47,4
+DA:49,12
+DA:54,5
+FN:54,Guard.spin
+FNDA:5,Guard.spin
+DA:56,5
+BRDA:56,8,0,2
+BRDA:56,8,1,3
+DA:57,7
+FNF:7
+FNH:7
+LF:26
+LH:26
+BRF:18
+BRH:18
+end_of_record
+
+"#]];
+    assert_lcov(cmd.arg("coverage"), report.clone());
+    assert_lcov(cmd.forge_fuse().arg("coverage").arg("--use").arg(solar), report);
+}
+
+// A Yul `if` whose body is only a `continue` or a `leave` is the conditional jump itself, and path
+// 0 still enters the body.
+#[forgetest]
+fn yul_if_jump_body_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Guard.sol",
+        r#"
+contract Guard {
+    uint256 public stored;
+
+    function skip(uint256 n) external {
+        assembly {
+            for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                if eq(i, 2) { continue }
+                sstore(stored.slot, i)
+            }
+        }
+    }
+
+    function early(uint256 x) external pure returns (uint256 r) {
+        assembly {
+            function f(a) -> y {
+                if lt(a, 5) { leave }
+                y := 3
+            }
+            r := f(x)
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Guard.t.sol",
+        r#"
+import "../src/Guard.sol";
+contract GuardTest {
+    function testPaths() public {
+        Guard guard = new Guard();
+        guard.skip(4);
+        guard.skip(1);
+        guard.early(1);
+        guard.early(9);
+        guard.early(9);
+    }
+}
+"#,
+    );
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Guard.sol
+DA:7,2
+FN:7,Guard.skip
+FNDA:2,Guard.skip
+DA:9,7
+DA:10,5
+BRDA:10,0,0,1
+BRDA:10,0,1,4
+DA:11,4
+DA:16,3
+FN:16,Guard.early
+FNDA:3,Guard.early
+DA:18,3
+FN:18,Guard.f
+FNDA:3,Guard.f
+DA:19,3
+BRDA:19,1,0,1
+BRDA:19,1,1,2
+DA:20,2
+DA:22,3
+FNF:3
+FNH:3
+LF:9
+LH:9
+BRF:4
+BRH:4
+end_of_record
+
+"#]],
+    );
+}
+
 // Test that coverage files are written even when tests fail.
 #[forgetest]
 fn coverage_with_failing_tests(prj: _, cmd: _) {
@@ -3706,6 +4469,51 @@ contract CounterTest is DSTest {
     assert!(lcov_content.contains("SF:src/Counter.sol"), "Coverage should include Counter.sol");
     assert!(lcov_content.contains("FN:"), "Coverage should include function data");
     assert!(lcov_content.contains("DA:"), "Coverage should include line hit data");
+}
+
+// The lines run by a failing fuzz input are covered, as they are for a failing unit test.
+#[forgetest]
+fn coverage_includes_failing_fuzz_input(prj: _, cmd: _) {
+    prj.add_source(
+        "Risky.sol",
+        r#"
+contract Risky {
+    function check(uint256 x) public pure returns (uint256) {
+        if (x > 100) {
+            return 7;
+        }
+        return 1;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "RiskyTest.sol",
+        r#"
+import {Risky} from "./Risky.sol";
+
+contract RiskyTest {
+    Risky risky = new Risky();
+
+    function testFuzz_Check(uint256 x) public {
+        require(risky.check(x) != 7);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").args(["--report=lcov"]).assert_failure();
+
+    // `return 7;` is reached only by the failing input.
+    let source = fs::read_to_string(prj.root().join("src/Risky.sol")).unwrap();
+    let line = source.lines().position(|l| l.contains("return 7;")).unwrap() + 1;
+    let lcov = fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+    let hits = lcov
+        .lines()
+        .find_map(|l| l.strip_prefix(&format!("DA:{line},")))
+        .and_then(|hits| hits.parse::<u64>().ok());
+    assert!(hits.is_some_and(|hits| hits > 0), "line {line} should be covered:\n{lcov}");
 }
 
 #[forgetest_init]
@@ -4435,5 +5243,386 @@ fn coverage_cache_prunes_obsolete_files(prj: _, cmd: _) {
         assert!(!cache.join("artifacts/Removed.sol/Removed.json").exists());
         builds = files_with_ext(&cache.join("build-info"), "json").collect();
         assert_eq!(builds.len(), 1);
+    }
+}
+
+// Only bytecode matching an artifact is credited to its source; constructor data may vary.
+#[forgetest]
+fn coverage_credits_only_exact_bytecode(prj: _, cmd: _) {
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Target {
+    uint256 public value;
+
+    constructor(uint256 x) {
+        value = x;
+    }
+
+    function live() external pure returns (uint256) {
+        return 0x1111;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Target.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+}
+
+contract TargetTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    // Patches `PUSH2 0x1111` to `PUSH2 0x2222`.
+    function patch(bytes memory code) internal pure returns (bytes memory) {
+        for (uint256 i; i + 2 < code.length; ++i) {
+            if (code[i] == 0x61 && code[i + 1] == 0x11 && code[i + 2] == 0x11) {
+                code[i + 1] = 0x22;
+                code[i + 2] = 0x22;
+                return code;
+            }
+        }
+        revert("constant not found");
+    }
+
+    function deploy(bytes memory initCode) internal returns (Target created) {
+        assembly {
+            created := create(0, add(initCode, 0x20), mload(initCode))
+        }
+    }
+
+    function testModifiedCode() external {
+        address etched = address(0x1234);
+        vm.etch(etched, patch(type(Target).runtimeCode));
+        require(Target(etched).live() == 0x2222);
+
+        Target created =
+            deploy(patch(abi.encodePacked(type(Target).creationCode, abi.encode(uint256(1)))));
+        require(created.value() == 1 && created.live() == 0x2222);
+    }
+
+    function testConstructorTrailingData() external {
+        Target created = deploy(
+            abi.encodePacked(type(Target).creationCode, abi.encode(uint256(42)), hex"ff")
+        );
+        require(created.value() == 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["coverage", "--report=summary", "--mt", "testModifiedCode"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭----------------+-------------+--------------+------------+-------------╮
+| File           | % Lines     | % Statements | % Branches | % Funcs     |
++========================================================================+
+| src/Target.sol | 0.00% (0/4) | 0.00% (0/2)  | N/A (0/0)  | 0.00% (0/2) |
+|----------------+-------------+--------------+------------+-------------|
+| Total          | 0.00% (0/4) | 0.00% (0/2)  | N/A (0/0)  | 0.00% (0/2) |
+╰----------------+-------------+--------------+------------+-------------╯
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Warning: excluding executed [..] code from coverage: it resembles `src/Target.sol:Target` but does not match it exactly
+Warning: excluding executed [..] code from coverage: it resembles `src/Target.sol:Target` but does not match it exactly
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--report=summary", "--mt", "testConstructorTrailingData"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭----------------+--------------+--------------+------------+--------------╮
+| File           | % Lines      | % Statements | % Branches | % Funcs      |
++==========================================================================+
+| src/Target.sol | 50.00% (2/4) | 50.00% (1/2) | N/A (0/0)  | 50.00% (1/2) |
+|----------------+--------------+--------------+------------+--------------|
+| Total          | 50.00% (2/4) | 50.00% (1/2) | N/A (0/0)  | 50.00% (1/2) |
+╰----------------+--------------+--------------+------------+--------------╯
+
+"#]]);
+}
+
+#[forgetest]
+fn coverage_bytecode_report(prj: _, cmd: _) {
+    prj.add_source(
+        "Counter.sol",
+        "contract Counter { function get() public pure returns (uint256) { return 42; } }",
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "src/Counter.sol";
+
+contract CounterTest {
+    function testGet() public {
+        require(new Counter().get() == 42);
+    }
+}
+"#,
+    );
+    cmd.args(["coverage", "--report=bytecode"]).assert_success();
+    let asm = fs::read_to_string(prj.root().join("bytecode-coverage/Counter.asm")).unwrap();
+    assert_data_eq!(
+        asm,
+        str![[r#"
+[002] 00000000: PUSH1 0x80                     // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000002: PUSH1 0x40                     // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000004: MSTORE                         // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000005: CALLVALUE                      // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000006: DUP1                           // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000007: ISZERO                         // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000008: PUSH1 0x0e                     // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 0000000a: JUMPI                          // src/Counter.sol: 3:1-3:81 (71-151)
+      0000000b: PUSH0                          // src/Counter.sol: 3:1-3:81 (71-151)
+...
+"#]]
+    );
+}
+
+// Gaps report offsets and snippets do not depend on CRLF line endings or multibyte text.
+#[forgetest]
+fn coverage_gaps_report(prj: _, cmd: _) {
+    let source = prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public value;
+
+    function set(uint256 x) public {
+        // ☃
+        if (x > 10) {
+            value = x;
+        } else {
+            value = 0;
+        }
+    }
+
+    function check(uint256 x) public pure {
+        require(x > 0, "zero");
+    }
+
+    function unused() public {
+        value = 42;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "AContract.t.sol",
+        r#"
+import {AContract} from "../src/AContract.sol";
+
+contract AContractTest {
+    function testSet() public {
+        AContract a = new AContract();
+        a.set(11);
+        a.check(1);
+    }
+}
+"#,
+    );
+
+    let expected = str![[r#"
+{
+  "version": 1,
+  "files": {
+    "src/AContract.sol": [
+      {
+        "kind": "branch",
+        "contract": "AContract",
+        "function": "set",
+        "line_start": 9,
+        "line_end": 13,
+        "byte_start": 180,
+        "byte_end": 266,
+        "snippet": "if (x > 10) {",
+        "branch_id": 0,
+        "path_id": 1
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "set",
+        "line_start": 12,
+        "line_end": 12,
+        "byte_start": 246,
+        "byte_end": 255,
+        "snippet": "value = 0"
+      },
+      {
+        "kind": "branch",
+        "contract": "AContract",
+        "function": "check",
+        "line_start": 17,
+        "line_end": 17,
+        "byte_start": 326,
+        "byte_end": 348,
+        "snippet": "require(x > 0, \"zero\")",
+        "branch_id": 1,
+        "path_id": 0
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 20,
+        "line_end": 20,
+        "byte_start": 361,
+        "byte_end": 387,
+        "snippet": "function unused() public {"
+      },
+      {
+        "kind": "function",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 20,
+        "line_end": 22,
+        "byte_start": 361,
+        "byte_end": 413,
+        "snippet": "function unused() public {"
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 21,
+        "line_end": 21,
+        "byte_start": 396,
+        "byte_end": 406,
+        "snippet": "value = 42"
+      }
+    ]
+  }
+}
+"#]]
+    .is_json();
+    cmd.args(["coverage", "--report=gaps"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("coverage-gaps.json"), None),
+        expected.clone()
+    );
+
+    let crlf = fs::read_to_string(&source).unwrap().replace('\n', "\r\n");
+    fs::write(&source, crlf).unwrap();
+    cmd.forge_fuse()
+        .args(["coverage", "--report=gaps", "--report-file", "crlf-gaps.json"])
+        .assert_success();
+    assert_data_eq!(Data::read_from(&prj.root().join("crlf-gaps.json"), None), expected);
+}
+
+// Dynamic test linking rewrites `new Child()` in test helpers before compilation, so source maps
+// refer to the rewritten text. Items after the rewrite must still anchor to their own code.
+#[forgetest]
+fn dynamic_test_linking_source_edits(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Child.sol",
+        r#"
+contract Child {
+    uint256 public value;
+
+    constructor(uint256 _value) {
+        value = _value;
+    }
+}
+    "#,
+    );
+    prj.add_test(
+        "Factory.sol",
+        r#"
+import {Child} from "../src/Child.sol";
+
+contract Factory {
+    function make(uint256 n) public returns (uint256 total) {
+        Child child = new Child(1);
+        total = child.value();
+        if (n > 1) {
+            total += n;
+        } else {
+            total += 100;
+        }
+        total += 1;
+    }
+
+    function skipped() public pure returns (uint256 x) {
+        x = 5;
+    }
+}
+    "#,
+    );
+    prj.add_test(
+        "Factory.t.sol",
+        r#"
+import "../src/test.sol";
+import {Factory} from "./Factory.sol";
+
+contract FactoryTest is DSTest {
+    function testMake() public {
+        Factory factory = new Factory();
+        assertEq(factory.make(2), 4);
+    }
+}
+    "#,
+    );
+
+    let solar = prj.ensure_foundry_bin("solar");
+    for solar in [None, Some(&solar)] {
+        let cmd = cmd.forge_fuse();
+        cmd.arg("coverage");
+        if let Some(solar) = solar {
+            cmd.arg("--use").arg(solar);
+        }
+        assert_lcov(
+            cmd,
+            str![[r#"
+TN:
+SF:src/Child.sol
+DA:7,1
+FN:7,Child.constructor
+FNDA:1,Child.constructor
+DA:8,1
+FNF:1
+FNH:1
+LF:2
+LH:2
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:test/Factory.sol
+DA:7,1
+FN:7,Factory.make
+FNDA:1,Factory.make
+DA:8,1
+DA:9,1
+DA:10,1
+BRDA:10,0,0,1
+BRDA:10,0,1,0
+DA:11,1
+DA:13,0
+DA:15,1
+DA:18,0
+FN:18,Factory.skipped
+FNDA:0,Factory.skipped
+DA:19,0
+FNF:2
+FNH:1
+LF:9
+LH:6
+BRF:2
+BRH:1
+end_of_record
+
+"#]],
+        );
     }
 }

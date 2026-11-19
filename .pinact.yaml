@@ -6,5 +6,14 @@ rules:
   - ignore: true
     conditions:
       - expr: |
-          ActionRepoFullName == "tempoxyz/gh-actions"
-      - expr: ActionVersion matches "^[0-9a-f]{40}$"
+          ActionRepoFullName == "tempoxyz/gh-actions" &&
+          ActionVersion matches "^[0-9a-f]{40}$"
+
+  # rust-toolchain only publishes a moving v1 tag, so its historical SHA pins
+  # cannot have stable version comments. Dependabot maintains the pins weekly.
+  - ignore: true
+    conditions:
+      - expr: |
+          ActionRepoFullName == "dtolnay/rust-toolchain" &&
+          ActionVersion matches "^[0-9a-f]{40}$" &&
+          VersionComment == ""

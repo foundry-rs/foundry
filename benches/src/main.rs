@@ -83,13 +83,15 @@ struct Cli {
 
     /// Comma-separated list of repositories to benchmark.
     ///
-    /// Each entry has the form `org/repo[:rev][ <extra args...>]`. Anything
-    /// after the first whitespace is appended to every benchmark command for
-    /// that repo (handy to skip a broken test contract via e.g.
+    /// Each entry has the form `org/repo[/subdir][:rev][ <extra args...>]`.
+    /// `subdir` selects the Foundry project inside a monorepo. Anything after
+    /// the first whitespace is appended to every benchmark command for that
+    /// repo (handy to skip a broken test contract via e.g.
     /// `--nmc BrokenTest`).
     ///
     /// Examples:
-    ///   `ithacaxyz/account:v0.5.7`
+    ///   `morpho-org/morpho-blue:9cf6d5b844625ba108e36d1cf911f5d2faf7c136`
+    ///   `tempoxyz/tempo/crates/zones/contracts`
     ///   `vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest'`
     #[clap(long, value_delimiter = ',')]
     repos: Option<Vec<String>>,
@@ -156,11 +158,8 @@ fn main() -> Result<()> {
 
     // Determine versions to test. Each entry is a display name, optionally
     // `name=path` to build that ref from source (e.g. a baseline worktree).
-    let raw_versions = if let Some(v) = cli.versions {
-        v
-    } else {
-        FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
-    };
+    let raw_versions =
+        cli.versions.unwrap_or_else(|| FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect());
     let version_specs = parse_version_specs(&raw_versions)?;
     let versions: Vec<String> = version_specs.iter().map(|(name, _)| name.clone()).collect();
     if cli.symbolic_sidecar_output.is_some() && versions.len() != 1 {

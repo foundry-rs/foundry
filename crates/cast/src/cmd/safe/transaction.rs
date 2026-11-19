@@ -1,3 +1,4 @@
+use super::SafeRpcOpts;
 use crate::{
     tempo,
     tx::{CastTxBuilder, apply_poll_interval},
@@ -11,10 +12,11 @@ use alloy_signer::{Signature, Signer};
 use clap::Args;
 use eyre::{Context, Result, ensure};
 use foundry_cli::{
-    opts::{EthereumOpts, RpcOpts, TransactionOpts},
+    opts::{EthereumOpts, TransactionOpts},
     utils::{LoadConfig, resolve_lane},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_config::Config;
 use foundry_wallets::{WalletOpts, WalletSigner};
 use serde::Serialize;
 use std::time::Duration;
@@ -24,7 +26,7 @@ use tempo_alloy::TempoNetwork;
 #[derive(Args, Debug)]
 pub(super) struct SafeSendOpts {
     #[command(flatten)]
-    pub(super) rpc: Box<RpcOpts>,
+    pub(super) rpc: Box<SafeRpcOpts>,
 
     #[command(flatten)]
     wallet: Box<WalletOpts>,
@@ -49,18 +51,20 @@ impl SafeSendOpts {
         poll_interval: Option<u64>,
     ) -> Result<SafeSendResult> {
         let Self { rpc, wallet, tx } = self;
-        let eth = EthereumOpts { rpc: *rpc, wallet: *wallet, ..Default::default() };
+        let config = rpc.load_config()?;
+        let eth = EthereumOpts { rpc: rpc.rpc, wallet: *wallet, ..Default::default() };
         let (network, signer, access_key) =
-            tempo::resolve_transaction_network_and_signer(&tx.tempo, &eth).await?;
+            tempo::resolve_transaction_network_and_signer_with_config(&tx.tempo, &eth, &config)
+                .await?;
         ensure!(
             access_key.is_none(),
             "Tempo Accounts sessions are not yet supported by `cast safe create` or `cast safe execute`"
         );
         let call = SafeCall { to, data, confirmations, timeout, poll_interval };
         if network.is_tempo() {
-            call.send::<TempoNetwork>(eth, *tx, signer).await
+            call.send::<TempoNetwork>(eth, *tx, signer, config).await
         } else {
-            call.send::<Ethereum>(eth, *tx, signer).await
+            call.send::<Ethereum>(eth, *tx, signer, config).await
         }
     }
 }
@@ -79,12 +83,13 @@ impl SafeCall {
         eth: EthereumOpts,
         mut tx_opts: TransactionOpts,
         signer: Option<WalletSigner>,
+        config: Config,
     ) -> Result<SafeSendResult>
     where
         N: Network + RecommendedFillers,
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
         N::UnsignedTx: SignableTransaction<Signature>,
-        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: Serialize,
     {
         ensure!(
@@ -107,7 +112,6 @@ impl SafeCall {
             "Tempo Accounts sessions are not yet supported by `cast safe create` or `cast safe execute`"
         );
 
-        let config = eth.rpc.load_config()?;
         let timeout = self.timeout.unwrap_or(config.transaction_timeout);
         resolve_lane(&mut tx_opts.tempo, &config.root)?;
         tempo::print_expires(tx_opts.tempo.resolve_expires())?;
@@ -126,11 +130,9 @@ impl SafeCall {
             .await?
             .with_code_sig_and_args(None, Some(hex::encode_prefixed(self.data)), Vec::new())
             .await?;
-        let chain = builder.chain();
         let (mut request, _) = builder.build(from).await?;
         let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
-        tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut request, Some(from))
-            .await?;
+        tempo::resolve_and_print_fee_token(fee_provider, &mut request, Some(from)).await?;
 
         let receipt = provider
             .send_transaction(request)

@@ -2,10 +2,11 @@ use alloy_primitives::{
     Address, B256, U256,
     map::{AddressHashMap, B256HashMap},
 };
-use revm::{
-    bytecode::opcode,
-    interpreter::{Interpreter, interpreter_types::Jumps},
+use evm2::{
+    EvmTypesHost,
+    interpreter::{Interpreter, op},
 };
+use std::collections::BTreeMap;
 
 /// Provenance recovered for a Solidity mapping storage slot.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,12 +34,23 @@ pub struct MappingSlots {
     /// `data_low`, higher 256 bits in `data_high`.
     /// This is needed for mapping_key detect if the slot is for some mapping and record that.
     pub seen_sha3: B256HashMap<(B256, B256)>,
+
+    /// Holds the input of each 32-byte sha3 `sha3_result => data`. A dynamic array's elements
+    /// start at the hash of its slot, so this locates arrays whose slot is itself computed, e.g.
+    /// a mapping value or an element of another array. Ordered to find the nearest hash at or
+    /// below a slot.
+    pub seen_word_sha3: BTreeMap<U256, B256>,
 }
 
 impl MappingSlots {
     /// Records the result and two input words of a 64-byte `KECCAK256` operation.
     pub fn record_hash(&mut self, result: B256, key: B256, parent: B256) {
         self.seen_sha3.insert(result, (key, parent));
+    }
+
+    /// Records the result and input word of a 32-byte `KECCAK256` operation.
+    pub fn record_word_hash(&mut self, result: B256, word: B256) {
+        self.seen_word_sha3.insert(result.into(), word);
     }
 
     /// Resolves a computed slot to its terminal mapping root and root-to-leaf keys.
@@ -76,47 +88,66 @@ impl MappingSlots {
     }
 }
 
-/// A pending 64-byte Keccak operation captured before execution.
+/// A pending 32- or 64-byte Keccak operation captured before execution.
 #[derive(Clone, Copy, Debug)]
 pub struct PendingMappingHash {
     /// The effective storage address of the executing frame.
     pub address: Address,
     /// The memory offset containing the Keccak preimage.
     pub offset: usize,
+    /// The preimage size: 32 for a dynamic array's data slot, 64 for a mapping entry.
+    pub size: usize,
 }
 
-/// Captures a 64-byte Keccak operation before execution.
-pub fn capture_hash(interpreter: &Interpreter) -> Option<PendingMappingHash> {
-    if interpreter.bytecode.opcode() != opcode::KECCAK256
-        || interpreter.stack.peek(1).ok()? != U256::from(0x40)
-    {
+/// Captures a 32- or 64-byte Keccak operation before execution.
+pub fn capture_hash<T: EvmTypesHost>(
+    interp: &Interpreter<'_, '_, T>,
+) -> Option<PendingMappingHash> {
+    let stack = interp.stack();
+    if interp.opcode() != op::KECCAK256 {
+        return None;
+    }
+    let size = stack.peek(1)?;
+    if size != U256::from(0x20) && size != U256::from(0x40) {
         return None;
     }
     Some(PendingMappingHash {
-        address: interpreter.input.target_address,
-        offset: interpreter.stack.peek(0).ok()?.try_into().ok()?,
+        address: interp.message().destination,
+        offset: stack.peek(0)?.try_into().ok()?,
+        size: size.to(),
     })
 }
 
-/// Records a successfully executed 64-byte Keccak operation after memory expansion.
-pub fn record_hash(
+/// Records a successfully executed 32- or 64-byte Keccak operation after memory expansion.
+pub fn record_hash<T: EvmTypesHost>(
     mapping_slots: &mut AddressHashMap<MappingSlots>,
-    interpreter: &Interpreter,
+    interp: &Interpreter<'_, '_, T>,
     pending: PendingMappingHash,
 ) {
-    let Ok(result) = interpreter.stack.peek(0) else { return };
-    let data = interpreter.memory.slice_len(pending.offset, 0x40);
-    let key = B256::from_slice(&data[..0x20]);
-    let parent = B256::from_slice(&data[0x20..]);
-    mapping_slots.entry(pending.address).or_default().record_hash(result.into(), key, parent);
+    if interp.result().is_err() {
+        return;
+    }
+    let Some(result) = interp.stack().peek(0) else { return };
+    let data = interp.memory().slice(pending.offset, pending.size);
+    let slots = mapping_slots.entry(pending.address).or_default();
+    if pending.size == 0x20 {
+        slots.record_word_hash(result.into(), B256::from_slice(data));
+    } else {
+        let key = B256::from_slice(&data[..0x20]);
+        let parent = B256::from_slice(&data[0x20..]);
+        slots.record_hash(result.into(), key, parent);
+    }
 }
 
 /// Function to be used in `Inspector::step` to record mapping slots.
 #[cold]
-pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
-    if interpreter.bytecode.opcode() == opcode::SSTORE
-        && let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)
-        && let Ok(slot) = interpreter.stack.peek(0)
+pub fn step<T: EvmTypesHost>(
+    mapping_slots: &mut AddressHashMap<MappingSlots>,
+    interp: &Interpreter<'_, '_, T>,
+) {
+    if interp.opcode() == op::SSTORE
+        && let Some(mapping_slots) = mapping_slots.get_mut(&interp.message().destination)
+        && let Some(slot) = interp.stack().peek(0)
     {
         mapping_slots.insert(slot.into());
     }
@@ -153,7 +184,7 @@ mod tests {
         slots.record_hash(slot, key, root);
 
         assert!(slots.resolve(root).is_none());
-        assert!(slots.resolve(B256::from(U256::from_be_bytes(slot.0) + U256::ONE)).is_none());
+        assert!(slots.resolve(B256::from(Into::<U256>::into(slot) + U256::ONE)).is_none());
 
         slots.record_hash(root, key, slot);
         assert!(slots.resolve(slot).is_none());

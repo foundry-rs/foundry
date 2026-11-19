@@ -2,11 +2,10 @@
 
 use crate::fork::fork_config;
 use alloy_genesis::Genesis;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256, address, b256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use anvil::{NodeConfig, spawn};
-use std::str::FromStr;
 
 const GENESIS: &str = r#"{
   "config": {
@@ -80,7 +79,7 @@ async fn can_apply_genesis() {
 
     assert_eq!(provider.get_chain_id().await.unwrap(), 19763u64);
 
-    let addr: Address = Address::from_str("71562b71999873db5b286df957af199ec94617f7").unwrap();
+    let addr: Address = address!("71562b71999873db5b286df957af199ec94617f7");
     let balance = provider.get_balance(addr).await.unwrap();
 
     let expected: U256 = U256::from_str_radix("ffffffffffffffffffffffffff", 16).unwrap();
@@ -104,13 +103,11 @@ async fn applies_genesis_header() {
 
     assert_eq!(
         block.header.hash,
-        B256::from_str("0x0a6ab47aa1672305a6d2fe01c7e4245b2e80ff8f20da2079c2a62a506410a46d")
-            .unwrap()
+        b256!("0x0a6ab47aa1672305a6d2fe01c7e4245b2e80ff8f20da2079c2a62a506410a46d")
     );
     assert_eq!(
         block.header.state_root,
-        B256::from_str("0x5b0bc9e85c26ad3ecafbea8de25cf99fca0f65c73572b24aacb5a781fb61815a")
-            .unwrap()
+        b256!("0x5b0bc9e85c26ad3ecafbea8de25cf99fca0f65c73572b24aacb5a781fb61815a")
     );
 }
 

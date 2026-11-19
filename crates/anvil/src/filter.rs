@@ -63,8 +63,9 @@ impl<N: Network> Filters<N> {
 
     /// Returns the original `Filter` of an `eth_newFilter`
     pub async fn get_log_filter(&self, id: &str) -> Option<Filter> {
-        let filters = self.active_filters.lock().await;
-        if let Some((EthFilter::Logs(log), _)) = filters.get(id) {
+        let mut filters = self.active_filters.lock().await;
+        if let Some((EthFilter::Logs(log), deadline)) = filters.get_mut(id) {
+            *deadline = self.next_deadline();
             return log.filter.filter.clone();
         }
         None
@@ -238,5 +239,50 @@ where
             }
         }
         logs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{NodeConfig, spawn};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn log_queries_refresh_expiry_without_preserving_idle_filters() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let filters = Filters::default();
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(
+                filters
+                    .add_filter(EthFilter::Logs(Box::new(LogsFilter {
+                        blocks: api.new_block_notifications(),
+                        storage: api.storage_info(),
+                        filter: FilteredParams::new(Some(Filter::default())),
+                        historic: None,
+                    })))
+                    .await,
+            );
+        }
+        let block_id = filters.add_filter(EthFilter::Blocks(api.new_block_notifications())).await;
+        // Expire all filters before polling, without a wall-clock sleep or eviction race.
+        let expired = Instant::now() - Duration::from_secs(1);
+        for (_, deadline) in filters.active_filters.lock().await.values_mut() {
+            *deadline = expired;
+        }
+
+        assert_eq!(filters.get_log_filter(&ids[0]).await, Some(Filter::default()));
+        filters.get_filter_changes(&ids[1]).await;
+        assert!(filters.get_log_filter(&block_id).await.is_none());
+        assert!(filters.get_log_filter("missing").await.is_none());
+        filters.evict().await;
+
+        let active = filters.active_filters.lock().await;
+        assert_eq!(active.len(), 2);
+        for id in &ids[..2] {
+            assert!(active.get(id).unwrap().1 > expired);
+        }
+        assert!(!active.contains_key(&ids[2]));
+        assert!(!active.contains_key(&block_id));
     }
 }

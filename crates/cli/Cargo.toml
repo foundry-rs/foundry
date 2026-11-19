@@ -9,6 +9,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[package.metadata.cargo-shear]
+ignored = ["ahash", "hashbrown", "num-bigint", "ruint", "rustix"]
+
 [lints]
 workspace = true
 
@@ -20,6 +23,7 @@ foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 
+tempo-alloy.workspace = true
 tempo-primitives.workspace = true
 
 foundry-compilers.workspace = true
@@ -53,22 +57,32 @@ regex = { workspace = true, default-features = false }
 serde_json.workspace = true
 serde.workspace = true
 semver.workspace = true
-soldeer-commands.workspace = true
+soldeer-commands = { workspace = true, optional = true }
 toml.workspace = true
 strsim = "0.11"
+# Unused. Enable the same features across all binaries' dependency trees so that Cargo reuses
+# builds across package selections.
+ahash = "0.8"
+hashbrown.workspace = true
+itertools014 = { package = "itertools", version = "0.14" }
+num-bigint = { version = "0.4", features = ["serde"] }
+ruint = { version = "1", features = ["num-bigint"] }
 tokio = { workspace = true, features = ["macros"] }
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
 yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
-dunce.workspace = true
 
 tracing-tracy = { version = "0.12", optional = true, features = ["demangle"] }
 
 [dev-dependencies]
+alloy-transport.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
+# Unused. Enables the same features as forge's dependency tree so that Cargo reuses builds across
+# package selections.
+rustix = { version = "1", features = ["process", "event"] }
 tikv-jemallocator = { workspace = true, optional = true }
 
 [features]
@@ -77,6 +91,7 @@ tracy = ["dep:tracing-tracy"]
 tracy-allocator = ["tracy"]
 jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
+soldeer = ["dep:soldeer-commands"]
 monad = [
     "foundry-common/monad",
     "foundry-config/monad",

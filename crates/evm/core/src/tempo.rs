@@ -6,7 +6,6 @@
 //! It includes the shared genesis initialization function used by both anvil and forge.
 
 use alloy_primitives::{Address, Bytes, U256};
-use revm::state::Bytecode;
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
@@ -15,7 +14,7 @@ use tempo_contracts::{
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     error::TempoPrecompileError,
-    storage::{PrecompileStorageProvider, StorageCtx},
+    storage::StorageCtx,
     tip20::{ITIP20, TIP20Token},
     tip20_factory::TIP20Factory,
     validator_config,
@@ -48,46 +47,14 @@ pub use tempo_precompiles::{
 /// All well-known TIP20 fee token addresses on Tempo networks.
 pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
 
-/// Initialize Tempo precompiles and contracts using a storage provider.
-///
-/// This is the core initialization logic that sets up Tempo-specific precompiles,
-/// fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD), and standard contracts.
-///
-/// This function should be called during genesis setup when running in Tempo mode.
-/// It uses the `StorageCtx` pattern to work with any storage backend that implements
-/// `PrecompileStorageProvider`.
-///
-/// # Arguments
-/// * `storage` - A mutable reference to a storage provider implementing `PrecompileStorageProvider`
-/// * `admin` - The admin address that will have control over tokens and config
-/// * `recipient` - The address that will receive minted tokens
-///
-/// Ref: <https://github.com/tempoxyz/tempo/blob/main/xtask/src/genesis_args.rs>
-pub fn initialize_tempo_genesis(
-    storage: &mut impl PrecompileStorageProvider,
-    admin: Address,
-    recipient: Address,
-) -> Result<(), TempoPrecompileError> {
-    initialize_tempo_genesis_at_hardfork(storage, admin, recipient, TempoHardfork::default())
-}
-
-/// Initialize Tempo precompiles and contracts for a specific active hardfork.
-pub fn initialize_tempo_genesis_at_hardfork(
-    storage: &mut impl PrecompileStorageProvider,
-    admin: Address,
-    recipient: Address,
-    hardfork: TempoHardfork,
-) -> Result<(), TempoPrecompileError> {
-    StorageCtx::enter(storage, || initialize_tempo_genesis_inner(admin, recipient, hardfork))
-}
-
 /// Inner genesis initialization logic. Must be called within a [`StorageCtx`] scope
 /// (either via [`StorageCtx::enter`] or [`StorageCtx::enter_evm`]).
+/// Returns whether genesis code was installed rather than already initialized.
 pub fn initialize_tempo_genesis_inner(
     admin: Address,
     recipient: Address,
     hardfork: TempoHardfork,
-) -> Result<(), TempoPrecompileError> {
+) -> Result<bool, TempoPrecompileError> {
     initialize_tempo_genesis_inner_with_precompiles(
         admin,
         recipient,
@@ -109,24 +76,24 @@ pub fn initialize_tempo_test_genesis_inner(
         recipient,
         TEMPO_PRECOMPILE_ADDRESSES.iter().copied(),
     )
+    .map(|_| ())
 }
 
 fn initialize_tempo_genesis_inner_with_precompiles(
     admin: Address,
     recipient: Address,
     precompiles: impl IntoIterator<Item = Address>,
-) -> Result<(), TempoPrecompileError> {
+) -> Result<bool, TempoPrecompileError> {
     // Idempotent: PATH_USD is the first token created during genesis; if it already exists, skip.
     if TIP20Factory::new().is_tip20(PATH_USD_ADDRESS)? {
-        return Ok(());
+        return Ok(false);
     }
 
     let mut ctx = StorageCtx;
 
     // Set sentinel bytecode for precompile addresses
-    let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
     for precompile in precompiles {
-        ctx.set_code(precompile, sentinel.clone())?;
+        ctx.set_code(precompile, Bytes::from_static(SYSTEM_PRECOMPILE_STUB))?;
     }
 
     // Create PathUSD token: 0x20C0000000000000000000000000000000000000
@@ -180,29 +147,12 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     // Initialize ValidatorConfig with admin as owner
     ctx.sstore(VALIDATOR_CONFIG_ADDRESS, validator_config::slots::OWNER, admin.into_word().into())?;
 
-    // Set bytecode for standard contracts
-    ctx.set_code(
-        MULTICALL3_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&Multicall3::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        CREATEX_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&CreateX::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        SAFE_DEPLOYER_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&SafeDeployer::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        PERMIT2_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&Permit2::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        ARACHNID_CREATE2_FACTORY_ADDRESS,
-        Bytecode::new_legacy(ARACHNID_CREATE2_FACTORY_BYTECODE),
-    )?;
+    // Set bytecode for standard contracts.
+    for (address, code) in tempo_genesis_contracts() {
+        ctx.set_code(address, code)?;
+    }
 
-    Ok(())
+    Ok(true)
 }
 
 /// Helper function to create and mint a TIP20 token.
@@ -236,4 +186,16 @@ fn create_and_mint_token(
     }
 
     Ok(token_address)
+}
+
+/// Standard contracts and their runtime bytecode installed by Tempo genesis initialization.
+pub fn tempo_genesis_contracts() -> impl Iterator<Item = (Address, Bytes)> {
+    [
+        (MULTICALL3_ADDRESS, Multicall3::DEPLOYED_BYTECODE.clone()),
+        (CREATEX_ADDRESS, CreateX::DEPLOYED_BYTECODE.clone()),
+        (SAFE_DEPLOYER_ADDRESS, SafeDeployer::DEPLOYED_BYTECODE.clone()),
+        (PERMIT2_ADDRESS, Permit2::DEPLOYED_BYTECODE.clone()),
+        (ARACHNID_CREATE2_FACTORY_ADDRESS, ARACHNID_CREATE2_FACTORY_BYTECODE),
+    ]
+    .into_iter()
 }

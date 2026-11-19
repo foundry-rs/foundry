@@ -3,6 +3,7 @@
 //! replay/shrink semantics, and stale-file cleanup. Distinct from invariant predicate
 //! failures.
 
+use alloy_primitives::address;
 use foundry_test_utils::{forgetest_init, str};
 
 // Handler `assert(false)` surfaces under `Assertion Tests:`, not as a live invariant failure.
@@ -522,8 +523,7 @@ Warning: Replayed handler-side assertion bug from [..]
     // the legacy record until normal result persistence has written its canonical replacement.
     let mut legacy: serde_json::Value =
         serde_json::from_reader(std::fs::File::open(file.path()).unwrap()).unwrap();
-    let legacy_reverter: alloy_primitives::Address =
-        "0x7109709ecfa91a80626ff3989d68f67f5b1dd12d".parse().unwrap();
+    let legacy_reverter = address!("0x7109709ecfa91a80626ff3989d68f67f5b1dd12d");
     let selector: alloy_primitives::Selector =
         legacy["failure_site"]["selector"].as_str().unwrap().parse().unwrap();
     let mut identity = [0u8; 24];
@@ -1053,7 +1053,8 @@ contract TwoBranchTest is Test {
 // `GLOBAL_FAIL_SLOT = 1` and that committed slot was never cleared, poisoning every
 // subsequent `handlers_succeeded` check and silently suppressing later `assert_invariants`
 // evaluations. Asserts on call #1, then bumps a counter on call #2/#3 to trip a real
-// predicate — both the handler bug AND the predicate failure must be reported.
+// predicate — both the handler bug AND the predicate failure must be reported. Replays stop at
+// the handler assertion instead of the predicate, so the predicate's sequence is kept unshrunk.
 #[forgetest_init]
 fn handler_vm_assert_global_flag_does_not_poison_invariant_checks(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -1103,11 +1104,13 @@ contract HandlerVmAssertPoisonTest is Test {
 ...
 Ran 1 test for test/HandlerVmAssertPoisonTest.t.sol:HandlerVmAssertPoisonTest
 [FAIL: counter reached 3]
-	[Sequence] (original: 3, shrunk: 1)
+	[Sequence] (original: 3, shrunk: 3)
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
 		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
 
 Assertion Tests: 1 assertion bug(s) found
-[FAIL: assertion failed] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
+[FAIL: assertion failed: 1 != 2] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
 	[Sequence] (original: 1, shrunk: 1)
 		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
  invariant_counter_below_three() (runs: 1, calls: 3, reverts: 0)
@@ -1125,11 +1128,13 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 Failing tests:
 Encountered 1 failing test in test/HandlerVmAssertPoisonTest.t.sol:HandlerVmAssertPoisonTest
 [FAIL: counter reached 3]
-	[Sequence] (original: 3, shrunk: 1)
+	[Sequence] (original: 3, shrunk: 3)
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
 		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
 
 Assertion Tests: 1 assertion bug(s) found
-[FAIL: assertion failed] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
+[FAIL: assertion failed: 1 != 2] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
 	[Sequence] (original: 1, shrunk: 1)
 		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
  invariant_counter_below_three() (runs: 1, calls: 3, reverts: 0)

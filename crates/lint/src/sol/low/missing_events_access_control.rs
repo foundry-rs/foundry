@@ -14,6 +14,7 @@ use solar::{
     interface::{Span, data_structures::Never},
     sema::{
         Gcx,
+        builtins::Builtin,
         hir::{
             self, EventId, Expr, ExprKind, FunctionId, ItemId, LoopSource, Stmt, StmtKind,
             VariableId, Visit,
@@ -76,6 +77,9 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
                     ..Default::default()
                 },
                 call_stack: Vec::new(),
+                return_states: Vec::new(),
+                terminal_states: Vec::new(),
+                next_write_id: 0,
             };
             analyzer.analyze_function(func_id);
 
@@ -135,6 +139,7 @@ type Sources = HashSet<Source>;
 
 #[derive(Clone)]
 struct StateWrite {
+    id: usize,
     var_id: VariableId,
     span: Span,
     sources: Sources,
@@ -163,6 +168,11 @@ struct WriteAnalyzer<'a, 'gcx> {
     guard_targets: &'a HashSet<VariableId>,
     state: State,
     call_stack: Vec<FunctionId>,
+    /// State at each normal `return`, grouped by active inlined function call.
+    return_states: Vec<Vec<State>>,
+    /// State at each successful terminal exit, grouped by active inlined function call.
+    terminal_states: Vec<Vec<State>>,
+    next_write_id: usize,
 }
 
 impl<'gcx> WriteAnalyzer<'_, 'gcx> {
@@ -173,6 +183,8 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
         let func = self.gcx.hir.function(func_id);
         let Some(body) = func.body else { return };
         self.call_stack.push(func_id);
+        self.return_states.push(Vec::new());
+        self.terminal_states.push(Vec::new());
         for modifier in func.modifiers {
             if let Some(modifier_id) = modifier.id.as_function() {
                 let _ = self.visit_call_args(&modifier.args);
@@ -183,6 +195,27 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
             let _ = self.visit_stmt(stmt);
         }
         self.correlate_pending();
+        let mut exits = self.return_states.pop().unwrap();
+        let terminal_exits = self.terminal_states.pop().unwrap();
+        if !exits.is_empty() || !terminal_exits.is_empty() {
+            if !body.stmts.iter().any(|stmt| branch_always_exits(self.gcx, stmt)) {
+                exits.push(self.state.clone());
+            }
+            for write in &mut self.state.writes {
+                // An exit before this write does not require an event for it.
+                let mut matching = exits
+                    .iter()
+                    .chain(&terminal_exits)
+                    .filter_map(|state| state.writes.iter().find(|other| other.id == write.id));
+                if let Some(first) = matching.next() {
+                    write.evented = first.evented && matching.all(|other| other.evented);
+                }
+            }
+            self.state.emits.retain(|event| exits.iter().all(|state| state.emits.contains(event)));
+        }
+        if let Some(parent) = self.terminal_states.last_mut() {
+            parent.extend(terminal_exits);
+        }
         self.call_stack.pop();
     }
 
@@ -256,12 +289,14 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
                 && (!sources.is_empty() || (fixed_clear && self.guard_targets.contains(&var_id)))
             {
                 self.state.writes.push(StateWrite {
+                    id: self.next_write_id,
                     var_id,
                     span: lhs.span,
                     sources: sources.clone(),
                     fixed_clear,
                     evented: false,
                 });
+                self.next_write_id += 1;
             }
         }
     }
@@ -299,18 +334,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     /// event must mention the variable and share a source with the write (or the write must be
     /// a fixed clear).
     fn correlate_pending(&mut self) {
-        let gcx = self.gcx;
-        let State { emits, writes, .. } = &mut self.state;
-        for (event_id, event_sources) in emits.iter() {
-            for write in writes.iter_mut() {
-                if !write.evented
-                    && (write.fixed_clear || !write.sources.is_disjoint(event_sources))
-                    && event_mentions_state_var(gcx, *event_id, write.var_id)
-                {
-                    write.evented = true;
-                }
-            }
-        }
+        correlate_pending(self.gcx, &mut self.state);
     }
 }
 
@@ -359,6 +383,14 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
             StmtKind::Emit(expr) => {
                 self.visit_expr(expr)?;
                 self.record_emit(expr);
+            }
+            StmtKind::Return(expr) => {
+                if let Some(expr) = expr {
+                    self.visit_expr(expr)?;
+                }
+                let mut state = self.state.clone();
+                correlate_pending(self.gcx, &mut state);
+                self.return_states.last_mut().unwrap().push(state);
             }
             StmtKind::Loop(block, source) => {
                 // A loop body may not run to completion on the iteration containing an emit — a
@@ -433,8 +465,19 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
                 if op.is_some() {
                     sources.extend(self.value_sources(lhs));
                 }
-                self.record_writes(lhs, &sources, is_zero_value(rhs));
-                if let Some(local) = lhs_local_var(self.gcx, lhs) {
+                let local = lhs_local_var(self.gcx, lhs);
+                let rebinds_storage = op.is_none()
+                    && local.is_some_and(|var_id| {
+                        self.gcx.hir.variable(var_id).data_location == Some(DataLocation::Storage)
+                    })
+                    && self
+                        .gcx
+                        .type_of_expr(rhs.peel_parens().id)
+                        .is_some_and(|ty| ty.loc() == Some(DataLocation::Storage));
+                if !rebinds_storage {
+                    self.record_writes(lhs, &sources, is_zero_value(rhs));
+                }
+                if let Some(local) = local {
                     self.set_local(local, sources, rhs);
                 }
                 ControlFlow::Continue(())
@@ -452,6 +495,11 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
                 {
                     let gcx = self.gcx;
                     self.analyze_call(callee_id, |index| gcx.call_arg(expr, index));
+                }
+                if self.gcx.resolved_builtin(callee) == Some(Builtin::Selfdestruct) {
+                    let mut state = self.state.clone();
+                    correlate_pending(self.gcx, &mut state);
+                    self.terminal_states.last_mut().unwrap().push(state);
                 }
                 ControlFlow::Continue(())
             }
@@ -593,4 +641,17 @@ fn event_mentions_state_var(gcx: Gcx<'_>, event_id: EventId, var_id: VariableId)
 
 fn normalize(name: &str) -> String {
     name.chars().filter(char::is_ascii_alphanumeric).map(|c| c.to_ascii_lowercase()).collect()
+}
+
+fn correlate_pending(gcx: Gcx<'_>, state: &mut State) {
+    for (event_id, event_sources) in &state.emits {
+        for write in &mut state.writes {
+            if !write.evented
+                && (write.fixed_clear || !write.sources.is_disjoint(event_sources))
+                && event_mentions_state_var(gcx, *event_id, write.var_id)
+            {
+                write.evented = true;
+            }
+        }
+    }
 }

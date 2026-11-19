@@ -609,7 +609,7 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 false
             }
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => self.analyze_block(block),
-            StmtKind::AssemblyBlock(block) => {
+            StmtKind::AssemblyBlock(block, _) => {
                 self.assembly_depth += 1;
                 let continues = self.analyze_block(block);
                 self.assembly_depth -= 1;
@@ -654,10 +654,11 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 }
                 false
             }
-            StmtKind::Placeholder => match self.modifier_continuations.last().copied() {
-                Some(cont) => self.analyze_modifier_chain(cont.modifiers, cont.next, cont.body),
-                None => true,
-            },
+            StmtKind::Placeholder => self
+                .modifier_continuations
+                .last()
+                .copied()
+                .is_none_or(|c| self.analyze_modifier_chain(c.modifiers, c.next, c.body)),
             StmtKind::Err(_) => true,
         }
     }

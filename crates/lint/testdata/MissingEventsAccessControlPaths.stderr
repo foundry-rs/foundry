@@ -1,0 +1,80 @@
+warning[missing-events-access-control]: `owner` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControlPaths.sol:LL:CC
+   │
+LL │         owner = newOwner;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-events-access-control]: `owner` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControlPaths.sol:LL:CC
+   │
+LL │         owner = newOwner;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-events-access-control]: `owner` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControlPaths.sol:LL:CC
+   │
+LL │             owner = newOwner;
+   │             ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-events-access-control]: `owner` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControlPaths.sol:LL:CC
+   │
+LL │         owner = newOwner;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-events-access-control]: `owner` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControlPaths.sol:LL:CC
+   │
+LL │         owner = newOwner;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-events-access-control]: `owner` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControlPaths.sol:LL:CC
+   │
+LL │         owner = newOwner;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-events-access-control]: `owner` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControlPaths.sol:LL:CC
+   │
+LL │         owner = newOwner;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-events-access-control]: `owner` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControlPaths.sol:LL:CC
+   │
+LL │         owner = newOwner;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-events-access-control]: `roles` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControlPaths.sol:LL:CC
+   │
+LL │         selected[account] = true;
+   │         ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-events-access-control]: `roleData` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControlPaths.sol:LL:CC
+   │
+LL │         selected.account = value.account;
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+

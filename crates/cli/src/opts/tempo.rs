@@ -8,16 +8,11 @@ use foundry_common::{
     tempo::{TempoSponsor, resolve_tempo_sponsor_signer},
 };
 use foundry_evm::hardfork::TempoHardfork;
-use std::{
-    num::NonZeroU64,
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{num::NonZeroU64, path::PathBuf, str::FromStr, sync::Arc};
 
-use crate::utils::parse_fee_token_address;
+use crate::utils::{now, parse_fee_token_address};
 
+mod configurable_account;
 mod session;
 pub use session::TEMPO_SESSION_ID_ENV;
 
@@ -47,8 +42,8 @@ pub struct TempoOpts {
     /// Opt into TIP-1009 expiring-nonce mode with a validity window.
     ///
     /// Convenience flag that combines `--tempo.expiring-nonce` with a relative
-    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now +
-    /// seconds.
+    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX and valid_before = now + seconds. The
+    /// nonce defaults to 0; see `--tempo.expiring-nonce` for how an explicit nonce is used.
     ///
     /// Maximum value is 300 seconds; networks that have not activated the T11 hardfork reject
     /// windows above 30 seconds. The transaction must be mined before the deadline or it becomes
@@ -158,8 +153,14 @@ pub struct TempoOpts {
 
     /// Enable expiring nonce mode for Tempo transactions.
     ///
-    /// Sets nonce to 0 and nonce_key to U256::MAX, enabling time-bounded transaction
-    /// validity via `--tempo.valid-before` and `--tempo.valid-after`.
+    /// Sets nonce_key to U256::MAX, enabling time-bounded transaction validity via
+    /// `--tempo.valid-before` and `--tempo.valid-after`.
+    ///
+    /// The nonce is not sequential in this mode and defaults to 0. From the T12 hardfork
+    /// (TIP-1106) an explicitly supplied nonce is kept as an opaque discriminator, so otherwise
+    /// identical transactions with different nonces are distinct. Earlier hardforks reject any
+    /// nonce other than 0. `forge script` takes no nonce and from T12 uses each transaction's
+    /// ordinal across the complete script plan, including completed transactions on resume.
     #[arg(long = "tempo.expiring-nonce", requires = "valid_before", conflicts_with = "expires")]
     pub expiring_nonce: bool,
 
@@ -176,6 +177,60 @@ pub struct TempoOpts {
     /// Requires `--tempo.expiring-nonce`.
     #[arg(long = "tempo.valid-after")]
     pub valid_after: Option<u64>,
+
+    /// Send as this Tempo configurable account (T14), failing unless it is one.
+    ///
+    /// Not needed for a sender named with `--from` or `--sender`: a configurable account sender
+    /// is detected from the chain, and the local owner keys (the wallet options, `--tempo.owner`,
+    /// and owner keys in the Tempo Accounts store) sign its `0x05` signature, as many as reach the
+    /// threshold.
+    #[arg(
+        long = "tempo.configurable-account",
+        id = "tempo_configurable_account",
+        value_name = "ADDRESS"
+    )]
+    pub configurable_account: Option<Address>,
+
+    /// The configuration of the configurable account sender, or of
+    /// `--tempo.configurable-access-key`, instead of rebuilding it from the chain.
+    ///
+    /// JSON, inline or in a file, with `salt`, `version`, `threshold` and `owners` (each an
+    /// `owner` and a `weight`), as `cast wallet owners --json` prints it. It is checked against
+    /// the account's configuration commitment. An account that has not sent its first transaction
+    /// yet has none onchain, so it needs this unless it is the 1-of-1 account of a local key.
+    #[arg(long = "tempo.config", id = "tempo_config", value_name = "CONFIG")]
+    pub configurable_account_config: Option<String>,
+
+    /// An owner key of the configurable account sender, or of `--tempo.configurable-access-key`,
+    /// in addition to the wallet options.
+    ///
+    /// Repeat for several owners. Takes the forms of `--tempo.sponsor-signer`: `env://VAR`,
+    /// `keystore://PATH`, `account://NAME`, `ledger://`, `trezor://`, `aws://`, `gcp://`,
+    /// `turnkey://`, or `private-key://KEY`.
+    #[arg(long = "tempo.owner", id = "tempo_owner", value_name = "SIGNER")]
+    pub owners: Vec<String>,
+
+    /// Sign with this Tempo configurable account as an access key of the sender `--from` (T14,
+    /// TIP-1111).
+    ///
+    /// The sender must have authorized the account with key type `configurable`. Its local owner
+    /// keys, found as for `--tempo.configurable-account`, approve the transaction inside a
+    /// keychain signature for the sender.
+    #[arg(
+        long = "tempo.configurable-access-key",
+        id = "tempo_configurable_access_key",
+        value_name = "ADDRESS",
+        conflicts_with_all = ["tempo_configurable_account", "tempo_eoa", "key_id"]
+    )]
+    pub configurable_access_key: Option<Address>,
+
+    /// Send from the key itself instead of the Tempo configurable account linked to its keystore.
+    ///
+    /// On a Tempo chain where T14 is active, a keystore that `cast wallet new` created for a
+    /// configurable account sends from that account unless `--from`, `--sender` or this flag
+    /// names the key.
+    #[arg(long, id = "tempo_eoa", conflicts_with = "tempo_configurable_account")]
+    pub eoa: bool,
 }
 
 impl TempoOpts {
@@ -194,13 +249,13 @@ impl TempoOpts {
             || self.expiring_nonce
             || self.valid_before.is_some()
             || self.valid_after.is_some()
+            || self.has_configurable_account_options()
     }
 
     /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
     pub fn expires_at(&self) -> Option<u64> {
         let secs = self.expires?;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
-        Some(now.as_secs() + secs)
+        Some(now().as_secs() + secs)
     }
 
     /// Resolves `--tempo.expires` into concrete expiring-nonce fields.
@@ -218,6 +273,12 @@ impl TempoOpts {
     /// Returns `true` if a sponsor signature should be attached before submission.
     pub const fn has_sponsor_submission(&self) -> bool {
         self.sponsor.is_some() || self.sponsor_signer.is_some() || self.sponsor_sig.is_some()
+    }
+
+    /// Returns `true` if a fee payer will sponsor the transaction, through a sponsor signature, a
+    /// sponsor service or a printed sponsor hash.
+    pub const fn is_sponsored(&self) -> bool {
+        self.has_sponsor_submission() || self.sponsor_url.is_some() || self.print_sponsor_hash
     }
 
     /// Resolves sponsor CLI options into a reusable sponsor config for transaction submission.
@@ -253,14 +314,17 @@ impl TempoOpts {
     /// Applies Tempo-specific options to a transaction request.
     ///
     /// All setters are no-ops for non-Tempo networks, so this is safe to call unconditionally.
+    ///
+    /// In expiring nonce mode `nonce` is the TIP-1106 discriminator rather than a sequential
+    /// nonce: an explicit value is kept as supplied and `None` selects 0.
     pub fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, nonce: Option<u64>)
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        // Handle expiring nonce mode: sets nonce=0 and nonce_key=U256::MAX.
+        // Handle expiring nonce mode: sets nonce_key=U256::MAX and never reads nonce state.
         // --tempo.expires is a convenience alias that also sets valid_before = now + duration.
         if self.expiring_nonce || self.expires.is_some() {
-            tx.set_nonce(0);
+            tx.set_nonce(nonce.unwrap_or_default());
             tx.set_nonce_key(U256::MAX);
         } else {
             if let Some(nonce) = nonce {
@@ -297,10 +361,9 @@ impl TempoOpts {
         // Note: the fee_payer_signature is NOT set here. It must be applied AFTER
         // gas estimation so that `--tempo.print-sponsor-hash` and
         // `--tempo.sponsor-signature` produce identical gas estimates. Callers
-        // should call `set_fee_payer_signature` on the built tx request.
-        if (self.has_sponsor_submission() || self.sponsor_url.is_some() || self.print_sponsor_hash)
-            && tx.nonce_key().is_none()
-        {
+        // should call `set_fee_payer_signature` on the built tx request, and
+        // mark only the estimation request with `mark_sponsored_gas_estimation`.
+        if self.is_sponsored() && tx.nonce_key().is_none() {
             tx.set_nonce_key(U256::ZERO);
         }
     }
@@ -376,13 +439,11 @@ mod tests {
 
     #[test]
     fn resolve_expires_materializes_valid_before() {
-        let before =
-            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+        let before = now().as_secs();
         let mut opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
 
         let resolved = opts.resolve_expires().unwrap();
-        let after =
-            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+        let after = now().as_secs();
 
         assert!(resolved >= before + 10);
         assert!(resolved <= after + 10);
@@ -437,7 +498,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
         assert_eq!(opts.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
         assert!(opts.sponsor_sig.is_none());
         assert!(opts.is_tempo());
@@ -462,7 +523,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
         assert!(opts.sponsor_sig.is_some());
     }
 
@@ -477,7 +538,7 @@ mod tests {
         .unwrap();
 
         assert!(opts.print_sponsor_hash);
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
     }
 
     #[test]

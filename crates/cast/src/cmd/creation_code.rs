@@ -221,7 +221,7 @@ mod tests {
         let args = DynSolValue::Tuple(vec![
             DynSolValue::Address(Address::repeat_byte(0x11)),
             DynSolValue::FixedArray(vec![
-                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::ONE, 256),
                 DynSolValue::Uint(U256::from(2), 256),
             ]),
         ])

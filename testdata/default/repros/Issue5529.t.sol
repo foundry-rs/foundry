@@ -29,9 +29,24 @@ contract Issue5529Test is Test {
         run();
     }
 
+    function testCreate2FactoryUsedByDeployCode() public {
+        runDeployCode();
+    }
+
+    function testCreate2FactoryUsedByDeployCodeWhenPranking() public {
+        vm.startPrank(address(1234));
+        runDeployCode();
+    }
+
     function run() private {
         address a = vm.computeCreate2Address(0, keccak256(type(Counter).creationCode), address(default_create2_factory));
         address b = address(new Counter{salt: 0}());
+        require(a == b, "create2 address mismatch");
+    }
+
+    function runDeployCode() private {
+        address a = vm.computeCreate2Address(0, keccak256(type(Counter).creationCode), address(default_create2_factory));
+        address b = vm.deployCode("repros/Issue5529.t.sol:Counter", bytes32(0));
         require(a == b, "create2 address mismatch");
     }
 }

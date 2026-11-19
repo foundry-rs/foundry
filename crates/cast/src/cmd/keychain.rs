@@ -1,14 +1,14 @@
 use crate::{
     cmd::{
         auth::confirm_and_build,
+        configurable_key_auth::{
+            ConfigurableAccountArgs, send_keychain_tx_as_configurable_account,
+        },
         print_json_or,
         send::{SendOptions, cast_send},
         tempo_policy_args::{parse_period, parse_scope, parse_selector_bytes},
     },
-    tempo::{
-        active_tempo_hardfork, apply_fee_payment, is_tempo_hardfork_active, print_expires,
-        require_hardfork, sponsor_hash, tempo_provider,
-    },
+    tempo::{apply_fee_payment, print_expires, require_hardfork, sponsor_hash, tempo_provider},
     tx::{CastTxBuilder, SendTxOpts, SenderKind, apply_poll_interval},
 };
 use alloy_consensus::BlockHeader;
@@ -25,23 +25,24 @@ use eyre::Result;
 use foundry_cli::{
     json::{print_json_object, print_json_success},
     opts::{RpcOpts, TempoOpts, TransactionOpts},
-    utils::{LoadConfig, now, parse_fee_token_address, resolve_lane},
+    utils::{LoadConfig, now, parse_fee_token_address, parse_json, resolve_lane},
 };
 use foundry_common::{
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, AccountsStoreView, KeyType, read_tempo_accounts_store, tempo_accounts_store_path,
+        self, AccountsStoreView, KeyType, active_tempo_hardfork,
+        configurable_account::{ca_error, config_commitment},
+        is_tempo_hardfork_active, read_tempo_accounts_store, tempo_accounts_store_path,
     },
 };
-use foundry_evm::hardfork::TempoHardfork;
 use foundry_wallets::{
     BrowserWalletOpts, WalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fmt::Display;
-use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
+use tempo_alloy::{TempoNetwork, chainspec::hardfork::TempoHardfork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN,
     IAccountKeychain::{
@@ -146,12 +147,17 @@ pub enum KeychainSubcommand {
     },
 
     /// Authorize a new key on-chain via the AccountKeychain precompile.
+    ///
+    /// With `--tempo.configurable-account`, a configurable account sends the call in a `0x05`
+    /// transaction that its local owners approve (T14): the wallet signer, `--tempo.owner` and the
+    /// Tempo Accounts store, which must reach the account's threshold.
     #[command(visible_alias = "auth")]
     Authorize {
         /// The key address to authorize.
         key_address: Address,
 
-        /// Signature type: secp256k1, p256, or webauthn.
+        /// Signature type: secp256k1, p256, webauthn, or configurable (a configurable account as
+        /// the access key, T14).
         #[arg(default_value = "secp256k1", value_parser = parse_signature_type)]
         key_type: SignatureType,
 
@@ -192,7 +198,8 @@ pub enum KeychainSubcommand {
         /// Authorize a T6 admin access key via `authorizeAdminKey` (key-management only).
         ///
         /// Admin keys may authorize/revoke other keys but cannot carry an expiry, spending limits,
-        /// or call scopes. The account is the signing (precompile caller) account.
+        /// or call scopes. The account is the signing (precompile caller) account. Not supported
+        /// on T14 or later, where TIP-1137 retires admin keys.
         #[arg(long)]
         admin: bool,
 
@@ -418,9 +425,19 @@ pub enum KeyAuthorizationSubcommand {
     /// With an admin access-key signer the bound account is the key's root and is derived
     /// automatically; with a direct signer, `--bind-account` binds to another root. A root-signed
     /// `--admin` authorization defaults the account to the signer.
+    ///
+    /// With `--tempo.configurable-account`, the configurable account's owners sign the
+    /// authorization (T14, TIP-1111) and it is bound to the account. Its configuration is read
+    /// from the RPC.
     Sign {
         #[command(flatten)]
         authorization: KeyAuthorizationArgs,
+
+        #[command(flatten)]
+        configurable: ConfigurableAccountArgs,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
 
         /// Bind this authorization to a target (root) account (T6).
         ///
@@ -459,7 +476,8 @@ pub struct KeyAuthorizationArgs {
     /// Key address to authorize.
     key_address: Address,
 
-    /// Type of access key being authorized: secp256k1, p256, or webauthn.
+    /// Type of access key being authorized: secp256k1, p256, webauthn, or configurable (a
+    /// configurable account as the access key, T14).
     /// The root signature type is determined by the configured signer.
     #[arg(long, default_value = "secp256k1", value_parser = parse_auth_signature_type)]
     key_type: AuthSignatureType,
@@ -495,7 +513,8 @@ pub struct KeyAuthorizationArgs {
     ///
     /// Admin keys may authorize/revoke other keys but cannot carry an expiry, spending limits, or
     /// call scopes, and require a bound account (`--account` for `encode`, signer-derived for
-    /// `sign`).
+    /// `sign`). Tempo nodes reject admin key authorizations on T14 or later, where TIP-1137
+    /// retires admin keys.
     #[arg(long)]
     admin: bool,
 }
@@ -580,7 +599,10 @@ fn parse_auth_signature_type(s: &str) -> Result<AuthSignatureType, String> {
         "secp256k1" => Ok(AuthSignatureType::Secp256k1),
         "p256" => Ok(AuthSignatureType::P256),
         "webauthn" => Ok(AuthSignatureType::WebAuthn),
-        _ => Err(format!("unknown signature type: {s} (expected secp256k1, p256, or webauthn)")),
+        "configurable" | "configurableaccount" => Ok(AuthSignatureType::ConfigurableAccount),
+        _ => Err(format!(
+            "unknown signature type: {s} (expected secp256k1, p256, webauthn, or configurable)"
+        )),
     }
 }
 
@@ -598,6 +620,7 @@ const fn key_type_name(t: KeyType) -> &'static str {
         KeyType::Secp256k1 => "secp256k1",
         KeyType::P256 => "p256",
         KeyType::WebAuthn => "webauthn",
+        KeyType::ConfigurableAccount => "configurableaccount",
     }
 }
 
@@ -606,6 +629,7 @@ const fn key_type_label(t: KeyType) -> &'static str {
         KeyType::Secp256k1 => "Secp256k1",
         KeyType::P256 => "P256",
         KeyType::WebAuthn => "WebAuthn",
+        KeyType::ConfigurableAccount => "ConfigurableAccount",
     }
 }
 
@@ -664,7 +688,7 @@ struct JsonSelectorWithRecipients {
 /// Parse `--scopes` JSON flag value.
 fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
     let entries: Vec<JsonCallScope> =
-        serde_json::from_str(s).map_err(|e| format!("invalid --scopes JSON: {e}"))?;
+        parse_json(s).map_err(|e| format!("invalid --scopes JSON: {e}"))?;
     entries
         .into_iter()
         .map(|entry| {
@@ -897,7 +921,23 @@ impl KeyAuthorizationSubcommand {
                     hex::encode_prefixed(&encoded),
                 )
             }
-            Self::Sign { authorization, account, wallet, browser } => {
+            Self::Sign { authorization, configurable, rpc, account, wallet, browser } => {
+                if let Some(configurable_account) = configurable.account() {
+                    eyre::ensure!(
+                        !browser.browser,
+                        "browser wallets cannot sign as a configurable account owner; pass \
+                         browser approvals with --tempo.owner-signature"
+                    );
+                    return sign_configurable_key_authorization(
+                        authorization,
+                        &configurable,
+                        configurable_account,
+                        account,
+                        &wallet,
+                        &rpc,
+                    )
+                    .await;
+                }
                 run_key_auth_sign(authorization, account, *wallet, browser).await
             }
             Self::Inspect { authorization, account } => {
@@ -1016,7 +1056,7 @@ async fn run_inspect(
     let (_, provider) = tempo_provider(&rpc)?;
 
     let info = provider.get_keychain_key(root_account, key_address).await?;
-    let provisioned = info.keyId != Address::ZERO;
+    let provisioned = !info.keyId.is_zero();
     let is_t3 = is_tempo_hardfork_active(&provider, TempoHardfork::T3).await?;
     // On T6, `isAdminKey` is authoritative for the root/admin distinction.
     let is_admin = is_tempo_hardfork_active(&provider, TempoHardfork::T6).await?
@@ -1090,7 +1130,7 @@ async fn run_inspect(
 async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) -> Result<()> {
     let (_, provider) = tempo_provider(&rpc)?;
     let info = provider.get_keychain_key(wallet_address, key_address).await?;
-    let provisioned = info.keyId != Address::ZERO;
+    let provisioned = !info.keyId.is_zero();
     let signature_type = abi_key_type(info.signatureType).map_or("unknown", key_type_name);
 
     if shell::is_json() {
@@ -1463,7 +1503,7 @@ impl Doctor {
 
         // Step 5: on-chain key state.
         let registration = match provider.get_keychain_key(root_account, key_address).await {
-            Ok(info) if info.keyId != Address::ZERO => {
+            Ok(info) if !info.keyId.is_zero() => {
                 let key_type = abi_key_type(info.signatureType).map_or("unknown", key_type_label);
                 self.steps.push(DoctorStep::pass(
                     KEY_REGISTRATION,
@@ -1472,10 +1512,25 @@ impl Doctor {
                 KeyRegistration::OnChain(info)
             }
             Ok(_) => {
+                // A configurable account's authorization is tied to it by its onchain commitment.
+                let signs_as_configurable_account = subject
+                    .entry
+                    .as_ref()
+                    .and_then(|entry| entry.key_authorization.as_ref())
+                    .is_some_and(|signed| signed.signature().as_configurable_account().is_some());
+                let commitment = if signs_as_configurable_account {
+                    config_commitment(&provider, root_account, BlockId::latest())
+                        .await
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
                 let (signed, detail) = self.attempt(validate_pending_key_authorization(
                     &subject,
                     rpc_chain_id,
                     &chain_timestamp,
+                    commitment,
                 ))?;
                 self.steps.push(DoctorStep::pass(KEY_REGISTRATION, detail));
                 KeyRegistration::Pending(Box::new(signed))
@@ -1513,7 +1568,7 @@ impl Doctor {
                     "not on-chain yet; key_authorization will provision a fresh key",
                 ));
                 check_expiry(
-                    signed.authorization.expiry.map(|expiry| expiry.get()),
+                    signed.authorization().expiry.map(|expiry| expiry.get()),
                     &chain_timestamp,
                     "key_authorization ",
                     "refresh the access key to get a later key_authorization expiry",
@@ -1533,7 +1588,7 @@ impl Doctor {
             }
             KeyRegistration::Pending(signed) => (
                 check_authorization_spending_limits(signed, fee_token, is_t3),
-                Some(&signed.authorization),
+                Some(signed.authorization()),
             ),
         };
         self.steps.push(limits);
@@ -1762,10 +1817,14 @@ fn check_local_signing_readiness(subject: &DoctorSubject) -> DoctorStep {
 }
 
 /// Validates the local pending `key_authorization`, returning it with its pass detail.
+///
+/// `commitment` is the root account's onchain configuration commitment, which a key authorization
+/// signed by a configurable account's owners must match; it is zero before the account registers.
 fn validate_pending_key_authorization(
     subject: &DoctorSubject,
     rpc_chain_id: u64,
     chain_timestamp: &ChainTimestamp,
+    commitment: Option<B256>,
 ) -> Result<(SignedKeyAuthorization, String), DoctorStep> {
     let fail = |detail: String, hint: &str| DoctorStep::fail(KEY_REGISTRATION, detail, hint);
     let not_registered = || {
@@ -1787,7 +1846,7 @@ fn validate_pending_key_authorization(
             "authorize the key with `cast keychain authorize <KEY>` or refresh the local key_authorization",
         ));
     };
-    let auth = &signed.authorization;
+    let auth = signed.authorization();
 
     if auth.key_id != subject.key_address {
         return Err(fail(
@@ -1829,7 +1888,22 @@ fn validate_pending_key_authorization(
             "refresh the access key to get a later key_authorization expiry",
         ));
     }
-    match signed.recover_signer() {
+    let signer = match signed.signature().as_configurable_account() {
+        Some(signature) => commitment
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "could not read the configuration commitment of {}",
+                    signature.account()
+                )
+            })
+            .and_then(|commitment| {
+                signature.validate_account_commitment(commitment).map_err(ca_error)
+            })
+            .and_then(|()| signature.verify_approvals(signed.signature_hash()).map_err(ca_error))
+            .map(|()| signature.account()),
+        None => signed.recover_signer().map_err(ca_error),
+    };
+    match signer {
         Ok(recovered) if recovered == subject.root_account => {}
         Ok(recovered) => {
             return Err(fail(
@@ -2001,7 +2075,7 @@ fn check_authorization_spending_limits(
     fee_token: Address,
     is_t3: Option<bool>,
 ) -> DoctorStep {
-    let auth = &signed.authorization;
+    let auth = signed.authorization();
     if is_t3.is_none() && auth.has_periodic_limits() {
         return DoctorStep::warn(
             SPENDING_LIMITS,
@@ -2463,15 +2537,32 @@ async fn run_authorize(
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
     let (_, provider) = tempo_provider(&send_tx.eth.rpc)?;
+    if key_type == SignatureType::ConfigurableAccount {
+        require_hardfork(
+            &provider,
+            TempoHardfork::T14,
+            "a configurable account access key requires the Tempo T14 hardfork",
+        )
+        .await?;
+    }
+
+    // TIP-1137 deprecates admin keys from T14, the hardfork that adds configurable accounts.
+    eyre::ensure!(
+        !(admin && tx_opts.tempo.has_configurable_account_options()),
+        "--admin cannot be combined with --tempo.configurable-account or \
+         --tempo.configurable-access-key"
+    );
 
     // T6 admin keys are key-management only and use a dedicated precompile entrypoint.
     if admin {
-        require_hardfork(
-            &provider,
-            TempoHardfork::T6,
-            "--admin requires a Tempo T6-capable AccountKeychain RPC",
-        )
-        .await?;
+        let hardfork = active_tempo_hardfork(&provider).await?;
+        eyre::ensure!(hardfork.is_t6(), "--admin requires a Tempo T6-capable AccountKeychain RPC");
+        // From T14 the precompile rejects `authorizeAdminKey` with a bare `InvalidKeyId()`.
+        eyre::ensure!(
+            !hardfork.is_t14(),
+            "--admin is not supported on Tempo T14 or later: TIP-1137 retires admin keys; \
+             authorize a regular access key without --admin instead"
+        );
         // u64::MAX is the no-expiry default; anything else is an explicit expiry admin keys reject.
         eyre::ensure!(expiry == u64::MAX, "--admin cannot be combined with an explicit --expiry");
         eyre::ensure!(
@@ -2549,6 +2640,9 @@ async fn run_authorize(
         .abi_encode()
     };
 
+    if tx_opts.tempo.has_configurable_account_options() {
+        return send_keychain_tx_as_configurable_account(calldata, tx_opts, &send_tx, force).await;
+    }
     send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
@@ -2569,6 +2663,12 @@ async fn run_key_auth_sign(
             "browser key authorization signing does not support T5/T6 fields yet: witness, admin, account"
         );
     }
+    // TODO: remove once the browser wallet serializes configurable account key authorizations.
+    if browser.browser && args.key_type == AuthSignatureType::ConfigurableAccount {
+        eyre::bail!(
+            "browser key authorization signing does not support the configurable key type yet"
+        );
+    }
 
     if let Some(browser) = browser.run::<TempoNetwork>().await? {
         let signer_address = browser.address();
@@ -2577,11 +2677,14 @@ async fn run_key_auth_sign(
         let authorization = args.into_authorization(None)?;
         let key_type = authorization.key_type;
         let signature_hash = authorization.signature_hash();
-        let signed = browser.sign_key_authorization(authorization).await?;
+        let signed =
+            foundry_common::tempo::sign_key_authorization_with_browser(&browser, authorization)
+                .await?;
         return print_signed_key_authorization(&signed, signature_hash, signer_address, key_type);
     }
 
-    let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
+    let (signer, tempo_access_key) =
+        foundry_common::tempo::maybe_signer(&wallet, Some(chain_id)).await?;
     let signer_address = match (&signer, &tempo_access_key) {
         (Some(signer), None) => signer.address(),
         (None, Some(wallet)) => wallet.key_id()?,
@@ -2621,6 +2724,37 @@ async fn run_key_auth_sign(
     print_signed_key_authorization(&signed, signature_hash, signer_address, key_type)
 }
 
+/// Signs `args` as `account`'s owners, bound to the account, and prints it.
+///
+/// The wallet signer, when given, approves as one owner.
+async fn sign_configurable_key_authorization(
+    args: KeyAuthorizationArgs,
+    configurable: &ConfigurableAccountArgs,
+    account: Address,
+    bind_account: Option<Address>,
+    wallet: &WalletOpts,
+    rpc: &RpcOpts,
+) -> Result<()> {
+    // TIP-1137 deprecates admin keys from T14, the hardfork that adds configurable accounts.
+    eyre::ensure!(!args.admin, "--admin cannot be combined with --tempo.configurable-account");
+    if let Some(bound) = bind_account {
+        eyre::ensure!(
+            bound == account,
+            "--bind-account {bound} does not match the configurable account {account}"
+        );
+    }
+    let (owner, access_key) =
+        foundry_common::tempo::maybe_signer(wallet, Some(args.chain_id)).await?;
+    eyre::ensure!(
+        access_key.is_none(),
+        "configurable account owners sign with their own keys, not a Tempo access key"
+    );
+    let key_type = args.key_type;
+    let authorization = args.into_authorization(Some(account))?;
+    let signed = configurable.sign(rpc, account, owner.as_ref(), authorization).await?;
+    print_signed_key_authorization(&signed, signed.signature_hash(), account, key_type)
+}
+
 fn print_signed_key_authorization(
     signed: &SignedKeyAuthorization,
     signature_hash: B256,
@@ -2635,10 +2769,10 @@ fn print_signed_key_authorization(
             "rlp_length": encoded.len(),
             "signer": signer_address,
             "authorized_key_type": key_type_name(authorized_key_type.into()),
-            "signature_type": key_type_name(signed.signature.signature_type().into()),
-            "witness": signed.authorization.witness(),
-            "is_admin": signed.authorization.is_admin(),
-            "account": signed.authorization.account,
+            "signature_type": key_type_name(signed.signature().signature_type().into()),
+            "witness": signed.authorization().witness(),
+            "is_admin": signed.authorization().is_admin(),
+            "account": signed.authorization().account,
         }),
         hex::encode_prefixed(&encoded),
     )
@@ -2657,9 +2791,17 @@ fn decode_and_validate_key_authorization(
     let (auth, signed, signer) =
         match tempo::decode_key_authorization::<SignedKeyAuthorization>(raw) {
             // Signer recovery is best-effort so `inspect` still surfaces fields for a corrupt sig.
+            // A configurable account is the signer only when its owner quorum verifies against
+            // an initial configuration that derives it; a later configuration needs the account's
+            // onchain commitment, which `inspect` does not read.
             Ok(signed) => {
-                let signer = signed.recover_signer().ok();
-                (signed.authorization, true, signer)
+                let signer = match signed.signature().as_configurable_account() {
+                    Some(signature) => (signature.validate_account_commitment(B256::ZERO).is_ok()
+                        && signature.verify_approvals(signed.signature_hash()).is_ok())
+                    .then(|| signature.account()),
+                    None => signed.recover_signer().ok(),
+                };
+                (signed.authorization().clone(), true, signer)
             }
             Err(signed_err) => match tempo::decode_key_authorization::<KeyAuthorization>(raw) {
                 Ok(unsigned) => (unsigned, false, None),
@@ -2901,7 +3043,8 @@ pub(crate) async fn resolve_keychain_root_signer(
     print_sponsor_hash: bool,
 ) -> Result<KeychainRootSigner> {
     const WHAT: &str = "AccountKeychain transaction";
-    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+    let (signer, tempo_access_key) =
+        foundry_common::tempo::maybe_signer(&send_tx.eth.wallet, None).await?;
     if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {
         ensure_root_sender(browser.address(), expected_from, WHAT)?;
         return Ok(KeychainRootSigner::Browser(browser));
@@ -2956,12 +3099,21 @@ pub(crate) async fn send_keychain_tx(
     let root_signer =
         resolve_keychain_root_signer(send_tx, expected_from, tx_opts.tempo.print_sponsor_hash)
             .await?;
-    send_keychain_tx_with_root_signer(calldata, tx_opts, send_tx, root_signer, force, || Ok(()))
-        .await
+    send_precompile_tx_with_root_signer(
+        ACCOUNT_KEYCHAIN_ADDRESS,
+        calldata,
+        tx_opts,
+        send_tx,
+        root_signer,
+        force,
+        || Ok(()),
+    )
+    .await
 }
 
-/// Send AccountKeychain calldata with an already-resolved root signer.
-pub(crate) async fn send_keychain_tx_with_root_signer(
+/// Send calldata to the Tempo precompile at `to` with an already-resolved root signer.
+pub(crate) async fn send_precompile_tx_with_root_signer(
+    to: Address,
     calldata: Vec<u8>,
     mut tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
@@ -2993,20 +3145,19 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
 
     let builder = CastTxBuilder::new(&provider, tx_opts, &config)
         .await?
-        .with_to(Some(NameOrAddress::Address(ACCOUNT_KEYCHAIN_ADDRESS)))
+        .with_to(Some(NameOrAddress::Address(to)))
         .await?
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
 
     let from = root_signer.address();
-    let chain = builder.chain();
     if print_sponsor_hash {
         let Some(mut tx) =
             confirm_and_build(builder, root_signer.sender(), force, None, false).await?
         else {
             return Ok(KeychainTxOutcome::Aborted);
         };
-        let hash = sponsor_hash(fee_provider, chain, &mut tx, from, sponsor_fee_payer).await?;
+        let hash = sponsor_hash(fee_provider, &mut tx, from, sponsor_fee_payer).await?;
         if shell::is_json() {
             sh_println!("{}", json!({ "sponsor_hash": format!("{hash:?}") }))?;
         } else {
@@ -3017,8 +3168,8 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
 
     print_expires(expires_at)?;
 
-    let send_opts = SendOptions::new(send_tx, &config)
-        .resolving_fee_token(tempo_sponsor.is_none().then_some(chain), &config);
+    let send_opts =
+        SendOptions::new(send_tx, &config).resolving_fee_token(tempo_sponsor.is_none(), &config);
     let is_browser = matches!(root_signer, KeychainRootSigner::Browser(_));
     let (builder, lane) = if is_browser {
         (builder.with_browser_wallet(), None)
@@ -3029,14 +3180,8 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     else {
         return Ok(KeychainTxOutcome::Aborted);
     };
-    apply_fee_payment::<TempoNetwork, _>(
-        tempo_sponsor.as_ref(),
-        fee_provider,
-        chain,
-        &mut tx,
-        from,
-    )
-    .await?;
+    apply_fee_payment::<TempoNetwork, _>(tempo_sponsor.as_ref(), fee_provider, &mut tx, from)
+        .await?;
     before_submit()?;
 
     match root_signer {
@@ -3352,7 +3497,7 @@ const fn key_role(is_root: bool, is_admin: bool) -> &'static str {
 
 fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
     let is_direct = entry.key_address == entry.wallet_address;
-    let auth = entry.key_authorization.as_ref().map(|signed| &signed.authorization);
+    let auth = entry.key_authorization.as_ref().map(|signed| signed.authorization());
     let is_admin = auth.is_some_and(KeyAuthorization::is_admin);
 
     sh_println!("Wallet:       {}", entry.wallet_address)?;
@@ -3388,7 +3533,7 @@ fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
 
 fn key_entry_to_json(entry: &tempo::KeyEntry) -> Value {
     let is_direct = entry.key_address == entry.wallet_address;
-    let auth = entry.key_authorization.as_ref().map(|signed| &signed.authorization);
+    let auth = entry.key_authorization.as_ref().map(|signed| signed.authorization());
     let is_admin = auth.is_some_and(KeyAuthorization::is_admin);
     let limits: Vec<_> =
         entry.limits.iter().map(|l| json!({ "currency": l.currency, "limit": l.limit })).collect();
@@ -3416,7 +3561,7 @@ mod tests {
     use alloy_rlp::Decodable;
 
     fn addr(byte: u8) -> Address {
-        Address::from([byte; 20])
+        Address::repeat_byte(byte)
     }
 
     fn rule(selector: [u8; 4], recipients: Vec<Address>) -> SelectorRule {
@@ -3553,7 +3698,7 @@ mod tests {
             admin_a.clone().into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
         let encoded = alloy_rlp::encode(&signed);
         let decoded = SignedKeyAuthorization::decode(&mut encoded.as_slice()).unwrap();
-        assert_eq!(decoded.authorization, admin_a);
+        assert_eq!(decoded.authorization(), &admin_a);
 
         // Local store entries expose the decoded authorization witness.
         let witness = B256::repeat_byte(0x53);
@@ -3822,9 +3967,9 @@ mod tests {
         let fee_token = addr(0xAA);
         let limit = |token, limit, period| AuthTokenLimit { token, limit, period };
         let cases = [
-            (limit(addr(0xBB), U256::from(1), 0), Some(true), "not listed"),
+            (limit(addr(0xBB), U256::ONE, 0), Some(true), "not listed"),
             (limit(fee_token, U256::ZERO, 0), Some(true), ""),
-            (limit(fee_token, U256::from(1), 60), None, "hardfork unknown"),
+            (limit(fee_token, U256::ONE, 60), None, "hardfork unknown"),
         ];
         for (limit, is_t3, detail) in cases {
             let signed = signed_authorization_with_limits(Some(vec![limit]));

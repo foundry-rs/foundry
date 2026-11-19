@@ -175,7 +175,7 @@ payments = "3"
 big      = "115792089237316195423570985008687907853269984665640564039457584007913129639935"
 "#;
         let lanes = parse_lanes(toml).unwrap();
-        assert_eq!(lanes.get("deploy"), Some(&U256::from(1u64)));
+        assert_eq!(lanes.get("deploy"), Some(&U256::ONE));
         assert_eq!(lanes.get("ops"), Some(&U256::from(2u64)));
         assert_eq!(lanes.get("payments"), Some(&U256::from(3u64)));
         assert_eq!(lanes.get("big"), Some(&U256::MAX));

@@ -1,9 +1,10 @@
-use super::contracts::ISafe;
+use super::contracts::{ISafe, SafeTx};
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_sol_types::{SolStruct, eip712_domain};
 use clap::Args;
 use eyre::{Context, Result, ensure};
-use foundry_common::sh_status;
+use foundry_common::{sh_status, sh_warn};
 use reqwest::{Client, Method, Url, header};
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -87,29 +88,65 @@ impl SafeTransaction {
         U256::from_str(value).wrap_err_with(|| format!("invalid {field} in transaction"))
     }
 
-    pub(super) async fn calculate_hash<P>(&self, provider: &P) -> Result<B256>
+    /// Computes a standard Safe transaction hash locally and checks that the contract agrees.
+    pub(super) async fn calculate_hash<P>(&self, provider: &P, chain_id: u64) -> Result<B256>
     where
         P: alloy_provider::Provider<Ethereum>,
     {
-        ISafe::new(self.safe, provider)
+        let transaction = SafeTx {
+            to: self.to,
+            value: Self::number(&self.value, "value")?,
+            data: self.data.clone(),
+            operation: self.operation,
+            safeTxGas: Self::number(&self.safe_tx_gas, "safeTxGas")?,
+            baseGas: Self::number(&self.base_gas, "baseGas")?,
+            gasPrice: Self::number(&self.gas_price, "gasPrice")?,
+            gasToken: self.gas_token,
+            refundReceiver: self.refund_receiver,
+            nonce: Self::number(&self.nonce, "nonce")?,
+        };
+        let calculated = transaction.eip712_signing_hash(&eip712_domain! {
+            chain_id: chain_id,
+            verifying_contract: self.safe,
+        });
+        // Safe v1.0.0 through v1.2.0 omit the chain ID from the domain.
+        let legacy = transaction.eip712_signing_hash(&eip712_domain! {
+            verifying_contract: self.safe,
+        });
+        let remote = ISafe::new(self.safe, provider)
             .getTransactionHash(
-                self.to,
-                Self::number(&self.value, "value")?,
-                self.data.clone(),
-                self.operation,
-                Self::number(&self.safe_tx_gas, "safeTxGas")?,
-                Self::number(&self.base_gas, "baseGas")?,
-                Self::number(&self.gas_price, "gasPrice")?,
-                self.gas_token,
-                self.refund_receiver,
-                Self::number(&self.nonce, "nonce")?,
+                transaction.to,
+                transaction.value,
+                transaction.data,
+                transaction.operation,
+                transaction.safeTxGas,
+                transaction.baseGas,
+                transaction.gasPrice,
+                transaction.gasToken,
+                transaction.refundReceiver,
+                transaction.nonce,
             )
             .call()
             .await
-            .wrap_err("failed to calculate Safe transaction hash")
+            .wrap_err("failed to calculate Safe transaction hash")?;
+        ensure!(
+            remote == calculated || remote == legacy,
+            "Safe transaction hash mismatch: contract returned {remote}, locally calculated {calculated} (chain ID {chain_id}) or {legacy} (pre-v1.3.0 Safe)"
+        );
+        if remote == legacy {
+            sh_warn!(
+                "This Safe uses a pre-v1.3.0 transaction hash without a chain ID. Its signatures can be replayed on other chains."
+            )?;
+        }
+        Ok(remote)
     }
 
-    pub(super) async fn verify_hash<P>(&self, expected_safe: Address, provider: &P) -> Result<()>
+    pub(super) async fn verify_hash<P>(
+        &self,
+        expected_safe: Address,
+        provider: &P,
+        chain_id: u64,
+    ) -> Result<()>
     where
         P: alloy_provider::Provider<Ethereum>,
     {
@@ -119,7 +156,7 @@ impl SafeTransaction {
             self.safe
         );
         ensure!(self.operation <= 1, "invalid Safe operation: {}", self.operation);
-        let calculated = self.calculate_hash(provider).await?;
+        let calculated = self.calculate_hash(provider, chain_id).await?;
         ensure!(
             calculated == self.safe_tx_hash,
             "Safe transaction hash mismatch: service/file returned {}, calculated {calculated}",
@@ -237,9 +274,10 @@ impl SafeTransaction {
         Ok(signatures.into())
     }
 
-    pub(super) fn show_transaction_summary(&self) -> Result<()> {
+    pub(super) fn show_transaction_summary(&self, chain_id: u64) -> Result<()> {
         let operation = if self.operation == 0 { "CALL" } else { "DELEGATECALL" };
         sh_status!("Safe transaction: {}", self.safe_tx_hash)?;
+        sh_status!("  Chain ID:        {chain_id}")?;
         sh_status!("  Safe:            {}", self.safe)?;
         sh_status!("  To:              {}", self.to)?;
         sh_status!("  Value:           {}", self.value)?;
@@ -341,7 +379,7 @@ impl SafeServiceOpts {
             _ => eyre::bail!("invalid nonce returned by Safe Transaction Service"),
         }
         .wrap_err("invalid nonce returned by Safe Transaction Service")?;
-        Ok(std::cmp::max(onchain_nonce, nonce.saturating_add(U256::from(1))))
+        Ok(std::cmp::max(onchain_nonce, nonce.saturating_add(U256::ONE)))
     }
 
     fn next_nonce_endpoint(&self, chain_id: u64, safe: Address) -> Result<Url> {
@@ -613,10 +651,10 @@ mod tests {
     fn rejects_malformed_confirmation_signatures() {
         let owner = Address::repeat_byte(1);
         let mut wrong_offset = vec![0; 97];
-        wrong_offset[32..64].copy_from_slice(&U256::from(66).to_be_bytes::<32>());
+        wrong_offset[32..64].copy_from_slice(B256::with_last_byte(66).as_slice());
         let mut wrong_length = vec![0; 97];
-        wrong_length[32..64].copy_from_slice(&U256::from(65).to_be_bytes::<32>());
-        wrong_length[65..97].copy_from_slice(&U256::from(1).to_be_bytes::<32>());
+        wrong_length[32..64].copy_from_slice(B256::with_last_byte(65).as_slice());
+        wrong_length[65..97].copy_from_slice(B256::with_last_byte(1).as_slice());
 
         for signature in [vec![1; 66], vec![0; 65], wrong_offset, wrong_length] {
             let mut transaction = transaction();

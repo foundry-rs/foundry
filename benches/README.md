@@ -93,10 +93,13 @@ foundry-bench --versions stable,nightly
 foundry-bench --versions stable,nightly,v1.0.0
 
 # Run on specific repositories. Default rev for the repo is "main"
-foundry-bench --repos ithacaxyz/account,Vectorized/solady
+foundry-bench --repos morpho-org/morpho-blue,Vectorized/solady
 
 # Test specific repository with custom revision
-foundry-bench --repos ithacaxyz/account:main,Vectorized/solady:v0.0.123
+foundry-bench --repos morpho-org/morpho-blue:main,Vectorized/solady:v0.0.123
+
+# Benchmark a Foundry project inside a monorepo subdirectory
+foundry-bench --repos tempoxyz/tempo/crates/zones/contracts
 
 # Run only specific benchmarks
 foundry-bench --benchmarks forge_build_with_cache,forge_test
@@ -113,7 +116,7 @@ foundry-bench --repos Vectorized/solady:v0.1.26,SorellaLabs/angstrom:73b55b8eca6
 # Combine options
 foundry-bench \
   --versions stable,nightly \
-  --repos ithacaxyz/account \
+  --repos morpho-org/morpho-blue \
   --benchmarks forge_build_with_cache
 
 # Force install Foundry versions
@@ -128,6 +131,19 @@ foundry-bench --output-dir ./results --output-file LATEST_RESULTS.md
 
 `forge_symbolic_test` keeps the existing focused commands for Solady, Angstrom, and Farcaster
 and uses the generic symbolic command for other repositories.
+For `foundry-rs/foundry`, it runs the checked XOR workload under
+`benches/fixtures/symbolic/xor`. Pin the workload to the same commit containing
+that fixture for both baseline and candidate runs, even when the baseline binary
+predates the specialist:
+
+```bash
+BASE_REF=origin/master \
+BENCHMARKS=forge_symbolic_test \
+REPOS="foundry-rs/foundry:<fixture-commit>" \
+benches/scripts/pr-bench.sh
+```
+
+This is a synthetic XOR workload, not a claim about general Solidity performance.
 Use `--symbolic-sidecar-output <FILE>` with exactly one `--versions` value to capture the
 versioned per-run results. Like `--json-output`, the sidecar path is relative to `--output-dir`.
 
@@ -188,7 +204,7 @@ Examples:
 ```bash
 # Test-runner or EVM execution change.
 BENCHMARKS=forge_test
-REPOS="ithacaxyz/account:v0.5.7"
+REPOS="morpho-org/morpho-blue:9cf6d5b844625ba108e36d1cf911f5d2faf7c136"
 
 # Build/cache change.
 BENCHMARKS=forge_build_no_cache,forge_build_with_cache
@@ -208,7 +224,7 @@ Run the matched branch-vs-base timing comparison:
 ```bash
 BASE_REF=origin/master \
 BENCHMARKS=forge_test \
-REPOS="ithacaxyz/account:v0.5.7,vectorized/solady:v0.1.26" \
+REPOS="morpho-org/morpho-blue:9cf6d5b844625ba108e36d1cf911f5d2faf7c136,vectorized/solady:v0.1.26" \
 benches/scripts/pr-bench.sh
 ```
 
@@ -230,7 +246,7 @@ For PR bodies, reduce the two JSON/Markdown outputs into a concise table:
 
 | Benchmark | master | this PR | delta |
 | --- | ---: | ---: | ---: |
-| `forge_test/ithacaxyz-account` wall time | ... | ... | ... |
+| `forge_test/morpho-blue` wall time | ... | ... | ... |
 ```
 
 Include domain counters next to wall time when the benchmark produces them, for
@@ -333,9 +349,10 @@ The artifact bundle exposes:
 ## Configuration
 
 The benchmark binary uses command-line arguments to configure which repositories and versions to
-test. Its generic defaults track the main branches of Account and Solady. Reproducible CI repository
-pins and per-repository arguments are defined by `run-benchmark-suite.sh`; use `--list` to discover
-those suites. You can override repositories using `--repos` with the format `org/repo[:rev]`.
+test. Its generic defaults track the main branches of Morpho Blue and Solady. Reproducible CI
+repository pins and per-repository arguments are defined by `run-benchmark-suite.sh`; use `--list`
+to discover those suites. You can override repositories using `--repos` with the format
+`org/repo[/subdir][:rev]`, where `subdir` selects the Foundry project inside a monorepo.
 
 ## Results
 
