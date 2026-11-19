@@ -2008,6 +2008,15 @@ corpus/00000000-0000-0000-0000-000000000002-2.json (1 txs)
 
 #[forgetest_init]
 fn forge_fuzz_cmin_keeps_coverage_adding_entries(prj: _, cmd: _) {
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[profile.other]
+optimizer = true
+[rpc_endpoints]
+unused = { endpoint = "http://127.0.0.1:1", profile = "other" }
+"#,
+    );
     prj.add_test(
         "ForgeFuzzCminTarget.t.sol",
         r#"

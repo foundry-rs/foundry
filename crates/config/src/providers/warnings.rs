@@ -110,6 +110,7 @@ const RPC_ENDPOINT_KEYS: &[&str] = &[
     "retry_backoff",
     "compute_units_per_second",
     "auth",
+    "profile",
 ];
 
 /// Allowed keys for an `[etherscan]` entry.

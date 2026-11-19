@@ -1,7 +1,7 @@
 use super::{JsonResult, NestedValue, ScriptResult, runner::ScriptRunner};
 use crate::{
     ScriptArgs, ScriptConfig,
-    build::{CompiledState, LinkedBuildData},
+    build::{CompiledState, LinkedBuildData, ScriptPredeployLibraries},
     simulate::PreSimulationState,
 };
 use alloy_dyn_abi::FunctionExt;
@@ -13,7 +13,7 @@ use alloy_primitives::{
 };
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
-use foundry_cheatcodes::Wallets;
+use foundry_cheatcodes::{Wallets, referenced_chain_libraries};
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     ContractsByArtifact,
@@ -206,6 +206,28 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             }
         }
 
+        // Forks deploy CREATE2 libraries before their first broadcast, so the setup chain only
+        // keeps them if the script broadcasts there.
+        let fork_url = &self.script_config.evm_opts.fork_url;
+        let create2_deployer = self.script_config.evm_opts.create2_deployer;
+        if let ScriptPredeployLibraries::Create2 { onchain, .. } =
+            &self.build_data.predeploy_libraries
+            && let Some(txs) = &mut setup_result.transactions
+        {
+            let libraries = txs
+                .iter()
+                .take(onchain.len())
+                .take_while(|tx| {
+                    tx.rpc == *fork_url && tx.transaction.to() == Some(create2_deployer)
+                })
+                .count();
+            if txs.iter().skip(libraries).all(|tx| tx.rpc != *fork_url)
+                && txs.iter().any(|tx| tx.rpc != *fork_url)
+            {
+                txs.drain(..libraries);
+            }
+        }
+
         Ok(setup_result)
     }
 
@@ -350,11 +372,41 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
 
         if rpc_data.is_multi_chain() && !silent {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
-            if !self.build_data.libraries.is_empty() {
+            if self.build_data.predeploy_libraries.has_nonce_libraries() {
                 eyre::bail!(
-                    "Multi chain deployment does not support library linking at the moment."
+                    "Multi chain deployment does not support libraries deployed at nonce addresses."
                 );
             }
+        }
+        // Local run libraries exist on no chain, and run CREATE2 libraries are not deployed on
+        // forks of profiled endpoints.
+        let chain_builds = &self.script_config.chain_builds;
+        let (libraries, local) = match &self.build_data.predeploy_libraries {
+            ScriptPredeployLibraries::Default { local, .. } => (local, true),
+            ScriptPredeployLibraries::Create2 { onchain, .. } => (onchain, false),
+        };
+        let libraries = libraries
+            .iter()
+            .map(|library| (library.address, library.bytecode.clone()))
+            .collect::<Vec<_>>();
+        if !libraries.is_empty()
+            && let Some(txs) = &self.execution_result.transactions
+            && let Some(tx) = txs.iter().find(|tx| {
+                let build = tx.rpc.as_ref().and_then(|rpc| chain_builds.get(rpc));
+                (local || build.is_some())
+                    && tx.transaction.input().is_some_and(|input| {
+                        referenced_chain_libraries(input, &libraries).iter().any(|(address, _)| {
+                            !build.is_some_and(|build| {
+                                build.create2_libraries.iter().any(|(other, _)| other == address)
+                            })
+                        })
+                    })
+            })
+        {
+            eyre::bail!(
+                "a broadcast on `{}` uses libraries of the run build that are not deployed on that chain",
+                tx.rpc.as_deref().unwrap_or_default()
+            );
         }
         if !silent {
             rpc_data.check_shanghai_support().await?;
@@ -446,6 +498,8 @@ pub(crate) fn build_trace_decoder_for_context<FEN: FoundryEvmNetwork>(
     execution_result: &ScriptResult<FEN::Network>,
     chain_id: Option<Chain>,
 ) -> Result<CallTraceDecoder> {
+    let known_contracts =
+        &known_contracts.merged(script_config.chain_builds.values().map(|build| &build.artifacts));
     let resolved_hardfork = script_config.hardfork;
     let mut tracing = script_config.config.tracing.clone();
     tracing.labels.extend(execution_result.labeled_addresses.clone());

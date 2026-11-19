@@ -19,7 +19,7 @@ use evm2::{
         MAX_CODE_SIZE, MAX_CODE_SIZE_AMSTERDAM, MAX_INITCODE_SIZE, MAX_INITCODE_SIZE_AMSTERDAM,
     },
 };
-use eyre::{OptionExt, Result};
+use eyre::{OptionExt, Result, WrapErr};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
@@ -28,6 +28,7 @@ use foundry_compilers::{
         output_selection::OutputSelection,
         remappings::{RelativeRemapping, Remapping},
     },
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
@@ -38,7 +39,7 @@ use foundry_compilers::{
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
 };
-use foundry_config::{Config, providers::dependency_library_paths};
+use foundry_config::{Config, figment::Provider, providers::dependency_library_paths};
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use path_slash::PathExt;
@@ -902,6 +903,84 @@ where
     compile_abi_project(&mut cached_project, compiler)
 }
 
+/// Build of the profiles named by `[rpc_endpoints]` that share compiler settings.
+#[derive(Clone, Debug)]
+pub struct ProfileBuild {
+    /// Profiles with these compiler settings.
+    pub profiles: Vec<String>,
+    /// Config with these compiler settings.
+    pub config: Config,
+    /// Artifacts directory of the build.
+    pub artifacts_dir: PathBuf,
+    /// The compiler output.
+    pub output: ProjectCompileOutput,
+}
+
+/// Compiles each distinct set of compiler settings among the profiles named by `[rpc_endpoints]`
+/// once, with `overrides` applied, and caches it by those settings. With `coverage`, the builds are
+/// compiled without the cache, and `Some(ir_minimum)` disables optimizations as for a coverage
+/// build, keeping `viaIR` at minimum optimization if `ir_minimum` is `true`.
+pub fn compile_endpoint_profiles(
+    config: &Config,
+    overrides: impl Provider + Clone,
+    coverage: Option<Option<bool>>,
+    compiler: impl Fn(&Config) -> ProjectCompiler,
+) -> Result<Vec<ProfileBuild>> {
+    let profiles = config
+        .rpc_endpoints
+        .values()
+        .filter_map(|endpoint| endpoint.profile.as_deref())
+        .collect::<BTreeSet<_>>();
+    let mut builds = Vec::<ProfileBuild>::new();
+    for profile in profiles {
+        let config = config
+            .with_profile_compiler_settings(profile, overrides.clone())
+            .wrap_err_with(|| format!("failed to load profile `{profile}` of `[rpc_endpoints]`"))?;
+        let mut cache_path = config.profile_cache_path()?;
+        if let Some(ir_minimum) = coverage {
+            cache_path = cache_path.join(match ir_minimum {
+                Some(true) => "coverage-ir-minimum",
+                Some(false) => "coverage",
+                None => "coverage-optimized",
+            });
+        }
+        if let Some(build) = builds.iter_mut().find(|build| {
+            build.artifacts_dir == cache_path.join("artifacts")
+                && build.config.hardfork == config.hardfork
+                && build.config.create2_library_salt == config.create2_library_salt
+        }) {
+            build.profiles.push(profile.to_string());
+            continue;
+        }
+        let (artifacts_dir, output) =
+            match builds.iter().find(|build| build.artifacts_dir == cache_path.join("artifacts")) {
+                Some(build) => (build.artifacts_dir.clone(), build.output.clone()),
+                None => {
+                    let mut project = config.project()?;
+                    if let Some(ir_minimum) = coverage {
+                        if let Some(ir_minimum) = ir_minimum {
+                            config.disable_optimizations(&mut project, ir_minimum);
+                        }
+                        project.cached = false;
+                    }
+                    project.paths.cache = cache_path.join(SOLIDITY_FILES_CACHE_FILENAME);
+                    project.paths.artifacts = cache_path.join("artifacts");
+                    project.paths.build_infos = cache_path.join("build-info");
+                    project.paths.slash_paths();
+                    let output = compiler(&config).compile(&project)?;
+                    (project.paths.artifacts, output)
+                }
+            };
+        builds.push(ProfileBuild {
+            profiles: vec![profile.to_string()],
+            config,
+            artifacts_dir,
+            output,
+        });
+    }
+    Ok(builds)
+}
+
 /// Compiles the target contract requesting only ABI output and returns its ABI.
 pub fn compile_target_abi(
     project: &mut Project<MultiCompiler>,
@@ -1508,5 +1587,55 @@ mod tests {
             paths.remappings.push(Remapping::from_str(explicit).unwrap());
             assert_eq!(remapping_candidates(&paths, import, &file), BTreeMap::new());
         }
+    }
+
+    #[test]
+    fn endpoint_profiles_share_compilation_but_preserve_runtime_settings() {
+        foundry_config::figment::Jail::expect_with(|jail| {
+            jail.create_dir("src")?;
+            jail.create_file("src/Profile.sol", "pragma solidity >=0.8.0; contract Profile {}")?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+[profile.default]
+evm_version = "cancun"
+[profile.first]
+hardfork = "cancun"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+[profile.second]
+hardfork = "prague"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000002"
+[profile.third]
+hardfork = "cancun"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+[rpc_endpoints]
+first = { endpoint = "http://127.0.0.1:1", profile = "first" }
+second = { endpoint = "http://127.0.0.1:2", profile = "second" }
+third = { endpoint = "http://127.0.0.1:3", profile = "third" }
+"#,
+            )?;
+            let config = Config::load().unwrap();
+            let count = std::cell::Cell::new(0);
+            let builds = compile_endpoint_profiles(
+                &config,
+                foundry_config::figment::Figment::new(),
+                None,
+                |_| {
+                    count.set(count.get() + 1);
+                    ProjectCompiler::new().quiet(true)
+                },
+            )
+            .unwrap();
+            assert_eq!(count.get(), 1);
+            assert_eq!(builds.len(), 2);
+            assert_eq!(builds[0].profiles, ["first", "third"]);
+            assert_eq!(builds[0].artifacts_dir, builds[1].artifacts_dir);
+            assert_ne!(builds[0].config.hardfork, builds[1].config.hardfork);
+            assert_ne!(
+                builds[0].config.create2_library_salt,
+                builds[1].config.create2_library_salt
+            );
+            Ok(())
+        });
     }
 }

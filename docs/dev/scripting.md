@@ -279,6 +279,42 @@ atomicity. Recovery must preserve independent per-chain progress and must not in
 completion permits skipping an operation on another. With `--verify`, every sequence is verified
 even after one fails, and the failures are returned together, each naming its chain.
 
+Endpoints that name a profile get a separate build of that profile's compiler settings, cached in
+`cache/profiles/<settings hash>`. Every such build is compiled on each run, whether or not it is
+forked, and the CLI's compiler and EVM options apply to it. Profiles with identical compiler settings
+share that build while retaining their own hardfork and CREATE2 library salt. Endpoints are mapped to profiles by URL
+without contacting them. An endpoint without a profile cannot share a profiled endpoint's URL, and
+a profiled endpoint whose URL does not resolve when forge starts cannot be forked. Commands that do
+not build profiles, such as chisel, cannot fork profiled endpoints.
+On forks of the endpoint's URL, in scripts and tests:
+
+- `vm.getCode`, `vm.getDeployedCode` and `vm.deployCode` take the build's artifact. Artifact JSON
+  paths outside the artifacts directory are read unchanged. `vm.getArtifactPathByCode` and
+  `vm.getArtifactPathByDeployedCode` search the build's artifacts first.
+- Direct script or test `new C()` and `new C{salt: s}()` deploy the build's creation code of a project
+  contract, with the same constructor arguments. A CREATE2 address therefore follows from
+  `vm.getCode`, not from `type(C).creationCode`. Calls into on-chain factories execute their supplied
+  initcode unchanged, so transaction simulation and broadcast reproduce script execution.
+- Frames of non-persistent accounts use the profile's spec, resolved against the chain as the run's
+  spec is: in scripts it follows a chain that is ahead of it. The script or test contract keeps the
+  run's spec, and `vm.setEvmVersion` overrides both. Replayed transactions keep their own spec.
+
+Scripts link profile builds with CREATE2 libraries and deploy them on each fork before its first
+broadcast. Multichain scripts support CREATE2 and configured libraries, but not libraries deployed at
+nonce addresses. Before broadcasting, forge checks that the CREATE2 deployer exists on each chain
+that needs it. In multichain scripts, the `--rpc-url` chain only receives the run's CREATE2
+libraries if the script broadcasts there. When the `--rpc-url` endpoint names a profile, the run build's libraries are only
+deployed locally. A broadcast that embeds a run library that is not deployed on its chain is refused. Tests link profile builds with the run's libraries
+unless the profile configures them.
+
+Constructor metadata and verification select artifacts from the endpoint's build and retain its
+compiler settings and linked library addresses. Run-profile deployments, including libraries
+prepared before broadcasting, retain the run build as a verification fallback. `--resume` and
+verification look up each chain's build by its endpoint in the current config. Coverage, mutation
+testing, and fuzz corpus replay pass endpoint builds to their test runners as well. Coverage compiles
+them without the cache, with its own optimizer settings, and includes them in the report. Traces and
+gas reports identify contracts of the endpoint builds.
+
 ## Known failure windows
 
 | Window                                                                    | Recovery behavior or remaining limitation                                   |
