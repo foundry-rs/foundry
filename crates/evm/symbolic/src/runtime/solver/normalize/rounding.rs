@@ -193,6 +193,19 @@ impl ConstraintContext {
                 } else {
                     return None;
                 };
+                // When `y + z` is nonzero and does not wrap, `x * y / (y + z) <= x`, strictly once
+                // `x` and `z` are nonzero, since `x * y < x * (y + z)`. A wrapped product only
+                // shrinks the dividend.
+                if let SymExprKind::BinOp(SymBinOp::Add, a, b) = divisor.kind()
+                    && let Some(rest) = (a == other).then_some(b).or((b == other).then_some(a))
+                    && self
+                        .interval(other)
+                        .zip(self.interval(rest))
+                        .is_some_and(|(other, rest)| other.max.checked_add(rest.max).is_some())
+                    && nonzero(divisor)
+                {
+                    return Some(nonzero(large) && nonzero(rest));
+                }
                 let divisor = self.interval(divisor)?;
                 (!divisor.min.is_zero()
                     && self.interval(other)?.max <= divisor.min
