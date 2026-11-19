@@ -425,11 +425,60 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
             if *op == SymCmpOp::Eq && polynomial_identity(&left, &right) {
                 return SymBoolExpr::constant(cx, true);
             }
+            if let Some(normalized) = normalize_ite_branch_cmp(cx, *op, &left, &right) {
+                return normalized;
+            }
             let normalized = normalize_cmp_for_solver(cx, *op, left, right);
             normalized.normalize_udiv_for_solver(cx).unwrap_or(normalized)
         }
         _ => expr,
     }
+}
+
+/// Compares an `ite` against one of its own branches, as in `ite(c, a, b) < b => c && a < b`.
+/// Fires only when one branch comparison folds to `false`, so the expression never grows; for a
+/// strict comparison the branch equal to the other operand always does. Equality is left to
+/// `SymBoolExpr::ite_eq_arm`.
+fn normalize_ite_branch_cmp(
+    cx: &mut SymCx,
+    op: SymCmpOp,
+    left: &SymExpr,
+    right: &SymExpr,
+) -> Option<SymBoolExpr> {
+    if op == SymCmpOp::Eq {
+        return None;
+    }
+    let (condition, then_value, else_value, ite_on_left) = match (left.kind(), right.kind()) {
+        (SymExprKind::Ite(condition, then_value, else_value), _)
+            if then_value == right || else_value == right =>
+        {
+            (condition, then_value, else_value, true)
+        }
+        (_, SymExprKind::Ite(condition, then_value, else_value))
+            if then_value == left || else_value == left =>
+        {
+            (condition, then_value, else_value, false)
+        }
+        _ => return None,
+    };
+    let mut branch_cmp = |value: &SymExpr| {
+        if ite_on_left {
+            SymBoolExpr::cmp(cx, op, value.clone(), right.clone())
+        } else {
+            SymBoolExpr::cmp(cx, op, left.clone(), value.clone())
+        }
+    };
+    let then_cmp = branch_cmp(then_value);
+    let else_cmp = branch_cmp(else_value);
+    let selected = if then_cmp.as_const() == Some(false) {
+        let not_condition = condition.clone().not(cx);
+        SymBoolExpr::and(cx, vec![not_condition, else_cmp])
+    } else if else_cmp.as_const() == Some(false) {
+        SymBoolExpr::and(cx, vec![condition.clone(), then_cmp])
+    } else {
+        return None;
+    };
+    Some(normalize_bool_for_solver(cx, selected))
 }
 
 fn normalize_cmp_for_solver(
