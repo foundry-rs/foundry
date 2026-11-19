@@ -61,11 +61,12 @@ fn tx_to_request_json(cmd: _) {
 "#]]);
 }
 
-// tests that `v` is the RPC value, not `27` plus the parity
+// Tests that `v` is the RPC value, not `27` plus the parity.
 #[casttest]
 fn tx_field_v(cmd: _) {
     let rpc = next_http_rpc_endpoint();
 
+    // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
     cmd.args([
         "tx",
         "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
