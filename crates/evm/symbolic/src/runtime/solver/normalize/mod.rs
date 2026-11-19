@@ -2211,7 +2211,7 @@ impl ConstraintContext {
         .then_some((divisor, other))
     }
 
-    /// Learns multiplication safety from a retained successful Solidity overflow check.
+    /// Learns multiplication safety from a retained successful overflow guard.
     fn record_non_wrapping_product(&mut self, cx: &mut SymCx, constraint: &SymBoolExpr) -> bool {
         let fact = bitwise_bool_word_fact(cx, constraint).unwrap_or_else(|| constraint.clone());
         let factors = if let Some(factors) = self.checked_product_factors(&fact, None) {
@@ -2263,11 +2263,7 @@ impl ConstraintContext {
     fn division_guard_factors(predicate: &SymBoolExpr) -> Option<(SymExpr, SymExpr)> {
         let SymBoolExprKind::Not(inner) = predicate.kind() else { return None };
         let SymBoolExprKind::Cmp(SymCmpOp::Ult, bound, value) = inner.kind() else { return None };
-        let quotient = match bound.kind() {
-            SymExprKind::Ite(_, zero, quotient) if zero.as_const() == Some(U256::ZERO) => quotient,
-            _ => bound,
-        };
-        let (_, factor) = quotient.udiv_operands()?;
+        let (_, factor) = word_division_operands(bound)?;
         Some((value.clone(), factor.clone()))
     }
 
