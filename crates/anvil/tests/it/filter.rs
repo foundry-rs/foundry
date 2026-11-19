@@ -67,13 +67,19 @@ async fn new_filter_seeds_historic_logs_only_with_from_block() {
     let live = Filter::new().address(*contract.address());
     let live_id: String = provider.client().request("eth_newFilter", (live,)).await.unwrap();
 
+    // `latest` behaves like an omitted `fromBlock`, even though the head block has a log.
+    let latest = Filter::new().address(*contract.address()).from_block(BlockNumberOrTag::Latest);
+    let latest_id: String = provider.client().request("eth_newFilter", (latest,)).await.unwrap();
+
     let changes: Vec<Log> =
         provider.client().request("eth_getFilterChanges", (historic_id,)).await.unwrap();
     assert_eq!(changes.len(), 1, "expected the constructor log to be replayed");
 
-    let changes: Vec<Log> =
-        provider.client().request("eth_getFilterChanges", (live_id,)).await.unwrap();
-    assert!(changes.is_empty(), "expected no historic logs, got {changes:?}");
+    for id in [&live_id, &latest_id] {
+        let changes: Vec<Log> =
+            provider.client().request("eth_getFilterChanges", (id,)).await.unwrap();
+        assert!(changes.is_empty(), "expected no historic logs, got {changes:?}");
+    }
 
     // A future range starts reporting logs only when its first block is mined.
     let start = provider.get_block_number().await.unwrap() + 2;
@@ -100,6 +106,10 @@ async fn new_filter_seeds_historic_logs_only_with_from_block() {
     let changes: Vec<Log> =
         provider.client().request("eth_getFilterChanges", (future_id,)).await.unwrap();
     assert_eq!(changes, receipt.inner.inner.logs());
+
+    let changes: Vec<Log> =
+        provider.client().request("eth_getFilterChanges", (latest_id,)).await.unwrap();
+    assert_eq!(changes.len(), 2, "expected both new logs, got {changes:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
