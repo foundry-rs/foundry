@@ -1551,14 +1551,23 @@ impl ConstraintContext {
                     max: left.max.checked_add(right.max)?,
                 })
             }
-            SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
+            SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) => {
                 if let Some(interval) =
-                    self.rounding_error_interval(left, right, intervals, remaining)
+                    self.rounding_error_interval(minuend, subtrahend, intervals, remaining)
                 {
                     return Some(interval);
                 }
-                let left = self.interval_cached(left, intervals, remaining)?;
-                let right = self.interval_cached(right, intervals, remaining)?;
+                let left = self.interval_cached(minuend, intervals, remaining)?;
+                let right = self.interval_cached(subtrahend, intervals, remaining)?;
+                // A retained `subtrahend <= minuend` rules out wrapping.
+                if left.min < right.max
+                    && self.asserted_order(subtrahend, &|large| large == minuend)
+                {
+                    return Some(WordInterval {
+                        min: left.min.saturating_sub(right.max),
+                        max: left.max.checked_sub(right.min)?,
+                    });
+                }
                 if left.max < right.min {
                     // Every subtraction wraps exactly once, so the unsigned image is contiguous.
                     return Some(WordInterval {
