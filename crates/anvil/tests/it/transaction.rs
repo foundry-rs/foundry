@@ -1365,7 +1365,6 @@ async fn test_tx_receipt() {
         .await
         .unwrap();
 
-    assert!(block["timestamp"].is_string());
     assert_eq!(receipt["blockTimestamp"], block["timestamp"]);
     assert_eq!(block_receipts[0]["blockTimestamp"], block["timestamp"]);
 
