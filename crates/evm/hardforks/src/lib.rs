@@ -888,11 +888,30 @@ mod tests {
     fn test_tempo_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T13))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T14))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T14))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T14_TIMESTAMP - 1),
             Some(FoundryHardfork::Tempo(TempoHardfork::T13))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T14_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T14))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(
+                MODERATO_CHAIN_ID,
+                MODERATO_T14_TIMESTAMP - 1
+            ),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T13))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T14_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T14))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T13_TIMESTAMP - 1),
@@ -1169,11 +1188,11 @@ mod tests {
             let sepolia_config = UpgradeConfig::BASE_SEPOLIA;
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(8453, u64::MAX),
-                Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
+                Some(FoundryHardfork::Base(BaseUpgrade::Denim))
             );
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(84532, u64::MAX),
-                Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
+                Some(FoundryHardfork::Base(BaseUpgrade::Denim))
             );
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(8453, mainnet_config.base.azul.unwrap()),

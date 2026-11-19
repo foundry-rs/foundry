@@ -320,6 +320,12 @@ fn spec_changes_keep_foundry_policy() {
     assert_eq!(factory.env_with_spec(env, SpecId::OSAKA).version.tx_gas_limit_cap, u64::MAX);
     assert_ne!(factory.version(SpecId::OSAKA, 31337).tx_gas_limit_cap, u64::MAX);
 
+    // A disabled EIP-8037 total cap stays disabled at Amsterdam.
+    let mut env = evm_env(&evm);
+    env.version.tx_total_gas_cap = u64::MAX;
+    assert_eq!(factory.env_with_spec(env, SpecId::AMSTERDAM).version.tx_total_gas_cap, u64::MAX);
+    assert_ne!(factory.version(SpecId::AMSTERDAM, 31337).tx_total_gas_cap, u64::MAX);
+
     let request = store_request::<EthEvmNetwork>(caller, STORE_ADDRESS, 9, 1, 31337);
     let result = evm
         .transact(&TypesFor::<EthEvmNetwork>::tx_from_request(request).unwrap())
@@ -544,11 +550,7 @@ fn rpc_conversion_suite<FEN: FoundryEvmNetwork>() {
 
     let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
         hash: B256::ZERO,
-        inner: UnknownTypedTransaction {
-            ty: AnyTxType(0xFF),
-            fields: Default::default(),
-            memo: Default::default(),
-        },
+        inner: UnknownTypedTransaction::new(AnyTxType(0xFF), Default::default()),
     });
     assert!(TypesFor::<FEN>::tx_from_any_rpc(&rpc_transaction(unknown, from)).is_err());
 }

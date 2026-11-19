@@ -92,17 +92,17 @@ pub struct BlockExecutionResult {
 
 /// Builds the receipt of a transaction type that does not require network-specific metadata.
 ///
-/// `eip8130_phase_statuses` are the per-phase statuses of a Base EIP-8130 transaction, and are
+/// `eip8130_committed_phases` is the committed phase count of a Base EIP-8130 transaction, and is
 /// ignored for other transaction types.
 pub(crate) fn build_receipt(
     tx_type: FoundryTxType,
     success: bool,
     logs: Vec<Log>,
     cumulative_gas_used: u64,
-    eip8130_phase_statuses: Option<Vec<u8>>,
+    eip8130_committed_phases: Option<u64>,
 ) -> FoundryReceiptEnvelope {
     #[cfg(not(feature = "base"))]
-    let _ = eip8130_phase_statuses;
+    let _ = eip8130_committed_phases;
     let receipt =
         Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs }.with_bloom();
     match tx_type {
@@ -120,9 +120,9 @@ pub(crate) fn build_receipt(
         #[cfg(feature = "base")]
         FoundryTxType::Eip8130 => {
             FoundryReceiptEnvelope::Eip8130(alloy_consensus::ReceiptWithBloom {
-                receipt: base_common_consensus::Eip8130Receipt::new(
+                receipt: base_common_consensus::TxBaseReceipt::new(
                     receipt.receipt,
-                    eip8130_phase_statuses.unwrap_or_default(),
+                    eip8130_committed_phases.unwrap_or_default(),
                 ),
                 logs_bloom: receipt.logs_bloom,
             })
@@ -434,7 +434,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 result.status,
                 mem::take(&mut result.logs),
                 self.gas_used,
-                result.ext.eip8130_phase_statuses.take(),
+                result.ext.eip8130_committed_phases.take(),
             )
         };
         #[cfg(not(any(feature = "base", feature = "optimism")))]
@@ -443,7 +443,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             result.status,
             mem::take(&mut result.logs),
             self.gas_used,
-            result.ext.eip8130_phase_statuses.take(),
+            result.ext.eip8130_committed_phases.take(),
         );
         self.receipts.push(receipt);
 

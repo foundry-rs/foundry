@@ -12,7 +12,7 @@ use alloy_eips::BlockNumHash;
 use alloy_network::{
     AnyNetwork, BlockResponse, Network, TransactionBuilder, primitives::HeaderResponse,
 };
-use alloy_primitives::{Address, B256, BlockNumber, ChainId, U256};
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, ChainId, U64, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::{
@@ -140,7 +140,8 @@ pub struct EvmOpts {
     /// Whether to disable block gas limit checks.
     pub disable_block_gas_limit: bool,
 
-    /// Whether to enable tx gas limit checks as imposed by Osaka (EIP-7825).
+    /// Whether to enable tx gas limit checks as imposed by Osaka (EIP-7825) and
+    /// Amsterdam (EIP-8037).
     pub enable_tx_gas_limit: bool,
 
     #[serde(flatten)]
@@ -568,11 +569,10 @@ impl EvmOpts {
         let fork = fork.ok_or_else(|| eyre::eyre!("fork must be resolved"))?;
         let provider = self.provider_for_fork::<AnyNetwork>(fork)?;
         self.check_fork_endpoint(&provider, fork).await?;
-        let available = !provider
-            .get_code_at(self.create2_deployer)
-            .block_id(fork.state_block_id())
-            .await?
-            .is_empty();
+        let code: Bytes = provider
+            .raw_request("eth_getCode".into(), (self.create2_deployer, fork.state_block_id()))
+            .await?;
+        let available = !code.is_empty();
         self.check_fork_endpoint(&provider, fork).await?;
         Ok(available)
     }
@@ -621,9 +621,11 @@ impl EvmOpts {
     ) -> eyre::Result<u64> {
         let provider = self.provider_for_fork::<AnyNetwork>(fork)?;
         self.check_fork_endpoint(&provider, fork).await?;
-        let nonce = provider.get_transaction_count(account).block_id(fork.state_block_id()).await?;
+        let nonce: U64 = provider
+            .raw_request("eth_getTransactionCount".into(), (account, fork.state_block_id()))
+            .await?;
         self.check_fork_endpoint(&provider, fork).await?;
-        Ok(nonce)
+        Ok(nonce.to())
     }
 
     /// Returns a `RootProvider` for the given fork URL configured with options in `self` and
@@ -1182,10 +1184,12 @@ impl EvmOpts {
         // is a contract. So we disable the check by default.
         version.features.remove(EvmFeatures::EIP3607 | EvmFeatures::NONCE_CHECK);
         version.features.set(EvmFeatures::BLOCK_GAS_LIMIT_CHECK, !self.disable_block_gas_limit);
-        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
+        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825) and
+        // Amsterdam (EIP-8037).
         // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
         if !self.enable_tx_gas_limit {
             version.tx_gas_limit_cap = u64::MAX;
+            version.tx_total_gas_cap = u64::MAX;
         }
         version
     }
@@ -2480,6 +2484,28 @@ mod tests {
             "get_fork should preserve explicitly set fork_block_number"
         );
         assert!(!fork.evm_opts.fork_block_number_is_inferred);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_preflight_reads_send_hash_objects_without_canonical_flag() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let (endpoint, code_requests) =
+            spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getCode").await;
+        let (endpoint, nonce_requests) =
+            spawn_rpc_proxy_recording_method(endpoint, "eth_getTransactionCount").await;
+        let evm_opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
+        let fork = evm_opts.prepare_fork().await.unwrap().unwrap();
+        let sender = handle.dev_accounts().next().unwrap();
+
+        evm_opts.can_use_create2_deployer_at(Some(&fork)).await.unwrap();
+        assert_eq!(evm_opts.transaction_count_at_fork(sender, &fork).await.unwrap(), 0);
+
+        let expected = serde_json::json!({ "blockHash": fork.hash() });
+        for requests in [code_requests, nonce_requests] {
+            let requests = requests.lock().unwrap();
+            assert!(!requests.is_empty());
+            assert!(requests.iter().all(|params| params[1] == expected), "{requests:?}");
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

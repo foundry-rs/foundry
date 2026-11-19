@@ -36,8 +36,8 @@ use serde_json::json;
 use std::{
     path::PathBuf,
     sync::{
-        Arc, OnceLock,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        Arc,
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -65,8 +65,6 @@ type ReplayCase = (BasicTxDetails, Option<FuzzRunMetadata>);
 struct WorkerState<FEN: FoundryEvmNetwork> {
     /// Worker identifier
     id: usize,
-    /// First fuzz case this worker encountered (with global run number)
-    first_case: Option<(u32, FuzzCase)>,
     /// Gas usage for all cases this worker ran
     gas_by_case: Vec<(u64, u64)>,
     /// Counterexample if this worker found one
@@ -93,10 +91,6 @@ struct WorkerState<FEN: FoundryEvmNetwork> {
     failure: Option<TestCaseError>,
     /// Fuzz run metadata that produced the failure.
     failure_run: Option<FuzzRunMetadata>,
-    /// Last run timestamp in milliseconds
-    ///
-    /// Used to identify which worker ran last and collect its traces and call breakpoints
-    last_run_timestamp: u128,
     /// Failed corpus replays
     failed_corpus_replays: usize,
     /// Branch frontiers captured for symbolic follow-up.
@@ -107,7 +101,6 @@ impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
     fn new(worker_id: usize) -> Self {
         Self {
             id: worker_id,
-            first_case: None,
             gas_by_case: Vec::new(),
             counterexample: None,
             traces: Vec::new(),
@@ -120,7 +113,6 @@ impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
             runs: 0,
             failure: None,
             failure_run: None,
-            last_run_timestamp: 0,
             failed_corpus_replays: 0,
             frontiers: Vec::new(),
         }
@@ -132,12 +124,12 @@ struct SharedFuzzState {
     state: EvmFuzzState,
     /// Total runs across workers
     total_runs: Arc<AtomicU32>,
-    /// Found failure
+    /// The first failure of the campaign, see [`Self::failure_order`].
     ///
-    /// The worker that found the failure sets it's ID.
-    ///
-    /// This ID is then used to correctly extract the failure reason and counterexample.
-    failed_worker_id: OnceLock<usize>,
+    /// Each worker draws its inputs from its own seed stream, so the worker that fails first in
+    /// time depends on thread scheduling. The campaign reports the failure that is first in this
+    /// order instead, which only depends on the seed and on the number of workers.
+    first_failure: AtomicU64,
     /// Total rejects across workers
     total_rejects: Arc<AtomicU32>,
     /// Fuzz timer
@@ -149,8 +141,6 @@ struct SharedFuzzState {
 
     /// Global test suite early exit.
     global_early_exit: EarlyExit,
-    /// Local fuzz early exit.
-    local_early_exit: EarlyExit,
 }
 
 impl SharedFuzzState {
@@ -158,13 +148,12 @@ impl SharedFuzzState {
         Self {
             state,
             total_runs: Arc::new(AtomicU32::new(0)),
-            failed_worker_id: OnceLock::new(),
+            first_failure: AtomicU64::new(u64::MAX),
             total_rejects: Arc::new(AtomicU32::new(0)),
             timer: FuzzTestTimer::new(timeout),
             timed_out: AtomicBool::new(false),
             global_corpus_metrics: GlobalCorpusMetrics::default(),
             global_early_exit: early_exit,
-            local_early_exit: EarlyExit::new(true),
         }
     }
 
@@ -178,9 +167,14 @@ impl SharedFuzzState {
         self.total_rejects.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// Returns `true` if the worker should continue running.
-    fn should_continue(&self) -> bool {
-        if self.global_early_exit.should_stop() || self.local_early_exit.should_stop() {
+    /// Returns `true` if the worker should continue after its first `runs` runs.
+    ///
+    /// A worker stops when a recorded failure is ordered before its next run: no failure that
+    /// the worker can still find replaces the recorded one.
+    fn should_continue(&self, worker_id: usize, runs: u32) -> bool {
+        if self.global_early_exit.should_stop()
+            || self.first_failure.load(Ordering::Relaxed) < Self::failure_order(worker_id, runs)
+        {
             return false;
         }
         if self.timer.is_timed_out() {
@@ -198,16 +192,23 @@ impl SharedFuzzState {
             && self.total_runs.load(Ordering::Relaxed) < planned_runs
     }
 
-    /// Returns true if the worker was able to claim the failure, false if failure was set by
-    /// another worker
-    fn try_claim_failure(&self, worker_id: usize) -> bool {
-        let mut claimed = false;
-        let _ = self.failed_worker_id.get_or_init(|| {
-            claimed = true;
-            self.local_early_exit.record_failure();
-            worker_id
-        });
-        claimed
+    /// Records that the worker failed after its first `runs` runs.
+    fn record_failure(&self, worker_id: usize, runs: u32) {
+        self.first_failure.fetch_min(Self::failure_order(worker_id, runs), Ordering::Relaxed);
+    }
+
+    /// Returns the worker that found the first failure and the number of runs that the worker
+    /// completed before the failure.
+    fn first_failure(&self) -> Option<(usize, u32)> {
+        let order = self.first_failure.load(Ordering::Relaxed);
+        (order != u64::MAX).then_some((order as u32 as usize, (order >> 32) as u32))
+    }
+
+    /// Orders failures by the number of runs that the worker completed before the failure, then
+    /// by worker ID. This is the order in which one thread finds the failures when it runs the
+    /// workers in turn, one run at a time.
+    const fn failure_order(worker_id: usize, runs: u32) -> u64 {
+        (runs as u64) << 32 | worker_id as u64
     }
 }
 
@@ -475,6 +476,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             }
             let mut candidate = tx.clone();
             candidate.call_details.calldata = calldata.clone();
+            // Each candidate runs alone, so host effects skipped by earlier ones do not affect it.
+            self.executor_f.inspector_mut().collect_failure_identity(true);
             let Ok((candidate, call, success)) = self.replay_case(address, candidate, run.as_ref())
             else {
                 return false;
@@ -776,18 +779,12 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             return (result, None, None);
         }
 
-        // Find first case and last run worker. Set `failed_corpus_replays`.
-        let mut first_case_candidate = None;
+        // Find the worker of the last run, in the order of `SharedFuzzState::failure_order`. Set
+        // `failed_corpus_replays`.
         let mut last_run_worker = None;
         for (i, worker) in workers.iter().enumerate() {
-            if let Some((run, ref case)) = worker.first_case
-                && first_case_candidate.as_ref().is_none_or(|&(r, _)| run < r)
-            {
-                first_case_candidate = Some((run, case.clone()));
-            }
-
-            if last_run_worker.is_none_or(|(t, _)| worker.last_run_timestamp > t) {
-                last_run_worker = Some((worker.last_run_timestamp, i));
+            if last_run_worker.is_none_or(|(runs, _)| worker.runs >= runs) {
+                last_run_worker = Some((worker.runs, i));
             }
 
             // Only set replays from master which is responsible for replaying persisted corpus.
@@ -795,14 +792,20 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 result.failed_corpus_replays = worker.failed_corpus_replays;
             }
         }
-        result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
         let (_, last_run_worker_idx) = last_run_worker.expect("at least one worker");
         let mut output_worker_idx = last_run_worker_idx;
         let shown_case;
         let mut campaign_failure = None;
 
-        if let Some(&failed_worker_id) = shared_state.failed_worker_id.get() {
+        if let Some((failed_worker_id, failed_runs)) = shared_state.first_failure() {
             result.success = false;
+
+            // The workers stop at different runs, so only keep the cases that are ordered before
+            // the failure.
+            for worker in &mut workers {
+                let cases = failed_runs as usize + usize::from(worker.id < failed_worker_id);
+                worker.gas_by_case.truncate(cases);
+            }
 
             let failed_worker_idx = workers.iter().position(|w| w.id == failed_worker_id).unwrap();
             output_worker_idx = failed_worker_idx;
@@ -874,6 +877,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 .extend(worker.traces.into_iter().map(SparsedTraceArena::into_gas_report_arena));
             HitMaps::merge_opt(&mut result.line_coverage, worker.coverage);
             result.deprecated_cheatcodes.extend(worker.deprecated_cheatcodes);
+        }
+        // The cases are in worker order.
+        if let Some(&(gas, stipend)) = result.gas_by_case.first() {
+            result.first_case = FuzzCase { gas, stipend };
         }
 
         if let Some(reason) = &result.reason
@@ -992,7 +999,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         "failed to generate fuzzed input in worker {}: {err}",
                         worker.id
                     )));
-                    shared_state.try_claim_failure(worker_id);
+                    shared_state.record_failure(worker_id, worker.runs);
                     return Ok(worker);
                 }
             }
@@ -1009,9 +1016,14 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let mut runs_since_sync = sync_threshold; // Always sync at the start.
         let mut last_metrics_report = Instant::now();
         // Continue while:
-        // 1. Global state allows (not timed out, not at global limit, no failure found)
+        // 1. Global state allows (not timed out, not at global limit, no failure ordered before the
+        //    next run)
         // 2. Worker hasn't reached its specific run limit
-        'stop: while shared_state.should_continue() && worker.runs < worker_runs {
+        'stop: while shared_state.should_continue(worker_id, worker.runs)
+            && worker.runs < worker_runs
+        {
+            // The number of runs that the worker completed before this one.
+            let runs = worker.runs;
             // If counterexample recorded, replay it first, without incrementing runs.
             let (input, fuzz_run, is_persisted_replay) = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
@@ -1075,7 +1087,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                             "failed to generate fuzzed input in worker {}: {err}",
                             worker.id
                         )));
-                        shared_state.try_claim_failure(worker_id);
+                        shared_state.record_failure(worker_id, runs);
                         break 'stop;
                     }
                 };
@@ -1103,10 +1115,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 if let Some(progress) = progress {
                     progress.inc(1);
                 }
-                total_runs
             };
 
-            worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
             let case_input = input.clone();
             match self.single_fuzz(
                 &mut executor,
@@ -1121,7 +1131,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         if is_persisted_replay {
                             continue 'stop;
                         }
-                        let total_runs = inc_runs();
+                        inc_runs();
 
                         if worker_id == 0 && self.config.corpus.collect_edge_coverage() {
                             if let Some(progress) = progress {
@@ -1146,10 +1156,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         }
 
                         worker.gas_by_case.push((case.case.gas, case.case.stipend));
-
-                        if worker.first_case.is_none() {
-                            worker.first_case = Some((total_runs, case.case));
-                        }
 
                         if let Some(call_traces) = case.traces {
                             if worker.traces.len() == max_traces_to_collect as usize {
@@ -1198,14 +1204,14 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         }
                         worker.counterexample = Some(outcome);
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
-                        shared_state.try_claim_failure(worker_id);
+                        shared_state.record_failure(worker_id, runs);
                         break 'stop;
                     }
                 },
                 Err(err) => match err {
                     TestCaseError::Fail(_) => {
                         worker.failure = Some(err);
-                        shared_state.try_claim_failure(worker_id);
+                        shared_state.record_failure(worker_id, runs);
                         break 'stop;
                     }
                     TestCaseError::Reject(_) => {
@@ -1229,7 +1235,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         if max > 0 && total > max {
                             worker.failure =
                                 Some(TestCaseError::reject(FuzzError::TooManyRejects(max)));
-                            shared_state.try_claim_failure(worker_id);
+                            shared_state.record_failure(worker_id, runs);
                             break 'stop;
                         }
                     }

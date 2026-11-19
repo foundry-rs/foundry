@@ -510,6 +510,10 @@ impl ScriptArgs {
                  --tempo.sponsor-signer or --tempo.sponsor-sig"
             );
         }
+        eyre::ensure!(
+            self.tempo.configurable_access_key.is_none(),
+            "--tempo.configurable-access-key is not supported by forge script; use cast send"
+        );
 
         if let Some(dir) = &self.dump {
             ensure_dump_dir(dir)?;

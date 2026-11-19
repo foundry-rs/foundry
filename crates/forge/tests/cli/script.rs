@@ -5,6 +5,7 @@ use crate::{
     utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702, TxEnvelope};
+use alloy_dyn_abi::DynSolValue;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync,
@@ -10381,54 +10382,6 @@ Deployed contracts (chain 31337):
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
 }
 
-/// On T14, `forge script` with a keystore that `cast wallet new` linked to a configurable account
-/// broadcasts from the account while `vm.sign` signs with the key, and `--sender` with the key
-/// broadcasts from the key.
-#[forgetest_init]
-async fn tempo_t14_script_broadcasts_from_linked_keystore(prj: _, cmd: _) {
-    prj.initialize_default_contracts();
-    let script = prj.add_script(
-        "LinkedDeploy.s.sol",
-        r#"
-import {Script} from "forge-std/Script.sol";
-import {Counter} from "../src/Counter.sol";
-
-contract LinkedDeployScript is Script {
-    function run() external {
-        // The keystore's key still signs messages for the script.
-        bytes32 digest = keccak256("linked");
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
-        require(ecrecover(digest, v, r, s) == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2);
-        vm.startBroadcast();
-        new Counter();
-        vm.stopBroadcast();
-    }
-}
-"#,
-    );
-    let (api, handle) =
-        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
-    let rpc = handle.http_endpoint();
-    let provider = handle.http_provider();
-    let (keystore, account, owner) = crate::utils::tempo_linked_keystore(prj.root());
-    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
-    for address in [account, owner] {
-        api.anvil_deal_tip20(address, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
-    }
-    let owner_arg = owner.to_string();
-    for (extra, sender) in [(&[][..], account), (&["--sender", owner_arg.as_str()][..], owner)] {
-        cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
-        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token.to_string()]);
-        cmd.args(["--keystore", keystore.to_str().unwrap(), "--password", "keystorepassword"]);
-        cmd.args(extra).assert_success();
-        let block = provider.get_block_number().await.unwrap();
-        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
-        let receipt = receipt.last().unwrap();
-        assert!(receipt.status());
-        assert_eq!(receipt.from(), sender);
-    }
-}
-
 /// `--resume` runs the script again when the owner keys that the wallet options provide do not
 /// reach a configurable account's threshold, so that the script can provide the others, here with
 /// `vm.rememberKey`.
@@ -10483,6 +10436,54 @@ contract CaRememberScript is Script {
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
 }
 
+/// On T14, `forge script` with a keystore that `cast wallet new` linked to a configurable account
+/// broadcasts from the account while `vm.sign` signs with the key, and `--sender` with the key
+/// broadcasts from the key.
+#[forgetest_init]
+async fn tempo_t14_script_broadcasts_from_linked_keystore(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "LinkedDeploy.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract LinkedDeployScript is Script {
+    function run() external {
+        // The keystore's key still signs messages for the script.
+        bytes32 digest = keccak256("linked");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
+        require(ecrecover(digest, v, r, s) == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2);
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (keystore, account, owner) = crate::utils::tempo_linked_keystore(prj.root());
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
+    for address in [account, owner] {
+        api.anvil_deal_tip20(address, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
+    }
+    let owner_arg = owner.to_string();
+    for (extra, sender) in [(&[][..], account), (&["--sender", owner_arg.as_str()][..], owner)] {
+        cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token.to_string()]);
+        cmd.args(["--keystore", keystore.to_str().unwrap(), "--password", "keystorepassword"]);
+        cmd.args(extra).assert_success();
+        let block = provider.get_block_number().await.unwrap();
+        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipt.last().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.from(), sender);
+    }
+}
+
 /// A script that broadcasts from an upgraded EOA signs with its owners, also when the EOA's
 /// retired root key is among the wallets.
 #[forgetest_init]
@@ -10533,7 +10534,6 @@ contract UpgradeScript is Script {{
             new IConfigurableAccount.ConfigurableAccountOwner[](1);
         owners[0] = IConfigurableAccount.ConfigurableAccountOwner({owner}, 1);
         vm.startBroadcast();
-        // A low-level call: the precompile has no code for Solidity's code size check.
         (bool ok,) = address(0xAACC000000000000000000000000000000000000).call(
             abi.encodeCall(IConfigurableAccount.upgradeAccount, (1, owners))
         );
@@ -10644,11 +10644,9 @@ contract CaOfflineScript is Script {
     .unwrap();
     let account_arg = account.to_string();
     let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
-    let local_owner = keys[0].parse::<PrivateKeySigner>().unwrap().address();
-    let offline_owner = keys[1].parse::<PrivateKeySigner>().unwrap().address();
-
-    // One local owner does not reach the threshold, so nothing is sent.
-    cmd.forge_fuse().arg("script").arg(&script).args([
+    let [local_owner, offline_owner, other_owner] = [&keys[0], &keys[1], &keys[2]]
+        .map(|key| key.parse::<PrivateKeySigner>().unwrap().address());
+    let broadcast = [
         "--rpc-url",
         rpc.as_str(),
         "--sender",
@@ -10662,17 +10660,11 @@ contract CaOfflineScript is Script {
         &config,
         "--private-key",
         &keys[0],
-    ]);
+    ];
+
+    // One local owner does not reach the threshold, so nothing is sent.
+    cmd.forge_fuse().arg("script").arg(&script).args(broadcast);
     let stdout = cmd.assert_success().get_output().stdout_lossy();
-    assert!(
-        stdout.contains(&format!(
-            "Transactions of the Tempo configurable account {account} on chain 31337 await \
-             approvals from its owners, with threshold 2:"
-        )) && stdout.contains("cast wallet sign --no-hash <DIGEST>")
-            && stdout.contains("--tempo.owner-signature <SIGNATURE>")
-            && !stdout.contains("ONCHAIN EXECUTION COMPLETE"),
-        "{stdout}"
-    );
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
 
     let sequence: Value =
@@ -10685,19 +10677,48 @@ contract CaOfflineScript is Script {
         assert_eq!(entry["index"], index);
         assert_eq!(entry["account"].as_str().unwrap().parse::<Address>().unwrap(), account);
         assert_eq!(entry["approvals"].as_array().unwrap().len(), 1, "{entry}");
-        // The nonces are fixed in order, and the digest is printed for the owners.
+        // The nonces are fixed in order.
         let unsigned = hex::decode(entry["unsignedTx"].as_str().unwrap()).unwrap();
         let tx =
             foundry_common::tempo::configurable_account::decode_unsigned_tx(&unsigned).unwrap();
         assert_eq!(tx.nonce, index as u64);
         unsigned_txs.push(tx);
-        let digest = entry["digest"].as_str().unwrap().to_string();
-        assert!(
-            stdout.contains(&format!("digest {digest}, approved by {local_owner}")),
-            "{stdout}"
-        );
-        digests.push(digest);
+        digests.push(entry["digest"].as_str().unwrap().to_string());
     }
+
+    // The transactions awaiting approvals, each with its digest and the owners that approved it,
+    // the owners missing from any of them, and how to approve and send them.
+    let one = format!("approved by {local_owner} (weight 1 of 2)");
+    let two = format!("approved by {local_owner}, {offline_owner} (weight 2 of 2)");
+    let awaiting = |approved: [&str; 3], missing: [Address; 2]| {
+        let transactions = (0..3)
+            .map(|i| {
+                format!(
+                    "  transaction {i} (nonce {i}, gas limit [..]): digest {}, {}",
+                    digests[i], approved[i]
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "==========================\n\nTransactions of the Tempo configurable account \
+             {account} on chain 31337 await approvals from its owners, with threshold \
+             2:\n{transactions}\n\nOwners of {account} that have not approved every transaction: \
+             {} (weight 1), {} (weight 1)\n\nEach owner signs every digest without hashing it \
+             again, with `cast wallet sign --no-hash <DIGEST>` and their wallet options \
+             (`--p256 --private-key <KEY>` for a raw P-256 owner), or with a passkey: a WebAuthn \
+             assertion whose challenge is the digest, saved as JSON with the credential's public \
+             key. Then send the transactions by running the same command with `--resume` instead \
+             of `--broadcast`, adding `--tempo.owner-signature <SIGNATURE>` for each approval. \
+             Approvals are kept once given, so they can be collected over several runs.\n",
+            missing[0], missing[1]
+        )
+    };
+    let expected = awaiting([one.as_str(), &one, &one], [offline_owner, other_owner]);
+    // The report follows the gas estimates, which also end with a separator, and precedes the
+    // paths of the saved transactions.
+    let report = expected.strip_prefix("==========================\n\n").unwrap();
+    assert_data_eq!(stdout, format!("...\n{report}...\n"));
 
     // The offline owner signs each digest on its own machine.
     let sign = |cmd: &mut TestCommand, digest: &str, key: &str| {
@@ -10724,54 +10745,32 @@ contract CaOfflineScript is Script {
         }
     };
 
-    // A signature by a key that is not an owner approves nothing.
+    // A signature by a key that is not an owner approves nothing, but the owner's approval given
+    // with it is kept.
     let stranger = sign(&mut cmd, &digests[0], &format!("0x{}", "64".repeat(32)));
     resume(&mut cmd, &[&approvals[0], &stranger]);
-    let stderr = cmd.assert_failure().get_output().stderr_lossy();
-    assert!(
-        stderr.contains(
-            "--tempo.owner-signature 2 is not an owner's approval of any transaction awaiting \
-             owner approvals"
-        ),
-        "{stderr}"
-    );
+    cmd.assert_failure().stderr_eq(format!(
+        "...\nError: --tempo.owner-signature 2 is not an owner's approval of any transaction \
+         awaiting owner approvals: it must sign one of their digests with an owner key\n{}",
+        awaiting([two.as_str(), &one, &one], [other_owner, offline_owner])
+    ));
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
 
     // Two of the three transactions are approved: nothing is sent, but the approvals are kept.
     resume(&mut cmd, &[&approvals[0], &approvals[1]]);
-    let stderr = cmd.assert_failure().get_output().stderr_lossy();
-    assert!(
-        stderr.contains("transactions await more owner approvals, so nothing was sent")
-            && stderr.contains(&format!(
-                "digest {}, approved by {local_owner}, {offline_owner} (weight 2 of 2)",
-                digests[0]
-            ))
-            && stderr.contains(&format!(
-                "digest {}, approved by {local_owner} (weight 1 of 2)",
-                digests[2]
-            )),
-        "{stderr}"
-    );
+    cmd.assert_failure().stderr_eq(format!(
+        "...\nError: transactions await more owner approvals, so nothing was sent\n{}",
+        awaiting([two.as_str(), &two, &one], [other_owner, offline_owner])
+    ));
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
 
     // A new broadcast does not replace the approvals collected so far.
-    cmd.forge_fuse().arg("script").arg(&script).args([
-        "--rpc-url",
-        rpc.as_str(),
-        "--sender",
-        &account_arg,
-        "--broadcast",
-        "--network",
-        "tempo",
-        "--tempo.fee-token",
-        &fee_token,
-        "--tempo.config",
-        &config,
-        "--private-key",
-        &keys[0],
-    ]);
-    let stderr = cmd.assert_failure().get_output().stderr_lossy();
-    assert!(stderr.contains("has unfinished operations"), "{stderr}");
+    cmd.forge_fuse().arg("script").arg(&script).args(broadcast);
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: the previous broadcast `[..]` has unfinished operations; finish it with `[..]`, or pass `--start-fresh` to archive it and broadcast anew
+
+"#]]);
     let sequence: Value =
         foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
     let counts = sequence["awaiting_owners"]
@@ -10898,8 +10897,11 @@ contract CaPingScript is Script {
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
 
     resume(&mut cmd);
-    let stderr = cmd.assert_failure().get_output().stderr_lossy();
-    assert!(stderr.contains("resume will not send them"), "{stderr}");
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: [..]reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again
+
+"#]]);
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
 }
 
@@ -11055,7 +11057,14 @@ Error: the owners of a Tempo configurable account sender approve its transaction
              owner keys and Tempo options of the original --broadcast\n"
         )
     );
-    assert!(output.stdout_lossy().contains(new_digest), "{}", output.stdout_lossy());
+    let local_owner = keys[0].parse::<PrivateKeySigner>().unwrap().address();
+    assert_data_eq!(
+        output.stdout_lossy(),
+        format!(
+            "...\n  transaction 0 (nonce 0, gas limit [..]): digest {new_digest}, approved by \
+             {local_owner} (weight 1 of 2)\n...\n"
+        )
+    );
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
     assert_eq!(provider.get_transaction_count(eoa).await.unwrap(), 0);
 
@@ -11171,14 +11180,16 @@ contract CaOnlyScript is Script {
     );
     let after = digests(&prj);
     assert_eq!(after.len(), 2);
-    let stdout = output.stdout_lossy();
-    for digest in &after {
-        assert!(!before.contains(digest), "{after:?}");
-        assert!(
-            stdout.contains(&format!("digest {digest}, approved by {local_owner}")),
-            "{stdout}"
-        );
-    }
+    assert!(after.iter().all(|digest| !before.contains(digest)), "{after:?}");
+    assert_data_eq!(
+        output.stdout_lossy(),
+        format!(
+            "...\n  transaction 0 (nonce 0, gas limit [..]): digest {}, approved by {local_owner} \
+             (weight 1 of 2)\n  transaction 1 (nonce 1, gas limit [..]): digest {}, approved by \
+             {local_owner} (weight 1 of 2)\n...\n",
+            after[0], after[1]
+        )
+    );
 
     // A deadline that has passed is refused before anything is saved.
     cmd.forge_fuse().arg("script").arg(&script).args(owner_options);
@@ -11417,9 +11428,24 @@ contract CaChecksScript is Script {
     )
     .await;
 
-    let update_config = &keccak256(
-        "updateConfig((bytes32,uint64,uint8,(address,uint8)[]),uint8,(address,uint8)[])",
-    )[..4];
+    // Complete calldata, since `forge script` decodes the arguments of known precompile calls.
+    let update_config = [
+        &keccak256(
+            "updateConfig((bytes32,uint64,uint8,(address,uint8)[]),uint8,(address,uint8)[])",
+        )[..4],
+        &DynSolValue::Tuple(vec![
+            DynSolValue::Tuple(vec![
+                DynSolValue::FixedBytes(B256::ZERO, 32),
+                DynSolValue::Uint(U256::ZERO, 64),
+                DynSolValue::Uint(U256::from(1), 8),
+                DynSolValue::Array(vec![]),
+            ]),
+            DynSolValue::Uint(U256::from(1), 8),
+            DynSolValue::Array(vec![]),
+        ])
+        .abi_encode_params(),
+    ]
+    .concat();
     let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
     let account_arg = account.to_string();
     let cases = [
@@ -11464,7 +11490,7 @@ contract CaChecksScript is Script {
         (
             upstream.as_str(),
             address!("0xAACC000000000000000000000000000000000000"),
-            update_config.to_vec(),
+            update_config,
             1,
             vec![],
             format!(

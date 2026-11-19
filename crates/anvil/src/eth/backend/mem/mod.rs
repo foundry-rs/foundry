@@ -212,23 +212,25 @@ use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 #[cfg(feature = "base")]
 use crate::eth::backend::evm::BaseEvmNetwork;
 #[cfg(feature = "base")]
-use alloy_eips::Encodable2718;
+use base_common_base_tx::{IntrinsicGas, NonceManagerSlots};
 #[cfg(feature = "base")]
 use base_common_chains::ChainConfig;
 #[cfg(feature = "base")]
 use base_common_consensus::{
-    BaseTransactionInfo, BaseTxEnvelope, EIP8130_REJECTION_MSG, Eip8130Constants, Eip8130Signed,
-    Predeploys,
+    BASE_TX_REJECTION_MSG, BaseTransactionInfo, BaseTxEnvelope, Predeploys, TxBaseConstants,
+    TxBaseSigned,
 };
 #[cfg(feature = "base")]
-use base_common_eip8130::{IntrinsicGas, IntrinsicGasInput, NonceManagerSlots};
+use base_common_genesis::BaseFeature;
 #[cfg(feature = "base")]
 use base_common_rpc_types::{
-    EIP8130_PRE_ZENITH_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
-    Transaction as BaseRpcTransaction,
+    BASE_TX_PRE_EVEREST_RPC_ERROR, Transaction as BaseRpcTransaction, TxBaseNonce,
+    TxBaseReceiptFields,
 };
 #[cfg(feature = "base")]
 use base_evm2::L1BlockInfo;
+#[cfg(feature = "base")]
+use base_execution_base_tx::{ResolvedSender, TransactionAuthorizer};
 #[cfg(feature = "base")]
 use evm2::bytecode::Bytecode;
 #[cfg(feature = "base")]
@@ -608,7 +610,7 @@ fn map_simulated_tx(
         let mut typed = FoundryTypedTx::Eip8130(signed.into_tx());
         f(&mut typed)?;
         let FoundryTypedTx::Eip8130(tx) = typed else { unreachable!("EIP-8130 stays EIP-8130") };
-        return Ok(FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, payer_auth)));
+        return Ok(FoundryTxEnvelope::Eip8130(TxBaseSigned::new(tx, sender_auth, payer_auth)));
     }
     if let FoundryTxEnvelope::Tempo(signed) = tx {
         let (tx, signature, _) = signed.into_parts();
@@ -864,10 +866,6 @@ const MAX_MOCK_WEBAUTHN_DATA_LEN: usize = 8192;
 /// without its r, s and public key coordinates.
 const MAX_OWNER_WEBAUTHN_DATA_LEN: usize = MAX_WEBAUTHN_SIGNATURE_LENGTH - 4 * size_of::<B256>();
 
-/// Error text for a configurable account call simulated without its configuration witness.
-const MISSING_CONFIGURATION_WITNESS: &str =
-    "configurable account simulation requires a configuration witness";
-
 /// Creates the mock signature a Tempo node simulates a request with, from its key type hints.
 ///
 /// Returns `None` for a configurable account, whose owner quorum a primitive placeholder cannot
@@ -983,6 +981,52 @@ fn mock_configurable_account_signature(
     weight.finish().map_err(|e| invalid(&e))?;
     ConfigurableAccountSignature::try_new(account, spec.config.clone(), signatures)
         .map_err(|e| invalid(&e))
+}
+
+/// Returns the placeholder owner quorum that the impersonated configurable account `account`
+/// with `config` signs with.
+///
+/// The quorum approves with the first owners that reach the threshold. Its zero secp256k1
+/// approvals stand in for owner keys Anvil does not hold, so the transaction executes in
+/// simulation, which skips owner recovery like impersonation skips the sender's.
+fn placeholder_configurable_account_signature(
+    account: Address,
+    config: ConfigurableAccountConfig,
+) -> Result<ConfigurableAccountSignature, BlockchainError> {
+    // Approvals carry no owner, so only their number matters: the fewest that reach the
+    // threshold, which the heaviest owners give.
+    let mut weights = config.owners.iter().map(|owner| u16::from(owner.weight)).collect::<Vec<_>>();
+    weights.sort_unstable_by(|a, b| b.cmp(a));
+    let mut weight = 0;
+    let approvals = weights
+        .iter()
+        .take_while(|owner| {
+            let below = weight < u16::from(config.threshold);
+            weight += **owner;
+            below
+        })
+        .count();
+    let signatures =
+        vec![mock_primitive_signature(PrimitiveSignatureType::Secp256k1, None, 0); approvals];
+    ConfigurableAccountSignature::try_new(account, config, signatures)
+        .map_err(|err| BlockchainError::Message(err.to_string()))
+}
+
+/// Returns the configuration of `account` that `commitment` names, from the chain `fork` forks at
+/// or before the fork block, for an account whose configuration events predate the fork.
+async fn forked_configurable_account_config(
+    fork: &ClientFork,
+    account: Address,
+    commitment: B256,
+) -> Result<ConfigurableAccountConfig, BlockchainError> {
+    fork.configurable_account_config(account, commitment).await.map_err(|err| {
+        BlockchainError::Message(format!(
+            "cannot impersonate configurable account {account}: no configuration event in this \
+             node's blocks matches its commitment, and the forked chain up to block {} does not \
+             give it: {err:#}",
+            fork.block_number()
+        ))
+    })
 }
 
 /// Returns the configurable account signatures of a simulated Tempo request, as a Tempo node
@@ -1933,19 +1977,19 @@ impl<N: Network> Backend<N> {
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_active_at(&self, timestamp: u64) -> Result<(), BlockchainError> {
         let upgrade = self.base_upgrade_at_timestamp(timestamp);
-        if self.is_base() && upgrade >= BaseUpgrade::Zenith {
+        if self.is_base() && upgrade.is_feature_enabled(BaseFeature::TxBase) {
             return Ok(());
         }
-        Err(BlockchainError::InvalidTransactionRequest(EIP8130_PRE_ZENITH_RPC_ERROR.to_string()))
+        Err(BlockchainError::InvalidTransactionRequest(BASE_TX_PRE_EVEREST_RPC_ERROR.to_string()))
     }
 
     /// Returns an admission error if Base EIP-8130 submissions are not active.
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_submission_active(&self) -> Result<(), BlockchainError> {
-        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Zenith {
+        if self.is_base() && self.base_upgrade().is_feature_enabled(BaseFeature::TxBase) {
             return Ok(());
         }
-        Err(BlockchainError::Eip8130TransactionRejected(EIP8130_REJECTION_MSG.to_string()))
+        Err(BlockchainError::Eip8130TransactionRejected(BASE_TX_REJECTION_MSG.to_string()))
     }
 
     /// Returns an error if Tempo transactions are not active
@@ -3580,7 +3624,7 @@ impl<N: Network> Backend<N> {
             )
             .ok_or_else(|| {
                 BlockchainError::InvalidTransactionRequest(
-                    MISSING_CONFIGURATION_WITNESS.to_string(),
+                    "configurable account simulation requires a configuration witness".into(),
                 )
             })?,
         };
@@ -3678,17 +3722,22 @@ impl<N: Network> Backend<N> {
                 // Base's RPC conversion resolves the sender and shapes representative sender and
                 // payer authentication blobs, so intrinsic gas prices the authentication scheme.
                 let simulation = request
-                    .to_eip8130_simulation_tx(self.chain_id().to(), gas_limit)
-                    .and_then(|tx| tx.eip8130)
+                    .to_base_tx_simulation_tx(self.chain_id().to(), gas_limit)
+                    .map_err(|err| {
+                        BlockchainError::InvalidTransactionRequest(format!(
+                            "invalid EIP-8130 simulation request: {err}"
+                        ))
+                    })?
+                    .base_tx
                     .ok_or_else(invalid)?;
                 let sender = request
-                    .as_eip8130()
+                    .as_base_tx()
                     .and_then(|aa| aa.sender)
                     .or(request.as_ref().from)
                     .ok_or_else(invalid)?;
                 let envelope = FoundryTxEnvelope::Eip8130(simulation.signed);
                 let mut tx = PreparedTx::simulated(envelope.clone(), sender);
-                tx.eip8130_sender_actor_id = simulation.simulation_sender_actor_id;
+                tx.eip8130_sender_actor_id = Some(sender.into_word());
                 Ok(PreparedCall {
                     evm_env,
                     tx,
@@ -4182,6 +4231,7 @@ impl<N: Network> Backend<N> {
             return Ok(fork.trace_call(request, trace_types, resolved).await?);
         }
 
+        self.prefetch_impersonated_configurable_accounts([request.from]).await;
         self.with_database_at_and_context(Some(block_request), |state, block, mut monad_context| {
             let mut inspector =
                 TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
@@ -4309,6 +4359,8 @@ impl<N: Network> Backend<N> {
     where
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
+        let senders = calls.iter().map(|(request, _)| request.from).collect::<Vec<_>>();
+        self.prefetch_impersonated_configurable_accounts(senders).await;
         self.with_database_at_and_context(block_request, |state, block_env, mut monad_context| {
             let mut cache_db = CacheDB::new(&*state);
             let mut results = Vec::with_capacity(calls.len());
@@ -4839,6 +4891,8 @@ impl<N: Network> Backend<N> {
                     &parent_env,
                     self.best_hash(),
                     self.hardfork(),
+                    // A transaction-hash fork funds fee tokens after replaying its block prefix.
+                    self.get_fork().is_some_and(|fork| fork.transaction_hash().is_none()),
                 )
                 .await;
         }
@@ -4919,8 +4973,11 @@ impl<N: Network> Backend<N> {
         parent_env: &EvmEnv,
         parent_hash: B256,
         hardfork: FoundryHardfork,
+        fund_fee_tokens: bool,
     ) -> Result<(), DatabaseError> {
         let user = StagedForkDbUser { db: Some(db), cache_lease };
+        let is_tempo = self.is_tempo();
+        let tempo_hardfork = TempoHardfork::from(hardfork);
         let mut genesis_accounts = JoinSet::new();
         for address in self.genesis.accounts.iter().copied() {
             let task_user = StagedForkDbUser {
@@ -4932,6 +4989,13 @@ impl<N: Network> Backend<N> {
             genesis_accounts.spawn(async move {
                 let db = task_user.db().read().await;
                 let info = db.basic_ref(address)?.unwrap_or_default();
+                if is_tempo {
+                    crate::eth::backend::tempo::prefetch_fork_test_account(
+                        &**db,
+                        address,
+                        tempo_hardfork,
+                    )?;
+                }
                 Ok::<_, DatabaseError>((address, info))
             });
         }
@@ -4958,6 +5022,16 @@ impl<N: Network> Backend<N> {
             db_guard.insert_account(address, info);
         }
         self.genesis.apply_genesis_json_alloc(&mut **db_guard)?;
+        // Tempo pays fees in TIP-20 tokens, so dev accounts also need fee tokens to transact.
+        if is_tempo && fund_fee_tokens {
+            crate::eth::backend::tempo::fund_fork_test_accounts(
+                &mut **db_guard,
+                parent_env,
+                &self.genesis,
+                hardfork,
+            )
+            .map_err(tempo_db_err)?;
+        }
         // A fork taken before the remote chain activated Denim has no BaseTime deployment, but
         // Denim blocks mined locally still send the BaseTime deposit. Existing deployments and
         // their admin are preserved.
@@ -4972,7 +5046,7 @@ impl<N: Network> Backend<N> {
             )?;
         }
         #[cfg(not(feature = "base"))]
-        let _ = (parent_env, parent_hash, hardfork);
+        let _ = parent_hash;
         drop(db_guard);
         self.apply_funded_accounts(user.db()).await
     }
@@ -5038,13 +5112,13 @@ impl<N: Network> Backend<N> {
         if upgrade >= BaseUpgrade::Denim {
             base::ensure_base_time_predeploy(db, true)?;
         }
-        if upgrade >= BaseUpgrade::Zenith {
-            base::ensure_eip8130_system_accounts(db)?;
+        if upgrade.is_feature_enabled(BaseFeature::NativeNonceManager) {
+            base::ensure_base_tx_system_accounts(db)?;
         }
 
         // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
         // check on high-level calls to functions without return data does not revert in the
-        // caller. `ensure_eip8130_system_accounts` only covers the Zenith nonce manager.
+        // caller. `ensure_base_tx_system_accounts` only covers the Everest nonce manager.
         for address in foundry_evm_networks::BASE_CODE_SENTINEL_ADDRESSES
             .iter()
             .copied()
@@ -5303,6 +5377,7 @@ impl<N: Network> Backend<N> {
                 &staged_env,
                 staged_client_config.block_hash,
                 staged_client_config.hardfork.unwrap_or_else(|| staged_config.get_hardfork()),
+                true,
             )
             .await?;
 
@@ -5789,62 +5864,101 @@ where
         tx: FoundryTypedTx,
         sender: Address,
     ) -> Result<FoundryTxEnvelope, BlockchainError> {
-        if let FoundryTypedTx::Tempo(tempo) = &tx
-            && let Some(signature) =
+        if let FoundryTypedTx::Tempo(tempo) = &tx {
+            self.prefetch_impersonated_configurable_accounts([Some(sender)]).await;
+            if let Some(signature) =
                 self.impersonated_configurable_account_signature(&**self.db.read().await, sender)?
-        {
-            let signature = TempoSignature::ConfigurableAccount(signature);
-            return Ok(FoundryTxEnvelope::Tempo(tempo.clone().into_signed(signature)));
+            {
+                let signature = TempoSignature::ConfigurableAccount(signature);
+                return Ok(FoundryTxEnvelope::Tempo(tempo.clone().into_signed(signature)));
+            }
         }
         Ok(tx.into_impersonated())
+    }
+
+    /// Looks up on the forked chain the configurations of the impersonated configurable accounts
+    /// among `senders`, ahead of simulating their requests, so that the simulation does not scan
+    /// the forked chain while it holds the database.
+    ///
+    /// Failures are left for the simulation to report, since a request with its own witness or
+    /// key does not need the configuration.
+    pub(crate) async fn prefetch_impersonated_configurable_accounts(
+        &self,
+        senders: impl IntoIterator<Item = Option<Address>>,
+    ) {
+        let Some(fork) = self.get_fork() else { return };
+        for sender in senders.into_iter().flatten() {
+            if !self.cheats.is_impersonated(sender) {
+                continue;
+            }
+            let commitment = self.configurable_account_commitment(&**self.db.read().await, sender);
+            if let Ok(Some(commitment)) = commitment
+                && self.configurable_account_config(sender, commitment).is_none()
+                && let Err(error) = fork.configurable_account_config(sender, commitment).await
+            {
+                debug!(target: "backend", %sender, %error, "failed to prefetch configurable account configuration");
+            }
+        }
     }
 
     /// Returns the placeholder owner quorum that the impersonated configurable account `account`
     /// signs with in `state`, or `None` when it has no configuration commitment.
     ///
-    /// The quorum approves with the first owners that reach the threshold of the configuration
-    /// the commitment names, recovered from the configuration events in this node's blocks. Its
-    /// zero secp256k1 approvals stand in for owner keys Anvil does not hold, so the transaction
-    /// executes in simulation, which skips owner recovery like impersonation skips the sender's.
+    /// The configuration the commitment names is recovered from the configuration events in this
+    /// node's blocks or, on a fork, from the latest one at or before the fork block.
     fn impersonated_configurable_account_signature(
         &self,
         state: &dyn DatabaseRef,
         account: Address,
     ) -> Result<Option<ConfigurableAccountSignature>, BlockchainError> {
+        let Some(commitment) = self.configurable_account_commitment(state, account)? else {
+            return Ok(None);
+        };
+        let config = match self.configurable_account_config(account, commitment) {
+            Some(config) => config,
+            None => {
+                let fork = self.configuration_fork(account, commitment)?;
+                // Callers prefetch the configuration before they take the database, so this only
+                // scans the forked chain when that failed or the state's commitment differs. Fork
+                // state reads already block here.
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(forked_configurable_account_config(&fork, account, commitment))
+                })?
+            }
+        };
+        placeholder_configurable_account_signature(account, config).map(Some)
+    }
+
+    /// Returns the configuration commitment of the Tempo account `account` in `state`, or `None`
+    /// when it has none.
+    fn configurable_account_commitment(
+        &self,
+        state: &dyn DatabaseRef,
+        account: Address,
+    ) -> Result<Option<B256>, BlockchainError> {
         if !self.is_tempo() {
             return Ok(None);
         }
         let Some(info) = state.basic_ref(account)? else { return Ok(None) };
         let commitment = account_config_commitment(&info, self.tempo_hardfork())
             .map_err(|err| BlockchainError::Message(err.to_string()))?;
-        if commitment.is_zero() {
-            return Ok(None);
-        }
-        let config = self.configurable_account_config(account, commitment).ok_or_else(|| {
+        Ok((!commitment.is_zero()).then_some(commitment))
+    }
+
+    /// Returns the fork on which to look up the configuration of `account` that `commitment`
+    /// names, when no configuration event in this node's blocks matches it.
+    fn configuration_fork(
+        &self,
+        account: Address,
+        commitment: B256,
+    ) -> Result<ClientFork, BlockchainError> {
+        self.get_fork().ok_or_else(|| {
             BlockchainError::Message(format!(
                 "cannot impersonate configurable account {account}: no configuration event in \
                  this node's blocks matches its commitment {commitment}"
             ))
-        })?;
-        // Approvals carry no owner, so only their number matters: the fewest that reach the
-        // threshold, which the heaviest owners give.
-        let mut weights =
-            config.owners.iter().map(|owner| u16::from(owner.weight)).collect::<Vec<_>>();
-        weights.sort_unstable_by(|a, b| b.cmp(a));
-        let mut weight = 0;
-        let approvals = weights
-            .iter()
-            .take_while(|owner| {
-                let below = weight < u16::from(config.threshold);
-                weight += **owner;
-                below
-            })
-            .count();
-        let signatures =
-            vec![mock_primitive_signature(PrimitiveSignatureType::Secp256k1, None, 0); approvals];
-        ConfigurableAccountSignature::try_new(account, config, signatures)
-            .map(Some)
-            .map_err(|err| BlockchainError::Message(err.to_string()))
+        })
     }
 
     /// Returns the configuration of `account` that `commitment` names, from the
@@ -6287,6 +6401,14 @@ where
             .transpose()?;
         db.commit(&state_changes);
         db.insert_block_hash(U256::from(block_number), block_hash);
+        if self.is_tempo() {
+            crate::eth::backend::tempo::fund_fork_test_accounts(
+                &mut **db,
+                &evm_env,
+                &self.genesis,
+                self.hardfork(),
+            )?;
+        }
 
         let BlockInfo { block, transactions, receipts } = block_info;
         let header = block.header.clone();
@@ -7090,6 +7212,7 @@ where
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         overrides: EvmOverrides,
     ) -> Result<CallOutcome, BlockchainError> {
+        self.prefetch_impersonated_configurable_accounts([request.from]).await;
         self.with_database_at_and_context(block_request, |state, mut block, monad_context| {
             let block_number = block.number;
             let outcome = {
@@ -7121,6 +7244,7 @@ where
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
+        self.prefetch_impersonated_configurable_accounts([request.from]).await;
         let GethDebugTracingCallOptions {
             tracing_options,
             block_overrides,
@@ -7329,8 +7453,9 @@ where
                         let tracing_inspector = inspector.tracer.expect("tracer disappeared");
 
                         Ok(tracing_inspector
+                            .with_transaction_gas_limit(tx.tx.gas_limit())
                             .into_geth_builder()
-                            .geth_call_traces(call_config, executed.result.tx_gas_used())
+                            .geth_call_traces(call_config, executed.result.ext.charged_gas)
                             .into())
                     }
                     GethDebugBuiltInTracerType::PreStateTracer => {
@@ -7425,14 +7550,18 @@ where
         let exit_reason = result.stop;
         let gas_used = result.tx_gas_used();
 
-        trace!(target: "backend", ?exit_reason, out = ?result.output, %gas_used, %block_number, "trace call");
+        let charged_gas = result.ext.charged_gas;
+        trace!(target: "backend", ?exit_reason, out = ?result.output, %gas_used, %charged_gas, %block_number, "trace call");
 
-        let res = tracing_inspector
-            .into_geth_builder()
-            .geth_traces_with_result_gas(&result, result.output.clone(), config)
-            .into();
+        let mut res = tracing_inspector.into_geth_builder().geth_traces_with_result_gas(
+            &result,
+            result.output.clone(),
+            config,
+        );
+        // Only the root summary reports the charge; opcode and multidimensional gas stay intact.
+        res.gas = charged_gas;
 
-        Ok(res)
+        Ok(res.into())
     }
 
     /// Helper function to execute a closure with the database at a specific block
@@ -8398,6 +8527,7 @@ where
                     &pending,
                     EnvelopeExecution::replay(transaction_context, hardfork),
                 )?;
+                inspector.set_transaction_gas_limit(tx.gas_limit());
                 traces.push(TraceResult::Success {
                     result: build_trace(&inspector, *gas_used, output.clone()),
                     tx_hash: Some(tx.hash()),
@@ -8447,8 +8577,9 @@ where
                                 let frame = self.replay_tx_with_inspector(
                                     tx.info.transaction_hash,
                                     inspector,
-                                    |_, _, inspector, _, _| {
+                                    |_, _, inspector, prepared, _| {
                                         inspector
+                                            .with_transaction_gas_limit(prepared.tx.gas_limit())
                                             .geth_builder()
                                             .geth_call_traces(call_config, tx.info.gas_used)
                                             .into()
@@ -8637,8 +8768,14 @@ where
 
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
 
+        // The RPC reports one status per phase, derived from the receipt's committed phase count.
         #[cfg(feature = "base")]
-        let eip8130_phase_statuses = tx_receipt.eip8130_phase_statuses().to_vec();
+        let eip8130_phase_statuses = match (&tx_receipt, transaction.as_ref()) {
+            (FoundryReceiptEnvelope::Eip8130(receipt), FoundryTxEnvelope::Eip8130(tx)) => {
+                receipt.receipt.phase_statuses(tx.tx().calls.len()).unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
         let tx_receipt = tx_receipt.convert_logs_rpc(
             BlockNumHash::new(block.header.number(), block_hash),
             block.header.timestamp(),
@@ -8701,7 +8838,7 @@ where
         if self.is_base()
             && let FoundryTxEnvelope::Eip8130(tx) = transaction.as_ref()
         {
-            let fields = Eip8130ReceiptFields {
+            let fields = TxBaseReceiptFields {
                 payer: Some(tx.tx().payer.unwrap_or(info.from)),
                 phase_statuses: eip8130_phase_statuses,
                 metadata: (!tx.tx().metadata.is_empty()).then(|| tx.tx().metadata.clone()),
@@ -9303,6 +9440,12 @@ impl Backend<FoundryNetwork> {
             )));
         }
 
+        let senders = bundles
+            .iter()
+            .flat_map(|bundle| &bundle.transactions)
+            .map(|request| request.from)
+            .collect::<Vec<_>>();
+        self.prefetch_impersonated_configurable_accounts(senders).await;
         self.with_database_at_and_context(
             block_request,
             |state, mut block_env, mut monad_context| {
@@ -9389,6 +9532,13 @@ impl Backend<FoundryNetwork> {
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         block_interval: u64,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
+        let senders = request
+            .block_state_calls
+            .iter()
+            .flat_map(|block| &block.calls)
+            .map(|call| call.from)
+            .collect::<Vec<_>>();
+        self.prefetch_impersonated_configurable_accounts(senders).await;
         let simulate_at = |state: Box<dyn MaybeFullDatabase + '_>,
                            base_block_env: BlockEnv,
                            base_number,
@@ -9469,6 +9619,7 @@ impl Backend<FoundryNetwork> {
                 let mut call_res = Vec::with_capacity(calls.len());
                 let mut log_index = 0;
                 let mut cumulative_gas_used = 0;
+                let mut cumulative_charged_gas = 0u64;
                 let mut block_regular_gas_used = 0;
                 let mut block_state_gas_used = 0;
                 let mut block_blob_gas_used = 0u64;
@@ -9548,7 +9699,7 @@ impl Backend<FoundryNetwork> {
                 // execute all calls in that block
                 for (req_idx, mut request) in calls.into_iter().enumerate() {
                     #[cfg(feature = "base")]
-                    if request.transaction_type == Some(base_common_consensus::EIP8130_TX_TYPE_ID) {
+                    if request.transaction_type == Some(base_common_consensus::BASE_TX_TYPE_ID) {
                         return Err(BlockchainError::InvalidTransactionRequest(
                             "eth_simulateV1 does not accept EIP-8130 transaction requests"
                                 .to_string(),
@@ -9774,8 +9925,13 @@ impl Backend<FoundryNetwork> {
                         state.account_changes().map(|changes| changes.address),
                     );
 
-                    rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
-                    cumulative_gas_used = cumulative_gas_used.saturating_add(result.tx_gas_used());
+                    // Simulation allowances measure consumption independently of receipt charges.
+                    let gas_used = result.tx_gas_used();
+                    rpc_gas_budget = rpc_gas_budget.saturating_sub(gas_used);
+                    cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
+                    cumulative_charged_gas =
+                        cumulative_charged_gas.saturating_add(result.ext.charged_gas);
+                    // Amsterdam budgets regular and state gas separately, using consumption.
                     block_regular_gas_used =
                         block_regular_gas_used.saturating_add(result.execution_gas_spent());
                     block_state_gas_used =
@@ -9836,15 +9992,15 @@ impl Backend<FoundryNetwork> {
                             canonical_logs.clone(),
                             Some(self.hardfork()),
                             caller_nonce,
-                            cumulative_gas_used,
+                            cumulative_charged_gas,
                         )
                     } else {
                         build_receipt(
                             tx.as_ref().tx_type(),
                             result.status,
                             canonical_logs.clone(),
-                            cumulative_gas_used,
-                            result.ext.eip8130_phase_statuses.clone(),
+                            cumulative_charged_gas,
+                            result.ext.eip8130_committed_phases,
                         )
                     };
                     #[cfg(not(any(feature = "base", feature = "optimism")))]
@@ -9852,8 +10008,8 @@ impl Backend<FoundryNetwork> {
                         tx.as_ref().tx_type(),
                         result.status,
                         canonical_logs.clone(),
-                        cumulative_gas_used,
-                        result.ext.eip8130_phase_statuses.clone(),
+                        cumulative_charged_gas,
+                        result.ext.eip8130_committed_phases,
                     );
                     receipts.push(receipt);
                     transaction_envelopes.push(tx.as_ref().clone());
@@ -9865,7 +10021,7 @@ impl Backend<FoundryNetwork> {
                         if result.status { result.output.clone() } else { Bytes::new() };
                     let sim_res = SimCallResult {
                         return_data,
-                        gas_used: result.tx_gas_used(),
+                        gas_used: result.ext.charged_gas,
                         max_used_gas: Some(result.total_gas_spent.max(result.floor_gas)),
                         status: result.status,
                         error: if result.status {
@@ -9919,6 +10075,9 @@ impl Backend<FoundryNetwork> {
                     }
                 }
 
+                // The header reports consumption, like the block budget, so simulated blocks stay
+                // within their gas limit and keep the next base fee meaningful. Calls and receipts
+                // report the charged gas, which can exceed consumption.
                 let gas_used = if is_amsterdam {
                     block_regular_gas_used.max(block_state_gas_used)
                 } else {
@@ -10483,12 +10642,17 @@ where
             signed
                 .validate_timestamp(now)
                 .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
+            // Authentication reads no state, so it runs before the nonce checks, which let a
+            // future-nonce transaction into the queue without executing it.
+            ResolvedSender::resolve(signed)
+                .and_then(|sender| TransactionAuthorizer::authorize(signed, sender))
+                .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
 
             let rejected = |error: &dyn std::fmt::Display| {
                 BlockchainError::Eip8130TransactionRejected(error.to_string())
             };
 
-            let channel_nonce = if body.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            let channel_nonce = if body.nonce_key == TxBaseConstants::NONCE_KEY_MAX {
                 None
             } else if body.nonce_key.is_zero() {
                 Some(account.nonce)
@@ -10496,7 +10660,7 @@ where
                 let slot = NonceManagerSlots::nonce_slot(address, body.nonce_key)
                     .ok_or_else(|| rejected(&"nonce_key 0 is the protocol nonce"))?;
                 let word = self.storage_at(NonceManagerSlots::ADDRESS, slot, None).await?;
-                Some(Eip8130Nonce::decode_channel_nonce(word.into()).to::<u64>())
+                Some(TxBaseNonce::decode_channel_nonce(word.into()).to::<u64>())
             };
             if let Some(channel) = channel_nonce
                 && body.nonce_sequence < channel
@@ -10506,20 +10670,17 @@ where
                     body.nonce_sequence
                 )));
             }
-            let nonce_key_first_use = channel_nonce == Some(0);
             let ready_for_execution =
                 channel_nonce.is_none_or(|nonce| body.nonce_sequence == nonce);
 
-            let intrinsic = IntrinsicGas::compute(
-                signed,
-                &signed.encoded_2718(),
-                &IntrinsicGasInput::worst_case(
-                    nonce_key_first_use,
-                    IntrinsicGasInput::sender_auto_delegated(&body.account_changes),
-                    body.payer.is_some(),
-                ),
-            )
-            .map_err(|error| rejected(&error))?;
+            // Intrinsic gas depends only on the transaction and its sender. Like Base's pool, the
+            // gas limit must cover both the sender-intrinsic gas and the EIP-7623 calldata floor.
+            let intrinsic = IntrinsicGas::compute(signed, address);
+            if body.gas_limit < intrinsic.sender_floor() {
+                return Err(rejected(
+                    &"transaction gas limit is below the EIP-7623 calldata floor",
+                ));
+            }
             if intrinsic.execution_gas_available(body.gas_limit).is_none() {
                 return Err(rejected(&"sender intrinsic gas exceeds transaction gas limit"));
             }
@@ -10532,7 +10693,7 @@ where
             };
             let required = base::eip8130_max_fee_charge(
                 body.gas_limit,
-                intrinsic.payer_auth,
+                intrinsic.payer_auth_cost,
                 body.max_fee_per_gas,
             );
             if payer_balance < required {
@@ -10964,11 +11125,7 @@ pub(crate) fn transaction_build_with_block_hash(
                 fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
                 fields.insert(String::from("nonce"), serde_json::to_value("0x0").unwrap());
 
-                let inner = UnknownTypedTransaction {
-                    ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
-                    fields,
-                    memo: Default::default(),
-                };
+                let inner = UnknownTypedTransaction::new(AnyTxType(DEPOSIT_TX_TYPE_ID), fields);
 
                 let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
                     hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
@@ -10993,7 +11150,7 @@ pub(crate) fn transaction_build_with_block_hash(
     if let FoundryTxEnvelope::Eip8130(eip8130_tx) = eth_transaction.as_ref() {
         let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
         let rpc_tx = BaseRpcTransaction::from_transaction(
-            Recovered::new_unchecked(BaseTxEnvelope::Eip8130(eip8130_tx.clone()), from),
+            Recovered::new_unchecked(BaseTxEnvelope::Base(eip8130_tx.clone()), from),
             BaseTransactionInfo::default(),
         );
         let mut fields = OtherFields::try_from(
@@ -11014,11 +11171,10 @@ pub(crate) fn transaction_build_with_block_hash(
         }
         let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
             hash: eth_transaction.hash(),
-            inner: UnknownTypedTransaction {
-                ty: AnyTxType(base_common_consensus::EIP8130_TX_TYPE_ID),
+            inner: UnknownTypedTransaction::new(
+                AnyTxType(base_common_consensus::BASE_TX_TYPE_ID),
                 fields,
-                memo: Default::default(),
-            },
+            ),
         });
         return build_rpc_transaction(envelope, from, block, info, None);
     }
@@ -11030,11 +11186,10 @@ pub(crate) fn transaction_build_with_block_hash(
         fields.remove("hash");
         let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
             hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
-            inner: UnknownTypedTransaction {
-                ty: AnyTxType(foundry_primitives::CIP64_TX_TYPE),
+            inner: UnknownTypedTransaction::new(
+                AnyTxType(foundry_primitives::CIP64_TX_TYPE),
                 fields,
-                memo: Default::default(),
-            },
+            ),
         });
         let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
         let effective_gas_price = block.map(|_| eth_transaction.effective_gas_price(base_fee));
@@ -11048,11 +11203,7 @@ pub(crate) fn transaction_build_with_block_hash(
         match maybe_tempo_fields {
             Ok(mut fields) => {
                 fields.remove("hash");
-                let inner = UnknownTypedTransaction {
-                    ty: AnyTxType(TEMPO_TX_TYPE_ID),
-                    fields,
-                    memo: Default::default(),
-                };
+                let inner = UnknownTypedTransaction::new(AnyTxType(TEMPO_TX_TYPE_ID), fields);
 
                 let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
                     hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
