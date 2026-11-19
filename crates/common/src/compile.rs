@@ -924,7 +924,7 @@ pub fn compile_target_abi(
 pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Project> {
     let target_path = canonicalize_path(target_path)?;
     let sources_path = target_path.join(&metadata.contract_name);
-    metadata.source_tree().write_to(&target_path)?;
+    metadata.source_tree()?.write_to(&target_path)?;
 
     let mut settings = metadata.settings()?;
 
