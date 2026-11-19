@@ -1026,8 +1026,10 @@ fn scoped_remapping_warnings(
                 .max_by_key(|mapping| mapping.name.len())
             {
                 Some(mapping) if remappings_conflict(mapping, &original, root) => {
-                    let target =
+                    let mut target =
                         RelativeRemapping::new(mapping.clone(), root).to_relative_remapping();
+                    // Render the target with `/`, like the remappings in the same warning.
+                    target.slash_path();
                     let suffix = original.name[mapping.name.trim_end_matches('/').len()..]
                         .trim_start_matches('/');
                     if suffix.is_empty() {
