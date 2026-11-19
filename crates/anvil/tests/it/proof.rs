@@ -4,7 +4,8 @@ use alloy_primitives::{Address, B256, Bytes, U256, address, fixed_bytes};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, eth::EthApi, spawn};
 use foundry_primitives::FoundryNetwork;
-use std::{collections::BTreeMap, str::FromStr};
+use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
+use std::{collections::BTreeMap, str::FromStr, sync::atomic::Ordering};
 
 async fn verify_account_proof(
     api: &EthApi<FoundryNetwork>,
@@ -174,4 +175,44 @@ async fn can_get_storage_proof_for_short_keys() {
         .await
         .unwrap_err();
     assert_eq!(err.as_error_resp().unwrap().code, -32602);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_storage_proof_only_relabels_matching_slots() {
+    // The upstream sorts and dedupes its entries, as Besu and Nethermind do.
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let one = format!("0x{:064x}", 1);
+    let (proxy, calls) = spawn_rpc_proxy_canned_method(
+        origin_handle.http_endpoint(),
+        "eth_getProof",
+        serde_json::json!({
+            "address": Address::repeat_byte(0x01),
+            "balance": "0x0",
+            "codeHash": B256::ZERO,
+            "nonce": "0x0",
+            "storageHash": B256::ZERO,
+            "accountProof": [],
+            "storageProof": [
+                { "key": one, "value": "0x2a", "proof": [] },
+                { "key": "0x2", "value": "0x0", "proof": [] },
+            ],
+        }),
+    )
+    .await;
+    let (_api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(proxy))).await;
+    let provider = handle.http_provider();
+
+    for (keys, expected) in [
+        (["0x1", &format!("0x{:063x}", 2)], ["0x1", &format!("0x{:064x}", 2)]),
+        (["0x2", "0x1"], [one.as_str(), "0x2"]),
+    ] {
+        let proof: serde_json::Value = provider
+            .raw_request("eth_getProof".into(), (Address::repeat_byte(0x01), keys, "latest"))
+            .await
+            .unwrap();
+        let entries = proof["storageProof"].as_array().unwrap();
+        let keys = entries.iter().map(|entry| entry["key"].as_str().unwrap()).collect::<Vec<_>>();
+        assert_eq!(keys, expected);
+    }
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
 }
