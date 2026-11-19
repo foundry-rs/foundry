@@ -2647,8 +2647,11 @@ impl SymbolicWorld {
     /// Restores the world state of snapshot `id` and returns its block environment and gas price.
     pub(crate) fn restore_snapshot(&mut self, id: U256) -> Option<(SymbolicBlock, SymExpr)> {
         let snapshot = self.snapshots.get(&id)?;
-        self.state = Arc::clone(&snapshot.state);
-        Some((snapshot.block.clone(), snapshot.gas_price.clone()))
+        let current = std::mem::replace(&mut self.state, Arc::clone(&snapshot.state));
+        let restored = (snapshot.block.clone(), snapshot.gas_price.clone());
+        // A revert does not change the storage these bases read, so keep the reads made since.
+        self.keep_symbolic_key_bases_from(&current);
+        Some(restored)
     }
 
     pub(crate) fn delete_snapshot(&mut self, id: U256) -> bool {
@@ -2866,12 +2869,32 @@ impl SymbolicWorld {
                 self.record_replay_symbolic_storage_key(*symbol, *address, key);
             }
         }
+        // A failed call does not change the storage these bases read, so keep the reads it made.
+        self.keep_symbolic_key_bases_from(&other.state);
         let state = Arc::make_mut(&mut self.state);
         for (expr, address) in &other.symbolic_address_aliases {
             state.symbolic_address_aliases.entry(expr.clone()).or_insert(*address);
         }
         for (expr, candidates) in &other.guarded_symbolic_addresses {
             state.guarded_symbolic_addresses.entry(expr.clone()).or_default().extend(candidates);
+        }
+    }
+
+    /// Adds the symbolic key base reads of `other` that this state lacks, so a key read again
+    /// after a revert gets the same base. Bases only depend on the storage before the run and
+    /// the bases read before them, and a path's reads only grow, so `other`'s reads extend these.
+    fn keep_symbolic_key_bases_from(&mut self, other: &SymbolicWorldState) {
+        if other.symbolic_key_base_order.len() == self.symbolic_key_base_order.len() {
+            return;
+        }
+        let state = Arc::make_mut(&mut self.state);
+        for entry in &other.symbolic_key_base_order {
+            if !state.symbolic_key_base_reads.contains_key(entry) {
+                state
+                    .symbolic_key_base_reads
+                    .insert(entry.clone(), other.symbolic_key_base_reads[entry].clone());
+                state.symbolic_key_base_order.push(entry.clone());
+            }
         }
     }
 

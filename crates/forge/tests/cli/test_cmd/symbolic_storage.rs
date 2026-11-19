@@ -6,7 +6,9 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt},
 };
 
-use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
+use super::symbolic_helpers::{
+    assert_symbolic, assert_symbolic_witness, json_test_result, read_artifact_ref, z3_available,
+};
 use crate::skip_unless_z3;
 
 #[forgetest_init]
@@ -464,6 +466,8 @@ interface Vm {
     function assume(bool condition) external pure;
     function prank(address sender) external;
     function setArbitraryStorage(address target) external;
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256 id) external returns (bool);
 }
 
 contract Balances {
@@ -478,6 +482,15 @@ contract Balances {
             mstore(0, account)
             mstore(0x20, 0)
             value := sload(keccak256(0, 0x40))
+        }
+    }
+
+    function revertWithSecond(uint256 first, uint256 second) external view {
+        this.balanceOfWord(first);
+        uint256 value = this.balanceOfWord(second);
+        assembly {
+            mstore(0, value)
+            revert(0, 0x20)
         }
     }
 }
@@ -510,6 +523,22 @@ contract SymbolicEqualKeys {
         assert(afterSub == before);
     }
 
+    function checkKeyAfterRevertedCall(uint256 first, uint256 second) public {
+        uint256 seen;
+        try arbitrary.revertWithSecond(first, second) {} catch (bytes memory data) {
+            seen = abi.decode(data, (uint256));
+        }
+        assert(arbitrary.balanceOfWord(second) == seen);
+    }
+
+    function checkKeyAfterRevertToState(uint256 first, uint256 second) public {
+        uint256 id = vm.snapshotState();
+        arbitrary.balanceOfWord(first);
+        uint256 seen = arbitrary.balanceOfWord(second);
+        vm.revertToState(id);
+        assert(arbitrary.balanceOfWord(second) == seen);
+    }
+
     /// forge-config: default.symbolic.storage_layout = "generic"
     function checkSenderKeyGeneric(uint256 account, uint256 value) public {
         (uint256 before, uint256 afterSub) = subtract(generic, account, value);
@@ -529,12 +558,37 @@ contract SymbolicEqualKeys {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicEqualKeys.t.sol:SymbolicEqualKeys
+Ran 6 tests for test/SymbolicEqualKeys.t.sol:SymbolicEqualKeys
+[PASS] checkKeyAfterRevertToState(uint256,uint256) ([METRICS])
+[PASS] checkKeyAfterRevertedCall(uint256,uint256) ([METRICS])
 [PASS] checkSenderKey(uint256,uint256) ([METRICS])
 [PASS] checkSenderKeyGeneric(uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: [..]] checkSenderKeyGenericWrong(uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: [..]] checkSenderKeyWrong(uint256,uint256) ([METRICS])
-Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // The generic counterexample only fails with the storage it read, so its artifacts carry
+    // that storage, minimization replays with it, and so does the artifact replay.
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--match-test", "checkSenderKeyGenericWrong"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkSenderKeyGenericWrong(uint256,uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["replay"]["status"], "confirmed", "{result}");
+    let artifact = read_artifact_ref(&symbolic["artifact"]);
+    assert!(!artifact["storage"].as_array().is_none_or(Vec::is_empty), "{artifact}");
+    let original = read_artifact_ref(&symbolic["minimization"]["original"]);
+    assert_eq!(original["storage"], artifact["storage"]);
+    let artifact_path = symbolic["artifact"]["path"].as_str().unwrap().to_string();
+    cmd.forge_fuse().args(["test", "--replay-symbolic-artifact", &artifact_path]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: [..]] checkSenderKeyGenericWrong(uint256,uint256) ([GAS])
 ...
 "#]]);
 }

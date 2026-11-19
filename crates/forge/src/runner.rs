@@ -1450,10 +1450,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self,
         call: &SymbolicCounterexampleCall,
         expected_identity: Option<B256>,
+        storage: &[SymbolicStorageAssignment],
         memory_halt_pc: Option<usize>,
     ) -> Result<(RawCallResult<FEN>, Option<String>), String> {
         let mut executor = self
             .clone_executor_with_svm_returns(&call.svm_returns)
+            .and_then(|executor| apply_symbolic_storage(executor, storage))
             .map_err(|err| err.to_string())?;
         executor.inspector_mut().collect_failure_identity(true);
         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())
@@ -2850,7 +2852,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // which must reproduce the reported failure.
         if final_reason.is_some()
             && let Some(identity) = self
-                .replay_confirmed_symbolic_single_call(&original_call, None, memory_halt_pc)
+                .replay_confirmed_symbolic_single_call(
+                    &original_call,
+                    None,
+                    storage,
+                    memory_halt_pc,
+                )
                 .ok()
                 .filter(|(_, reason)| *reason == final_reason)
                 .and_then(|(raw, _)| raw.failure_identity)
@@ -2862,6 +2869,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     self.replay_confirmed_symbolic_single_call(
                         candidate,
                         Some(identity),
+                        storage,
                         memory_halt_pc,
                     )
                     .is_ok()
@@ -2872,6 +2880,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 match self.replay_confirmed_symbolic_single_call(
                     &candidate.minimized_call,
                     Some(identity),
+                    storage,
                     memory_halt_pc,
                 ) {
                     Ok((raw, reason)) => {
@@ -2909,15 +2918,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 ..SymbolicCounterexample::from(&base_counterexample)
             },
         );
+        let single_call_artifact = |result: &SymbolicResult, call| {
+            let artifact =
+                self.symbolic_artifact(&signature, kind, result, fail_on_revert, vec![call]);
+            if storage.is_empty() { artifact } else { artifact.with_storage(storage.to_vec()) }
+        };
         let minimized_artifact = self.write_symbolic_artifact(
             &signature,
-            &self.symbolic_artifact(
-                &signature,
-                kind,
-                &symbolic_result,
-                fail_on_revert,
-                vec![final_call],
-            ),
+            &single_call_artifact(&symbolic_result, final_call),
         );
         if let Some(artifact) = minimized_artifact.clone() {
             symbolic_result = symbolic_result.with_artifact(artifact);
@@ -2931,13 +2939,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             );
             let original_artifact = self.write_symbolic_artifact(
                 &format!("original__{signature}"),
-                &self.symbolic_artifact(
-                    &signature,
-                    kind,
-                    &original_result,
-                    fail_on_revert,
-                    vec![minimization.original_call.clone()],
-                ),
+                &single_call_artifact(&original_result, minimization.original_call.clone()),
             );
             if let Some((original, minimized)) = original_artifact.zip(minimized_artifact) {
                 symbolic_result =
@@ -3025,6 +3027,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 let counterexample = || CounterExample::Single(call.to_base_counterexample());
                 let (executor, raw) = match self
                     .clone_executor_with_svm_returns(&call.svm_returns)
+                    .and_then(|executor| apply_symbolic_storage(executor, &artifact.storage))
                     .and_then(|mut executor| {
                         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())?;
                         Ok((executor, raw))
