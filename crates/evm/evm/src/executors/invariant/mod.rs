@@ -851,23 +851,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             dynamic: Some(&dynamic),
             senders: Some(&campaign_seed.sender_filters),
         };
-        // Only worker 0 mutates with cmp hints, so patches are solved after sharding.
-        let solve_patches = self.config.corpus.mutates_evm_comparisons();
         let mut corpus_seed = WorkerCorpusSeed::load_from_disk(
             &self.config.corpus,
             None,
             Some(&corpus_replay_executor),
             replay_target,
-            solve_patches && actual_worker_count == 1,
+            self.config.corpus.mutates_evm_comparisons().then_some(actual_worker_count),
         )?;
-        if solve_patches && actual_worker_count > 1 {
-            corpus_seed.solve_worker_patches(
-                &self.config.corpus,
-                &corpus_replay_executor,
-                replay_target,
-                actual_worker_count,
-            )?;
-        }
         if invariant_contract.is_optimization()
             && let Some(best_value) = corpus_seed.optimization_best_value
         {

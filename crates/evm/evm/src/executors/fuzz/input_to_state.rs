@@ -227,99 +227,116 @@ mod tests {
     }
 
     #[test]
-    fn solves_balance_offset() {
-        let before = U256::from(10).pow(U256::from(24));
-        let target = U256::MAX >> 2;
-        let amount = U256::from(5);
-        let base = [cmp(opcode::EQ, before + amount, target)];
-        let shifted = [cmp(opcode::EQ, before + amount + U256::ONE, target)];
-        assert_eq!(solve(&base, &shifted, 4, amount, U256::ONE), [patch(target - before)]);
-    }
-
-    #[test]
-    fn solves_negated_operand() {
-        let value = U256::MAX >> 3;
-        let x = U256::from(100);
-        let base = [cmp(opcode::EQ, value - x, U256::from(7))];
-        let shifted = [cmp(opcode::EQ, value - x - U256::ONE, U256::from(7))];
-        assert_eq!(solve(&base, &shifted, 4, x, U256::ONE), [patch(value - U256::from(7))]);
-    }
-
-    #[test]
-    fn solves_with_negative_shift() {
-        let x = U256::MAX;
-        let base = [cmp(opcode::EQ, x, U256::from(9))];
-        let shifted = [cmp(opcode::EQ, x - U256::ONE, U256::from(9))];
-        assert_eq!(solve(&base, &shifted, 4, x, U256::MAX), [patch(U256::from(9))]);
-    }
-
-    #[test]
-    fn skips_comparisons_that_do_not_move_by_one_on_one_side() {
-        let x = U256::from(5);
-        for (base, shifted) in [
+    fn solves_comparisons_that_move_with_the_word() {
+        let balance = U256::from(10).pow(U256::from(24));
+        let balance_target = U256::MAX >> 2;
+        let negated = U256::MAX >> 3;
+        let (before, t, x) = (U256::from(1000), U256::from(5000), U256::from(10));
+        // (base log, shifted log, word, delta, expected patched words).
+        let cases = [
+            // `balance + x == target`.
+            (
+                vec![cmp(opcode::EQ, balance + x, balance_target)],
+                vec![cmp(opcode::EQ, balance + x + U256::ONE, balance_target)],
+                x,
+                U256::ONE,
+                vec![balance_target - balance],
+            ),
+            // `value - x == 7`: the operand moves against the word.
+            (
+                vec![cmp(opcode::EQ, negated - x, U256::from(7))],
+                vec![cmp(opcode::EQ, negated - x - U256::ONE, U256::from(7))],
+                x,
+                U256::ONE,
+                vec![negated - U256::from(7)],
+            ),
+            // A word at its maximum is shifted down.
+            (
+                vec![cmp(opcode::EQ, U256::MAX, U256::from(9))],
+                vec![cmp(opcode::EQ, U256::MAX - U256::ONE, U256::from(9))],
+                U256::MAX,
+                U256::MAX,
+                vec![U256::from(9)],
+            ),
+            // `before + x > t` is false, so the sum must rise one past `t`.
+            (
+                vec![cmp(opcode::GT, before + x, t)],
+                vec![cmp(opcode::GT, before + x + U256::ONE, t)],
+                x,
+                U256::ONE,
+                vec![t + U256::ONE - before],
+            ),
+            // `t < before + x` is the same ordering with the moving side on the right.
+            (
+                vec![cmp(opcode::LT, t, before + x)],
+                vec![cmp(opcode::LT, t, before + x + U256::ONE)],
+                x,
+                U256::ONE,
+                vec![t + U256::ONE - before],
+            ),
+            // Each occurrence of a site is solved; the second moves against the word.
+            (
+                vec![
+                    cmp(opcode::EQ, U256::from(3), U256::from(10)),
+                    cmp(opcode::EQ, U256::from(17), U256::ONE),
+                ],
+                vec![
+                    cmp(opcode::EQ, U256::from(4), U256::from(10)),
+                    cmp(opcode::EQ, U256::from(16), U256::ONE),
+                ],
+                U256::from(3),
+                U256::ONE,
+                vec![U256::from(10), U256::from(19)],
+            ),
+            // solc compiles `x + 10 == 50` to `SUB` + `JUMPI`, logged while the operands differ.
+            (
+                vec![cmp(opcode::SUB, U256::from(13), U256::from(50))],
+                vec![cmp(opcode::SUB, U256::from(14), U256::from(50))],
+                U256::from(3),
+                U256::ONE,
+                vec![U256::from(40)],
+            ),
             // Both sides moved.
-            (cmp(opcode::EQ, x, x + U256::ONE), cmp(opcode::EQ, x + U256::ONE, x + U256::from(2))),
+            (
+                vec![cmp(opcode::EQ, x, x + U256::ONE)],
+                vec![cmp(opcode::EQ, x + U256::ONE, x + U256::from(2))],
+                x,
+                U256::ONE,
+                vec![],
+            ),
             // Slope 2.
             (
-                cmp(opcode::EQ, x * U256::from(2), U256::ONE),
-                cmp(opcode::EQ, x * U256::from(2) + U256::from(2), U256::ONE),
+                vec![cmp(opcode::EQ, x * U256::from(2), U256::ONE)],
+                vec![cmp(opcode::EQ, x * U256::from(2) + U256::from(2), U256::ONE)],
+                x,
+                U256::ONE,
+                vec![],
             ),
             // Nothing moved.
-            (cmp(opcode::EQ, U256::ONE, U256::from(2)), cmp(opcode::EQ, U256::ONE, U256::from(2))),
-        ] {
-            assert!(solve(&[base], &[shifted], 4, x, U256::ONE).is_empty(), "{base:?}");
+            (
+                vec![cmp(opcode::EQ, U256::ONE, U256::from(2))],
+                vec![cmp(opcode::EQ, U256::ONE, U256::from(2))],
+                x,
+                U256::ONE,
+                vec![],
+            ),
+            // The site occurs a different number of times.
+            (
+                vec![cmp(opcode::LT, U256::ZERO, x), cmp(opcode::LT, U256::ONE, x)],
+                vec![
+                    cmp(opcode::LT, U256::ZERO, x + U256::ONE),
+                    cmp(opcode::LT, U256::ONE, x + U256::ONE),
+                    cmp(opcode::LT, U256::from(2), x + U256::ONE),
+                ],
+                x,
+                U256::ONE,
+                vec![],
+            ),
+        ];
+        for (base, shifted, word, delta, expected) in cases {
+            let expected = expected.into_iter().map(patch).collect::<Vec<_>>();
+            assert_eq!(solve(&base, &shifted, 4, word, delta), expected, "{base:?}");
         }
-    }
-
-    #[test]
-    fn skips_sites_whose_occurrence_count_changed() {
-        let x = U256::from(3);
-        let base = [cmp(opcode::LT, U256::ZERO, x), cmp(opcode::LT, U256::ONE, x)];
-        let shifted = [
-            cmp(opcode::LT, U256::ZERO, x + U256::ONE),
-            cmp(opcode::LT, U256::ONE, x + U256::ONE),
-            cmp(opcode::LT, U256::from(2), x + U256::ONE),
-        ];
-        assert!(solve(&base, &shifted, 4, x, U256::ONE).is_empty());
-    }
-
-    #[test]
-    fn solves_ordering_through_offset() {
-        let before = U256::from(1000);
-        let t = U256::from(5000);
-        let x = U256::from(10);
-        // `before + x > t` is false, so the sum must rise one past `t`.
-        let base = [cmp(opcode::GT, before + x, t)];
-        let shifted = [cmp(opcode::GT, before + x + U256::ONE, t)];
-        assert_eq!(solve(&base, &shifted, 4, x, U256::ONE), [patch(t + U256::ONE - before)]);
-        // `t < before + x` is the same ordering with the moving side on the right.
-        let base = [cmp(opcode::LT, t, before + x)];
-        let shifted = [cmp(opcode::LT, t, before + x + U256::ONE)];
-        assert_eq!(solve(&base, &shifted, 4, x, U256::ONE), [patch(t + U256::ONE - before)]);
-    }
-
-    #[test]
-    fn solves_each_occurrence_of_a_site() {
-        let x = U256::from(3);
-        let base =
-            [cmp(opcode::EQ, x, U256::from(10)), cmp(opcode::EQ, U256::from(20) - x, U256::ONE)];
-        // The second occurrence moves against the word.
-        let shifted = [
-            cmp(opcode::EQ, x + U256::ONE, U256::from(10)),
-            cmp(opcode::EQ, U256::from(20) - x - U256::ONE, U256::ONE),
-        ];
-        assert_eq!(
-            solve(&base, &shifted, 4, x, U256::ONE),
-            [patch(U256::from(10)), patch(U256::from(19))]
-        );
-    }
-
-    #[test]
-    fn solves_address_word_at_its_maximum() {
-        let max = U256::MAX >> 96;
-        let base = [cmp(opcode::EQ, max, U256::from(9))];
-        let shifted = [cmp(opcode::EQ, max - U256::ONE, U256::from(9))];
-        assert_eq!(solve(&base, &shifted, 4, max, U256::MAX), [patch(U256::from(9))]);
     }
 
     #[test]
@@ -382,14 +399,5 @@ mod tests {
         let function = Function::parse("f((uint8,bytes),uint16)").unwrap();
         // The tuple is dynamic, so only its offset word occupies the head.
         assert_eq!(value_words(&function), [ValueWord { offset: 36, max: U256::from(u16::MAX) }]);
-    }
-
-    #[test]
-    fn solves_equality_logged_as_sub() {
-        // solc compiles `x + 10 == 50` to `SUB` + `JUMPI`, logged while the operands differ.
-        let x = U256::from(3);
-        let base = [cmp(opcode::SUB, x + U256::from(10), U256::from(50))];
-        let shifted = [cmp(opcode::SUB, x + U256::from(11), U256::from(50))];
-        assert_eq!(solve(&base, &shifted, 4, x, U256::ONE), [patch(U256::from(40))]);
     }
 }

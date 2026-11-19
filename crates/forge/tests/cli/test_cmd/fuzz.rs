@@ -7312,38 +7312,6 @@ Ran 1 test for test/FuzzCmpBalance.t.sol:FuzzCmpBalance
 "#]]);
 }
 
-// Cmp mutations solve `value - x == 7`, where the input enters the comparison negated.
-#[forgetest_init]
-fn fuzz_cmp_solves_negated_operand(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.fuzz.runs = 1000;
-        config.fuzz.seed = Some(U256::ONE);
-        config.fuzz.corpus.corpus_dir = Some(prj.root().join("corpus"));
-    });
-    prj.add_test(
-        "FuzzCmpNegated.t.sol",
-        r#"
-contract FuzzCmpNegated {
-    function testFuzz_negated(uint256 x) public view {
-        uint256 value = uint256(keccak256(abi.encode(address(this))));
-        bool hit;
-        assembly {
-            hit := eq(sub(value, x), 7)
-        }
-        require(!hit, "hit");
-    }
-}
-   "#,
-    );
-
-    cmd.args(["test", "--mc", "FuzzCmpNegated", "-j1"]).assert_failure().stdout_eq(str![[r#"
-...
-Ran 1 test for test/FuzzCmpNegated.t.sol:FuzzCmpNegated
-[FAIL: hit; counterexample: [..]] testFuzz_negated(uint256) (runs: [..], [AVG_GAS])
-...
-"#]]);
-}
-
 // Cmp mutations solve a comparison from a reloaded corpus, whose replay already covers it.
 #[forgetest_init]
 fn fuzz_cmp_solves_from_replayed_corpus(prj: _, cmd: _) {
