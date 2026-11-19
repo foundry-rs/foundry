@@ -1450,12 +1450,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self,
         call: &SymbolicCounterexampleCall,
         expected_identity: Option<B256>,
-        storage: &[SymbolicStorageAssignment],
         memory_halt_pc: Option<usize>,
     ) -> Result<(RawCallResult<FEN>, Option<String>), String> {
         let mut executor = self
-            .clone_executor_with_svm_returns(&call.svm_returns)
-            .and_then(|executor| apply_symbolic_storage(executor, storage))
+            .clone_single_call_replay_executor(&call.svm_returns, &[])
             .map_err(|err| err.to_string())?;
         executor.inspector_mut().collect_failure_identity(true);
         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())
@@ -1487,8 +1485,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
     /// Replays `calldata` on the test contract and returns whether it ran out of gas at `pc` on a
     /// memory access beyond `memory_limit`.
-    fn replays_memory_halt(&self, calldata: &Bytes, svm_returns: &[Bytes], pc: usize) -> bool {
-        let Ok(mut executor) = self.clone_executor_with_svm_returns(svm_returns) else {
+    fn replays_memory_halt(
+        &self,
+        calldata: &Bytes,
+        svm_returns: &[Bytes],
+        storage: &[SymbolicStorageAssignment],
+        pc: usize,
+    ) -> bool {
+        let Ok(mut executor) = self.clone_single_call_replay_executor(svm_returns, storage) else {
             return false;
         };
         executor.inspector_mut().collect_failure_identity(true);
@@ -2698,16 +2702,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 args,
                 calldata,
                 svm_returns,
-                storage,
                 memory_halt_pc,
+                storage,
                 stats,
             } => self.replay_symbolic_counterexample(
                 func,
                 args,
                 calldata,
                 svm_returns,
-                &storage,
                 memory_halt_pc,
+                storage,
                 stats,
                 &symbolic_config,
             ),
@@ -2729,11 +2733,29 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         args: Vec<DynSolValue>,
         calldata: Bytes,
         svm_returns: Vec<Bytes>,
-        storage: &[SymbolicStorageAssignment],
         memory_halt_pc: Option<usize>,
+        mut storage: Vec<SymbolicStorageAssignment>,
         stats: SymbolicStats,
         symbolic_config: &SymbolicConfig,
     ) -> (TestStatus, Option<String>, Option<CounterExample>, SymbolicResult) {
+        // Arbitrary storage never draws a slot again once setUp fixed it with `vm.store` or a
+        // read, which a copy caches under its source, so the artifact leaves those slots out.
+        if let Some(cheats) = self.executor.inspector().cheatcodes.as_ref() {
+            storage.retain(|assignment| {
+                let cached_address = if cheats.has_arbitrary_storage(&assignment.address) {
+                    assignment.address
+                } else {
+                    cheats
+                        .arbitrary_storage_copied_target_sources()
+                        .find(|(target, _)| *target == assignment.address)
+                        .map_or(assignment.address, |(_, source)| source)
+                };
+                !cheats.is_arbitrary_storage_slot_explicit(assignment.address, assignment.slot)
+                    && cheats
+                        .cached_arbitrary_storage_value(cached_address, assignment.slot)
+                        .is_none()
+            });
+        }
         let symbolic_counterexample = SymbolicCounterexample {
             svm_returns: svm_returns.clone(),
             ..SymbolicCounterexample::from(&BaseCounterExample::from_fuzz_call(
@@ -2755,8 +2777,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
 
         let replay = self
-            .clone_executor_with_svm_returns(&svm_returns)
-            .and_then(|executor| apply_symbolic_storage(executor, storage))
+            .clone_single_call_replay_executor(&svm_returns, &storage)
             .map_err(EvmError::from)
             .and_then(|executor| {
                 executor.call(
@@ -2802,7 +2823,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // a model that halts on that access may replay as out of gas, but only at that access.
         let out_of_gas = replay_ran_out_of_gas(&raw)
             && memory_halt_pc.is_none_or(|pc| {
-                !self.replays_memory_halt(&base_counterexample.calldata, &svm_returns, pc)
+                !self.replays_memory_halt(&base_counterexample.calldata, &svm_returns, &storage, pc)
             });
         if rejected_by_assume
             || svm_exhausted
@@ -2849,15 +2870,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut final_reason = reason;
         let mut minimization = None;
         // Recording the identity skips cheatcodes with host effects, so it uses its own replay,
-        // which must reproduce the reported failure.
+        // which must reproduce the reported failure. Storage is keyed by concrete slots that a
+        // smaller input can move off, leaving it to read fresh arbitrary values, so a
+        // counterexample that needs storage is not minimized.
         if final_reason.is_some()
+            && storage.is_empty()
             && let Some(identity) = self
-                .replay_confirmed_symbolic_single_call(
-                    &original_call,
-                    None,
-                    storage,
-                    memory_halt_pc,
-                )
+                .replay_confirmed_symbolic_single_call(&original_call, None, memory_halt_pc)
                 .ok()
                 .filter(|(_, reason)| *reason == final_reason)
                 .and_then(|(raw, _)| raw.failure_identity)
@@ -2869,7 +2888,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     self.replay_confirmed_symbolic_single_call(
                         candidate,
                         Some(identity),
-                        storage,
                         memory_halt_pc,
                     )
                     .is_ok()
@@ -2880,7 +2898,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 match self.replay_confirmed_symbolic_single_call(
                     &candidate.minimized_call,
                     Some(identity),
-                    storage,
                     memory_halt_pc,
                 ) {
                     Ok((raw, reason)) => {
@@ -2918,14 +2935,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 ..SymbolicCounterexample::from(&base_counterexample)
             },
         );
-        let single_call_artifact = |result: &SymbolicResult, call| {
-            let artifact =
-                self.symbolic_artifact(&signature, kind, result, fail_on_revert, vec![call]);
-            if storage.is_empty() { artifact } else { artifact.with_storage(storage.to_vec()) }
-        };
         let minimized_artifact = self.write_symbolic_artifact(
             &signature,
-            &single_call_artifact(&symbolic_result, final_call),
+            &self
+                .symbolic_artifact(
+                    &signature,
+                    kind,
+                    &symbolic_result,
+                    fail_on_revert,
+                    vec![final_call],
+                )
+                .with_storage(storage),
         );
         if let Some(artifact) = minimized_artifact.clone() {
             symbolic_result = symbolic_result.with_artifact(artifact);
@@ -2939,7 +2959,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             );
             let original_artifact = self.write_symbolic_artifact(
                 &format!("original__{signature}"),
-                &single_call_artifact(&original_result, minimization.original_call.clone()),
+                &self.symbolic_artifact(
+                    &signature,
+                    kind,
+                    &original_result,
+                    fail_on_revert,
+                    vec![minimization.original_call.clone()],
+                ),
             );
             if let Some((original, minimized)) = original_artifact.zip(minimized_artifact) {
                 symbolic_result =
@@ -3026,8 +3052,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
                 let counterexample = || CounterExample::Single(call.to_base_counterexample());
                 let (executor, raw) = match self
-                    .clone_executor_with_svm_returns(&call.svm_returns)
-                    .and_then(|executor| apply_symbolic_storage(executor, &artifact.storage))
+                    .clone_single_call_replay_executor(&call.svm_returns, &artifact.storage)
                     .and_then(|mut executor| {
                         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())?;
                         Ok((executor, raw))
@@ -5791,10 +5816,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.executor.clone().into_owned()
     }
 
-    /// Clones the executor and answers the `svm.*` helper calls with `svm_returns` in order, as
-    /// the symbolic path did.
-    fn clone_executor_with_svm_returns(&self, svm_returns: &[Bytes]) -> Result<Executor<FEN>> {
+    /// Clones the executor for a single-call symbolic replay: applies the counterexample's
+    /// `storage` and answers the `svm.*` helper calls with `svm_returns` in order, as the symbolic
+    /// path did.
+    fn clone_single_call_replay_executor(
+        &self,
+        svm_returns: &[Bytes],
+        storage: &[SymbolicStorageAssignment],
+    ) -> Result<Executor<FEN>> {
         let mut executor = self.clone_executor();
+        apply_symbolic_storage(&mut executor, storage)?;
         // Like the symbolic model, the helper address reports one byte of code.
         executor
             .set_code(SYMBOLIC_VM_COMPAT_ADDRESS, Bytecode::new_raw(Bytes::from_static(&[0])))?;
@@ -5836,7 +5867,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self,
         storage: &[SymbolicStorageAssignment],
     ) -> Result<Executor<FEN>> {
-        apply_symbolic_storage(self.clone_invariant_executor(), storage)
+        let mut executor = self.clone_invariant_executor();
+        apply_symbolic_storage(&mut executor, storage)?;
+        Ok(executor)
     }
 
     fn build_fuzz_state(&self, invariant: bool, func: Option<&Function>) -> EvmFuzzState {
@@ -5898,25 +5931,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
         EvmFuzzState::new(&self.setup.deployed_libs, &db, config, Some(literals))
     }
-}
-
-/// Applies the setup-storage values of a symbolic counterexample to `executor`, including the
-/// arbitrary storage values its cheatcodes would otherwise make up.
-fn apply_symbolic_storage<FEN: FoundryEvmNetwork>(
-    mut executor: Executor<FEN>,
-    storage: &[SymbolicStorageAssignment],
-) -> Result<Executor<FEN>> {
-    for assignment in storage {
-        executor.set_storage_slot(assignment.address, assignment.slot, assignment.value)?;
-        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
-            cheats.cache_arbitrary_storage_value(
-                assignment.address,
-                assignment.slot,
-                assignment.value,
-            );
-        }
-    }
-    Ok(executor)
 }
 
 fn fuzzer_with_cases(seed: Option<U256>, cases: u32, max_global_rejects: u32) -> TestRunner {
@@ -6192,6 +6206,30 @@ fn replayed_memory_halt<FEN: FoundryEvmNetwork>(
         && raw
             .failure_halt
             .is_some_and(|(halt_pc, end)| halt_pc == pc && end > U256::from(memory_limit))
+}
+
+/// Applies the setup storage of a symbolic counterexample. Arbitrary storage draws the modeled
+/// values instead of random ones, keeping its own rules for when a slot is drawn; other storage,
+/// such as under the generic layout, is written directly.
+fn apply_symbolic_storage<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    storage: &[SymbolicStorageAssignment],
+) -> Result<()> {
+    for assignment in storage {
+        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
+            && (cheats.has_arbitrary_storage(&assignment.address)
+                || cheats.is_arbitrary_storage_copy(&assignment.address))
+        {
+            cheats.set_arbitrary_storage_replay_value(
+                assignment.address,
+                assignment.slot,
+                assignment.value,
+            );
+        } else {
+            executor.set_storage_slot(assignment.address, assignment.slot, assignment.value)?;
+        }
+    }
+    Ok(())
 }
 
 fn frontier_selector(frontier: &FuzzBranchFrontierRecord) -> Option<Selector> {
