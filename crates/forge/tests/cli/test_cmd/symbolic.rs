@@ -8433,6 +8433,73 @@ UPDATES        assert(x < 2 ** 128);
     );
 }
 
+// Lending checks cross-multiply `debt * BPS <= collateral * ltv`, and an `ltv` of at most `BPS`
+// then bounds the debt by the collateral.
+#[forgetest_init]
+fn symbolic_proves_scaled_order(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_scaled_order");
+    prj.add_test(
+        "SymbolicScaledOrder.t.sol",
+        r#"
+contract SymbolicScaledOrder {
+    uint256 internal constant BPS = 10_000;
+
+    function checkBorrowWithinCollateral(uint128 collateral, uint16 ltvBps, uint128 debt)
+        public
+        pure
+    {
+        require(ltvBps <= BPS);
+        require(uint256(debt) * BPS <= uint256(collateral) * ltvBps);
+        assert(debt <= collateral);
+    }
+
+    function checkBorrowAboveFullLtv(uint128 collateral, uint16 ltvBps, uint128 debt)
+        public
+        pure
+    {
+        require(ltvBps <= BPS + 1);
+        require(uint256(debt) * BPS <= uint256(collateral) * ltvBps);
+        assert(debt <= collateral);
+    }
+
+    function checkBorrowWithWrappingDebt(uint128 collateral, uint16 ltvBps, uint256 debt)
+        public
+        pure
+    {
+        require(ltvBps <= BPS);
+        unchecked {
+            require(debt * BPS <= uint256(collateral) * ltvBps);
+        }
+        assert(debt <= collateral);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicScaledOrder"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result =
+            json_test_result(&output, "checkBorrowWithinCollateral(uint128,uint16,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+
+        for signature in [
+            "checkBorrowAboveFullLtv(uint128,uint16,uint128)",
+            "checkBorrowWithWrappingDebt(uint128,uint16,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A

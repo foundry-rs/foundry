@@ -291,8 +291,49 @@ impl ConstraintContext {
                     })
                 })
                 .then_some(false),
-            _ => None,
+            _ => self.asserts_scaled_order(small, large, intervals, remaining).then_some(false),
         }
+    }
+
+    /// Returns whether another conjunct asserts `small * k <= large * l` with `l <= k` and a
+    /// positive `k`, as in a cross-multiplied collateral check. When `small * k` does not wrap,
+    /// `small > large` would give `small * k > large * k >= large * l`, using `k > 0` and
+    /// `l <= k`, and a wrapped `large * l` is only smaller. The reverse, deciding a scaled fact
+    /// from `small <= large`, must never remove a conjunct, or the two could justify each other.
+    fn asserts_scaled_order(
+        &self,
+        small: &SymExpr,
+        large: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let factor = |product: &'_ SymExpr, operand: &SymExpr| match product.kind() {
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) if left == operand => {
+                Some(right.clone())
+            }
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) if right == operand => {
+                Some(left.clone())
+            }
+            _ => None,
+        };
+        self.facts.iter().any(|fact| {
+            let (scaled_small, scaled_large) = match fact.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => (left, right),
+                SymBoolExprKind::Not(inner) => match inner.kind() {
+                    SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => (right, left),
+                    _ => return false,
+                },
+                _ => return false,
+            };
+            let (Some(k), Some(l)) = (factor(scaled_small, small), factor(scaled_large, large))
+            else {
+                return false;
+            };
+            self.interval_cached(&k, intervals, remaining)
+                .zip(self.interval_cached(&l, intervals, remaining))
+                .is_some_and(|(k, l)| !k.min.is_zero() && l.max <= k.min)
+                && self.mul_cannot_overflow_256(small, &k)
+        })
     }
 
     /// Returns whether another conjunct asserts `small <= large`, including strict `<`.
