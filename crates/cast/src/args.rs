@@ -1363,7 +1363,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let metadata = client.contract_source_code(address.parse()?).await?;
             match (directory, flatten) {
                 (Some(dir), false) => {
-                    metadata.source_tree().write_to(&dir)?;
+                    metadata.source_tree()?.write_to(&dir)?;
                 }
                 (None, false) => sh_println!("{}", metadata.source_code())?,
                 (dir, true) => {
