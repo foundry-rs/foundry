@@ -58,6 +58,14 @@ contract StorageSlotLayout {
     }
 }
 
+contract StorageSlotBase {
+    uint128 public baseValue; // slot 0, offset 0
+}
+
+contract StorageSlotChild is StorageSlotBase {
+    uint128 public childValue; // slot 0, offset 16
+}
+
 contract GetStorageSlotTest is Test {
     StorageSlotLayout target;
 
@@ -167,8 +175,27 @@ contract GetStorageSlotTest is Test {
         assertLocation("A", 11, 0, 32);
     }
 
+    function testInheritedVariables() public {
+        address child = address(new StorageSlotChild());
+        (uint256 slot, uint256 offset, uint256 numberOfBytes) = vm.getStorageSlot(child, "baseValue");
+        assertEq(slot, 0);
+        assertEq(offset, 0);
+        assertEq(numberOfBytes, 16);
+        (slot, offset, numberOfBytes) = vm.getStorageSlot(child, "childValue");
+        assertEq(slot, 0);
+        assertEq(offset, 16);
+        assertEq(numberOfBytes, 16);
+    }
+
     function testUnknownVariable() public {
         vm._expectCheatcodeRevert("variable 'missing' not found in storage layout");
         vm.getStorageSlot(address(target), "missing");
+    }
+
+    function testNoStorageLayout() public {
+        vm._expectCheatcodeRevert(
+            "Storage layout not available for contract at 0x000000000000000000000000000000000000dEaD. Try compiling contracts with `--extra-output storageLayout`"
+        );
+        vm.getStorageSlot(address(0xdEaD), "value");
     }
 }
