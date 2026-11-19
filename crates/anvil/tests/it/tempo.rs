@@ -3997,13 +3997,45 @@ async fn test_tempo_simulate_reverted_batch_discards_logs() {
     });
 
     let response = provider
-        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload.clone(),))
         .await
         .unwrap();
     assert_eq!(response[0]["calls"][0]["status"], "0x0");
     assert_eq!(response[0]["calls"][0]["logs"], serde_json::json!([]));
     assert_eq!(response[0]["calls"][1]["status"], "0x1");
     assert_eq!(response[0]["calls"][1]["logs"][0]["logIndex"], "0x0");
+
+    // A reverted call that pays fees keeps its fee transfer log, as its receipt does.
+    let mut payload = payload;
+    let max_fee = U256::from(provider.get_gas_price().await.unwrap() * 2);
+    for call in payload["blockStateCalls"][0]["calls"].as_array_mut().unwrap() {
+        call["maxFeePerGas"] = serde_json::json!(max_fee);
+    }
+    payload["validation"] = serde_json::json!(true);
+    let response = provider
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+    let calls = response[0]["calls"].as_array().unwrap();
+    assert_eq!(calls[0]["status"], "0x0");
+    assert_eq!(calls[1]["status"], "0x1");
+    let logs = calls
+        .iter()
+        .flat_map(|call| call["logs"].as_array().unwrap())
+        .map(|log| (log["transactionIndex"].clone(), log["logIndex"].clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        logs,
+        [
+            (serde_json::json!("0x0"), serde_json::json!("0x0")),
+            (serde_json::json!("0x1"), serde_json::json!("0x1")),
+            (serde_json::json!("0x1"), serde_json::json!("0x2")),
+        ]
+    );
+    assert_eq!(
+        calls[0]["logs"][0]["topics"][2],
+        serde_json::json!(TIP_FEE_MANAGER_ADDRESS.into_word())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
