@@ -6,6 +6,7 @@
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
     SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
+    rounded_product_operands,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -218,22 +219,35 @@ impl ConstraintContext {
                 {
                     return nonzero(divisor).then_some(false);
                 }
-                let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
-                    return None;
-                };
-                let other = if left == large {
-                    right
-                } else if right == large {
-                    left
-                } else {
-                    return None;
-                };
-                let range = self.interval(divisor)?;
-                (!range.min.is_zero()
-                    && (self.interval(other).is_some_and(|other| other.max <= range.min)
+                let bounded = |dividend: &SymExpr| {
+                    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
+                        return false;
+                    };
+                    let other = if left == large {
+                        right
+                    } else if right == large {
+                        left
+                    } else {
+                        return false;
+                    };
+                    let Some(range) = self.interval(divisor).filter(|range| !range.min.is_zero())
+                    else {
+                        return false;
+                    };
+                    (other == divisor
+                        || self.interval(other).is_some_and(|other| other.max <= range.min)
                         || self.asserts_less_or_equal(other, divisor))
-                    && self.mul_cannot_overflow_256(left, right))
-                .then_some(false)
+                        && self.mul_cannot_overflow_256(left, right)
+                };
+                // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
+                // is bounded by `n / d`.
+                let peeled = match dividend.kind() {
+                    SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                        rounded_product_operands(left, right).map(|(n, _)| n)
+                    }
+                    _ => None,
+                };
+                (peeled.is_some_and(bounded) || bounded(dividend)).then_some(false)
             }
             // `(x / d) * k <= (x / d) * d <= x` once `k <= d`, so the product cannot wrap; a zero
             // `d` forces a zero product.

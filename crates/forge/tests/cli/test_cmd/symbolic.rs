@@ -8999,6 +8999,23 @@ contract SymbolicBoundedComplementTest {
         if (total == 0 || shares < total) return;
         assert(reward * shares / total <= reward);
     }
+
+    // Converting assets to shares and back rounds down twice, so it cannot create assets.
+    function checkVaultRoundTrip(uint256 assets, uint256 supply, uint256 total) public pure {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = assets * supply / total;
+        assert(shares * total / supply <= assets);
+    }
+
+    // Dividing the rounded product by another divisor can create assets.
+    function checkVaultOtherDivisor(uint256 assets, uint256 supply, uint256 total, uint256 other)
+        public
+        pure
+    {
+        if (supply == 0 || total == 0 || other == 0) return;
+        uint256 shares = assets * supply / total;
+        assert(shares * total / other <= assets);
+    }
 }
 "#,
     );
@@ -9075,6 +9092,18 @@ contract SymbolicBoundedComplementTest {
         );
 
         let result = json_test_result(&output, "checkProRataAboveTotal(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkVaultRoundTrip(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result =
+            json_test_result(&output, "checkVaultOtherDivisor(uint256,uint256,uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
