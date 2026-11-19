@@ -2216,6 +2216,8 @@ impl ConstraintContext {
         let fact = bitwise_bool_word_fact(cx, constraint).unwrap_or_else(|| constraint.clone());
         let factors = if let Some(factors) = self.checked_product_factors(&fact, None) {
             Some(factors)
+        } else if let Some(factors) = Self::division_guard_factors(&fact) {
+            Some(factors)
         } else if let SymBoolExprKind::Not(inner) = fact.kind()
             && let SymBoolExprKind::And(terms) = inner.kind()
             && terms.len() == 2
@@ -2226,6 +2228,14 @@ impl ConstraintContext {
             let second = terms[1].clone().not(cx);
             self.checked_product_factors(&second, Some(&first))
                 .or_else(|| self.checked_product_factors(&first, Some(&second)))
+                .or_else(|| {
+                    // `y == 0 || x <= MAX / y`, as in Solmate's `mulDivDown`.
+                    [(&first, &second), (&second, &first)].into_iter().find_map(|(guard, zero)| {
+                        let (value, factor) = Self::division_guard_factors(guard)?;
+                        (self.bounded_zero_check_operand(zero) == Some(&factor))
+                            .then_some((value, factor))
+                    })
+                })
         } else {
             None
         };
@@ -2245,6 +2255,20 @@ impl ConstraintContext {
         } else {
             false
         }
+    }
+
+    /// Returns `(x, y)` for `x <= n / y` with any numerator, as in `x <= MAX / y`, since then
+    /// `x * y <= (n / y) * y <= n`. The product is zero when `y == 0`, and an EVM division that
+    /// yields zero only forces `x == 0`.
+    fn division_guard_factors(predicate: &SymBoolExpr) -> Option<(SymExpr, SymExpr)> {
+        let SymBoolExprKind::Not(inner) = predicate.kind() else { return None };
+        let SymBoolExprKind::Cmp(SymCmpOp::Ult, bound, value) = inner.kind() else { return None };
+        let quotient = match bound.kind() {
+            SymExprKind::Ite(_, zero, quotient) if zero.as_const() == Some(U256::ZERO) => quotient,
+            _ => bound,
+        };
+        let (_, factor) = quotient.udiv_operands()?;
+        Some((value.clone(), factor.clone()))
     }
 
     fn checked_product_factors(
