@@ -6,7 +6,6 @@
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
     SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
-    rounded_product_operands,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -142,9 +141,9 @@ impl ConstraintContext {
     /// Decides a comparison between a division result and one of its operands.
     ///
     /// With a nonzero divisor, `a % d < d` and `a / d <= a`. For every divisor, `a % d <= a` and
-    /// `(a / d) * d <= a`, and `x * y / k <= x` once `y <= k` and `x * y` cannot wrap. The
-    /// Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the other's
-    /// complement.
+    /// `(a / d) * k <= a` once `k <= d`, and `x * y / k <= x` once `y <= k` and `x * y` cannot
+    /// wrap. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
+    /// other's complement.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -210,8 +209,20 @@ impl ConstraintContext {
                     && self.mul_cannot_overflow_256(left, right))
                 .then_some(false)
             }
-            SymExprKind::BinOp(SymBinOp::Mul, left, right) => rounded_product_operands(left, right)
-                .is_some_and(|(dividend, _)| dividend == large)
+            // `(x / d) * k <= (x / d) * d <= x` once `k <= d`, so the product cannot wrap; a zero
+            // `d` forces a zero product.
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => [(left, right), (right, left)]
+                .into_iter()
+                .any(|(quotient, factor)| {
+                    quotient.udiv_operands().is_some_and(|(dividend, divisor)| {
+                        dividend == large
+                            && (factor == divisor
+                                || self
+                                    .interval(factor)
+                                    .zip(self.interval(divisor))
+                                    .is_some_and(|(factor, divisor)| factor.max <= divisor.min))
+                    })
+                })
                 .then_some(false),
             _ => None,
         }
