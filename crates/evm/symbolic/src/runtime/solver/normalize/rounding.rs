@@ -6,6 +6,7 @@
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
     SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
+    rounded_product_operands,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -230,27 +231,16 @@ impl ConstraintContext {
                 {
                     return nonzero(interval(divisor)).then_some(false);
                 }
-                let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
-                    return None;
-                };
-                let other = if left == large {
-                    right
-                } else if right == large {
-                    left
-                } else {
-                    return None;
-                };
                 // When `y + z` is nonzero and does not wrap, `x * y / (y + z) <= x`, strictly once
                 // `x` and `z` are nonzero, since `x * y < x * (y + z)`. A wrapped product only
                 // shrinks the dividend. `UDiv` by zero is all ones, so the divisor must be nonzero.
-                if let SymExprKind::BinOp(SymBinOp::Add, a, b) = divisor.kind()
-                    && let Some(rest) = if a == other {
-                        Some(b)
-                    } else if b == other {
-                        Some(a)
-                    } else {
-                        None
-                    }
+                if let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind()
+                    && let SymExprKind::BinOp(SymBinOp::Add, a, b) = divisor.kind()
+                    && let Some(other) = [(left, right), (right, left)]
+                        .into_iter()
+                        .find_map(|(x, y)| (x == large).then_some(y))
+                    && let Some(rest) =
+                        [(a, b), (b, a)].into_iter().find_map(|(y, z)| (y == other).then_some(z))
                     && let Some(other) = interval(other)
                     && let Some(rest) = interval(rest)
                     && other.max.checked_add(rest.max).is_some()
@@ -258,12 +248,34 @@ impl ConstraintContext {
                 {
                     return Some(nonzero(interval(large)) && !rest.min.is_zero());
                 }
-                let range = interval(divisor)?;
-                (!range.min.is_zero()
-                    && (interval(other).is_some_and(|other| other.max <= range.min)
+                let mut bounded = |dividend: &SymExpr| {
+                    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
+                        return false;
+                    };
+                    let other = if left == large {
+                        right
+                    } else if right == large {
+                        left
+                    } else {
+                        return false;
+                    };
+                    let Some(range) = interval(divisor).filter(|range| !range.min.is_zero()) else {
+                        return false;
+                    };
+                    (other == divisor
+                        || interval(other).is_some_and(|other| other.max <= range.min)
                         || self.asserts_less_or_equal(other, divisor))
-                    && self.mul_cannot_overflow_256(left, right))
-                .then_some(false)
+                        && self.mul_cannot_overflow_256(left, right)
+                };
+                // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
+                // is bounded by `n / d`.
+                let peeled = match dividend.kind() {
+                    SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                        rounded_product_operands(left, right).map(|(n, _)| n)
+                    }
+                    _ => None,
+                };
+                (peeled.is_some_and(&mut bounded) || bounded(dividend)).then_some(false)
             }
             // `(x / d) * k <= (x / d) * d <= x` once `k <= d`, so the product cannot wrap; a zero
             // `d` forces a zero product.
