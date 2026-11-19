@@ -194,9 +194,10 @@ impl ConstraintContext {
                 } else {
                     return None;
                 };
-                let divisor = self.interval(divisor)?;
-                (!divisor.min.is_zero()
-                    && self.interval(other)?.max <= divisor.min
+                let range = self.interval(divisor)?;
+                (!range.min.is_zero()
+                    && (self.interval(other).is_some_and(|other| other.max <= range.min)
+                        || self.asserts_less_or_equal(other, divisor))
                     && self.mul_cannot_overflow_256(left, right))
                 .then_some(false)
             }
@@ -217,6 +218,20 @@ impl ConstraintContext {
                 .then_some(false),
             _ => None,
         }
+    }
+
+    /// Returns whether another conjunct asserts `small <= large`, including strict `<`.
+    fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
+        self.facts.iter().any(|fact| match fact.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => {
+                left == small && right == large
+            }
+            SymBoolExprKind::Not(inner) => matches!(
+                inner.kind(),
+                SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) if left == large && right == small
+            ),
+            _ => false,
+        })
     }
 
     /// Bounds a subtraction only when the relation proves it cannot underflow.

@@ -8811,6 +8811,24 @@ contract SymbolicBoundedComplementTest {
         (bool ok,) = address(this).staticcall(abi.encodeCall(this.remainderMul, (x, d, k)));
         assert(ok);
     }
+
+    // `shares <= total`, so a pro-rata share of `reward` is at most `reward`.
+    function checkProRataShare(uint256 reward, uint256 shares, uint256 total) public pure {
+        if (total == 0 || shares > total) return;
+        assert(reward * shares / total <= reward);
+    }
+
+    // `reward < total` bounds the other factor, so the share is at most `shares`.
+    function checkProRataStrictShare(uint256 reward, uint256 shares, uint256 total) public pure {
+        if (reward >= total) return;
+        assert(reward * shares / total <= shares);
+    }
+
+    // `shares >= total` does not bound the share.
+    function checkProRataAboveTotal(uint256 reward, uint256 shares, uint256 total) public pure {
+        if (total == 0 || shares < total) return;
+        assert(reward * shares / total <= reward);
+    }
 }
 "#,
     );
@@ -8869,6 +8887,24 @@ contract SymbolicBoundedComplementTest {
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
 
         let result = json_test_result(&output, "checkWideRemainderMul(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(&output, "checkProRataShare(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkProRataStrictShare(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkProRataAboveTotal(uint256,uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
