@@ -606,7 +606,7 @@ where
         gas_used_ratio: 0f64,
         blob_gas_used_ratio: 0f64,
         gas_used: 0,
-        transactions: Vec::new(),
+        transactions: Arc::default(),
         excess_blob_gas,
         base_fee_per_blob_gas,
         blob_gas_used,
@@ -647,7 +647,7 @@ where
         transactions.sort_by_key(|(_, reward)| *reward);
 
         item.gas_used = block.header.gas_used();
-        item.transactions = transactions;
+        item.transactions = transactions.into();
         block.header.number()
     });
     (item, block_number)
@@ -688,7 +688,9 @@ pub struct FeeHistoryCacheItem {
     pub blob_gas_used: Option<u128>,
     pub gas_used: u64,
     /// Gas used and effective tip of each transaction, sorted by tip.
-    pub transactions: Vec<(u64, u128)>,
+    ///
+    /// Shared so that cloning a cache entry does not copy every transaction.
+    pub transactions: Arc<[(u64, u128)]>,
 }
 
 impl FeeHistoryCacheItem {
@@ -803,8 +805,9 @@ mod tests {
     fn reward_percentiles_reference(
         transactions: &[(u64, u128)],
         block_gas_used: f64,
+        percentiles: &[f64],
     ) -> Vec<u128> {
-        sampled_percentiles()
+        percentiles
             .iter()
             .filter_map(|&percentile| {
                 let target_gas = (percentile * block_gas_used / 100f64) as u64;
@@ -820,11 +823,15 @@ mod tests {
             .collect()
     }
 
-    fn assert_reward_percentiles_match(transactions: &mut [(u64, u128)], gas_used: u64) {
+    fn assert_reward_percentiles_match(
+        transactions: &mut [(u64, u128)],
+        gas_used: u64,
+        percentiles: &[f64],
+    ) {
         transactions.sort_by_key(|(_, reward)| *reward);
         assert_eq!(
-            reward_percentiles(transactions, gas_used as f64, &sampled_percentiles()),
-            reward_percentiles_reference(transactions, gas_used as f64)
+            reward_percentiles(transactions, gas_used as f64, percentiles),
+            reward_percentiles_reference(transactions, gas_used as f64, percentiles)
         );
     }
 
@@ -882,17 +889,25 @@ mod tests {
 
     #[test]
     fn reward_percentile_sweep_preserves_boundaries_and_empty_results() {
-        assert_reward_percentiles_match(&mut [], 0);
+        let sampled = sampled_percentiles();
+        assert_reward_percentiles_match(&mut [], 0, &sampled);
 
         let mut transactions = [(5, 1), (0, 2), (5, 3)];
-        assert_reward_percentiles_match(&mut transactions, 1_000);
-        assert_eq!(reward_percentiles(&transactions, 1_000f64, &sampled_percentiles()), [1, 1, 3]);
+        assert_reward_percentiles_match(&mut transactions, 1_000, &sampled);
+        assert_eq!(reward_percentiles(&transactions, 1_000f64, &sampled), [1, 1, 3]);
 
         let mut transactions = [(0, 10), (1, 20)];
-        assert_reward_percentiles_match(&mut transactions, 1);
-        let rewards = reward_percentiles(&transactions, 1f64, &sampled_percentiles());
+        assert_reward_percentiles_match(&mut transactions, 1, &sampled);
+        let rewards = reward_percentiles(&transactions, 1f64, &sampled);
         assert_eq!(&rewards[..200], &[10; 200]);
         assert_eq!(rewards[200], 20);
+
+        // Geth's thresholds for these are 20958, 21000, 21042, 21100, and 21105 gas.
+        let transactions = [(21_000, 1), (21_000, 2)];
+        assert_eq!(
+            reward_percentiles(&transactions, 42_000f64, &[49.9, 50.0, 50.1, 50.24, 50.25]),
+            [1, 1, 2, 2, 2]
+        );
     }
 
     #[test]
@@ -914,8 +929,13 @@ mod tests {
                 2 => total_gas.saturating_add(next_random(&mut state) % 1_000),
                 _ => 0,
             };
+            let mut percentiles = (0..next_random(&mut state) % 32)
+                .map(|_| (next_random(&mut state) % 100_001) as f64 / 1_000f64)
+                .collect::<Vec<_>>();
+            percentiles.sort_by(f64::total_cmp);
+            percentiles.dedup();
 
-            assert_reward_percentiles_match(&mut transactions, header_gas_used);
+            assert_reward_percentiles_match(&mut transactions, header_gas_used, &percentiles);
         }
     }
 
