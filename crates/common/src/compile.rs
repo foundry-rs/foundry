@@ -1211,8 +1211,7 @@ fn dependency_owner<L>(paths: &ProjectPathsConfig<L>, file: &Path) -> Option<Pat
             break;
         }
         let Some(package) = next else { break };
-        libs =
-            dependency_library_paths(&package).into_iter().map(|lib| package.join(lib)).collect();
+        libs = dependency_library_paths(&package);
         owner = Some(package);
     }
     owner?.strip_prefix(&paths.root).ok().map(Path::to_path_buf)
@@ -1451,7 +1450,7 @@ mod tests {
         fs::write(root.join("lib/a/src/Target.sol"), "contract Target {}\n").unwrap();
         // A dependency can keep its nested dependencies in a directory the root does not use.
         fs::create_dir_all(root.join("lib/d")).unwrap();
-        fs::write(root.join("lib/d/foundry.toml"), "[profile.default]\nlibs = [\"vendor\"]\n")
+        fs::write(root.join("lib/d/foundry.toml"), "[profile.default]\nlibs = [\"./vendor\"]\n")
             .unwrap();
         // The source graph resolves `File.sol` to this loose copy, but the compiler does not.
         fs::write(root.join("lib/File.sol"), "contract Loose {}\n").unwrap();
@@ -1488,6 +1487,7 @@ mod tests {
             ("lib/@pkg-1.0.0/src/Dep.sol", "lib/@pkg-1.0.0/:@alias/=lib/a/src/"),
             ("lib/@pkg-1.0.0/Dep.sol", "lib/@pkg-1.0.0/:@alias/=lib/a/src/"),
         ] {
+            fs::create_dir_all(root.join(importer).parent().unwrap()).unwrap();
             assert_eq!(
                 remapping_candidates(&paths, import, &root.join(importer)),
                 BTreeMap::from([("@alias/".to_string(), BTreeSet::from([scoped.to_string()]))])

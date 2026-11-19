@@ -626,18 +626,15 @@ impl RemappingsProvider<'_> {
                 && seen.insert(entry.canonical.clone())
             {
                 // Nested library roots must stay inside both dependency identities.
-                let owner = normalize_remapping_context(&entry.path);
-                for lib in config.libs.iter().filter(|lib| lib.is_relative()) {
-                    let lib = entry.path.join(lib);
-                    if normalize_remapping_context(&lib).starts_with(&owner)
-                        && let Ok(canonical) = dunce::canonicalize(&lib)
-                        && canonical.starts_with(&entry.canonical)
-                    {
-                        pending.extend(foundry_toml_dir_entries(lib).into_iter().filter(|entry| {
-                            !fs::symlink_metadata(&entry.path)
-                                .is_ok_and(|metadata| metadata.file_type().is_symlink())
-                        }));
-                    }
+                for lib in config
+                    .libs
+                    .iter()
+                    .filter_map(|lib| contained_library_path(&entry.path, &entry.canonical, lib))
+                {
+                    pending.extend(foundry_toml_dir_entries(lib).into_iter().filter(|entry| {
+                        !fs::symlink_metadata(&entry.path)
+                            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                    }));
                 }
             }
 
@@ -691,17 +688,29 @@ impl RemappingsProvider<'_> {
     }
 }
 
-/// Returns the library directories the dependency at `root` configures, relative to it.
-///
-/// Like nested remapping discovery, only relative directories inside the dependency count.
+/// Returns the normalized library directories the dependency at `root` configures, as nested
+/// remapping discovery accepts them.
 pub fn dependency_library_paths(root: &Path) -> Vec<PathBuf> {
     let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
     let Ok(config) = Config::from_figment_fallback(figment) else { return Vec::new() };
+    let canonical = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     config
         .libs
-        .into_iter()
-        .filter(|lib| lib.components().all(|component| matches!(component, Component::Normal(_))))
+        .iter()
+        .filter_map(|lib| contained_library_path(root, &canonical, lib))
+        .map(|lib| normalize_remapping_context(&lib))
         .collect()
+}
+
+/// Joins a dependency's library directory when it is relative and stays inside both the
+/// dependency's lexical and canonical directory, so symlinks and parent components cannot
+/// impersonate another owner.
+fn contained_library_path(owner: &Path, canonical: &Path, lib: &Path) -> Option<PathBuf> {
+    let joined = owner.join(lib);
+    (lib.is_relative()
+        && normalize_remapping_context(&joined).starts_with(normalize_remapping_context(owner))
+        && dunce::canonicalize(&joined).is_ok_and(|joined| joined.starts_with(canonical)))
+    .then_some(joined)
 }
 
 fn load_nested_config(root: &Path) -> Result<Option<CachedNestedConfig>, Error> {
