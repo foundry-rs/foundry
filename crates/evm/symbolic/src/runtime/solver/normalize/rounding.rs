@@ -146,7 +146,7 @@ impl ConstraintContext {
     /// wrap. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly for nonzero
     /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
     /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
-    /// by `a != 0`.
+    /// by `a != 0`, and the shares `w * a / k + w * b / k <= w` once `a + b <= k`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -188,15 +188,16 @@ impl ConstraintContext {
     ) -> Option<bool> {
         // The overflow rewrite turns a checked `a + b` into `~a < b` before `d != 0` resolves the
         // division guards, so a symbolic divisor's Euclidean sum is not folded to `x`. That sum is
-        // `x` and cannot wrap, so `b <= ~a`.
+        // `x` and cannot wrap, so `b <= ~a`. Two shares of one whole cannot wrap either.
         if let SymExprKind::Not(base) = large.kind()
             && (euclidean_sum_dividend(base, small).is_some()
-                || self.shares_whole(base, small, intervals, remaining).is_some())
+                || self.shares_whole(base, small, None, intervals, remaining).is_some())
         {
             return Some(false);
         }
+        // Two shares sum to at most their whole.
         if let SymExprKind::BinOp(SymBinOp::Add, first, second) = small.kind()
-            && self.shares_whole(first, second, intervals, remaining) == Some(large)
+            && self.shares_whole(first, second, Some(large), intervals, remaining).is_some()
         {
             return Some(false);
         }
@@ -301,50 +302,71 @@ impl ConstraintContext {
         }
     }
 
-    /// Returns `w` for the shares `w * a / k` and `w * b / k` of a nonzero `k` once `a + b <= k`.
-    /// Their floors sum to at most `w * (a + b) / k <= w`, so the sum cannot wrap, and a wrapped
-    /// product only shrinks its share.
+    /// Returns `w` for the shares `w * a / k` and `w * b / k` of a nonzero `k` once `a + b <= k`,
+    /// only matching `whole` when given. Their floors sum to at most `w * (a + b) / k <= w`, so the
+    /// sum cannot wrap, and a wrapped product only shrinks its share.
     fn shares_whole<'a>(
         &self,
         first: &'a SymExpr,
         second: &'a SymExpr,
+        whole: Option<&SymExpr>,
         intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
         remaining: &mut usize,
     ) -> Option<&'a SymExpr> {
         let (first, divisor) = first.udiv_operands()?;
         let (second, other_divisor) = second.udiv_operands()?;
+        if divisor != other_divisor {
+            return None;
+        }
         let (SymExprKind::BinOp(SymBinOp::Mul, w1, a1), SymExprKind::BinOp(SymBinOp::Mul, w2, b2)) =
             (first.kind(), second.kind())
         else {
             return None;
         };
-        let (whole, a, b) =
+        let (found, a, b) =
             [(w1, a1, w2, b2), (w1, a1, b2, w2), (a1, w1, w2, b2), (a1, w1, b2, w2)]
                 .into_iter()
-                .find_map(|(whole, a, other, b)| (whole == other).then_some((whole, a, b)))?;
+                .find_map(|(found, a, other, b)| {
+                    (found == other && whole.is_none_or(|whole| whole == found))
+                        .then_some((found, a, b))
+                })?;
         let min = self.interval_cached(divisor, intervals, remaining)?.min;
-        if divisor != other_divisor || min.is_zero() {
+        if min.is_zero() {
             return None;
         }
-        let a_max = self.interval_cached(a, intervals, remaining)?.max;
-        let b_max = self.interval_cached(b, intervals, remaining)?.max;
-        // `a + b` does not wrap, so the sum bound below holds over the integers.
-        let sum_max = a_max.checked_add(b_max)?;
+        // Whether another conjunct asserts `x <= y`, including strict `<`.
+        let asserted = |accept: &dyn Fn(&SymExpr, &SymExpr) -> bool| {
+            self.facts.iter().any(|fact| match fact.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => {
+                    accept(left, right)
+                }
+                SymBoolExprKind::Not(inner) => matches!(
+                    inner.kind(),
+                    SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) if accept(right, left)
+                ),
+                _ => false,
+            })
+        };
+        // `a + b` must not wrap for `a + b <= k` to hold over the integers: from value ranges, or
+        // from a checked addition's `b <= ~a` guard.
+        let sum_max = self
+            .interval_cached(a, intervals, remaining)
+            .and_then(|a| a.max.checked_add(self.interval_cached(b, intervals, remaining)?.max));
+        let complement =
+            |x: &SymExpr, y: &SymExpr| matches!(y.kind(), SymExprKind::Not(inner) if inner == x);
+        if sum_max.is_none()
+            && !asserted(&|x, y| (x == b && complement(a, y)) || (x == a && complement(b, y)))
+        {
+            return None;
+        }
         let is_sum = |expr: &SymExpr| {
             matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::Add, x, y)
                 if (x == a && y == b) || (x == b && y == a))
         };
-        (sum_max <= min || is_sum(divisor) || self.facts.iter().any(|fact| match fact.kind() {
-            SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => {
-                is_sum(left) && right == divisor
-            }
-            SymBoolExprKind::Not(inner) => matches!(
-                inner.kind(),
-                SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) if left == divisor && is_sum(right)
-            ),
-            _ => false,
-        }))
-        .then_some(whole)
+        (sum_max.is_some_and(|max| max <= min)
+            || is_sum(divisor)
+            || asserted(&|x, y| is_sum(x) && y == divisor))
+        .then_some(found)
     }
 
     /// Returns whether another conjunct asserts `small <= large`, including strict `<`.

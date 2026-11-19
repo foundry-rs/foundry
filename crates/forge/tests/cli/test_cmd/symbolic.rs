@@ -8434,7 +8434,8 @@ UPDATES        assert(x < 2 ** 128);
 }
 
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
-// `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either.
+// `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
+// `a + b <= k` does not bound the shares.
 #[forgetest_init]
 fn symbolic_proves_shares_within_whole(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_shares_within_whole");
@@ -8463,6 +8464,16 @@ contract SymbolicShares {
         assert(paidA + paidB <= received);
     }
 
+    function checkUint256FeeSplitWithinAmount(uint256 amount, uint256 protocolBps, uint256 lpBps)
+        public
+        pure
+    {
+        require(protocolBps + lpBps <= 10_000);
+        uint256 protocolFee = amount * protocolBps / 10_000;
+        uint256 lpFee = amount * lpBps / 10_000;
+        assert(protocolFee + lpFee <= amount);
+    }
+
     function checkFeeSplitOverBudget(uint128 amount, uint16 protocolBps, uint16 lpBps)
         public
         pure
@@ -8482,6 +8493,21 @@ contract SymbolicShares {
         uint256 lpFee = uint256(amount) * lpBps / 9_999;
         assert(protocolFee + lpFee <= amount);
     }
+
+    function checkFeeSplitWrappedBudget(uint128 amount, uint256 protocolBps, uint256 lpBps)
+        public
+        pure
+    {
+        require(protocolBps <= 1 << 255 && lpBps <= 1 << 255);
+        uint256 protocolFee;
+        uint256 lpFee;
+        unchecked {
+            require(protocolBps + lpBps <= 10_000);
+            protocolFee = uint256(amount) * protocolBps / 10_000;
+            lpFee = uint256(amount) * lpBps / 10_000;
+        }
+        assert(protocolFee + lpFee <= amount);
+    }
 }
 "#,
     );
@@ -8498,6 +8524,7 @@ contract SymbolicShares {
         for signature in [
             "checkFeeSplitWithinAmount(uint128,uint16,uint16)",
             "checkPayeesWithinReceived(uint128,uint128,uint128)",
+            "checkUint256FeeSplitWithinAmount(uint256,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
@@ -8510,6 +8537,7 @@ contract SymbolicShares {
         for signature in [
             "checkFeeSplitOverBudget(uint128,uint16,uint16)",
             "checkFeeSplitOtherDivisor(uint128,uint16,uint16)",
+            "checkFeeSplitWrappedBudget(uint128,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
