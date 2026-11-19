@@ -4383,7 +4383,7 @@ ParserError: Source "src/missing/Dep.sol" not found: File not found. Searched th
 }
 
 // Scoping an alias that no root mapping covers is silent until a compiled file imports it, and a
-// dependency importer is told how to fix only its own dependency.
+// dependency importer is told how to fix only its own dependency, on the matching import's error.
 #[forgetest]
 fn unused_scoped_dependency_alias_does_not_warn(prj: _, cmd: _) {
     for name in ["a", "b"] {
@@ -4393,7 +4393,8 @@ fn unused_scoped_dependency_alias_does_not_warn(prj: _, cmd: _) {
         );
         prj.add_lib(&format!("{name}/src/Dep.sol"), "contract Dep {}\n");
     }
-    prj.add_lib("c/src/C.sol", "import {Dep} from \"@custom/Dep.sol\"; contract C is Dep {}\n");
+    let c = "import {Dep} from \"@custom/Dep.sol\"; contract C is Dep {}\n";
+    prj.add_lib("c/src/C.sol", &format!("import \"Unknown.sol\";\n{c}"));
     prj.add_source("Root.sol", "contract Root {}\n");
 
     cmd.args(["build", "--no-lint"]).assert_success().stderr_eq("");
@@ -4401,17 +4402,25 @@ fn unused_scoped_dependency_alias_does_not_warn(prj: _, cmd: _) {
     prj.add_source("Root.sol", "import {C} from \"c/C.sol\"; contract Root is C {}\n");
     cmd.forge_fuse().args(["build", "--no-lint"]).assert_failure().stderr_eq(str![[r#"
 Error: Compiler run failed:
-Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
-ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+Error (6275): Source "Unknown.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "Unknown.sol" not found: File not found. Searched the following locations: "[..]".
  [FILE]:3:1:
   |
-3 | import {Dep} from "@custom/Dep.sol"; contract C is Dep {}
+3 | import "Unknown.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^
+
+Error (6275): Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "@custom/Dep.sol" not found: File not found. Searched the following locations: "[..]".
+ [FILE]:4:1:
+  |
+4 | import {Dep} from "@custom/Dep.sol"; contract C is Dep {}
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 help: this file imports the alias "@custom/", which is scoped to a dependency. To use it from `lib/c/`, choose a remapping in foundry.toml or remappings.txt: `lib/c/:@custom/=lib/a/src/` or `lib/c/:@custom/=lib/b/src/`
 
 "#]]);
 
+    prj.add_lib("c/src/C.sol", c);
     prj.update_config(|config| {
         config.remappings = vec![Remapping::from_str("lib/c/:@custom/=lib/a/src/").unwrap().into()];
     });

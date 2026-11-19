@@ -221,6 +221,8 @@ pub struct RemappingsProvider<'a> {
     pub remappings: Result<Vec<Remapping>, Error>,
     /// Source, test and script directories owned by the root project.
     pub project_paths: Vec<PathBuf>,
+    /// Extra directories the compiler searches for imports.
+    pub include_paths: Vec<PathBuf>,
     /// Warnings collected by earlier configuration providers.
     pub warnings: Result<Vec<Warning>, Error>,
 }
@@ -535,6 +537,7 @@ impl RemappingsProvider<'_> {
                 &previous_globals,
                 &all_remappings.remappings,
                 &self.project_paths,
+                &self.include_paths,
                 self.root,
             ));
             suppress_overridden_remapping_warnings(&mut warnings, &authoritative_remappings);
@@ -963,14 +966,15 @@ fn suppress_overridden_remapping_warnings(
 /// Returns migration advice for scoped declarations whose former global target root imports
 /// silently replace.
 ///
-/// Root imports still resolve when a root mapping covers the alias or a root directory has its
-/// name. Otherwise imports of it fail with actionable compiler help, so warning here would flag
-/// projects that never import the alias.
+/// Root imports still resolve when a root mapping covers the alias, or when the root or an include
+/// path contains it. Otherwise imports of it fail with actionable compiler help, so warning here
+/// would flag projects that never import the alias.
 fn scoped_remapping_warnings(
     scoped: Vec<RelativeRemapping>,
     previous_globals: &BTreeSet<RelativeRemapping>,
     current: &[Remapping],
     project_paths: &[PathBuf],
+    include_paths: &[PathBuf],
     root: &Path,
 ) -> Vec<Warning> {
     let mut warned = BTreeSet::new();
@@ -989,7 +993,8 @@ fn scoped_remapping_warnings(
             {
                 return None;
             }
-            // Like solc, the longest root alias wins; without one, the root directory resolves it.
+            // Like solc, the longest root alias wins; without one, the root or an include path
+            // resolves it.
             let resolved = match current
                 .iter()
                 .filter(|mapping| {
@@ -1009,7 +1014,19 @@ fn scoped_remapping_warnings(
                         format!("{}/{suffix}", target.path.trim_end_matches('/'))
                     }
                 }
-                None if root.join(&original.name).exists() => original.name,
+                None => {
+                    let found = std::iter::once(root.to_path_buf())
+                        .chain(include_paths.iter().map(|path| root.join(path)))
+                        .map(|base| base.join(&original.name))
+                        .find(|path| path.exists())?;
+                    let found =
+                        project_path_remapping_name(found.strip_prefix(root).unwrap_or(&found));
+                    if original.name.ends_with('/') {
+                        found
+                    } else {
+                        found.trim_end_matches('/').to_string()
+                    }
+                }
                 _ => return None,
             };
             Some(Warning::ScopedDependencyRemapping { remapping, resolved })
@@ -1095,6 +1112,7 @@ mod tests {
             root,
             remappings: Ok(vec![]),
             project_paths: Vec::new(),
+            include_paths: Vec::new(),
             warnings: Ok(Vec::new()),
         };
 
@@ -1125,6 +1143,7 @@ mod tests {
             root: &root,
             remappings: Ok(vec![]),
             project_paths: Vec::new(),
+            include_paths: Vec::new(),
             warnings: Ok(Vec::new()),
         };
 
@@ -1164,6 +1183,7 @@ mod tests {
             root: &root,
             remappings: Ok(vec![]),
             project_paths: Vec::new(),
+            include_paths: Vec::new(),
             warnings: Ok(Vec::new()),
         };
 
@@ -1296,6 +1316,7 @@ mod tests {
             root: root.path(),
             remappings: Ok(Vec::new()),
             project_paths: Vec::new(),
+            include_paths: Vec::new(),
             warnings: Ok(Vec::new()),
         };
 
@@ -2034,7 +2055,7 @@ mod tests {
     }
 
     #[test]
-    fn scoped_dependency_alias_shadowed_by_root_directory_warns() {
+    fn scoped_dependency_alias_shadowed_by_root_or_include_path_warns() {
         figment::Jail::expect_with(|_| {
             let temp = tempdir().unwrap();
             let root = temp.path();
@@ -2055,6 +2076,35 @@ mod tests {
                 config.warnings.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 [
                     "Dependency remapping `utils/=lib/a/src/utils/` now applies only within `lib/a/`. Root imports of `utils/` now resolve to `utils/` instead. Adding `utils/=lib/a/src/utils/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:utils/=<target>`."
+                ]
+            );
+
+            // An include path can supply the replacement too, once another dependency's
+            // conflicting declaration scopes the alias.
+            fs::remove_dir_all(root.join("utils")).unwrap();
+            fs::create_dir_all(root.join("lib/b/src/other")).unwrap();
+            fs::write(
+                root.join("lib/b").join(Config::FILE_NAME),
+                "[profile.default]\nremappings = [\"utils/=src/other/\"]\n",
+            )
+            .unwrap();
+            fs::create_dir_all(root.join("vendor/utils")).unwrap();
+            fs::write(root.join("vendor/utils/U.sol"), "contract Vendored {}\n").unwrap();
+            assert!(Config::load_with_root(root).unwrap().warnings.is_empty());
+            fs::write(
+                root.join(Config::FILE_NAME),
+                "[profile.default]\ninclude_paths = [\"vendor\"]\n",
+            )
+            .unwrap();
+            assert_eq!(
+                Config::load_with_root(root)
+                    .unwrap()
+                    .warnings
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                [
+                    "Dependency remapping `utils/=lib/a/src/utils/` now applies only within `lib/a/`. Root imports of `utils/` now resolve to `vendor/utils/` instead. Adding `utils/=lib/a/src/utils/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:utils/=<target>`."
                 ]
             );
 
@@ -2161,6 +2211,7 @@ mod tests {
                 root: &linked_root,
                 remappings: Ok(Vec::new()),
                 project_paths: Vec::new(),
+                include_paths: Vec::new(),
                 warnings: Ok(Vec::new()),
             };
             assert_eq!(

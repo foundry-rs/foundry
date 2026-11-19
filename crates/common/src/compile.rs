@@ -1185,26 +1185,44 @@ fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'s
     reason
 }
 
-/// Returns the top-level dependency directory that contains `file`, relative to the root.
+/// Returns the innermost dependency directory that contains `file`, relative to the root.
 ///
+/// Nested dependencies live in a library directory, such as `lib/`, directly inside their parent.
 /// An npm scope such as `node_modules/@scope/` holds packages, so its owner is the package. Other
 /// `@` directories, such as Soldeer's `dependencies/@name-version/`, are packages themselves.
 fn dependency_owner<L>(paths: &ProjectPathsConfig<L>, file: &Path) -> Option<PathBuf> {
+    let lib_names = paths.libraries.iter().filter_map(|lib| lib.file_name()).collect::<Vec<_>>();
     paths.libraries.iter().find_map(|lib| {
-        let lib = paths.root.join(lib);
-        let mut components = file.strip_prefix(&lib).ok()?.components();
-        let mut owner = lib.join(components.next()?);
-        if lib.ends_with("node_modules") && owner.file_name()?.to_string_lossy().starts_with('@') {
-            owner.push(components.next()?);
+        let mut dir = paths.root.join(lib);
+        let parts = file.strip_prefix(&dir).ok()?.iter().collect::<Vec<_>>();
+        let (mut owner, mut i) = (None, 0);
+        while let Some(name) = parts.get(i) {
+            let mut package = dir.join(name);
+            i += 1;
+            if dir.ends_with("node_modules") && name.to_string_lossy().starts_with('@') {
+                let Some(name) = parts.get(i) else { break };
+                package.push(name);
+                i += 1;
+            }
+            // A file directly in a library directory belongs to no package there.
+            if i >= parts.len() {
+                break;
+            }
+            owner = Some(package.clone());
+            if i + 1 < parts.len() && lib_names.contains(&parts[i]) {
+                dir = package.join(parts[i]);
+                i += 1;
+            } else {
+                break;
+            }
         }
-        components.next()?;
-        owner.strip_prefix(&paths.root).ok().map(Path::to_path_buf)
+        owner?.strip_prefix(&paths.root).ok().map(Path::to_path_buf)
     })
 }
 
 /// Finds aliases restricted to dependency contexts that would resolve an import.
 ///
-/// Root files get root remappings. Dependency files get remappings scoped to their top-level
+/// Root files get root remappings. Dependency files get remappings scoped to their innermost
 /// dependency, so the fix does not redirect the alias for the root or other dependencies.
 fn remapping_candidates<L: Clone>(
     paths: &ProjectPathsConfig<L>,
@@ -1215,18 +1233,19 @@ fn remapping_candidates<L: Clone>(
     let mut candidates = BTreeMap::<_, BTreeSet<_>>::new();
     let Some(cwd) = file.parent() else { return candidates };
     let owner = dependency_owner(paths, &file);
+    // Library directories are a fallback of the source graph that the compiler does not share.
+    let mut candidate_paths = paths.clone();
+    candidate_paths.libraries.clear();
     if !file.starts_with(&paths.root)
         || (owner.is_none()
             && paths.libraries.iter().any(|lib| file.starts_with(paths.root.join(lib))))
         // An applicable root or CLI mapping remains authoritative, even if its target is missing.
-        || paths.resolve_library_import(cwd, import).is_some()
+        || candidate_paths.resolve_library_import(cwd, import).is_some()
     {
         return candidates;
     }
     let scope = owner.map(|owner| format!("{}/:", owner.to_slash_lossy())).unwrap_or_default();
 
-    let mut candidate_paths = paths.clone();
-    candidate_paths.libraries.clear();
     for remapping in &paths.remappings {
         if let Some(context) = &remapping.context
             && paths
@@ -1251,27 +1270,21 @@ fn remapping_candidates<L: Clone>(
     candidates
 }
 
+/// Returns the import a compiler failed to find: solc reports it as 6275, Solar without a code.
+fn missing_import(error: &SolcError) -> Option<&str> {
+    let (import, _) = match error.error_code {
+        Some(6275) => error.message.strip_prefix("Source \"")?.split_once("\" not found")?,
+        None => error.message.strip_prefix("couldn't read ")?.split_once(": ")?,
+        _ => return None,
+    };
+    Some(import)
+}
+
 /// Adds actionable alias migration help to existing import errors, including JSON diagnostics.
 fn add_scoped_alias_diagnostics<C: Compiler<CompilerContract = Contract>>(
     output: &mut ProjectCompileOutput<C>,
     paths: &ProjectPathsConfig<C::Language>,
 ) {
-    if output.graph().unresolved_imports().is_empty() {
-        return;
-    }
-
-    let mut suggestions = BTreeMap::<_, BTreeMap<_, BTreeSet<_>>>::new();
-    for (import, file) in output.graph().unresolved_imports() {
-        for (alias, mappings) in remapping_candidates(paths, import, file) {
-            suggestions
-                .entry(paths.root.join(file))
-                .or_default()
-                .entry(alias)
-                .or_default()
-                .extend(mappings);
-        }
-    }
-
     for error in &mut output.output_mut().errors {
         // CompilationError has no mutable diagnostic accessors; reuse concrete solc errors.
         let error = error as &mut dyn Any;
@@ -1284,13 +1297,15 @@ fn add_scoped_alias_diagnostics<C: Compiler<CompilerContract = Contract>>(
         } else {
             continue;
         };
-        // Solc reports missing sources as 6275; Solar reports them without a code.
-        if (error.error_code == Some(6275)
-            || error.error_code.is_none() && error.message.starts_with("couldn't read "))
+        // The compiler may reject an import that the source graph resolved through a fallback, so
+        // take the missing import from the error itself.
+        if let Some(import) = missing_import(error).map(PathBuf::from)
             && let Some(location) = &error.source_location
-            && let Some(aliases) = suggestions.remove(&paths.root.join(&location.file))
+            && let file = paths.root.join(&location.file)
+            && let aliases = remapping_candidates(paths, &import, &file)
+            && !aliases.is_empty()
         {
-            let importer = dependency_owner(paths, &paths.root.join(&location.file)).map_or_else(
+            let importer = dependency_owner(paths, &file).map_or_else(
                 || "the root project".to_string(),
                 |owner| format!("`{}/`", owner.to_slash_lossy()),
             );
@@ -1436,6 +1451,8 @@ mod tests {
         let root = temp.path().join("project");
         fs::create_dir_all(root.join("lib/a/src")).unwrap();
         fs::write(root.join("lib/a/src/Target.sol"), "contract Target {}\n").unwrap();
+        // The source graph resolves `File.sol` to this loose copy, but the compiler does not.
+        fs::write(root.join("lib/File.sol"), "contract Loose {}\n").unwrap();
         let root = dunce::canonicalize(root).unwrap();
         let paths = ProjectPathsConfig::builder()
             .root(&root)
@@ -1456,9 +1473,12 @@ mod tests {
             )])
         );
 
-        // Dependency importers get a remapping scoped to their own top-level dependency.
+        // Dependency importers get a remapping scoped to their own innermost dependency.
         for (importer, scoped) in [
             ("lib/b/src/nested/Dep.sol", "lib/b/:@alias/=lib/a/src/"),
+            // Nested dependencies own their files; a loose nested file belongs to its parent.
+            ("lib/b/lib/c/src/C.sol", "lib/b/lib/c/:@alias/=lib/a/src/"),
+            ("lib/b/lib/Loose.sol", "lib/b/:@alias/=lib/a/src/"),
             ("node_modules/@scope/c/src/Dep.sol", "node_modules/@scope/c/:@alias/=lib/a/src/"),
             // Soldeer packages start with `@` but are not npm scopes.
             ("lib/@pkg-1.0.0/src/Dep.sol", "lib/@pkg-1.0.0/:@alias/=lib/a/src/"),
