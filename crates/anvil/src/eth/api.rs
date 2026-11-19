@@ -4165,6 +4165,15 @@ impl EthApi<FoundryNetwork> {
             {
                 vec![]
             }
+            // Like an omitted `fromBlock`, `latest` and `pending` only match newly mined logs.
+            Some(BlockNumber::Latest | BlockNumber::Pending)
+                if filter
+                    .block_option
+                    .get_to_block()
+                    .is_none_or(|to| to.is_latest() || to.is_pending()) =>
+            {
+                vec![]
+            }
             Some(_) => self.backend.logs(filter.clone()).await?,
             None => vec![],
         };
