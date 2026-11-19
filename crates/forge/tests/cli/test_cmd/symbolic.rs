@@ -8777,6 +8777,17 @@ contract SymbolicQuotientMulTest {
         assert(x / d * d <= x);
         assert(d * (x / d) <= x);
     }
+
+    // Dividing first rounds down, so a fee of at most 100% cannot exceed the amount.
+    function checkDivideFirstFee(uint256 amount, uint16 bps) public pure {
+        if (bps > 10000) return;
+        assert(amount / 10000 * bps <= amount);
+    }
+
+    function checkDivideFirstFeeAboveFull(uint256 amount, uint16 bps) public pure {
+        if (bps > 10001) return;
+        assert(amount / 10000 * bps <= amount);
+    }
 }
 "#,
     );
@@ -8807,6 +8818,17 @@ contract SymbolicQuotientMulTest {
             result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
             "optimized={optimized}"
         );
+
+        let result = json_test_result(&output, "checkDivideFirstFee(uint256,uint16)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        let result = json_test_result(&output, "checkDivideFirstFeeAboveFull(uint256,uint16)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
 }
 
