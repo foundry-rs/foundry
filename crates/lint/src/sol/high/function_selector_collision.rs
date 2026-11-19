@@ -676,7 +676,7 @@ impl<'gcx> Visit<'gcx> for DelegateTargetCollector<'gcx> {
                     self.return_controls.last_mut().expect("return control stack is not empty");
                 extend_unique(returns, paths);
             }
-            StmtKind::AssemblyBlock(_) => {
+            StmtKind::AssemblyBlock(..) => {
                 // Inline assembly may rewrite any calldata parameter in scope.
                 for path in &mut self.paths {
                     for &input in &self.current_inputs {

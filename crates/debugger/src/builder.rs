@@ -9,7 +9,8 @@ use eyre::Result;
 use foundry_common::{ContractsByArtifact, get_contract_name};
 use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::{
-    CallTraceArena, CallTraceDecoder, CallTraceNode, Traces, debug::ContractSources,
+    CallTraceArena, CallTraceDecoder, CallTraceNode, Traces,
+    debug::{ContractSources, DebugRecording},
 };
 use std::path::Path;
 
@@ -19,6 +20,8 @@ use std::path::Path;
 pub struct DebuggerBuilder {
     /// Debug traces returned from the EVM execution.
     trace_arenas: Vec<CallTraceArena>,
+    /// The steps a debug recorder recorded for each trace arena, if one ran.
+    debug_steps: Vec<Option<DebugRecording>>,
     /// Identified contracts.
     identified_contracts: AddressHashMap<String>,
     /// Known local contracts and their compiler metadata.
@@ -41,6 +44,7 @@ impl DebuggerBuilder {
     pub fn traces(mut self, traces: Traces) -> Self {
         for (_, arena) in traces {
             self = self.trace_arena(arena.arena);
+            *self.debug_steps.last_mut().unwrap() = arena.debug_steps;
         }
         self
     }
@@ -49,6 +53,7 @@ impl DebuggerBuilder {
     #[inline]
     pub fn trace_arena(mut self, arena: CallTraceArena) -> Self {
         self.trace_arenas.push(arena);
+        self.debug_steps.push(None);
         self
     }
 
@@ -105,8 +110,24 @@ impl DebuggerBuilder {
     ///
     /// Every trace arena belongs to the same session, including deployment and setup.
     pub fn run(self, dump: Option<&Path>) -> Result<()> {
-        let Self { trace_arenas, identified_contracts, known_contracts, sources, breakpoints } =
-            self;
+        let Self {
+            trace_arenas,
+            debug_steps,
+            identified_contracts,
+            known_contracts,
+            sources,
+            breakpoints,
+        } = self;
+        // The steps come from the recorder when it ran for every arena, else from the tracer.
+        let recordings = if debug_steps.iter().all(Option::is_some) {
+            debug_steps.into_iter().flatten().collect()
+        } else {
+            eyre::ensure!(
+                debug_steps.iter().all(Option::is_none),
+                "only some debug traces have recorded steps"
+            );
+            Vec::new()
+        };
         let mut identified_code = HashMap::default();
         let contract_names = trace_arenas
             .iter()
@@ -126,11 +147,17 @@ impl DebuggerBuilder {
             })
             .collect::<Vec<_>>();
         match dump {
-            Some(dir) => {
-                write_bundle(dir, trace_arenas, &contract_names, &sources, &known_contracts)
-            }
+            Some(dir) => write_bundle(
+                dir,
+                trace_arenas,
+                recordings,
+                &contract_names,
+                &sources,
+                &known_contracts,
+            ),
             None => SoldbDebugger::new(
                 trace_arenas,
+                recordings,
                 &contract_names,
                 &sources,
                 &known_contracts,

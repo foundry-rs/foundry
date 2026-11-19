@@ -9,19 +9,20 @@ use crate::{
 use alloy_genesis::Genesis;
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::HashMap, utils::Unit};
-use alloy_signer_local::coins_bip39::{English, Mnemonic};
+use alloy_signer_local::coins_bip39::{English, Entropy, Mnemonic, WordCount};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm::hardfork::FoundryHardfork;
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
-use rand_08::{SeedableRng, rngs::StdRng};
+use rand_08::{Rng, RngCore, SeedableRng, rngs::StdRng};
 use std::{
     net::IpAddr,
+    num::NonZeroU64,
     path::{Path, PathBuf},
     pin::Pin,
     str::FromStr,
@@ -89,6 +90,19 @@ pub struct NodeArgs {
     /// account.
     #[arg(long = "tempo.fee-payer", value_name = "ADDRESS")]
     pub tempo_fee_payer: Option<Address>,
+
+    /// Number of block heights in a Tempo consensus epoch. Only used on Tempo networks.
+    ///
+    /// Defaults to the fork source's epoch length when it reports one, otherwise 21600.
+    #[arg(long = "tempo.epoch-length", value_name = "BLOCKS")]
+    pub tempo_epoch_length: Option<NonZeroU64>,
+
+    /// Development consensus seed for Tempo, as 32 bytes of hex.
+    ///
+    /// Defaults to a domain-separated hash of the dev-account mnemonic. Only used on Tempo
+    /// networks.
+    #[arg(long = "tempo.consensus-seed", value_name = "SEED")]
+    pub tempo_consensus_seed: Option<B256>,
 
     /// The EVM hardfork to use.
     ///
@@ -210,7 +224,10 @@ pub struct NodeArgs {
     #[arg(long)]
     pub prune_history: Option<Option<usize>>,
 
-    /// Max number of states to persist on disk.
+    /// Max number of older states to keep, beyond the most recent ones.
+    ///
+    /// Block states of local and forked chains share unchanged data and stay in memory; states
+    /// loaded from a dump are persisted on disk.
     ///
     /// Note that `prune_history` will overwrite `max_persisted_states` to 0.
     #[arg(long, conflicts_with = "prune_history")]
@@ -361,6 +378,8 @@ impl NodeArgs {
             // execution chain ID. Fork source discovery can refine an unresolved network later.
             .with_networks(networks)
             .with_tempo_fee_payer(self.tempo_fee_payer)
+            .with_tempo_epoch_length(self.tempo_epoch_length)
+            .with_tempo_consensus_seed(self.tempo_consensus_seed)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
@@ -401,23 +420,21 @@ impl NodeArgs {
         if let Some(ref mnemonic) = self.mnemonic {
             generator = generator.phrase(mnemonic);
         } else if let Some(count) = self.mnemonic_random {
-            let mut rng = rand_08::thread_rng();
-            let mnemonic = match Mnemonic::<English>::new_with_count(&mut rng, count) {
-                Ok(mnemonic) => mnemonic.to_phrase(),
-                Err(err) => {
-                    warn!(target: "node", ?count, %err, "failed to generate mnemonic, falling back to 12-word random mnemonic");
-                    // Fallback: generate a valid 12-word random mnemonic instead of using
-                    // DEFAULT_MNEMONIC
-                    Mnemonic::<English>::new_with_count(&mut rng, 12)
-                        .expect("valid default word count")
-                        .to_phrase()
-                }
-            };
-            generator = generator.phrase(mnemonic);
+            let count = WordCount::try_from(count).unwrap_or_else(|err| {
+                warn!(target: "node", ?count, %err, "failed to generate mnemonic, falling back to 12-word random mnemonic");
+                // Fallback: generate a valid 12-word random mnemonic instead of using
+                // DEFAULT_MNEMONIC
+                WordCount::Twelve
+            });
+            let mut entropy = vec![0u8; count.entropy_bytes()];
+            rand_08::thread_rng().fill_bytes(&mut entropy);
+            let entropy = Entropy::from_slice(&entropy).expect("valid entropy length");
+            generator = generator
+                .phrase(Mnemonic::<English>::new_from_entropy(entropy).to_phrase().as_str());
         } else if let Some(seed) = self.mnemonic_seed {
-            let mut seed = StdRng::seed_from_u64(seed);
-            let mnemonic = Mnemonic::<English>::new(&mut seed).to_phrase();
-            generator = generator.phrase(mnemonic);
+            let entropy = StdRng::seed_from_u64(seed).r#gen::<[u8; 16]>();
+            let mnemonic = Mnemonic::<English>::new_from_entropy(entropy.into()).to_phrase();
+            generator = generator.phrase(mnemonic.as_str());
         }
         if let Some(ref derivation) = self.derivation_path {
             generator = generator.derivation_path(derivation);
@@ -675,6 +692,9 @@ pub struct AnvilEvmArgs {
     pub disable_block_gas_limit: bool,
 
     /// Enable the transaction gas limit check as imposed by EIP-7825 (Osaka hardfork).
+    ///
+    /// From Amsterdam, the cap always applies to regular gas only, and gas above it becomes the
+    /// EIP-8037 state gas reservoir.
     #[arg(long, visible_alias = "tx-gas-limit", help_heading = "Environment config")]
     pub enable_tx_gas_limit: bool,
 
@@ -984,15 +1004,15 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::hardfork::EthereumHardfork;
+    use foundry_evm_hardforks::EthereumHardfork;
     use std::{env, net::Ipv4Addr};
     use tempo_hardfork::TempoHardfork;
 
     #[cfg(feature = "base")]
-    use foundry_evm::hardforks::BaseUpgrade;
+    use foundry_evm_hardforks::BaseUpgrade;
 
     #[cfg(feature = "optimism")]
-    use foundry_evm::hardfork::OpHardfork;
+    use foundry_evm_hardforks::OpHardfork;
 
     #[tokio::test]
     async fn final_dump_cancels_suspended_periodic_dump() {
@@ -1465,7 +1485,7 @@ mod tests {
         let args: NodeArgs =
             NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
         let config = args.into_node_config().unwrap();
-        assert_eq!(config.hardfork, Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
+        assert_eq!(config.hardfork, Some(foundry_evm_hardforks::MonadHardfork::MonadNine.into()));
         assert!(config.networks.is_monad());
     }
 
@@ -1475,7 +1495,7 @@ mod tests {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, None);
-        assert_eq!(config.get_hardfork(), foundry_evm::hardfork::MonadHardfork::default().into());
+        assert_eq!(config.get_hardfork(), foundry_evm_hardforks::MonadHardfork::default().into());
         assert!(config.networks.is_monad());
     }
 
@@ -1669,5 +1689,64 @@ mod tests {
         assert!(
             NodeArgs::try_parse_from(["anvil", "--transaction-coalescing-window", "-1"]).is_err()
         );
+    }
+
+    #[test]
+    fn tempo_consensus_arguments() {
+        for epoch_length in ["1", "21600", "18446744073709551615"] {
+            let config = NodeArgs::try_parse_from([
+                "anvil",
+                "--network",
+                "tempo",
+                "--tempo.epoch-length",
+                epoch_length,
+                "--tempo.consensus-seed",
+                "0x0101010101010101010101010101010101010101010101010101010101010101",
+            ])
+            .unwrap()
+            .into_node_config()
+            .unwrap();
+            assert_eq!(config.tempo_epoch_length, epoch_length.parse().ok());
+            assert_eq!(config.tempo_consensus_seed(), B256::repeat_byte(1));
+        }
+        for epoch_length in ["0", "-1", "18446744073709551616"] {
+            assert!(
+                NodeArgs::try_parse_from(["anvil", "--tempo.epoch-length", epoch_length,]).is_err()
+            );
+        }
+        for seed in ["0x01".to_owned(), "11".repeat(33), "zz".repeat(32)] {
+            assert!(NodeArgs::try_parse_from(["anvil", "--tempo.consensus-seed", &seed]).is_err());
+        }
+    }
+
+    #[test]
+    fn tempo_consensus_seed_uses_effective_mnemonic() {
+        let default = NodeArgs::parse_from(["anvil"]).into_node_config().unwrap();
+        assert_eq!(default.tempo_epoch_length, None);
+        assert_eq!(default.tempo_consensus_seed(), NodeConfig::default().tempo_consensus_seed());
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let custom =
+            NodeArgs::parse_from(["anvil", "--mnemonic", mnemonic]).into_node_config().unwrap();
+        assert_ne!(custom.tempo_consensus_seed(), default.tempo_consensus_seed());
+        let seed = B256::repeat_byte(7);
+        let explicit = NodeArgs::parse_from([
+            "anvil",
+            "--mnemonic",
+            mnemonic,
+            "--tempo.consensus-seed",
+            &seed.to_string(),
+        ])
+        .into_node_config()
+        .unwrap();
+        assert_eq!(explicit.tempo_consensus_seed(), seed);
+        assert_eq!(explicit.genesis_accounts, custom.genesis_accounts);
+        let seeded = NodeArgs::parse_from(["anvil", "--mnemonic-seed-unsafe", "42"])
+            .into_node_config()
+            .unwrap();
+        let repeated = NodeArgs::parse_from(["anvil", "--mnemonic-seed-unsafe", "42"])
+            .into_node_config()
+            .unwrap();
+        assert_ne!(seeded.tempo_consensus_seed(), default.tempo_consensus_seed());
+        assert_eq!(seeded.tempo_consensus_seed(), repeated.tempo_consensus_seed());
     }
 }

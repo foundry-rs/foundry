@@ -17,8 +17,8 @@ use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
 use alloy_network::{BlockResponse, Ethereum, Network, eip2718::Decodable2718};
 use alloy_primitives::{
-    Address, B256, Bytes, I256, Keccak256, LogData, TxHash, U64, U256, b256, eip191_hash_message,
-    hex, keccak256,
+    Address, B256, Bytes, I256, Keccak256, LogData, Selector, TxHash, U64, U256,
+    eip191_hash_message, hex, keccak256,
     utils::{ParseUnits, Unit},
 };
 use alloy_provider::Provider;
@@ -34,11 +34,15 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
+    EIP1967_ADMIN_SLOT, EIP1967_BEACON_SLOT, EIP1967_IMPLEMENTATION_SLOT,
     abi::{
         abi_decode_calldata, abi_decode_event_data, encode_function_args,
-        encode_function_args_packed, get_error, get_event, get_func,
+        encode_function_args_packed, encode_function_args_raw, get_error, get_event, get_func,
     },
-    fmt::{UIfmt, UIfmtSignatureExt, format_uint_exp, get_pretty_block_attr, get_pretty_tx_attr},
+    fmt::{
+        UIfmt, UIfmtSignatureExt, add_configurable_account_details, format_uint_exp,
+        get_pretty_block_attr, get_pretty_tx_attr,
+    },
     fs,
     provider::{ProviderBuilder, RetryProvider},
     selectors::{
@@ -220,6 +224,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Conversion(ConversionSubcommand::ToInt256 { value }) => {
             let n = NumberWithBase::parse_int(&stdin::unwrap_line(value)?, None)?;
+            eyre::ensure!(
+                !n.is_nonnegative() || n.number() <= I256::MAX.into_raw(),
+                "value out of range for a signed 256-bit integer"
+            );
             print_scalar(format!("{n:#066x}"))?;
         }
         CastSubcommand::Conversion(ConversionSubcommand::ToUnit { value, unit }) => {
@@ -370,28 +378,29 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
                 let func = get_func(&sig)?;
                 let encoded = encode_function_args_packed(&func, &args).map_err(|e| {
+                    let e = with_trailing_flag_hint(e, func.inputs.len(), &args);
                     eyre::eyre!("Could not ABI encode the function and arguments: {e}")
                 })?;
                 hex::encode_prefixed(encoded)
             } else {
                 let func = get_func(&sig)?;
-                let encoded = encode_function_args(&func, &args).map_err(|e| {
+                let encoded = encode_function_args_raw(&func, &args).map_err(|e| {
+                    let e = with_trailing_flag_hint(e, func.inputs.len(), &args);
                     eyre::eyre!("Could not ABI encode the function and arguments: {e}")
                 })?;
-                hex::encode_prefixed(&encoded[4..])
+                hex::encode_prefixed(encoded)
             };
             print_scalar(out)?;
         }
-        // TODO(json): multi-line output (one line per topic + data field), needs structured object
-        // envelope
         CastSubcommand::Abi(AbiSubcommand::AbiEncodeEvent { sig, args }) => {
             let event = get_event(&sig)?;
             if event.inputs.len() != args.len() {
-                eyre::bail!(
+                let err = eyre::eyre!(
                     "encode length mismatch: expected {} types, got {}",
                     event.inputs.len(),
                     args.len(),
                 );
+                return Err(with_trailing_flag_hint(err, event.inputs.len(), &args));
             }
 
             let types = event
@@ -443,16 +452,21 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_tokens(&abi_decode_calldata(&sig, &raw_hex, true, true)?)?;
         }
         CastSubcommand::Abi(AbiSubcommand::CalldataEncode { sig, args, file }) => {
-            let args = match file {
-                Some(file_path) => fs::read_to_string(file_path)?
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(String::from)
-                    .collect(),
-                None => args,
+            let func = get_func(&sig)?;
+            let encoded = match file {
+                Some(file_path) => {
+                    let args = fs::read_to_string(file_path)?
+                        .lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .map(String::from)
+                        .collect::<Vec<_>>();
+                    encode_function_args(&func, &args)?
+                }
+                None => encode_function_args(&func, &args)
+                    .map_err(|e| with_trailing_flag_hint(e, func.inputs.len(), &args))?,
             };
-            print_scalar(hex::encode_prefixed(encode_function_args(&get_func(&sig)?, &args)?))?;
+            print_scalar(hex::encode_prefixed(encoded))?;
         }
         CastSubcommand::Abi(AbiSubcommand::DecodeString { data }) => {
             print_tokens(&abi_decode_calldata("Any(string)", &data, true, true)?)?;
@@ -483,11 +497,31 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 else {
                     eyre::bail!("No matching event signature found for selector `{selector}`");
                 };
-                let _ = sh_println!("{}", event.signature());
-                let data = data.get(64..).unwrap_or_default();
-                get_event(&event.signature())?
-                    .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
-                    .body
+                // Keep `--json` stdout a single JSON document.
+                if shell::is_json() {
+                    let _ = sh_eprintln!("{}", event.signature());
+                } else {
+                    let _ = sh_println!("{}", event.signature());
+                }
+                let expected = event.selector();
+                eyre::ensure!(
+                    expected == selector,
+                    alloy_dyn_abi::Error::EventSignatureMismatch { expected, actual: selector }
+                );
+                let data = hex::decode(data.get(64..).unwrap_or_default())?;
+                // Indexed parameters are not in DATA, but logs sharing a topic0 can index different
+                // parameters, like ERC-20 and ERC-721 `Transfer`. Keep the cached indexed flags
+                // only if the non-indexed parameters account for all of DATA, otherwise decode
+                // every parameter from DATA.
+                match abi_decode_event_data(&event, &data) {
+                    Ok(values)
+                        if DynSolValue::Tuple(values.clone()).abi_encode_params().len()
+                            == data.len() =>
+                    {
+                        values
+                    }
+                    _ => abi_decode_event_data(&get_event(&event.signature())?, &data)?,
+                }
             };
             print_tokens(&decoded_values)?;
         }
@@ -502,7 +536,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 else {
                     eyre::bail!("No matching error signature found for selector `{selector}`");
                 };
-                let _ = sh_println!("{}", error.signature());
+                // Keep `--json` stdout a single JSON document.
+                if shell::is_json() {
+                    let _ = sh_eprintln!("{}", error.signature());
+                } else {
+                    let _ = sh_println!("{}", error.signature());
+                }
                 error
             };
             print_tokens(&error.decode_error(&hex::decode(data)?)?.body)?;
@@ -966,22 +1005,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Query(QuerySubcommand::Implementation { block, beacon, who, rpc }) => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            // bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)
-            const BEACON_SLOT: B256 =
-                b256!("0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50");
-            // bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)
-            const IMPLEMENTATION_SLOT: B256 =
-                b256!("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc");
-
-            let slot = if beacon { BEACON_SLOT } else { IMPLEMENTATION_SLOT };
+            let slot = if beacon { EIP1967_BEACON_SLOT } else { EIP1967_IMPLEMENTATION_SLOT };
             print_scalar(address_at_slot(&provider, who, slot, block).await?)?;
         }
         CastSubcommand::Query(QuerySubcommand::Admin { block, who, rpc }) => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            // bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1)
-            const ADMIN_SLOT: B256 =
-                b256!("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103");
-            print_scalar(address_at_slot(&provider, who, ADMIN_SLOT, block).await?)?;
+            print_scalar(address_at_slot(&provider, who, EIP1967_ADMIN_SLOT, block).await?)?;
         }
         CastSubcommand::Query(QuerySubcommand::Nonce { block, who, rpc }) => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
@@ -1162,7 +1191,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         // 4Byte
         CastSubcommand::Abi(AbiSubcommand::FourByte { selector }) => {
             let selector = stdin::unwrap_line(selector)?;
-            let sigs = decode_function_selector(selector).await?;
+            let sigs = with_local_first(
+                local_function_signature(selector).await?,
+                decode_function_selector(selector).await,
+            )?;
             if sigs.is_empty() {
                 eyre::bail!("No matching function signatures found for selector `{selector}`");
             }
@@ -1175,7 +1207,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let calldata = stdin::unwrap_line(calldata)?;
 
             if calldata.len() == 10 {
-                let sigs = decode_function_selector(calldata.parse()?).await?;
+                let selector = calldata.parse()?;
+                let sigs = with_local_first(
+                    local_function_signature(selector).await?,
+                    decode_function_selector(selector).await,
+                )?;
                 if sigs.is_empty() {
                     eyre::bail!("No matching function signatures found for calldata `{calldata}`");
                 }
@@ -1185,7 +1221,20 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 return Ok(());
             }
 
-            let sigs = decode_calldata(&calldata).await?;
+            let local = match strip_0x(&calldata).get(..8).map(str::parse::<Selector>) {
+                // Library types such as `L.S` parse as `uint8`, so a signature whose parsed form
+                // has another selector is used only if decoding with that form loses nothing.
+                Some(Ok(selector)) => local_function_signature(selector).await?.filter(|sig| {
+                    abi_decode_calldata(sig, &calldata, true, true).is_ok_and(|values| {
+                        get_func(sig).is_ok_and(|f| f.selector() == selector)
+                            || hex::decode(&calldata).is_ok_and(|data| {
+                                DynSolValue::Tuple(values).abi_encode_params() == data[4..]
+                            })
+                    })
+                }),
+                _ => None,
+            };
+            let sigs = with_local_first(local, decode_calldata(&calldata).await)?;
             for (i, sig) in sigs.iter().enumerate() {
                 let _ = sh_println!("{}) \"{sig}\"", i + 1);
             }
@@ -1204,7 +1253,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
         CastSubcommand::Abi(AbiSubcommand::FourByteEvent { topic }) => {
             let topic = stdin::unwrap_line(topic)?;
-            let sigs = decode_event_topic(topic).await?;
+            let local = SignaturesIdentifier::new(true)?.identify_event(topic).await;
+            // Drop cached signatures whose parsed form hashes to another topic.
+            let sigs = with_local_first(
+                local.filter(|event| event.selector() == topic).map(|event| event.signature()),
+                decode_event_topic(topic).await,
+            )?;
             if sigs.is_empty() {
                 eyre::bail!("No matching event signatures found for topic `{topic}`");
             }
@@ -1294,7 +1348,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 value.wrapping_shr(bits.saturating_to())
             })?)?;
         }
-        // TODO(json): multi-line source code or directory expansion, needs structured envelope
         CastSubcommand::Misc(MiscSubcommand::Source {
             address,
             directory,
@@ -1310,7 +1363,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let metadata = client.contract_source_code(address.parse()?).await?;
             match (directory, flatten) {
                 (Some(dir), false) => {
-                    metadata.source_tree().write_to(&dir)?;
+                    metadata.source_tree()?.write_to(&dir)?;
                 }
                 (None, false) => sh_println!("{}", metadata.source_code())?,
                 (dir, true) => {
@@ -1471,7 +1524,8 @@ where
         if let Some(value) = get_pretty_tx_attr::<N>(&tx, &field) {
             value
         } else {
-            let tx_json = serde_json::to_value(&tx)?;
+            let mut tx_json = serde_json::to_value(&tx)?;
+            add_configurable_account_details(&mut tx_json);
             let value =
                 tx_json.get(&field).ok_or_else(|| eyre::eyre!("invalid tx field: {field}"))?;
             match value {
@@ -1481,7 +1535,9 @@ where
         }
     } else if shell::is_json() {
         // to_value first to sort json object keys
-        serde_json::to_value(&tx)?.to_string()
+        let mut tx_json = serde_json::to_value(&tx)?;
+        add_configurable_account_details(&mut tx_json);
+        tx_json.to_string()
     } else if to_request {
         serde_json::to_string_pretty(&Into::<N::TransactionRequest>::into(tx))?
     } else {
@@ -1606,11 +1662,13 @@ fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>
 ) -> Result<serde_json::Value> {
     let tx_hex = hex::decode(tx)?;
     let tx: N::TxEnvelope = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
-    if let Ok(signer) = tx.recover_signer() {
-        Ok(serde_json::to_value(Recovered::new_unchecked(tx, signer))?)
+    let mut decoded = if let Ok(signer) = tx.recover_signer() {
+        serde_json::to_value(Recovered::new_unchecked(tx, signer))?
     } else {
-        Ok(serde_json::to_value(tx)?)
-    }
+        serde_json::to_value(tx)?
+    };
+    add_configurable_account_details(&mut decoded);
+    Ok(decoded)
 }
 
 fn get_selector(signature: &str, optimize: usize) -> Result<(String, String)> {
@@ -1625,13 +1683,25 @@ fn get_selector(signature: &str, optimize: usize) -> Result<(String, String)> {
         eyre::bail!("invalid function signature");
     };
 
-    let num_threads = rayon::current_num_threads();
+    find_optimized_selector(name, params, optimize, 0)
+}
+
+/// Searches nonces from `first_nonce` up to `u32::MAX` for a name whose selector has exactly
+/// `optimize` leading zero bytes.
+fn find_optimized_selector(
+    name: &str,
+    params: &str,
+    optimize: usize,
+    first_nonce: u32,
+) -> Result<(String, String)> {
+    let num_threads = rayon::current_num_threads() as u32;
     let found = AtomicBool::new(false);
 
     // Each thread walks its own residue class of nonces until one of them finds a match.
-    (0..num_threads as u32)
+    (0..num_threads)
         .into_par_iter()
-        .find_map_any(|mut nonce| {
+        .find_map_any(|offset| {
+            let mut nonce = first_nonce.checked_add(offset)?;
             while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
                 let input = format!("{name}{nonce}({params}");
                 let selector = &keccak256(input.as_bytes())[..4];
@@ -1639,7 +1709,7 @@ fn get_selector(signature: &str, optimize: usize) -> Result<(String, String)> {
                     found.store(true, Ordering::Relaxed);
                     return Some((hex::encode_prefixed(selector), input));
                 }
-                nonce += num_threads as u32;
+                nonce = nonce.checked_add(num_threads)?;
             }
             None
         })
@@ -1648,6 +1718,19 @@ fn get_selector(signature: &str, optimize: usize) -> Result<(String, String)> {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+/// Points out a flag that was read as an extra ABI argument.
+///
+/// The variadic ABI arguments accept hyphen values so that negative numbers work, which also
+/// captures flags written after the arguments.
+fn with_trailing_flag_hint(err: eyre::Report, expected: usize, args: &[String]) -> eyre::Report {
+    match args.iter().skip(expected).find(|arg| arg.starts_with("--")) {
+        Some(flag) => {
+            eyre::eyre!("{err}; `{flag}` was read as an argument; put flags before the signature")
+        }
+        None => err,
+    }
 }
 
 /// Encodes the topic of an indexed event parameter.
@@ -1688,10 +1771,48 @@ fn encode_event_topic_preimage(value: &DynSolValue, out: &mut Vec<u8>) {
     }
 }
 
+/// Returns the signature of a function selector from the local signatures cache, which
+/// `forge build` and trace decoding populate.
+///
+/// The stored text is returned as is: parsing it would turn library signatures such as
+/// `f(L.E)` into `f(uint8)`, which hashes to another selector.
+async fn local_function_signature(selector: Selector) -> Result<Option<String>> {
+    Ok(SignaturesIdentifier::new(true)?
+        .identify(&[SelectorKind::Function(selector)])
+        .await
+        .pop()
+        .flatten())
+}
+
+/// Lists a signature from the local cache first, followed by the other signatures found remotely.
+/// The cached signature alone is used when the remote lookup fails.
+fn with_local_first(local: Option<String>, remote: Result<Vec<String>>) -> Result<Vec<String>> {
+    match (local, remote) {
+        (Some(sig), Ok(mut sigs)) => {
+            sigs.retain(|remote| *remote != sig);
+            sigs.insert(0, sig);
+            Ok(sigs)
+        }
+        (Some(sig), Err(_)) => Ok(vec![sig]),
+        (None, remote) => remote,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_sol_types::{EventTopic, sol_data};
+
+    #[test]
+    fn optimized_selector_search_terminates_without_a_match() {
+        // Four leading zero bytes will not show up in the last thousand nonces, and the search must
+        // report that instead of wrapping the nonce around and starting over.
+        // Use two threads so one lane overflows instead of reaching u32::MAX exactly.
+        let err = rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap().install(|| {
+            find_optimized_selector("transfer", "address,uint256)", 4, u32::MAX - 1000).unwrap_err()
+        });
+        assert_eq!(err.to_string(), "No selector found");
+    }
 
     /// Compares [`super::encode_event_topic`] against alloy's static [`EventTopic`]
     /// implementation, which `sol!`-generated events use to compute indexed topics.
@@ -1768,5 +1889,25 @@ mod tests {
             )
             .0,
         );
+    }
+
+    #[test]
+    fn trailing_flag_hint() {
+        let hint = |expected, args: &[&str]| {
+            let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+            with_trailing_flag_hint(eyre::eyre!("encode length mismatch"), expected, &args)
+                .to_string()
+        };
+
+        // A flag after the expected arguments is named in the error.
+        assert_eq!(
+            hint(1, &["1", "--packed"]),
+            "encode length mismatch; `--packed` was read as an argument; put flags before the signature"
+        );
+        // Only the extra trailing arguments are checked.
+        assert_eq!(hint(1, &["--x", "2"]), "encode length mismatch");
+        // Too few arguments never mention flags, even when one starts with `--`.
+        assert_eq!(hint(2, &["--packed"]), "encode length mismatch");
+        assert_eq!(hint(1, &[]), "encode length mismatch");
     }
 }

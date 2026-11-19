@@ -1,5 +1,5 @@
 use alloy_json_abi::ToSolConfig;
-use alloy_primitives::map::HashSet;
+use alloy_primitives::map::{HashMap, HashSet, hash_map::Entry};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
@@ -17,6 +17,7 @@ use foundry_compilers::{
     multi::{MultiCompiler, MultiCompilerParser, MultiCompilerSettings},
 };
 use foundry_config::{Config, impl_figment_convert};
+use heck::ToSnakeCase;
 use regex::Regex;
 use semver::Version;
 use solar::ast::{Item, ItemKind};
@@ -31,7 +32,15 @@ impl_figment_convert!(BindArgs, build);
 const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 const DEFAULT_CRATE_VERSION: &str = "0.1.0";
 
-type BindingFiles = Vec<(String, PathBuf)>;
+type BindingFiles = Vec<BindingFile>;
+
+struct BindingFile {
+    /// Original contract name, without compiler version or profile suffixes.
+    name: String,
+    path: PathBuf,
+    /// Source identity, if available. Otherwise the artifact directory identifies it.
+    source: PathBuf,
+}
 
 /// CLI arguments for `forge bind`.
 #[derive(Clone, Debug, Parser)]
@@ -156,18 +165,19 @@ impl BindArgs {
                         || contexts
                             .get(&id.source)
                             .is_some_and(|contexts| contexts.contains(&(id.version, id.profile))))
-                    .then_some(id.path)
+                    .then_some((id.path, Some(id.source)))
                 }))?;
             (files, enum_definitions(output.parser()))
         };
 
         let bindings_root = self.bindings.clone().unwrap_or_else(|| artifacts.join("bindings"));
         let sol_config = ToSolConfig::new().enum_definitions(enum_definitions);
+        // Validate identities and names before overwriting any existing bindings.
+        let mut bindings = self.get_solmacrogen(&files)?;
 
         if bindings_root.exists() {
             if !self.overwrite {
                 sh_status!("Bindings found. Checking for consistency.")?;
-                let mut bindings = self.get_solmacrogen(&files)?;
                 bindings.generate_bindings(!self.skip_extra_derives, &sol_config)?;
                 return self.check_existing_bindings(&bindings, &bindings_root);
             }
@@ -176,7 +186,7 @@ impl BindArgs {
             fs::remove_dir_all(&bindings_root)?;
         }
 
-        self.generate_bindings(&files, &bindings_root, &sol_config)?;
+        self.generate_bindings(&mut bindings, &bindings_root, &sol_config)?;
 
         sh_status!("Bindings have been generated to {}", bindings_root.display())?;
         Ok(())
@@ -230,25 +240,31 @@ impl BindArgs {
             files.extend(json_files(&config.out.join(".external")));
             files
         } else {
-            // Artifact-only directories have no compiler manifest to resolve version/profile
-            // identity.
+            // Without cache-based selection, include all artifacts on disk.
             json_files(&config.out).collect()
         };
-        let files = self.filter_artifact_paths(files)?;
+        // Source identity is independent of cache-based selection: compiler variants can live in
+        // different artifact directories, even with --no-cache.
+        let sources = cache
+            .iter()
+            .flat_map(|cache| &cache.files)
+            .flat_map(|(source, entry)| {
+                entry.artifacts().map(move |artifact| (&artifact.path, source))
+            })
+            .collect::<HashMap<_, _>>();
+        let files = self.filter_artifact_paths(files.into_iter().map(|path| {
+            let source = sources.get(&path).map(|source| (*source).clone());
+            (path, source)
+        }))?;
         // Cache-based selection already guarantees membership for built-in artifacts.
-        if let Some(cache) = cache.filter(|_| !config.cache)
+        if !config.cache
             && !definitions.is_empty()
+            && files.iter().any(|file| {
+                !file.path.starts_with(config.out.join(".external"))
+                    && !sources.contains_key(&file.path)
+            })
         {
-            let cached_artifacts = cache
-                .entries()
-                .flat_map(|entry| entry.artifacts())
-                .map(|artifact| &artifact.path)
-                .collect::<HashSet<_>>();
-            if files.iter().any(|(_, path)| {
-                !path.starts_with(config.out.join(".external")) && !cached_artifacts.contains(path)
-            }) {
-                definitions.clear();
-            }
+            definitions.clear();
         }
         Ok((files, definitions))
     }
@@ -337,15 +353,15 @@ impl BindArgs {
         Ok(files)
     }
 
-    /// Applies binding filters and preserves artifact-path precedence for duplicate names.
+    /// Applies binding filters and sorts variants of the same contract by artifact path.
     fn filter_artifact_paths(
         &self,
-        paths: impl IntoIterator<Item = PathBuf>,
+        paths: impl IntoIterator<Item = (PathBuf, Option<PathBuf>)>,
     ) -> Result<BindingFiles> {
         let filter = self.get_filter()?;
         let mut files = paths
             .into_iter()
-            .filter_map(|path| {
+            .filter_map(|(path, source)| {
                 if path.to_str()?.contains("build-info")
                     || path.iter().any(|component| component == "target")
                 {
@@ -355,23 +371,66 @@ impl BindArgs {
                 if stem.ends_with(".metadata") {
                     return None;
                 }
-                let name = binding_name(stem.split('.').next().unwrap());
-                filter.is_match(&name).then_some((name, path))
+                let name = stem.split('.').next().unwrap().to_owned();
+                filter.is_match(&binding_name(&name)).then(|| BindingFile {
+                    name,
+                    source: source.unwrap_or_else(|| path.parent().unwrap().to_path_buf()),
+                    path,
+                })
             })
             .collect::<Vec<_>>();
-        files.sort_by(|a, b| a.1.cmp(&b.1));
+        files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
     }
 
-    fn get_solmacrogen(&self, files: &[(String, PathBuf)]) -> Result<MultiSolMacroGen> {
-        let mut dup = HashSet::<String>::default();
-        let instances = files
-            .iter()
-            .filter_map(|(name, path)| {
-                trace!(?path, "parsing SolMacroGen from file");
-                dup.insert(name.clone()).then(|| SolMacroGen::new(path.clone(), name.clone()))
-            })
-            .collect::<Vec<_>>();
+    fn get_solmacrogen(&self, files: &[BindingFile]) -> Result<MultiSolMacroGen> {
+        let mut identities = HashSet::<_>::default();
+        let mut names = HashMap::<_, &BindingFile>::default();
+        let mut modules = HashMap::<_, _>::default();
+        let mut instances = Vec::new();
+        for file in files {
+            if !identities.insert((&file.source, &file.name)) {
+                continue;
+            }
+            let name = binding_name(&file.name);
+            match names.entry(name.clone()) {
+                Entry::Occupied(entry) => {
+                    let previous = entry.get();
+                    sh_warn!(
+                        "Binding name collision for `{name}`: keeping contract `{}` ({}) and skipping contract `{}` ({})",
+                        previous.name,
+                        previous.path.display(),
+                        file.name,
+                        file.path.display(),
+                    )?;
+                    continue;
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(file);
+                }
+            }
+            if !self.single_file {
+                let module = name.to_snake_case();
+                let entrypoint = if self.module { "mod" } else { "lib" };
+                eyre::ensure!(
+                    module != entrypoint,
+                    "Binding module name collision for `{module}`: contract `{}` ({}) conflicts with generated entry point `{entrypoint}.rs`",
+                    file.name,
+                    file.path.display(),
+                );
+                if let Some(previous) = modules.insert(module.clone(), file) {
+                    eyre::bail!(
+                        "Binding module name collision for `{module}`: contract `{}` ({}) and contract `{}` ({})",
+                        previous.name,
+                        previous.path.display(),
+                        file.name,
+                        file.path.display(),
+                    );
+                }
+            }
+            trace!(path = ?file.path, "parsing SolMacroGen from file");
+            instances.push(SolMacroGen::new(file.path.clone(), name));
+        }
 
         let multi = MultiSolMacroGen::new(instances);
         eyre::ensure!(!multi.instances.is_empty(), "No contract artifacts found");
@@ -402,11 +461,10 @@ impl BindArgs {
     /// Generate the bindings
     fn generate_bindings(
         &self,
-        files: &[(String, PathBuf)],
+        bindings: &mut MultiSolMacroGen,
         bindings_root: &Path,
         sol_config: &ToSolConfig,
     ) -> Result<()> {
-        let mut bindings = self.get_solmacrogen(files)?;
         sh_status!("Generating bindings for {} contracts", bindings.instances.len())?;
 
         if self.module {

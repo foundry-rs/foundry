@@ -161,6 +161,31 @@ contract SymbolicPrecompileInput {
 
         assert(first == second);
     }
+
+    // The path pins `a` to 1, so the precompile runs on that value and its digest is exact.
+    function checkPinnedHashInput(uint256 a) public pure {
+        if (a == 1) {
+            assert(
+                sha256(abi.encode(a))
+                    == 0xec4916dd28fc4c10d78e287ca5d9cc51ee1ae73cbfde08c6b37324cbfaac8bc5
+            );
+            assert(
+                ripemd160(abi.encode(a)) == bytes20(hex"ae387fcfeb723c3f5964509af111cf5a67f30661")
+            );
+        }
+    }
+
+    // The first call stays an opaque term; the guard pins the second one to a digest.
+    function checkPinnedHashMatchesEarlierCall(uint256 a) public pure {
+        bytes32 first = sha256(abi.encode(a));
+        bytes20 firstRipemd = ripemd160(abi.encode(a));
+        address firstSigner = ecrecover(bytes32(a), 27, bytes32(a), bytes32(a));
+        if (a == 1) {
+            assert(first == sha256(abi.encode(a)));
+            assert(firstRipemd == ripemd160(abi.encode(a)));
+            assert(firstSigner == ecrecover(bytes32(a), 27, bytes32(a), bytes32(a)));
+        }
+    }
 }
 "#,
     );
@@ -174,10 +199,12 @@ contract SymbolicPrecompileInput {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicPrecompileInput.t.sol:SymbolicPrecompileInput
+Ran 4 tests for test/SymbolicPrecompileInput.t.sol:SymbolicPrecompileInput
+[PASS] checkPinnedHashInput(uint256) ([METRICS])
+[PASS] checkPinnedHashMatchesEarlierCall(uint256) ([METRICS])
 [PASS] checkSymbolicEcrecoverDeterminism(bytes32,uint8,bytes32,bytes32) ([METRICS])
 [PASS] checkSymbolicHashDeterminism(bytes) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -225,9 +252,16 @@ contract EcrecoverReturnData {
         }
     }
 
+    // A signature with `r = 0` or `s = 0` never recovers.
+    function checkZeroScalarRecoversNothing(bytes32 digest, bytes32 r, bytes32 s) public pure {
+        assert(ecrecover(digest, 27, bytes32(0), s) == address(0));
+        assert(ecrecover(digest, 28, r, bytes32(0)) == address(0));
+    }
+
     function testFuzzConformance(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
         checkInvalidRecoveryId(digest, r, s);
         checkRecoveryOutput(digest, v, r, s);
+        checkZeroScalarRecoversNothing(digest, r, s);
     }
 }
 "#,
@@ -246,6 +280,7 @@ contract EcrecoverReturnData {
 ...
 [PASS] checkInvalidRecoveryId(bytes32,bytes32,bytes32) ([METRICS])
 [PASS] checkRecoveryOutput(bytes32,uint8,bytes32,bytes32) ([METRICS])
+[PASS] checkZeroScalarRecoversNothing(bytes32,bytes32,bytes32) ([METRICS])
 ...
 "#]]);
 }
@@ -312,6 +347,8 @@ fn symbolic_advanced_precompiles_accept_symbolic_payloads(prj: _, cmd: _) {
         r#"
 import "forge-std/Test.sol";
 
+/// Before Osaka, so EIP-7823 does not reject large modexp lengths before gas is charged.
+/// forge-config: default.evm_version = "cancun"
 contract SymbolicAdvancedPrecompileInput is Test {
     function checkSymbolicModexp(bytes1 base) public {
         bytes memory input = abi.encodePacked(
@@ -345,6 +382,66 @@ contract SymbolicAdvancedPrecompileInput is Test {
         assertEq(outA.length, outB.length);
         assertEq(keccak256(outA), keccak256(outB));
     }
+
+    // A 2^28-byte exponent costs about 1.1e10 gas under EIP-2565, more than a call can forward.
+    function checkModexpOutOfGas(uint256 base) public view {
+        (bool ok,) = address(5).staticcall(abi.encodePacked(uint256(32), uint256(1 << 28), uint256(32), base));
+        assert(!ok);
+    }
+
+    // An exponent length of 2^255 must run out of gas, not abort the run.
+    function checkModexpHugeExponentLength() public view {
+        (bool ok,) = address(5).staticcall(
+            abi.encodePacked(uint256(1), uint256(1) << 255, uint256(1), uint8(2), uint256(0), uint8(5))
+        );
+        assert(!ok);
+    }
+
+    // 2^32 - 1 rounds cost 4.29e9 gas.
+    function checkBlake2fOutOfGas(uint256 m0) public view {
+        (bool ok,) = address(9).staticcall(
+            abi.encodePacked(type(uint32).max, new bytes(64), m0, new bytes(96), uint64(3), uint64(0), uint8(1))
+        );
+        assert(!ok);
+    }
+
+    // With zero rounds BLAKE2f ignores the state words, so different inputs collide.
+    function checkBlake2fZeroRoundsCollide(bytes32 a, bytes32 b) public view {
+        require(a != b);
+        assert(blake2fZeroRounds(a) != blake2fZeroRounds(b));
+    }
+
+    function blake2fZeroRounds(bytes32 h0) internal view returns (bytes32) {
+        (bool ok, bytes memory out) = address(9).staticcall(
+            abi.encodePacked(uint32(0), h0, new bytes(160), uint64(0), uint64(0), uint8(1))
+        );
+        require(ok);
+        return abi.decode(out, (bytes32));
+    }
+
+    function modexp(uint256 b, uint256 e, uint256 m) internal view returns (uint256 r) {
+        bytes memory input = abi.encode(uint256(32), uint256(32), uint256(32), b, e, m);
+        (bool ok, bytes memory out) = address(5).staticcall(input);
+        require(ok);
+        r = abi.decode(out, (uint256));
+    }
+
+    // modexp is not injective: x^2 == (7 - x)^2 mod 7 for every x.
+    function checkModexpOutputsMayCollide(uint256 x) public view {
+        require(x > 0 && x < 7);
+        assert(modexp(x, 2, 7) != modexp(7 - x, 2, 7));
+    }
+}
+
+/// forge-config: default.evm_version = "osaka"
+contract SymbolicModexpOsakaLimit {
+    // EIP-7823: from Osaka, an input longer than 1024 bytes makes the call fail.
+    function checkSymbolicModexpLengthLimit(uint256 base) public view {
+        (bool ok,) = address(5).staticcall(
+            abi.encodePacked(uint256(32), uint256(32), uint256(1025), base, uint256(1), new bytes(1025))
+        );
+        assert(!ok);
+    }
 }
 "#,
     );
@@ -355,13 +452,18 @@ contract SymbolicAdvancedPrecompileInput is Test {
         "--match-contract",
         "SymbolicAdvancedPrecompileInput",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicAdvancedPrecompileInput.t.sol:SymbolicAdvancedPrecompileInput
+Ran 7 tests for test/SymbolicAdvancedPrecompileInput.t.sol:SymbolicAdvancedPrecompileInput
+[PASS] checkBlake2fOutOfGas(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBlake2fZeroRoundsCollide(bytes32,bytes32) ([METRICS])
+[PASS] checkModexpHugeExponentLength() ([METRICS])
+[PASS] checkModexpOutOfGas(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkModexpOutputsMayCollide(uint256) ([METRICS])
 [PASS] checkSymbolicBlake2f(bytes1) ([METRICS])
 [PASS] checkSymbolicModexp(bytes1) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 5 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -369,6 +471,19 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
     assert!(!stdout.contains("symbolic precompile length header"), "{stdout}");
+
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicModexpOsakaLimit",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+[PASS] checkSymbolicModexpLengthLimit(uint256) ([METRICS])
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -747,6 +862,9 @@ contract PrecompileAccounts is Test {
     function setUp() public {
         vm.deal(address(2), 1);
         vm.setNonce(address(3), 1);
+        vm.etch(address(0x1234), hex"602a60005260206000f3");
+        vm.cloneAccount(address(0x1234), address(0x0b));
+        vm.cloneAccount(address(0x1234), address(0x100));
     }
 
     function checkPrecompileAccounts() public {
@@ -755,6 +873,12 @@ contract PrecompileAccounts is Test {
 
     function testPrecompileAccounts() public {
         assertPrecompileAccounts();
+    }
+
+    function checkSymbolicCodehashAfterCodeQuery(address who) public {
+        vm.assume(who == address(1));
+        assert(address(1).code.length == 0);
+        assert(who.codehash == bytes32(0));
     }
 
     function assertPrecompileAccounts() internal {
@@ -773,6 +897,22 @@ contract PrecompileAccounts is Test {
         assert(address(4).codehash == keccak256(""));
         vm.setNonce(address(5), 1);
         assert(address(5).codehash == keccak256(""));
+
+        // Account code remains observable even when calls dispatch to a precompile.
+        address[2] memory targets = [address(0x0b), address(0x100)];
+        for (uint256 i; i < targets.length; ++i) {
+            address target = targets[i];
+            assert(target.code.length == 10);
+            assert(target.codehash == keccak256(hex"602a60005260206000f3"));
+            assert(keccak256(target.code) == keccak256(hex"602a60005260206000f3"));
+        }
+
+        (bool blsOk, bytes memory blsOut) = address(0x0b).staticcall("");
+        assert(!blsOk);
+        assert(blsOut.length == 0);
+        (bool p256Ok, bytes memory p256Out) = address(0x100).staticcall("");
+        assert(p256Ok);
+        assert(p256Out.length == 0);
     }
 }
 "#,
@@ -782,7 +922,7 @@ contract PrecompileAccounts is Test {
         "test",
         "--json",
         "--evm-version",
-        "cancun",
+        "osaka",
         "--match-test",
         "testPrecompileAccounts",
     ])
@@ -806,15 +946,23 @@ contract PrecompileAccounts is Test {
             "--symbolic",
             "--json",
             "--evm-version",
-            "cancun",
+            "osaka",
             "--match-test",
-            "checkPrecompileAccounts",
+            "checkPrecompileAccounts|checkSymbolicCodehashAfterCodeQuery",
         ])
         .assert_json_stdout(str![[r#"
 {
   "test/PrecompileAccounts.t.sol:PrecompileAccounts": {
     "test_results": {
       "checkPrecompileAccounts()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "...": "{...}"
+        },
+        "...": "{...}"
+      },
+      "checkSymbolicCodehashAfterCodeQuery(address)": {
         "status": "Success",
         "symbolic": {
           "status": "pass",
@@ -867,4 +1015,58 @@ contract SymbolicKzgResidual {
         stdout.contains("symbolic KZG point-evaluation precompile residual not modeled"),
         "{stdout}"
     );
+}
+
+#[forgetest_init]
+fn symbolic_precompiles_follow_active_spec(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_precompiles_follow_active_spec because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicOsakaPrecompiles.t.sol",
+        r#"
+contract SymbolicOsakaPrecompiles {
+    function checkBlsAndP256Precompiles(uint256) public {
+        // BLS12-381 G1ADD rejects empty input instead of acting as an empty account.
+        (bool blsOk, bytes memory blsOut) = address(0x0b).staticcall("");
+        assert(!blsOk);
+        assert(blsOut.length == 0);
+
+        // P256VERIFY returns no output for an invalid signature.
+        (bool p256Ok, bytes memory p256Out) = address(0x100).staticcall(new bytes(160));
+        assert(p256Ok);
+        assert(p256Out.length == 0);
+    }
+
+    /// forge-config: default.symbolic.symbolic_call_targets = true
+    function checkSymbolicTargetIncludesBlsPrecompiles(address target) public {
+        // Every address in this range is a precompile or an empty account.
+        if (uint160(target) <= 0x0a || uint160(target) > 0x100) return;
+        (bool ok,) = target.call("");
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "osaka",
+        "--match-contract",
+        "SymbolicOsakaPrecompiles",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicOsakaPrecompiles.t.sol:SymbolicOsakaPrecompiles
+[PASS] checkBlsAndP256Precompiles(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicTargetIncludesBlsPrecompiles(address) ([METRICS])
+...
+"#]]);
 }

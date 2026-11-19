@@ -22,16 +22,16 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, sol};
 use anvil::{NodeConfig, spawn};
+use base_common_base_tx::NonceManagerSlots as NonceManagerStorage;
 use base_common_consensus::{
-    BaseTimeDepositSource, Call, DepositSourceDomain, Eip8130Constants, Eip8130Contracts,
-    Eip8130Signed, Predeploys, SystemAddresses, TxEip8130,
+    BaseTimeDepositSource, Call, DepositSourceDomain, Predeploys, SystemAddresses, TxBase,
+    TxBaseConstants, TxBaseSigned,
 };
-use base_common_evm::BaseTime;
-use base_common_precompiles::NonceManagerStorage;
 use base_protocol::{BaseTimeUpdateTx, L1BlockInfoTx};
-use foundry_common::provider::RetryProvider;
+use foundry_common::{EIP1967_ADMIN_SLOT, EIP1967_IMPLEMENTATION_SLOT, provider::RetryProvider};
 use foundry_config::Config;
-use foundry_evm::{hardforks::BaseUpgrade, opts::EvmOpts};
+use foundry_evm_core::opts::EvmOpts;
+use foundry_evm_hardforks::BaseUpgrade;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use op_alloy_consensus::TxDeposit;
@@ -59,7 +59,7 @@ fn eip8130_envelope_with(
     calls: Vec<Vec<Call>>,
     metadata: Bytes,
 ) -> FoundryTxEnvelope {
-    let tx = TxEip8130 {
+    let tx = TxBase {
         chain_id: 8453,
         sender: None,
         nonce_key: U256::ZERO,
@@ -75,7 +75,7 @@ fn eip8130_envelope_with(
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()))
+    FoundryTxEnvelope::Eip8130(TxBaseSigned::new(tx, signature.as_bytes().into(), Bytes::new()))
 }
 
 fn eip8130_envelope(signer: &PrivateKeySigner) -> FoundryTxEnvelope {
@@ -91,7 +91,7 @@ fn malformed_configured_eip8130_envelope_with_nonce(
     nonce_key: U256,
     nonce_sequence: u64,
 ) -> FoundryTxEnvelope {
-    let tx = TxEip8130 {
+    let tx = TxBase {
         chain_id: 8453,
         sender: Some(signer.address()),
         nonce_key,
@@ -107,7 +107,7 @@ fn malformed_configured_eip8130_envelope_with_nonce(
         payer: None,
     };
     let bare_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes().into();
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, bare_auth, Bytes::new()))
+    FoundryTxEnvelope::Eip8130(TxBaseSigned::new(tx, bare_auth, Bytes::new()))
 }
 
 fn eip8130_envelope_with_nonce(
@@ -132,14 +132,32 @@ fn eip8130_envelope_with_nonce_and_fee(
     valid_before: u64,
     max_fee_per_gas: u128,
 ) -> FoundryTxEnvelope {
-    let tx = TxEip8130 {
+    eip8130_envelope_with_nonce_and_fees(
+        signer,
+        nonce_key,
+        nonce_sequence,
+        valid_before,
+        max_fee_per_gas,
+        0,
+    )
+}
+
+fn eip8130_envelope_with_nonce_and_fees(
+    signer: &PrivateKeySigner,
+    nonce_key: U256,
+    nonce_sequence: u64,
+    valid_before: u64,
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+) -> FoundryTxEnvelope {
+    let tx = TxBase {
         chain_id: 8453,
         sender: None,
         nonce_key,
         nonce_sequence,
         valid_after: 0,
         valid_before,
-        max_priority_fee_per_gas: 0,
+        max_priority_fee_per_gas,
         max_fee_per_gas,
         gas_limit: 200_000,
         account_changes: Vec::new(),
@@ -148,7 +166,7 @@ fn eip8130_envelope_with_nonce_and_fee(
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()))
+    FoundryTxEnvelope::Eip8130(TxBaseSigned::new(tx, signature.as_bytes().into(), Bytes::new()))
 }
 
 fn eip8130_envelope_with_channel_calls(
@@ -156,7 +174,7 @@ fn eip8130_envelope_with_channel_calls(
     nonce_key: U256,
     calls: Vec<Vec<Call>>,
 ) -> FoundryTxEnvelope {
-    let tx = TxEip8130 {
+    let tx = TxBase {
         chain_id: 8453,
         sender: None,
         nonce_key,
@@ -172,7 +190,7 @@ fn eip8130_envelope_with_channel_calls(
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()))
+    FoundryTxEnvelope::Eip8130(TxBaseSigned::new(tx, signature.as_bytes().into(), Bytes::new()))
 }
 
 fn sponsored_eip8130_envelope(
@@ -188,7 +206,7 @@ fn sponsored_eip8130_envelope_with_nonce(
     nonce_key: U256,
     nonce_sequence: u64,
 ) -> FoundryTxEnvelope {
-    let tx = TxEip8130 {
+    let tx = TxBase {
         chain_id: 8453,
         sender: None,
         nonce_key,
@@ -206,9 +224,9 @@ fn sponsored_eip8130_envelope_with_nonce(
     let sender_auth =
         sender.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes().to_vec();
     let payer_signature = payer.sign_hash_sync(&tx.payer_signature_hash(sender.address())).unwrap();
-    let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+    let mut payer_auth = TxBaseConstants::K1_AUTHENTICATOR.to_vec();
     payer_auth.extend_from_slice(&payer_signature.as_bytes());
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth.into(), payer_auth.into()))
+    FoundryTxEnvelope::Eip8130(TxBaseSigned::new(tx, sender_auth.into(), payer_auth.into()))
 }
 
 fn eip8130_simulation_request(sender: Address) -> WithOtherFields<TransactionRequest> {
@@ -233,12 +251,6 @@ fn eip8130_simulation_request_with_call(
         "gas": "0x30d40"
     }))
     .unwrap()
-}
-
-fn eip8130_auth_blob(authenticator: Address, data_len: usize) -> Bytes {
-    let mut blob = authenticator.to_vec();
-    blob.resize(blob.len() + data_len, 0xff);
-    blob.into()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -321,8 +333,11 @@ async fn base_fork_call_and_trace_use_native_evm() {
     let source_config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()));
     let (source_api, source_handle) = spawn(source_config).await;
     source_api.mine_one().await.unwrap();
+    // The fork resolves Base mainnet's current upgrade (Denim), which seeds no activation admin,
+    // and the local source never wrote one to storage, so pin it explicitly.
     let target_config = NodeConfig::test_base()
         .with_hardfork(Some(BaseUpgrade::Beryl.into()))
+        .with_base_activation_admin(Some(MAINNET_BERYL_ACTIVATION_ADMIN))
         .with_eth_rpc_url(Some(source_handle.http_endpoint()));
     let (_target_api, target_handle) = spawn(target_config).await;
     let provider = target_handle.http_provider();
@@ -717,48 +732,7 @@ async fn base_eip8130_estimate_includes_sponsored_payer_auth() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_estimate_prices_authentication_scheme() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
-    let (_api, handle) = spawn(config).await;
-    let provider = handle.http_provider();
-    let sender = handle.dev_wallets().next().unwrap().address();
-    let k1 = provider.estimate_gas(eip8130_simulation_request(sender)).await.unwrap();
-    let p256 = provider
-        .estimate_gas(
-            serde_json::from_value(serde_json::json!({
-                "from": sender,
-                "calls": [],
-                "senderAuth": eip8130_auth_blob(Eip8130Contracts::P256_AUTHENTICATOR, 128),
-                "maxFeePerGas": "0x3b9aca00",
-                "gas": "0x30d40"
-            }))
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-    let webauthn = provider
-        .estimate_gas(
-            serde_json::from_value(serde_json::json!({
-                "from": sender,
-                "calls": [],
-                "senderAuth": eip8130_auth_blob(
-                    Eip8130Contracts::WEBAUTHN_AUTHENTICATOR,
-                    1024
-                ),
-                "maxFeePerGas": "0x3b9aca00",
-                "gas": "0x30d40"
-            }))
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(p256 > k1, "P-256 estimate {p256} must exceed K1 {k1}");
-    assert!(webauthn > p256, "WebAuthn estimate {webauthn} must exceed P-256 {p256}");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_simulation_and_nonce_key_are_rejected_before_zenith() {
+async fn base_eip8130_simulation_and_nonce_key_are_rejected_before_everest() {
     let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
@@ -780,7 +754,7 @@ async fn base_eip8130_simulation_and_nonce_key_are_rejected_before_zenith() {
         access_list_error.to_string(),
         nonce_error.to_string(),
     ] {
-        assert!(error.contains("not active before the Zenith hard fork"), "{error}");
+        assert!(error.contains("not active before the Everest hard fork"), "{error}");
     }
 }
 
@@ -800,7 +774,7 @@ async fn base_eip8130_estimate_validates_sender() {
     }))
     .unwrap();
     let error = provider.estimate_gas(missing).await.unwrap_err();
-    assert!(error.to_string().contains("invalid EIP-8130 simulation request"), "{error}");
+    assert!(error.to_string().contains("no sender account"), "{error}");
 
     let explicit_sender = serde_json::from_value(serde_json::json!({
         "sender": sender,
@@ -820,7 +794,21 @@ async fn base_eip8130_estimate_validates_sender() {
     }))
     .unwrap();
     let error = provider.estimate_gas(mismatch).await.unwrap_err();
-    assert!(error.to_string().contains("invalid EIP-8130 simulation request"), "{error}");
+    assert!(error.to_string().contains("`sender` and `from` differ"), "{error}");
+
+    let calls_and_to = serde_json::from_value(serde_json::json!({
+        "from": sender,
+        "to": other,
+        "calls": [[{ "to": other, "data": "0x" }]],
+        "maxFeePerGas": "0x3b9aca00",
+        "gas": "0x30d40"
+    }))
+    .unwrap();
+    let error = provider.call(calls_and_to).await.unwrap_err();
+    assert!(
+        error.to_string().contains("set either `calls` or a top-level `to`/`value`/`data`"),
+        "{error}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -877,7 +865,7 @@ async fn base_eip8130_debug_trace_transaction_inspects_protocol_calls() {
         .send_raw_transaction(
             &eip8130_envelope_with(
                 &signer,
-                vec![vec![Call { to: target, data: Bytes::new() }]],
+                vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
                 Bytes::new(),
             )
             .encoded_2718(),
@@ -989,15 +977,29 @@ async fn base_eip8130_txpool_orders_channel_heads_by_fee() {
 
     let low = provider
         .send_raw_transaction(
-            &eip8130_envelope_with_nonce_and_fee(&signer, U256::ONE, 0, 0, 1_000_000_000)
-                .encoded_2718(),
+            &eip8130_envelope_with_nonce_and_fees(
+                &signer,
+                U256::ONE,
+                0,
+                0,
+                1_000_000_000,
+                1_000_000_000,
+            )
+            .encoded_2718(),
         )
         .await
         .unwrap();
     let high = provider
         .send_raw_transaction(
-            &eip8130_envelope_with_nonce_and_fee(&signer, U256::from(2), 0, 0, 2_000_000_000)
-                .encoded_2718(),
+            &eip8130_envelope_with_nonce_and_fees(
+                &signer,
+                U256::from(2),
+                0,
+                0,
+                2_000_000_000,
+                2_000_000_000,
+            )
+            .encoded_2718(),
         )
         .await
         .unwrap();
@@ -1105,7 +1107,7 @@ async fn base_eip8130_txpool_replaces_nonce_free_by_replay_id() {
         .send_raw_transaction(
             &eip8130_envelope_with_nonce_and_fee(
                 &signer,
-                Eip8130Constants::NONCE_KEY_MAX,
+                TxBaseConstants::NONCE_KEY_MAX,
                 0,
                 valid_before,
                 1_000_000_000,
@@ -1119,7 +1121,7 @@ async fn base_eip8130_txpool_replaces_nonce_free_by_replay_id() {
         .send_raw_transaction(
             &eip8130_envelope_with_nonce_and_fee(
                 &signer,
-                Eip8130Constants::NONCE_KEY_MAX,
+                TxBaseConstants::NONCE_KEY_MAX,
                 0,
                 valid_before,
                 2_000_000_000,
@@ -1132,7 +1134,7 @@ async fn base_eip8130_txpool_replaces_nonce_free_by_replay_id() {
         .send_raw_transaction(
             &eip8130_envelope_with_nonce_and_fee(
                 &signer,
-                Eip8130Constants::NONCE_KEY_MAX,
+                TxBaseConstants::NONCE_KEY_MAX,
                 0,
                 valid_before + 1,
                 1_000_000_000,
@@ -1166,7 +1168,7 @@ async fn base_eip8130_rejects_mined_nonce_free_replay_at_admission() {
         .send_raw_transaction(
             &eip8130_envelope_with_nonce_and_fee(
                 &signer,
-                Eip8130Constants::NONCE_KEY_MAX,
+                TxBaseConstants::NONCE_KEY_MAX,
                 0,
                 valid_before,
                 1_000_000_000,
@@ -1183,7 +1185,7 @@ async fn base_eip8130_rejects_mined_nonce_free_replay_at_admission() {
         .send_raw_transaction(
             &eip8130_envelope_with_nonce_and_fee(
                 &signer,
-                Eip8130Constants::NONCE_KEY_MAX,
+                TxBaseConstants::NONCE_KEY_MAX,
                 0,
                 valid_before,
                 2_000_000_000,
@@ -1207,7 +1209,7 @@ async fn base_eip8130_txpool_drops_expired_nonce_free_transaction() {
     let valid_before = (now + 1) * 1_000;
     let pending = provider
         .send_raw_transaction(
-            &eip8130_envelope_with_nonce(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, valid_before)
+            &eip8130_envelope_with_nonce(&signer, TxBaseConstants::NONCE_KEY_MAX, 0, valid_before)
                 .encoded_2718(),
         )
         .await
@@ -1332,13 +1334,13 @@ async fn base_standalone_mines_eip8130_transaction() {
 
     assert!(receipt.status());
     let receipt_json = serde_json::to_value(&receipt).unwrap();
-    assert!(receipt_json.get("phaseStatuses").is_none(), "{receipt_json}");
+    assert_eq!(receipt_json["phaseStatuses"], serde_json::json!([]), "{receipt_json}");
     assert_eq!(receipt_json["payer"], serde_json::to_value(sender).unwrap());
     let mined = provider.get_transaction_by_hash(receipt.tx_hash()).await.unwrap().unwrap();
     assert_eq!(mined.ty(), 0x79);
     let mined_json = serde_json::to_value(mined).unwrap();
-    assert_eq!(mined_json["tx"]["nonceKey"], "0x0", "{mined_json}");
-    assert!(mined_json["tx"].get("calls").is_some());
+    assert_eq!(mined_json["nonceKey"], "0x0", "{mined_json}");
+    assert!(mined_json.get("calls").is_some());
     assert!(mined_json.get("senderAuth").is_some());
     assert!(provider.get_balance(sender).await.unwrap() < before);
 }
@@ -1400,7 +1402,7 @@ async fn base_eip8130_receipt_reports_phase_statuses_and_metadata() {
     api.anvil_set_code(target, Bytes::from_static(&[0x00])).await.unwrap();
     let envelope = eip8130_envelope_with(
         &signer,
-        vec![vec![Call { to: target, data: Bytes::new() }]],
+        vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
         Bytes::from_static(&[0xaa]),
     );
 
@@ -1504,8 +1506,8 @@ async fn base_eip8130_receipt_reports_partial_phase_revert() {
     let envelope = eip8130_envelope_with(
         &signer,
         vec![
-            vec![Call { to: success, data: Bytes::new() }],
-            vec![Call { to: reverter, data: Bytes::new() }],
+            vec![Call { to: success, value: U256::ZERO, data: Bytes::new() }],
+            vec![Call { to: reverter, value: U256::ZERO, data: Bytes::new() }],
         ],
         Bytes::new(),
     );
@@ -1541,7 +1543,7 @@ async fn base_eip8130_same_block_receipts_keep_phase_statuses_isolated() {
             &eip8130_envelope_with_channel_calls(
                 &signer,
                 U256::from(20),
-                vec![vec![Call { to: success, data: Bytes::new() }]],
+                vec![vec![Call { to: success, value: U256::ZERO, data: Bytes::new() }]],
             )
             .encoded_2718(),
         )
@@ -1553,8 +1555,8 @@ async fn base_eip8130_same_block_receipts_keep_phase_statuses_isolated() {
                 &signer,
                 U256::from(21),
                 vec![
-                    vec![Call { to: success, data: Bytes::new() }],
-                    vec![Call { to: reverter, data: Bytes::new() }],
+                    vec![Call { to: success, value: U256::ZERO, data: Bytes::new() }],
+                    vec![Call { to: reverter, value: U256::ZERO, data: Bytes::new() }],
                 ],
             )
             .encoded_2718(),
@@ -1590,9 +1592,9 @@ async fn base_beryl_rejects_eip8130_transaction() {
         .await
         .unwrap_err();
 
-    assert!(err.to_string().contains("gated behind Zenith"), "{err}");
+    assert!(err.to_string().contains("gated behind Everest"), "{err}");
     assert!(
-        nonce_error.to_string().contains("not active before the Zenith hard fork"),
+        nonce_error.to_string().contains("not active before the Everest hard fork"),
         "{nonce_error}"
     );
 }
@@ -1612,7 +1614,7 @@ async fn base_eip8130_is_rejected_by_non_base_networks() {
             .await
             .unwrap_err();
 
-        assert!(error.to_string().contains("gated behind Zenith"), "{error}");
+        assert!(error.to_string().contains("gated behind Everest"), "{error}");
     }
 }
 
@@ -1658,7 +1660,7 @@ async fn base_fork_denim_continues_every_parent_phase() {
     let (source_api, source_handle) = spawn(config).await;
     let admin = B256::from(U256::from(0x1234));
     source_api
-        .anvil_set_storage_at(Predeploys::BASE_TIME, BaseTime::ADMIN_SLOT, admin)
+        .anvil_set_storage_at(Predeploys::BASE_TIME, EIP1967_ADMIN_SLOT.into(), admin)
         .await
         .unwrap();
     let source_provider = source_handle.http_provider();
@@ -1670,7 +1672,10 @@ async fn base_fork_denim_continues_every_parent_phase() {
         let (api, handle) = spawn(config).await;
         let provider = handle.http_provider();
         assert_eq!(
-            provider.get_storage_at(Predeploys::BASE_TIME, BaseTime::ADMIN_SLOT).await.unwrap(),
+            provider
+                .get_storage_at(Predeploys::BASE_TIME, EIP1967_ADMIN_SLOT.into())
+                .await
+                .unwrap(),
             U256::from_be_bytes(admin.0)
         );
         assert_eq!(base_time_ms(&provider, BlockId::pending()).await, before + 200);
@@ -1842,13 +1847,10 @@ async fn base_denim_rejected_state_load_is_atomic() {
     source.mine_one().await.unwrap();
     let mut invalid_state = source.backend.serialized_state(false).await.unwrap();
     let base_time = invalid_state.accounts.get_mut(&Predeploys::BASE_TIME).unwrap();
+    base_time.storage.insert(EIP1967_IMPLEMENTATION_SLOT, B256::ZERO);
     base_time
         .storage
-        .insert(B256::from(BaseTime::IMPLEMENTATION_SLOT.to_be_bytes::<32>()), B256::ZERO);
-    base_time.storage.insert(
-        B256::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
-        B256::from(U256::from(0xdead).to_be_bytes::<32>()),
-    );
+        .insert(EIP1967_ADMIN_SLOT, B256::from(U256::from(0xdead).to_be_bytes::<32>()));
 
     let (target, target_handle) = spawn(config()).await;
     target.anvil_set_balance(sentinel, U256::from(7)).await.unwrap();

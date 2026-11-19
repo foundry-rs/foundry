@@ -7,7 +7,7 @@ use foundry_config::{
         self, Figment, Metadata, Profile,
         value::{Dict, Map},
     },
-    find_project_root, impl_figment_convert_cast,
+    impl_figment_convert_cast,
 };
 use foundry_wallets::WalletOpts;
 use serde::Serialize;
@@ -115,10 +115,12 @@ impl RpcOpts {
     }
 
     pub fn into_figment(self, all: bool) -> Figment {
-        let root = find_project_root(None).expect("could not determine project root");
-        Config::with_root(&root)
-            .to_figment(if all { FigmentProviders::All } else { FigmentProviders::Cast })
-            .merge(self)
+        Config::current_project_figment(if all {
+            FigmentProviders::All
+        } else {
+            FigmentProviders::Cast
+        })
+        .merge(self)
     }
 }
 
@@ -156,7 +158,7 @@ impl figment::Provider for EtherscanOpts {
 impl EtherscanOpts {
     /// Returns true if the Etherscan API key is set.
     pub fn has_key(&self) -> bool {
-        self.key.as_ref().filter(|key| !key.trim().is_empty()).is_some()
+        self.key.as_ref().is_some_and(|key| !key.trim().is_empty())
     }
 
     /// Returns the Etherscan API key.

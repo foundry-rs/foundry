@@ -26,6 +26,14 @@ impl SymBytes {
         cx.mk_bytes_kind(kind)
     }
 
+    /// Returns the bytes a sized buffer was cut from, whose bytes past the size are not zeroed.
+    pub(crate) fn without_size(&self) -> Self {
+        match self.kind() {
+            SymBytesKind::Sized { bytes, .. } => bytes.without_size(),
+            _ => self.clone(),
+        }
+    }
+
     fn kind(&self) -> &SymBytesKind {
         self.kind.value()
     }
@@ -202,7 +210,12 @@ impl SymBytes {
         if len == 0 {
             return Self::empty(cx);
         }
-        if offset == 0 && len == self.len() {
+        let self_len = self.len();
+        // Bytes past the end read as zero; this also keeps `offset + idx` below from overflowing.
+        if offset >= self_len {
+            return Self::concrete(cx, vec![0; len]);
+        }
+        if offset == 0 && len == self_len {
             return self.clone();
         }
         match self.kind() {
@@ -278,6 +291,9 @@ impl SymBytes {
     }
 
     pub(crate) fn word_at(&self, cx: &mut SymCx, offset: usize) -> SymExpr {
+        if offset >= self.len() {
+            return SymExpr::zero(cx);
+        }
         if let Some(word) = self.word_fragment_at(cx, offset, 32, 0) {
             return word;
         }
@@ -322,6 +338,9 @@ impl SymBytes {
     pub(crate) fn right_aligned_word(&self, cx: &mut SymCx, offset: usize, len: usize) -> SymExpr {
         debug_assert!(len <= 32);
         let len = len.min(32);
+        if offset >= self.len() {
+            return SymExpr::zero(cx);
+        }
         if let Some(word) = self.word_fragment_at(cx, offset, len, 32 - len) {
             return word;
         }

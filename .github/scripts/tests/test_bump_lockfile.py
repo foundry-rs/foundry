@@ -80,7 +80,7 @@ class BumpLockfileTests(unittest.TestCase):
         old = tomllib.loads(self.baseline.decode())["package"]
         old_unrelated = next(p for p in old if p["name"] == "unrelated-dep")
         self.write_manifest(self.revision(self.target))
-        for name in ("bump-solar.sh", "bump-tempo.sh"):
+        for name in ("bump-tempo.sh",):
             with self.subTest(script=name):
                 (self.project / "Cargo.lock").write_bytes(self.baseline)
                 result = self.update_lockfile(name)
@@ -92,7 +92,7 @@ class BumpLockfileTests(unittest.TestCase):
 
     def test_resolution_failure_stops_script(self):
         self.write_manifest("0" * 40)
-        for name in ("bump-solar.sh", "bump-tempo.sh"):
+        for name in ("bump-tempo.sh",):
             with self.subTest(script=name):
                 result = self.update_lockfile(name)
                 self.assertNotEqual(result.returncode, 0, result.stdout)

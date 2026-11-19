@@ -13,8 +13,9 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
+use alloy_eips::BlockId;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_network::Network;
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, Log, U256, hex,
     map::{AddressHashMap, HashMap},
@@ -23,7 +24,8 @@ use alloy_signer::Signer;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use dialoguer::Confirm;
-use eyre::{ContextCompat, Result};
+use evm2::{EvmFeatures, interpreter::InstrStop};
+use eyre::{ContextCompat, Result, WrapErr};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
@@ -31,10 +33,12 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_common::{
-    ContractsByArtifact, SELECTOR_LEN,
+    ContractsByArtifact, FoundryTransactionBuilder, SELECTOR_LEN,
     abi::{encode_function_args, get_func},
     compile::ContractSizeLimits,
+    provider::ProviderBuilder,
     shell,
+    tempo::configurable_account::{detect_configurable_account, linked_account},
 };
 use foundry_compilers::{ArtifactId, artifacts::output_selection::ContractOutputSelection};
 use foundry_config::{
@@ -44,25 +48,30 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+use foundry_debugger::ensure_dump_dir;
 use foundry_evm::{
     backend::Backend,
     core::{
-        Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        Breakpoints,
+        evm::{
+            EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork,
+            TransactionRequestFor,
+        },
     },
     executors::ExecutorBuilder,
+    hardforks::ExecutionSpec,
     inspectors::{
         CheatsConfig,
         cheatcodes::{BroadcastableTransactions, Wallets},
     },
     opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
-    revm::interpreter::InstructionResult,
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
-use foundry_wallets::{MultiWalletOpts, wallet_multi::MultiWallet};
+use foundry_wallets::{MultiWalletOpts, utils::maybe_get_keystore_path, wallet_multi::MultiWallet};
 use serde::Serialize;
 use std::path::PathBuf;
+use tempo_alloy::TempoNetwork;
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -78,6 +87,7 @@ mod build;
 mod execute;
 mod library_deployments;
 mod multi_sequence;
+mod owner_approvals;
 mod progress;
 mod providers;
 mod receipts;
@@ -225,6 +235,29 @@ pub struct ScriptArgs {
     )]
     pub resume_retry: bool,
 
+    /// An owner's approval of a Tempo configurable account transaction that awaits its owners.
+    ///
+    /// When the local owner keys of a configurable account sender do not reach its threshold,
+    /// `--broadcast` saves its transactions unsigned and prints the digest of each. Owners sign
+    /// the digests with `cast wallet sign --no-hash <DIGEST>` or with a passkey, and `--resume`
+    /// sends the transactions once their approvals reach the threshold. Repeat for each approval,
+    /// in any order. Takes a hex signature, a JSON signature, or a browser WebAuthn assertion, as
+    /// `cast wallet assemble` does; a value naming a file is read from it.
+    #[arg(
+        long = "tempo.owner-signature",
+        value_name = "SIGNATURE",
+        requires = "resume",
+        conflicts_with = "batch"
+    )]
+    pub tempo_owner_signatures: Vec<String>,
+
+    /// Archives an unfinished previous broadcast of this script and broadcasts it anew.
+    ///
+    /// Without this flag, `--broadcast` refuses to replace a previous broadcast whose operations
+    /// have not all mined or reverted. Finish that broadcast with `--resume` instead.
+    #[arg(long, requires = "broadcast", conflicts_with = "resume")]
+    pub start_fresh: bool,
+
     /// If present, --resume or --verify will be assumed to be a multi chain deployment.
     #[arg(long)]
     pub multi: bool,
@@ -242,7 +275,7 @@ pub struct ScriptArgs {
     #[arg(
         long,
         requires = "debug",
-        value_hint = ValueHint::FilePath,
+        value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
     pub dump: Option<PathBuf>,
@@ -266,9 +299,7 @@ pub struct ScriptArgs {
     )]
     pub confirmations: u64,
 
-    /// Disables interactive prompts that might appear when deploying big contracts.
-    ///
-    /// For more info on the contract size limit, see EIP-170: <https://eips.ethereum.org/EIPS/eip-170>
+    /// Skips script confirmation prompts, including no-code targets and oversized contracts.
     #[arg(long)]
     pub non_interactive: bool,
 
@@ -392,7 +423,17 @@ impl ScriptArgs {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
-            let addresses = script_wallets.addresses();
+            let mut addresses = script_wallets.addresses();
+            if addresses.is_empty() && browser_wallet.is_none() {
+                // A keystore without an `address` field, such as one written by `cast wallet`,
+                // must be unlocked to find its address.
+                addresses = script_wallets.signers().map_err(|err| {
+                    eyre::eyre!("{err}").wrap_err(
+                        "failed to unlock the wallet to find the script sender; pass `--sender`, \
+                         or a keystore password file with `--password-file` or `ETH_PASSWORD`",
+                    )
+                })?;
+            }
             if addresses.len() == 1 {
                 evm_opts.sender = addresses[0];
             } else if let Some(signer) = browser_wallet.as_ref().map(|b| b.address()) {
@@ -400,15 +441,50 @@ impl ScriptArgs {
             }
         }
 
+        // An explicit configurable account is the sender of a bare `vm.startBroadcast()`, as
+        // `--sender` would make it; its owner keys must not broadcast in its place.
+        if let Some(account) = args.tempo.configurable_account
+            && !args.resume
+        {
+            if let Some(sender) = args.evm.sender {
+                eyre::ensure!(
+                    sender == account,
+                    "--sender {sender} conflicts with --tempo.configurable-account {account}"
+                );
+            }
+            evm_opts.sender = account;
+            script_wallets.inner.lock().provided_sender = Some(account);
+        } else if !args.resume
+            && !args.batch
+            && args.evm.sender.is_none()
+            && !args.tempo.eoa
+            && let Some((account, owner)) = args.linked_account_sender(&config, &evm_opts).await?
+        {
+            // `vm.startBroadcast()` without an address broadcasts from the provided sender, and
+            // `vm.sign` without a signer signs with its owner key.
+            evm_opts.sender = account;
+            let mut wallets = script_wallets.inner.lock();
+            wallets.provided_sender = Some(account);
+            wallets.sender_owner = Some(owner);
+        }
+
         tempo.resolve_expires();
         config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        // `--json` keeps stdout for the result, so logs are captured into it.
+        if shell::is_json() {
+            config.live_logs = false;
+        }
         if args.debug {
             if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);
             }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in scripts.
-            config.build_info = true;
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
             config.request_ethdebug();
         }
 
@@ -434,6 +510,14 @@ impl ScriptArgs {
                 "--sponsor-url is not supported by forge script; use --tempo.sponsor with \
                  --tempo.sponsor-signer or --tempo.sponsor-sig"
             );
+        }
+        eyre::ensure!(
+            self.tempo.configurable_access_key.is_none(),
+            "--tempo.configurable-access-key is not supported by forge script; use cast send"
+        );
+
+        if let Some(dir) = &self.dump {
+            ensure_dump_dir(dir)?;
         }
 
         if self.wallet_session.enabled {
@@ -480,6 +564,11 @@ impl ScriptArgs {
                     } else {
                         bundled.broadcast().await?
                     };
+                    // Transactions saved for their owners are deployed and verified on resume.
+                    if owner_approvals::awaits_approvals(&broadcasted.sequence) {
+                        return Ok(());
+                    }
+                    broadcasted.print_deployed_contracts()?;
                     if broadcasted.args.verify {
                         broadcasted.verify().await?;
                     }
@@ -628,6 +717,7 @@ impl ScriptArgs {
             let size_limits = pre_simulation.args.contract_size_limits::<FEN>(
                 &pre_simulation.script_config.config,
                 &pre_simulation.script_config.evm_opts,
+                pre_simulation.script_config.hardfork,
             );
             pre_simulation.args.check_contract_sizes(
                 size_limits,
@@ -647,6 +737,16 @@ impl ScriptArgs {
     ) -> Result<Option<BundledState<FEN>>> {
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
+            if bundled.sequence.sequences().iter().any(|sequence| {
+                sequence
+                    .transactions
+                    .iter()
+                    .any(|tx| tx.tx().from() == Some(Config::DEFAULT_SENDER))
+            }) {
+                sh_warn!(
+                    "Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender."
+                )?;
+            }
             if !shell::is_json() {
                 if shell::verbosity() >= 4 {
                     sh_println!("\n=== Transactions that will be broadcast ===\n")?;
@@ -685,12 +785,65 @@ impl ScriptArgs {
 
     async fn broadcast_bundle<FEN: FoundryEvmNetwork>(bundled: BundledState<FEN>) -> Result<()> {
         let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
+        broadcasted.print_deployed_contracts()?;
 
         if broadcasted.args.verify {
             broadcasted.verify().await?;
         }
 
         Ok(())
+    }
+
+    /// Returns the Tempo configurable account linked to the keystore of the detected sender, and
+    /// its owner key. The account becomes the script sender when the RPC is a Tempo chain where
+    /// T14 is active.
+    async fn linked_account_sender(
+        &self,
+        config: &Config,
+        evm_opts: &EvmOpts,
+    ) -> Result<Option<(Address, Address)>> {
+        let Some(fork_url) = evm_opts.fork_url.as_deref() else { return Ok(None) };
+        if !evm_opts.networks.is_tempo() {
+            return Ok(None);
+        }
+        let paths = match (&self.wallets.keystore_paths, &self.wallets.keystore_account_names) {
+            (Some(paths), _) => paths.iter().map(PathBuf::from).collect(),
+            (None, Some(names)) => {
+                let mut paths = Vec::with_capacity(names.len());
+                for name in names {
+                    paths.extend(maybe_get_keystore_path(None, Some(name))?);
+                }
+                paths
+            }
+            (None, None) => Vec::new(),
+        };
+        for path in paths {
+            if let Some((account, owner)) = linked_account(&path)?
+                && owner == evm_opts.sender
+            {
+                let provider =
+                    ProviderBuilder::<TempoNetwork>::from_config_with_url(config, fork_url)?
+                        .build()?;
+                // Before T14 the linked account does not exist yet, and the key sends as before.
+                let config = detect_configurable_account(
+                    &provider,
+                    account,
+                    &[owner],
+                    None,
+                    false,
+                    BlockId::latest(),
+                )
+                .await
+                .wrap_err_with(|| {
+                    format!(
+                        "could not check the configurable account {account} linked to the \
+                             keystore; pass --sender {owner} or --eoa to send from the key"
+                    )
+                })?;
+                return Ok(config.map(|_| (account, owner)));
+            }
+        }
+        Ok(None)
     }
 
     /// In case the user has loaded *only* one private-key or a single remote signer (e.g.,
@@ -716,8 +869,10 @@ impl ScriptArgs {
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
-        if let Ok(decoded) = hex::decode(&self.sig) {
-            let selector = &decoded[..SELECTOR_LEN];
+        // Hex shorter than a selector cannot be calldata, so it is treated as a function name.
+        if let Ok(decoded) = hex::decode(&self.sig)
+            && let Some(selector) = decoded.get(..SELECTOR_LEN)
+        {
             let func =
                 abi.functions().find(|func| selector == &func.selector()[..]).ok_or_else(|| {
                     eyre::eyre!(
@@ -834,11 +989,15 @@ impl ScriptArgs {
         }
 
         // Only prompt if we're broadcasting and we've not disabled interactivity.
-        if prompt_user
-            && !self.non_interactive
-            && !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
-        {
-            eyre::bail!("User canceled the script.");
+        if prompt_user && !self.non_interactive {
+            if !dialoguer::console::Term::stderr().is_term() {
+                eyre::bail!(
+                    "contract above the code size limit requires confirmation; pass --non-interactive to continue without confirmation"
+                );
+            }
+            if !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()? {
+                eyre::bail!("User canceled the script.");
+            }
         }
 
         Ok(())
@@ -848,6 +1007,7 @@ impl ScriptArgs {
         &self,
         config: &Config,
         evm_opts: &EvmOpts,
+        hardfork: Option<FoundryHardfork>,
     ) -> ContractSizeLimits {
         self.evm
             .env
@@ -862,7 +1022,9 @@ impl ScriptArgs {
                     .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
             })
             .unwrap_or_else(|| {
-                let spec_id: SpecFor<FEN> = config.evm_spec_id();
+                let spec_id = hardfork
+                    .and_then(SpecFor::<FEN>::from_foundry_hardfork)
+                    .unwrap_or_else(|| config.evm_spec_id());
                 ContractSizeLimits::for_spec_id(spec_id.into())
             })
     }
@@ -920,7 +1082,7 @@ pub struct ScriptResult<N: Network> {
     pub transactions: Option<BroadcastableTransactions<N>>,
     pub returned: Bytes,
     #[serde(skip)]
-    pub exit_reason: Option<InstructionResult>,
+    pub exit_reason: Option<InstrStop>,
     pub address: Option<Address>,
     #[serde(skip)]
     pub breakpoints: Breakpoints,
@@ -974,15 +1136,21 @@ impl<N: Network> ScriptResult<N> {
                     }
 
                     let init_code = node.trace.data.clone();
-                    let contract_name = known_contracts
-                        .find_by_creation_code(init_code.as_ref())
-                        .map(|artifact| artifact.0.name.clone());
+                    let artifact = known_contracts.find_by_creation_code_prefix(init_code.as_ref());
+                    let contract_name = artifact
+                        .or_else(|| known_contracts.find_by_creation_code(init_code.as_ref()))
+                        .map(|(id, _)| id.name.clone());
+                    let exact_artifact_match = artifact.is_some_and(|(id, _)| {
+                        !id.source.extension().is_some_and(|ext| ext == "vy")
+                    });
                     Some(AdditionalContract {
                         call_kind: node.trace.kind,
                         address: node.trace.address,
                         contract_name,
+                        exact_artifact_match,
                         init_code,
                         creator_code_addresses,
+                        label: None,
                     })
                 })
             })
@@ -1030,11 +1198,10 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     ) -> Result<Self> {
         // Linking and execution share the backend created here, before any preflight reads.
         prepare_script_source(&mut config, &mut evm_opts, None).await?;
-        let backend = Backend::spawn(evm_opts.get_fork(
-            &config,
-            evm_opts.env.chain_id.unwrap_or_default(),
-            None,
-        ))?;
+        let backend = Backend::spawn_source(
+            evm_opts.get_fork(&config, evm_opts.env.chain_id.unwrap_or_default(), None),
+            evm_opts.local_evm_env::<FEN>(),
+        )?;
         let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
             sender_nonce
         } else if evm_opts.fork_url.is_some() {
@@ -1078,24 +1245,27 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
     async fn select_backend(&mut self) -> Result<()> {
         if self.evm_opts.fork_url.is_none() {
-            if self.backend.fork()?.is_some() {
-                self.backend.replace_fork(None)?;
+            if self.backend.fork().is_some() {
+                self.backend.replace_fork(None, self.evm_opts.local_evm_env::<FEN>())?;
             }
             return Ok(());
         }
         if !self.prepare_requested_source().await? {
             return Ok(());
         }
-        self.backend.replace_fork(self.evm_opts.get_fork(
-            &self.config,
-            self.evm_opts.env.chain_id.unwrap_or_default(),
-            None,
-        ))
+        self.backend.replace_fork(
+            self.evm_opts.get_fork(
+                &self.config,
+                self.evm_opts.env.chain_id.unwrap_or_default(),
+                None,
+            ),
+            self.evm_opts.local_evm_env::<FEN>(),
+        )
     }
 
     /// Prepares the requested RPC source. Returns `false` if the backend already serves it.
     async fn prepare_requested_source(&mut self) -> Result<bool> {
-        if let Some(fork) = self.backend.fork()? {
+        if let Some(fork) = self.backend.fork() {
             if fork.matches_request(&self.evm_opts) {
                 return Ok(false);
             }
@@ -1115,8 +1285,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             self.resolve_execution_env().await?;
             return Ok(());
         }
-        let (mut evm_env, _, fork_context) =
-            self.evm_opts.env_with_fork_context::<_, _, TxEnvFor<FEN>>().await?;
+        let (mut evm_env, _, fork_context) = self.evm_opts.env_with_fork_context::<FEN>().await?;
         self.apply_execution_spec(&mut evm_env, fork_context);
         Ok(())
     }
@@ -1149,7 +1318,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // Script execution is synthetic. Keep the Tempo transaction context, but do not charge
         // protocol fees for deploying or calling the local script contract.
         if self.evm_opts.networks.is_tempo() {
-            runner.executor.evm_env_mut().cfg_env.disable_fee_charge = true;
+            runner.executor.evm_env_mut().set_feature(EvmFeatures::FEE_CHARGE, false);
         }
 
         Ok(runner)
@@ -1162,7 +1331,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let (evm_env, mut tx_env) = self.resolve_execution_env().await?;
+        let (evm_env, mut tx) = self.resolve_execution_env().await?;
         let db = self.backend.clone();
 
         // We need to enable tracing to decode contract names: local or external.
@@ -1174,6 +1343,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     .logs(self.config.live_logs)
                     .trace_requirements(script_trace_requirements(&self.config, debug))
                     .create2_deployer(self.evm_opts.create2_deployer)
+                    .fork_prefetch(self.evm_opts.fork_prefetch)
             })
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
@@ -1200,10 +1370,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         // Propagate fee token to the transaction environment so that internal EVM calls
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
-        tx_env.set_fee_token(self.tempo.fee_token);
+        if let Some(fee_token) = self.tempo.fee_token {
+            tx.set_fee_token(fee_token);
+            // A fee token makes calls Tempo AA transactions, which are priced with EIP-1559 fees.
+            tx.set_max_fee_per_gas(0);
+            tx.set_max_priority_fee_per_gas(0);
+        }
 
         let mut runner = ScriptRunner::new(
-            builder.build(evm_env, tx_env, db, self.evm_opts.networks),
+            builder.build(evm_env, tx, db, self.evm_opts.networks),
             self.evm_opts.clone(),
         )
         .with_debug_bytecodes(debug);
@@ -1216,11 +1391,13 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 
     /// Builds the execution environment and spec from the selected backend.
-    async fn resolve_execution_env(&mut self) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>)> {
-        let (mut evm_env, tx_env) = self.backend.env(&self.evm_opts).await?;
-        let fork_context = self.backend.fork()?.as_ref().map(|fork| fork.context());
+    async fn resolve_execution_env(
+        &mut self,
+    ) -> Result<(EvmEnvFor<FEN>, TransactionRequestFor<FEN>)> {
+        let (mut evm_env, tx) = self.backend.env(&self.evm_opts).await?;
+        let fork_context = self.backend.fork().map(|fork| fork.context());
         self.apply_execution_spec(&mut evm_env, fork_context);
-        Ok((evm_env, tx_env))
+        Ok((evm_env, tx))
     }
 
     /// Records the source chain and resolves the execution spec for `fork_context`.
@@ -1232,11 +1409,11 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
-        self.hardfork = resolve_execution_spec(
+        self.hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
             self.config.evm_version,
             self.config.hardfork,
             evm_env,
-            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
+            ExecutionSpecContext::local_or_script(fork_chain_id, fork_hardfork),
             None,
         );
     }
@@ -1272,7 +1449,7 @@ async fn prepare_script_source(
 const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequirements {
     TraceRequirements::none()
         .with_calls(true)
-        .with_debug(debug)
+        .with_debug_recording(debug)
         .with_verbosity(config.tracing.verbosity)
         .with_decode_internal(if config.tracing.decode_internal {
             InternalTraceMode::Full
@@ -1297,18 +1474,11 @@ mod tests {
         upsert_session_entry,
     };
     use foundry_config::UnresolvedEnvVarError;
-    use foundry_evm::{
-        revm::context::Block as _,
-        traces::{
-            CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
-        },
+    use foundry_evm::traces::{
+        CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
     };
     use semver::Version;
-    use std::{
-        fs,
-        num::NonZeroU64,
-        sync::{Arc, LazyLock},
-    };
+    use std::{fs, num::NonZeroU64, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
 
@@ -1353,7 +1523,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let first = config.backend.fork().unwrap().unwrap();
+        let first = config.backend.fork().unwrap();
         assert_eq!(first.number(), 1);
         assert_eq!(config.evm_opts.fork_block_number, None);
         assert!(first.matches_request(&config.evm_opts));
@@ -1361,7 +1531,7 @@ mod tests {
         config._get_runner(None, false, false).await.unwrap();
 
         config.select_rpc(handle_b.http_endpoint()).await.unwrap();
-        let second = config.backend.fork().unwrap().unwrap();
+        let second = config.backend.fork().unwrap();
 
         assert_eq!(second.number(), 3);
         assert_eq!(config.evm_opts.fork_block_number, None);
@@ -1396,7 +1566,7 @@ mod tests {
         assert_eq!(config.evm_opts.networks, NetworkConfigs::with_ethereum());
 
         config.select_rpc(handle_b.http_endpoint()).await.unwrap();
-        let second = config.backend.fork().unwrap().unwrap();
+        let second = config.backend.fork().unwrap();
 
         assert_eq!(second.number(), 3);
         assert_eq!(second.context().network_profile, NetworkConfigs::with_monad());
@@ -1429,7 +1599,7 @@ mod tests {
         config._get_runner(None, false, false).await.unwrap();
 
         config.select_rpc(handle_b.http_endpoint()).await.unwrap();
-        let context = config.backend.fork().unwrap().unwrap();
+        let context = config.backend.fork().unwrap();
 
         assert_eq!(context.number(), 1);
         assert_eq!(config.evm_opts.fork_block_number, Some(1));
@@ -1458,14 +1628,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let latest = config.backend.fork().unwrap().unwrap();
+        let latest = config.backend.fork().unwrap();
         assert_eq!(config.evm_opts.fork_block_number, None);
         config._get_runner(None, false, false).await.unwrap();
 
         config.select_rpc(handle_b.http_endpoint()).await.unwrap();
         config.evm_opts.fork_block_number = Some(1);
         config.select_backend().await.unwrap();
-        let explicit = config.backend.fork().unwrap().unwrap();
+        let explicit = config.backend.fork().unwrap();
 
         assert_eq!(explicit.number(), 1);
         assert_eq!(config.evm_opts.fork_block_number, Some(1));
@@ -1505,23 +1675,25 @@ mod tests {
         .unwrap();
         let mut runner_a = config._get_runner(None, false, false).await.unwrap();
         assert_eq!(runner_a.executor.get_balance(state_address).unwrap(), balance_a);
-        let first_a = config.backend.fork().unwrap().unwrap();
-        let cache_a = runner_a.executor.backend().active_fork().unwrap().backend().data();
+        let first_a = config.backend.fork().unwrap();
+        let cache_a = runner_a.executor.backend().active_fork_info().unwrap().id.clone();
         runner_a.executor.set_balance(state_address, U256::from(3)).unwrap();
 
         config.select_rpc(url_b.clone()).await.unwrap();
         let runner_b = config._get_runner(None, false, false).await.unwrap();
         assert_eq!(runner_b.executor.get_balance(state_address).unwrap(), balance_b);
-        let context_b = config.backend.fork().unwrap().unwrap().clone();
+        let context_b = config.backend.fork().unwrap().clone();
         assert_eq!(context_b.number(), 1);
 
         config.select_rpc(url_a.clone()).await.unwrap();
         let reused_a = config._get_runner(None, false, false).await.unwrap();
         assert_eq!(reused_a.executor.get_balance(state_address).unwrap(), balance_a);
-        assert!(Arc::ptr_eq(
-            &cache_a,
-            &reused_a.executor.backend().active_fork().unwrap().backend().data()
-        ));
+        // A reused fork shares the creating fork's RPC cache under a suffixed ID.
+        let reused_id = &reused_a.executor.backend().active_fork_info().unwrap().id;
+        assert!(
+            reused_id.0 == cache_a.0 || reused_id.0.starts_with(&format!("{}-", cache_a.0)),
+            "{reused_id:?} does not reuse {cache_a:?}"
+        );
         config.select_rpc(url_b.clone()).await.unwrap();
 
         let provider_a = handle_a.http_provider();
@@ -1535,14 +1707,17 @@ mod tests {
         assert_ne!(replacement.header.mix_hash, Some(original_prevrandao));
 
         config.select_rpc(url_a.clone()).await.unwrap();
-        let second_a = config.backend.fork().unwrap().unwrap();
+        let second_a = config.backend.fork().unwrap();
         assert_eq!(second_a.number(), first_a.number());
         assert_eq!(second_a.hash(), replacement.header.hash);
         assert_ne!(second_a.hash(), first_a.hash());
 
         let runner = config._get_runner(None, false, false).await.unwrap();
         assert_eq!(runner.executor.get_balance(state_address).unwrap(), balance_a);
-        assert_eq!(runner.executor.evm_env().block_env.prevrandao(), replacement.header.mix_hash);
+        assert_eq!(
+            runner.executor.evm_env().block.prevrandao,
+            U256::from_be_bytes(replacement.header.mix_hash.unwrap().0)
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1565,15 +1740,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let resolved = config.backend.fork().unwrap().unwrap();
+        let resolved = config.backend.fork().unwrap();
         config._get_runner(None, false, false).await.unwrap();
 
         api.anvil_mine(Some(U256::ONE), None).await.unwrap();
         config.select_rpc(url.clone()).await.unwrap();
         let runner = config._get_runner(None, false, false).await.unwrap();
 
-        assert_eq!(config.backend.fork().unwrap().as_ref(), Some(&resolved));
-        assert_eq!(runner.executor.evm_env().block_env.number(), U256::ONE);
+        assert_eq!(config.backend.fork().as_ref(), Some(&resolved));
+        assert_eq!(runner.executor.evm_env().block.number, U256::ONE);
         assert_eq!(config.evm_opts.fork_block_number, None);
     }
 
@@ -1598,11 +1773,11 @@ mod tests {
         .await
         .unwrap();
         config._get_runner(None, false, false).await.unwrap();
-        let without_headers = config.backend.fork().unwrap().unwrap().clone();
+        let without_headers = config.backend.fork().unwrap().clone();
 
         config.evm_opts.fork_headers = Some(vec!["x-foundry-test: resolved-fork".to_string()]);
         config.select_backend().await.unwrap();
-        let with_headers = config.backend.fork().unwrap().unwrap();
+        let with_headers = config.backend.fork().unwrap();
         config._get_runner(None, false, false).await.unwrap();
 
         assert_ne!(without_headers, with_headers);
@@ -1634,7 +1809,7 @@ mod tests {
         .await
         .unwrap();
         config._get_runner(None, false, false).await.unwrap();
-        let first = config.backend.fork().unwrap().unwrap().clone();
+        let first = config.backend.fork().unwrap().clone();
         let first_instance = first.context().instance_id.unwrap();
 
         api.anvil_reset(None).await.unwrap();
@@ -1642,7 +1817,7 @@ mod tests {
         configure_changed(&mut config.evm_opts);
 
         config.select_backend().await.unwrap();
-        let second = config.backend.fork().unwrap().unwrap();
+        let second = config.backend.fork().unwrap();
         assert_ne!(second.context().instance_id, Some(first_instance));
         assert_ne!(second, first);
         assert_eq!(config.evm_opts.fork_block_number, Some(0));
@@ -1705,7 +1880,7 @@ mod tests {
         config._get_runner(None, false, false).await.unwrap();
 
         let provider = handle.http_provider();
-        let pinned = config.backend.fork().unwrap().unwrap();
+        let pinned = config.backend.fork().unwrap();
         provider
             .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
             .await
@@ -1718,11 +1893,14 @@ mod tests {
         config.select_rpc(handle.http_endpoint()).await.unwrap();
         match config._get_runner(None, false, false).await {
             Ok(runner) => {
-                assert_eq!(runner.executor.evm_env().block_env.prevrandao(), Some(prevrandao));
+                assert_eq!(
+                    runner.executor.evm_env().block.prevrandao,
+                    U256::from_be_bytes(prevrandao.0)
+                );
             }
             Err(error) => assert_missing_orphaned_block(&error),
         }
-        assert_eq!(config.backend.fork().unwrap().as_ref(), Some(&pinned));
+        assert_eq!(config.backend.fork().as_ref(), Some(&pinned));
     }
 
     #[test]
@@ -1787,6 +1965,7 @@ mod tests {
                     arena,
                     ignored: Default::default(),
                     diagnostics: Default::default(),
+                    debug_steps: None,
                 },
             )],
             ..Default::default()
@@ -1829,6 +2008,7 @@ mod tests {
                     arena,
                     ignored: Default::default(),
                     diagnostics: Default::default(),
+                    debug_steps: None,
                 },
             )],
             ..Default::default()
@@ -1906,6 +2086,33 @@ mod tests {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
         assert_eq!(args.sig, sig);
+    }
+
+    #[test]
+    fn short_hex_sig_is_resolved_as_function_name() {
+        let abi = JsonAbi::parse(["function fade()", "function run()"]).unwrap();
+        let method = |sig: &str| {
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig])
+                .get_method_and_calldata(&abi)
+        };
+
+        let fade = abi.function("fade").unwrap()[0].clone();
+        let (func, calldata) = method("fade").unwrap();
+        assert_eq!(func, fade);
+        assert_eq!(calldata, Bytes::from(fade.selector()));
+
+        for sig in ["", "0x12"] {
+            assert_eq!(
+                method(sig).unwrap_err().to_string(),
+                format!("Function `{sig}` not found in the ABI")
+            );
+        }
+
+        // Hex with a full selector is still raw calldata.
+        let run = abi.function("run").unwrap()[0].clone();
+        let (func, calldata) = method(&hex::encode(run.selector())).unwrap();
+        assert_eq!(func, run);
+        assert_eq!(calldata, Bytes::from(run.selector()));
     }
 
     #[test]
@@ -2006,7 +2213,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let resolved = config.backend.fork().unwrap().unwrap();
+        let resolved = config.backend.fork().unwrap();
         assert_eq!(config.evm_opts.fork_block_number, None);
         assert_eq!(config.sender_nonce, 0);
 
@@ -2020,7 +2227,7 @@ mod tests {
             Ok(()) => assert_eq!(config.sender_nonce, 1),
             Err(error) => assert_missing_orphaned_block(&error),
         }
-        assert_eq!(config.backend.fork().unwrap().as_ref(), Some(&resolved));
+        assert_eq!(config.backend.fork().as_ref(), Some(&resolved));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2109,7 +2316,7 @@ mod tests {
         .unwrap();
 
         let rpc_runner = script._get_runner(None, false, false).await.unwrap();
-        assert!(!rpc_runner.executor.evm_env().cfg_env.disable_fee_charge);
+        assert!(rpc_runner.executor.evm_env().version.feature(EvmFeatures::FEE_CHARGE));
 
         let target = ArtifactId {
             path: PathBuf::from("Script.json"),
@@ -2129,7 +2336,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(synthetic_runner.executor.evm_env().cfg_env.disable_fee_charge);
+        assert!(!synthetic_runner.executor.evm_env().version.feature(EvmFeatures::FEE_CHARGE));
     }
 
     #[test]
@@ -2532,7 +2739,8 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
 
-        let limits = args.contract_size_limits::<MonadEvmNetwork>(&Config::default(), &evm_opts);
+        let limits =
+            args.contract_size_limits::<MonadEvmNetwork>(&Config::default(), &evm_opts, None);
 
         assert!(limits.runtime > ContractSizeLimits::default().runtime);
         assert!(limits.initcode > ContractSizeLimits::default().initcode);
@@ -2551,7 +2759,7 @@ mod tests {
         let mut config = Config { code_size_limit: Some(128), ..Default::default() };
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
         assert_eq!(
-            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts,),
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts, None),
             ContractSizeLimits::with_runtime_limit(64)
         );
 
@@ -2559,7 +2767,7 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         config.code_size_limit = Some(128);
         assert_eq!(
-            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts,),
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts, None),
             ContractSizeLimits::with_runtime_limit(128)
         );
     }

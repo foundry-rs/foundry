@@ -1,0 +1,8 @@
+warning[reentrancy-eth]: uncapped ETH transfer can be reentered before `x` is updated
+   ╭▸ ROOT/testdata/ReentrancyEthPrunedPaths.sol:LL:CC
+   │
+LL │             (bool ok,) = msg.sender.call{value: y}("");
+   │                          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-eth
+

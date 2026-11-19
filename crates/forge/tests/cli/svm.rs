@@ -11,7 +11,7 @@ use svm::Platform;
 /// 3. svm bumped in foundry-compilers
 /// 4. foundry-compilers update with any breaking changes
 /// 5. upgrade the `LATEST_SOLC`
-const LATEST_SOLC: Version = Version::new(0, 8, 37);
+const LATEST_SOLC: Version = Version::new(0, 8, 38);
 
 macro_rules! ensure_svm_releases {
     ($($test:ident => $platform:ident),* $(,)?) => {$(
@@ -257,6 +257,35 @@ contract StateGasTest is Test {
         assertEq(VM_GAS.snapshotGasLastCall("calldataFloorLowGas"), floorGas, "wrong calldata floor gas");
     }
 
+    function testDeployCodeChargesCreateStateGas() public {
+        // Deploy natively with CREATE, which dynamic test linking does not rewrite.
+        bytes memory initCode = type(StateGasTarget).creationCode;
+        VM_GAS.startSnapshotGas("nativeCreate");
+        assembly {
+            pop(create(0, add(initCode, 0x20), mload(initCode)))
+        }
+        uint256 native = VM_GAS.stopSnapshotGas();
+
+        VM_GAS.startSnapshotGas("deployCodeCreate");
+        vm.deployCode("test/StateGas.t.sol:StateGasTarget");
+        uint256 synthetic = VM_GAS.stopSnapshotGas();
+
+        // The cheatcode call overhead differs from native memory expansion, but the account
+        // creation state gas must be charged to both.
+        assertApproxEqAbs(synthetic, native, 2_000, "deployCode create gas differs");
+    }
+
+    /// forge-config: default.isolate = true
+    function testIsolatedDeployCodeWithTightGas() public {
+        // Only runs with a low test gas limit above the transaction gas limit cap, so the account
+        // creation state gas is paid from regular gas.
+        uint256 start = gasleft();
+        if (start <= 1 << 24 || start > 50_000_000) return;
+        // Enough for one account-creation state charge, not for two.
+        while (gasleft() > 900_000) {}
+        vm.deployCode("test/StateGas.t.sol:StateGasTarget");
+    }
+
     function snapshotValueTransfer(address to, uint256 gasLimit) internal returns (uint256 section) {
         VM_GAS.startSnapshotGas("valueTransferSection");
         (bool success,) = to.call{value: 1, gas: gasLimit}("");
@@ -280,6 +309,10 @@ contract StateGasTest is Test {
     cmd.forge_fuse().args(args).arg("--enable-tx-gas-limit").assert_success();
     cmd.forge_fuse().args(args).arg("--isolate").assert_success();
     cmd.forge_fuse().args(args).args(["--isolate", "--enable-tx-gas-limit"]).assert_success();
+    cmd.forge_fuse()
+        .args(args)
+        .args(["--gas-limit", "40000000", "--mt", "testIsolatedDeployCodeWithTightGas"])
+        .assert_success();
 
     // Exercise the equivalent foundry.toml settings.
     prj.update_config(|config| {

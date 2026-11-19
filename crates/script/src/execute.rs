@@ -166,6 +166,14 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
         &self,
         runner: &mut ScriptRunner<FEN>,
     ) -> Result<ScriptResult<FEN::Network>> {
+        // Authorize linked libraries before the script constructor can call them. Configured
+        // libraries already present on a fork are not in `predeploy_libraries`.
+        for address in
+            self.build_data.libraries.libs.values().flat_map(|libraries| libraries.values())
+        {
+            runner.executor.backend_mut().allow_cheatcode_access(address.parse()?);
+        }
+
         let (address, mut setup_result) = runner.setup(
             &self.build_data.predeploy_libraries,
             self.execution_data.bytecode.clone(),
@@ -610,7 +618,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         let mut sources = self.build_data.sources;
         sources.insert_compiled_sources(
             &self.script_config.config.project_paths::<MultiCompilerLanguage>().build_infos,
-        )?;
+        );
         Ok(DebuggerBuilder::new()
             .traces(self.execution_result.traces)
             .decoder(&self.execution_artifacts.decoder)

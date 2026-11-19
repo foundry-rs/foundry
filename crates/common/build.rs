@@ -6,12 +6,21 @@ use std::{error::Error, path::PathBuf};
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
 
-    let build = vergen::Build::builder().build_date(true).build_timestamp(true).build();
-    let git = vergen::Gitcl::builder().describe(false, true, None).sha(false).build();
+    let build = smolgen::Build::builder().build_date(true).build_timestamp(true).build();
+    // Debug builds skip git HEAD tracking, which would otherwise rerun this script, and rebuild
+    // the crate and everything above it, on every commit and checkout. They keep the git values
+    // and the build timestamp from the last run of this script. Release profiles keep tracking
+    // HEAD, so their commit SHA follows the checkout.
+    let track_head = env_var("PROFILE") != "debug";
+    let git = smolgen::Gitcl::builder()
+        .describe(false, true, None)
+        .sha(false)
+        .rerun_on_head_change(track_head)
+        .build();
 
-    vergen::Emitter::new().add_instructions(&build)?.add_instructions(&git)?.emit_and_set()?;
+    smolgen::Emitter::new().add_instructions(&build)?.add_instructions(&git)?.emit_and_set()?;
 
-    // `vergen` warns and carries on when it cannot reach a git worktree, so `VERGEN_GIT_SHA` is
+    // `smolgen` warns and carries on when it cannot reach a git worktree, so `VERGEN_GIT_SHA` is
     // simply unset when building outside one, e.g. from a release source tarball. Fall back the
     // same way `TAG_NAME` does below instead of assuming the variable is set and long enough.
     let sha = try_env_var("VERGEN_GIT_SHA").unwrap_or_else(|| String::from("unknown"));
@@ -29,8 +38,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out_dir = PathBuf::from(env_var("OUT_DIR"));
     let profile = out_dir.components().rev().nth(3).unwrap().as_os_str().to_str().unwrap();
 
+    // Under `VERGEN_IDEMPOTENT` (or on any error), `smolgen` emits a placeholder instead of a real
+    // RFC3339 timestamp so that builds are reproducible and fresh worktrees share cache keys. Treat
+    // any value that is not a timestamp as unknown rather than failing the build.
     let build_timestamp = env_var("VERGEN_BUILD_TIMESTAMP");
-    let build_timestamp_unix = DateTime::parse_from_rfc3339(&build_timestamp)?.timestamp();
+    let (build_timestamp, build_timestamp_unix) =
+        match DateTime::parse_from_rfc3339(&build_timestamp) {
+            Ok(timestamp) => (build_timestamp, timestamp.timestamp()),
+            Err(_) => ("unknown".to_string(), 0),
+        };
 
     // The SemVer compatible version information for Foundry.
     // - The latest version from Cargo.toml.

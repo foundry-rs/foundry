@@ -65,7 +65,7 @@ pub fn derive_private_key<W: Wordlist>(
         .map_err(|e| e.to_string())?
         .build()
         .map_err(|e| e.to_string())?;
-    Ok(U256::from_be_bytes(wallet.credential().to_bytes().into()))
+    Ok(wallet.to_bytes().into())
 }
 
 /// Derives a private key from a BIP-39 mnemonic, selecting the wordlist by name.
@@ -100,7 +100,7 @@ pub fn private_key_from_u256(private_key: U256) -> Result<PrivateKeySigner, Stri
     if private_key.is_zero() {
         return Err("private key cannot be zero".to_string());
     }
-    PrivateKeySigner::from_slice(&private_key.to_be_bytes::<32>()).map_err(|e| e.to_string())
+    PrivateKeySigner::from_bytes(&private_key.into()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

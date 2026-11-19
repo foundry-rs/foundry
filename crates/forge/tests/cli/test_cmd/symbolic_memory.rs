@@ -80,6 +80,7 @@ contract SymbolicMsizeAfterWrite {
         r#"
 contract SymbolicMemoryEpochOrdering {
     function checkLaterConcreteWriteWins(uint256 symKey, uint256 readKey) public pure {
+        if (symKey > 0xffff || readKey > 0xffff) return;
         uint256 v;
         assembly {
             // Earlier symbolic-offset write.
@@ -470,6 +471,20 @@ contract SymbolicMemoryLimit {
         (bool nestedOk,) = address(this).call(abi.encodeCall(this.nestedWrappingCallRange, ()));
         assert(!directOk && !nestedOk);
     }
+
+    function checkTopLevelMemoryLimitAtInput(uint256 x) public pure {
+        if (x == 42) {
+            assembly {
+                mstore(4065, 1)
+            }
+        }
+    }
+
+    function checkTopLevelMemoryLimitAtOffset(uint16 offset) public pure {
+        assembly {
+            mstore(offset, 1)
+        }
+    }
 }
 "#,
     );
@@ -489,6 +504,25 @@ Ran 6 tests for test/SymbolicMemoryLimit.t.sol:SymbolicMemoryLimit
 [PASS] checkMemoryLimitRejectsWrappingCallRanges() ([METRICS])
 [PASS] checkMemoryLimitSymbolicCallSize(bool) ([METRICS])
 Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Going past the memory limit halts, as in concrete execution, so it fails the test instead
+    // of pruning the path.
+    cmd.forge_fuse();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkTopLevelMemoryLimit",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicMemoryLimit.t.sol:SymbolicMemoryLimit
+[FAIL: EvmError: MemoryLimitOOG; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkTopLevelMemoryLimitAtInput(uint256) ([METRICS])
+[FAIL: EvmError: MemoryLimitOOG; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkTopLevelMemoryLimitAtOffset(uint16) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1125,6 +1159,12 @@ contract SymbolicReturndataCopyOobOffset is Test {
         assertEq(data.length, 0);
     }
 
+    function checkTopLevelOutOfBoundsOffset(uint8 offset) public view {
+        assembly {
+            pop(staticcall(gas(), 4, 0, 32, 0, 0))
+            returndatacopy(0, offset, 32)
+        }
+    }
 }
 "#,
     );
@@ -1142,6 +1182,23 @@ Ran 2 tests for test/SymbolicReturndataCopyOobOffset.t.sol:SymbolicReturndataCop
 [PASS] checkOutOfBoundsClearsReturnData(uint256) ([METRICS])
 [PASS] checkOutOfBoundsOffsetForcedZeroSizeReverts(uint256) ([METRICS])
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Copying past the return data halts, as in concrete execution, so it fails the test.
+    cmd.forge_fuse();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkTopLevelOutOfBoundsOffset",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicReturndataCopyOobOffset.t.sol:SymbolicReturndataCopyOobOffset
+[FAIL: EvmError: OutOfOffset; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkTopLevelOutOfBoundsOffset(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1381,6 +1438,83 @@ contract SymbolicKeccakChain {
         .stdout_eq(str![[r#"
 ...
 [PASS] checkKeccakChain(uint256) [..]
+...
+"#]]);
+}
+
+// MSTORE8 keeps only the low byte of a full word, as Solady `LibString` does with hex tables, and
+// reads past the end of code or calldata are zero even at offsets near `u64::MAX`.
+#[forgetest_init]
+fn symbolic_byte_reads_match_evm_at_word_and_offset_limits(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_byte_reads_match_evm_at_word_and_offset_limits");
+
+    prj.add_test(
+        "SymbolicByteLimits.t.sol",
+        r#"
+contract CalldataReader {
+    function readFarPastEnd() external pure returns (uint256 word) {
+        assembly {
+            word := calldataload(0xffffffffffffffff)
+        }
+    }
+}
+
+contract SymbolicByteLimits {
+    CalldataReader reader;
+
+    function setUp() public {
+        reader = new CalldataReader();
+    }
+
+    function checkMstore8StoresLowByte() public pure {
+        uint256 stored;
+        assembly {
+            mstore(0x0f, 0x30313233343536373839616263646566)
+            mstore8(0x80, mload(11))
+            stored := byte(0, mload(0x80))
+        }
+        assert(stored == 0x62);
+    }
+
+    function checkCodecopyFarPastEndIsZero() public pure {
+        uint256 word;
+        assembly {
+            codecopy(0, 0xffffffffffffffff, 32)
+            word := mload(0)
+        }
+        assert(word == 0);
+    }
+
+    function checkCalldataloadFarPastEndIsZero(uint256 x) public {
+        address target = address(reader);
+        bytes4 selector = CalldataReader.readFarPastEnd.selector;
+        bool ok;
+        uint256 word;
+        assembly {
+            mstore(0, selector)
+            ok := call(gas(), target, 0, 0, add(4, and(x, 3)), 0, 32)
+            word := mload(0)
+        }
+        assert(ok && word == 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicByteLimits",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicByteLimits.t.sol:SymbolicByteLimits
+[PASS] checkCalldataloadFarPastEndIsZero(uint256) ([METRICS])
+[PASS] checkCodecopyFarPastEndIsZero() ([METRICS])
+[PASS] checkMstore8StoresLowByte() ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

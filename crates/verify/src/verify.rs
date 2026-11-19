@@ -21,7 +21,7 @@ use foundry_cli::{
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{
-    Chain, Config,
+    Chain, Config, NamedChain,
     figment::{
         Error, Metadata, Profile, Provider as FigmentProvider,
         value::{Dict, Map, Value},
@@ -883,8 +883,14 @@ impl VerifyArgs {
                         // as `0.8.20+commit.a1b79de6`.
                         // See <https://github.com/foundry-rs/foundry/issues/9510>.
                         if cached_artifacts.is_none() && version.build != BuildMetadata::EMPTY {
-                            version.build = BuildMetadata::EMPTY;
-                            cached_artifacts = artifacts.get(&version);
+                            let mut stripped = version.clone();
+                            stripped.build = BuildMetadata::EMPTY;
+                            cached_artifacts = artifacts.get(&stripped);
+                            // Solar's build metadata identifies the compiler, so keep it for
+                            // the verifier.
+                            if !version.build.as_str().contains("solar") {
+                                version = stripped;
+                            }
                         }
                         cached_artifacts
                     })
@@ -1044,7 +1050,6 @@ pub fn sourcify_api_url(chain: Chain) -> Option<String> {
 
 /// Returns `true` for local/dev chains.
 const fn is_dev_chain(chain: Chain) -> bool {
-    use foundry_config::NamedChain;
     matches!(chain.named(), Some(NamedChain::Dev | NamedChain::AnvilHardhat | NamedChain::Cannon))
 }
 

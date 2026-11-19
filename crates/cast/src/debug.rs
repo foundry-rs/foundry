@@ -1,6 +1,8 @@
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
-use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler, shell};
+use foundry_common::{
+    ContractsByArtifactBuilder, compile::ProjectCompiler, namespaced_storage, shell,
+};
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
 use foundry_debugger::DebuggerBuilder;
@@ -75,24 +77,28 @@ pub(crate) async fn handle_traces(
             }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in tests and scripts.
-            config.build_info = true;
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
             config.request_ethdebug();
         }
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
-        let output = compiler.compile(&project)?;
+        let mut output = compiler.compile(&project)?;
         let mut sources = ContractSources::from_project_output(&output, project.root(), None)?;
         if debug {
-            sources.insert_compiled_sources(&project.paths.build_infos)?;
+            sources.insert_compiled_sources(&project.paths.build_infos);
         }
+        let storage_layouts =
+            namespaced_storage::project_storage_layouts(&mut output, project.root());
         (
             Some(
                 ContractsByArtifactBuilder::new(
                     output.artifact_ids().map(|(id, artifact)| (id, artifact.into())),
                 )
-                .with_storage_layouts(output.artifact_ids().filter_map(|(id, artifact)| {
-                    artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
-                }))
+                .with_storage_layouts(storage_layouts)
                 .build(),
             ),
             sources,

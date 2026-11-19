@@ -20,6 +20,7 @@ eyre.workspace = true
 
 # ui
 alloy-consensus.workspace = true
+alloy-eips.workspace = true
 op-alloy-consensus = { workspace = true, optional = true }
 alloy-network.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth"] }
@@ -28,7 +29,6 @@ alloy-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
-revm.workspace = true
 yansi.workspace = true
 comfy-table.workspace = true
 
@@ -40,6 +40,8 @@ base-common-rpc-types = { workspace = true, optional = true, features = ["std"] 
 tempo-alloy.workspace = true
 
 [dev-dependencies]
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 foundry-macros.workspace = true
 similar-asserts.workspace = true
 proptest.workspace = true

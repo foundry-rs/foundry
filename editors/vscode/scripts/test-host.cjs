@@ -43,6 +43,7 @@ async function main() {
     "solarLsp.flychecks": [],
     "solarLsp.formatOnSave": true,
     "editor.formatOnSave": false,
+    "[plaintext]": { "files.insertFinalNewline": true },
     "security.workspace.trust.enabled": false,
   }, null, 2));
   await writeFile(path.join(workspace, "foundry.toml"), '[profile.default]\nsrc = "src"\n[fmt]\ntab_width = 8\n');

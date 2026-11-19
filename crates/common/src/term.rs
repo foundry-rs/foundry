@@ -242,6 +242,18 @@ impl Reporter for SpinnerReporter {
         self.send_msg(format!("Failed to install Solc {version}: {error}").red().to_string());
     }
 
+    fn on_solar_installation_start(&self, version: &Version) {
+        self.send_msg(format!("Installing Solar version {version}"));
+    }
+
+    fn on_solar_installation_success(&self, version: &Version) {
+        self.send_msg(format!("Successfully installed Solar {version}"));
+    }
+
+    fn on_solar_installation_error(&self, version: &Version, error: &str) {
+        self.send_msg(format!("Failed to install Solar {version}: {error}").red().to_string());
+    }
+
     fn on_unresolved_imports(&self, imports: &[(&Path, &Path)], remappings: &[Remapping]) {
         self.send_msg(report::format_unresolved_imports(imports, remappings));
     }

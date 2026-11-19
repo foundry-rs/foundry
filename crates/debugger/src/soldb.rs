@@ -4,7 +4,8 @@
 //! maps into soldb debug info, then runs a soldb session over them or writes them as a bundle that
 //! soldb's own tools read.
 
-use alloy_primitives::{Address, Bytes, U256, hex, map::HashSet};
+use alloy_primitives::{Address, B256, Bytes, hex, keccak256, map::HashSet};
+use evm2::interpreter::{InstrStop, opcode::OpCode};
 use eyre::{OptionExt, Result};
 use foundry_common::{
     ContractsByArtifact, Shell,
@@ -16,91 +17,109 @@ use foundry_compilers::{
 };
 use foundry_evm_core::{Breakpoints, ic::PcIcMap};
 use foundry_evm_traces::{
-    CallTraceArena, CallTraceNode, CallTraceStep, TraceMemberOrder,
-    debug::{ArtifactData, ContractSources, SourceData},
+    CallTrace, CallTraceArena, CallTraceNode, CallTraceStep, TraceMemberOrder,
+    debug::{
+        ArtifactData, ContractSources, DebugRecording, RecordedFrame, SourceData, StepConverter,
+        quantity, step_record,
+    },
 };
-use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
+use foundry_tui::{TuiMode, restore_terminal_on_panic, tui_mode};
 use serde_json::{Map, Value, json};
 use soldb_core::{
-    ContractCreation, ExecutionCall, StepSnapshot, StorageChange, TraceArtifacts,
-    TraceCapabilities, TraceStep, TransactionTrace, WordInterner,
+    ContractCreation, EvmWord, ExecutionCall, StepRecord, StepTable, TraceArtifacts,
+    TraceCapabilities, TransactionTrace,
 };
-use soldb_debugger::{CodeGenerator, ContractDebugInfo, StorageLayout};
-use soldb_ethdebug::{EthdebugInfo, Instruction};
+use soldb_debugger::{CodeGenerator, ContractDebugInfo, SourceCache, StorageLayout};
+use soldb_ethdebug::{EthdebugInfo, Instruction, SourceLocation, SourceMapContext, SourceMapJump};
 use soldb_repl::{BreakpointTarget, DebuggerCommand, DebuggerState, Output, Renderer, Session};
 use soldb_tui::Exit;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     io::{self, IsTerminal, Write},
+    ops::Range,
     path::{Component, Path, PathBuf},
     sync::Arc,
 };
 
-/// The steps that execute each breakpoint's code address and program counter.
-type BreakpointSteps = BTreeMap<(Address, usize), Vec<usize>>;
+/// The frames that run a breakpoint location, as the steps they span and their depth.
+type BreakpointFrames = Vec<(Range<usize>, u64)>;
+
+/// The frames that run each breakpoint's code address and program counter.
+type BreakpointSteps = BTreeMap<(Address, usize), BreakpointFrames>;
 
 /// A soldb session over the recorded call traces.
 #[derive(Debug)]
 pub(crate) struct SoldbDebugger {
     trace: TransactionTrace,
     contracts: Vec<ContractDebugInfo>,
-    /// The program counter of each `vm.breakpoint` location and the steps that run it.
-    breakpoints: Vec<(u64, Vec<usize>)>,
+    /// The program counter of each `vm.breakpoint` location and the frames that run it.
+    breakpoints: Vec<(u64, BreakpointFrames)>,
 }
 
 impl SoldbDebugger {
     /// Converts `arenas`, whose node contracts are identified by `contract_names`.
+    ///
+    /// The steps are the ones `recordings` hold, one per arena, or the arenas' own steps when
+    /// `recordings` is empty.
     pub(crate) fn new(
         mut arenas: Vec<CallTraceArena>,
+        recordings: Vec<DebugRecording>,
         contract_names: &[Vec<Option<String>>],
         sources: &ContractSources,
         known_contracts: &ContractsByArtifact,
         breakpoints: &Breakpoints,
     ) -> Result<Self> {
+        let mut source_cache = SourceCache::default();
         let contracts = executed_programs(&arenas, contract_names, sources, known_contracts)
             .iter()
-            .filter_map(contract_debug_info)
+            .filter_map(|program| contract_debug_info(program, &mut source_cache))
             .collect();
-        let (trace, breakpoints) = transaction_trace(&mut arenas, breakpoints)?;
+        let (trace, breakpoints) = transaction_trace(&mut arenas, recordings, breakpoints)?;
         let breakpoints = breakpoints
             .into_iter()
-            .filter(|(_, steps)| !steps.is_empty())
-            .map(|((_, pc), steps)| (pc as u64, steps))
+            .filter(|(_, frames)| !frames.is_empty())
+            .map(|((_, pc), frames)| (pc as u64, frames))
             .collect();
         Ok(Self { trace, contracts, breakpoints })
     }
 
     /// Runs the session.
     ///
-    /// If stdin and stdout are terminals, the full-screen view opens first. Then commands are
-    /// read from stdin, one per line, until `quit` or the end of the input.
+    /// If the full-screen view can run, it opens first. Then commands are read from stdin, one per
+    /// line, until `quit` or the end of the input, with a prompt if stdin is a terminal.
     pub(crate) fn try_run(self) -> Result<()> {
         let mut state = DebuggerState::new();
-        state.load_trace(self.trace)?;
-        state.attach_debug_info(self.contracts);
+        state.load_trace_with_debug_info(self.trace, self.contracts)?;
         // soldb breakpoints match a program counter in any contract, so each one is limited to
-        // the steps that run the `vm.breakpoint` location.
-        for (pc, steps) in self.breakpoints {
-            let condition =
-                steps.iter().map(|step| format!("step == {step}")).collect::<Vec<_>>().join(" || ");
+        // the own steps of the frames that run the `vm.breakpoint` location: the steps they span
+        // at their depth, which leaves out their subcalls.
+        for (pc, frames) in self.breakpoints {
+            let condition = frames
+                .iter()
+                .map(|(steps, depth)| {
+                    format!("step >= {} && step < {} && depth == {depth}", steps.start, steps.end)
+                })
+                .collect::<Vec<_>>()
+                .join(" || ");
             state.set_conditional_breakpoint_target(&BreakpointTarget::Pc(pc), Some(&condition));
         }
         let mut session = Session::new(state);
         let renderer = Renderer::new(Shell::get().out_supports_color());
-        let terminal = io::stdin().is_terminal() && io::stdout().is_terminal();
+        // The prompt goes to stderr, so it shows even when stdout is piped.
+        let prompt = io::stdin().is_terminal();
 
         emit(&renderer, vec![session.loaded()])?;
         emit(&renderer, session.initial_stop())?;
-        if terminal {
-            if open_tui(&mut session)? == Flow::Quit {
-                return Ok(());
-            }
+        if tui_mode().is_interactive() && open_tui(&mut session)? == Flow::Quit {
+            return Ok(());
+        }
+        if prompt {
             sh_eprintln!("Type `help` for the command list, `tui` for the full-screen view.")?;
         }
 
         let mut line = String::new();
         loop {
-            if terminal {
+            if prompt {
                 sh_eprint!("soldb> ")?;
                 io::stderr().flush()?;
             }
@@ -142,7 +161,11 @@ fn emit(renderer: &Renderer, outputs: Vec<Output>) -> Result<Flow> {
 
 /// Opens the full-screen view until the user leaves it.
 fn open_tui(session: &mut Session) -> Result<Flow> {
-    match soldb_tui::run(session) {
+    if let TuiMode::Fallback(reason) = tui_mode() {
+        sh_warn!("cannot open the full-screen view: {}", reason.as_str())?;
+        return Ok(Flow::Continue);
+    }
+    match restore_terminal_on_panic(|| soldb_tui::run(session)) {
         Ok(Exit::Repl) => Ok(Flow::Continue),
         Ok(Exit::Quit) => Ok(Flow::Quit),
         Err(error) if error.kind() == io::ErrorKind::Unsupported => {
@@ -156,22 +179,51 @@ fn open_tui(session: &mut Session) -> Result<Flow> {
 /// Converts `arenas` into a soldb trace: their steps in execution order, with each call and
 /// creation recorded at the steps it spans.
 ///
-/// Also returns the steps that run each `breakpoints` location. The steps move out of `arenas`, so
-/// each one is dropped once converted.
+/// The steps are the ones `recordings` hold, one per arena, or the arenas' own steps when
+/// `recordings` is empty. Also returns the steps that run each `breakpoints` location. The steps
+/// move out of `arenas`, so each one is dropped once converted.
 fn transaction_trace(
     arenas: &mut [CallTraceArena],
+    recordings: Vec<DebugRecording>,
     breakpoints: &Breakpoints,
 ) -> Result<(TransactionTrace, BreakpointSteps)> {
+    let nodes = arenas.iter().flat_map(|arena| arena.nodes());
+    let (steps, frames) =
+        nodes.fold((0, 0), |(steps, frames), node| (steps + node.trace.steps.len(), frames + 1));
     let mut builder = TraceBuilder {
+        calls: Vec::with_capacity(frames),
+        creations: Vec::with_capacity(frames),
         breakpoints: breakpoints.values().map(|location| (*location, Vec::new())).collect(),
         ..Default::default()
     };
-    for arena in &mut *arenas {
-        builder.visit(arena.nodes_mut(), 0, None);
+    if recordings.is_empty() {
+        builder.steps = StepTable::with_capacity(steps);
+        for arena in &mut *arenas {
+            builder.visit(arena.nodes_mut(), 0, None);
+        }
+    } else {
+        eyre::ensure!(recordings.len() == arenas.len(), "a debug trace has no recorded steps");
+        let offsets;
+        (builder.steps, offsets) = recorded_steps(&recordings)?;
+        for ((arena, recording), offset) in arenas.iter_mut().zip(&recordings).zip(offsets) {
+            let nodes = arena.nodes_mut();
+            eyre::ensure!(
+                recording.frames.len() == nodes.len()
+                    && recording
+                        .frames
+                        .iter()
+                        .zip(&*nodes)
+                        .all(|(frame, node)| frame.depth == node.trace.depth),
+                "the recorded steps do not match the call trace"
+            );
+            builder.visit_recorded(nodes, 0, None, &recording.frames, offset);
+        }
     }
     let TraceBuilder { steps, calls, creations, breakpoints, .. } = builder;
 
-    let root = &arenas.first().ok_or_eyre("debug arena is empty")?.nodes()[0].trace;
+    // The arenas run in order, such as the deployment, the setup, and the test, so the last one
+    // is the call being debugged.
+    let root = &arenas.last().ok_or_eyre("debug arena is empty")?.nodes()[0].trace;
     let create = root.kind.is_any_create();
     let trace = TransactionTrace {
         tx_hash: None,
@@ -209,18 +261,12 @@ fn transaction_trace(
 /// Collects the soldb steps, calls, and creations of a trace in execution order.
 #[derive(Default)]
 struct TraceBuilder {
-    steps: Vec<TraceStep>,
+    steps: StepTable,
     calls: Vec<ExecutionCall>,
     creations: Vec<ContractCreation>,
-    /// One shared copy of each distinct stack word and mnemonic.
-    words: WordInterner,
-    /// The last recorded memory and its hex encoding, shared by the steps that did not change it.
-    memory: Option<(Bytes, Arc<str>)>,
-    /// The last return data buffer and its hex encoding, shared by unchanged steps.
-    return_data: Option<(Bytes, Arc<str>)>,
-    /// The storage of the steps that touch no slot.
-    no_storage: Arc<BTreeMap<String, String>>,
-    /// The steps that run each `vm.breakpoint` location, as code address and program counter.
+    /// Converts the return data and storage of the steps.
+    converter: StepConverter,
+    /// The frames that run each `vm.breakpoint` location, as code address and program counter.
     breakpoints: BreakpointSteps,
 }
 
@@ -230,12 +276,124 @@ impl TraceBuilder {
         let node = &mut nodes[idx];
         let ordering = std::mem::take(&mut node.ordering);
         let children = std::mem::take(&mut node.children);
-        let steps = std::mem::take(&mut node.trace.steps);
+        let mut steps = std::mem::take(&mut node.trace.steps);
+        let runs_steps = !steps.is_empty();
         let trace = &node.trace;
         let address = trace.address;
         let depth = trace.depth as u64 + 1;
-        let entry_step = Some(self.steps.len());
+        let entry_step = self.steps.len();
+        let (creation, call) = self.open_frame(trace, parent, entry_step);
+
+        // The ordering lists the steps in recording order.
+        let mut next_step = 0;
+        let mut hits = Vec::new();
+        for order in ordering {
+            match order {
+                TraceMemberOrder::Step(_) => {
+                    if next_step < steps.len() {
+                        let (done, rest) = steps.split_at_mut(next_step + 1);
+                        let step = &mut done[next_step];
+                        if self.breakpoints.contains_key(&(address, step.pc))
+                            && !hits.contains(&step.pc)
+                        {
+                            hits.push(step.pc);
+                        }
+                        self.push_step(step, rest.first(), depth);
+                        // Free the converted snapshots now, not when the frame ends.
+                        step.stack = None;
+                        step.memory = None;
+                        next_step += 1;
+                    }
+                }
+                TraceMemberOrder::Call(child) => {
+                    self.visit(nodes, children[child], call.or(parent));
+                }
+                TraceMemberOrder::Log(_) => {}
+            }
+        }
+
+        self.close_frame(creation, call, self.steps.len(), runs_steps);
+        self.record_hits(address, hits, entry_step..self.steps.len(), depth);
+    }
+
+    /// Records node `idx` and its subcalls, whose steps `frames` locate in the step table from
+    /// `offset`. `parent` is the id of the enclosing call.
+    fn visit_recorded(
+        &mut self,
+        nodes: &mut [CallTraceNode],
+        idx: usize,
+        parent: Option<usize>,
+        frames: &[RecordedFrame],
+        offset: usize,
+    ) {
+        let node = &mut nodes[idx];
+        let ordering = std::mem::take(&mut node.ordering);
+        let children = std::mem::take(&mut node.children);
+        let address = node.trace.address;
+        let frame = frames[idx];
+        let (creation, call) = self.open_frame(&node.trace, parent, offset + frame.entry_step);
+
+        // The frame's own steps are the ones between its subcalls.
+        let mut next_step = offset + frame.entry_step;
+        let mut runs_steps = false;
+        let mut hits = Vec::new();
+        for order in ordering {
+            if let TraceMemberOrder::Call(child) = order {
+                let child = children[child];
+                let own = next_step..offset + frames[child].entry_step;
+                runs_steps |= !own.is_empty();
+                self.find_hits(address, own, &mut hits);
+                self.visit_recorded(nodes, child, call.or(parent), frames, offset);
+                next_step = offset + frames[child].exit_step;
+            }
+        }
+        let own = next_step..offset + frame.exit_step;
+        runs_steps |= !own.is_empty();
+        self.find_hits(address, own, &mut hits);
+
+        let steps = offset + frame.entry_step..offset + frame.exit_step;
+        self.close_frame(creation, call, steps.end, runs_steps);
+        self.record_hits(address, hits, steps, frame.depth as u64 + 1);
+    }
+
+    /// Adds the program counters of the `steps` that run a breakpoint location of `address` to
+    /// `hits`.
+    fn find_hits(&self, address: Address, steps: Range<usize>, hits: &mut Vec<usize>) {
+        if self.breakpoints.range((address, 0)..=(address, usize::MAX)).next().is_none() {
+            return;
+        }
+        for index in steps {
+            let pc = self.steps.step(index).pc() as usize;
+            if self.breakpoints.contains_key(&(address, pc)) && !hits.contains(&pc) {
+                hits.push(pc);
+            }
+        }
+    }
+
+    /// Records that the frame of `address` that spans `steps` at `depth` runs the breakpoint
+    /// locations at the program counters `hits`.
+    fn record_hits(&mut self, address: Address, hits: Vec<usize>, steps: Range<usize>, depth: u64) {
+        for pc in hits {
+            if let Some(frames) = self.breakpoints.get_mut(&(address, pc)) {
+                frames.push((steps.clone(), depth));
+            }
+        }
+    }
+
+    /// Records the call or creation `trace` that starts at `entry_step`, and returns its
+    /// creation or call id.
+    fn open_frame(
+        &mut self,
+        trace: &CallTrace,
+        parent: Option<usize>,
+        entry_step: usize,
+    ) -> (Option<usize>, Option<usize>) {
+        let depth = trace.depth as u64 + 1;
+        let entry_step = Some(entry_step);
         let error = status_error(trace.status);
+        // The code the frame runs, as `executed_programs` hashes it, so each frame maps through
+        // its own program when several run at one address.
+        let code_hash = trace.bytecode.as_ref().map(|code| keccak256(code).to_string());
         let creation = trace.kind.is_any_create().then_some(self.creations.len());
         let mut call = None;
         if creation.is_some() {
@@ -255,6 +413,7 @@ impl TraceBuilder {
                 output: Some(hex::encode_prefixed(&trace.output)),
                 success: Some(trace.success),
                 error,
+                code_hash,
             });
         } else {
             // A delegated call runs `address`'s code against the storage of `caller`.
@@ -277,126 +436,116 @@ impl TraceBuilder {
                 output: Some(hex::encode_prefixed(&trace.output)),
                 success: Some(trace.success),
                 error,
+                code_hash,
             });
         }
+        (creation, call)
+    }
 
-        // The ordering lists the steps in recording order.
-        let mut steps = steps.into_iter().peekable();
-        for order in ordering {
-            match order {
-                TraceMemberOrder::Step(_) => {
-                    if let Some(step) = steps.next() {
-                        if let Some(hits) = self.breakpoints.get_mut(&(address, step.pc)) {
-                            hits.push(self.steps.len());
-                        }
-                        self.push_step(&step, steps.peek(), depth);
-                    }
-                }
-                TraceMemberOrder::Call(child) => {
-                    self.visit(nodes, children[child], call.or(parent));
-                }
-                TraceMemberOrder::Log(_) => {}
-            }
-        }
-
-        let exit_step = Some(self.steps.len());
-        if let Some(id) = creation {
-            self.creations[id].exit_step = exit_step;
+    /// Records that the creation or call that `open_frame` returned ends before `exit_step`, and
+    /// whether it `runs_steps` of its own.
+    ///
+    /// SolDB finds the frame that runs a step by the step it was entered at. A frame that runs no
+    /// step of its own but whose subcalls do, such as `vm.deployCode` around the creation it
+    /// makes, would share its entry step with its first subcall and take the subcall's steps, so
+    /// it records no entry step.
+    fn close_frame(
+        &mut self,
+        creation: Option<usize>,
+        call: Option<usize>,
+        exit_step: usize,
+        runs_steps: bool,
+    ) {
+        let (entry, exit) = if let Some(id) = creation {
+            let creation = &mut self.creations[id];
+            (&mut creation.entry_step, &mut creation.exit_step)
         } else if let Some(id) = call {
-            self.calls[id].exit_step = exit_step;
+            let call = &mut self.calls[id];
+            (&mut call.entry_step, &mut call.exit_step)
+        } else {
+            return;
+        };
+        if !runs_steps && entry.is_some_and(|entry| entry < exit_step) {
+            *entry = None;
         }
+        *exit = Some(exit_step);
     }
 
     /// Records `step`. `next` is the following step of the same frame, if any.
     fn push_step(&mut self, step: &CallTraceStep, next: Option<&CallTraceStep>, depth: u64) {
         let stack = step.stack.as_deref().unwrap_or_default();
-        let memory = step.memory.as_ref().map(|memory| {
-            let memory = memory.as_bytes();
-            match &self.memory {
-                Some((last, hex)) if last == memory => hex.clone(),
-                _ => {
-                    let hex = Arc::<str>::from(hex::encode(memory));
-                    self.memory = Some((memory.clone(), hex.clone()));
-                    hex
-                }
-            }
-        });
-        // The slot an `SLOAD` or `SSTORE` touches and the value it reads or writes. The full
-        // stack snapshots do not record pushes, but an `SLOAD` leaves its value on top of the
-        // next step's stack.
-        let touched = match step.op {
-            OpCode::SLOAD => stack
-                .last()
-                .copied()
-                .zip(next.and_then(|next| next.stack.as_deref()?.last().copied())),
-            OpCode::SSTORE => match stack {
-                [.., value, slot] => Some((*slot, *value)),
-                _ => None,
+        // The tracer shares one buffer between steps that leave memory unchanged, so this only
+        // bumps a reference count.
+        let memory = step.memory.as_ref().map(|memory| memory.as_bytes().0.clone());
+        // The full stack snapshots do not record pushes, but an `SLOAD` or `TLOAD` leaves its
+        // value on top of the next step's stack.
+        let loaded = next.and_then(|next| next.stack.as_deref()?.last().copied());
+        let had_value = step
+            .storage_change
+            .as_ref()
+            .filter(|_| step.op == OpCode::SSTORE)
+            .and_then(|change| change.had_value);
+        let storage = self.converter.storage(step.op.get(), stack, loaded, had_value);
+        // The converter spells out the buffer of the first step and of every change, including
+        // to an empty one; `None` keeps the previous step's.
+        let return_data = self.converter.return_data(&step.returndata);
+        self.steps.append(
+            StepRecord {
+                pc: step.pc as u64,
+                op: step.op.get(),
+                gas: step.gas_remaining,
+                gas_cost: step.gas_cost,
+                depth,
+                error: status_error(step.status),
+                memory,
+                storage: Some(storage.storage),
+                storage_diff: storage.storage_diff,
+                transient_storage: storage.transient_storage,
+                return_data,
             },
-            _ => None,
-        };
-        let (storage, storage_diff) = match touched {
-            Some((slot, value)) => {
-                let (slot, value) = (quantity(slot), quantity(value));
-                let before = step
-                    .storage_change
-                    .as_ref()
-                    .filter(|_| step.op == OpCode::SSTORE)
-                    .and_then(|change| change.had_value)
-                    .map(quantity);
-                let change = StorageChange { before, after: Some(value.clone()) };
-                (
-                    Arc::new(BTreeMap::from([(slot.clone(), value)])),
-                    BTreeMap::from([(slot, change)]),
-                )
-            }
-            None => (self.no_storage.clone(), BTreeMap::new()),
-        };
-
-        let transient_storage = match step.op {
-            OpCode::TLOAD => stack
-                .last()
-                .copied()
-                .zip(next.and_then(|next| next.stack.as_deref()?.last().copied())),
-            OpCode::TSTORE => match stack {
-                [.., value, slot] => Some((*slot, *value)),
-                _ => None,
-            },
-            _ => None,
-        }
-        .map(|(slot, value)| (quantity(slot), quantity(value)))
-        .into_iter()
-        .collect();
-        let return_data = if step.returndata.is_empty() {
-            None
-        } else {
-            Some(match &self.return_data {
-                Some((last, hex)) if last == &step.returndata => hex.clone(),
-                _ => {
-                    let hex = Arc::<str>::from(hex::encode(&step.returndata));
-                    self.return_data = Some((step.returndata.clone(), hex.clone()));
-                    hex
-                }
-            })
-        };
-        let snapshot = StepSnapshot {
-            stack: stack.iter().map(|word| self.words.intern(&quantity(*word))).collect(),
-            memory,
-            storage,
-            storage_diff,
-            transient_storage,
-            return_data,
-        };
-        self.steps.push(TraceStep::new(
-            step.pc as u64,
-            self.words.intern(step.op.as_str()),
-            step.gas_remaining,
-            step.gas_cost,
-            depth,
-            status_error(step.status),
-            snapshot,
-        ));
+            stack.iter().map(|word| EvmWord(word.to_be_bytes())),
+        );
     }
+}
+
+/// The step table that holds the steps of `recordings`, and where each recording's steps start in
+/// it.
+///
+/// The recorders of one session append to one table in execution order, so it is taken as it is
+/// when the recordings cover it in order. Otherwise their steps are copied into a new table.
+fn recorded_steps(recordings: &[DebugRecording]) -> Result<(StepTable, Vec<usize>)> {
+    let first = &recordings[0].sink;
+    let mut offsets = Vec::with_capacity(recordings.len());
+    let mut next = 0;
+    for recording in recordings {
+        if !recording.sink.same(first)
+            || (!recording.steps.is_empty() && recording.steps.start != next)
+        {
+            offsets.clear();
+            break;
+        }
+        offsets.push(next);
+        next = recording.steps.end.max(next);
+    }
+    let mut shared = first.lock();
+    let len = shared.as_ref().ok_or_eyre("the recorded steps are in use")?.len();
+    if offsets.len() == recordings.len() && next == len {
+        return Ok((shared.take().unwrap_or_default(), offsets));
+    }
+    drop(shared);
+
+    offsets.clear();
+    let mut table = StepTable::with_capacity(recordings.iter().map(|r| r.steps.len()).sum());
+    for recording in recordings {
+        offsets.push(table.len());
+        let source = recording.sink.lock();
+        let source = source.as_ref().ok_or_eyre("the recorded steps are in use")?;
+        for index in recording.steps.clone() {
+            let step = source.step(index);
+            table.append(step_record(&step), step.stack().iter());
+        }
+    }
+    Ok((table, offsets))
 }
 
 /// A program the trace executes and the local artifact that describes it.
@@ -404,6 +553,11 @@ struct ExecutedProgram<'a> {
     address: Address,
     name: &'a str,
     code: &'a Bytes,
+    /// The hash of `code`, which tells apart programs run at one address.
+    code_hash: B256,
+    /// The hash of the deployed code: `code_hash` for deployed code, and for creation code the
+    /// hash of the code it returned, so a contract's two programs share a bundle entry.
+    deployed_hash: B256,
     /// Whether the program is creation code.
     init: bool,
     artifact: &'a ArtifactData,
@@ -426,7 +580,7 @@ fn executed_programs<'a>(
     sources: &'a ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Vec<ExecutedProgram<'a>> {
-    let mut seen = HashSet::<(Address, bool)>::default();
+    let mut seen = HashSet::<(Address, bool, B256)>::default();
     let mut programs = Vec::new();
     for (node, name) in
         arenas.iter().zip(contract_names).flat_map(|(arena, names)| arena.nodes().iter().zip(names))
@@ -435,7 +589,8 @@ fn executed_programs<'a>(
         let init = trace.kind.is_any_create();
         if let Some(name) = name
             && let Some(code) = &trace.bytecode
-            && seen.insert((trace.address, init))
+            && let code_hash = keccak256(code)
+            && seen.insert((trace.address, init, code_hash))
             && let Some(sources_for_name) = sources.get_sources(name)
             && let Some((artifact, source)) = sources_for_name.into_iter().find(|(artifact, _)| {
                 if init {
@@ -469,6 +624,8 @@ fn executed_programs<'a>(
                 address: trace.address,
                 name,
                 code,
+                code_hash,
+                deployed_hash: if init { keccak256(&trace.output) } else { code_hash },
                 init,
                 artifact,
                 solc: matches!(source.language, MultiCompilerLanguage::Solc(_)),
@@ -485,7 +642,10 @@ fn executed_programs<'a>(
 
 /// The soldb debug info of `program`, from its ETHDebug program when the build has one and from its
 /// source map otherwise.
-fn contract_debug_info(program: &ExecutedProgram<'_>) -> Option<ContractDebugInfo> {
+fn contract_debug_info(
+    program: &ExecutedProgram<'_>,
+    source_cache: &mut SourceCache,
+) -> Option<ContractDebugInfo> {
     let (info, code_generator) = match program.ethdebug {
         // ETHDebug comes from the IR pipeline, whose stack layout soldb does not infer.
         Some(ethdebug) => (ethdebug_info(program, ethdebug)?, Some(CodeGenerator::ViaIr)),
@@ -509,13 +669,15 @@ fn contract_debug_info(program: &ExecutedProgram<'_>) -> Option<ContractDebugInf
     let storage_layout =
         program.storage_layout.as_ref().and_then(|layout| StorageLayout::parse(layout).ok());
     Some(
-        ContractDebugInfo::new(
+        ContractDebugInfo::with_source_cache(
             Some(&hex::encode_prefixed(program.address)),
             program.name,
             info,
             source_contents,
+            source_cache,
         )
         .with_code_generator(code_generator)
+        .with_code_hash(Some(&program.code_hash.to_string()))
         .with_storage_layout(storage_layout),
     )
 }
@@ -553,17 +715,8 @@ fn source_map_info(program: &ExecutedProgram<'_>) -> Option<EthdebugInfo> {
             Some(pc as u32)
         };
         if let Some(element) = index.and_then(|index| source_map.get(index as usize)) {
-            let mnemonic =
-                op.map_or_else(|| format!("UNKNOWN(0x{byte:02x})"), |op| op.as_str().to_string());
-            instructions.push(Instruction {
-                offset: pc as u64,
-                operation: json!({ "mnemonic": mnemonic }),
-                context: Some(instruction_context(
-                    element,
-                    program.build_sources,
-                    &mut used_sources,
-                )),
-            });
+            let context = instruction_context(element, program.build_sources, &mut used_sources);
+            instructions.extend(Instruction::from_bytecode(program.code, pc, context));
         }
         pc += 1 + op.map_or(0, |op| op.info().immediate_size() as usize);
     }
@@ -596,6 +749,28 @@ fn compilation(build_sources: &HashMap<u32, Arc<SourceData>>) -> Value {
     json!({ "compilation": { "sources": sources } })
 }
 
+/// Checks that a SolDB bundle can be written to `dir`, before the run that records it.
+pub fn ensure_dump_dir(dir: &Path) -> Result<()> {
+    // Before 1.9, `--dump` wrote a single file, which a later run would otherwise fail on only
+    // after recording the trace.
+    if dir.exists() && !dir.is_dir() {
+        eyre::bail!(
+            "--dump now takes a directory, but {} is not one; remove it or pass a directory path",
+            dir.display()
+        );
+    }
+    // The bundle copies the compiler's sources under their project paths, and they can differ
+    // from the files on disk, so a directory with files, such as the project root, could have its
+    // files replaced.
+    if std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()) {
+        eyre::bail!(
+            "cannot write the SolDB bundle to {}: the directory is not empty",
+            dir.display()
+        );
+    }
+    Ok(())
+}
+
 /// Writes a bundle that soldb's own tools read, for example
 /// `soldb profile --trace-file <dir>/trace.json --contracts <dir>/contracts.json`.
 ///
@@ -606,38 +781,42 @@ fn compilation(build_sources: &HashMap<u32, Arc<SourceData>>) -> Value {
 pub(crate) fn write_bundle(
     dir: &Path,
     mut arenas: Vec<CallTraceArena>,
+    recordings: Vec<DebugRecording>,
     contract_names: &[Vec<Option<String>>],
     sources: &ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Result<()> {
-    let mut contracts = BTreeMap::<Address, CombinedJson>::new();
+    ensure_dump_dir(dir)?;
+    // One entry per deployed code, so code replaced at an address keeps its own source maps.
+    let mut contracts = BTreeMap::<(Address, B256), CombinedJson>::new();
     let mut written_sources = HashSet::<PathBuf>::default();
     for program in executed_programs(&arenas, contract_names, sources, known_contracts) {
         // soldb reads legacy source maps by instruction counter, which Vyper's are not.
         if !program.solc {
             continue;
         }
-        let contract = contracts.entry(program.address).or_insert_with(|| {
-            let path = |id: &u32| {
-                program.build_sources.get(id).map(|source| source.path.to_string_lossy())
-            };
-            let max_id = program.build_sources.keys().max().copied().unwrap_or_default();
-            CombinedJson {
-                name: program.name.to_string(),
-                key: format!(
-                    "{}:{}",
-                    path(&program.artifact.file_id).unwrap_or_default(),
-                    program.name
-                ),
-                // Ids without a build source stay unreadable placeholders.
-                source_list: (0..=max_id)
-                    .map(|id| path(&id).map_or_else(|| format!("<missing-{id}>"), Into::into))
-                    .collect(),
-                fields: Map::new(),
-                ethdebug: Vec::new(),
-                compilation: compilation(program.build_sources),
-            }
-        });
+        let contract =
+            contracts.entry((program.address, program.deployed_hash)).or_insert_with(|| {
+                let path = |id: &u32| {
+                    program.build_sources.get(id).map(|source| source.path.to_string_lossy())
+                };
+                let max_id = program.build_sources.keys().max().copied().unwrap_or_default();
+                CombinedJson {
+                    name: program.name.to_string(),
+                    key: format!(
+                        "{}:{}",
+                        path(&program.artifact.file_id).unwrap_or_default(),
+                        program.name
+                    ),
+                    // Ids without a build source stay unreadable placeholders.
+                    source_list: (0..=max_id)
+                        .map(|id| path(&id).map_or_else(|| format!("<missing-{id}>"), Into::into))
+                        .collect(),
+                    fields: Map::new(),
+                    ethdebug: Vec::new(),
+                    compilation: compilation(program.build_sources),
+                }
+            });
         let (source_map_key, bytecode_key, program_suffix) = if program.init {
             ("srcmap", "bin", "_ethdebug.json")
         } else {
@@ -685,10 +864,18 @@ pub(crate) fn write_bundle(
         }
     }
 
+    let mut programs_at = HashMap::<Address, usize>::new();
+    for (address, _) in contracts.keys() {
+        *programs_at.entry(*address).or_default() += 1;
+    }
     let mut mapping = Vec::new();
-    for (address, contract) in contracts {
-        let address = hex::encode_prefixed(address);
-        let contract_dir = dir.join(&address);
+    for ((address, code_hash), contract) in contracts {
+        let debug_dir = if programs_at[&address] > 1 {
+            format!("{}-{}", hex::encode_prefixed(address), hex::encode(&code_hash[..4]))
+        } else {
+            hex::encode_prefixed(address)
+        };
+        let contract_dir = dir.join(&debug_dir);
         fs::create_dir_all(&contract_dir)?;
         write_json_file(
             &contract_dir.join("combined.json"),
@@ -703,10 +890,15 @@ pub(crate) fn write_bundle(
                 write_json_file(&contract_dir.join(file_name), &program)?;
             }
         }
-        mapping.push(json!({ "address": address, "name": contract.name, "debug_dir": address }));
+        mapping.push(json!({
+            "address": hex::encode_prefixed(address),
+            "name": contract.name,
+            "debug_dir": debug_dir,
+            "code_hash": code_hash.to_string(),
+        }));
     }
     write_json_file(&dir.join("contracts.json"), &json!({ "contracts": mapping }))?;
-    let (trace, _) = transaction_trace(&mut arenas, &Breakpoints::default())?;
+    let (trace, _) = transaction_trace(&mut arenas, recordings, &Breakpoints::default())?;
     write_json_file(&dir.join("trace.json"), &trace)?;
     Ok(())
 }
@@ -731,49 +923,38 @@ fn instruction_context(
     element: &SourceElement,
     build_sources: &HashMap<u32, Arc<SourceData>>,
     used_sources: &mut BTreeSet<u32>,
-) -> Value {
-    let mut context = Map::new();
-    context.insert("modifierDepth".to_string(), element.modifier_depth().into());
+) -> SourceMapContext {
     // Compiler-generated code points at sources that are not in the build.
-    if let Some(index) = element.index()
-        && build_sources.contains_key(&index)
-    {
+    let code = element.index().filter(|index| build_sources.contains_key(index)).map(|index| {
         used_sources.insert(index);
-        context.insert(
-            "code".to_string(),
-            json!({
-                "source": { "id": index },
-                "range": { "offset": element.offset(), "length": element.length() },
-            }),
-        );
-    }
-    match element.jump() {
-        Jump::In => {
-            context.insert("invoke".to_string(), json!({}));
+        SourceLocation {
+            source_id: u64::from(index),
+            offset: u64::from(element.offset()),
+            length: u64::from(element.length()),
         }
-        Jump::Out => {
-            context.insert("return".to_string(), json!({}));
-        }
-        Jump::Regular => {}
+    });
+    SourceMapContext {
+        code,
+        jump: match element.jump() {
+            Jump::In => SourceMapJump::Into,
+            Jump::Out => SourceMapJump::Out,
+            Jump::Regular => SourceMapJump::Regular,
+        },
+        modifier_depth: element.modifier_depth().into(),
     }
-    Value::Object(context)
 }
 
 /// The error a failed step or call ended with.
-fn status_error(status: Option<InstructionResult>) -> Option<String> {
-    status.filter(|status| !status.is_ok()).map(|status| format!("{status:?}"))
-}
-
-/// Formats `value` as a JSON-RPC quantity.
-fn quantity(value: U256) -> String {
-    format!("{value:#x}")
+fn status_error(status: Option<InstrStop>) -> Option<String> {
+    status.filter(|status| !status.is_success()).map(|status| format!("{status:?}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::U256;
     use foundry_compilers::artifacts::sourcemap;
-    use foundry_evm_traces::{CallKind, CallTrace};
+    use foundry_evm_traces::CallKind;
     use soldb_ethdebug::SourceMapEnvironment;
 
     /// A step as debug mode records it: the full stack, without pushes.
@@ -787,13 +968,12 @@ mod tests {
             returndata: Bytes::new(),
             gas_remaining: 0,
             gas_refund_counter: 0,
-            gas_used: 0,
             gas_cost: 0,
             state_gas_cost: None,
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            status: (op == OpCode::STOP).then_some(InstructionResult::Stop),
+            status: (op == OpCode::STOP).then_some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
         }
@@ -846,16 +1026,17 @@ mod tests {
         });
 
         let breakpoints = Breakpoints::from_iter([('a', (proxy, 3)), ('b', (implementation, 9))]);
-        let (trace, breakpoints) = transaction_trace(&mut [arena], &breakpoints).unwrap();
+        let (trace, breakpoints) =
+            transaction_trace(&mut [arena], Vec::new(), &breakpoints).unwrap();
         assert_eq!(
             breakpoints,
-            BTreeMap::from([((proxy, 3), vec![2]), ((implementation, 9), Vec::new())])
+            BTreeMap::from([((proxy, 3), vec![(0..6, 1)]), ((implementation, 9), Vec::new())])
         );
 
         let steps = trace
             .steps
             .iter()
-            .map(|step| (step.pc, step.op.to_string(), step.depth))
+            .map(|step| (step.pc(), step.mnemonic().to_string(), step.depth()))
             .collect::<Vec<_>>();
         assert_eq!(
             steps,
@@ -869,7 +1050,7 @@ mod tests {
             ]
         );
         let storage_diff =
-            |index: usize| serde_json::to_value(&trace.steps[index].snapshot.storage_diff).unwrap();
+            |index: usize| serde_json::to_value(trace.steps.step(index).storage_diff()).unwrap();
         assert_eq!(storage_diff(1), json!({ "0x0": { "before": null, "after": "0x29" } }));
         assert_eq!(storage_diff(3), json!({ "0x0": { "before": null, "after": "0x2a" } }));
         assert_eq!(storage_diff(4), json!({}));
@@ -921,7 +1102,6 @@ mod tests {
                 language: Default::default(),
                 path: PathBuf::from("src/C.sol"),
                 contract_definitions: Vec::new(),
-                debug_scopes: Vec::new(),
             }),
         );
         sources.artifacts_by_name.insert(
@@ -955,7 +1135,7 @@ mod tests {
         let arenas = [arena];
         let names = [names];
         let programs = executed_programs(&arenas, &names, &sources, &Default::default());
-        let contract = contract_debug_info(&programs[0]).unwrap();
+        let contract = contract_debug_info(&programs[0], &mut SourceCache::default()).unwrap();
 
         assert_eq!(contract.address, Some(hex::encode_prefixed(address)));
         assert_eq!(contract.code_generator, Some(CodeGenerator::Legacy));
@@ -969,7 +1149,8 @@ mod tests {
                 json!({
                     "offset": instruction.offset,
                     "mnemonic": instruction.mnemonic(),
-                    "context": instruction.context,
+                    "arguments": instruction.arguments(),
+                    "context": serde_json::to_value(instruction).unwrap()["context"],
                 })
             })
             .collect::<Vec<_>>();
@@ -979,6 +1160,7 @@ mod tests {
                 {
                     "offset": 0,
                     "mnemonic": "PUSH1",
+                    "arguments": ["0x80"],
                     "context": {
                         "modifierDepth": 0,
                         "code": { "source": { "id": 0 }, "range": { "offset": 0, "length": 8 } },
@@ -987,13 +1169,19 @@ mod tests {
                 {
                     "offset": 2,
                     "mnemonic": "JUMPDEST",
+                    "arguments": [],
                     "context": {
                         "modifierDepth": 0,
                         "code": { "source": { "id": 0 }, "range": { "offset": 9, "length": 3 } },
                         "invoke": {},
                     },
                 },
-                { "offset": 3, "mnemonic": "STOP", "context": { "modifierDepth": 0, "return": {} } },
+                {
+                    "offset": 3,
+                    "mnemonic": "STOP",
+                    "arguments": [],
+                    "context": { "modifierDepth": 0, "return": {} },
+                },
             ])
         );
     }
@@ -1009,12 +1197,15 @@ mod tests {
         set_up.nodes_mut()[0].trace.success = true;
         let (_, mut test, _) = executed_c();
         test.nodes_mut()[0].trace.gas_used = 30;
-        test.nodes_mut()[0].trace.status = Some(InstructionResult::Revert);
+        test.nodes_mut()[0].trace.status = Some(InstrStop::Revert);
         let breakpoints = Breakpoints::from_iter([('a', (Address::repeat_byte(0xc), 2))]);
         let (trace, hits) =
-            transaction_trace(&mut [deployment, set_up, test], &breakpoints).unwrap();
+            transaction_trace(&mut [deployment, set_up, test], Vec::new(), &breakpoints).unwrap();
         soldb_debugger::check_root_calls(&trace).unwrap();
         assert_eq!(trace.gas_used, 60);
+        // The header describes the test call, not the deployment.
+        assert_eq!(trace.to_addr, Some(hex::encode_prefixed(Address::repeat_byte(0xc))));
+        assert_eq!(trace.contract_address, None);
         assert!(!trace.success);
         assert_eq!(trace.error.as_deref(), Some("Revert"));
         assert_eq!(trace.steps.len(), 6);
@@ -1024,8 +1215,8 @@ mod tests {
         assert_eq!(trace.artifacts.calls[1].entry_step, Some(4));
         assert_eq!(trace.artifacts.calls[1].exit_step, Some(6));
         assert!(trace.artifacts.calls.iter().all(|call| call.parent_id.is_none()));
-        assert_eq!(hits[&(Address::repeat_byte(0xc), 2)], [1, 3, 5]);
-        assert!(transaction_trace(&mut [], &Breakpoints::default()).is_err());
+        assert_eq!(hits[&(Address::repeat_byte(0xc), 2)], [(0..2, 1), (2..4, 1), (4..6, 1)]);
+        assert!(transaction_trace(&mut [], Vec::new(), &Breakpoints::default()).is_err());
     }
 
     #[test]
@@ -1039,16 +1230,18 @@ mod tests {
         builder.push_step(&load, Some(&stop), 1);
         builder.push_step(&stop, None, 1);
         builder.push_step(&stop, None, 1);
+        builder.push_step(&store, None, 1);
         let expected = BTreeMap::from([("0x7".to_string(), "0x2a".to_string())]);
-        assert_eq!(builder.steps[0].snapshot.transient_storage, expected);
-        assert_eq!(builder.steps[1].snapshot.transient_storage, expected);
-        assert!(builder.steps[2].snapshot.transient_storage.is_empty());
-        assert!(builder.steps[0].snapshot.return_data.is_none());
-        assert_eq!(builder.steps[2].snapshot.return_data.as_deref(), Some("abcd"));
-        assert!(Arc::ptr_eq(
-            builder.steps[2].snapshot.return_data.as_ref().unwrap(),
-            builder.steps[3].snapshot.return_data.as_ref().unwrap(),
-        ));
+        assert_eq!(*builder.steps.step(0).transient_storage(), expected);
+        assert_eq!(*builder.steps.step(1).transient_storage(), expected);
+        assert!(builder.steps.step(2).transient_storage().is_empty());
+        assert!(builder.steps.step(0).return_data().is_none());
+        assert_eq!(builder.steps.step(2).return_data(), Some("abcd"));
+        assert!(builder.steps.step(4).return_data().is_none());
+        assert_eq!(
+            builder.steps.step(2).return_data().unwrap().as_ptr(),
+            builder.steps.step(3).return_data().unwrap().as_ptr(),
+        );
     }
 
     #[test]
@@ -1056,13 +1249,20 @@ mod tests {
         let (sources, arena, names) = executed_c();
         let dir = tempfile::tempdir().unwrap();
 
-        write_bundle(dir.path(), vec![arena], &[names], &sources, &Default::default()).unwrap();
+        write_bundle(dir.path(), vec![arena], Vec::new(), &[names], &sources, &Default::default())
+            .unwrap();
 
         let address = hex::encode_prefixed(Address::repeat_byte(0xc));
         let mapping = soldb_ethdebug::read_json_file(&dir.path().join("contracts.json")).unwrap();
+        let code_hash = keccak256([0x60, 0x80, 0x5b, 0x00]).to_string();
         assert_eq!(
             mapping,
-            json!({ "contracts": [{ "address": address, "name": "C", "debug_dir": address }] })
+            json!({ "contracts": [{
+                "address": address,
+                "name": "C",
+                "debug_dir": address,
+                "code_hash": code_hash,
+            }] })
         );
         let program = soldb_ethdebug::load_debug_program_with_sources(
             &dir.path().join(&address),
@@ -1080,6 +1280,19 @@ mod tests {
         let trace = std::fs::read_to_string(dir.path().join("trace.json")).unwrap();
         let trace = serde_json::from_str::<TransactionTrace>(&trace).unwrap();
         assert_eq!(trace.steps.len(), 2);
+
+        // A second bundle would replace the files of the first, as it would a project's sources.
+        let (sources, arena, names) = executed_c();
+        let error = write_bundle(
+            dir.path(),
+            vec![arena],
+            Vec::new(),
+            &[names],
+            &sources,
+            &Default::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().ends_with("the directory is not empty"));
     }
 
     #[test]
@@ -1098,14 +1311,15 @@ mod tests {
 
         let (arenas, names) = (vec![arena], vec![names]);
         let programs = executed_programs(&arenas, &names, &sources, &Default::default());
-        let contract = contract_debug_info(&programs[0]).unwrap();
+        let contract = contract_debug_info(&programs[0], &mut SourceCache::default()).unwrap();
         assert_eq!(contract.code_generator, Some(CodeGenerator::ViaIr));
         let offsets = contract.info.instructions.iter().map(|i| i.offset).collect::<Vec<_>>();
         assert_eq!(offsets, [2]);
         assert_eq!(contract.info.sources, BTreeMap::from([(0, "src/C.sol".to_string())]));
 
         let dir = tempfile::tempdir().unwrap();
-        write_bundle(dir.path(), arenas, &names, &sources, &Default::default()).unwrap();
+        write_bundle(dir.path(), arenas, Vec::new(), &names, &sources, &Default::default())
+            .unwrap();
         let address = hex::encode_prefixed(Address::repeat_byte(0xc));
         let program = soldb_ethdebug::load_debug_program_with_sources(
             &dir.path().join(&address),

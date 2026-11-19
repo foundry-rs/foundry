@@ -3,8 +3,10 @@ use forge_lint::{
     sol::{self, SolLint},
 };
 use foundry_config::{
-    DenyLevel, LintSeverity, LinterConfig, SolidityErrorCode, lint::LintSpecificConfig,
+    DenyLevel, LintSeverity, LinterConfig, SolidityErrorCode,
+    lint::{ContractException, LintSpecificConfig},
 };
+use std::fs;
 
 mod geiger;
 
@@ -205,8 +207,6 @@ interface IToken {
 
 #[forgetest]
 fn lint_does_not_write_artifacts(prj: _, cmd: _) {
-    use std::fs;
-
     prj.add_source("LintTarget", "contract LintTarget {}");
     let artifact = prj.root().join("out/LintTarget.sol/LintTarget.json");
 
@@ -883,8 +883,6 @@ fn multi_contract_file_no_exceptions(prj: _, cmd: _) {
 
 #[forgetest]
 fn multi_contract_file_interface_exception(prj: _, cmd: _) {
-    use foundry_config::lint::ContractException;
-
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
 
     // With interface exception, should flag 6 items
@@ -920,8 +918,6 @@ fn multi_contract_file_interface_exception(prj: _, cmd: _) {
 
 #[forgetest]
 fn multi_contract_file_library_exception(prj: _, cmd: _) {
-    use foundry_config::lint::ContractException;
-
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
 
     // With library exception, should flag 7 items
@@ -955,8 +951,6 @@ fn multi_contract_file_library_exception(prj: _, cmd: _) {
 
 #[forgetest]
 fn multi_contract_file_abstract_exception(prj: _, cmd: _) {
-    use foundry_config::lint::ContractException;
-
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
 
     // With abstract contract exception, should flag 7 items
@@ -991,8 +985,6 @@ fn multi_contract_file_abstract_exception(prj: _, cmd: _) {
 
 #[forgetest]
 fn multi_contract_file_multiple_exceptions(prj: _, cmd: _) {
-    use foundry_config::lint::ContractException;
-
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
 
     // With interface + library exceptions, should flag 4 items
@@ -1032,8 +1024,6 @@ fn multi_contract_file_multiple_exceptions(prj: _, cmd: _) {
 
 #[forgetest]
 fn multi_contract_file_all_exceptions(prj: _, cmd: _) {
-    use foundry_config::lint::ContractException;
-
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
 
     // With all exceptions, should still flag 2 regular contracts
@@ -1072,8 +1062,6 @@ fn multi_contract_file_all_exceptions(prj: _, cmd: _) {
 
 #[forgetest]
 fn multi_contract_file_invalid_toml_value(prj: _, cmd: _) {
-    use std::fs;
-
     prj.add_source("Simple", "contract Simple {}");
 
     // Write invalid TOML config with invalid enum value
@@ -1101,8 +1089,6 @@ multi_contract_file_exceptions = ["interface", "bad_contract_type", "library"]
 
 #[forgetest]
 fn multi_contract_file_valid_toml_values(prj: _, cmd: _) {
-    use std::fs;
-
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
 
     // Write valid TOML config with all valid enum values
@@ -2567,4 +2553,49 @@ Error: aborting due to 1 linter warning(s)
 Error: aborting due to 1 linter warning(s)
 
 "#]]);
+}
+
+#[forgetest]
+fn inline_config_preserves_doc_suppression_after_unmatched_fmt_end(prj: _, cmd: _) {
+    for directives in [
+        "",
+        "// forgefmt: disable-end",
+        "// forgefmt: disable-end\n// forgefmt: disable-end",
+        r#"// forgefmt: disable-end
+// forgefmt: disable-start
+// forgefmt: disable-start
+// forgefmt: disable-end
+// forgefmt: disable-end
+// forgefmt: disable-end"#,
+    ] {
+        prj.add_source(
+            "Suppression",
+            &format!(
+                r#"
+contract Suppression {{
+    uint256 public reported;
+{directives}
+    /** forge-lint: disable-next-line(uninitialized-state) */
+    uint256 public suppressed;
+}}
+"#
+            ),
+        );
+
+        cmd.forge_fuse()
+            .args(["lint", "--only-lint", "uninitialized-state"])
+            .assert_success()
+            .stdout_eq("")
+            .stderr_eq(str![[r#"
+warning[uninitialized-state]: state variable is read but never written
+  [FILE]:5:5
+  │
+5 │     uint256 public reported;
+  │     ━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+
+"#]]);
+    }
 }

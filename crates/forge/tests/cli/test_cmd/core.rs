@@ -1,7 +1,7 @@
 //! Core test functionality tests
 
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
-use foundry_test_utils::str;
+use foundry_test_utils::{str, util::OutputExt};
 use serde_json::Value;
 
 #[forgetest_init]
@@ -96,6 +96,13 @@ contract Asserter {
         vm.assertTrue(false);
         revert();
     }
+
+    // Sends 17 wei from 0x5316812db67073C4d4af8BB3000C5B86c2877e94 on chain 1.
+    function broadcast() external {
+        vm.broadcastRawTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+    }
 }
 
 /// forge-config: default.assertions_revert = false
@@ -112,6 +119,14 @@ contract NonRevertingAssertionsTest is Test {
 
     function testRevertedCallFailureIsDropped() public {
         try asserter.failThenRevert() {} catch {}
+    }
+
+    // A call that runs a nested transaction replaces the running state with its own.
+    function testNestedTransactionKeepsFailure() public {
+        vm.chainId(1);
+        vm.deal(0x5316812db67073C4d4af8BB3000C5B86c2877e94, 1 ether);
+        vm.assertTrue(false);
+        asserter.broadcast();
     }
 }
 
@@ -139,19 +154,21 @@ Ran 1 test for test/LegacyAssertions.t.sol:NoAssertionsRevertTest
 [FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 3 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
+Ran 4 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
 [FAIL] testBodyFailure() ([GAS])
 [FAIL] testCallFailure() ([GAS])
+[FAIL] testNestedTransactionKeepsFailure() ([GAS])
 [PASS] testRevertedCallFailureIsDropped() ([GAS])
-Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
 
-Ran 3 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
+Ran 4 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
 [FAIL] testBodyFailure() ([GAS])
 [FAIL] testCallFailure() ([GAS])
+[FAIL] testNestedTransactionKeepsFailure() ([GAS])
 [PASS] testRevertedCallFailureIsDropped() ([GAS])
-Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
 
-Ran 5 test suites [ELAPSED]: 4 tests passed, 9 failed, 0 skipped (13 total tests)
+Ran 5 test suites [ELAPSED]: 4 tests passed, 11 failed, 0 skipped (15 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/LegacyAssertions.t.sol:LegacyAssertionsNonIsolatedTest
@@ -165,17 +182,19 @@ Encountered 2 failing tests in test/LegacyAssertions.t.sol:LegacyAssertionsTest
 Encountered 1 failing test in test/LegacyAssertions.t.sol:NoAssertionsRevertTest
 [FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
 
-Encountered 2 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
+Encountered 3 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
 [FAIL] testBodyFailure() ([GAS])
 [FAIL] testCallFailure() ([GAS])
+[FAIL] testNestedTransactionKeepsFailure() ([GAS])
 
-Encountered 2 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
+Encountered 3 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
 [FAIL] testBodyFailure() ([GAS])
 [FAIL] testCallFailure() ([GAS])
+[FAIL] testNestedTransactionKeepsFailure() ([GAS])
 
-Encountered a total of 9 failing tests, 4 tests succeeded
+Encountered a total of 11 failing tests, 4 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 9 failed tests
+Tip: Run `forge test --rerun` to retry only the 11 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
@@ -205,6 +224,90 @@ Profile saved to cache/evm_profile_EvmProfileNoOpenTest_testProfile.json
         .expect("profile should be valid JSON");
     assert_eq!(profile["exporter"], "foundry");
     assert_eq!(profile["profiles"][0]["type"], "evented");
+}
+
+// Trace gas is gross: the refund is only subtracted from the test's reported gas. A profile must
+// use the trace's gas as is, with isolation from the config (the default) or from `--isolate`.
+#[forgetest_init]
+fn evm_profile_gas_matches_trace_gas_with_refund(prj: _, cmd: _) {
+    prj.add_test(
+        "RefundProfile.t.sol",
+        r#"
+contract Store {
+    uint256 public x = 1;
+
+    function clear() external {
+        x = 0;
+    }
+}
+
+contract RefundProfileTest {
+    Store store;
+
+    function setUp() public {
+        store = new Store();
+    }
+
+    function testClear() public {
+        store.clear();
+    }
+}
+"#,
+    );
+
+    for isolate_flag in [false, true] {
+        let mut args = vec!["test", "--match-test", "testClear"];
+        if isolate_flag {
+            args.push("--isolate");
+        }
+
+        let output = cmd
+            .forge_fuse()
+            .args(&args)
+            .args(["--json", "-vvvv"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let results: Value = serde_json::from_str(&output).unwrap();
+        let traces = &results["test/RefundProfile.t.sol:RefundProfileTest"]["test_results"]["testClear()"]
+            ["traces"];
+        let execution = traces
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|trace| trace[0] == "Execution")
+            .expect("execution trace");
+        let root = &execution[1]["arena"][0]["trace"];
+        let clear = &execution[1]["arena"][1]["trace"];
+        assert!(root["gas_refund_counter"].as_u64().unwrap() > 0, "the test should earn a refund");
+
+        cmd.forge_fuse().args(&args).args(["--evm-profile", "--no-open"]).assert_success();
+        let profile_path = prj.root().join("cache/evm_profile_RefundProfileTest_testClear.json");
+        let file: Value =
+            serde_json::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
+        let clear_frame = file["shared"]["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|frame| frame["name"] == "Store.clear()")
+            .expect("frame of Store.clear()");
+        let profile = &file["profiles"][0];
+        let events = profile["events"].as_array().unwrap();
+        let clear_at = |kind: &str| {
+            events
+                .iter()
+                .find(|event| event["type"] == kind && event["frame"] == clear_frame)
+                .and_then(|event| event["at"].as_u64())
+                .unwrap()
+        };
+
+        assert_eq!(profile["endValue"], root["gas_used"], "test frame, --isolate: {isolate_flag}");
+        assert_eq!(
+            clear_at("C") - clear_at("O"),
+            clear["gas_used"].as_u64().unwrap(),
+            "Store.clear() frame, --isolate: {isolate_flag}"
+        );
+    }
 }
 
 #[forgetest_init]
@@ -696,4 +799,33 @@ contract RerunNetworksTest {
     assert_eq!(failed_tests.len(), 2);
     assert!(failed_tests.contains(&"testDefaultFailure"));
     assert!(failed_tests.contains(&"testTempoFailure"));
+}
+
+#[cfg(feature = "monad")]
+#[forgetest_init]
+fn dynamic_inspector_records_resumed_caller(prj: _, cmd: _) {
+    prj.add_test(
+        "Record.t.sol",
+        &include_str!("../../../../../testdata/default/cheats/Record.t.sol")
+            .replace("utils/Test.sol", "forge-std/Test.sol"),
+    );
+
+    // Default verbosity, without coverage or gas instrumentation: their stepping would hide a
+    // resumed frame that does not step the recorded opcodes.
+    for network in ["ethereum", "monad"] {
+        cmd.forge_fuse().args(["test", "--network", network]).assert_success().stdout_eq(str![[
+            r#"
+...
+Ran 4 tests for test/Record.t.sol:RecordTest
+[PASS] testRecordAccess() ([GAS])
+[PASS] testRecordResumedCaller() ([GAS])
+[PASS] testRecordResumedCreator() ([GAS])
+[PASS] testStopRecordAccess() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#
+        ]]);
+    }
 }

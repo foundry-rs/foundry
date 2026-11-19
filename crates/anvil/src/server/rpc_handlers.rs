@@ -1,7 +1,10 @@
 //! Contains RPC handlers
 use crate::{
     EthApi,
-    eth::{error::to_rpc_result, macros::node_info},
+    eth::{
+        error::{ToRpcResponseResult, to_rpc_result},
+        macros::node_info,
+    },
     pubsub::{EthSubscription, LogsSubscription},
 };
 use alloy_rpc_types::{
@@ -63,7 +66,7 @@ impl PubSubEthRpcHandler {
         let id = SubscriptionId::random_hex();
         trace!(target: "rpc::ws", "received pubsub request {:?}", pubsub);
         match pubsub {
-            EthPubSub::EthUnSubscribe(id) => {
+            EthPubSub::EthUnSubscribe(id) | EthPubSub::ConsensusUnsubscribe(id) => {
                 trace!(target: "rpc::ws", "canceling subscription {:?}", id);
                 let canceled = cx.remove_subscription(&id).is_some();
                 ResponseResult::success(canceled)
@@ -93,6 +96,7 @@ impl PubSubEthRpcHandler {
                             storage,
                             filter: params,
                             queued: Default::default(),
+                            skipped: Default::default(),
                             id: id.clone(),
                         }))
                     }
@@ -111,7 +115,7 @@ impl PubSubEthRpcHandler {
                             ),
                             Params::Bool(false) | Params::None => {
                                 EthSubscription::PendingTransactions(
-                                    self.api.new_ready_transactions(),
+                                    self.api.new_ready_transaction_subscription(),
                                     id.clone(),
                                 )
                             }
@@ -153,6 +157,15 @@ impl PubSubEthRpcHandler {
                 trace!(target: "rpc::ws", "created new subscription: {:?}", id);
                 to_rpc_result(id)
             }
+            EthPubSub::ConsensusSubscribe(()) => {
+                let events = match self.api.backend.tempo_consensus_notifications().await {
+                    Ok(events) => events,
+                    Err(error) => return Err::<(), _>(error).to_rpc_result(),
+                };
+                let subscription = EthSubscription::tempo_consensus(events, id.clone());
+                cx.add_subscription(id.clone(), subscription);
+                to_rpc_result(id)
+            }
         }
     }
 }
@@ -169,6 +182,15 @@ impl PubSubRpcHandler for PubSubEthRpcHandler {
         }
     }
 
+    fn close_on_subscription_end(&self, subscription: &Self::Subscription) -> bool {
+        matches!(
+            subscription,
+            EthSubscription::Logs(_)
+                | EthSubscription::PendingTransactions(..)
+                | EthSubscription::FullPendingTransactions(..)
+        )
+    }
+
     fn on_request_error(
         &self,
         method: &str,
@@ -182,4 +204,64 @@ impl PubSubRpcHandler for PubSubEthRpcHandler {
 
 fn log_request_error(method: &str, id: &Id, params: &serde_json::Value, error: &RpcError) {
     node_info!(method, ?id, %params, error = %error, "RPC request failed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{NodeConfig, spawn};
+    use futures::StreamExt;
+    use tokio::sync::broadcast;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn closes_connection_when_loss_sensitive_subscription_ends() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let handler = PubSubEthRpcHandler::new(api.clone());
+        let id = SubscriptionId::Number(1);
+        let logs = EthSubscription::Logs(Box::new(LogsSubscription {
+            blocks: api.new_block_notifications(),
+            storage: api.storage_info(),
+            filter: FilteredParams::new(None),
+            queued: Default::default(),
+            skipped: Default::default(),
+            id: id.clone(),
+        }));
+        assert!(handler.close_on_subscription_end(&logs));
+
+        let (_, hashes) = futures::channel::mpsc::channel(1);
+        let pending = EthSubscription::<FoundryNetwork>::PendingTransactions(hashes, id.clone());
+        assert!(handler.close_on_subscription_end(&pending));
+
+        let (_, full_transactions) = tokio::sync::mpsc::unbounded_channel();
+        let full =
+            EthSubscription::<FoundryNetwork>::FullPendingTransactions(full_transactions, id);
+        assert!(handler.close_on_subscription_end(&full));
+        assert!(!handler.close_on_subscription_end(&EthSubscription::Syncing(None)));
+    }
+
+    #[tokio::test]
+    async fn tempo_subscription_unsubscribe_aliases_and_cleanup() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        let events = broadcast::Sender::new(1);
+        let id = SubscriptionId::String("0x1234".to_owned());
+        let eth_id = SubscriptionId::String("0x5678".to_owned());
+        let context = PubSubContext::<PubSubEthRpcHandler>::default();
+        let handler = PubSubEthRpcHandler::new(api);
+        let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
+        assert!(!handler.close_on_subscription_end(&subscription));
+        assert!(futures::poll!(subscription.next()).is_pending());
+        context.add_subscription(id, subscription);
+        context.add_subscription(eth_id.clone(), EthSubscription::Syncing(Some(eth_id.clone())));
+
+        assert_eq!(
+            handler
+                .on_pub_sub(EthPubSub::ConsensusUnsubscribe(eth_id.clone()), context.clone())
+                .await,
+            ResponseResult::success(true),
+        );
+        assert!(context.remove_subscription(&eth_id).is_none());
+        assert_eq!(events.receiver_count(), 1);
+        drop(context);
+        assert_eq!(events.receiver_count(), 0);
+    }
 }

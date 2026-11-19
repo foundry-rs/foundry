@@ -119,7 +119,7 @@ impl<'gcx> LateLintPass<'gcx> for UnchangedStateVariables {
 
 fn has_assembly_or_unknown(stmt: &Stmt<'_>) -> bool {
     match &stmt.kind {
-        StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
+        StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
         StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => {
             b.stmts.iter().any(has_assembly_or_unknown)
         }

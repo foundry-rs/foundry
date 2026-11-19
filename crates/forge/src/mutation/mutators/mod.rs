@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use eyre::Result;
-use solar::ast::{Expr, Span, VariableDefinition, yul};
+use solar::ast::{Expr, ItemFunction, Span, VariableDefinition, yul};
 
 use crate::mutation::Mutant;
 
@@ -10,6 +10,7 @@ pub mod assignment_mutator;
 pub mod binary_op_mutator;
 pub mod delete_expression_mutator;
 pub mod elim_delegate_mutator;
+pub mod function_body_mutator;
 pub mod mutator_registry;
 pub mod require_mutator;
 pub mod unary_op_mutator;
@@ -28,6 +29,7 @@ pub struct MutationContext<'a> {
     /// The expression to mutate
     pub expr: Option<&'a Expr<'a>>,
     pub var_definition: Option<&'a VariableDefinition<'a>>,
+    pub function: Option<&'a ItemFunction<'a>>,
     /// Yul expression for assembly block mutations
     pub yul_expr: Option<&'a yul::Expr<'a>>,
     /// The full source code (used to extract original text for mutations)
@@ -95,6 +97,7 @@ pub struct MutationContextBuilder<'a> {
     span: Option<Span>,
     expr: Option<&'a Expr<'a>>,
     var_definition: Option<&'a VariableDefinition<'a>>,
+    function: Option<&'a ItemFunction<'a>>,
     yul_expr: Option<&'a yul::Expr<'a>>,
     source: Option<&'a str>,
 }
@@ -107,6 +110,7 @@ impl<'a> MutationContextBuilder<'a> {
             span: None,
             expr: None,
             var_definition: None,
+            function: None,
             yul_expr: None,
             source: None,
         }
@@ -136,6 +140,11 @@ impl<'a> MutationContextBuilder<'a> {
         self
     }
 
+    pub const fn with_function(mut self, function: &'a ItemFunction<'a>) -> Self {
+        self.function = Some(function);
+        self
+    }
+
     // Optional
     pub const fn with_yul_expr(mut self, yul_expr: &'a yul::Expr<'a>) -> Self {
         self.yul_expr = Some(yul_expr);
@@ -157,6 +166,7 @@ impl<'a> MutationContextBuilder<'a> {
             span,
             expr: self.expr,
             var_definition: self.var_definition,
+            function: self.function,
             yul_expr: self.yul_expr,
             source: self.source,
         })

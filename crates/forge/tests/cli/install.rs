@@ -1870,6 +1870,148 @@ fn install_with_quoted_submodule_branch(prj: _, cmd: _) {
     );
 }
 
+// Installing a tag whose name matches the dependency's default branch checks out and locks the
+// tag commit, and `forge update` keeps it there instead of switching to the branch.
+#[forgetest]
+fn install_tag_shadowed_by_same_name_default_branch(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let source_git = Git::new(source.path());
+    let tag_rev = source_git.head().unwrap();
+    // Make a `v1` branch that diverges from the `v1` tag and is the remote's default branch.
+    for args in [&["tag", "v1"][..], &["checkout", "-b", "v1"]] {
+        let output = Command::new("git").current_dir(source.path()).args(args).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+    // A tag can also shadow the short name of a remote-tracking branch.
+    let output = Command::new("git")
+        .current_dir(source.path())
+        .args(["tag", "origin/v1", &tag_rev])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    fs::write(source.path().join("source.txt"), "branch source\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("branch").unwrap();
+
+    let dep = Path::new("lib/parent");
+    let tag =
+        DepIdentifier::Tag { name: "v1".to_string(), rev: tag_rev.clone(), r#override: false };
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["install", "fixture/parent@tag=v1"]).assert_success();
+    assert_eq!(Git::new(&prj.root().join(dep)).head().unwrap(), tag_rev);
+    assert_eq!(lockfile_get(prj.root(), dep), Some(tag.clone()));
+
+    // Restoring the locked tag must not switch to the branch.
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("update").assert_success();
+    assert_eq!(Git::new(&prj.root().join(dep)).head().unwrap(), tag_rev);
+    assert_eq!(lockfile_get(prj.root(), dep), Some(tag));
+
+    // Explicit branches must not resolve to the same-named tag, including non-default branches.
+    let branch_rev = source_git.head().unwrap();
+    for branch in ["v1", "feature/v1"] {
+        if branch != "v1" {
+            let remote_tag = format!("origin/{branch}");
+            for args in [
+                &["branch", branch, &branch_rev][..],
+                &["tag", branch, &tag_rev],
+                &["tag", &remote_tag, &tag_rev],
+            ] {
+                let output =
+                    Command::new("git").current_dir(source.path()).args(args).output().unwrap();
+                assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            }
+        }
+        let alias = branch.replace('/', "-");
+        configure_local_install(&mut cmd, source.path());
+        cmd.args(["install", &format!("{alias}=fixture/parent@branch={branch}")]).assert_success();
+        let path = PathBuf::from(format!("lib/{alias}"));
+        assert_eq!(Git::new(&prj.root().join(&path)).head().unwrap(), branch_rev);
+        assert_eq!(
+            lockfile_get(prj.root(), &path),
+            Some(DepIdentifier::Branch {
+                name: branch.to_string(),
+                rev: branch_rev.clone(),
+                r#override: false,
+            })
+        );
+        assert_eq!(
+            Git::new(prj.root())
+                .read_submodules_with_branch(prj.root(), "lib".as_ref())
+                .unwrap()
+                .get(&path)
+                .map(String::as_str),
+            Some(branch)
+        );
+
+        configure_local_install(&mut cmd, source.path());
+        cmd.args([
+            "install",
+            "--no-git",
+            &format!("{alias}-folder=fixture/parent@branch={branch}"),
+        ])
+        .assert_success();
+        assert_data_eq!(
+            fs::read_to_string(prj.root().join(format!("lib/{alias}-folder/source.txt"))).unwrap(),
+            str![[r#"
+branch source
+
+"#]]
+        );
+
+        // Reinstallation must preserve local branch commits and work without contacting origin.
+        let dep = prj.root().join(&path);
+        let dep_git = Git::new(&dep);
+        fs::write(dep.join("source.txt"), "local branch source\n").unwrap();
+        dep_git.add(["source.txt"]).unwrap();
+        dep_git.commit("local change").unwrap();
+        let local_rev = dep_git.head().unwrap();
+        configure_local_install(&mut cmd, source.path());
+        cmd.args(["install", &format!("{alias}=fixture/parent@branch={branch}")]).assert_success();
+        assert_eq!(dep_git.head().unwrap(), local_rev);
+
+        fs::write(dep.join("untracked.txt"), "keep me\n").unwrap();
+        configure_local_install(&mut cmd, source.path());
+        cmd.env("GIT_ALLOW_PROTOCOL", "none");
+        cmd.args(["install", &format!("{alias}=fixture/parent@branch={branch}")]).assert_success();
+        assert_eq!(dep_git.head().unwrap(), local_rev);
+        assert_eq!(fs::read_to_string(dep.join("untracked.txt")).unwrap(), "keep me\n");
+    }
+}
+
+#[forgetest]
+fn install_no_git_branch_cleans_removed_nested_submodule(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    let child = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    init_local_install_source(child.path());
+    let source_git = Git::new(source.path());
+    let output =
+        Command::new("git").current_dir(source.path()).args(["branch", "lean"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    add_local_submodule(source.path(), child.path());
+    source_git.commit("add child to default branch").unwrap();
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.env("GIT_CONFIG_COUNT", "2");
+    cmd.env("GIT_CONFIG_KEY_1", "submodule.recurse");
+    cmd.env("GIT_CONFIG_VALUE_1", "false");
+    cmd.args(["install", "--no-git", "fixture/parent@branch=lean"]).assert_success();
+    let dep = prj.root().join("lib/parent");
+    assert_data_eq!(
+        fs::read_to_string(dep.join("source.txt")).unwrap(),
+        str![[r#"
+dependency source
+
+"#]]
+    );
+    assert!(!dep.join("lib/dep/source.txt").exists());
+    assert!(!dep.join(".git").exists());
+}
+
 fn add_local_submodule(root: &Path, source: &Path) {
     let output = Command::new("git")
         .current_dir(root)

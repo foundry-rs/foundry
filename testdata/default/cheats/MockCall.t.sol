@@ -374,6 +374,14 @@ contract MockCallRevertTest is Test {
 
         assertEq(address(this).balance, initSenderBalance);
         assertEq(address(mock).balance, initTargetBalance);
+
+        // An underfunded call fails before the mock reverts.
+        vm.deal(address(this), 0);
+        try mock.pay{value: value}(1) {
+            revert();
+        } catch (bytes memory err) {
+            assertEq(err.length, 0);
+        }
     }
 
     function testMockCallResetsMockCallRevert() public {
