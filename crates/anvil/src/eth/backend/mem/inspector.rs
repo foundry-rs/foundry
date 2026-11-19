@@ -248,12 +248,12 @@ impl AnvilInspector {
         success: bool,
     ) -> Option<Vec<Log>> {
         self.simulation_logs.take().map(|mut collector| {
-            if success {
-                collector.append_remaining_canonical_logs(canonical_logs);
-            } else {
-                // A top-level revert discards its logs without an enclosing frame callback.
+            if !success {
+                // A top-level revert discards its logs without an enclosing frame callback. Logs
+                // emitted after execution, such as Tempo fee transfers, survive in the receipt.
                 collector.logs.clear();
             }
+            collector.append_remaining_canonical_logs(canonical_logs);
             collector.logs.into_iter().map(|log| log.log).collect()
         })
     }
