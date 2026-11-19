@@ -38,7 +38,7 @@ use foundry_compilers::{
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
 };
-use foundry_config::Config;
+use foundry_config::{Config, providers::dependency_library_paths};
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use path_slash::PathExt;
@@ -1187,37 +1187,35 @@ fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'s
 
 /// Returns the innermost dependency directory that contains `file`, relative to the root.
 ///
-/// Nested dependencies live in a library directory, such as `lib/`, directly inside their parent.
-/// An npm scope such as `node_modules/@scope/` holds packages, so its owner is the package. Other
-/// `@` directories, such as Soldeer's `dependencies/@name-version/`, are packages themselves.
+/// Nested dependencies live in the library directories their parent configures. An npm scope such
+/// as `node_modules/@scope/` holds packages, so its owner is the package. Other `@` directories,
+/// such as Soldeer's `dependencies/@name-version/`, are packages themselves.
 fn dependency_owner<L>(paths: &ProjectPathsConfig<L>, file: &Path) -> Option<PathBuf> {
-    let lib_names = paths.libraries.iter().filter_map(|lib| lib.file_name()).collect::<Vec<_>>();
-    paths.libraries.iter().find_map(|lib| {
-        let mut dir = paths.root.join(lib);
-        let parts = file.strip_prefix(&dir).ok()?.iter().collect::<Vec<_>>();
-        let (mut owner, mut i) = (None, 0);
-        while let Some(name) = parts.get(i) {
-            let mut package = dir.join(name);
-            i += 1;
-            if dir.ends_with("node_modules") && name.to_string_lossy().starts_with('@') {
-                let Some(name) = parts.get(i) else { break };
+    let mut libs = paths.libraries.iter().map(|lib| paths.root.join(lib)).collect::<Vec<_>>();
+    let mut owner = None;
+    loop {
+        let mut next = None;
+        for lib in &libs {
+            let Ok(rest) = file.strip_prefix(lib) else { continue };
+            let mut parts = rest.iter();
+            let Some(name) = parts.next() else { break };
+            let mut package = lib.join(name);
+            if lib.ends_with("node_modules") && name.to_string_lossy().starts_with('@') {
+                let Some(name) = parts.next() else { break };
                 package.push(name);
-                i += 1;
             }
             // A file directly in a library directory belongs to no package there.
-            if i >= parts.len() {
-                break;
+            if parts.next().is_some() {
+                next = Some(package);
             }
-            owner = Some(package.clone());
-            if i + 1 < parts.len() && lib_names.contains(&parts[i]) {
-                dir = package.join(parts[i]);
-                i += 1;
-            } else {
-                break;
-            }
+            break;
         }
-        owner?.strip_prefix(&paths.root).ok().map(Path::to_path_buf)
-    })
+        let Some(package) = next else { break };
+        libs =
+            dependency_library_paths(&package).into_iter().map(|lib| package.join(lib)).collect();
+        owner = Some(package);
+    }
+    owner?.strip_prefix(&paths.root).ok().map(Path::to_path_buf)
 }
 
 /// Finds aliases restricted to dependency contexts that would resolve an import.
@@ -1451,6 +1449,10 @@ mod tests {
         let root = temp.path().join("project");
         fs::create_dir_all(root.join("lib/a/src")).unwrap();
         fs::write(root.join("lib/a/src/Target.sol"), "contract Target {}\n").unwrap();
+        // A dependency can keep its nested dependencies in a directory the root does not use.
+        fs::create_dir_all(root.join("lib/d")).unwrap();
+        fs::write(root.join("lib/d/foundry.toml"), "[profile.default]\nlibs = [\"vendor\"]\n")
+            .unwrap();
         // The source graph resolves `File.sol` to this loose copy, but the compiler does not.
         fs::write(root.join("lib/File.sol"), "contract Loose {}\n").unwrap();
         let root = dunce::canonicalize(root).unwrap();
@@ -1479,6 +1481,8 @@ mod tests {
             // Nested dependencies own their files; a loose nested file belongs to its parent.
             ("lib/b/lib/c/src/C.sol", "lib/b/lib/c/:@alias/=lib/a/src/"),
             ("lib/b/lib/Loose.sol", "lib/b/:@alias/=lib/a/src/"),
+            ("lib/d/vendor/c/src/C.sol", "lib/d/vendor/c/:@alias/=lib/a/src/"),
+            ("lib/d/lib/c/src/C.sol", "lib/d/:@alias/=lib/a/src/"),
             ("node_modules/@scope/c/src/Dep.sol", "node_modules/@scope/c/:@alias/=lib/a/src/"),
             // Soldeer packages start with `@` but are not npm scopes.
             ("lib/@pkg-1.0.0/src/Dep.sol", "lib/@pkg-1.0.0/:@alias/=lib/a/src/"),

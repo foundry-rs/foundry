@@ -691,6 +691,19 @@ impl RemappingsProvider<'_> {
     }
 }
 
+/// Returns the library directories the dependency at `root` configures, relative to it.
+///
+/// Like nested remapping discovery, only relative directories inside the dependency count.
+pub fn dependency_library_paths(root: &Path) -> Vec<PathBuf> {
+    let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
+    let Ok(config) = Config::from_figment_fallback(figment) else { return Vec::new() };
+    config
+        .libs
+        .into_iter()
+        .filter(|lib| lib.components().all(|component| matches!(component, Component::Normal(_))))
+        .collect()
+}
+
 fn load_nested_config(root: &Path) -> Result<Option<CachedNestedConfig>, Error> {
     let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
     let Ok(config) = Config::from_figment_fallback(figment) else { return Ok(None) };
