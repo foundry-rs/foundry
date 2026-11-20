@@ -395,18 +395,19 @@ impl ConstraintContext {
         .then_some(found)
     }
 
-    /// Returns whether another conjunct asserts `small <= large`, including strict `<`.
+    /// Returns whether other conjuncts assert `small <= large`, including strict `<`. An elapsed
+    /// `t - s` is at most `d` once `s <= t` and `t <= d + s`. A wrapped `d + s` would be below
+    /// `s <= t`, so the two facts cannot both hold.
     fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
-        self.facts.iter().any(|fact| match fact.kind() {
-            SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => {
-                left == small && right == large
-            }
-            SymBoolExprKind::Not(inner) => matches!(
-                inner.kind(),
-                SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) if left == large && right == small
-            ),
-            _ => false,
-        })
+        if self.asserted_upper_bounds(small).contains(large) {
+            return true;
+        }
+        let SymExprKind::BinOp(SymBinOp::Sub, end, start) = small.kind() else { return false };
+        self.asserted_upper_bounds(start).contains(end)
+            && self.asserted_upper_bounds(end).iter().any(|sum| {
+                matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
+                    if (a == large && b == start) || (a == start && b == large))
+            })
     }
 
     /// Bounds a subtraction only when the relation proves it cannot underflow.
