@@ -14,7 +14,7 @@ mod normalize;
 mod reasoning;
 mod smt;
 
-use fallback::{checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first};
+use fallback::{checked_mul_guard_branch_model, hard_arith_fallback_first_vars};
 use normalize::{
     NormalizationCache, constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
     sorted_bool_exprs_are_subset,
@@ -371,7 +371,7 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key.clone(), true);
             return Ok(model);
         }
-        if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints)
+        if hard_arith_fallback_first_vars(cx, &smt_constraints).is_some()
             && let Some(model) =
                 validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
         {
@@ -503,14 +503,17 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
-        if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints) {
+        if let Some(vars) = hard_arith_fallback_first_vars(cx, &smt_constraints) {
             if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some() {
                 self.heuristic_witnesses += 1;
                 trace!("is_sat: validated hard arithmetic fallback model before solver");
                 self.cache_sat_result(cache_key, true);
                 return Ok(BranchFeasibility::Sat);
             }
-            if defer_hard_arith_without_witness {
+            // Searching more than `HARD_ARITH_DEFER_MAX_VARS` variables only adds witnesses: a miss
+            // still asks the solver, which may prove the branch infeasible, where deferring would
+            // leave a nested call incomplete.
+            if defer_hard_arith_without_witness && vars <= HARD_ARITH_DEFER_MAX_VARS {
                 trace!("is_sat: deferring hard arithmetic branch without local witness");
                 return Ok(BranchFeasibility::NeedsSolver);
             }

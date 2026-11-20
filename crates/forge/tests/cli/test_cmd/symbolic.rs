@@ -8435,7 +8435,9 @@ UPDATES        assert(x < 2 ** 128);
 
 // Choosing the smaller of two pool ratios, as in a constant-product mint, branches on a comparison
 // of two quotients over five inputs. The local witness search must cover five variables so both
-// branches are found reachable instead of falling to the solver, which returns unknown.
+// branches are found reachable instead of falling to the solver, which returns unknown. A
+// five-variable branch without a witness must still reach the solver: a nested call cannot defer it
+// once `vm.projectRoot` rules out the stateless retry.
 #[forgetest_init]
 fn symbolic_finds_both_branches_of_min_ratio(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_finds_both_branches_of_min_ratio");
@@ -8471,6 +8473,28 @@ contract SymbolicMinRatio {
         assert(l == l0);
     }
 }
+
+interface Vm {
+    function projectRoot() external view returns (string memory);
+}
+
+contract Parity {
+    function check(uint8 a, uint8 b, uint8 c, uint8 d, uint8 e) external pure {
+        uint256 p = uint256(a) * b * c;
+        uint256 q = uint256(d) * e;
+        if (a % 2 == 0 && (p + 2 * q) % 2 == 1) revert();
+    }
+}
+
+contract SymbolicMinRatioNested {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Parity parity = new Parity();
+
+    function checkNestedBranchWithoutRetry(uint8 a, uint8 b, uint8 c, uint8 d, uint8 e) public view {
+        vm.projectRoot();
+        parity.check(a, b, c, d, e);
+    }
+}
 "#,
     );
     for optimized in [false, true] {
@@ -8498,6 +8522,12 @@ contract SymbolicMinRatio {
             "optimized={optimized}: {result}"
         );
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(
+            &output,
+            "checkNestedBranchWithoutRetry(uint8,uint8,uint8,uint8,uint8)",
+        );
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
     }
 }
 

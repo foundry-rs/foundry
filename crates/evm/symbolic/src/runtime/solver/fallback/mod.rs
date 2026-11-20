@@ -40,15 +40,16 @@ fn is_hard_arith_node(expr: &SymExpr) -> bool {
     }
 }
 
-/// Returns whether local hard-arithmetic search should run before asking the solver.
-pub(crate) fn constraints_prefer_hard_arith_fallback_first(
+/// Returns how many variables local hard-arithmetic search assigns when it should run before
+/// asking the solver.
+pub(crate) fn hard_arith_fallback_first_vars(
     cx: &SymCx,
     constraints: &[SymBoolExpr],
-) -> bool {
+) -> Option<usize> {
     if !constraints.iter().any(SymBoolExpr::contains_hard_arith)
         || constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
     {
-        return false;
+        return None;
     }
 
     let mut vars = SymbolicVars::default();
@@ -56,7 +57,7 @@ pub(crate) fn constraints_prefer_hard_arith_fallback_first(
         collect_bool_fallback_vars(constraint, &mut vars);
     }
     let vars = fallback_search_vars(cx, vars, constraints);
-    !vars.is_empty() && vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS
+    (!vars.is_empty() && vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS).then_some(vars.len())
 }
 
 pub(crate) fn hard_arith_fallback_model(
