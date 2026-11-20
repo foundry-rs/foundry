@@ -6852,7 +6852,7 @@
     {
       "func": {
         "id": "getDeployment_0",
-        "description": "Returns the most recent deployment for the current `chainId`.",
+        "description": "Returns the most recent deployment for the current `chainId`.\n`contractName` also matches the exact `vm.label` recorded for a deployment, including contracts created by other contracts.\nReverts if a label matches several deployments in its latest broadcast, or names a different deployment than the contract name.",
         "declaration": "function getDeployment(string calldata contractName) external view returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "view",
@@ -6872,7 +6872,7 @@
     {
       "func": {
         "id": "getDeployment_1",
-        "description": "Returns the most recent deployment for the given contract on `chainId`",
+        "description": "Returns the most recent deployment for the given contract on `chainId`.\n`contractName` also matches the exact `vm.label` recorded for a deployment, including contracts created by other contracts.\nReverts if a label matches several deployments in its latest broadcast, or names a different deployment than the contract name.",
         "declaration": "function getDeployment(string calldata contractName, uint64 chainId) external view returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "view",

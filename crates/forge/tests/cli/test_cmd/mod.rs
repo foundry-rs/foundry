@@ -26,6 +26,7 @@ mod brutalize;
 mod cheatcode_access;
 mod cheatcode_libraries;
 mod core;
+mod deployment_lookup;
 mod discovery;
 mod exact_fork;
 mod fork_bal;

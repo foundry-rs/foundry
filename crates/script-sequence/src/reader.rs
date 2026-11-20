@@ -1,5 +1,6 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
 use alloy_network::{Network, ReceiptResponse};
+use alloy_primitives::Address;
 use evm2_inspectors::tracing::types::CallKind;
 use eyre::{Result, bail};
 use foundry_common::{errors::FsPathError, fs};
@@ -61,6 +62,14 @@ impl BroadcastReader {
     where
         N::TxEnvelope: for<'d> Deserialize<'d>,
     {
+        Ok(self.filter_and_sort(self.read_all()?))
+    }
+
+    /// Reads every broadcast in the broadcast directory without applying the filters.
+    fn read_all<N: Network>(&self) -> eyre::Result<Vec<ScriptSequence<N>>>
+    where
+        N::TxEnvelope: for<'d> Deserialize<'d>,
+    {
         // 1. Recursively read all .json files in the broadcast directory
         let mut broadcasts = vec![];
         for entry in walkdir::WalkDir::new(&self.broadcast_path) {
@@ -100,8 +109,6 @@ impl BroadcastReader {
                 broadcasts.push(broadcast);
             }
         }
-
-        let broadcasts = self.filter_and_sort(broadcasts);
 
         Ok(broadcasts)
     }
@@ -178,6 +185,92 @@ impl BroadcastReader {
 
         targets
     }
+
+    /// Returns the most recent deployment whose contract name or exact `vm.label` is the
+    /// contract name of this reader.
+    ///
+    /// Contract names resolve as before: the highest-block confirmed CREATE or CREATE2 in the
+    /// latest broadcast with a matching transaction. Labels resolve in the latest broadcast with a
+    /// confirmed labeled deployment, including contracts created by other contracts, and must name
+    /// a single address there. A label equal to its deployment's own contract name is ignored.
+    /// When a broadcast has a matching contract name, the contract name decides, and a label that
+    /// resolves to a different deployment is an error.
+    pub fn read_latest_deployment<N: Network>(&self) -> Result<Address>
+    where
+        N::TxEnvelope: for<'d> Deserialize<'d>,
+    {
+        let reader = Self { tx_type: vec![CallKind::Create, CallKind::Create2], ..self.clone() };
+        let broadcasts = reader.read_all::<N>()?;
+        let query = Some(self.contract_name.as_str());
+        let label = broadcasts
+            .iter()
+            .filter(|broadcast| broadcast.chain == self.chain_id)
+            .filter_map(|broadcast| {
+                let addresses = broadcast
+                    .transactions
+                    .iter()
+                    .filter(|tx| {
+                        tx.hash.is_some_and(|hash| {
+                            broadcast.receipts.iter().any(|r| r.transaction_hash() == hash)
+                        })
+                    })
+                    .flat_map(|tx| {
+                        let created = tx.call_kind.is_any_create().then_some((
+                            tx.contract_name.as_deref(),
+                            tx.label.as_deref(),
+                            tx.contract_address,
+                        ));
+                        created.into_iter().chain(tx.additional_contracts.iter().map(|contract| {
+                            (
+                                contract.contract_name.as_deref(),
+                                contract.label.as_deref(),
+                                Some(contract.address),
+                            )
+                        }))
+                    })
+                    .filter(|&(name, label, _)| label == query && name != query)
+                    .filter_map(|(.., address)| address)
+                    .collect::<Vec<_>>();
+                (!addresses.is_empty()).then_some((broadcast.timestamp, addresses))
+            })
+            .max_by_key(|(timestamp, _)| *timestamp)
+            .map(|(_, addresses)| {
+                let [address] = addresses[..] else {
+                    let addresses = addresses.iter().map(Address::to_string).collect::<Vec<_>>();
+                    bail!(
+                        "label {} matches multiple deployments on chain {}: {}",
+                        self.contract_name,
+                        self.chain_id,
+                        addresses.join(", ")
+                    );
+                };
+                Ok(address)
+            })
+            .transpose()?;
+        let Some(broadcast) = reader
+            .filter_and_sort(broadcasts)
+            .into_iter()
+            .max_by_key(|broadcast| broadcast.timestamp)
+        else {
+            return label.ok_or_else(|| eyre::eyre!("No broadcasts found"));
+        };
+        let targets = reader.into_tx_receipts(broadcast);
+        let Some((tx, _)) = targets.first() else {
+            bail!("no deployment found for {} on chain {}", self.contract_name, self.chain_id);
+        };
+        let name = tx.contract_address.unwrap_or_default();
+
+        if let Some(label) = label
+            && label != name
+        {
+            bail!(
+                "{} is the label of {label} and the contract name of {name} on chain {}",
+                self.contract_name,
+                self.chain_id
+            );
+        }
+        Ok(name)
+    }
 }
 
 /// Deserializes a broadcast sequence, treating receipts without a `type` as legacy like
@@ -199,8 +292,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AdditionalContract;
     use alloy_network::{AnyNetwork, Ethereum};
-    use alloy_primitives::{Address, B256, Bloom};
+    use alloy_primitives::{B256, Bloom};
     use foundry_common::TransactionMaybeSigned;
 
     fn deployment(address: Address) -> ScriptSequence<Ethereum> {
@@ -289,5 +383,202 @@ mod tests {
         assert_eq!(reader.read::<AnyNetwork>().unwrap().len(), 2);
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn confirmed_deployment(
+        address: Address,
+        label: Option<&str>,
+        block: u64,
+    ) -> ScriptSequence<Ethereum> {
+        let mut sequence = deployment(address);
+        let hash = B256::with_last_byte(address[19]);
+        sequence.transactions[0].hash = Some(hash);
+        sequence.transactions[0].label = label.map(str::to_string);
+        sequence.receipts.push(
+            serde_json::from_value(serde_json::json!({
+                "type": "0x0",
+                "status": "0x1",
+                "cumulativeGasUsed": "0x5208",
+                "logs": [],
+                "logsBloom": Bloom::ZERO,
+                "transactionHash": hash,
+                "transactionIndex": "0x0",
+                "blockHash": B256::ZERO,
+                "blockNumber": format!("{block:#x}"),
+                "gasUsed": "0x5208",
+                "effectiveGasPrice": "0x1",
+                "from": Address::ZERO,
+                "to": null,
+                "contractAddress": address,
+            }))
+            .unwrap(),
+        );
+        sequence
+    }
+
+    fn merge(
+        sequences: impl IntoIterator<Item = ScriptSequence<Ethereum>>,
+    ) -> ScriptSequence<Ethereum> {
+        let mut merged = ScriptSequence { timestamp: 1, chain: 1, ..Default::default() };
+        for sequence in sequences {
+            merged.transactions.extend(sequence.transactions);
+            merged.receipts.extend(sequence.receipts);
+        }
+        merged
+    }
+
+    fn deployment_lookup(
+        test_name: &str,
+        name: &str,
+        broadcasts: &[ScriptSequence<Ethereum>],
+    ) -> BroadcastReader {
+        let root = std::env::temp_dir().join(format!("{test_name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("Counter.s.sol").join("1");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (index, broadcast) in broadcasts.iter().enumerate() {
+            fs::write_json_file(&dir.join(format!("run-{index}.json")), broadcast).unwrap();
+        }
+        BroadcastReader::new(name.to_string(), 1, &root).unwrap()
+    }
+
+    fn lookup(reader: &BroadcastReader) -> Result<Address, String> {
+        reader.read_latest_deployment::<AnyNetwork>().map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn deployment_lookup_resolves_exact_labels() {
+        let (usdc, weth) = (Address::with_last_byte(1), Address::with_last_byte(2));
+        let sequence = merge([
+            confirmed_deployment(usdc, Some("UsdcPool"), 1),
+            confirmed_deployment(weth, Some("WethPool"), 2),
+        ]);
+        let reader = deployment_lookup("deployment-label", "UsdcPool", &[sequence]);
+
+        assert_eq!(lookup(&reader), Ok(usdc));
+        assert!(reader.read::<Ethereum>().unwrap().is_empty());
+        let lowercase = BroadcastReader::new("usdcpool".to_string(), 1, &reader.broadcast_path);
+        assert!(lookup(&lowercase.unwrap()).is_err());
+
+        std::fs::remove_dir_all(reader.broadcast_path).unwrap();
+    }
+
+    #[test]
+    fn deployment_lookup_preserves_contract_names_with_own_name_labels() {
+        let (labeled, latest) = (Address::with_last_byte(1), Address::with_last_byte(2));
+        let unlabeled =
+            merge([confirmed_deployment(labeled, None, 1), confirmed_deployment(latest, None, 2)]);
+        let reader = deployment_lookup("deployment-legacy", "Counter", &[unlabeled]);
+        assert_eq!(lookup(&reader), Ok(latest));
+        std::fs::remove_dir_all(reader.broadcast_path).unwrap();
+
+        let labeled = merge([
+            confirmed_deployment(labeled, Some("Counter"), 1),
+            confirmed_deployment(latest, Some("Counter"), 2),
+        ]);
+        let reader = deployment_lookup("deployment-own-name", "Counter", &[labeled]);
+        assert_eq!(lookup(&reader), Ok(latest));
+        std::fs::remove_dir_all(reader.broadcast_path).unwrap();
+    }
+
+    #[test]
+    fn deployment_lookup_rejects_duplicate_labels() {
+        let sequence = merge([
+            confirmed_deployment(Address::with_last_byte(1), Some("Pool"), 1),
+            confirmed_deployment(Address::with_last_byte(2), Some("Pool"), 2),
+        ]);
+        let reader = deployment_lookup("deployment-duplicate-label", "Pool", &[sequence]);
+
+        assert_eq!(
+            lookup(&reader),
+            Err("label Pool matches multiple deployments on chain 1: \
+                 0x0000000000000000000000000000000000000001, \
+                 0x0000000000000000000000000000000000000002"
+                .to_string())
+        );
+
+        std::fs::remove_dir_all(reader.broadcast_path).unwrap();
+    }
+
+    #[test]
+    fn deployment_lookup_rejects_labels_naming_another_contract_in_any_run() {
+        let (labeled, named) = (Address::with_last_byte(1), Address::with_last_byte(2));
+        let label = confirmed_deployment(labeled, Some("Token"), 1);
+        let mut name = confirmed_deployment(named, None, 2);
+        name.transactions[0].contract_name = Some("Token".to_string());
+        let error = Err("Token is the label of 0x0000000000000000000000000000000000000001 and \
+                         the contract name of 0x0000000000000000000000000000000000000002 on chain 1"
+            .to_string());
+
+        for (test_name, older, mut newer) in [
+            ("deployment-newer-name", label.clone(), name.clone()),
+            ("deployment-newer-label", name.clone(), label.clone()),
+        ] {
+            newer.timestamp = 2;
+            let reader = deployment_lookup(test_name, "Token", &[older, newer]);
+            assert_eq!(lookup(&reader), error);
+            std::fs::remove_dir_all(reader.broadcast_path).unwrap();
+        }
+
+        let mut unconfirmed = name;
+        unconfirmed.receipts.clear();
+        let reader =
+            deployment_lookup("deployment-unconfirmed-name", "Token", &[label, unconfirmed]);
+        assert_eq!(lookup(&reader), Err("no deployment found for Token on chain 1".to_string()));
+        std::fs::remove_dir_all(reader.broadcast_path).unwrap();
+    }
+
+    #[test]
+    fn deployment_lookup_uses_the_latest_labeled_run_on_the_selected_chain() {
+        let older = confirmed_deployment(Address::with_last_byte(1), Some("Pool"), 1);
+        let address = Address::with_last_byte(2);
+        let mut newer = confirmed_deployment(address, Some("Pool"), 2);
+        newer.timestamp = 2;
+        newer.transactions[0].call_kind = CallKind::Create2;
+        let mut other_chain = confirmed_deployment(Address::with_last_byte(3), Some("Pool"), 3);
+        other_chain.timestamp = 3;
+        other_chain.chain = 2;
+        let mut unconfirmed = deployment(Address::with_last_byte(4));
+        unconfirmed.transactions[0].label = Some("Pool".to_string());
+        unconfirmed.timestamp = 4;
+        let reader = deployment_lookup(
+            "deployment-recent-label",
+            "Pool",
+            &[older, newer, other_chain, unconfirmed],
+        );
+
+        assert_eq!(lookup(&reader), Ok(address));
+
+        std::fs::remove_dir_all(reader.broadcast_path).unwrap();
+    }
+
+    #[test]
+    fn deployment_lookup_resolves_labeled_factory_contracts() {
+        let pool = Address::with_last_byte(2);
+        let mut sequence = confirmed_deployment(Address::with_last_byte(1), None, 1);
+        sequence.transactions[0].call_kind = CallKind::Call;
+        sequence.transactions[0].label = Some("Pool".to_string());
+        sequence.transactions[0].additional_contracts.push(AdditionalContract {
+            contract_name: Some("Pool".to_string()),
+            address: Address::with_last_byte(3),
+            label: Some("Pool".to_string()),
+            ..Default::default()
+        });
+        sequence.transactions[0].additional_contracts.push(AdditionalContract {
+            contract_name: Some("Pool".to_string()),
+            address: pool,
+            label: Some("UsdcPool".to_string()),
+            ..Default::default()
+        });
+        let pending = confirmed_deployment(Address::with_last_byte(4), Some("UsdcPool"), 3);
+        let mut sequence = merge([sequence]);
+        sequence.transactions.extend(pending.transactions);
+        let reader = deployment_lookup("deployment-factory-label", "UsdcPool", &[sequence]);
+
+        assert_eq!(lookup(&reader), Ok(pool));
+        let own_name = BroadcastReader::new("Pool".to_string(), 1, &reader.broadcast_path);
+        assert_eq!(lookup(&own_name.unwrap()), Err("No broadcasts found".to_string()));
+
+        std::fs::remove_dir_all(reader.broadcast_path).unwrap();
     }
 }
