@@ -1697,6 +1697,12 @@ impl<N: Network> Backend<N> {
             hardfork,
             deposit_contract_address: self.ethereum_deposit_contract_address(),
             parent_beacon_block_root,
+            // Scroll's l2geth applies EIP-2935 but has no beacon chain: its headers carry no
+            // beacon root and it never calls the EIP-4788 contract.
+            eip4788: !matches!(
+                NamedChain::try_from(self.protocol_chain_id()),
+                Ok(NamedChain::Scroll | NamedChain::ScrollSepolia)
+            ),
             execution_kind,
         })
     }

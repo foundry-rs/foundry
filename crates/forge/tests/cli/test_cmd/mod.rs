@@ -9097,3 +9097,154 @@ contract TransactCreationForkTest {
     cmd.args(["test"]).assert_success().stdout_eq(output.clone());
     cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
 }
+
+// An account created on one fork does not make the account at its address on another fork a
+// created one, whose storage a later call or a roll of that fork would discard, even once it is
+// persistent or carried back to the first fork.
+#[forgetest]
+async fn fork_created_account_other_fork(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // The account has code and storage on the latest block but not on the first one. State
+    // changes apply to the latest block, so they follow a second one.
+    let deployer = address!("0x1000000000000000000000000000000000000001");
+    let created = deployer.create(0);
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    api.anvil_set_code(created, Bytes::from_static(&[0x00])).await.unwrap();
+    api.anvil_set_storage_at(created, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    prj.add_test(
+        "OtherForkCreation.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function createSelectFork(string calldata url) external returns (uint256);
+    function prank(address sender) external;
+    function rollFork(uint256 blockNumber) external;
+    function makePersistent(address account) external;
+    function selectFork(uint256 forkId) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
+}
+
+contract Empty {}
+
+contract OtherForkCreationForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant DEPLOYER = <deployer>;
+    address constant CREATED = <created>;
+
+    function createOnFirstBlock() internal returns (uint256 forkId) {
+        forkId = vm.createSelectFork("<url>", 1);
+        vm.prank(DEPLOYER);
+        require(address(new Empty()) == CREATED, "created address");
+    }
+
+    function selectLatest() external {
+        vm.createSelectFork("<url>");
+    }
+
+    function poke() external {}
+
+    function testForkCreatedOnOtherForkKeepsStorage() public {
+        createOnFirstBlock();
+        vm.createSelectFork("<url>");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "before call");
+        this.poke();
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
+    }
+
+    function testForkCreatedOnOtherForkKeepsStorageAcrossRoll() public {
+        createOnFirstBlock();
+        this.selectLatest();
+        vm.rollFork(block.number);
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after roll");
+    }
+
+    function testForkCreatedOnOtherForkKeepsStorageWhenPersistent() public {
+        createOnFirstBlock();
+        vm.createSelectFork("<url>");
+        vm.makePersistent(CREATED);
+        this.poke();
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
+    }
+
+    function testForkCreatedOnOtherForkKeepsStorageWhenCarriedBack() public {
+        uint256 first = createOnFirstBlock();
+        vm.createSelectFork("<url>");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "before carry");
+        vm.makePersistent(CREATED);
+        vm.selectFork(first);
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "carried back");
+        this.poke();
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<deployer>", &deployer.to_checksum(None))
+        .replace("<created>", &created.to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkCreatedOnOtherForkKeepsStorage() ([GAS])
+[PASS] testForkCreatedOnOtherForkKeepsStorageAcrossRoll() ([GAS])
+[PASS] testForkCreatedOnOtherForkKeepsStorageWhenCarriedBack() ([GAS])
+[PASS] testForkCreatedOnOtherForkKeepsStorageWhenPersistent() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// An account the running transaction created on a fork stays created after a frame that selected
+// that fork reverts, so that EIP-6780 SELFDESTRUCT in a later isolated call still deletes it.
+// Without isolation the running state itself loses the mark with the revert, so only isolated
+// calls are checked.
+#[forgetest]
+async fn fork_created_account_reverted_switch(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    prj.add_test(
+        "RevertedSwitch.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function deal(address account, uint256 balance) external;
+}
+
+contract Bomb {
+    function boom() external {
+        selfdestruct(payable(address(this)));
+    }
+}
+
+contract RevertedSwitchForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function selectAndRevert(uint256 forkId) external {
+        vm.selectFork(forkId);
+        revert();
+    }
+
+    function testForkCreatedAccountSelfDestructsAfterRevertedSwitch() public {
+        uint256 first = vm.createSelectFork("<url>");
+        Bomb bomb = new Bomb();
+        vm.deal(address(bomb), 42);
+        vm.createSelectFork("<url>");
+        (bool ok,) = address(this).delegatecall(abi.encodeCall(this.selectAndRevert, (first)));
+        require(!ok, "reverted");
+        bomb.boom();
+        require(address(bomb).balance == 0, "destroyed");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint()),
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testForkCreatedAccountSelfDestructsAfterRevertedSwitch() ([GAS])
+...
+"#]]);
+}

@@ -1,6 +1,6 @@
-use crate::utils::generate_large_init_contract;
+use crate::utils::{generate_large_init_contract, generate_large_runtime_contract};
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
-use foundry_config::{CompilationRestrictions, SettingsOverrides};
+use foundry_config::{CompilationRestrictions, SettingsOverrides, SolidityErrorCode};
 use foundry_test_utils::{
     TestProject, forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt,
 };
@@ -1012,6 +1012,50 @@ fn build_sizes_respects_amsterdam_code_size_limits(prj: _, cmd: _) {
 "#]]
         .is_json(),
     );
+}
+
+// Solc 0.8.39 reports the Amsterdam code size limits with their own warning codes, which are
+// ignored by default like the pre-Amsterdam ones.
+#[forgetest]
+fn build_ignores_amsterdam_code_size_warnings(prj: _, cmd: _) {
+    prj.add_source(
+        "LargeRuntime.sol",
+        &format!("pragma solidity =0.8.39;\n{}", generate_large_runtime_contract(140_000)),
+    );
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 39)));
+        config.evm_version = EvmVersion::Amsterdam;
+        config.experimental = true;
+    });
+
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
+    });
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (5776): Contract code size is 140343 bytes and exceeds 65536 bytes (a limit introduced in Amsterdam). This contract may not be deployable on Mainnet. Consider enabling the optimizer (with a low "runs" value!), turning off revert strings, or using libraries.
+ [FILE]:3:1:
+  |
+3 | contract LargeRuntime {
+  | ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (7868): Contract initcode size is 140373 bytes and exceeds 131072 bytes (a limit introduced in Amsterdam). This contract may not be deployable on Mainnet. Consider enabling the optimizer (with a low "runs" value!), turning off revert strings, or using libraries.
+ [FILE]:3:1:
+  |
+3 | contract LargeRuntime {
+  | ^ (Relevant source part starts here and spans across multiple lines).
+
+
+"#]]);
 }
 
 // tests build output is as expected
