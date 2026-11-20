@@ -8929,6 +8929,84 @@ contract SymbolicShares {
     }
 }
 
+// A quotient shrinks as its divisor grows, so a constant-product output stays below the spot
+// quote: `x * y / (r + x) <= x * y / r`.
+#[forgetest_init]
+fn symbolic_orders_quotients_by_divisor(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_orders_quotients_by_divisor");
+    prj.add_test(
+        "SymbolicDivisorOrder.t.sol",
+        r#"
+contract SymbolicDivisorOrder {
+    function checkOutBelowQuote(uint112 amountIn, uint112 rIn, uint112 rOut) public pure {
+        require(amountIn != 0 && rIn != 0);
+        uint256 out = uint256(amountIn) * rOut / (uint256(rIn) + amountIn);
+        assert(out <= uint256(amountIn) * rOut / rIn);
+    }
+
+    function checkOrderedDivisors(uint128 n, uint128 d1, uint128 d2) public pure {
+        require(d1 != 0 && d1 <= d2);
+        assert(uint256(n) / d2 <= uint256(n) / d1);
+    }
+
+    function checkReversedDivisors(uint128 n, uint128 d1, uint128 d2) public pure {
+        require(d1 != 0 && d2 <= d1);
+        assert(uint256(n) / d2 <= uint256(n) / d1);
+    }
+
+    function checkZeroDivisor(uint128 n, uint128 d1, uint128 d2) public pure {
+        require(d1 <= d2);
+        uint256 small;
+        uint256 large;
+        assembly {
+            small := div(n, d2)
+            large := div(n, d1)
+        }
+        assert(small <= large);
+    }
+
+    function checkWrappingDivisor(uint256 n, uint256 d, uint256 e) public pure {
+        require(d != 0);
+        uint256 sum;
+        unchecked {
+            sum = d + e;
+        }
+        assert(n / sum <= n / d);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicDivisorOrder"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkOutBelowQuote(uint112,uint112,uint112)",
+            "checkOrderedDivisors(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0, "{signature}");
+        }
+
+        for signature in [
+            "checkReversedDivisors(uint128,uint128,uint128)",
+            "checkZeroDivisor(uint128,uint128,uint128)",
+            "checkWrappingDivisor(uint256,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A

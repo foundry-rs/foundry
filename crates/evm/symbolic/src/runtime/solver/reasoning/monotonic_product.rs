@@ -286,6 +286,27 @@ fn expr_less_or_equal<'a>(
             SymExprKind::BinOp(SymBinOp::UDiv, left_num, left_den),
             SymExprKind::BinOp(SymBinOp::UDiv, right_num, right_den),
         ) if left_den == right_den => expr_less_or_equal(left_num, right_num, facts, bounds),
+        // `n / d2 <= n / d1` for `0 < d1 <= d2`; a zero `d1` would make `n / d1` zero.
+        (
+            SymExprKind::BinOp(SymBinOp::UDiv, left_num, left_den),
+            SymExprKind::BinOp(SymBinOp::UDiv, right_num, right_den),
+        ) if left_num == right_num
+            && (facts.positive.contains(right_den)
+                || bounds.word_range(right_den).is_some_and(|(min, _)| !min.is_zero()))
+            && expr_less_or_equal(right_den, left_den, facts, bounds) =>
+        {
+            true
+        }
+        // `a <= a + b` when the sum does not wrap.
+        (_, SymExprKind::BinOp(SymBinOp::Add, a, b))
+            if (a == left || b == left)
+                && bounds
+                    .word_range(a)
+                    .zip(bounds.word_range(b))
+                    .is_some_and(|((_, a), (_, b))| a.checked_add(b).is_some()) =>
+        {
+            true
+        }
         // A failed bounded proof falls through: later arms can still order non-wrapping products.
         (
             SymExprKind::BinOp(SymBinOp::Mul, left_a, left_b),
