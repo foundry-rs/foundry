@@ -305,7 +305,7 @@ impl InstrumentedBuild {
     /// bitmap. A function record needs one of the reportable sources to define it.
     ///
     /// The records of test functions and of unreportable sources are left out, but not the
-    /// modifiers they apply: a modifier record takes the code regions of those expansions.
+    /// modifiers they apply: a modifier record expands into the code regions of those expansions.
     pub fn function_inputs(&self) -> Vec<FunctionInput> {
         let donors = self.expansion_donors();
         let mut inputs = Vec::new();
@@ -678,29 +678,31 @@ fn is_test_contract(function: &FunctionCoverage, test_contracts: &[&str]) -> boo
     parse_name(&function.name).0.is_some_and(|contract| test_contracts.contains(&contract))
 }
 
-/// The modifier's record with the code regions that the expansions of the donors take from the
-/// expanded file at the given index of their file tables. The regions count what the donors'
-/// counters count, so the modifier's record counts the hits of every expansion.
+/// The modifier's record with an expansion of its header into the code, gap, and skipped regions
+/// that the expansions of the donors take from the expanded file at the given index of their file
+/// tables. The regions count what the donors' counters count, so the lines of the modifier's
+/// source count the hits of every expansion.
 ///
-/// The record keeps its own region over the modifier's header, which counts the sum of the
-/// expansions, and the regions of the expansions start after it: the header stays the first region
-/// of the record, which gives the record its count and line.
+/// The regions keep their places, so `llvm-cov` adds their counts to those of the same regions in
+/// the expansions of other records, as it would if the report left no record out. They are in a
+/// file of their own, as in the donors, so the record's own lines stay those of its header.
 fn with_expansions(
     modifier: &FunctionCoverage,
     donors: &[(&FunctionCoverage, u32)],
 ) -> FunctionCoverage {
     let mut record = modifier.clone();
-    let header_end = modifier
+    let Some((start, len)) = modifier
         .regions
         .iter()
         .filter(|region| region.file() == 0)
         .min_by_key(|region| region.start())
-        .map_or(0, |region| region.start() + region.len());
-    // The region from `start`, or none if it ends before `header_end`.
-    let after_header = |start: u32, len: u32| {
-        let from = start.max(header_end);
-        (from < start + len).then_some((from, start + len - from))
+        .map(|region| (region.start(), region.len()))
+    else {
+        return record;
     };
+    let expanded_file = record.files.len() as u32;
+    record.files.push(modifier.files[0]);
+    record.regions.push(Region::Expansion { file: 0, start, len, count: 0, expanded_file });
     for &(donor, file) in donors {
         let offset = record.expressions.len() as u32;
         let shift = |tagged: u32| match TaggedCounter::decode(tagged) {
@@ -712,15 +714,13 @@ fn with_expansions(
             .expressions
             .extend(donor.expressions.iter().map(|[lhs, rhs]| [shift(*lhs), shift(*rhs)]));
         for region in donor.regions.iter().filter(|region| region.file() == file) {
-            let Some((start, len)) = after_header(region.start(), region.len()) else { continue };
+            let (file, start, len) = (expanded_file, region.start(), region.len());
             record.regions.push(match *region {
                 Region::Code { count, .. } => {
-                    Region::Code { file: 0, start, len, count: shift(count) }
+                    Region::Code { file, start, len, count: shift(count) }
                 }
-                Region::Gap { count, .. } => {
-                    Region::Gap { file: 0, start, len, count: shift(count) }
-                }
-                Region::Skipped { .. } => Region::Skipped { file: 0, start, len },
+                Region::Gap { count, .. } => Region::Gap { file, start, len, count: shift(count) },
+                Region::Skipped { .. } => Region::Skipped { file, start, len },
                 _ => continue,
             });
         }
@@ -1025,7 +1025,8 @@ mod tests {
         report.finalize_instrumented();
 
         // The test function's record is left out, and the modifier's lines count its expansion:
-        // the header and the body.
+        // the header and the body. As in `llvm-cov`, a function's own lines are those of its own
+        // file, so `LF` counts the header only.
         assert_eq!(
             report.llvm_lcov(),
             "SF:src/B.sol
@@ -1041,12 +1042,271 @@ DA:7,2
 DA:8,2
 BRF:0
 BRH:0
-LF:6
-LH:6
+LF:1
+LH:1
 end_of_record
 "
         );
         llvm::tests::assert_inputs_agree_in("src/B.sol", MODIFIER_SOURCE, report.llvm_inputs());
+    }
+
+    /// The LCOV record of `path`.
+    fn lcov_record<'a>(lcov: &'a str, path: &str) -> &'a str {
+        let start = lcov.find(&format!("SF:{path}\n")).unwrap();
+        let end = start + lcov[start..].find("end_of_record\n").unwrap();
+        &lcov[start..end + "end_of_record\n".len()]
+    }
+
+    /// Solar's records of a modifier with a `require`, applied by `user` in the modifier's source
+    /// and by `copy` in another source, which may have more records. The modifier's record has
+    /// its header and the `require` branch, with the sums of the expansions' counts, and each
+    /// function's record expands the modifier's body. Only `user` ran.
+    fn copied_modifier_build(
+        (path, text): (&str, &str),
+        (copy_path, copy_text, copy_reportable): (&str, &str, bool),
+        (modifier, header, condition): (&str, &str, &str),
+        user: (&str, &str),
+        copy: (&str, &str),
+        more: &[(&str, &str)],
+    ) -> InstrumentedBuild {
+        let counter = |id: u32| id << 2 | 1;
+        let sub = |id: u32| id << 2 | 2;
+        let add = |id: u32| id << 2 | 3;
+        let at = |text: &str, needle: &str| (text.find(needle).unwrap(), needle.len());
+        let header_start = text.find(header).unwrap();
+        let whole_end = header_start + text[header_start..].find("_;\n    }").unwrap() + 8;
+        let rest = header_start + text[header_start..].find("_;").unwrap();
+        let gap = text[..rest].rfind(");").unwrap() + 1;
+        let name = &header["modifier ".len()..header.find('(').unwrap()];
+        // The regions of a function at `base` counters: the entry, the expansion, the `require`
+        // passing, and the body's statement.
+        let function = |(record, function_text): (&str, &str), source: &str, files, base: u32| {
+            let (start, len) = at(source, function_text);
+            let call = start + function_text.find(&format!(" {name} ")).unwrap() + 1;
+            let mut regions = vec![
+                json!([0, 0, start, len, counter(base)]),
+                json!([1, 0, call, name.len(), counter(base + 1), 1]),
+            ];
+            if !function_text.ends_with("{}") {
+                let statement = function_text.split("{\n        ").nth(1).unwrap();
+                let statement = &statement[..statement.find('\n').unwrap()];
+                let (statement_start, statement_len) = at(source, statement);
+                regions.push(json!([0, 0, statement_start, statement_len, counter(base + 3)]));
+                regions.push(json!([2, 0, start + len - 1, 1]));
+            }
+            regions.extend([
+                json!([0, 1, header_start, whole_end - header_start, counter(base + 1)]),
+                json!([3, 1, gap, rest - gap, counter(base + 2)]),
+                json!([0, 1, rest, 2, counter(base + 2)]),
+                json!([2, 1, whole_end - 1, 1]),
+            ]);
+            json!({
+                "name": record, "hash": format!("0x{base:x}1"), "counters": [base, 4],
+                "files": files, "regions": regions,
+            })
+        };
+        let (condition_start, condition_len) = at(text, condition);
+        let modifier = json!({
+            "name": modifier, "hash": "0x99", "counters": [30, 0], "files": [0],
+            // The entries, the passes, and the failures of both expansions.
+            "expressions": [
+                [counter(1), counter(11)],
+                [counter(2), counter(12)],
+                [sub(3), sub(4)],
+                [counter(1), counter(2)],
+                [counter(11), counter(12)],
+            ],
+            "regions": [
+                [0, 0, header_start, header.len(), add(0)],
+                [4, 0, condition_start, condition_len, add(1), add(2)],
+            ],
+        });
+        let mut copy_records = vec![function(copy, copy_text, json!([1, 0]), 10)];
+        for (index, &(name, needle)) in more.iter().enumerate() {
+            let (start, len) = at(copy_text, needle);
+            let id = 20 + index as u32;
+            copy_records.push(json!({
+                "name": name, "hash": format!("0x{id:x}1"), "counters": [id, 1], "files": [1],
+                "regions": [[0, 0, start, len, counter(id)]],
+            }));
+        }
+        let source = |path: &str, text: &str, reportable, functions: Vec<serde_json::Value>| {
+            InstrumentedSource::new(
+                path.into(),
+                text.to_string(),
+                reportable,
+                serde_json::from_value(json!({"version": 2, "functions": functions})).unwrap(),
+            )
+        };
+        let mut build = InstrumentedBuild::new(BTreeMap::from([
+            (0, source(path, text, true, vec![modifier, function(user, text, json!([0, 0]), 0)])),
+            (1, source(copy_path, copy_text, copy_reportable, copy_records)),
+        ]));
+        build.add_hits([(0, 1), (1, 1), (2, 1), (3, 1)].into_iter(), std::iter::empty(), &[]);
+        build
+    }
+
+    const AUTH_SOURCE: &str = "contract Auth {
+    mapping(address => uint256) public wards;
+    modifier auth() {
+        require(wards[msg.sender] == 1, \"Auth/not-authorized\");
+        _;
+    }
+    function rely(address u) external auth {
+        wards[u] = 1;
+    }
+}
+";
+    const OTHER_SOURCE: &str = "contract Other is Auth {
+    uint256 x;
+    function file(uint256 v) external auth {
+        x = v;
+    }
+    function test() public {}
+}
+";
+
+    /// A contract in a test source applies the modifier `auth` and never runs it. With
+    /// `left_out`, its `test` function makes it a test contract, which the report leaves out.
+    fn auth_build(left_out: bool) -> InstrumentedBuild {
+        let test = [("test/sub/Other.sol:Other.test()", "function test() public {}")];
+        copied_modifier_build(
+            ("src/Auth.sol", AUTH_SOURCE),
+            ("test/sub/Other.sol", OTHER_SOURCE, true),
+            ("src/Auth.sol:Auth.auth()", "modifier auth()", "wards[msg.sender] == 1"),
+            (
+                "src/Auth.sol:Auth.rely(address)",
+                "function rely(address u) external auth {\n        wards[u] = 1;\n    }",
+            ),
+            (
+                "test/sub/Other.sol:Other.file(uint256)",
+                "function file(uint256 v) external auth {\n        x = v;\n    }",
+            ),
+            if left_out { &test } else { &[] },
+        )
+    }
+
+    #[test]
+    fn a_modifier_copy_in_a_test_contract_that_never_ran_keeps_the_modifier_lines() {
+        let report_for = |left_out| {
+            let mut report = CoverageReport::default();
+            report.add_source("b".into(), 0, "src/Auth.sol".into());
+            report.add_instrumented_build("b".into(), auth_build(left_out));
+            report.finalize_instrumented();
+            report
+        };
+        let report = report_for(true);
+        // The `require` on line 4 counts the run of `rely`, which the copy that never ran does
+        // not hide.
+        assert_eq!(
+            report.llvm_lcov(),
+            "SF:src/Auth.sol
+FN:3,Auth.auth()
+FN:7,Auth.rely(address)
+FNDA:1,Auth.auth()
+FNDA:1,Auth.rely(address)
+FNF:2
+FNH:2
+DA:3,1
+DA:4,1
+DA:5,1
+DA:7,1
+DA:8,1
+BRDA:4,0,0,1
+BRDA:4,0,1,0
+BRF:2
+BRH:1
+LF:3
+LH:3
+end_of_record
+"
+        );
+        // The source's record is the one of the report that leaves no record out.
+        let all = report_for(false).llvm_lcov();
+        assert_eq!(report.llvm_lcov(), lcov_record(&all, "src/Auth.sol"));
+        llvm::tests::assert_inputs_agree_in("src/Auth.sol", AUTH_SOURCE, report.llvm_inputs());
+    }
+
+    #[test]
+    fn modifier_records_merge_whether_or_not_a_build_left_a_copy_out() {
+        let record = |first, second| {
+            let mut report = CoverageReport::default();
+            report.add_instrumented_build("a".into(), auth_build(first));
+            report.add_instrumented_build("b".into(), auth_build(second));
+            let lcov = llvm::export_lcov(&llvm::CoverageMapping::new(report.llvm_inputs()));
+            lcov_record(&lcov, "src/Auth.sol").to_string()
+        };
+        // Both builds ran `rely` once.
+        let merged = record(true, false);
+        assert!(merged.contains("FNDA:2,Auth.auth()\n"), "{merged}");
+        assert!(merged.contains("DA:4,2\nDA:5,2\n"), "{merged}");
+        assert_eq!(record(false, true), merged);
+    }
+
+    const A_SOURCE: &str = "abstract contract Base {
+    modifier m() {
+        require(msg.sender != address(0));
+        _;
+    }
+}
+contract A is Base {
+    function f() external m {}
+}
+";
+    const B_SOURCE: &str = "contract B is Base {
+    function f() external m {}
+}
+";
+
+    #[test]
+    fn a_modifier_copy_in_an_excluded_source_that_never_ran_keeps_the_modifier_lines() {
+        let report_for = |exclude: bool| {
+            let mut report = CoverageReport::default();
+            report.add_source("b".into(), 0, "src/A.sol".into());
+            report.add_source("b".into(), 1, "src/mocks/B.sol".into());
+            report.add_instrumented_build(
+                "b".into(),
+                copied_modifier_build(
+                    ("src/A.sol", A_SOURCE),
+                    ("src/mocks/B.sol", B_SOURCE, true),
+                    ("src/A.sol:Base.m()", "modifier m()", "msg.sender != address(0)"),
+                    ("src/A.sol:A.f()", "function f() external m {}"),
+                    ("src/mocks/B.sol:B.f()", "function f() external m {}"),
+                    &[],
+                ),
+            );
+            // As `--no-match-coverage mocks` does.
+            report.retain_sources(|path| !exclude || !path.starts_with("src/mocks"));
+            report.finalize_instrumented();
+            report
+        };
+        let report = report_for(true);
+        // The `require` on line 3 counts the run of `A.f`, and the excluded source is left out.
+        assert_eq!(
+            report.llvm_lcov(),
+            "SF:src/A.sol
+FN:8,A.f()
+FN:2,Base.m()
+FNDA:1,A.f()
+FNDA:1,Base.m()
+FNF:2
+FNH:2
+DA:2,1
+DA:3,1
+DA:4,1
+DA:8,1
+BRDA:3,0,0,1
+BRDA:3,0,1,0
+BRF:2
+BRH:1
+LF:2
+LH:2
+end_of_record
+"
+        );
+        let all = report_for(false).llvm_lcov();
+        assert_eq!(report.llvm_lcov(), lcov_record(&all, "src/A.sol"));
+        llvm::tests::assert_inputs_agree_in("src/A.sol", A_SOURCE, report.llvm_inputs());
     }
 
     #[test]

@@ -453,16 +453,21 @@ fn is_expansion(region: &CountedRegion, file: u32) -> bool {
 
 /// Merges two records of the same function without counters of its own, which were built with
 /// different expansions and so differ in their counters, hash, and the regions they take from the
-/// expansions. A region that both have takes the sum of its counts, and a code, gap, or skipped
-/// region that only one has stays. Returns `None` if the other regions differ.
+/// expansions. A region that both have takes the sum of its counts, and a code, gap, skipped, or
+/// expansion region that only one has stays, as do the files that only one has after those of
+/// the other. Returns `None` if the other regions or files differ.
 pub fn merge_summed(a: &FunctionInput, b: &FunctionInput) -> Option<FunctionInput> {
     let key = |r: &MappingRegion| (r.kind, r.file, r.expanded_file, r.start, r.end, r.mcdc);
     let from_expansions = |r: &MappingRegion| {
-        matches!(r.kind, RegionKind::Code | RegionKind::Gap | RegionKind::Skipped)
+        matches!(
+            r.kind,
+            RegionKind::Code | RegionKind::Gap | RegionKind::Skipped | RegionKind::Expansion
+        )
     };
-    if a.filenames != b.filenames
+    let filenames = if a.filenames.len() < b.filenames.len() { &b.filenames } else { &a.filenames };
+    if !filenames.starts_with(&a.filenames)
+        || !filenames.starts_with(&b.filenames)
         || a.bitmap.len() != b.bitmap.len()
-        || a.regions.iter().chain(&b.regions).any(|region| region.kind == RegionKind::Expansion)
     {
         return None;
     }
@@ -518,7 +523,7 @@ pub fn merge_summed(a: &FunctionInput, b: &FunctionInput) -> Option<FunctionInpu
     Some(FunctionInput {
         name: a.name.clone(),
         hash: a.hash,
-        filenames: a.filenames.clone(),
+        filenames: filenames.clone(),
         expressions: Vec::new(),
         regions,
         counts,
