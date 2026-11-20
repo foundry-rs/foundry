@@ -2419,6 +2419,23 @@ mod tests {
     }
 
     #[test]
+    fn coverage_probes_count_the_same_under_an_inspector_that_steps() {
+        let mut executor = coverage_executor(21_000);
+        let target = Address::repeat_byte(0x41);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(COVERAGE_CODE))).unwrap();
+        let plain = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+
+        // The debug tracer records every step, so the interpreter runs the inspecting handlers.
+        executor.set_trace_requirements(TraceRequirements::none().with_debug(true));
+        let stepped = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        let steps = &stepped.traces.as_ref().unwrap().nodes()[0].trace.steps;
+        assert_eq!(steps.len(), 4);
+        assert_eq!(stepped.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(coverage_of(&stepped, COVERAGE_CODE), ([(5, 2), (7, 1)].to_vec(), Vec::new()));
+        assert_eq!(stepped.gas_used, plain.gas_used);
+    }
+
+    #[test]
     fn coverage_probes_keep_the_hits_of_each_code_object_apart() {
         // `a` runs counter 3, calls `b`, which runs counter 3 twice, and runs counter 3 again.
         let b_code: &[u8] = &[0xc2, 0x60, 0x03, 0xc2, 0x60, 0x03, 0x00];
