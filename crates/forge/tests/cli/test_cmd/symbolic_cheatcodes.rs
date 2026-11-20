@@ -3376,6 +3376,17 @@ contract SymbolicPrankedAddress is Test {
         vm.assume(who == address(0xB0B));
         assert(who.balance != 5);
     }
+
+    // A call to the fixed address runs the code `vm.etch` wrote through it, not the empty account.
+    function checkPrankedCallRunsEtchedCode(address who) public {
+        vm.etch(who, hex"602a60005260206000f3"); // Returns 42.
+        vm.deal(who, 5);
+        if (who != address(0xB0B)) return;
+
+        vm.prank(who);
+        (bool ok, bytes memory data) = who.staticcall("");
+        assert(!ok || data.length == 0);
+    }
 }
 
 contract SymbolicPrankedMany is Test {
@@ -3402,6 +3413,17 @@ contract SymbolicPrankedMany is Test {
         assert(ok);
         assert(weth.senderCodeSize() > 0);
     }
+
+    // A prank whose input stops at the selector fails to decode, so its sender does not fork.
+    function checkShortPrankInputDoesNotFork(address who) public {
+        bytes memory payload = abi.encodeWithSignature("prank(address)", who);
+        address target = address(vm);
+        bool ok;
+        assembly {
+            ok := call(gas(), target, 0, add(payload, 32), 4, 0, 0)
+        }
+        assert(!ok);
+    }
 }
 "#,
     );
@@ -3410,11 +3432,12 @@ contract SymbolicPrankedMany is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 11 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+Ran 12 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtBalanceBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceOnceFixed(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkPersistentBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOncePranked(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedCallRunsEtchedCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedOriginCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterIsPersistent(address) ([METRICS])
@@ -3422,7 +3445,7 @@ Ran 11 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawAfterMakePersistent(address) ([METRICS])
 [PASS] checkWithdrawToOtherSender(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawToPrankedSender(address) ([METRICS])
-Suite result: FAILED. 1 passed; 10 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
@@ -3435,10 +3458,11 @@ Suite result: FAILED. 1 passed; 10 failed; 0 skipped; [ELAPSED]
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedMany
+Ran 3 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedMany
 [PASS] checkDirtySenderDoesNotFork(uint96) ([METRICS])
 [PASS] checkRejectedPrankDoesNotFork(address) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkShortPrankInputDoesNotFork(address) ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

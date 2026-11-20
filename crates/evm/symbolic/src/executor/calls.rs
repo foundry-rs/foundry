@@ -89,15 +89,10 @@ impl SymbolicExecutor {
         let target = state.stack.pop()?;
         self.ensure_gas_modeled(&target)?;
         let target = target.address_operand(&mut self.cx);
+        // A target the path fixes runs as that account. A guarded alias that holds state stands
+        // for the fixed account, so it stays on the symbolic call path.
         let target = state.fixed_address_word(&mut self.cx, target);
-        // A target the path fixes runs as that account; a cheatcode address still has to be
-        // named concretely to reach a cheatcode.
-        let target_address = state.world.resolve_address(&target).or_else(|| {
-            state
-                .constrained_word(&mut self.cx, &target)
-                .map(word_to_address)
-                .filter(|to| *to != CHEATCODE_ADDRESS && *to != SYMBOLIC_VM_COMPAT_ADDRESS)
-        });
+        let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to))
                 if to == CHEATCODE_ADDRESS || to == SYMBOLIC_VM_COMPAT_ADDRESS =>

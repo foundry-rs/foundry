@@ -725,6 +725,11 @@ impl SymbolicExecutor {
         // The first argument to scan for guarded words.
         let mut first_scanned = 0;
         if to == Some(CHEATCODE_ADDRESS) {
+            // An input without a word for every argument fails to decode, so the cheatcode reverts
+            // before it takes any of them.
+            if in_size < 4 + 32 * vm_params(selector).len() {
+                return Ok(words);
+            }
             let store = selector == storeCall::SELECTOR;
             if store {
                 // `vm.store` writes the target under guards, except on the precompiles, where it
