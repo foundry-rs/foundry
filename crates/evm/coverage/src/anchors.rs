@@ -752,16 +752,19 @@ impl<'a> AnchorIndex<'a> {
             .collect::<Vec<_>>();
         // A check in the condition, such as an array bounds, enum, or call check, cannot enter an
         // arm, unless it is the only jump, as when the arm is a shared `revert`. One side of a
-        // check leads to a failure whose code starts in the condition, whether the check jumps to
-        // it or, as solc's legacy pipeline emits it, around it. A side of the `if`'s own jump can
-        // fail too, when the code after the `if` or its loop reverts, but that code is mapped
-        // outside the `if`.
+        // check leads to a failure whose code starts in the condition, or in no source at all, as
+        // Solar's shared panic block does, whether the check jumps to it or, as solc's legacy
+        // pipeline emits it, around it. A side of the `if`'s own jump can fail too, when the code
+        // after the `if` or its loop reverts, but that code is mapped outside the `if`.
         let fails_in_condition = |pc: u32| {
             let Ok(mut ic) = self.pcs.binary_search(&pc) else { return false };
             while self.pcs.get(ic).is_some_and(|&p| self.bytecode[p as usize] == opcode::JUMPDEST) {
                 ic += 1;
             }
-            self.source_map.get(ic).is_some_and(in_condition) && self.fails(pc)
+            self.source_map
+                .get(ic)
+                .is_some_and(|element| element.index().is_none() || in_condition(element))
+                && self.fails(pc)
         };
         if jumps.len() > 1 {
             jumps.retain(|&&(_, jump, immediate)| {

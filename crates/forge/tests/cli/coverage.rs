@@ -1740,11 +1740,11 @@ contract ChecksTest {
 }
 "#,
     );
-    // The bounds, enum, and call checks in each condition jump around their failure, so the
-    // codeless arms count from the edge of the `if`'s own jump.
-    assert_lcov(
-        cmd.arg("coverage"),
-        str![[r#"
+    // The bounds, enum, and call checks in each condition jump around their failure with solc
+    // and to a shared panic block with solar, so the codeless arms count from the edge of the
+    // `if`'s own jump.
+    let solar = prj.ensure_foundry_bin("solar");
+    let report = str![[r#"
 TN:
 SF:src/Checks.sol
 DA:9,1
@@ -1789,6 +1789,59 @@ FNF:6
 FNH:6
 LF:20
 LH:17
+BRF:6
+BRH:5
+end_of_record
+
+"#]];
+    assert_lcov(cmd.arg("coverage"), report);
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").arg("--use").arg(solar),
+        str![[r#"
+TN:
+SF:src/Checks.sol
+DA:9,1
+FN:9,Checks.round
+FNDA:1,Checks.round
+DA:10,1
+DA:13,1
+FN:13,Checks.index
+FNDA:1,Checks.index
+DA:14,4
+DA:15,3
+BRDA:15,0,0,2
+DA:16,1
+DA:20,2
+FN:20,Checks.enumCheck
+FNDA:2,Checks.enumCheck
+DA:21,2
+BRDA:21,1,0,1
+DA:22,0
+DA:25,1
+FN:25,Checks.externalCall
+FNDA:1,Checks.externalCall
+DA:26,1
+BRDA:26,2,0,1
+DA:27,0
+DA:30,1
+FN:30,Checks.indexThenRevert
+FNDA:1,Checks.indexThenRevert
+DA:31,1
+BRDA:31,3,0,1
+DA:32,0
+DA:35,1
+FN:35,Checks.breakThenRevert
+FNDA:1,Checks.breakThenRevert
+DA:36,1
+DA:37,1
+BRDA:37,4,0,1
+DA:38,0
+BRDA:38,5,0,-
+DA:40,1
+FNF:6
+FNH:6
+LF:20
+LH:14
 BRF:6
 BRH:5
 end_of_record
