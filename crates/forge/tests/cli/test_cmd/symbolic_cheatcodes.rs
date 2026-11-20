@@ -3325,6 +3325,18 @@ contract SymbolicPrankedAddress is Test {
         assert(weth.originCodeSize() == 0);
         vm.stopPrank();
     }
+
+    // A cheatcode that took the address before the prank does not decide it.
+    function checkWithdrawAfterMakePersistent(address who) public {
+        vm.makePersistent(who);
+        checkWithdrawToPrankedSender(who);
+    }
+
+    function checkPrankedSenderCodeAfterResetNonce(address who) public {
+        vm.resetNonce(who);
+        vm.prank(who);
+        assert(weth.senderCodeSize() == 0);
+    }
 }
 "#,
     );
@@ -3333,12 +3345,14 @@ contract SymbolicPrankedAddress is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+Ran 6 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedOriginCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterResetNonce(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawAfterMakePersistent(address) ([METRICS])
 [PASS] checkWithdrawToOtherSender(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawToPrankedSender(address) ([METRICS])
-Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

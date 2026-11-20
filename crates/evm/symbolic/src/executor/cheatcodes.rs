@@ -757,19 +757,15 @@ impl SymbolicExecutor {
             .contains(&selector)
             {
                 // A prank aliases a free sender or origin to an empty representative account, so
-                // the sender and origin first fork over the known accounts they may name. A word
-                // that already resolves to an account, such as one an earlier prank aliased, is
-                // decided.
+                // the sender and origin first fork over the known accounts they may name, even
+                // when another cheatcode already aliased them.
                 first_scanned = vm_params(selector)
                     .iter()
                     .take_while(|param| **param == DynSolType::Address)
                     .count();
                 for index in 0..first_scanned {
                     let word = read_abi_word_arg(&mut self.cx, memory, args_offset, index)?;
-                    let address = word.clone().address_operand(&mut self.cx);
-                    if state.constrained_word(&mut self.cx, &word).is_none()
-                        && state.world.resolve_address(&address).is_none()
-                    {
+                    if state.constrained_word(&mut self.cx, &word).is_none() {
                         words.push((word, state.world.concrete_alias_candidates(executor)));
                     }
                 }
