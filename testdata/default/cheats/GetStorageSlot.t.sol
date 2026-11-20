@@ -22,6 +22,11 @@ contract StorageSlotLayout {
         bool locked;
     }
 
+    /// @custom:storage-location erc7201:café
+    struct CafeStorage {
+        uint256 counter;
+    }
+
     function setPacked(uint64 _a, uint64 _b) public {
         a = _a;
         b = _b;
@@ -85,6 +90,10 @@ contract GetStorageSlotTest is Test {
         assertLocation("a", 1, 0, 8);
         assertLocation("A", 9, 0, 32);
         assertLocation("BALANCES", 3, 0, 32);
+
+        // Namespace ids can contain non-ASCII characters.
+        uint256 root = uint256(keccak256(abi.encode(uint256(keccak256(unicode"café")) - 1)) & ~bytes32(uint256(0xff)));
+        assertLocation(unicode"CAFÉ.counter", root, 0, 32);
     }
 
     function testUnknownVariable() public {
