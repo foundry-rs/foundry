@@ -2607,11 +2607,13 @@ async fn test_simulate_resolves_nonces_from_state() {
     assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0x7");
     assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0x8");
 
+    // A call at nonce 2^64 - 1 fails with the geth error, whose wording the guard sets.
     let response = rpc_request(
         &endpoint,
         "eth_simulateV1",
         json!([{
             "blockStateCalls": [{
+                "blockOverrides": {"baseFeePerGas": "0x0"},
                 "stateOverrides": {(sender): {"nonce": "0xfffffffffffffffe"}},
                 "calls": [
                     {"from": sender, "to": receiver},
@@ -2619,31 +2621,41 @@ async fn test_simulate_resolves_nonces_from_state() {
                     {"from": sender, "to": receiver}
                 ]
             }],
-            "returnFullTransactions": true
+            "validation": true
         }, "latest"]),
     )
     .await;
+    let error = json!({
+        "code": -32603,
+        "message": "nonce has max value: address 0xC000000000000000000000000000000000000000, nonce: 18446744073709551615"
+    });
+    assert_eq!(response["error"], error, "{response}");
 
-    assert!(response.get("error").is_none(), "{response}");
-    assert!(
-        response["result"][0]["calls"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|call| call["status"] == "0x1")
-    );
-    assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xfffffffffffffffe");
-    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0xffffffffffffffff");
-    assert_eq!(response["result"][0]["transactions"][2]["nonce"], "0x0");
+    // The cap also holds without validation, for creations and calls alike.
+    for call in [json!({"from": sender}), json!({"from": sender, "to": receiver, "nonce": "0x5"})] {
+        let response = rpc_request(
+            &endpoint,
+            "eth_simulateV1",
+            json!([{
+                "blockStateCalls": [{
+                    "stateOverrides": {(sender): {"nonce": "0xffffffffffffffff"}},
+                    "calls": [call]
+                }]
+            }, "latest"]),
+        )
+        .await;
+        assert_eq!(response["error"], error, "{response}");
+    }
 
+    // Without validation an explicit transaction nonce of 2^64 - 1 is still accepted.
     let response = rpc_request(
         &endpoint,
         "eth_simulateV1",
         json!([{
             "blockStateCalls": [{
-                "stateOverrides": {(sender): {"nonce": "0xffffffffffffffff"}},
+                "stateOverrides": {(sender): {"nonce": "0x7"}},
                 "calls": [
-                    {"from": sender},
+                    {"from": sender, "to": receiver, "nonce": "0xffffffffffffffff"},
                     {"from": sender, "to": receiver}
                 ]
             }],
@@ -2651,10 +2663,9 @@ async fn test_simulate_resolves_nonces_from_state() {
         }, "latest"]),
     )
     .await;
-
     assert!(response.get("error").is_none(), "{response}");
     assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xffffffffffffffff");
-    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0xffffffffffffffff");
+    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0x8");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2685,6 +2696,17 @@ async fn test_simulate_maps_validation_errors() {
                 "validation": true
             }, "latest"]),
             -38011,
+        ),
+        (
+            json!([{
+                "blockStateCalls": [{
+                    "blockOverrides": {"baseFeePerGas": "0x0"},
+                    "stateOverrides": {(sender): {"nonce": "0xffffffffffffffff"}},
+                    "calls": [{"from": sender, "to": receiver, "nonce": "0x5"}]
+                }],
+                "validation": true
+            }, "latest"]),
+            -38010,
         ),
         (
             json!([{
