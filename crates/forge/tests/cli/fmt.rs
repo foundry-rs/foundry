@@ -83,6 +83,37 @@ fn fmt_check_mode(prj: _, cmd: _) {
     cmd.assert_failure();
 }
 
+// `--check` reports files that fail to parse even when other files need formatting.
+#[forgetest]
+fn fmt_check_mode_reports_parse_errors_with_diffs(prj: _, cmd: _) {
+    prj.add_raw_source("Unformatted.sol", UNFORMATTED);
+    prj.add_raw_source(
+        "Invalid.sol",
+        r#"contract Invalid {
+    function f() public {
+        uint256 x = ;
+    }
+}
+"#,
+    );
+    cmd.args(["fmt", "--check"]);
+    cmd.assert_failure()
+        .stdout_eq(str![[r#"
+Diff in src/Unformatted.sol:
+...
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: solar reported errors:
+
+error: expected one of [..]
+...
+3 │         uint256 x = ;
+...
+
+"#]]);
+}
+
 #[forgetest]
 fn fmt_check_mode_stdin(cmd: _) {
     // Run fmt --check with well-formatted stdin input
