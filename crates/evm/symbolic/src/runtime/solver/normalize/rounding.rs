@@ -146,7 +146,8 @@ impl ConstraintContext {
     /// wrap. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly for nonzero
     /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
     /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
-    /// by `a != 0`.
+    /// by `a != 0`. Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once
+    /// `k` is positive, `l <= k`, and `x * k` cannot wrap.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -154,7 +155,13 @@ impl ConstraintContext {
         let SymBoolExprKind::Cmp(op, left, right) = expr.kind() else { return None };
         let mut intervals = HashMap::default();
         let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
-        if let Some(strict) = self.division_order(left, right, &mut intervals, &mut remaining) {
+        let mut order = |small, large| {
+            self.division_order(small, large, &mut intervals, &mut remaining).or_else(|| {
+                self.asserts_scaled_order(small, large, &mut intervals, &mut remaining)
+                    .then_some(false)
+            })
+        };
+        if let Some(strict) = order(left, right) {
             return match op {
                 SymCmpOp::Ule => Some(true),
                 SymCmpOp::Ugt => Some(false),
@@ -163,7 +170,7 @@ impl ConstraintContext {
                 _ => None,
             };
         }
-        if let Some(strict) = self.division_order(right, left, &mut intervals, &mut remaining) {
+        if let Some(strict) = order(right, left) {
             return match op {
                 SymCmpOp::Uge => Some(true),
                 SymCmpOp::Ult => Some(false),
@@ -291,7 +298,7 @@ impl ConstraintContext {
                     })
                 })
                 .then_some(false),
-            _ => self.asserts_scaled_order(small, large, intervals, remaining).then_some(false),
+            _ => None,
         }
     }
 
