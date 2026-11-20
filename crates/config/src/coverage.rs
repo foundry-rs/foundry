@@ -21,6 +21,9 @@ pub enum CoverageReportKind {
     Attribution,
     /// JSON report listing uncovered source items with their location and context.
     Gaps,
+    /// LLVM coverage files: a text profile, a coverage mapping object, and `llvm-cov export`
+    /// JSON. Requires `--instrumented`.
+    Llvm,
 }
 
 /// Configuration for `forge coverage`, exposed under `[coverage]` and

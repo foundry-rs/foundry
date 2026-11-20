@@ -80,6 +80,9 @@ impl CoverageReporter for CoverageSummaryReporter {
     }
 
     fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
+        if report.is_instrumented() {
+            return self.report_instrumented(report);
+        }
         for (path, summary) in report.summary_by_file() {
             self.total.merge(&summary);
             self.add_row(path.display(), summary);
@@ -89,6 +92,48 @@ impl CoverageReporter for CoverageSummaryReporter {
         sh_println!("\n{}", self.table)?;
         Ok(())
     }
+}
+
+impl CoverageSummaryReporter {
+    /// Prints the summary of an instrumented build, which counts what `llvm-cov report` counts:
+    /// lines by `llvm-cov`'s line rules, code regions, branch sides, and functions, and the
+    /// conditions that an independence pair covers when a source has MC/DC decisions.
+    fn report_instrumented(&mut self, report: &CoverageReport) -> eyre::Result<()> {
+        let summaries = report.llvm_file_summaries();
+        let mut total = llvm::FileSummary::default();
+        for (_, summary) in &summaries {
+            total.add(summary);
+        }
+        let mcdc = total.data.mcdc.total > 0;
+
+        let mut header = vec!["File", "% Lines", "% Regions", "% Branches", "% Funcs"];
+        if mcdc {
+            header.push("% MC/DC");
+        }
+        self.table.set_header(header.into_iter().map(Cell::new));
+        let rows = summaries
+            .iter()
+            .map(|(path, summary)| (Cell::new(path.display()), summary))
+            .chain([(Cell::new("Total"), &total)]);
+        for (name, summary) in rows {
+            let mut row = Row::new();
+            row.add_cell(name)
+                .add_cell(coverage_cell(summary.data.lines))
+                .add_cell(coverage_cell(summary.data.regions))
+                .add_cell(coverage_cell(summary.data.branches))
+                .add_cell(coverage_cell(summary.functions));
+            if mcdc {
+                row.add_cell(coverage_cell(summary.data.mcdc));
+            }
+            self.table.add_row(row);
+        }
+        sh_println!("\n{}", self.table)?;
+        Ok(())
+    }
+}
+
+fn coverage_cell(coverage: llvm::Coverage) -> Cell {
+    format_cell(coverage.covered, coverage.total)
 }
 
 fn format_cell(hits: usize, total: usize) -> Cell {
@@ -129,6 +174,14 @@ impl CoverageReporter for LcovReporter {
 
     fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
         let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
+
+        // An instrumented build writes the tracefile that `llvm-cov export -format=lcov` prints.
+        if report.is_instrumented() {
+            out.write_all(report.llvm_lcov().as_bytes())?;
+            out.flush()?;
+            sh_println!("Wrote LCOV report.")?;
+            return Ok(());
+        }
 
         let mut fn_index = 0usize;
         for (path, items) in report.items_by_file() {
@@ -610,6 +663,42 @@ impl LineNumberCache {
     }
 }
 
+/// Writes the coverage of an instrumented build as the files LLVM's tools read:
+/// `coverage.proftext`, a text instrumentation profile for `llvm-profdata merge`;
+/// `coverage.covmap.o`, an object file with the coverage mapping for `llvm-cov`; and
+/// `coverage.json`, the `llvm-cov export` JSON of the two.
+pub struct LlvmReporter {
+    root: PathBuf,
+}
+
+impl LlvmReporter {
+    /// Create a new LLVM reporter that writes its files to `root`.
+    pub const fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+}
+
+impl CoverageReporter for LlvmReporter {
+    fn name(&self) -> &'static str {
+        "llvm"
+    }
+
+    fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
+        let inputs = report.llvm_inputs();
+        let object = llvm::CoverageObject::new(&inputs)?;
+        fs::write(self.root.join("coverage.proftext"), &object.proftext)?;
+        fs::write(self.root.join("coverage.covmap.o"), &object.object)?;
+
+        let json = llvm::export_json(&llvm::CoverageMapping::new(inputs));
+        fs::write(self.root.join("coverage.json"), json)?;
+
+        sh_println!(
+            "Wrote LLVM coverage report: coverage.proftext, coverage.covmap.o, coverage.json."
+        )?;
+        Ok(())
+    }
+}
+
 /// Writes the uncovered coverage items of each source file as JSON.
 pub struct GapsReporter {
     root: PathBuf,
@@ -741,12 +830,134 @@ struct GapItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coverage::instrumented::{InstrumentedBuild, InstrumentedSource};
+    use serde_json::json;
 
     #[test]
     fn empty_summary_cell_is_not_applicable() {
         assert_eq!(
             format_cell(0, 0),
             Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
+        );
+    }
+
+    const SOURCE: &str = "contract C {
+    function f(uint a, uint b) public returns (uint) {
+        if (a > 1 && b > 2) {
+            return 1;
+        }
+        return 2;
+    }
+}
+";
+
+    /// An instrumented report of `C.f` called three times: with `a` below 2, with `b` below 3,
+    /// and with both above.
+    fn instrumented_report() -> CoverageReport {
+        let span = |needle: &str| (SOURCE.find(needle).unwrap(), needle.len());
+        let region = |kind: i64, needle: &str, rest: &[i64]| {
+            let (start, len) = span(needle);
+            let mut region = vec![kind, 0, start as i64, len as i64];
+            region.extend(rest);
+            json!(region)
+        };
+        let body = "function f(uint a, uint b) public returns (uint) {
+        if (a > 1 && b > 2) {
+            return 1;
+        }
+        return 2;
+    }";
+        // Counters 1 to 3 are the entry, `a > 1`, and `b > 2`, as the tagged values 5, 9, and 13.
+        // Expressions 0 and 1 are the differences 1 - 2 and 2 - 3, which the tagged values 2 and 6
+        // refer to.
+        let coverage = serde_json::from_value(json!({
+            "version": 2,
+            "functions": [{
+                "name": "src/C.sol:C.f(uint256,uint256)",
+                "hash": "0x1",
+                "counters": [1, 3],
+                "files": [0],
+                "expressions": [[5, 9], [9, 13]],
+                "regions": [
+                    region(0, body, &[5]),
+                    region(5, "a > 1 && b > 2", &[0]),
+                    region(6, "a > 1", &[9, 2, 0, -1, 1]),
+                    region(6, "b > 2", &[13, 6, 1, -1, -1]),
+                    region(0, "{
+            return 1;
+        }", &[13]),
+                    region(0, "return 2;", &[2]),
+                ],
+                "decisions": [{"id": 0, "conditions": 2, "vectors": ["FFF", "TFF", "TTT"]}],
+            }]
+        }))
+        .unwrap();
+        let source = InstrumentedSource::new("src/C.sol".into(), SOURCE.into(), true, coverage);
+        let mut build = InstrumentedBuild::new(BTreeMap::from([(0, source)]));
+        build.add_hits(
+            [(1, 3), (2, 2), (3, 1)].into_iter(),
+            [(0, 0), (0, 1), (0, 2)].into_iter(),
+            &[],
+        );
+        let mut report = CoverageReport::default();
+        report.add_source("build".into(), 0, "src/C.sol".into());
+        report.add_instrumented_build("build".into(), build);
+        report.finalize_instrumented();
+        report
+    }
+
+    #[test]
+    fn instrumented_reports_follow_llvm_cov() {
+        let report = instrumented_report();
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+
+        LlvmReporter::new(dir.to_path_buf()).report(&report).unwrap();
+        LcovReporter::new(dir.join("lcov.info"), Version::new(1, 0, 0)).report(&report).unwrap();
+        let json = serde_json::from_str::<serde_json::Value>(
+            &fs::read_to_string(dir.join("coverage.json")).unwrap(),
+        )
+        .unwrap();
+        let totals = &json["data"][0]["totals"];
+        // The function body, the `if` block, and the last return are the code regions.
+        assert_eq!(totals["lines"]["count"], 6);
+        assert_eq!(totals["lines"]["covered"], 6);
+        assert_eq!(totals["regions"]["count"], 3);
+        assert_eq!(totals["branches"]["count"], 4);
+        assert_eq!(totals["functions"]["count"], 1);
+        assert_eq!(totals["mcdc"]["covered"], 2);
+        assert_eq!(json["type"], "llvm.coverage.json.export");
+        assert!(fs::read_to_string(dir.join("coverage.proftext")).unwrap().starts_with(":fe\n"));
+        assert_eq!(&fs::read(dir.join("coverage.covmap.o")).unwrap()[..4], b"\x7fELF");
+        let lcov = fs::read_to_string(dir.join("lcov.info")).unwrap();
+
+        // The tracefile of `llvm-cov export -format=lcov`: signature names, no `TN`, and the
+        // branches numbered by pair and side within their line. Line 6 counts the three calls:
+        // `llvm-cov` takes the larger of the count a line starts with, from the function around
+        // it, and the counts of the regions that start on it.
+        assert_eq!(
+            lcov,
+            "SF:src/C.sol
+FN:2,C.f(uint256,uint256)
+FNDA:3,C.f(uint256,uint256)
+FNF:1
+FNH:1
+DA:2,3
+DA:3,3
+DA:4,1
+DA:5,1
+DA:6,3
+DA:7,3
+BRDA:3,0,0,2
+BRDA:3,0,1,1
+BRDA:3,1,2,1
+BRDA:3,1,3,1
+BRF:4
+BRH:4
+LF:6
+LH:6
+end_of_record
+"
         );
     }
 }

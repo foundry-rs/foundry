@@ -26,6 +26,7 @@ use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     backend::transaction_error,
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
+    edgecov,
     evm::{
         BlockEnvFor, DestructedAccount, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryExecutionHooks,
@@ -474,6 +475,8 @@ pub struct InspectorStackInner {
     /// Whether to collect comparison operands from `CMPLOG` probes instead of the cmp-log
     /// inspector.
     pub instrumented_cmp_log: bool,
+    /// Whether to collect the hits of `COVERAGE` probes as the call's line coverage.
+    pub coverage_counters: bool,
     pub enable_isolation: bool,
     /// Whether calls into fork contracts prefetch the remote state they are about to read, see
     /// [`Backend::prefetch_call`](foundry_evm_core::backend::Backend::prefetch_call).
@@ -881,6 +884,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub const fn enable_edgecov_opcode(&mut self, yes: bool) {
         self.inner.edgecov_opcode = yes;
+    }
+
+    /// Set whether to collect the hits of the compiler-instrumented `COVERAGE` probes as line
+    /// coverage, which runs those probes.
+    #[inline]
+    pub const fn collect_coverage_counters(&mut self, yes: bool) {
+        self.inner.coverage_counters = yes;
+        self.inner.edgecov_opcode |= yes;
     }
 
     /// Drops the inspectors that only feed fuzz guidance: edge coverage, the fuzzer value
@@ -2197,6 +2208,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
     fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         self.refresh_cheat_steps();
         let depth = interp.message().depth;
+        edgecov::enter_frame(depth);
         if let Some(cheats) = self.cheatcodes.as_deref_mut()
             && let Some(checkpoint) = interp.host().frame_checkpoint()
         {

@@ -6102,16 +6102,18 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.26.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=989f05e23c64b5a96c62ea962191eb1af74a2804#989f05e23c64b5a96c62ea962191eb1af74a2804"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ee80ac1661c3e3b4a4495d5ef0e156e9206a3611#ee80ac1661c3e3b4a4495d5ef0e156e9206a3611"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
  "alloy-primitives",
  "foundry-compilers",
  "reqwest 0.13.5",
+ "same-file",
  "semver 1.0.28",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -6363,7 +6365,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=989f05e23c64b5a96c62ea962191eb1af74a2804#989f05e23c64b5a96c62ea962191eb1af74a2804"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ee80ac1661c3e3b4a4495d5ef0e156e9206a3611#ee80ac1661c3e3b4a4495d5ef0e156e9206a3611"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6375,7 +6377,7 @@ dependencies = [
  "foundry-compilers-artifacts",
  "foundry-compilers-core",
  "fs_extra",
- "itertools 0.15.0",
+ "itertools 0.13.0",
  "path-slash",
  "rand 0.10.3",
  "rayon",
@@ -6400,7 +6402,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=989f05e23c64b5a96c62ea962191eb1af74a2804#989f05e23c64b5a96c62ea962191eb1af74a2804"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ee80ac1661c3e3b4a4495d5ef0e156e9206a3611#ee80ac1661c3e3b4a4495d5ef0e156e9206a3611"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -6409,7 +6411,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=989f05e23c64b5a96c62ea962191eb1af74a2804#989f05e23c64b5a96c62ea962191eb1af74a2804"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ee80ac1661c3e3b4a4495d5ef0e156e9206a3611#ee80ac1661c3e3b4a4495d5ef0e156e9206a3611"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6429,7 +6431,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=989f05e23c64b5a96c62ea962191eb1af74a2804#989f05e23c64b5a96c62ea962191eb1af74a2804"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ee80ac1661c3e3b4a4495d5ef0e156e9206a3611#ee80ac1661c3e3b4a4495d5ef0e156e9206a3611"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6442,7 +6444,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=989f05e23c64b5a96c62ea962191eb1af74a2804#989f05e23c64b5a96c62ea962191eb1af74a2804"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ee80ac1661c3e3b4a4495d5ef0e156e9206a3611#ee80ac1661c3e3b4a4495d5ef0e156e9206a3611"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6653,7 +6655,9 @@ dependencies = [
  "foundry-evm-core",
  "rayon",
  "semver 1.0.28",
+ "serde_json",
  "solar-compiler",
+ "tempfile",
  "tracing",
 ]
 
@@ -6798,7 +6802,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=989f05e23c64b5a96c62ea962191eb1af74a2804#989f05e23c64b5a96c62ea962191eb1af74a2804"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ee80ac1661c3e3b4a4495d5ef0e156e9206a3611#ee80ac1661c3e3b4a4495d5ef0e156e9206a3611"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6914,7 +6918,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.2.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=4d183274aed94cccbac20d8871916d7abc1036e2#4d183274aed94cccbac20d8871916d7abc1036e2"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ee80ac1661c3e3b4a4495d5ef0e156e9206a3611#ee80ac1661c3e3b4a4495d5ef0e156e9206a3611"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",

@@ -1,0 +1,1459 @@
+//! Coverage of compiler-instrumented builds.
+//!
+//! An instrumented build, such as Solar's `-Zinstrument-coverage`, maps each source's functions to
+//! LLVM-style records: regions over counters and counter expressions. Its probes count the
+//! counters at runtime, so a record's coverage needs neither source maps nor bytecode anchors.
+//!
+//! [`InstrumentedBuild`] holds the sources of a build with the counter and MC/DC hits of every
+//! executed code object. It turns them into the coverage items that the item-based reports use,
+//! and into the [`FunctionInput`]s of the LLVM coverage mapping that the summary, LCOV, and LLVM
+//! reports use.
+
+use crate::{
+    CoverageItem, CoverageItemKind, SourceLocation,
+    llvm::{
+        Counter, Expression, FunctionInput, MappingRegion, McdcParams, RegionKind, decision_vectors,
+    },
+};
+use alloy_primitives::map::rustc_hash::{FxHashMap, FxHashSet};
+use foundry_common::TestFunctionExt;
+use foundry_compilers::artifacts::{
+    Counter as TaggedCounter, CoverageAlias, FunctionCoverage, Region, SourceCoverage,
+};
+use std::{collections::BTreeMap, ops::Range, path::PathBuf, sync::Arc};
+
+/// The most bitmap bytes a function can have: a text profile counts them in one byte.
+const MAX_BITMAP_BYTES: usize = 255;
+
+/// A source of an instrumented build with its coverage map.
+#[derive(Clone, Debug)]
+pub struct InstrumentedSource {
+    /// The project-relative path.
+    pub path: PathBuf,
+    /// The text the compiler read, with line endings normalized.
+    pub text: String,
+    /// Whether the report includes the source. A source that the report excludes, such as a
+    /// library, still maps the regions of modifiers expanded in an included source.
+    pub reportable: bool,
+    /// The coverage map.
+    pub coverage: SourceCoverage,
+    /// The byte offset of the start of each line.
+    line_starts: Vec<u32>,
+}
+
+impl InstrumentedSource {
+    /// Creates a source.
+    pub fn new(path: PathBuf, text: String, reportable: bool, coverage: SourceCoverage) -> Self {
+        let line_starts = std::iter::once(0)
+            .chain(text.match_indices('\n').map(|(index, _)| index as u32 + 1))
+            .collect();
+        Self { path, text, reportable, coverage, line_starts }
+    }
+
+    /// The 1-based line and column of a byte offset.
+    fn line_col(&self, offset: u32) -> (u32, u32) {
+        let offset = offset.min(self.text.len() as u32);
+        let line = self.line_starts.partition_point(|&start| start <= offset);
+        (line as u32, offset - self.line_starts[line - 1] + 1)
+    }
+
+    /// The 1-based line and column just after the last byte of a region, so that a region that
+    /// ends with a line break ends on that line.
+    fn region_end(&self, start: u32, len: u32) -> (u32, u32) {
+        let Some(last) = start.saturating_add(len).checked_sub(1).filter(|_| len > 0) else {
+            return self.line_col(start);
+        };
+        let (line, column) = self.line_col(last);
+        (line, column + 1)
+    }
+
+    /// The 1-based line of a byte offset.
+    fn line(&self, offset: u32) -> u32 {
+        self.line_col(offset).0
+    }
+
+    /// The byte range of a 1-based line, without its line break.
+    pub fn line_bytes(&self, line: u32) -> Range<u32> {
+        let start =
+            self.line_starts.get(line as usize - 1).copied().unwrap_or(self.text.len() as u32);
+        let end = self
+            .line_starts
+            .get(line as usize)
+            .map_or(self.text.len() as u32, |&next| next.saturating_sub(1))
+            .max(start);
+        start..end
+    }
+
+    /// The contracts with a test function.
+    fn test_contracts(&self) -> Vec<&str> {
+        self.coverage
+            .functions
+            .iter()
+            .map(|function| parse_name(&function.name))
+            .filter(|(_, function)| function.is_any_test())
+            .filter_map(|(contract, _)| contract)
+            .collect()
+    }
+
+    /// The path with `/` separators, as the coverage mapping names the file.
+    pub fn filename(&self) -> String {
+        self.path.to_string_lossy().replace('\\', "/")
+    }
+}
+
+/// The counter and MC/DC hits of the executed code objects of a build, and the build's sources.
+#[derive(Clone, Debug, Default)]
+pub struct InstrumentedBuild {
+    /// The sources by source ID.
+    pub sources: BTreeMap<u32, InstrumentedSource>,
+    /// The hits of each counter, summed over all code objects.
+    hits: FxHashMap<u32, u64>,
+    /// The executed test vector indices of each MC/DC decision, by decision ID.
+    mcdc: FxHashMap<u32, FxHashSet<u32>>,
+}
+
+/// An item's count: a tagged counter of a function record.
+#[derive(Clone, Copy, Debug)]
+pub struct ItemCount {
+    /// The source ID.
+    source: u32,
+    /// The index of the record in the source's map.
+    function: u32,
+    /// The tagged counter.
+    count: u32,
+}
+
+impl InstrumentedBuild {
+    /// Creates a build from its sources, by source ID.
+    pub fn new(sources: BTreeMap<u32, InstrumentedSource>) -> Self {
+        Self { sources, ..Default::default() }
+    }
+
+    /// Adds the hits of one code object, after the compiler's counter aliases of that object.
+    pub fn add_hits(
+        &mut self,
+        counters: impl Iterator<Item = (u32, u32)>,
+        mcdc: impl Iterator<Item = (u32, u32)>,
+        aliases: &[CoverageAlias],
+    ) {
+        if aliases.is_empty() {
+            for (counter, hits) in counters {
+                *self.hits.entry(counter).or_default() += u64::from(hits);
+            }
+        } else {
+            // A dropped counter takes the hits of the counter that stands in for it.
+            let mut local = counters.collect::<FxHashMap<_, _>>();
+            for &[dropped, kept] in aliases {
+                let hits = local.get(&kept).copied().unwrap_or(0);
+                local.insert(dropped, hits);
+            }
+            for (counter, hits) in local {
+                *self.hits.entry(counter).or_default() += u64::from(hits);
+            }
+        }
+        for (decision, vector) in mcdc {
+            self.mcdc.entry(decision).or_default().insert(vector);
+        }
+    }
+
+    fn hits(&self, counter: u32) -> u64 {
+        self.hits.get(&counter).copied().unwrap_or(0)
+    }
+
+    /// The hits of a tagged counter of a record. A negative count is zero.
+    fn eval(&self, function: &FunctionCoverage, tagged: u32, hits: &impl Fn(u32) -> u64) -> u64 {
+        let value = self.eval_signed(function, tagged, hits);
+        u64::try_from(value).unwrap_or(0)
+    }
+
+    fn eval_signed(
+        &self,
+        function: &FunctionCoverage,
+        tagged: u32,
+        hits: &impl Fn(u32) -> u64,
+    ) -> i64 {
+        match TaggedCounter::decode(tagged) {
+            TaggedCounter::Zero => 0,
+            TaggedCounter::Counter(id) => hits(id) as i64,
+            TaggedCounter::Subtract(id) | TaggedCounter::Add(id) => {
+                let Some(&[lhs, rhs]) = function.expressions.get(id as usize) else { return 0 };
+                let (lhs, rhs) =
+                    (self.eval_signed(function, lhs, hits), self.eval_signed(function, rhs, hits));
+                if matches!(TaggedCounter::decode(tagged), TaggedCounter::Subtract(_)) {
+                    lhs.wrapping_sub(rhs)
+                } else {
+                    lhs.wrapping_add(rhs)
+                }
+            }
+        }
+    }
+
+    /// The coverage items of the reportable sources and the count of each item.
+    ///
+    /// Like source-map coverage, the items skip the functions of contracts that define tests,
+    /// give every branch of a source its own ID, and disambiguate overloaded functions. A
+    /// function is one item with the entry count, each code region of the function's own file is a
+    /// statement, and each side of a branch is a path of a branch.
+    pub fn items(&self) -> (Vec<CoverageItem>, Vec<ItemCount>) {
+        let (mut items, mut counts) = (Vec::new(), Vec::new());
+        for (&source_id, source) in &self.sources {
+            if !source.reportable {
+                continue;
+            }
+            let names = source
+                .coverage
+                .functions
+                .iter()
+                .map(|function| parse_name(&function.name))
+                .collect::<Vec<_>>();
+            let test_contracts = names
+                .iter()
+                .filter(|(_, function)| function.is_any_test())
+                .filter_map(|(contract, _)| *contract)
+                .collect::<Vec<_>>();
+            let mut overloads = FxHashMap::<_, usize>::default();
+            for &(contract, function) in &names {
+                *overloads.entry((contract, function)).or_default() += 1;
+            }
+            let mut overload_indices = FxHashMap::<_, usize>::default();
+            let mut branch_id = 0;
+            for (index, (function, &(contract, function_name))) in
+                source.coverage.functions.iter().zip(&names).enumerate()
+            {
+                if contract.is_some_and(|contract| test_contracts.contains(&contract)) {
+                    continue;
+                }
+                let Some(first) = function.regions.first() else { continue };
+                let contract_name = Arc::<str>::from(contract.unwrap_or_default());
+                let name = if overloads[&(contract, function_name)] > 1 {
+                    let overload = overload_indices.entry((contract, function_name)).or_default();
+                    *overload += 1;
+                    format!("{function_name}.{}", *overload - 1).into()
+                } else {
+                    function_name.into()
+                };
+                let location = |region: &Region| {
+                    let bytes = region.start()..region.start().saturating_add(region.len());
+                    let end = bytes.end.saturating_sub(1).max(bytes.start);
+                    let lines = source.line(bytes.start)..source.line(end) + 1;
+                    SourceLocation {
+                        source_id: source_id as usize,
+                        contract_name: contract_name.clone(),
+                        bytes,
+                        lines,
+                    }
+                };
+                let mut push = |kind, region: &Region, count| {
+                    items.push(CoverageItem {
+                        kind,
+                        loc: location(region),
+                        anchor_loc: None,
+                        hits: 0,
+                    });
+                    counts.push(ItemCount { source: source_id, function: index as u32, count });
+                };
+                // A record's entry count is its first region's count. The record of the
+                // creation-time code outside functions, `<init>`, has no body region, so it is not
+                // a function.
+                let has_body = !function_name.starts_with('<');
+                if has_body && let Region::Code { count, .. } = first {
+                    push(CoverageItemKind::Function { name }, first, *count);
+                }
+                for region in function.regions.iter().filter(|region| region.file() == 0) {
+                    match *region {
+                        Region::Code { count, .. } if !has_body || !std::ptr::eq(region, first) => {
+                            push(CoverageItemKind::Statement, region, count);
+                        }
+                        Region::Branch { true_count, false_count, .. }
+                        | Region::McdcBranch { true_count, false_count, .. } => {
+                            for (path_id, count) in
+                                [true_count, false_count].into_iter().enumerate()
+                            {
+                                // A side that constant folding removed is not a path.
+                                if count & 3 == 0 {
+                                    continue;
+                                }
+                                let kind = CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: path_id as u32,
+                                    is_first_opcode: false,
+                                };
+                                push(kind, region, count);
+                            }
+                            branch_id += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        (items, counts)
+    }
+
+    /// The hits of an item, from the hits of a code object after its aliases.
+    pub fn item_hits(&self, count: ItemCount, hits: &impl Fn(u32) -> u64) -> u32 {
+        let function = &self.sources[&count.source].coverage.functions[count.function as usize];
+        u32::try_from(self.eval(function, count.count, hits)).unwrap_or(u32::MAX)
+    }
+
+    /// The hits of an item, from the hits of all code objects.
+    pub fn total_item_hits(&self, count: ItemCount) -> u32 {
+        self.item_hits(count, &|counter| self.hits(counter))
+    }
+
+    /// The function records for the LLVM coverage mapping, with their profile counters and MC/DC
+    /// bitmap. A function record needs one of the reportable sources to define it.
+    ///
+    /// The records of test functions and of unreportable sources are left out, but not the
+    /// modifiers they apply: a modifier record expands into the code regions of those expansions.
+    pub fn function_inputs(&self) -> Vec<FunctionInput> {
+        let donors = self.expansion_donors();
+        let mut inputs = Vec::new();
+        for (&id, source) in self.sources.iter().filter(|(_, source)| source.reportable) {
+            let test_contracts = source.test_contracts();
+            for (index, function) in source.coverage.functions.iter().enumerate() {
+                if is_test_contract(function, &test_contracts) {
+                    continue;
+                }
+                inputs.extend(match donors.get(&(id, index)) {
+                    Some(donors) => self.function_input(&with_expansions(function, donors)),
+                    None => self.function_input(function),
+                });
+            }
+        }
+        inputs
+    }
+
+    /// The expansions of reportable modifiers in the records that the report leaves out, by the
+    /// source and index of the modifier's record: the record that expands, and the index of the
+    /// expanded file in its file table.
+    ///
+    /// The modifier's record is the one without counters of its own whose first region starts
+    /// where the first region of the expanded file does.
+    fn expansion_donors(&self) -> FxHashMap<(u32, usize), Vec<(&FunctionCoverage, u32)>> {
+        let mut donors = FxHashMap::<_, Vec<_>>::default();
+        for source in self.sources.values() {
+            let test_contracts = source.test_contracts();
+            for function in &source.coverage.functions {
+                if source.reportable && !is_test_contract(function, &test_contracts) {
+                    continue;
+                }
+                for region in &function.regions {
+                    let Region::Expansion { expanded_file, .. } = *region else { continue };
+                    let Some(&target_id) = function.files.get(expanded_file as usize) else {
+                        continue;
+                    };
+                    let Some(target) = self.sources.get(&target_id).filter(|s| s.reportable) else {
+                        continue;
+                    };
+                    let first = function
+                        .regions
+                        .iter()
+                        .filter(|region| region.file() == expanded_file)
+                        .map(Region::start)
+                        .min();
+                    let target_tests = target.test_contracts();
+                    let modifier = target.coverage.functions.iter().position(|candidate| {
+                        candidate.counters[1] == 0
+                            && !is_test_contract(candidate, &target_tests)
+                            && candidate.files.first() == Some(&target_id)
+                            && candidate
+                                .regions
+                                .iter()
+                                .filter(|region| region.file() == 0)
+                                .map(Region::start)
+                                .min()
+                                == first
+                    });
+                    if let Some(modifier) = modifier {
+                        donors
+                            .entry((target_id, modifier))
+                            .or_default()
+                            .push((function, expanded_file));
+                    }
+                }
+            }
+        }
+        donors
+    }
+
+    /// Builds a function record for the LLVM coverage mapping.
+    fn function_input(&self, function: &FunctionCoverage) -> Option<FunctionInput> {
+        // Drop the files that the report excludes, and the regions in them.
+        let sources = function
+            .files
+            .iter()
+            .map(|id| self.sources.get(id))
+            .collect::<Vec<Option<&InstrumentedSource>>>();
+        sources.first().copied().flatten()?;
+        let mut file_map = vec![None; sources.len()];
+        let mut filenames = Vec::new();
+        for (index, source) in sources.iter().enumerate() {
+            if let Some(source) = source
+                && (index == 0 || source.reportable)
+                && function.regions.iter().any(|region| region.file() as usize == index)
+            {
+                file_map[index] = Some(filenames.len() as u32);
+                filenames.push(source.filename());
+            }
+        }
+        file_map[0]?;
+        // An expansion into a dropped file goes too.
+        let regions = function
+            .regions
+            .iter()
+            .filter(|region| {
+                file_map.get(region.file() as usize).copied().flatten().is_some()
+                    && match region {
+                        Region::Expansion { expanded_file, .. } => {
+                            file_map.get(*expanded_file as usize).copied().flatten().is_some()
+                        }
+                        _ => true,
+                    }
+            })
+            .collect::<Vec<_>>();
+
+        // The record's own counters are the first counters of the profile.
+        let [first, len] = function.counters;
+        let mut builder =
+            ExpressionBuilder { function, expressions: Vec::new(), built: Default::default() };
+
+        let mut mapped = Vec::with_capacity(regions.len());
+        let mut mcdc_broken = false;
+        for region in &regions {
+            let file = file_map[region.file() as usize].unwrap();
+            let source = sources[region.file() as usize].unwrap();
+            let start = source.line_col(region.start());
+            let end = source.region_end(region.start(), region.len());
+            let mut decision = None;
+            let (kind, count, false_count, mcdc, expanded_file) = match **region {
+                Region::Code { count, .. } => {
+                    (RegionKind::Code, builder.counter(count), Counter::Zero, McdcParams::None, 0)
+                }
+                Region::Expansion { expanded_file, .. } => (
+                    RegionKind::Expansion,
+                    Counter::Zero,
+                    Counter::Zero,
+                    McdcParams::None,
+                    file_map[expanded_file as usize].unwrap(),
+                ),
+                Region::Skipped { .. } => {
+                    (RegionKind::Skipped, Counter::Zero, Counter::Zero, McdcParams::None, 0)
+                }
+                Region::Gap { count, .. } => {
+                    (RegionKind::Gap, builder.counter(count), Counter::Zero, McdcParams::None, 0)
+                }
+                Region::Branch { true_count, false_count, .. } => (
+                    RegionKind::Branch,
+                    builder.counter(true_count),
+                    builder.counter(false_count),
+                    McdcParams::None,
+                    0,
+                ),
+                Region::Decision { decision: index, .. } => {
+                    let Some(entry) = function.decisions.get(index as usize) else {
+                        mcdc_broken = true;
+                        continue;
+                    };
+                    let conditions = entry.conditions;
+                    decision = Some(index as usize);
+                    // The bitmap index is set once the decision's conditions are known.
+                    let params = McdcParams::Decision { bitmap_idx: 0, num_conditions: conditions };
+                    (RegionKind::McdcDecision, Counter::Zero, Counter::Zero, params, 0)
+                }
+                Region::McdcBranch {
+                    true_count,
+                    false_count,
+                    cond_id,
+                    false_next,
+                    true_next,
+                    ..
+                } => (
+                    RegionKind::McdcBranch,
+                    builder.counter(true_count),
+                    builder.counter(false_count),
+                    McdcParams::Branch { id: cond_id as i32, false_next, true_next },
+                    0,
+                ),
+            };
+            let region =
+                MappingRegion { kind, count, false_count, mcdc, file, expanded_file, start, end };
+            mapped.push((region, decision));
+        }
+        let mut expressions = builder.expressions;
+
+        // Number the counters: the record's own first, then the others by ID. The others are the
+        // counters of a modifier's expansions, which its record sums.
+        let mut foreign = std::collections::BTreeSet::new();
+        let counters = mapped
+            .iter()
+            .flat_map(|(region, _)| [region.count, region.false_count])
+            .chain(expressions.iter().flat_map(|e| [e.lhs, e.rhs]));
+        for counter in counters {
+            if let Counter::Counter(id) = counter
+                && !(first..first.saturating_add(len)).contains(&id)
+            {
+                foreign.insert(id);
+            }
+        }
+        let foreign = foreign.into_iter().collect::<Vec<_>>();
+        let local = |counter: Counter| match counter {
+            Counter::Counter(id) if (first..first.saturating_add(len)).contains(&id) => {
+                Counter::Counter(id - first)
+            }
+            Counter::Counter(id) => {
+                Counter::Counter(len + foreign.binary_search(&id).unwrap() as u32)
+            }
+            other => other,
+        };
+        for (region, _) in &mut mapped {
+            region.count = local(region.count);
+            region.false_count = local(region.false_count);
+        }
+        for expression in &mut expressions {
+            expression.lhs = local(expression.lhs);
+            expression.rhs = local(expression.rhs);
+        }
+        let counts = (first..first.saturating_add(len))
+            .chain(foreign)
+            .map(|counter| self.hits(counter))
+            .collect();
+
+        mapped.sort_by(|(lhs, _), (rhs, _)| lhs.writer_order(rhs));
+
+        // A decision that cannot be laid out, or a bitmap that a text profile cannot hold, costs
+        // the record its MC/DC regions but not its branch coverage.
+        let bitmap = self
+            .assign_bitmap(function, &mut mapped)
+            .filter(|bitmap| bitmap.len() <= MAX_BITMAP_BYTES && !mcdc_broken);
+        let bitmap = bitmap.unwrap_or_else(|| {
+            crate::warn_once(format!(
+                "dropping the MC/DC regions of `{}`: its decisions cannot be laid out in a \
+                 profile bitmap",
+                function.name
+            ));
+            mapped.retain(|(region, _)| region.kind != RegionKind::McdcDecision);
+            for (region, _) in &mut mapped {
+                if region.kind == RegionKind::McdcBranch {
+                    region.kind = RegionKind::Branch;
+                    region.mcdc = McdcParams::None;
+                }
+            }
+            Vec::new()
+        });
+        Some(FunctionInput {
+            name: function.name.clone(),
+            hash: function.hash.max(1),
+            filenames,
+            expressions,
+            regions: mapped.into_iter().map(|(region, _)| region).collect(),
+            counts,
+            bitmap,
+            summed: len == 0,
+        })
+    }
+
+    /// Lays out the MC/DC bitmap of a function: assigns each decision the bits of its test
+    /// vectors, and returns the bitmap bytes with the executed test vectors set.
+    ///
+    /// Like LLVM, it pairs a decision region with the condition regions that follow it.
+    fn assign_bitmap(
+        &self,
+        function: &FunctionCoverage,
+        regions: &mut [(MappingRegion, Option<usize>)],
+    ) -> Option<Vec<u8>> {
+        let mut layout = Vec::new();
+        // The decisions that wait for conditions: the region index, the `[false, true]` next
+        // condition of each condition by ID, and how many conditions were found.
+        let mut open = Vec::<(usize, Vec<[i32; 2]>, usize)>::new();
+        for (index, (region, _)) in regions.iter().enumerate() {
+            match (region.kind, region.mcdc) {
+                (RegionKind::McdcDecision, McdcParams::Decision { num_conditions, .. }) => {
+                    open.push((index, vec![[-1; 2]; num_conditions as usize], 0));
+                }
+                (RegionKind::McdcBranch, McdcParams::Branch { id, false_next, true_next }) => {
+                    let (_, next_ids, found) = open.last_mut()?;
+                    *next_ids.get_mut(usize::try_from(id).ok()?)? = [false_next, true_next];
+                    *found += 1;
+                    if *found == next_ids.len() {
+                        let (decision, next_ids, _) = open.pop()?;
+                        layout.push((decision, next_ids));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !open.is_empty() {
+            return None;
+        }
+
+        let mut bits = 0usize;
+        let mut executed = Vec::new();
+        for (index, next_ids) in layout {
+            let (region, decision) = &mut regions[index];
+            let McdcParams::Decision { num_conditions, .. } = region.mcdc else { return None };
+            let decision = function.decisions.get((*decision)?)?;
+            let vectors = decision_vectors(&next_ids)?;
+            let start = bits;
+            bits += vectors.len();
+            // The index is that of the bit after the decision's test vectors.
+            region.mcdc = McdcParams::Decision { bitmap_idx: bits as u32, num_conditions };
+
+            // The map's test vector index is the one the probes add up. LLVM numbers the vectors
+            // by the condition graph, so find each of the map's vectors among LLVM's.
+            let positions = decision
+                .vectors
+                .iter()
+                .map(|vector| vectors.iter().position(|llvm| llvm == vector))
+                .collect::<Option<Vec<_>>>()
+                .filter(|positions| positions.len() == vectors.len());
+            if positions.is_none() {
+                crate::warn_once(format!(
+                    "the MC/DC test vectors of a decision of `{}` are not those of its condition \
+                     graph, so its MC/DC coverage may be wrong",
+                    function.name
+                ));
+            }
+            // The vectors that any of the decision's runtime IDs executed.
+            let vectors_run = decision
+                .runtime_ids()
+                .flat_map(|id| self.mcdc.get(&id).into_iter().flatten().copied());
+            for vector in vectors_run {
+                let position = match &positions {
+                    Some(positions) => positions.get(vector as usize).copied(),
+                    None => Some(vector as usize),
+                };
+                if let Some(position) = position.filter(|&position| position < vectors.len()) {
+                    executed.push(start + position);
+                }
+            }
+        }
+        let mut bitmap = vec![0u8; bits.div_ceil(8)];
+        for bit in executed {
+            bitmap[bit / 8] |= 1 << (bit % 8);
+        }
+        Some(bitmap)
+    }
+}
+
+/// Builds the LLVM counters and expressions of a function record from its tagged counters, with
+/// counter IDs as in the map.
+///
+/// LLVM gives an expression its kind in the references to it, so an expression that the record
+/// refers to as both a sum and a difference becomes two expressions.
+struct ExpressionBuilder<'a> {
+    function: &'a FunctionCoverage,
+    expressions: Vec<Expression>,
+    /// The expression of an input expression and kind, by `(index, subtract)`.
+    built: FxHashMap<(u32, bool), u32>,
+}
+
+impl ExpressionBuilder<'_> {
+    fn counter(&mut self, tagged: u32) -> Counter {
+        match TaggedCounter::decode(tagged) {
+            TaggedCounter::Zero => Counter::Zero,
+            TaggedCounter::Counter(id) => Counter::Counter(id),
+            TaggedCounter::Subtract(id) => self.expression(id, true),
+            TaggedCounter::Add(id) => self.expression(id, false),
+        }
+    }
+
+    fn expression(&mut self, id: u32, subtract: bool) -> Counter {
+        if let Some(&index) = self.built.get(&(id, subtract)) {
+            return Counter::Expression(index);
+        }
+        let Some(&[lhs, rhs]) = self.function.expressions.get(id as usize) else {
+            return Counter::Zero;
+        };
+        let (lhs, rhs) = (self.counter(lhs), self.counter(rhs));
+        let index = self.expressions.len() as u32;
+        self.expressions.push(Expression { subtract, lhs, rhs });
+        self.built.insert((id, subtract), index);
+        Counter::Expression(index)
+    }
+}
+
+/// Whether the function belongs to a test contract: one with a test function.
+fn is_test_contract(function: &FunctionCoverage, test_contracts: &[&str]) -> bool {
+    parse_name(&function.name).0.is_some_and(|contract| test_contracts.contains(&contract))
+}
+
+/// The modifier's record with an expansion of its header into the code, gap, and skipped regions
+/// that the expansions of the donors take from the expanded file at the given index of their file
+/// tables. The regions count what the donors' counters count, so the lines of the modifier's
+/// source count the hits of every expansion.
+///
+/// The regions keep their places, so `llvm-cov` adds their counts to those of the same regions in
+/// the expansions of other records, as it would if the report left no record out. They are in a
+/// file of their own, as in the donors, so the record's own lines stay those of its header.
+fn with_expansions(
+    modifier: &FunctionCoverage,
+    donors: &[(&FunctionCoverage, u32)],
+) -> FunctionCoverage {
+    let mut record = modifier.clone();
+    let Some((start, len)) = modifier
+        .regions
+        .iter()
+        .filter(|region| region.file() == 0)
+        .min_by_key(|region| region.start())
+        .map(|region| (region.start(), region.len()))
+    else {
+        return record;
+    };
+    let expanded_file = record.files.len() as u32;
+    record.files.push(modifier.files[0]);
+    record.regions.push(Region::Expansion { file: 0, start, len, count: 0, expanded_file });
+    for &(donor, file) in donors {
+        let offset = record.expressions.len() as u32;
+        let shift = |tagged: u32| match TaggedCounter::decode(tagged) {
+            TaggedCounter::Subtract(id) => TaggedCounter::Subtract(id + offset).encode(),
+            TaggedCounter::Add(id) => TaggedCounter::Add(id + offset).encode(),
+            _ => tagged,
+        };
+        record
+            .expressions
+            .extend(donor.expressions.iter().map(|[lhs, rhs]| [shift(*lhs), shift(*rhs)]));
+        for region in donor.regions.iter().filter(|region| region.file() == file) {
+            let (file, start, len) = (expanded_file, region.start(), region.len());
+            record.regions.push(match *region {
+                Region::Code { count, .. } => {
+                    Region::Code { file, start, len, count: shift(count) }
+                }
+                Region::Gap { count, .. } => Region::Gap { file, start, len, count: shift(count) },
+                Region::Skipped { .. } => Region::Skipped { file, start, len },
+                _ => continue,
+            });
+        }
+    }
+    record
+}
+
+/// Splits a PGO name `path:Contract.function(args)` into the contract and the function name.
+fn parse_name(name: &str) -> (Option<&str>, &str) {
+    let rest = name.split_once(':').map_or(name, |(_, rest)| rest);
+    let head = &rest[..rest.find('(').unwrap_or(rest.len())];
+    match head.rsplit_once('.') {
+        Some((contract, function)) => (Some(contract), function),
+        None => (None, head),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{CoverageReport, llvm, llvm::tests::build};
+    use serde_json::json;
+
+    fn item_summary(report: &CoverageReport) -> Vec<String> {
+        let (_, items) = report.items_by_file().next().unwrap();
+        items
+            .iter()
+            .map(|item| {
+                let kind = match &item.kind {
+                    CoverageItemKind::Line => "line".to_string(),
+                    CoverageItemKind::Statement => "statement".to_string(),
+                    CoverageItemKind::Function { name } => format!("function {name}"),
+                    CoverageItemKind::Branch { branch_id, path_id, .. } => {
+                        format!("branch {branch_id}.{path_id}")
+                    }
+                };
+                format!("{kind} {:?} {}", item.loc.lines, item.hits)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn items_follow_the_coverage_map_and_llvm_line_rules() {
+        let mut report = CoverageReport::default();
+        report.add_source("b".into(), 0, "src/C.sol".into());
+        report.add_instrumented_build("b".into(), build());
+        report.finalize_instrumented();
+        let summary = item_summary(&report);
+        // The functions and statements of the file's own regions, and both sides of the two
+        // conditions of the decision. The modifier's counts are the sum of its expansions'.
+        for expected in [
+            "function f 3..11 3",
+            "function m 11..12 3",
+            "function g 12..13 2",
+            "function g2 13..14 1",
+            "function k 14..15 1",
+            "function h 15..16 0",
+            "branch 0.0 4..5 2",
+            "branch 0.1 4..5 1",
+            "branch 1.0 4..5 1",
+            "branch 1.1 4..5 1",
+        ] {
+            assert!(summary.iter().any(|item| item == expected), "{expected} in {summary:#?}");
+        }
+        // `llvm-cov` maps lines 3 to 15. The modifier's line counts its own record and the
+        // expansions that repeat it.
+        let lines = summary.iter().filter(|item| item.starts_with("line")).collect::<Vec<_>>();
+        let expected = [3, 3, 1, 2, 2, 2, 3, 3, 6, 2, 1, 1, 0];
+        assert_eq!(lines.len(), expected.len());
+        for (index, hits) in expected.iter().enumerate() {
+            let line = index + 3;
+            assert_eq!(*lines[index], format!("line {line}..{} {hits}", line + 1));
+        }
+    }
+
+    #[test]
+    fn builds_of_one_source_add_their_hits_and_share_its_lines() {
+        let mut other = build();
+        // The second build ran `f` twice more and `h` once.
+        other.add_hits([(1, 2), (16, 1)].into_iter(), std::iter::empty(), &[]);
+        let mut report = CoverageReport::default();
+        for (id, build) in [("a", build()), ("b", other)] {
+            report.add_source(id.into(), 0, "src/C.sol".into());
+            report.add_instrumented_build(id.into(), build);
+        }
+        report.finalize_instrumented();
+        let summary = item_summary(&report);
+        for expected in ["function f 3..11 8", "function h 15..16 1", "function g 12..13 4"] {
+            assert!(summary.iter().any(|item| item == expected), "{expected} in {summary:#?}");
+        }
+        // One item per line, with the hits of both builds, as `llvm-cov` counts them.
+        let lines = summary.iter().filter(|item| item.starts_with("line")).collect::<Vec<_>>();
+        assert_eq!(lines.len(), 13);
+        assert_eq!(*lines[0], "line 3..4 8");
+        assert_eq!(*lines[12], "line 15..16 1");
+    }
+
+    #[test]
+    fn records_of_one_function_merge_whatever_the_order_of_the_builds() {
+        let source = InstrumentedSource::new(
+            "src/C.sol".into(),
+            crate::llvm::tests::SOURCE.into(),
+            true,
+            crate::llvm::tests::coverage(),
+        );
+        let mut idle = InstrumentedBuild::new(BTreeMap::from([(0, source)]));
+        idle.add_hits([(1, 4)].into_iter(), [(0, 2)].into_iter(), &[]);
+        let merged = |first: &str, second: &str| {
+            let mut report = CoverageReport::default();
+            report.add_instrumented_build(first.into(), idle.clone());
+            report.add_instrumented_build(second.into(), build());
+            report
+                .llvm_inputs()
+                .into_iter()
+                .find(|input| input.name.ends_with("C.f(uint256,uint256)"))
+                .map(|input| (input.counts, input.bitmap))
+                .unwrap()
+        };
+        let (counts, bitmap) = merged("a", "b");
+        assert_eq!(counts, [7, 2, 1]);
+        assert_eq!(merged("b", "a"), (counts, bitmap.clone()));
+        // The vectors of both builds join: the idle build ran the third, the other all three.
+        assert_eq!(bitmap, build().function_inputs()[0].bitmap);
+    }
+
+    /// A function of `decisions` decisions that each chain `conditions` conditions with `&&`, and
+    /// the source it maps.
+    fn chained_decisions(decisions: usize, conditions: usize, listed: usize) -> InstrumentedBuild {
+        let text = "c".repeat(conditions).repeat(decisions);
+        let mut regions = vec![json!([0, 0, 0, text.len(), 5])];
+        let mut listed_decisions = Vec::new();
+        for decision in 0..decisions {
+            let start = decision * conditions;
+            regions.push(json!([5, 0, start, conditions, decision]));
+            for condition in 0..conditions {
+                let next = if condition + 1 == conditions { -1 } else { condition as i64 + 1 };
+                regions.push(json!([6, 0, start + condition, 1, 5, 5, condition, -1, next]));
+            }
+            if decision < listed {
+                listed_decisions.push(json!({
+                    "id": decision, "conditions": conditions, "vectors": [],
+                }));
+            }
+        }
+        let map = serde_json::from_value(json!({
+            "version": 2,
+            "functions": [{
+                "name": "src/D.sol:D.f()", "hash": "0x1", "counters": [1, 1], "files": [0],
+                "regions": regions, "decisions": listed_decisions,
+            }]
+        }))
+        .unwrap();
+        let source = InstrumentedSource::new("src/D.sol".into(), text, true, map);
+        InstrumentedBuild::new(BTreeMap::from([(0, source)]))
+    }
+
+    fn mcdc_regions(build: &InstrumentedBuild) -> (usize, usize, usize) {
+        let inputs = build.function_inputs();
+        assert_eq!(inputs.len(), 1);
+        let count = |kind| inputs[0].regions.iter().filter(|region| region.kind == kind).count();
+        (count(RegionKind::McdcDecision), count(RegionKind::McdcBranch), count(RegionKind::Branch))
+    }
+
+    #[test]
+    fn a_function_whose_bitmap_does_not_fit_loses_its_mcdc_regions_only() {
+        // Three decisions of 64 conditions need 3 * 65 bits, which fit.
+        let fits = chained_decisions(3, 64, 3);
+        assert_eq!(mcdc_regions(&fits), (3, 192, 0));
+        assert_eq!(fits.function_inputs()[0].bitmap.len(), 25);
+        // Thirty-two of them need 260 bytes, which a text profile cannot hold.
+        let too_big = chained_decisions(32, 64, 32);
+        assert_eq!(mcdc_regions(&too_big), (0, 0, 32 * 64));
+        assert!(too_big.function_inputs()[0].bitmap.is_empty());
+    }
+
+    #[test]
+    fn a_decision_missing_from_the_map_loses_its_mcdc_regions_only() {
+        assert_eq!(mcdc_regions(&chained_decisions(2, 3, 2)), (2, 6, 0));
+        assert_eq!(mcdc_regions(&chained_decisions(2, 3, 1)), (0, 0, 6));
+    }
+
+    /// The build of `build()`'s source whose modifier `m` has no expansions: its record has the
+    /// zero-count regions of its body, and so another hash.
+    fn build_without_expansions() -> InstrumentedBuild {
+        let mut map = serde_json::to_value(crate::llvm::tests::coverage()).unwrap();
+        let record = map["functions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|function| function["name"] == "src/C.sol:C.m()")
+            .unwrap();
+        let body = record["regions"][0].clone();
+        record["regions"] = json!([[0, 0, body[2], body[3], 0]]);
+        record["hash"] = json!("0x9999999999999999");
+        record.as_object_mut().unwrap().remove("expressions");
+        let source = InstrumentedSource::new(
+            "src/C.sol".into(),
+            crate::llvm::tests::SOURCE.into(),
+            true,
+            serde_json::from_value(map).unwrap(),
+        );
+        InstrumentedBuild::new(BTreeMap::from([(0, source)]))
+    }
+
+    #[test]
+    fn modifier_records_of_different_builds_keep_the_hits_of_their_expansions() {
+        let modifier_count = |first: &str, second: &str, other: InstrumentedBuild| {
+            let mut report = CoverageReport::default();
+            report.add_instrumented_build(first.into(), build());
+            report.add_instrumented_build(second.into(), other);
+            // The merged records are what the tools read, too.
+            llvm::tests::assert_inputs_agree(llvm::tests::SOURCE, report.llvm_inputs());
+            let mapping = llvm::CoverageMapping::new(report.llvm_inputs());
+            let modifier = mapping.functions().iter().find(|f| f.name == "C.m()").unwrap();
+            modifier.execution_count
+        };
+        // One build expands the modifier, the other has no expansions: whichever comes first, the
+        // sum of the expansions counts.
+        assert_eq!(modifier_count("a", "b", build_without_expansions()), 3);
+        assert_eq!(modifier_count("b", "a", build_without_expansions()), 3);
+        // Two builds that expand it add up.
+        assert_eq!(modifier_count("a", "b", build()), 6);
+    }
+
+    const MODIFIER_SOURCE: &str = "contract B {
+    uint x;
+    modifier a() {
+        if (x != 1) {
+            x += 1;
+        }
+        _;
+    }
+}
+";
+    const TEST_SOURCE: &str = "contract T is B { function test_a() public a {} }\n";
+
+    /// A build where a modifier of a reportable source is applied only by a test function of
+    /// another source.
+    fn modifier_build(test_hits: u32, caller_hits: u32) -> InstrumentedBuild {
+        let at = |text: &str, needle: &str| {
+            let start = text.find(needle).unwrap();
+            (start, needle.len())
+        };
+        let (header, whole) = (
+            at(MODIFIER_SOURCE, "modifier a()"),
+            at(
+                MODIFIER_SOURCE,
+                "modifier a() {\n        if (x != 1) {\n            x += 1;\n        }\n        _;\n    }",
+            ),
+        );
+        let (inner, rest) = (at(MODIFIER_SOURCE, "x += 1;"), at(MODIFIER_SOURCE, "_;"));
+        let (test_body, call) = (at(TEST_SOURCE, "{}"), at(TEST_SOURCE, "a {"));
+        let counter = |id: u32| id << 2 | 1;
+        let source = |text: &str, path: &str, reportable, functions: serde_json::Value| {
+            InstrumentedSource::new(
+                path.into(),
+                text.to_string(),
+                reportable,
+                serde_json::from_value(json!({"version": 2, "functions": functions})).unwrap(),
+            )
+        };
+        // The modifier counts the entries of its expansions, which are in the test's record.
+        let modifier = source(
+            MODIFIER_SOURCE,
+            "src/B.sol",
+            true,
+            json!([{
+                "name": "src/B.sol:B.a()", "hash": "0x11", "counters": [10, 0], "files": [0],
+                "regions": [[0, 0, header.0, header.1, counter(21)]],
+            }]),
+        );
+        let test = source(
+            TEST_SOURCE,
+            "test/T.t.sol",
+            false,
+            json!([{
+                "name": "test/T.t.sol:T.test_a()", "hash": "0x22", "counters": [20, 1],
+                "files": [1, 0],
+                "regions": [
+                    [0, 0, test_body.0, test_body.1, counter(20)],
+                    [1, 0, call.0, 1, counter(21), 1],
+                    [0, 1, whole.0, whole.1, counter(21)],
+                    [0, 1, inner.0, inner.1, counter(22)],
+                    [0, 1, rest.0, rest.1, counter(21)],
+                ],
+            }]),
+        );
+        let mut build = InstrumentedBuild::new(BTreeMap::from([(0, modifier), (1, test)]));
+        build.add_hits(
+            [(20, test_hits), (21, test_hits), (22, caller_hits)].into_iter(),
+            std::iter::empty(),
+            &[],
+        );
+        build
+    }
+
+    #[test]
+    fn a_modifier_counts_the_expansions_in_records_the_report_leaves_out() {
+        let mut report = CoverageReport::default();
+        report.add_source("b".into(), 0, "src/B.sol".into());
+        report.add_instrumented_build("b".into(), modifier_build(2, 1));
+        report.finalize_instrumented();
+
+        // The test function's record is left out, and the modifier's lines count its expansion:
+        // the header and the body. As in `llvm-cov`, a function's own lines are those of its own
+        // file, so `LF` counts the header only.
+        assert_eq!(
+            report.llvm_lcov(),
+            "SF:src/B.sol
+FN:3,B.a()
+FNDA:2,B.a()
+FNF:1
+FNH:1
+DA:3,2
+DA:4,2
+DA:5,2
+DA:6,2
+DA:7,2
+DA:8,2
+BRF:0
+BRH:0
+LF:1
+LH:1
+end_of_record
+"
+        );
+        llvm::tests::assert_inputs_agree_in("src/B.sol", MODIFIER_SOURCE, report.llvm_inputs());
+    }
+
+    /// The LCOV record of `path`.
+    fn lcov_record<'a>(lcov: &'a str, path: &str) -> &'a str {
+        let start = lcov.find(&format!("SF:{path}\n")).unwrap();
+        let end = start + lcov[start..].find("end_of_record\n").unwrap();
+        &lcov[start..end + "end_of_record\n".len()]
+    }
+
+    /// Solar's records of a modifier with a `require`, applied by `user` in the modifier's source
+    /// and by `copy` in another source, which may have more records. The modifier's record has
+    /// its header and the `require` branch, with the sums of the expansions' counts, and each
+    /// function's record expands the modifier's body. Only `user` ran.
+    fn copied_modifier_build(
+        (path, text): (&str, &str),
+        (copy_path, copy_text, copy_reportable): (&str, &str, bool),
+        (modifier, header, condition): (&str, &str, &str),
+        user: (&str, &str),
+        copy: (&str, &str),
+        more: &[(&str, &str)],
+    ) -> InstrumentedBuild {
+        let counter = |id: u32| id << 2 | 1;
+        let sub = |id: u32| id << 2 | 2;
+        let add = |id: u32| id << 2 | 3;
+        let at = |text: &str, needle: &str| (text.find(needle).unwrap(), needle.len());
+        let header_start = text.find(header).unwrap();
+        let whole_end = header_start + text[header_start..].find("_;\n    }").unwrap() + 8;
+        let rest = header_start + text[header_start..].find("_;").unwrap();
+        let gap = text[..rest].rfind(");").unwrap() + 1;
+        let name = &header["modifier ".len()..header.find('(').unwrap()];
+        // The regions of a function at `base` counters: the entry, the expansion, the `require`
+        // passing, and the body's statement.
+        let function = |(record, function_text): (&str, &str), source: &str, files, base: u32| {
+            let (start, len) = at(source, function_text);
+            let call = start + function_text.find(&format!(" {name} ")).unwrap() + 1;
+            let mut regions = vec![
+                json!([0, 0, start, len, counter(base)]),
+                json!([1, 0, call, name.len(), counter(base + 1), 1]),
+            ];
+            if !function_text.ends_with("{}") {
+                let statement = function_text.split("{\n        ").nth(1).unwrap();
+                let statement = &statement[..statement.find('\n').unwrap()];
+                let (statement_start, statement_len) = at(source, statement);
+                regions.push(json!([0, 0, statement_start, statement_len, counter(base + 3)]));
+                regions.push(json!([2, 0, start + len - 1, 1]));
+            }
+            regions.extend([
+                json!([0, 1, header_start, whole_end - header_start, counter(base + 1)]),
+                json!([3, 1, gap, rest - gap, counter(base + 2)]),
+                json!([0, 1, rest, 2, counter(base + 2)]),
+                json!([2, 1, whole_end - 1, 1]),
+            ]);
+            json!({
+                "name": record, "hash": format!("0x{base:x}1"), "counters": [base, 4],
+                "files": files, "regions": regions,
+            })
+        };
+        let (condition_start, condition_len) = at(text, condition);
+        let modifier = json!({
+            "name": modifier, "hash": "0x99", "counters": [30, 0], "files": [0],
+            // The entries, the passes, and the failures of both expansions.
+            "expressions": [
+                [counter(1), counter(11)],
+                [counter(2), counter(12)],
+                [sub(3), sub(4)],
+                [counter(1), counter(2)],
+                [counter(11), counter(12)],
+            ],
+            "regions": [
+                [0, 0, header_start, header.len(), add(0)],
+                [4, 0, condition_start, condition_len, add(1), add(2)],
+            ],
+        });
+        let mut copy_records = vec![function(copy, copy_text, json!([1, 0]), 10)];
+        for (index, &(name, needle)) in more.iter().enumerate() {
+            let (start, len) = at(copy_text, needle);
+            let id = 20 + index as u32;
+            copy_records.push(json!({
+                "name": name, "hash": format!("0x{id:x}1"), "counters": [id, 1], "files": [1],
+                "regions": [[0, 0, start, len, counter(id)]],
+            }));
+        }
+        let source = |path: &str, text: &str, reportable, functions: Vec<serde_json::Value>| {
+            InstrumentedSource::new(
+                path.into(),
+                text.to_string(),
+                reportable,
+                serde_json::from_value(json!({"version": 2, "functions": functions})).unwrap(),
+            )
+        };
+        let mut build = InstrumentedBuild::new(BTreeMap::from([
+            (0, source(path, text, true, vec![modifier, function(user, text, json!([0, 0]), 0)])),
+            (1, source(copy_path, copy_text, copy_reportable, copy_records)),
+        ]));
+        build.add_hits([(0, 1), (1, 1), (2, 1), (3, 1)].into_iter(), std::iter::empty(), &[]);
+        build
+    }
+
+    const AUTH_SOURCE: &str = "contract Auth {
+    mapping(address => uint256) public wards;
+    modifier auth() {
+        require(wards[msg.sender] == 1, \"Auth/not-authorized\");
+        _;
+    }
+    function rely(address u) external auth {
+        wards[u] = 1;
+    }
+}
+";
+    const OTHER_SOURCE: &str = "contract Other is Auth {
+    uint256 x;
+    function file(uint256 v) external auth {
+        x = v;
+    }
+    function test() public {}
+}
+";
+
+    /// A contract in a test source applies the modifier `auth` and never runs it. With
+    /// `left_out`, its `test` function makes it a test contract, which the report leaves out.
+    fn auth_build(left_out: bool) -> InstrumentedBuild {
+        let test = [("test/sub/Other.sol:Other.test()", "function test() public {}")];
+        copied_modifier_build(
+            ("src/Auth.sol", AUTH_SOURCE),
+            ("test/sub/Other.sol", OTHER_SOURCE, true),
+            ("src/Auth.sol:Auth.auth()", "modifier auth()", "wards[msg.sender] == 1"),
+            (
+                "src/Auth.sol:Auth.rely(address)",
+                "function rely(address u) external auth {\n        wards[u] = 1;\n    }",
+            ),
+            (
+                "test/sub/Other.sol:Other.file(uint256)",
+                "function file(uint256 v) external auth {\n        x = v;\n    }",
+            ),
+            if left_out { &test } else { &[] },
+        )
+    }
+
+    #[test]
+    fn a_modifier_copy_in_a_test_contract_that_never_ran_keeps_the_modifier_lines() {
+        let report_for = |left_out| {
+            let mut report = CoverageReport::default();
+            report.add_source("b".into(), 0, "src/Auth.sol".into());
+            report.add_instrumented_build("b".into(), auth_build(left_out));
+            report.finalize_instrumented();
+            report
+        };
+        let report = report_for(true);
+        // The `require` on line 4 counts the run of `rely`, which the copy that never ran does
+        // not hide.
+        assert_eq!(
+            report.llvm_lcov(),
+            "SF:src/Auth.sol
+FN:3,Auth.auth()
+FN:7,Auth.rely(address)
+FNDA:1,Auth.auth()
+FNDA:1,Auth.rely(address)
+FNF:2
+FNH:2
+DA:3,1
+DA:4,1
+DA:5,1
+DA:7,1
+DA:8,1
+BRDA:4,0,0,1
+BRDA:4,0,1,0
+BRF:2
+BRH:1
+LF:3
+LH:3
+end_of_record
+"
+        );
+        // The source's record is the one of the report that leaves no record out.
+        let all = report_for(false).llvm_lcov();
+        assert_eq!(report.llvm_lcov(), lcov_record(&all, "src/Auth.sol"));
+        llvm::tests::assert_inputs_agree_in("src/Auth.sol", AUTH_SOURCE, report.llvm_inputs());
+    }
+
+    #[test]
+    fn modifier_records_merge_whether_or_not_a_build_left_a_copy_out() {
+        let record = |first, second| {
+            let mut report = CoverageReport::default();
+            report.add_instrumented_build("a".into(), auth_build(first));
+            report.add_instrumented_build("b".into(), auth_build(second));
+            let lcov = llvm::export_lcov(&llvm::CoverageMapping::new(report.llvm_inputs()));
+            lcov_record(&lcov, "src/Auth.sol").to_string()
+        };
+        // Both builds ran `rely` once.
+        let merged = record(true, false);
+        assert!(merged.contains("FNDA:2,Auth.auth()\n"), "{merged}");
+        assert!(merged.contains("DA:4,2\nDA:5,2\n"), "{merged}");
+        assert_eq!(record(false, true), merged);
+    }
+
+    const A_SOURCE: &str = "abstract contract Base {
+    modifier m() {
+        require(msg.sender != address(0));
+        _;
+    }
+}
+contract A is Base {
+    function f() external m {}
+}
+";
+    const B_SOURCE: &str = "contract B is Base {
+    function f() external m {}
+}
+";
+
+    #[test]
+    fn a_modifier_copy_in_an_excluded_source_that_never_ran_keeps_the_modifier_lines() {
+        let report_for = |exclude: bool| {
+            let mut report = CoverageReport::default();
+            report.add_source("b".into(), 0, "src/A.sol".into());
+            report.add_source("b".into(), 1, "src/mocks/B.sol".into());
+            report.add_instrumented_build(
+                "b".into(),
+                copied_modifier_build(
+                    ("src/A.sol", A_SOURCE),
+                    ("src/mocks/B.sol", B_SOURCE, true),
+                    ("src/A.sol:Base.m()", "modifier m()", "msg.sender != address(0)"),
+                    ("src/A.sol:A.f()", "function f() external m {}"),
+                    ("src/mocks/B.sol:B.f()", "function f() external m {}"),
+                    &[],
+                ),
+            );
+            // As `--no-match-coverage mocks` does.
+            report.retain_sources(|path| !exclude || !path.starts_with("src/mocks"));
+            report.finalize_instrumented();
+            report
+        };
+        let report = report_for(true);
+        // The `require` on line 3 counts the run of `A.f`, and the excluded source is left out.
+        assert_eq!(
+            report.llvm_lcov(),
+            "SF:src/A.sol
+FN:8,A.f()
+FN:2,Base.m()
+FNDA:1,A.f()
+FNDA:1,Base.m()
+FNF:2
+FNH:2
+DA:2,1
+DA:3,1
+DA:4,1
+DA:8,1
+BRDA:3,0,0,1
+BRDA:3,0,1,0
+BRF:2
+BRH:1
+LF:2
+LH:2
+end_of_record
+"
+        );
+        let all = report_for(false).llvm_lcov();
+        assert_eq!(report.llvm_lcov(), lcov_record(&all, "src/A.sol"));
+        llvm::tests::assert_inputs_agree_in("src/A.sol", A_SOURCE, report.llvm_inputs());
+    }
+
+    #[test]
+    fn dropped_counters_take_the_hits_of_their_replacement() {
+        let mut build = build();
+        // Counter 20 stands in for the dropped counter 21 in one code object only.
+        build.add_hits([(20, 4)].into_iter(), std::iter::empty(), &[[21, 20]]);
+        build.add_hits([(21, 1)].into_iter(), std::iter::empty(), &[]);
+        assert_eq!((build.hits(20), build.hits(21)), (4, 5));
+        // A dropped counter whose replacement did not run gets none, even if it counted.
+        build.add_hits([(22, 9)].into_iter(), std::iter::empty(), &[[22, 23]]);
+        assert_eq!(build.hits(22), 0);
+    }
+
+    #[test]
+    fn an_expression_used_as_a_sum_and_a_difference_becomes_two() {
+        let source = InstrumentedSource::new(
+            "src/A.sol".into(),
+            "contract A { function f() public { a(); b(); } }".into(),
+            true,
+            serde_json::from_value(json!({
+                "version": 2,
+                "functions": [{
+                    "name": "src/A.sol:A.f()",
+                    "hash": "0x1",
+                    // Expression 0 is counter 1 + counter 2. The regions refer to it as a sum and as
+                    // a difference.
+                    "counters": [1, 2],
+                    "files": [0],
+                    "expressions": [[5, 9]],
+                    "regions": [
+                        [0, 0, 13, 33, 3],
+                        [0, 0, 36, 4, 2],
+                        [0, 0, 41, 4, 3],
+                    ],
+                }]
+            }))
+            .unwrap(),
+        );
+        let input = InstrumentedBuild::new(BTreeMap::from([(0, source)])).function_inputs();
+        let expressions = &input[0].expressions;
+        assert_eq!(expressions.len(), 2);
+        assert!(expressions[0].subtract != expressions[1].subtract);
+        assert_eq!(
+            (expressions[0].lhs, expressions[0].rhs),
+            (expressions[1].lhs, expressions[1].rhs)
+        );
+        assert_eq!(expressions[0].lhs, Counter::Counter(0));
+        assert_eq!(expressions[0].rhs, Counter::Counter(1));
+    }
+
+    #[test]
+    fn a_modifier_in_an_excluded_source_is_dropped_from_its_users() {
+        let text = "contract A { modifier m() { x; _; } function f() m { y; } }";
+        let span = |needle: &str| (text.find(needle).unwrap(), needle.len());
+        let region = |kind: u32, file: u32, needle: &str, rest: &[u32]| {
+            let (start, len) = span(needle);
+            let mut region = vec![kind, file, start as u32, len as u32];
+            region.extend(rest);
+            json!(region)
+        };
+        let map = |files: serde_json::Value, regions: Vec<serde_json::Value>| {
+            serde_json::from_value::<SourceCoverage>(json!({
+                "version": 2,
+                "functions": [{
+                    "name": "src/A.sol:A.f()", "hash": "0x1", "counters": [1, 2],
+                    "files": files, "regions": regions,
+                }]
+            }))
+            .unwrap()
+        };
+        let users = map(
+            json!([0, 1]),
+            vec![
+                region(0, 0, "function f() m { y; }", &[5]),
+                region(1, 0, "m {", &[0, 1]),
+                region(0, 1, "modifier m() { x; _; }", &[9]),
+                region(0, 0, "y;", &[9]),
+            ],
+        );
+        let sources = |reportable| {
+            BTreeMap::from([
+                (0, InstrumentedSource::new("src/A.sol".into(), text.into(), true, users.clone())),
+                (
+                    1,
+                    InstrumentedSource::new(
+                        "lib/M.sol".into(),
+                        text.into(),
+                        reportable,
+                        SourceCoverage::default(),
+                    ),
+                ),
+            ])
+        };
+        let inputs = InstrumentedBuild::new(sources(true)).function_inputs();
+        assert_eq!(inputs[0].filenames, ["src/A.sol", "lib/M.sol"]);
+        assert_eq!(inputs[0].regions.len(), 4);
+        // The library is not in the report, so the modifier's regions are gone and the user's
+        // function keeps its own.
+        let inputs = InstrumentedBuild::new(sources(false)).function_inputs();
+        assert_eq!(inputs[0].filenames, ["src/A.sol"]);
+        assert_eq!(
+            inputs[0].regions.iter().map(|region| region.kind).collect::<Vec<_>>(),
+            [RegionKind::Code, RegionKind::Code]
+        );
+    }
+
+    #[test]
+    fn mcdc_vectors_land_on_llvms_indices_whatever_order_the_map_numbers_them() {
+        let text = "contract A { function f() public { if (x && y) { c(); } } }";
+        let region = |kind: u32, needle: &str, rest: &[i64]| {
+            let start = text.find(needle).unwrap();
+            let mut region = vec![i64::from(kind), 0, start as i64, needle.len() as i64];
+            region.extend(rest);
+            json!(region)
+        };
+        let source = |vectors: serde_json::Value| {
+            InstrumentedSource::new(
+                "src/A.sol".into(),
+                text.into(),
+                true,
+                serde_json::from_value(json!({
+                    "version": 2,
+                    "functions": [{
+                        "name": "src/A.sol:A.f()", "hash": "0x1", "counters": [1, 1], "files": [0],
+                        "regions": [
+                            region(0, "function f() public { if (x && y) { c(); } }", &[5]),
+                            region(5, "x && y", &[0]),
+                            region(6, "x", &[5, 0, 0, -1, 1]),
+                            region(6, "y", &[5, 0, 1, -1, -1]),
+                        ],
+                        "decisions": [{"id": 3, "conditions": 2, "vectors": vectors}],
+                    }]
+                }))
+                .unwrap(),
+            )
+        };
+        let bitmap = |vectors: serde_json::Value, executed: [(u32, u32); 2]| {
+            let mut build = InstrumentedBuild::new(BTreeMap::from([(0, source(vectors))]));
+            build.add_hits(std::iter::empty(), executed.into_iter(), &[]);
+            build.function_inputs().remove(0).bitmap
+        };
+        // In LLVM's order, `F-F`, `TFF`, and `TTT` are 0, 1, and 2.
+        assert_eq!(bitmap(json!(["F-F", "TFF", "TTT"]), [(3, 1), (3, 2)]), [0b110]);
+        // The map numbers them the other way round: indices 0 and 1 are `TTT` and `TFF`.
+        assert_eq!(bitmap(json!(["TTT", "TFF", "F-F"]), [(3, 0), (3, 1)]), [0b110]);
+        // A map that does not describe the condition graph keeps its own indices.
+        assert_eq!(bitmap(json!(["TTT"]), [(3, 0), (3, 1)]), [0b011]);
+    }
+}

@@ -1648,9 +1648,13 @@ impl Config {
     ) -> Result<Vec<String>, SolcError> {
         let mut warnings = Vec::new();
 
-        if let Some(coverage_cache) = self.coverage_cache_path()
-            && coverage_cache.exists()
+        for coverage_cache in [self.coverage_cache_path(), self.instrumented_coverage_cache_path()]
+            .into_iter()
+            .flatten()
         {
+            if !coverage_cache.exists() {
+                continue;
+            }
             let result = Self::lock_coverage_cache(&coverage_cache)
                 .and_then(|_lock| fs::remove_dir_all(&coverage_cache));
             if let Err(err) = result
@@ -1718,6 +1722,18 @@ impl Config {
 
     /// Returns the coverage cache directory when it does not overlap project data.
     pub fn coverage_cache_path(&self) -> Option<PathBuf> {
+        self.coverage_cache_path_leaf("coverage")
+    }
+
+    /// Returns the instrumented coverage cache directory when it does not overlap project data.
+    pub fn instrumented_coverage_cache_path(&self) -> Option<PathBuf> {
+        self.coverage_cache_path_leaf("coverage-instrumented")
+    }
+
+    /// Returns the coverage cache directory named `leaf` under the cache path, when it does not
+    /// overlap project data. Source-map and instrumented coverage build different bytecode, so
+    /// each uses its own leaf and does not invalidate the other.
+    pub fn coverage_cache_path_leaf(&self, leaf: &str) -> Option<PathBuf> {
         // Resolve existing ancestors so symlinks and parent components cannot make cleanup
         // target a protected directory. Unresolvable paths disable this optional cache.
         let resolve = |path: PathBuf| {
@@ -1732,7 +1748,7 @@ impl Config {
             Some(path)
         };
         let root = resolve(self.root.clone())?;
-        let cache = resolve(self.root.join(&self.cache_path).join("coverage"))?;
+        let cache = resolve(self.root.join(&self.cache_path).join(leaf))?;
         if root.starts_with(&cache) {
             return None;
         }
@@ -2298,6 +2314,8 @@ impl Config {
             experimental: Some(self.experimental),
             // Not used.
             stop_after: None,
+            // Set by `forge coverage --instrumented`.
+            solar: None,
             // Set in project paths.
             remappings: Vec::new(),
             // Set with `with_extra_output` below.

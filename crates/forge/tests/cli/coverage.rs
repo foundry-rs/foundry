@@ -5090,8 +5090,13 @@ No files changed, compilation skipped
 No files changed, compilation skipped
 ...
 "#]]);
+    // `--instrumented` caches under its own leaf, which `clean` removes too.
+    let instrumented = prj.root().join("custom-cache/coverage-instrumented");
+    fs::create_dir_all(&instrumented).unwrap();
+    fs::write(instrumented.join(Config::COVERAGE_CACHE_MARKER), "").unwrap();
     cmd.forge_fuse().arg("clean").assert_success();
     assert!(!cache.exists());
+    assert!(!instrumented.exists());
     prj.update_config(|config| config.cache = false);
     cmd.forge_fuse().arg("coverage").assert_success();
     assert!(!cache.exists());
@@ -5625,4 +5630,35 @@ end_of_record
 "#]],
         );
     }
+}
+
+// `--instrumented` needs Solar, which instruments the code it generates.
+#[forgetest]
+fn instrumented_requires_solar(prj: _, cmd: _) {
+    prj.add_source("Counter.sol", "contract Counter {}");
+    cmd.args(["coverage", "--instrumented"]).assert_failure().stderr_eq(str![[r#"
+Error: `--instrumented` requires Solar as the compiler; set `solc = "/path/to/solar"` in `foundry.toml` or pass `--use`
+
+"#]]);
+}
+
+// `--mcdc` instruments decisions, so it needs `--instrumented`.
+#[forgetest]
+fn mcdc_requires_instrumented(prj: _, cmd: _) {
+    prj.add_source("Counter.sol", "contract Counter {}");
+    cmd.args(["coverage", "--mcdc"]).assert_failure().stderr_eq(str![[r#"
+error: the following required arguments were not provided:
+  --instrumented
+...
+"#]]);
+}
+
+// The LLVM report writes the coverage of compiler counters, so it needs `--instrumented`.
+#[forgetest]
+fn llvm_report_requires_instrumented(prj: _, cmd: _) {
+    prj.add_source("Counter.sol", "contract Counter {}");
+    cmd.args(["coverage", "--report", "llvm"]).assert_failure().stderr_eq(str![[r#"
+Error: `--report llvm` requires `--instrumented`
+
+"#]]);
 }

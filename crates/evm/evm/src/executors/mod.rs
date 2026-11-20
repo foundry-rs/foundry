@@ -42,7 +42,7 @@ use foundry_evm_core::{
         TransactionRequestFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
     },
 };
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMap, HitMaps};
 use foundry_evm_fuzz::ObservedCall;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
@@ -1251,6 +1251,7 @@ fn execute<FEN: FoundryEvmNetwork>(
     let edgecov_opcode = stack.inner.edgecov_opcode;
     let instrumented_edges = stack.inner.instrumented_edges;
     let instrumented_cmp_log = stack.inner.instrumented_cmp_log;
+    let coverage_counters = stack.inner.coverage_counters;
     let mut evm = backend.backend().create_evm();
     install_env::<FEN>(backend.backend(), &mut evm, env);
     match ext {
@@ -1260,8 +1261,9 @@ fn execute<FEN: FoundryEvmNetwork>(
     let executed = {
         let _guard = (sancov_edges || sancov_trace_cmp)
             .then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
-        let _edgecov =
-            edgecov_opcode.then(|| EdgeCovGuard::new(instrumented_edges, instrumented_cmp_log));
+        let _edgecov = edgecov_opcode.then(|| {
+            EdgeCovGuard::new(instrumented_edges, instrumented_cmp_log, coverage_counters)
+        });
         evm.set_inspector(stack.as_inspector(&mut *backend));
         evm.transact(tx).map(|executed| executed.detach())
     };
@@ -1836,6 +1838,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     let sancov_trace_cmp = inspector.inner.sancov_trace_cmp;
     let instrumented_edges = inspector.inner.instrumented_edges;
     let instrumented_cmp_log = inspector.inner.instrumented_cmp_log;
+    let coverage_counters = inspector.inner.coverage_counters;
     let observed_calls = inspector
         .inner
         .fuzzer
@@ -1847,7 +1850,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         mut logs,
         labels,
         traces,
-        line_coverage,
+        mut line_coverage,
         mut edge_coverage,
         mut evm_cmp_values,
         mut cheatcodes,
@@ -1869,6 +1872,13 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     }
     if instrumented_cmp_log {
         evm_cmp_values = Some(edgecov::take_cmp_log()).filter(|cmps| !cmps.is_empty());
+    }
+    // The probes count the hits of each code object themselves, so no inspector steps the code.
+    if coverage_counters {
+        let hit_maps = edgecov::take_coverage().into_iter().map(|(code_hash, code)| {
+            (code_hash, HitMap::from_counters(code.bytecode, code.counters, code.mcdc))
+        });
+        line_coverage = Some(HitMaps(hit_maps.collect()));
     }
 
     let transactions = cheatcodes
@@ -2360,6 +2370,261 @@ mod tests {
         let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(result.exit_reason, Some(InstrStop::Stop));
         assert!(!matches!(result.edge_coverage, Some(EdgeCoverage::Instrumented(_))));
+    }
+
+    /// Runtime code that hits coverage counter 5 twice and counter 7 once, then stops.
+    const COVERAGE_CODE: &[u8] = &[
+        0xc2, 0x61, 0x00, 0x05, // COVERAGE; PUSH2 5
+        0xc2, 0x60, 0x07, // COVERAGE; PUSH1 7
+        0xc2, 0x61, 0x00, 0x05, // COVERAGE; PUSH2 5
+        0x00, // STOP
+    ];
+
+    /// An executor that counts the hits of `COVERAGE` probes as line coverage.
+    fn coverage_executor(gas_limit: u64) -> Executor<EthEvmNetwork> {
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(gas_limit));
+        executor.inspector_mut().collect_coverage_counters(true);
+        executor
+    }
+
+    /// The counter hits and MC/DC vectors of a code object.
+    type CodeHits = (Vec<(u32, u32)>, Vec<(u32, u32)>);
+
+    /// The counter hits and MC/DC vectors that the call recorded for the code `code`.
+    fn coverage_of(result: &RawCallResult, code: &[u8]) -> CodeHits {
+        let hits = result.line_coverage.as_ref().unwrap();
+        let map = hits.get(&alloy_primitives::keccak256(code)).expect("code ran");
+        assert_eq!(map.bytecode().as_ref(), code);
+        let (mut counters, mut vectors) =
+            (map.counters().collect::<Vec<_>>(), map.mcdc_vectors().collect::<Vec<_>>());
+        counters.sort_unstable();
+        vectors.sort_unstable();
+        (counters, vectors)
+    }
+
+    #[test]
+    fn coverage_probes_count_hits_and_cost_no_gas() {
+        // No gas is left after the intrinsic cost, so a probe that ran its push would run out.
+        let mut executor = coverage_executor(21_000);
+        let target = Address::repeat_byte(0x41);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(COVERAGE_CODE))).unwrap();
+
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(coverage_of(&result, COVERAGE_CODE), ([(5, 2), (7, 1)].to_vec(), Vec::new()));
+
+        // The hits of a call are not the hits of the next one.
+        let again = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(coverage_of(&again, COVERAGE_CODE).0, [(5, 2), (7, 1)]);
+    }
+
+    #[test]
+    fn coverage_probes_count_the_same_under_an_inspector_that_steps() {
+        let mut executor = coverage_executor(21_000);
+        let target = Address::repeat_byte(0x41);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(COVERAGE_CODE))).unwrap();
+        let plain = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+
+        // The debug tracer records every step, so the interpreter runs the inspecting handlers.
+        executor.set_trace_requirements(TraceRequirements::none().with_debug(true));
+        let stepped = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        let steps = &stepped.traces.as_ref().unwrap().nodes()[0].trace.steps;
+        assert_eq!(steps.len(), 4);
+        assert_eq!(stepped.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(coverage_of(&stepped, COVERAGE_CODE), ([(5, 2), (7, 1)].to_vec(), Vec::new()));
+        assert_eq!(stepped.gas_used, plain.gas_used);
+    }
+
+    #[test]
+    fn coverage_probes_keep_the_hits_of_each_code_object_apart() {
+        // `a` runs counter 3, calls `b`, which runs counter 3 twice, and runs counter 3 again.
+        let b_code: &[u8] = &[0xc2, 0x60, 0x03, 0xc2, 0x60, 0x03, 0x00];
+        let b = Address::repeat_byte(0x43);
+        let mut a_code = vec![0xc2, 0x60, 0x03];
+        a_code.extend([0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73]);
+        a_code.extend(b);
+        a_code.extend([0x5a, 0xf1, 0x50, 0xc2, 0x60, 0x03, 0x00]);
+        let mut executor = coverage_executor(1 << 20);
+        let a = Address::repeat_byte(0x42);
+        executor.set_code(a, Bytecode::new_raw(Bytes::from(a_code.clone()))).unwrap();
+        executor.set_code(b, Bytecode::new_raw(Bytes::from_static(b_code))).unwrap();
+
+        let result = executor.call_raw(CALLER, a, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(coverage_of(&result, &a_code).0, [(3, 2)]);
+        assert_eq!(coverage_of(&result, b_code).0, [(3, 2)]);
+    }
+
+    /// An MC/DC probe: `op` is 0 for begin, 1 for add, and 2 for end.
+    fn mcdc(op: u32, decision: u32, increment: u32) -> [u8; 6] {
+        let value = 1 << 31 | op << 29 | decision << 8 | increment;
+        let [a, b, c, d] = value.to_be_bytes();
+        [0xc2, 0x63, a, b, c, d]
+    }
+
+    #[test]
+    fn mcdc_probes_record_the_vectors_of_completed_decisions() {
+        // Decision 3 completes with index 1 + 2, decision 4 never ends, and decision 5 ends twice
+        // with different indices.
+        let code = [
+            mcdc(0, 3, 0).as_slice(),
+            &mcdc(1, 3, 1),
+            &mcdc(1, 3, 2),
+            &mcdc(2, 3, 0),
+            &mcdc(0, 4, 0),
+            &mcdc(1, 4, 1),
+            &mcdc(0, 5, 0),
+            &mcdc(2, 5, 0),
+            &mcdc(0, 5, 0),
+            &mcdc(1, 5, 7),
+            &mcdc(2, 5, 0),
+            &[0x00],
+        ]
+        .concat();
+        let mut executor = coverage_executor(1 << 20);
+        let target = Address::repeat_byte(0x44);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from(code.clone()))).unwrap();
+
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        let (counters, vectors) = coverage_of(&result, &code);
+        assert!(counters.is_empty());
+        assert_eq!(vectors, [(3, 3), (5, 0), (5, 7)]);
+    }
+
+    #[test]
+    fn mcdc_probes_drop_the_decisions_of_frames_that_reverted() {
+        // `b` starts decision 8 and reverts. The decision that `a` runs, with the same ID, must
+        // not add to `b`'s unfinished one.
+        let b_code = [mcdc(0, 8, 0).as_slice(), &mcdc(1, 8, 1), &[0x60, 0, 0x60, 0, 0xfd]].concat();
+        let b = Address::repeat_byte(0x46);
+        let mut a_code = [mcdc(0, 8, 0).as_slice(), &mcdc(1, 8, 4)].concat();
+        a_code.extend([0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73]);
+        a_code.extend(b);
+        a_code.extend([0x5a, 0xf1, 0x50]);
+        a_code.extend(mcdc(1, 8, 2));
+        a_code.extend(mcdc(2, 8, 0));
+        a_code.push(0x00);
+        let mut executor = coverage_executor(1 << 20);
+        let a = Address::repeat_byte(0x45);
+        executor.set_code(a, Bytecode::new_raw(Bytes::from(a_code.clone()))).unwrap();
+        executor.set_code(b, Bytecode::new_raw(Bytes::from(b_code.clone()))).unwrap();
+
+        let result = executor.call_raw(CALLER, a, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(coverage_of(&result, &a_code).1, [(8, 6)]);
+        // The reverted decision recorded nothing.
+        let hits = result.line_coverage.as_ref().unwrap();
+        assert!(!hits.contains_key(&alloy_primitives::keccak256(&b_code)));
+    }
+
+    #[test]
+    fn coverage_probes_feed_the_fuzzer_edges_instead_of_edgecov() {
+        // Edge 9 is in code that ran a probe, so its `EDGECOV` is ignored. A probe pair is an
+        // edge: probe 4 after nothing, and probe 4 after probe 4. The IDs are mixed first, with
+        // `id * 0x9E3779B1` rotated left by 16, and the edge is the low 16 bits of the mixed probe
+        // xor half of the mixed previous one.
+        let probed: &[u8] = &[
+            0xc2, 0x60, 0x04, // COVERAGE; PUSH1 4
+            0x60, 0x09, 0xc0, // PUSH1 9; EDGECOV
+            0xc2, 0x60, 0x04, // COVERAGE; PUSH1 4
+            0x00,
+        ];
+        // A `COVERAGE` byte in data, as in metadata or constructor arguments, is no probe.
+        let plain: &[u8] = &[0x60, 0x09, 0xc0, 0x00, 0xc2];
+        let mut executor = edgecov_executor(true, true);
+        let (probed_target, plain_target) =
+            (Address::repeat_byte(0x47), Address::repeat_byte(0x48));
+        executor.set_code(probed_target, Bytecode::new_raw(Bytes::from_static(probed))).unwrap();
+        executor.set_code(plain_target, Bytecode::new_raw(Bytes::from_static(plain))).unwrap();
+
+        let result = executor.call_raw(CALLER, probed_target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(instrumented_hits(&result), [(30941, 1), (17587, 1)]);
+        // Code that ran no probe keeps its `EDGECOV` hits.
+        let result = executor.call_raw(CALLER, plain_target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(instrumented_hits(&result), [(9, 1)]);
+    }
+
+    #[test]
+    fn probe_edges_see_the_order_of_probes_and_restart_in_each_frame() {
+        let probes = |ids: &[u8]| ids.iter().flat_map(|&id| [0xc2, 0x60, id]).collect::<Vec<_>>();
+        let (first, second) = (Address::repeat_byte(0x49), Address::repeat_byte(0x4a));
+        let mut executor = edgecov_executor(true, true);
+        // Both orders of probes 5 and 7 reach the same probes, but by different edges.
+        for (target, ids) in [(first, [5, 7]), (second, [7, 5])] {
+            let code = [probes(&ids), vec![0x00]].concat();
+            executor.set_code(target, Bytecode::new_raw(Bytes::from(code))).unwrap();
+        }
+        let hits = |executor: &mut Executor<EthEvmNetwork>, target| {
+            let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+            instrumented_hits(&result)
+        };
+        assert_eq!(hits(&mut executor, first), [(5909, 1), (55310, 1)]);
+        assert_eq!(hits(&mut executor, second), [(21380, 1), (48855, 1)]);
+
+        // A call starts a new frame without a previous probe: `caller` runs probe 5, calls
+        // `first`, which runs 5 then 7, and runs probe 7. The callee's edges are those of a
+        // call on its own, and the caller's second probe continues from its first.
+        let mut caller = probes(&[5]);
+        caller.extend([0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73]);
+        caller.extend(first);
+        caller.extend([0x5a, 0xf1, 0x50]);
+        caller.extend(probes(&[7]));
+        caller.push(0x00);
+        let target = Address::repeat_byte(0x4b);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from(caller))).unwrap();
+        // The caller and the callee both go from probe 5, then to probe 7: the callee's first
+        // edge is that of a call on its own, not the edge from the caller's probe 5.
+        assert_eq!(hits(&mut executor, target), [(5909, 2), (55310, 2)]);
+    }
+
+    #[test]
+    fn sibling_calls_start_frames_without_a_previous_probe() {
+        // `callee` runs probes 5 and 7. The parent calls it twice and runs no probe between the
+        // calls, so only the start of each frame tells the second call from a continuation of the
+        // first.
+        let probes = |ids: &[u8]| ids.iter().flat_map(|&id| [0xc2, 0x60, id]).collect::<Vec<_>>();
+        let callee = Address::repeat_byte(0x4c);
+        let call = |code: &mut Vec<u8>| {
+            code.extend([0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73]);
+            code.extend(callee);
+            code.extend([0x5a, 0xf1, 0x50]);
+        };
+        let mut parent = Vec::new();
+        call(&mut parent);
+        call(&mut parent);
+        parent.push(0x00);
+        let mut executor = edgecov_executor(true, true);
+        let target = Address::repeat_byte(0x4d);
+        executor
+            .set_code(callee, Bytecode::new_raw(Bytes::from([probes(&[5, 7]), vec![0]].concat())))
+            .unwrap();
+        executor.set_code(target, Bytecode::new_raw(Bytes::from(parent))).unwrap();
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(instrumented_hits(&result), [(5909, 2), (55310, 2)]);
+    }
+
+    #[test]
+    fn sequential_probe_ids_do_not_share_edges() {
+        // Unmixed, the edges into probe 5 from probes 2 and 3 would be the same ID.
+        let probes = |ids: &[u8]| ids.iter().flat_map(|&id| [0xc2, 0x60, id]).collect::<Vec<_>>();
+        let mut executor = edgecov_executor(true, true);
+        let mut edges = Vec::new();
+        for (index, ids) in [[2, 5], [3, 5], [5, 5]].iter().enumerate() {
+            let target = Address::repeat_byte(0x50 + index as u8);
+            let code = [probes(ids), vec![0]].concat();
+            executor.set_code(target, Bytecode::new_raw(Bytes::from(code))).unwrap();
+            let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+            edges.extend(instrumented_hits(&result).into_iter().map(|(id, _)| id));
+        }
+        // Each frame has an edge for its first probe and one into probe 5, six in all.
+        let mut unique = edges.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), 6, "{edges:?}");
+        // Edges reach above the next power of two over the highest probe.
+        assert!(edges.iter().any(|&id| id > 8), "{edges:?}");
     }
 
     /// Runtime code with each comparison opcode once, then a loop whose `EQ` site runs 11 times.
