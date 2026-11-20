@@ -886,39 +886,16 @@ impl SymbolicExecutor {
     /// Guards each of `words` for the candidates a fork is about to decide.
     ///
     /// An alias another cheatcode gave a word stands for the accounts the fork rules out, so a
-    /// branch that fixes the word to a known account sees that account. An alias may hold state
-    /// written while that account was not known yet, which such a branch would drop, so that
-    /// reports incomplete.
+    /// branch that fixes the word to a known account sees that account once the path settles
+    /// the word.
     pub(super) fn guard_free_address_words(
         &mut self,
         state: &mut PathState,
         words: &[(SymExpr, Vec<Address>)],
-    ) -> Result<(), SymbolicError> {
+    ) {
         for (word, candidates) in words {
-            let unguarded = state.world.unguarded_alias_candidates(
-                word,
-                candidates,
-                &state.persistent_accounts,
-            );
-            if !unguarded.is_empty() {
-                let address = word.clone().address_operand(&mut self.cx);
-                let names_candidate = unguarded
-                    .iter()
-                    .map(|&candidate| {
-                        SymBoolExpr::eq_word_const(&mut self.cx, &address, address_word(candidate))
-                    })
-                    .collect();
-                let names_candidate = SymBoolExpr::or(&mut self.cx, names_candidate);
-                if self.constraints_for_condition(state, names_candidate)?.is_some() {
-                    return Err(SymbolicError::Unsupported(
-                        "symbolic address whose representative account holds state from \
-                         before the run knew an account it may name",
-                    ));
-                }
-            }
             state.world.guard_symbolic_address(word, candidates);
         }
-        Ok(())
     }
 
     /// Forks an address word over `candidates`, concrete accounts the run knows, so a cheatcode

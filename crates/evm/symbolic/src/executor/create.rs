@@ -17,7 +17,7 @@ impl SymbolicExecutor {
         // A free pranked creator and origin first fork over the accounts the run knows now.
         let pranked_words = self.pranked_words(executor, state, Vec::new());
         if !pranked_words.is_empty() {
-            self.guard_free_address_words(state, &pranked_words)?;
+            self.guard_free_address_words(state, &pranked_words);
             let pre_create_state = state.clone();
             let create_pc = state.pc.saturating_sub(1);
             for (word, candidates) in &pranked_words {
@@ -33,6 +33,8 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Forked);
                 }
             }
+            // The fork may have fixed a word.
+            state.settle_fixed_addresses(&mut self.cx, executor)?;
         }
 
         let offset = state.stack.peek(1)?.clone();

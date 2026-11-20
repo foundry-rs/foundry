@@ -13,7 +13,7 @@ impl SymbolicExecutor {
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
         let free_write_targets = self.free_address_write_targets(executor, state, kind)?;
-        self.guard_free_address_words(state, &free_write_targets)?;
+        self.guard_free_address_words(state, &free_write_targets);
         let pre_call_state = (!state.function_mocks.is_empty()
             || !free_write_targets.is_empty()
             || !state.expected_calls.is_empty()
@@ -35,6 +35,8 @@ impl SymbolicExecutor {
                 return Ok(StepOutcome::Forked);
             }
         }
+        // The fork may have fixed a word.
+        state.settle_fixed_addresses(&mut self.cx, executor)?;
 
         let has_value = matches!(kind, CallKind::Call | CallKind::CallCode);
         let in_offset_idx = if has_value { 3 } else { 2 };

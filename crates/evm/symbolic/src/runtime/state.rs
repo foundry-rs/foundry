@@ -1014,6 +1014,67 @@ impl PathState {
         self.world.extcode_bytes_word(cx, executor, address_expr, offset, size)
     }
 
+    /// Ends the alias of each address word the path constraints now fix, so the state that
+    /// cheatcodes wrote through the word onto its representative account lands on the account
+    /// the word names. The representative account stands for the accounts the run did not know
+    /// when that state was written, so the state moves onto an account the run still does not
+    /// know, and is dropped for one that a guarded write already reached. An account the run came
+    /// to know since holds state of its own that the earlier writes would precede, which is not
+    /// modeled.
+    pub(crate) fn settle_fixed_addresses(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+    ) -> Result<(), SymbolicError> {
+        for (word, representative) in self.world.symbolic_address_aliases() {
+            let address = word.clone().address_operand(cx);
+            let Some(value) = self.constrained_word(cx, &address) else { continue };
+            // Code on the representative account may run in a caller frame, which keeps its
+            // address, so it moves only once no frame runs below the root.
+            if self.call_depth > 0 && self.world.has_written_code(representative) {
+                continue;
+            }
+            let account = word_to_address(value);
+            let persistent = self.persistent_accounts.contains(&representative);
+            let to = if !persistent && !self.world.alias_holds_state(&word) {
+                None
+            } else if !persistent
+                && self.world.is_guarded_against(&word, account)
+                && !self.world.holds_unguarded_state(representative)
+            {
+                // The guarded writes, which set balances and storage, reached the account.
+                None
+            } else if self.world.knows_account(executor, account)
+                || self.persistent_accounts.contains(&account)
+            {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic address fixed to an account the run knew only after state was \
+                     written through the address",
+                ));
+            } else {
+                Some(account)
+            };
+            if self.persistent_accounts.remove(&representative)
+                && let Some(to) = to
+            {
+                self.persistent_accounts.insert(to);
+            }
+            self.world.settle_symbolic_address(&word, representative, to);
+            let frame = &mut self.frame;
+            for frame_address in [
+                &mut frame.address,
+                &mut frame.storage_address,
+                &mut frame.caller,
+                &mut self.origin,
+            ] {
+                if *frame_address == representative {
+                    *frame_address = account;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn address_or_symbolic_slot(&mut self, cx: &mut SymCx, expr: SymExpr) -> Address {
         if let Some(value) = self.constrained_word(cx, &expr) {
             return word_to_address(value);
@@ -2592,30 +2653,6 @@ impl SymbolicWorld {
             .extend(candidates);
     }
 
-    /// Returns the accounts in `candidates` that the alias of the address word `expr` is not
-    /// guarded against, when its representative account holds state, such as one of
-    /// `persistent_accounts`. A branch that fixes the word to one of them would not see that
-    /// state.
-    pub(crate) fn unguarded_alias_candidates(
-        &self,
-        expr: &SymExpr,
-        candidates: &[Address],
-        persistent_accounts: &HashSet<Address>,
-    ) -> Vec<Address> {
-        let Some((alias, representative)) = self.alias_entry(expr) else { return Vec::new() };
-        if !self.representative_holds_state(representative)
-            && !persistent_accounts.contains(&representative)
-        {
-            return Vec::new();
-        }
-        let guarded = self.guarded_symbolic_addresses.get(alias);
-        candidates
-            .iter()
-            .copied()
-            .filter(|candidate| guarded.is_none_or(|guarded| !guarded.contains(candidate)))
-            .collect()
-    }
-
     /// Returns whether the address word `expr` has an alias whose representative account holds
     /// state the world wrote, such as a balance, nonce, code, or storage.
     pub(crate) fn alias_holds_state(&self, expr: &SymExpr) -> bool {
@@ -2659,6 +2696,106 @@ impl SymbolicWorld {
             || self.written_code.contains(&representative)
             || self.storage.iter().any(|write| write.address == representative)
             || self.arbitrary_storage_accounts.contains_key(&representative)
+    }
+
+    pub(crate) fn has_written_code(&self, address: Address) -> bool {
+        self.written_code.contains(&address)
+    }
+
+    /// Returns whether `address` holds state that guarded writes, which set balances and storage,
+    /// do not make, such as a nonce or code.
+    pub(crate) fn holds_unguarded_state(&self, address: Address) -> bool {
+        self.nonces.contains_key(&address)
+            || self.written_code.contains(&address)
+            || self.arbitrary_storage_accounts.contains_key(&address)
+    }
+
+    /// Returns every aliased address word with its representative account.
+    pub(crate) fn symbolic_address_aliases(&self) -> Vec<(SymExpr, Address)> {
+        self.symbolic_address_aliases
+            .iter()
+            .map(|(word, address)| (word.clone(), *address))
+            .collect()
+    }
+
+    /// Returns whether a guarded cheatcode write through the aliased word `expr` also wrote
+    /// `address`.
+    pub(crate) fn is_guarded_against(&self, expr: &SymExpr, address: Address) -> bool {
+        self.guarded_symbolic_addresses.get(expr).is_some_and(|guarded| guarded.contains(&address))
+    }
+
+    /// Returns whether the run knows `address` or wrote state to it.
+    pub(crate) fn knows_account(&self, executor: &ExecutorView<'_>, address: Address) -> bool {
+        self.representative_holds_state(address)
+            || self.concrete_alias_candidates(executor).contains(&address)
+    }
+
+    /// Ends the alias of the word `expr`, which the path fixed to an account: the state written
+    /// on its `representative` account moves onto `to`, or is dropped without it.
+    pub(crate) fn settle_symbolic_address(
+        &mut self,
+        expr: &SymExpr,
+        representative: Address,
+        to: Option<Address>,
+    ) {
+        let state = Arc::make_mut(&mut self.state);
+        state.symbolic_address_aliases.remove(expr);
+        state.guarded_symbolic_addresses.remove(expr);
+        if !state.written_code.contains(&representative) {
+            // A backend read of the representative account caches its empty code.
+            state.code_cache.remove(&representative);
+        }
+        move_account_entry(&mut state.balances, representative, to);
+        move_account_entry(&mut state.code_cache, representative, to);
+        move_account_entry(&mut state.nonces, representative, to);
+        move_account_entry(&mut state.arbitrary_storage_accounts, representative, to);
+        move_account_entry(&mut state.arbitrary_storage_copies, representative, to);
+        for source in state.arbitrary_storage_copies.values_mut() {
+            if *source == representative
+                && let Some(to) = to
+            {
+                *source = to;
+            }
+        }
+        for set in [
+            &mut state.created_accounts,
+            &mut state.current_transaction_created_accounts,
+            &mut state.written_code,
+            &mut state.existing_accounts,
+            &mut state.destroyed_accounts,
+            &mut state.pending_selfdestructs,
+        ] {
+            move_account_member(set, representative, to);
+        }
+        for writes in [&mut state.storage, &mut state.transient_storage] {
+            match to {
+                Some(to) => writes
+                    .iter_mut()
+                    .filter(|write| write.address == representative)
+                    .for_each(|write| write.address = to),
+                None => writes.retain(|write| write.address != representative),
+            }
+        }
+        state.symbolic_key_base_reads = std::mem::take(&mut state.symbolic_key_base_reads)
+            .into_iter()
+            .filter_map(|((address, key), value)| match (address == representative, to) {
+                (false, _) => Some(((address, key), value)),
+                (true, Some(to)) => Some(((to, key), value)),
+                (true, None) => None,
+            })
+            .collect();
+        if let Some(to) = to {
+            for slot in state.replay_storage_slots.values_mut().flatten() {
+                if slot.address == representative {
+                    slot.address = to;
+                }
+            }
+            for (address, _) in state.replay_symbolic_storage_keys.values_mut().flatten() {
+                if *address == representative {
+                    *address = to;
+                }
+            }
+        }
     }
 
     /// Returns whether a guarded cheatcode write went through any address word.
@@ -3442,6 +3579,24 @@ fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> S
         "storage",
         format!("{address:?}:{:?}", ExpressionDigests::identity([key])).as_bytes(),
     )
+}
+
+/// Moves the entry of `from` in `map` to `to`, or drops it without `to`.
+fn move_account_entry<V>(map: &mut HashMap<Address, V>, from: Address, to: Option<Address>) {
+    if let Some(value) = map.remove(&from)
+        && let Some(to) = to
+    {
+        map.insert(to, value);
+    }
+}
+
+/// Moves the membership of `from` in `set` to `to`, or drops it without `to`.
+fn move_account_member(set: &mut HashSet<Address>, from: Address, to: Option<Address>) {
+    if set.remove(&from)
+        && let Some(to) = to
+    {
+        set.insert(to);
+    }
 }
 
 #[derive(Clone, Debug)]
