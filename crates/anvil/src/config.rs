@@ -2348,17 +2348,18 @@ latest block number: {latest_block}"
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
             // Pre-Cancun headers, Polygon Bor headers, Arbitrum Nitro headers, and Scroll l2geth
             // headers omit the blob fields. REVM still requires a valid blob environment when
-            // executing with the Cancun spec; zero is the neutral excess-gas value. On Nitro this
-            // makes `BLOBBASEFEE` return `1`, although Nitro rejects the opcode; matching that
-            // requires Arbitrum-specific EVM handling.
+            // executing with the Cancun spec; zero is the neutral excess-gas value. On Nitro and
+            // Scroll this makes `BLOBBASEFEE` return `1` and `BLOBHASH` return zero, although both
+            // chains reject these opcodes; matching that requires chain-specific EVM handling.
             (effective_spec >= SpecId::CANCUN
-                && ((source_may_omit_blob_fields && block.header.blob_gas_used().is_none())
-                    || Chain::from_id(source_chain_id).is_polygon()
-                    || Chain::from_id(source_chain_id).is_arbitrum()
+                && (((source_may_omit_blob_fields
                     || matches!(
                         Chain::from_id(source_chain_id).named(),
                         Some(NamedChain::Scroll | NamedChain::ScrollSepolia)
-                    )))
+                    ))
+                    && block.header.blob_gas_used().is_none())
+                    || Chain::from_id(source_chain_id).is_polygon()
+                    || Chain::from_id(source_chain_id).is_arbitrum()))
             .then_some(0)
         });
         evm_env.block_env.blob_excess_gas_and_price =

@@ -4138,7 +4138,7 @@ async fn test_scroll_forks_accept_l2geth_headers_without_blob_fields() {
         );
         let trace = provider
             .debug_trace_call(
-                request.into(),
+                request.clone().into(),
                 BlockId::latest(),
                 GethDebugTracingCallOptions::default(),
             )
@@ -4147,6 +4147,22 @@ async fn test_scroll_forks_accept_l2geth_headers_without_blob_fields() {
         let GethTrace::Default(frame) = trace else { panic!("expected default trace") };
         assert!(!frame.failed, "{chain}");
         assert_eq!(frame.return_value, Bytes::from(vec![0; 32]), "{chain}");
+
+        // A header that reports blob usage but drops only `excessBlobGas` is not l2geth's shape,
+        // so it must not get the zero fallback.
+        let partial_url =
+            spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), Some(0x12_0000), None)
+                .await;
+        let partial_url =
+            spawn_rpc_proxy_rejecting_method_after(partial_url, "anvil_nodeInfo", 0).await;
+        api.anvil_reset(Some(Forking { json_rpc_url: Some(partial_url), block_number: Some(0) }))
+            .await
+            .unwrap();
+        assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
+        let err = provider.call(request.into()).block(BlockId::latest()).await.unwrap_err();
+        let err = err.as_error_resp().unwrap();
+        assert_eq!(err.code, -32602, "{chain}");
+        assert_eq!(err.message, "Excess blob gas not set.", "{chain}");
     }
 }
 
