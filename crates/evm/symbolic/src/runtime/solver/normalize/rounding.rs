@@ -147,6 +147,8 @@ impl ConstraintContext {
     /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
     /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
     /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`.
+    /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
+    /// positive, `l <= k`, and `x * k` cannot wrap.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
@@ -155,7 +157,13 @@ impl ConstraintContext {
         let SymBoolExprKind::Cmp(op, left, right) = expr.kind() else { return None };
         let mut intervals = HashMap::default();
         let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
-        if let Some(strict) = self.division_order(left, right, &mut intervals, &mut remaining) {
+        let mut order = |small, large| {
+            self.division_order(small, large, &mut intervals, &mut remaining).or_else(|| {
+                self.asserts_scaled_order(small, large, &mut intervals, &mut remaining)
+                    .then_some(false)
+            })
+        };
+        if let Some(strict) = order(left, right) {
             return match op {
                 SymCmpOp::Ule => Some(true),
                 SymCmpOp::Ugt => Some(false),
@@ -164,7 +172,7 @@ impl ConstraintContext {
                 _ => None,
             };
         }
-        if let Some(strict) = self.division_order(right, left, &mut intervals, &mut remaining) {
+        if let Some(strict) = order(right, left) {
             return match op {
                 SymCmpOp::Uge => Some(true),
                 SymCmpOp::Ult => Some(false),
@@ -329,6 +337,47 @@ impl ConstraintContext {
                 .then_some(false),
             _ => None,
         }
+    }
+
+    /// Returns whether another conjunct asserts `small * k <= large * l` with `l <= k` and a
+    /// positive `k`, as in a cross-multiplied collateral check. When `small * k` does not wrap,
+    /// `small > large` would give `small * k > large * k >= large * l`, using `k > 0` and
+    /// `l <= k`, and a wrapped `large * l` is only smaller. The reverse, deciding a scaled fact
+    /// from `small <= large`, must never remove a conjunct, or the two could justify each other.
+    fn asserts_scaled_order(
+        &self,
+        small: &SymExpr,
+        large: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let factor = |product: &'_ SymExpr, operand: &SymExpr| match product.kind() {
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) if left == operand => {
+                Some(right.clone())
+            }
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) if right == operand => {
+                Some(left.clone())
+            }
+            _ => None,
+        };
+        self.facts.iter().any(|fact| {
+            let (scaled_small, scaled_large) = match fact.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => (left, right),
+                SymBoolExprKind::Not(inner) => match inner.kind() {
+                    SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => (right, left),
+                    _ => return false,
+                },
+                _ => return false,
+            };
+            let (Some(k), Some(l)) = (factor(scaled_small, small), factor(scaled_large, large))
+            else {
+                return false;
+            };
+            self.interval_cached(&k, intervals, remaining)
+                .zip(self.interval_cached(&l, intervals, remaining))
+                .is_some_and(|(k, l)| !k.min.is_zero() && l.max <= k.min)
+                && self.mul_cannot_overflow_256(small, &k)
+        })
     }
 
     /// Returns `w` for the shares `w * a / k` and `w * b / k` of a nonzero `k` once `a + b <= k`,
