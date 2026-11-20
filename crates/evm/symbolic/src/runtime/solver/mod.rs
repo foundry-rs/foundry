@@ -510,9 +510,9 @@ impl SmtLibSubprocessSolver {
                 self.cache_sat_result(cache_key, true);
                 return Ok(BranchFeasibility::Sat);
             }
-            // Searching more than `HARD_ARITH_DEFER_MAX_VARS` variables only adds witnesses: a miss
-            // still asks the solver, which may prove the branch infeasible, where deferring would
-            // leave a nested call incomplete.
+            // A search widened past `HARD_ARITH_DEFER_MAX_VARS` variables only adds witnesses: a
+            // miss still asks the solver, which may prove the branch infeasible, where deferring
+            // would leave a nested call incomplete.
             if defer_hard_arith_without_witness && vars <= HARD_ARITH_DEFER_MAX_VARS {
                 trace!("is_sat: deferring hard arithmetic branch without local witness");
                 return Ok(BranchFeasibility::NeedsSolver);

@@ -8437,7 +8437,9 @@ UPDATES        assert(x < 2 ** 128);
 // of two quotients over five inputs. The local witness search must cover five variables so both
 // branches are found reachable instead of falling to the solver, which returns unknown. A
 // five-variable branch without a witness must still reach the solver: a nested call cannot defer it
-// once `vm.projectRoot` rules out the stateless retry.
+// once `vm.projectRoot` rules out the stateless retry. Five-input queries whose hard arithmetic
+// fits in four search slots keep the narrower search, which completes a bound-defined fifth input
+// and defers a miss behind paths that already have witnesses.
 #[forgetest_init]
 fn symbolic_finds_both_branches_of_min_ratio(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_finds_both_branches_of_min_ratio");
@@ -8472,10 +8474,51 @@ contract SymbolicMinRatio {
         (uint256 l0, uint256 l) = liquidity(a0, a1, r0, r1, supply);
         assert(l == l0);
     }
+
+    function checkQuoteCompletedFromAssertion(
+        uint112 amount,
+        uint112 supply,
+        uint112 r0,
+        uint112 r1,
+        uint256 quote
+    ) public pure {
+        require(amount != 0 && r0 != 0 && r1 != 0);
+        require(uint256(amount) * supply / r0 < uint256(10) * supply / r1);
+        assert(quote != (uint256(amount) << 128) + 12345);
+    }
 }
 
 interface Vm {
+    function assume(bool condition) external pure;
     function projectRoot() external view returns (string memory);
+}
+
+contract Rounded {
+    function value(uint256 x, uint256 y) external pure returns (uint256) {
+        unchecked {
+            uint256 v = (x * y + 9) / 10;
+            if (v == 37) return 1;
+            if (v == 38) return 2;
+        }
+        return 0;
+    }
+}
+
+contract PathBudget {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Rounded rounded = new Rounded();
+
+    function checkDeferredProductBranches(uint256 x, uint256 y, uint256 a, uint256 b, uint256 c)
+        public
+        view
+    {
+        vm.assume(a > 2);
+        vm.assume(b > 4);
+        vm.assume(c > 6);
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        assert(rounded.value(x, y) != 0);
+    }
 }
 
 contract Parity {
@@ -8528,6 +8571,41 @@ contract SymbolicMinRatioNested {
             "checkNestedBranchWithoutRetry(uint8,uint8,uint8,uint8,uint8)",
         );
         assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+
+        let result = json_test_result(
+            &output,
+            "checkQuoteCompletedFromAssertion(uint112,uint112,uint112,uint112,uint256)",
+        );
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--symbolic-width",
+                "4",
+                "--match-contract",
+                "PathBudget",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(
+            &output,
+            "checkDeferredProductBranches(uint256,uint256,uint256,uint256,uint256)",
+        );
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
 }
 
