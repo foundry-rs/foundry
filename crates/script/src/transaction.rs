@@ -171,9 +171,20 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
         linked_build_data: &LinkedBuildData,
+        profile_contracts: Option<&ContractsByArtifact>,
     ) -> Result<Self> {
         let mut created_contracts =
             result.get_created_contracts(&linked_build_data.known_contracts);
+
+        if let Some(contracts) = profile_contracts {
+            for (created, profiled) in
+                created_contracts.iter_mut().zip(result.get_created_contracts(contracts))
+            {
+                if profiled.exact_artifact_match {
+                    *created = profiled;
+                }
+            }
+        }
 
         // Add the additional contracts created in this transaction, so we can verify them later.
         created_contracts.retain(|contract| {

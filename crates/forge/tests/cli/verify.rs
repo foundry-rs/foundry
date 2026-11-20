@@ -1208,6 +1208,70 @@ Error: chain 31338: Not all (0 / 1) contracts were verified; no local artifact m
 "#]]);
 }
 
+// `--resume --verify` verifies deployments on a profiled endpoint against its profile build, with
+// the CLI compiler options applied.
+#[forgetest_init]
+async fn script_verify_resume_uses_endpoint_profile_build_on_fork(prj: _, cmd: _) {
+    prj.add_source("Alpha.sol", "contract Alpha { uint256 public x = 1; }");
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Alpha} from "../src/Alpha.sol";
+contract Deploy is Script {
+    function run() external {
+        vm.broadcast();
+        new Alpha();
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+optimizer = false
+
+[profile.optimized]
+optimizer = true
+optimizer_runs = 1
+
+[rpc_endpoints]
+profiled = {{ endpoint = "{}", profile = "optimized" }}
+"#,
+            handle.http_endpoint()
+        ),
+    );
+    let script = [
+        "script",
+        "script/Deploy.s.sol:Deploy",
+        "--rpc-url",
+        "profiled",
+        "--optimizer-runs",
+        "2",
+        "--broadcast",
+        "--private-key",
+        &pk,
+    ];
+    cmd.forge_fuse().args(script).assert_success();
+
+    let (verifier_url, _, _server) = spawn_full_mock_verifier().await;
+    let output = cmd
+        .forge_fuse()
+        .args(script)
+        .args(["--resume", "--verify", "--verifier", "custom", "--verifier-url"])
+        .args([verifier_url.as_str(), "--verifier-api-key", "VALID_KEY"])
+        .execute();
+    let stderr = output.stderr_lossy();
+    assert!(output.status.success(), "{stderr}");
+    assert!(stderr.contains("Contract successfully verified"), "{stderr}");
+    assert!(stderr.contains("Optimizations:    2\n"), "{stderr}");
+}
+
 // The EVM permits ignored trailing bytes even without an ABI constructor. Such input must use
 // the same artifact-prefix matching rule when recording deployments and verifying them.
 #[forgetest_init]

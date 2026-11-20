@@ -27,11 +27,11 @@ use foundry_evm_core::{
 };
 
 pub use Vm::ForgeContext;
-pub use config::CheatsConfig;
+pub use config::{ChainBuild, CheatsConfig};
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
-    StorageHook, decode_cheatcode_call, message_result, revert_frame,
+    StorageHook, decode_cheatcode_call, message_result, referenced_chain_libraries, revert_frame,
 };
 pub use spec::{CheatcodeDef, Vm};
 

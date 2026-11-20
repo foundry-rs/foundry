@@ -10,6 +10,7 @@ use foundry_test_utils::{
         spawn_rpc_proxy_blocking_first_submission, spawn_rpc_proxy_mapping_method,
         spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_when_enabled,
     },
+    str,
     util::{TestCommand, TestProject},
 };
 use serde_json::Value;
@@ -24,6 +25,8 @@ use std::{
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
+
+const PRIVATE_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 #[forgetest]
 async fn can_deploy_multi_chain_script_without_lib(prj: _, cmd: _) {
@@ -46,10 +49,31 @@ async fn can_deploy_multi_chain_script_without_lib(prj: _, cmd: _) {
 }
 
 #[forgetest]
-async fn can_not_deploy_multi_chain_script_with_lib(prj: _, cmd: _) {
-    let (_, handle1) = spawn(NodeConfig::test()).await;
-    let (_, handle2) = spawn(NodeConfig::test()).await;
+async fn can_deploy_multi_chain_script_with_lib(prj: _, cmd: _) {
+    let (api1, handle1) = spawn(NodeConfig::test()).await;
+    let (api2, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_deployer(0)
+        .add_sig("MultiChainBroadcastLink", "deploy(string memory,string memory)")
+        .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
+        .broadcast(ScriptOutcome::OkBroadcast);
+
+    let deployer = tester.accounts_pub[1];
+    for (api, handle) in [(&api1, &handle1), (&api2, &handle2)] {
+        assert_eq!(api.transaction_count(deployer, None).await.unwrap().to::<u32>(), 2);
+        assert!(!handle.http_provider().get_code_at(deployer.create(1)).await.unwrap().is_empty());
+    }
+}
+
+#[forgetest]
+async fn can_not_deploy_multi_chain_script_with_lib_without_create2_deployer(prj: _, cmd: _) {
+    let (_, handle1) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    let (_, handle2) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle1.http_endpoint(), prj.root());
 
     tester
         .load_private_keys(&[0, 1])
@@ -848,4 +872,660 @@ async fn multi_resume_replays_later_signed_attempt_after_revert_without_unsent_w
 #[forgetest_init]
 async fn multi_resume_replays_later_signed_attempt_before_refusing_unsent_work(prj: _, cmd: _) {
     multi_resume_replays_later_signed_attempt_after_revert(prj, cmd, true).await;
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_keeps_run_libraries_local(prj: _, cmd: _) {
+    let (_, node) = spawn(NodeConfig::test().with_hardfork(Some("paris".parse().unwrap()))).await;
+    prj.add_source(
+        "LocalRunLibraries.sol",
+        r#"
+import "forge-std/Script.sol";
+library AutoLib { function value() external pure returns (uint256) { return 7; } }
+contract UsesAutoLib {
+    uint256 public value;
+    constructor() { value = AutoLib.value(); }
+}
+contract Factory {
+    function deploy(bytes memory code) external returns (address result) {
+        assembly { result := create(0, add(code, 32), mload(code)) }
+    }
+}
+contract LocalRunLibraries is Script {
+    function setUp() external { require(AutoLib.value() == 7); }
+    function run() external {
+        vm.startBroadcast();
+        UsesAutoLib child = new UsesAutoLib();
+        vm.stopBroadcast();
+        require(child.value() == 7);
+    }
+    function embedded() external {
+        vm.startBroadcast();
+        new Factory().deploy(type(UsesAutoLib).creationCode);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+evm_version = "shanghai"
+[profile.endpoint]
+evm_version = "paris"
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    cmd.args([
+        "script",
+        "LocalRunLibraries",
+        "--rpc-url",
+        "local",
+        "--broadcast",
+        "--private-key",
+        PRIVATE_KEY,
+    ])
+    .assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/LocalRunLibraries.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    // Only the Paris library and the child belong on chain, not the Shanghai setup library.
+    assert_eq!(sequence["transactions"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["transactions"][1]["contractName"], "UsesAutoLib");
+    let sender =
+        sequence["transactions"][0]["transaction"]["from"].as_str().unwrap().parse().unwrap();
+    assert_eq!(node.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+
+    // Run-build code embedded in a broadcast would call libraries that only exist locally.
+    cmd.forge_fuse()
+        .args(["script", "LocalRunLibraries", "--sig", "embedded()", "--rpc-url", "local"])
+        .args(["--broadcast", "--private-key", PRIVATE_KEY])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: a broadcast on `[..]` uses libraries of the run build that are not deployed on that chain
+
+"#]]);
+    assert_eq!(node.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_reinitializes_libraries_without_duplicate_transactions(
+    prj: _,
+    cmd: _,
+) {
+    prj.add_source(
+        "ForkLibraries.sol",
+        r#"
+import "forge-std/Script.sol";
+library AutoLib { function value() external pure returns (uint256) { return 7; } }
+contract UsesAutoLib {
+    uint256 public value;
+    constructor() { value = AutoLib.value(); }
+}
+contract ForkLibraries is Script {
+    function run(bool restore) external {
+        vm.createSelectFork("local");
+        uint256 snapshot = vm.snapshotState();
+        vm.startBroadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        UsesAutoLib first = new UsesAutoLib();
+        vm.stopBroadcast();
+        require(first.value() == 7);
+        if (restore) require(vm.revertToState(snapshot));
+        else vm.createSelectFork("local");
+        vm.startBroadcast(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
+        UsesAutoLib second = new UsesAutoLib();
+        vm.stopBroadcast();
+        require(second.value() == 7);
+    }
+}
+"#,
+    );
+    // A fresh fork of a profiled endpoint, and a snapshot of the `--rpc-url` endpoint whose run
+    // library was recorded during setup.
+    for (profile, restore) in [(true, false), (false, true)] {
+        let (_, node) = spawn(NodeConfig::test()).await;
+        let endpoint = if profile {
+            format!(r#"{{ endpoint = "{}", profile = "endpoint" }}"#, node.http_endpoint())
+        } else {
+            format!("\"{}\"", node.http_endpoint())
+        };
+        prj.create_file(
+            "foundry.toml",
+            &format!(
+                r#"
+[profile.default]
+evm_version = "shanghai"
+[profile.endpoint]
+evm_version = "paris"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000042"
+[rpc_endpoints]
+local = {endpoint}
+"#
+            ),
+        );
+        let cmd = cmd.forge_fuse().args([
+            "script",
+            "ForkLibraries",
+            "--sig",
+            "run(bool)",
+            if restore { "true" } else { "false" },
+            "--broadcast",
+            "--unlocked",
+            "--sender",
+            "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        ]);
+        if restore {
+            cmd.args(["--rpc-url", "local"]);
+        }
+        cmd.assert_success();
+        let sequence: Value = foundry_common::fs::read_json_file(
+            &prj.root().join("broadcast/ForkLibraries.sol/31337/run-latest.json"),
+        )
+        .unwrap();
+        // Local initialization on the second fork must not record or charge another library.
+        assert_eq!(sequence["transactions"].as_array().unwrap().len(), 3);
+        assert_eq!(sequence["receipts"].as_array().unwrap().len(), 3);
+        for (index, nonce) in [(0, "0x0"), (1, "0x1"), (2, "0x0")] {
+            assert_eq!(sequence["transactions"][index]["transaction"]["nonce"], nonce);
+        }
+    }
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_installs_libraries_before_local_creates(prj: _, cmd: _) {
+    prj.add_source(
+        "LocalProfileLibraries.sol",
+        r#"
+import "forge-std/Script.sol";
+library AutoLib { function value() external pure returns (uint256) { return 7; } }
+contract UsesAutoLib {
+    uint256 public value;
+    constructor(uint256 marker) { value = AutoLib.value() + marker; }
+}
+contract LocalProfileLibraries is Script {
+    function run() external {
+        vm.interceptInitcode();
+        try new UsesAutoLib(42) { revert("creation was not intercepted"); }
+        catch (bytes memory initcode) {
+            uint256 marker;
+            assembly { marker := mload(add(initcode, mload(initcode))) }
+            require(marker == 42, "wrong intercepted initcode");
+        }
+        require(new UsesAutoLib(0).value() == 7);
+        vm.startBroadcast();
+        UsesAutoLib child = new UsesAutoLib(0);
+        vm.stopBroadcast();
+        require(child.value() == 7);
+    }
+}
+"#,
+    );
+    let (_, node) = spawn(NodeConfig::test()).await;
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+evm_version = "shanghai"
+[profile.endpoint]
+evm_version = "shanghai"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000042"
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    cmd.args([
+        "script",
+        "LocalProfileLibraries",
+        "--rpc-url",
+        "local",
+        "--broadcast",
+        "--private-key",
+        PRIVATE_KEY,
+    ])
+    .assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/LocalProfileLibraries.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    // A library installed locally still needs its on-chain deployment before the first child.
+    assert_eq!(sequence["transactions"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["transactions"][0]["transaction"]["nonce"], "0x0");
+    assert_eq!(sequence["transactions"][1]["transaction"]["nonce"], "0x1");
+    assert_eq!(sequence["transactions"][1]["contractName"], "UsesAutoLib");
+}
+
+#[forgetest_init]
+async fn uses_endpoint_profile_builds_on_forks(prj: _, cmd: _) {
+    let first_lib = Address::repeat_byte(0x11);
+    let second_lib = Address::repeat_byte(0x22);
+    let (_, first) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(31338u64))
+            .with_hardfork(Some("paris".parse().unwrap())),
+    )
+    .await;
+    let (_, second) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(31339u64))
+            .with_hardfork(Some("prague".parse().unwrap())),
+    )
+    .await;
+    prj.add_source(
+        "ProfileScript.sol",
+        r#"
+import "forge-std/Script.sol";
+library Lib { function value() external pure returns (uint256) { return 1; } }
+contract UsesLib { function value() external pure returns (uint256) { return Lib.value(); } }
+library AutoLib { function value() external pure returns (uint256) { return 2; } }
+contract UsesAutoLib {
+    uint256 x;
+    constructor(uint256 x_) { x = x_; }
+    function value() external view returns (uint256) { return AutoLib.value() + x; }
+}
+contract Creator {
+    function created(bytes memory initCode) external returns (bool ok) {
+        assembly { ok := iszero(iszero(create(0, add(initCode, 0x20), mload(initCode)))) }
+    }
+    function bls() external view returns (bool ok) {
+        (ok,) = address(0x0b).staticcall("");
+    }
+}
+contract ForkOnly {
+    uint256 immutable seven;
+    constructor() { seven = 7; }
+    function ping() external view returns (uint256) { return seven; }
+}
+bytes constant PUSH0 = hex"5f00";
+bytes constant TSTORE = hex"600160005d00";
+contract ProfileScript is Script {
+    function run() external {
+        vm.createSelectFork("first");
+        Creator creator = new Creator();
+        vm.assertTrue(creator.created{gas: 1e6}(hex"00") && !creator.created{gas: 1e6}(PUSH0));
+        bytes memory firstCode = vm.getCode("ProfileScript.sol:UsesLib");
+        deploy(1);
+        vm.createSelectFork("second");
+        vm.assertTrue(new Creator().created{gas: 1e6}(TSTORE));
+        vm.assertFalse(new Creator().bls());
+        vm.assertNotEq(vm.getCode("ProfileScript.sol:UsesLib"), firstCode);
+        vm.assertEq(
+            vm.getCode("out/ProfileScript.sol/UsesLib.json"), vm.getCode("ProfileScript.sol:UsesLib")
+        );
+        vm.assertEq(vm.getCode("external/External.json"), hex"6001");
+        deploy(2);
+    }
+
+    function deploy(uint256 x) internal {
+        bytes32 salt = bytes32(x);
+        bytes memory initCode =
+            abi.encodePacked(vm.getCode("ProfileScript.sol:UsesAutoLib"), abi.encode(x));
+        vm.startBroadcast();
+        vm.deployCode("ProfileScript.sol:UsesLib");
+        UsesAutoLib created_ = new UsesAutoLib(x);
+        UsesAutoLib salted = new UsesAutoLib{salt: salt}(x);
+        vm.stopBroadcast();
+        vm.assertEq(address(created_).code, vm.getDeployedCode("ProfileScript.sol:UsesAutoLib"));
+        vm.assertEq(address(salted), vm.computeCreate2Address(salt, keccak256(initCode)));
+        vm.assertEq(created_.value(), 2 + x);
+    }
+
+    function single() external {
+        vm.broadcast();
+        vm.deployCode("ProfileScript.sol:UsesLib");
+    }
+
+    function embedded() external {
+        vm.createSelectFork("first");
+        vm.startBroadcast();
+        new Creator().created(abi.encodePacked(type(UsesAutoLib).creationCode, abi.encode(1)));
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "ProfileFork.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import "../src/ProfileScript.sol";
+contract ProfileForkTest is Test {
+    /// forge-config: default.fuzz.runs = 1
+    function test_fork_profile() public {
+        bytes memory runCode = address(new UsesLib()).code;
+        assertFalse(new Creator().created{gas: 1e6}(TSTORE));
+        vm.createSelectFork("second");
+        assertTrue(new Creator().created{gas: 1e6}(TSTORE));
+        assertTrue(new Creator().bls());
+        UsesLib usesLib = new UsesLib();
+        bytes memory code = address(usesLib).code;
+        assertEq(code, vm.getDeployedCode("ProfileScript.sol:UsesLib"));
+        assertTrue(vm.contains(vm.getArtifactPathByDeployedCode(code), "/profiles/"));
+        assertTrue(
+            vm.contains(
+                vm.getArtifactPathByCode(vm.getCode("ProfileScript.sol:UsesLib")), "/profiles/"
+            )
+        );
+        assertNotEq(code, runCode);
+        vm.expectRevert();
+        usesLib.value();
+        assertEq(new UsesAutoLib(1).value(), 3);
+        vm.setEvmVersion("shanghai");
+        assertFalse(new Creator().created{gas: 1e6}(TSTORE));
+        vm.createSelectFork("first");
+        assertEq(new ForkOnly().ping(), 7);
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "external/External.json",
+        r#"{"abi":[],"bytecode":{"object":"0x6001"},"deployedBytecode":{"object":"0x6001"}}"#,
+    );
+    // `unset` and `offline` are never forked, so they must not be resolved or contacted.
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+evm_version = "shanghai"
+fs_permissions = [{{ access = "read", path = "./out" }}, {{ access = "read", path = "./external" }}]
+
+[profile.first]
+evm_version = "paris"
+optimizer = true
+libraries = ["src/ProfileScript.sol:Lib:{first_lib}"]
+
+[profile.second]
+evm_version = "cancun"
+libraries = ["src/ProfileScript.sol:Lib:{second_lib}"]
+
+[rpc_endpoints]
+first = {{ endpoint = "{}", profile = "first" }}
+second = {{ endpoint = "{}", profile = "second" }}
+unset = {{ endpoint = "${{UNSET_PROFILE_RPC_URL}}", profile = "second" }}
+offline = {{ endpoint = "http://127.0.0.1:1", profile = "second" }}
+"#,
+            first.http_endpoint(),
+            second.http_endpoint()
+        ),
+    );
+    let read = |path: &str| -> Value {
+        foundry_common::fs::read_json_file(&prj.root().join("broadcast").join(path)).unwrap()
+    };
+    // Returns the code of the contract deployed by transaction `index` of `sequence`.
+    let code = async |handle: &anvil::NodeHandle, sequence: &Value, index: usize| {
+        let address = sequence["transactions"][index]["contractAddress"].as_str().unwrap();
+        handle.http_provider().get_code_at(address.parse().unwrap()).await.unwrap()
+    };
+    let linked =
+        |code: &[u8], library: Address| code.windows(20).any(|window| window == library.as_slice());
+
+    cmd.args(["script", "ProfileScript", "--broadcast", "--private-key", PRIVATE_KEY])
+        .assert_success();
+    let deployments = &read("multi/ProfileScript.sol-latest/run.json")["deployments"];
+    for (handle, deployment, library, x) in
+        [(&first, &deployments[0], first_lib, 1u8), (&second, &deployments[1], second_lib, 2)]
+    {
+        // The CREATE2 library deployment, `vm.deployCode`, `new` and `new` with salt.
+        assert_eq!(deployment["transactions"].as_array().unwrap().len(), 4);
+        assert!(linked(&code(handle, deployment, 1).await, library));
+        let uses_auto_lib = deployment["transactions"][2]["contractAddress"].as_str().unwrap();
+        let value = handle
+            .http_provider()
+            .call(
+                alloy_rpc_types::TransactionRequest::default()
+                    .to(uses_auto_lib.parse().unwrap())
+                    .input(hex!("3fa4f245").to_vec().into())
+                    .into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(value[..], B256::with_last_byte(2 + x)[..]);
+        assert_eq!(code(handle, deployment, 2).await, code(handle, deployment, 3).await);
+    }
+
+    // The `--rpc-url` endpoint uses its profile build too.
+    cmd.forge_fuse()
+        .args(["script", "ProfileScript", "--sig", "single()", "--rpc-url", "second"])
+        .args(["--broadcast", "--private-key", PRIVATE_KEY])
+        .assert_success();
+    let sequence = read("ProfileScript.sol/31339/single-latest.json");
+    assert_eq!(sequence["transactions"].as_array().unwrap().len(), 1);
+    assert!(linked(&code(&second, &sequence, 0).await, second_lib));
+
+    // Run-build libraries are not deployed on forks of profiled endpoints.
+    cmd.forge_fuse()
+        .args(["script", "ProfileScript", "--sig", "embedded()", "--broadcast"])
+        .args(["--private-key", PRIVATE_KEY])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+...
+Error: a broadcast on `[..]` uses libraries of the run build that are not deployed on that chain
+
+"#]]);
+
+    // Tests use profile builds and specs on forks too, and profile builds are cached.
+    cmd.forge_fuse().args(["test", "--mt", "test_fork_profile"]).assert_success();
+    cmd.forge_fuse().args(["test", "--mt", "test_fork_profile"]).assert_success().stdout_eq(str![
+        [r#"
+No files changed, compilation skipped
+No files changed, compilation skipped
+No files changed, compilation skipped
+
+Ran 1 test for test/ProfileFork.t.sol:ProfileForkTest
+[PASS] test_fork_profile() ([GAS])
+...
+"#]
+    ]);
+
+    // Traces identify contracts of profile builds.
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_fork_profile", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[..]ForkOnly::ping() [staticcall]
+...
+"#]]);
+
+    // Coverage credits code that only runs from profile builds on forks, and profile builds keep
+    // the path filter.
+    prj.add_test("Unmatched.t.sol", "contract Unmatched { function test_unmatched() public {} }");
+    cmd.forge_fuse()
+        .args(["coverage", "--match-path", "test/ProfileFork.t.sol", "--report", "lcov"])
+        .assert_success();
+    let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+    assert!(lcov.contains("FNDA:1,ForkOnly.constructor"), "{lcov}");
+    assert!(lcov.contains("FNDA:1,ForkOnly.ping"), "{lcov}");
+    assert!(!lcov.contains("Unmatched"), "{lcov}");
+
+    // Forks keep the build of their own endpoint's profile.
+    prj.add_test(
+        "UnsetProfile.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract UnsetProfileTest is Test {
+    function test_unset_profile() public {
+        vm.setEnv("UNSET_PROFILE_RPC_URL", vm.rpcUrl("first"));
+        vm.createSelectFork("unset");
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["test", "--mt", "test_unset_profile"]).assert_failure().stdout_eq(str![
+        [r#"
+...
+[FAIL: [..]the URL of `unset` does not match a profile build made when forge started] [..]
+...
+"#]
+    ]);
+    let toml = std::fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
+    for (endpoint, error) in [
+        (
+            format!("shared = \"{}\"", first.http_endpoint()),
+            "endpoint `shared` names no profile, but shares its URL with `first`, which does",
+        ),
+        (
+            format!("dup = {{ endpoint = \"{}\", profile = \"second\" }}", first.http_endpoint()),
+            "endpoints `dup` and `first` share a URL but name profiles with different builds",
+        ),
+        (
+            "bad = { endpoint = \"http://127.0.0.1:3\", profile = \"missing\" }".to_string(),
+            "failed to load profile `missing` of `[rpc_endpoints]`",
+        ),
+    ] {
+        prj.create_file("foundry.toml", &format!("{toml}{endpoint}\n"));
+        let output = cmd.forge_fuse().args(["test", "--mt", "test_fork_profile"]).assert_failure();
+        let stderr = String::from_utf8_lossy(&output.get_output().stderr).into_owned();
+        assert!(stderr.contains(&format!("Error: {error}")), "{stderr}");
+    }
+    prj.create_file("foundry.toml", &toml);
+
+    // `forge clean` removes the profile builds.
+    cmd.forge_fuse().arg("clean").assert_success();
+    assert!(!prj.root().join("cache/profiles").exists());
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_preserves_recorded_initcode_and_metadata(prj: _, cmd: _) {
+    let (_, node) = spawn(NodeConfig::test()).await;
+    prj.add_source(
+        "Recorded.sol",
+        r#"
+import "forge-std/Script.sol";
+library RecordedLib { function value() external pure returns (uint256) { return 7; } }
+contract RecordedChild {
+    uint256 public value;
+    constructor(uint256 x) { value = RecordedLib.value() + x; }
+}
+contract RecordedPlain { function value() external pure returns (uint256) { return 9; } }
+contract RecordedFactory {
+    function deploy(bytes memory code) external returns (address result) {
+        assembly { result := create(0, add(code, 32), mload(code)) }
+    }
+}
+contract RecordedScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        RecordedChild direct = new RecordedChild(42);
+        RecordedChild salted = new RecordedChild{salt: bytes32(block.number)}(43);
+        RecordedFactory factory = new RecordedFactory();
+        address nested = factory.deploy(type(RecordedPlain).creationCode);
+        vm.stopBroadcast();
+        require(direct.value() == 49 && salted.value() == 50);
+        require(keccak256(address(direct).code) != keccak256(type(RecordedChild).runtimeCode));
+        require(keccak256(nested.code) == keccak256(type(RecordedPlain).runtimeCode));
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+optimizer = false
+[profile.endpoint]
+optimizer = true
+optimizer_runs = 777
+bytecode_hash = "none"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000042"
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    for skip_simulation in [false, true] {
+        cmd.forge_fuse().args([
+            "script",
+            "RecordedScript",
+            "--rpc-url",
+            "local",
+            "--broadcast",
+            "--private-key",
+            PRIVATE_KEY,
+        ]);
+        if skip_simulation {
+            cmd.arg("--skip-simulation");
+        }
+        cmd.assert_success();
+        let sequence: Value = foundry_common::fs::read_json_file(
+            &prj.root().join("broadcast/Recorded.sol/31337/run-latest.json"),
+        )
+        .unwrap();
+        let children = sequence["transactions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|tx| tx["contractName"] == "RecordedChild")
+            .collect::<Vec<_>>();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0]["arguments"], serde_json::json!(["42"]));
+        assert_eq!(children[1]["arguments"], serde_json::json!(["43"]));
+        for (tx, expected) in children.into_iter().zip([49, 50]) {
+            let address = tx["contractAddress"].as_str().unwrap().parse().unwrap();
+            let value = node
+                .http_provider()
+                .call(
+                    alloy_rpc_types::TransactionRequest::default()
+                        .to(address)
+                        .input(hex!("3fa4f245").to_vec().into())
+                        .into(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(value[..], B256::with_last_byte(expected)[..]);
+        }
+    }
+}
+
+#[forgetest_init]
+fn endpoint_profiles_work_in_coverage_and_mutation(prj: _, cmd: _) {
+    prj.add_source("ProfileCounter.sol", "contract ProfileCounter { function value() external pure returns (uint256) { return 1; } }");
+    prj.add_test(
+        "ProfileCounter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import "../src/ProfileCounter.sol";
+contract ProfileCounterTest is Test {
+    function test_value() public { assertEq(new ProfileCounter().value(), 1); }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[profile.other]
+optimizer = true
+[rpc_endpoints]
+unused = { endpoint = "http://127.0.0.1:1", profile = "other" }
+"#,
+    );
+    cmd.args(["coverage", "--match-contract", "ProfileCounterTest"]).assert_success();
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mutate",
+            "src/ProfileCounter.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-contract",
+            "ProfileCounterTest",
+            "--json",
+        ])
+        .assert_json_stdout(str![[r#"
+{"summary":{"total":1,"killed":1,"survived":0,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":100.0,"duration_secs":"{...}"},"survived_mutants":{}}
+"#]]);
 }

@@ -52,10 +52,28 @@ impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
         // contracts of later chains unsubmitted.
         let mut errors = Vec::new();
         for index in 0..sequence.sequences().len() {
+            let mut verify = verify.clone();
+            if let Some(build) = sequence.sequences()[index]
+                .transactions
+                .front()
+                .and_then(|tx| script_config.chain_builds.get(&tx.rpc))
+            {
+                let mut profiled = VerifyBundle::new(
+                    &build.config.project()?,
+                    &build.config,
+                    build.artifacts.clone(),
+                    verify.retry,
+                    verify.verifier.clone(),
+                    verify.verify_external,
+                );
+                profiled.config = Some(build.config.clone());
+                profiled.fallback = Some(Box::new(verify));
+                verify = profiled;
+            }
             let result = verify_contracts::<FEN>(
                 &mut sequence.sequences_mut()[index],
                 &script_config.config,
-                verify.clone(),
+                verify,
             )
             .await;
             if let Err(err) = result {
@@ -82,6 +100,8 @@ pub struct VerifyBundle {
     pub verifier: VerifierArgs,
     pub via_ir: bool,
     pub verify_external: bool,
+    config: Option<Config>,
+    fallback: Option<Box<Self>>,
     source_etherscan_url: Option<String>,
     source_etherscan_key: Option<String>,
     source_sourcify_url: Option<String>,
@@ -123,6 +143,8 @@ impl VerifyBundle {
             verifier,
             via_ir,
             verify_external,
+            config: None,
+            fallback: None,
             source_etherscan_url: None,
             source_etherscan_key: None,
             source_sourcify_url: None,
@@ -258,6 +280,31 @@ impl VerifyBundle {
 
         Some(verify)
     }
+
+    fn get_verify_job(
+        &self,
+        address: Address,
+        offset: usize,
+        data: &[u8],
+        libraries: &[String],
+        evm_version: EvmVersion,
+    ) -> Option<VerificationJob> {
+        let (selected_libraries, selected_evm_version) =
+            self.config.as_ref().map_or((libraries, evm_version), |config| {
+                (config.libraries.as_slice(), config.evm_version)
+            });
+        self.get_verify_args(address, offset, data, selected_libraries, selected_evm_version)
+            .map(|args| VerificationJob::Local(args, self.config.clone().map(Box::new)))
+            .or_else(|| {
+                self.fallback.as_ref()?.get_verify_job(
+                    address,
+                    offset,
+                    data,
+                    libraries,
+                    evm_version,
+                )
+            })
+    }
 }
 
 fn source_api_key(config: &Config, chain: Chain) -> Option<String> {
@@ -265,14 +312,15 @@ fn source_api_key(config: &Config, chain: Chain) -> Option<String> {
 }
 
 enum VerificationJob {
-    Local(VerifyArgs),
+    Local(VerifyArgs, Option<Box<Config>>),
     External(VerifyArgs, Box<ExternalVerificationContext>),
 }
 
 impl VerificationJob {
     async fn run(self) -> Result<()> {
         match self {
-            Self::Local(args) => args.run().await,
+            Self::Local(args, Some(config)) => args.run_with_config(*config).await,
+            Self::Local(args, None) => args.run().await,
             Self::External(args, context) => args.run_with_external_context(*context).await,
         }
     }
@@ -432,6 +480,9 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
     trace!(target: "script", "verifying {} contracts [{}]", verify.known_contracts.len(), sequence.chain);
 
     verify.set_chain(config, sequence.chain.into())?;
+    if let Some(fallback) = &mut verify.fallback {
+        fallback.set_chain(config, sequence.chain.into())?;
+    }
 
     if verify.etherscan.has_key() || !verify.verifier.effective_type().is_etherscan() {
         trace!(target: "script", "prepare future verifications");
@@ -497,14 +548,14 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
             if !malformed_create2
                 && let (Some(address), Some(data)) = (receipt.contract_address(), tx.tx().input())
             {
-                match verify.get_verify_args(
+                match verify.get_verify_job(
                     address,
                     offset,
                     data,
                     &sequence.libraries,
                     config.evm_version,
                 ) {
-                    Some(verify) => verification_jobs.push(VerificationJob::Local(verify)),
+                    Some(job) => verification_jobs.push(job),
                     None => add_unverifiable(
                         address,
                         tx.contract_name.as_deref().filter(|_| tx.exact_artifact_match),
@@ -522,14 +573,14 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                 ..
             } in &tx.additional_contracts
             {
-                match verify.get_verify_args(
+                match verify.get_verify_job(
                     *address,
                     0,
                     init_code.as_ref(),
                     &sequence.libraries,
                     config.evm_version,
                 ) {
-                    Some(args) => verification_jobs.push(VerificationJob::Local(args)),
+                    Some(job) => verification_jobs.push(job),
                     None if !verify.verify_external => add_unverifiable(
                         *address,
                         contract_name.as_deref().filter(|_| *exact_artifact_match),
@@ -908,6 +959,42 @@ mod tests {
         assert!(concise.chars().count() <= 161);
     }
 
+    #[test]
+    fn endpoint_profile_verification_retains_build_settings() {
+        let mut verify = bundle_with_bytecode(Bytes::from_static(&[0x60, 0x01]));
+        let config = Config {
+            optimizer: Some(true),
+            optimizer_runs: Some(777),
+            via_ir: true,
+            evm_version: EvmVersion::Cancun,
+            libraries: vec!["src/Lib.sol:Lib:0x1111111111111111111111111111111111111111".into()],
+            ..Default::default()
+        };
+        verify.num_of_optimizations = config.optimizer_runs;
+        verify.via_ir = config.via_ir;
+        verify.config = Some(config);
+        verify.fallback = Some(Box::new(bundle_with_bytecode(Bytes::from_static(&[0x60, 0x02]))));
+        let VerificationJob::Local(args, Some(config)) = verify
+            .get_verify_job(Address::ZERO, 0, &[0x60, 0x01, 0xaa], &[], EvmVersion::London)
+            .unwrap()
+        else {
+            panic!("profile verification job expected")
+        };
+        assert_eq!(args.constructor_args.as_deref(), Some("aa"));
+        assert_eq!(args.evm_version, Some(EvmVersion::Cancun));
+        assert_eq!(args.num_of_optimizations, Some(777));
+        assert!(args.via_ir);
+        assert_eq!(args.libraries, config.libraries);
+        let VerificationJob::Local(args, None) = verify
+            .get_verify_job(Address::ZERO, 0, &[0x60, 0x02, 0xbb], &[], EvmVersion::London)
+            .unwrap()
+        else {
+            panic!("run verification fallback expected")
+        };
+        assert_eq!(args.constructor_args.as_deref(), Some("bb"));
+        assert_eq!(args.evm_version, Some(EvmVersion::London));
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn multichain_verification_collects_setup_errors() {
         let dir = tempfile::tempdir().unwrap();
@@ -944,6 +1031,7 @@ mod tests {
                 project_root: dir.path().into(),
                 output: config.project().unwrap().compile().unwrap(),
                 target,
+                profile_builds: Vec::new(),
             },
         )
         .unwrap();

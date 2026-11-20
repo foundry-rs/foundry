@@ -2,7 +2,8 @@
 
 use crate::{
     Cheatcode, CheatcodesBackend, CheatcodesCore, CheatsConfig, CheatsCtxt, Error, Result,
-    Vm::{self, AccountAccess},
+    Vm::{self, AccountAccess, ForgeContext},
+    env::current_execution_context,
     evm::{
         GasRecord, RecordAccess, append_storage_access, mark_account_accesses_reverted,
         merge_recorded_frame,
@@ -48,12 +49,13 @@ use foundry_evm_core::{
     Breakpoints,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{LocalForkId, RevertDiagnostic},
-    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
+    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME, TEST_CONTRACT_ADDRESS},
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
-        MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFor, FoundryEvmNetwork,
+        InterpreterFor, MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
         TransactionRequestFor, TxFor, TxResultFor, restore_access_warmth,
     },
+    opts::{ExecutionSpecContext, resolve_execution_spec},
     utils::opcodes,
 };
 use foundry_evm_traces::{
@@ -507,6 +509,9 @@ impl ArbitraryStorage {
     }
 }
 
+/// Broadcaster, if any, salt and CREATE2 libraries needed on the active fork.
+type ChainLibraries = (Option<Address>, B256, Vec<(Address, Bytes)>);
+
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
 
@@ -829,6 +834,13 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Automatic CREATE2 redirects: factory call depth, original issuing code, and whether the
     /// original create grants cheatcode access. The grant is resolved after caller overrides.
     pub pending_create2_redirects: Vec<(u16, Option<Address>, bool)>,
+
+    /// Spec of the run, restored for persistent accounts on forks of profiled endpoints.
+    run_spec: Option<SpecFor<FEN>>,
+
+    /// CREATE2 libraries found missing on a fork, keyed by RPC and address, with the sender and
+    /// nonce of their recorded deployment.
+    chain_library_deployments: BTreeMap<(String, Address), Option<(Address, u64)>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -919,6 +931,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             unrun_create_depth: None,
             env_handoff_creator: None,
             pending_create2_redirects: Vec::new(),
+            run_spec: None,
+            chain_library_deployments: Default::default(),
         }
     }
 
@@ -1319,6 +1333,64 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         {
             self.applied_access_list = Some(access_list.clone());
         }
+    }
+
+    /// Whether this create belongs to the local script/test or is itself recorded for broadcast.
+    /// Never replace initcode inside an ordinary on-chain factory call or a replayed transaction.
+    pub fn should_use_profile_init_code(&self, depth: usize, caller: Address) -> bool {
+        if self.in_replay {
+            return false;
+        }
+        let depth = self.deploy_code_caller_depth(depth);
+        if let Some(broadcast) = &self.broadcast {
+            depth == broadcast.depth && caller == broadcast.original_caller
+        } else {
+            depth == 1 && caller == self.script_address.unwrap_or(TEST_CONTRACT_ADDRESS)
+        }
+    }
+
+    /// Returns the spec `message` runs with on forks of profiled endpoints: the spec of the
+    /// profile for frames of non-persistent accounts, except top-level creates, or the spec of
+    /// the run. Returns `None` on other forks and in replayed transactions.
+    pub fn profile_spec(
+        &mut self,
+        running: &EvmEnvFor<FEN>,
+        message: &MessageFor<FEN>,
+        backend: &dyn CheatcodesBackend<FEN>,
+    ) -> Option<SpecFor<FEN>> {
+        let run_spec = *self.run_spec.get_or_insert(running.spec);
+        if self.in_replay {
+            return None;
+        }
+        let db = backend.backend();
+        let profiled = if message.kind.is_create() {
+            message.depth > 0
+        } else {
+            !db.is_persistent(&message.code_address)
+        };
+        let fork = db.active_fork_info()?;
+        let build = self.core.config.chain_builds.get(&fork.url)?;
+        if !profiled {
+            return Some(run_spec);
+        }
+        let context = fork.remote.as_ref()?.context();
+        let context = if current_execution_context() == Some(ForgeContext::ScriptGroup) {
+            ExecutionSpecContext::Script {
+                source_chain_id: context.source_chain_id,
+                endpoint_hardfork: context.hardfork,
+            }
+        } else {
+            ExecutionSpecContext::fork(context.source_chain_id, context.hardfork)
+        };
+        let mut env = *running;
+        resolve_execution_spec::<EvmFactoryFor<FEN>>(
+            build.config.evm_version,
+            build.config.hardfork,
+            &mut env,
+            context,
+            None,
+        );
+        Some(env.spec)
     }
 
     /// Handles a call, accounting for whether the executor will isolate it as a transaction.
@@ -1991,6 +2063,100 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     #[inline(always)]
     const fn has_active_env_overrides(&self) -> bool {
         self.env_overrides.is_any_set()
+    }
+
+    /// Returns the CREATE2 libraries needed on the fork of `rpc` by a frame of the script, and
+    /// the broadcaster if the frame is broadcast: those of the endpoint's profile build, or the
+    /// run's libraries.
+    pub fn chain_libraries(
+        &self,
+        rpc: &str,
+        depth: usize,
+        caller: Address,
+        input: &[u8],
+    ) -> Option<ChainLibraries> {
+        let config = &self.core.config;
+        let depth = self.deploy_code_caller_depth(depth);
+        let sender = self
+            .broadcast
+            .as_ref()
+            .filter(|broadcast| {
+                caller == broadcast.original_caller
+                    && (depth == broadcast.depth
+                        || (depth > broadcast.depth && broadcast.deploy_from_code))
+            })
+            .map(|broadcast| broadcast.new_origin);
+        let (salt, libraries) = match config.chain_builds.get(rpc) {
+            Some(build) if sender.is_some() || self.should_use_profile_init_code(depth, caller) => {
+                (build.config.create2_library_salt, build.create2_libraries.clone())
+            }
+            None if sender.is_some() => (
+                config.create2_library_salt,
+                referenced_chain_libraries(input, &config.create2_libraries),
+            ),
+            _ => return None,
+        };
+        (!libraries.is_empty()).then_some((sender, salt, libraries))
+    }
+
+    /// Remembers a library `missing` on the active fork, and records its deployment by `from`
+    /// once per endpoint. Returns the nonce of `from` following its recorded deployment, which
+    /// a fresh fork of the endpoint may predate.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_library_deployment(
+        &mut self,
+        evm: &FoundryEvmFor<'_, FEN>,
+        backend: &dyn CheatcodesBackend<FEN>,
+        from: Option<(Address, u64)>,
+        address: Address,
+        missing: bool,
+        create2_deployer: Address,
+        input: Bytes,
+    ) -> Option<u64> {
+        let db = backend.backend();
+        let rpc = db.active_fork_url()?;
+        let key = (rpc.clone(), address);
+        if missing {
+            self.chain_library_deployments.entry(key.clone()).or_default();
+        }
+        let (from, nonce) = from?;
+        let recorded = self.chain_library_deployments.get_mut(&key)?;
+        if let Some((sender, nonce)) = *recorded {
+            return (sender == from).then_some(nonce + 1);
+        }
+        *recorded = Some((from, nonce));
+        let chain_id = self
+            .env_overrides
+            .get(db.active_fork_id())
+            .and_then(|overrides| overrides.chain_id)
+            .unwrap_or(evm.version().chain_id);
+        let mut tx_req = TransactionRequestFor::<FEN>::default()
+            .with_from(from)
+            .with_to(create2_deployer)
+            .with_input(input)
+            .with_nonce(nonce)
+            .with_chain_id(chain_id);
+        if let Some(fee_token) = self.fee_token {
+            tx_req.set_fee_token(fee_token);
+        }
+        self.broadcastable_transactions.push_back(BroadcastableTransaction {
+            rpc: Some(rpc),
+            transaction: TransactionMaybeSigned::new(tx_req),
+            contract_address: None,
+        });
+        debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable library deployment");
+        Some(nonce + 1)
+    }
+
+    /// Registers a library deployment already recorded by the script runner on `rpc`.
+    pub fn mark_library_deployment_recorded(
+        &mut self,
+        rpc: String,
+        address: Address,
+        sender: Address,
+        nonce: u64,
+    ) {
+        self.chain_library_deployments.insert((rpc, address), Some((sender, nonce)));
     }
 
     /// Called after a frame interpreter has been initialized.
@@ -3816,6 +3982,29 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             _ => self.dynamic_gas_limit = false,
         }
     }
+}
+
+/// Returns the linked CREATE2 libraries referenced by `input` and their transitive dependencies.
+pub fn referenced_chain_libraries(
+    input: &[u8],
+    libraries: &[(Address, Bytes)],
+) -> Vec<(Address, Bytes)> {
+    let mut inputs = VecDeque::from([input]);
+    let mut referenced = Vec::new();
+    while let Some(input) = inputs.pop_front() {
+        for (address, code) in libraries {
+            if referenced.iter().any(|(referenced, _)| referenced == address)
+                || !input
+                    .windows(address.as_slice().len())
+                    .any(|window| window == address.as_slice())
+            {
+                continue;
+            }
+            referenced.push((*address, code.clone()));
+            inputs.push_back(code.as_ref());
+        }
+    }
+    referenced
 }
 
 /// Helper that expands memory, stores a revert string pertaining to a disallowed memory write,
