@@ -54,8 +54,9 @@ use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
     self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_canned_method,
-    spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
-    spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_when_enabled,
+    spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_mapping_method,
+    spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
+    spawn_rpc_proxy_rejecting_method_when_enabled,
     spawn_rpc_proxy_retyping_first_block_transaction,
 };
 use futures::{
@@ -993,6 +994,101 @@ async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
         .await
         .unwrap();
     assert_eq!(stored_timestamp, B256::from(U256::from(CANCUN_ERA_TIMESTAMP)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_scroll_fork_transaction_hash_replay_skips_beacon_root() {
+    // Scroll's l2geth applies EIP-2935 but never EIP-4788, and its headers carry no beacon root.
+    // Canonical Ethereum headers that lack the root must still fail the replay.
+    const HISTORY_BUFFER_LENGTH: u64 = 8191;
+    let timestamp = EthereumHardfork::Prague.mainnet_activation_timestamp().unwrap() + 100;
+    for chain in [NamedChain::Scroll, NamedChain::Mainnet] {
+        let (origin_api, origin) = spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(chain as u64))
+                .with_hardfork(Some(EthereumHardfork::Prague.into()))
+                .with_genesis_timestamp(Some(timestamp - 100)),
+        )
+        .await;
+        origin_api.anvil_set_auto_mine(false).await.unwrap();
+        origin_api.evm_set_next_block_timestamp(timestamp).unwrap();
+        let sender = origin.dev_wallets().next().unwrap().address();
+        let target = origin
+            .http_provider()
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(sender).to(Address::random()).value(U256::ONE),
+            ))
+            .await
+            .unwrap();
+        let target_hash = *target.tx_hash();
+        origin_api.mine_one().await.unwrap();
+        let genesis_hash = origin_api
+            .block_by_number(BlockNumberOrTag::Number(0))
+            .await
+            .unwrap()
+            .unwrap()
+            .header
+            .hash;
+        let mut fork_url = origin.http_endpoint();
+        for method in ["eth_getBlockByHash", "eth_getBlockByNumber"] {
+            fork_url = spawn_rpc_proxy_mapping_method(fork_url, method, |_, mut block| {
+                if let Some(block) = block.as_object_mut() {
+                    block.remove("parentBeaconBlockRoot");
+                }
+                block
+            })
+            .await;
+        }
+        let fork_url = spawn_rpc_proxy_rejecting_method_after(fork_url, "anvil_nodeInfo", 0).await;
+
+        let config = NodeConfig::test()
+            .with_eth_rpc_url(Some(fork_url))
+            .with_fork_transaction_hash(Some(target_hash))
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_no_storage_caching(true)
+            .with_no_mining(true);
+        if chain == NamedChain::Mainnet {
+            let Err(error) = try_spawn(config).await else {
+                panic!("expected missing beacon root to fail the Ethereum replay")
+            };
+            assert!(format!("{error:?}").contains("missing parent beacon block root"), "{error:?}");
+            continue;
+        }
+
+        let (fork_api, _fork) = spawn(config).await;
+        let replayed =
+            fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+        assert_eq!(
+            replayed
+                .transactions
+                .as_transactions()
+                .unwrap()
+                .iter()
+                .map(|tx| tx.tx_hash())
+                .collect::<Vec<_>>(),
+            [target_hash]
+        );
+        // The origin has the EIP-4788 contract, so a beacon-root call would store the timestamp.
+        let beacon_slot = U256::from(timestamp % HISTORY_BUFFER_LENGTH);
+        let stored_timestamp = fork_api
+            .storage_at(
+                alloy_eips::eip4788::BEACON_ROOTS_ADDRESS,
+                beacon_slot,
+                Some(BlockId::number(1)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stored_timestamp, B256::ZERO);
+        let stored_parent_hash = fork_api
+            .storage_at(
+                alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS,
+                U256::ZERO,
+                Some(BlockId::number(1)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stored_parent_hash, genesis_hash);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
