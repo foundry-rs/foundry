@@ -11,7 +11,7 @@ use svm::Platform;
 /// 3. svm bumped in foundry-compilers
 /// 4. foundry-compilers update with any breaking changes
 /// 5. upgrade the `LATEST_SOLC`
-const LATEST_SOLC: Version = Version::new(0, 8, 38);
+const LATEST_SOLC: Version = Version::new(0, 8, 39);
 
 macro_rules! ensure_svm_releases {
     ($($test:ident => $platform:ident),* $(,)?) => {$(
@@ -84,12 +84,12 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 }
 
 #[forgetest_init]
-fn can_test_with_solc_0_8_37_amsterdam(prj: _, cmd: _) {
+fn can_test_with_solc_0_8_39_amsterdam(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "StateGas.t.sol",
         r#"
-pragma solidity =0.8.37;
+pragma solidity =0.8.39;
 
 import "forge-std/Test.sol";
 
@@ -302,8 +302,8 @@ contract StateGasTest is Test {
 "#,
     );
 
-    // Amsterdam is an experimental EVM version in solc 0.8.37.
-    let args = ["test", "--use", "0.8.37", "--evm-version", "amsterdam", "--experimental"];
+    // Amsterdam is an experimental EVM version in solc 0.8.39.
+    let args = ["test", "--use", "0.8.39", "--evm-version", "amsterdam", "--experimental"];
     cmd.args(args).assert_success();
     // Exercise the individual and combined CLI flags.
     cmd.forge_fuse().args(args).arg("--enable-tx-gas-limit").assert_success();
@@ -327,7 +327,7 @@ fn can_test_slot_number_amsterdam(prj: _, cmd: _) {
     prj.add_test(
         "SlotNumber.t.sol",
         r#"
-pragma solidity =0.8.37;
+pragma solidity =0.8.39;
 
 import "forge-std/Test.sol";
 
@@ -358,7 +358,7 @@ contract SlotNumberTest is Test {
 }
 "#,
     );
-    let args = ["test", "--use", "0.8.37", "--evm-version", "amsterdam", "--experimental"];
+    let args = ["test", "--use", "0.8.39", "--evm-version", "amsterdam", "--experimental"];
     cmd.args(args).assert_success();
     cmd.forge_fuse().args(args).args(["--optimize", "--via-ir"]).assert_success();
     cmd.forge_fuse().args(args).arg("--isolate").assert_success();

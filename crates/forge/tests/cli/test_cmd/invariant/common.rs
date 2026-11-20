@@ -3076,6 +3076,8 @@ fn invariant_optimization_shrunk_witness_reproduces_value(prj: _, cmd: _) {
         config.invariant.depth = 10;
         config.invariant.max_block_delay = Some(1000);
         config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+        // The seeded witness depends on the bytecode, so pin solc instead of the newest installed.
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 38)));
     });
     prj.add_test("Optimization.t.sol", r#"
 pragma solidity ^0.8.20;
