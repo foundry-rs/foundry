@@ -679,6 +679,10 @@ interface Vm {
     function envOr(string calldata name, string calldata defaultValue) external view returns (string memory);
     function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
     function etch(address target, bytes calldata code) external;
+    function addr(uint256 privateKey) external pure returns (address);
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+    function getNonce(address account) external view returns (uint64);
+    function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
 }
 
 abstract contract UsesVm {
@@ -742,6 +746,59 @@ contract Create2DeployerTest is UsesVm {
         }
         (bool created,) = CREATE2_FACTORY.call(abi.encodePacked(bytes32(uint256(3)), type(ConstructorReader).creationCode));
         require(created, "authorized factory child lost cheatcode access");
+
+        // A transaction to the factory does not reuse the authorization of an earlier call.
+        (bool ok,) = address(vm).call(abi.encodeCall(
+            Vm.executeTransaction, (factoryTransaction(bytes32(uint256(4)), type(ConstructorReader).creationCode))
+        ));
+        require(!ok, "factory transaction child read cheatcodes");
+        vm.executeTransaction(factoryTransaction(bytes32(uint256(5)), type(DeployerRelay).creationCode));
+    }
+
+    /// Returns a signed legacy transaction without a chain ID that deploys `initCode` through the
+    /// factory.
+    function factoryTransaction(bytes32 salt, bytes memory initCode) internal returns (bytes memory) {
+        uint256 key = 1;
+        bytes[] memory fields = new bytes[](9);
+        fields[0] = rlp(vm.getNonce(vm.addr(key)));
+        fields[1] = rlp(0);
+        fields[2] = rlp(1_000_000);
+        fields[3] = rlp(abi.encodePacked(CREATE2_FACTORY));
+        fields[4] = rlp(0);
+        fields[5] = rlp(abi.encodePacked(salt, initCode));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, keccak256(rlpList(fields, 6)));
+        fields[6] = rlp(v);
+        fields[7] = rlp(uint256(r));
+        fields[8] = rlp(uint256(s));
+        return rlpList(fields, 9);
+    }
+
+    function rlp(uint256 value) internal pure returns (bytes memory) {
+        return rlp(trimmed(value));
+    }
+
+    function rlp(bytes memory value) internal pure returns (bytes memory) {
+        if (value.length == 1 && uint8(value[0]) < 0x80) return value;
+        return bytes.concat(rlpHeader(0x80, value.length), value);
+    }
+
+    function rlpList(bytes[] memory items, uint256 count) internal pure returns (bytes memory payload) {
+        for (uint256 i; i < count; i++) payload = bytes.concat(payload, items[i]);
+        return bytes.concat(rlpHeader(0xc0, payload.length), payload);
+    }
+
+    function rlpHeader(uint256 offset, uint256 length) internal pure returns (bytes memory) {
+        if (length <= 55) return abi.encodePacked(uint8(offset + length));
+        bytes memory size = trimmed(length);
+        return bytes.concat(abi.encodePacked(uint8(offset + 55 + size.length)), size);
+    }
+
+    /// Returns `value` as big-endian bytes without leading zeros.
+    function trimmed(uint256 value) internal pure returns (bytes memory out) {
+        while (value != 0) {
+            out = bytes.concat(abi.encodePacked(uint8(value)), out);
+            value >>= 8;
+        }
     }
 }
 "#;

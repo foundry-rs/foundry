@@ -833,9 +833,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// original create grants cheatcode access. The grant is resolved after caller overrides.
     pub pending_create2_redirects: Vec<(u16, Option<Address>, bool)>,
 
-    /// Depth of the latest call into the CREATE2 deployer, and whether the code that called it
-    /// grants cheatcode access to the contract the deployer creates.
-    create2_deployer_call: Option<(u16, bool)>,
+    /// Depth of a call into the CREATE2 deployer whose create has not run yet, and whether the
+    /// code that called it grants cheatcode access to the contract the deployer creates.
+    pub create2_deployer_call: Option<(u16, bool)>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1281,7 +1281,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ///
     /// Constructors need access before the new contract's runtime code has been deployed.
     fn allow_cheatcodes_on_create(
-        &self,
+        &mut self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         depth: usize,
         caller: Address,
@@ -1289,6 +1289,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         creator: Option<Address>,
     ) {
         let is_factory_create = |factory_depth: u16| usize::from(factory_depth) + 1 == depth;
+        let deployer_call = self.create2_deployer_call.take();
         let allowed = self
             .pending_create2_redirects
             .last()
@@ -1296,7 +1297,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             .map(|(.., allowed)| *allowed)
             .or_else(|| {
                 creator.is_some_and(|code| self.is_create2_deployer(code)).then(|| {
-                    self.create2_deployer_call.is_some_and(|(call_depth, allowed)| {
+                    deployer_call.is_some_and(|(call_depth, allowed)| {
                         allowed && is_factory_create(call_depth)
                     })
                 })

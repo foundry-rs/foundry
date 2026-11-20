@@ -604,6 +604,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
         let create2_redirects = cheats.pending_create2_redirects.len();
+        // The root frame skips the cheatcode hooks, so a call into the CREATE2 deployer recorded
+        // outside the transaction must not authorize its create.
+        cheats.create2_deployer_call = None;
         // The nested transaction has its own journal.
         let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
         // The nested transaction's persistent writes refer to its own journal, so they are kept
