@@ -3337,6 +3337,13 @@ contract SymbolicPrankedAddress is Test {
         vm.prank(who);
         assert(weth.senderCodeSize() == 0);
     }
+
+    // The balance `vm.deal` wrote through the address stays once the path fixes it.
+    function checkDealtBalanceOnceFixed(address who) public {
+        vm.deal(who, 5);
+        vm.assume(who == address(0xB0B));
+        assert(who.balance != 5);
+    }
 }
 "#,
     );
@@ -3345,14 +3352,15 @@ contract SymbolicPrankedAddress is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+Ran 7 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceOnceFixed(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedOriginCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterResetNonce(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawAfterMakePersistent(address) ([METRICS])
 [PASS] checkWithdrawToOtherSender(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawToPrankedSender(address) ([METRICS])
-Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

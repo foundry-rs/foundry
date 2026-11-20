@@ -982,7 +982,6 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = self.fixed_word(cx, address_expr);
         self.world.balance_word(cx, executor, address_expr)
     }
 
@@ -992,7 +991,6 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = self.fixed_word(cx, address_expr);
         self.world.extcode_size_word(cx, executor, address_expr)
     }
 
@@ -1002,7 +1000,6 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = self.fixed_word(cx, address_expr);
         self.world.extcode_hash_word(cx, executor, address_expr)
     }
 
@@ -1014,23 +1011,7 @@ impl PathState {
         offset: SymExpr,
         size: usize,
     ) -> Result<SymBytes, SymbolicError> {
-        let address_expr = self.fixed_word(cx, address_expr);
         self.world.extcode_bytes_word(cx, executor, address_expr, offset, size)
-    }
-
-    /// Returns the constant the path constraints fix the address word `expr` to, or `expr`
-    /// itself, so a word aliased before the path fixed it names the fixed account. A cheatcode
-    /// address still has to be named concretely.
-    fn fixed_word(&self, cx: &mut SymCx, expr: SymExpr) -> SymExpr {
-        match self.constrained_word(cx, &expr) {
-            Some(value)
-                if ![CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS]
-                    .contains(&word_to_address(value)) =>
-            {
-                SymExpr::constant(cx, value)
-            }
-            _ => expr,
-        }
     }
 
     pub(crate) fn address_or_symbolic_slot(&mut self, cx: &mut SymCx, expr: SymExpr) -> Address {
