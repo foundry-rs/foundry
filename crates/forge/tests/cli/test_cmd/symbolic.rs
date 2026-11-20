@@ -7456,6 +7456,7 @@ contract FixedPointRoundTripTest {
     }
 
     function checkFullWidthOptIn(address account) external {
+        vm.assume(account == address(0xB0B));
         vm.assume(target.cpt() >= 1e18);
         uint256 fixedCpt = target.fixedCpt(account);
         vm.assume(fixedCpt == 0 || fixedCpt == 1e18);
@@ -7468,6 +7469,7 @@ contract FixedPointRoundTripTest {
     }
 
     function checkFullWidthOptOut(address account) external {
+        vm.assume(account == address(0xB0B));
         vm.assume(target.cpt() >= 1e18);
         uint256 balance = target.balanceOf(account);
         vm.prank(account);

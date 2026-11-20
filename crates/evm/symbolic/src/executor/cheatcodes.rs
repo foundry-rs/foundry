@@ -644,7 +644,8 @@ impl SymbolicExecutor {
     ///
     /// `vm.etch` and the nonce cheatcodes through a free address fork over every known account,
     /// since they need concrete code and nonces, and `vm.store` over the known precompiles,
-    /// where it reverts. `vm.deal` and the rest of a `vm.store` write each account under a
+    /// where it reverts. `vm.prank` and `vm.startPrank` fork a free sender and origin over every
+    /// known account. `vm.deal` and the rest of a `vm.store` write each account under a
     /// guard instead. A word written that way is decided only once a call targets it, a pranked
     /// call takes it as caller or origin, or a cheatcode other than these writes and their
     /// reads takes it.
@@ -740,6 +741,36 @@ impl SymbolicExecutor {
                     }
                     if !candidates.is_empty() {
                         words.push((word, candidates));
+                    }
+                }
+            }
+            if [
+                prank_0Call::SELECTOR,
+                prank_1Call::SELECTOR,
+                prank_2Call::SELECTOR,
+                prank_3Call::SELECTOR,
+                startPrank_0Call::SELECTOR,
+                startPrank_1Call::SELECTOR,
+                startPrank_2Call::SELECTOR,
+                startPrank_3Call::SELECTOR,
+            ]
+            .contains(&selector)
+            {
+                // A prank aliases a free sender or origin to an empty representative account, so
+                // the sender and origin first fork over the known accounts they may name. A word
+                // that already resolves to an account, such as one an earlier prank aliased, is
+                // decided.
+                first_scanned = vm_params(selector)
+                    .iter()
+                    .take_while(|param| **param == DynSolType::Address)
+                    .count();
+                for index in 0..first_scanned {
+                    let word = read_abi_word_arg(&mut self.cx, memory, args_offset, index)?;
+                    let address = word.clone().address_operand(&mut self.cx);
+                    if state.constrained_word(&mut self.cx, &word).is_none()
+                        && state.world.resolve_address(&address).is_none()
+                    {
+                        words.push((word, state.world.concrete_alias_candidates(executor)));
                     }
                 }
             }

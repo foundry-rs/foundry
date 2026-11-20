@@ -204,8 +204,9 @@ contract SymbolicPrankSender is Test {
         vm.stopPrank();
     }
 
-    // A symbolic creator can alias this funded contract, so the CREATE is not modeled.
-    function checkSymbolicPrankCreateIsIncomplete(address who) public {
+    // A symbolic creator may name this funded contract, where the CREATE succeeds. A creator
+    // that names no known account still reports incomplete.
+    function checkSymbolicPrankCreate(address who) public {
         vm.prank(who);
         try new CreatedBySender{value: 1}() {
             assert(false);
@@ -333,7 +334,7 @@ Ran 14 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [FAIL: vm.prank: cannot overwrite a prank until it is applied at least once; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsUnusedPrankOverwrite() ([METRICS])
 [PASS] checkStartPrankCreate2(address) ([METRICS])
 [PASS] checkSymbolicPrank(address) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic CREATE prank] checkSymbolicPrankCreateIsIncomplete(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicPrankCreate(address) ([METRICS])
 [PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
@@ -3246,6 +3247,98 @@ Ran 11 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicOffsetPrank(address,uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
 Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A free pranked sender or origin may name a known account, so calls and code reads through it
+// must not run against an empty account.
+#[forgetest_init]
+fn symbolic_pranked_address_may_name_known_account(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_pranked_address_may_name_known_account");
+
+    prj.add_test(
+        "SymbolicPrankedAddress.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract WETH {
+    mapping(address => uint256) public balanceOf;
+
+    function deposit() public payable {
+        balanceOf[msg.sender] += msg.value;
+    }
+
+    function transfer(address to, uint256 amount) external {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+    }
+
+    function withdraw(uint256 amount) external {
+        balanceOf[msg.sender] -= amount;
+        (bool ok,) = msg.sender.call{value: amount}("");
+        require(ok);
+    }
+
+    function senderCodeSize() external view returns (uint256) {
+        return msg.sender.code.length;
+    }
+
+    function originCodeSize() external view returns (uint256) {
+        return tx.origin.code.length;
+    }
+
+    receive() external payable {
+        deposit();
+    }
+}
+
+contract SymbolicPrankedAddress is Test {
+    WETH weth;
+
+    function setUp() public {
+        weth = new WETH();
+    }
+
+    // Fails for `who == address(weth)`, whose `receive` deposits the withdrawn ether again.
+    function checkWithdrawToPrankedSender(address who) public {
+        weth.deposit{value: 1}();
+        weth.transfer(who, 1);
+        uint256 balanceBefore = weth.balanceOf(who);
+        vm.prank(who);
+        weth.withdraw(1);
+        assert(weth.balanceOf(who) == balanceBefore - 1);
+    }
+
+    function checkWithdrawToOtherSender(address who) public {
+        vm.assume(who != address(weth));
+        checkWithdrawToPrankedSender(who);
+    }
+
+    function checkPrankedSenderCode(address who) public {
+        vm.prank(who);
+        assert(weth.senderCodeSize() == 0);
+    }
+
+    function checkPrankedOriginCode(address who) public {
+        vm.startPrank(address(this), who);
+        assert(weth.originCodeSize() == 0);
+        vm.stopPrank();
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicPrankedAddress"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedOriginCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCode(address) ([METRICS])
+[PASS] checkWithdrawToOtherSender(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawToPrankedSender(address) ([METRICS])
+Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
