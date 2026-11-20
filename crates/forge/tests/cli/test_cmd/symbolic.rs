@@ -8216,6 +8216,73 @@ contract SymbolicSqrt {
     );
 }
 
+// Lending checks cross-multiply `debt * BPS <= collateral * ltv`, and an `ltv` of at most `BPS`
+// then bounds the debt by the collateral.
+#[forgetest_init]
+fn symbolic_proves_scaled_order(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_scaled_order");
+    prj.add_test(
+        "SymbolicScaledOrder.t.sol",
+        r#"
+contract SymbolicScaledOrder {
+    uint256 internal constant BPS = 10_000;
+
+    function checkBorrowWithinCollateral(uint128 collateral, uint16 ltvBps, uint128 debt)
+        public
+        pure
+    {
+        require(ltvBps <= BPS);
+        require(uint256(debt) * BPS <= uint256(collateral) * ltvBps);
+        assert(debt <= collateral);
+    }
+
+    function checkBorrowAboveFullLtv(uint128 collateral, uint16 ltvBps, uint128 debt)
+        public
+        pure
+    {
+        require(ltvBps <= BPS + 1);
+        require(uint256(debt) * BPS <= uint256(collateral) * ltvBps);
+        assert(debt <= collateral);
+    }
+
+    function checkBorrowWithWrappingDebt(uint128 collateral, uint16 ltvBps, uint256 debt)
+        public
+        pure
+    {
+        require(ltvBps <= BPS);
+        unchecked {
+            require(debt * BPS <= uint256(collateral) * ltvBps);
+        }
+        assert(debt <= collateral);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicScaledOrder"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result =
+            json_test_result(&output, "checkBorrowWithinCollateral(uint128,uint16,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+
+        for signature in [
+            "checkBorrowAboveFullLtv(uint128,uint16,uint128)",
+            "checkBorrowWithWrappingDebt(uint128,uint16,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // OpenZeppelin's `Math.ceilDiv` rounds up as `(a - 1) / b + 1` for a nonzero `a`, with a ternary
 // in v4 and a selector multiply in v5.
 #[forgetest_init]
@@ -8708,44 +8775,74 @@ contract SymbolicMinRatioNested {
     }
 }
 
-// Lending checks cross-multiply `debt * BPS <= collateral * ltv`, and an `ltv` of at most `BPS`
-// then bounds the debt by the collateral.
+// OpenZeppelin's `VestingWallet` (MIT) vests `total * (t - start) / duration` once
+// `start <= t < start + duration`, so the elapsed time stays at most the duration.
 #[forgetest_init]
-fn symbolic_proves_scaled_order(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_proves_scaled_order");
+fn symbolic_proves_vesting_schedule_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_vesting_schedule_bounded");
     prj.add_test(
-        "SymbolicScaledOrder.t.sol",
+        "SymbolicVestingSchedule.t.sol",
         r#"
-contract SymbolicScaledOrder {
-    uint256 internal constant BPS = 10_000;
+contract SymbolicVestingSchedule {
+    uint64 private _start;
+    uint64 private _duration;
 
-    function checkBorrowWithinCollateral(uint128 collateral, uint16 ltvBps, uint128 debt)
-        public
-        pure
-    {
-        require(ltvBps <= BPS);
-        require(uint256(debt) * BPS <= uint256(collateral) * ltvBps);
-        assert(debt <= collateral);
+    function start() public view returns (uint256) {
+        return _start;
     }
 
-    function checkBorrowAboveFullLtv(uint128 collateral, uint16 ltvBps, uint128 debt)
-        public
-        pure
-    {
-        require(ltvBps <= BPS + 1);
-        require(uint256(debt) * BPS <= uint256(collateral) * ltvBps);
-        assert(debt <= collateral);
+    function duration() public view returns (uint256) {
+        return _duration;
     }
 
-    function checkBorrowWithWrappingDebt(uint128 collateral, uint16 ltvBps, uint256 debt)
-        public
-        pure
+    function end() public view returns (uint256) {
+        return start() + duration();
+    }
+
+    function _vestingSchedule(uint256 totalAllocation, uint64 timestamp)
+        internal
+        view
+        returns (uint256)
     {
-        require(ltvBps <= BPS);
-        unchecked {
-            require(debt * BPS <= uint256(collateral) * ltvBps);
+        if (timestamp < start()) {
+            return 0;
+        } else if (timestamp >= end()) {
+            return totalAllocation;
+        } else {
+            return (totalAllocation * (timestamp - start())) / duration();
         }
-        assert(debt <= collateral);
+    }
+
+    function checkVestedBelowAllocation(uint64 s, uint64 d, uint128 total, uint64 t) public {
+        _start = s;
+        _duration = d;
+        assert(_vestingSchedule(total, t) <= total);
+    }
+
+    function checkVestedBelowWideAllocation(uint64 s, uint64 d, uint256 total, uint64 t) public {
+        _start = s;
+        _duration = d;
+        assert(_vestingSchedule(total, t) <= total);
+    }
+
+    function checkVestedPastLongerEnd(uint64 s, uint32 d, uint128 total, uint64 t) public pure {
+        require(total > 1 << 100 && d > 1 << 20);
+        require(t >= s && t < uint256(s) + (uint256(d) + 2));
+        assert(uint256(total) * (t - s) / d <= total);
+    }
+
+    function checkElapsedBeforeStart(uint256 s, uint256 d, uint64 t, uint256 total) public pure {
+        unchecked {
+            require(total <= 1 && t < 10 && s >= 10 && d > 0 && t < s + d);
+            assert(total * (t - s) / d <= total);
+        }
+    }
+
+    function checkElapsedAgainstOrder(uint64 s, uint64 t) public pure {
+        require(t <= s);
+        unchecked {
+            assert(uint256(t) - s <= type(uint64).max);
+        }
     }
 }
 "#,
@@ -8754,23 +8851,34 @@ contract SymbolicScaledOrder {
         prj.update_config(|config| config.optimizer = Some(optimized));
         let output = cmd
             .forge_fuse()
-            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicScaledOrder"])
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicVestingSchedule"])
             .assert_failure()
             .get_output()
             .stdout
             .clone();
 
-        let result =
-            json_test_result(&output, "checkBorrowWithinCollateral(uint128,uint16,uint128)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
-
         for signature in [
-            "checkBorrowAboveFullLtv(uint128,uint16,uint128)",
-            "checkBorrowWithWrappingDebt(uint128,uint16,uint256)",
+            "checkVestedBelowAllocation(uint64,uint64,uint128,uint64)",
+            "checkVestedBelowWideAllocation(uint64,uint64,uint256,uint64)",
         ] {
             let result = json_test_result(&output, signature);
-            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
-            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkVestedPastLongerEnd(uint64,uint32,uint128,uint64)",
+            "checkElapsedBeforeStart(uint256,uint256,uint64,uint256)",
+            "checkElapsedAgainstOrder(uint64,uint64)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
         }
     }
 }
