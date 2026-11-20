@@ -1601,18 +1601,32 @@ impl ConstraintContext {
                 })
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                // `(n / t) * t <= n`, and the product is zero when `t == 0`.
+                let cap = rounded_product_operands(left, right)
+                    .and_then(|(dividend, _)| self.interval_cached(dividend, intervals, remaining))
+                    .map(|dividend| dividend.max);
                 let guarded = self.has_non_wrapping_product(left, right);
-                let left = self.interval_cached(left, intervals, remaining)?;
-                let right = self.interval_cached(right, intervals, remaining)?;
-                Some(WordInterval {
-                    min: left.min.checked_mul(right.min)?,
-                    // A retained overflow guard correlates the factors. Their independent
-                    // maxima can overflow even though every feasible product fits.
-                    max: left
-                        .max
-                        .checked_mul(right.max)
-                        .or_else(|| guarded.then_some(U256::MAX))?,
-                })
+                let product = self
+                    .interval_cached(left, intervals, remaining)
+                    .zip(self.interval_cached(right, intervals, remaining))
+                    .and_then(|(left, right)| {
+                        Some(WordInterval {
+                            min: left.min.checked_mul(right.min)?,
+                            // A retained overflow guard correlates the factors. Their independent
+                            // maxima can overflow even though every feasible product fits.
+                            max: left
+                                .max
+                                .checked_mul(right.max)
+                                .or_else(|| guarded.then_some(U256::MAX))?,
+                        })
+                    });
+                match (product, cap) {
+                    (Some(product), Some(cap)) => {
+                        Some(WordInterval { min: product.min.min(cap), max: product.max.min(cap) })
+                    }
+                    (None, Some(cap)) => Some(WordInterval { min: U256::ZERO, max: cap }),
+                    (product, None) => product,
+                }
             }
             SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
                 // Even an otherwise unbounded numerator is a uint256 word. Division by a
