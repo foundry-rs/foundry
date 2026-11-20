@@ -8399,13 +8399,15 @@ contract SymbolicUniswapV2 {
     }
 }
 
-// Each checked `x -= x * y / (y + z)` asks whether the quotient stays below the previous `x`,
-// whose interval nests every earlier update. That analysis must share one node budget; with a
-// fresh budget per level, its work doubles per update and outlives the symbolic timeout.
+// Each checked `x -= x * y / (y + z)` or rounded-up `x -= (x * bps + 9_999) / 10_000` asks
+// whether the quotient stays below the previous `x`, whose interval nests every earlier update.
+// That analysis must share one node budget; with a fresh budget per level, its work doubles per
+// update and outlives the symbolic timeout.
 #[forgetest_init]
 fn symbolic_bounds_chained_sum_divisor_updates(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_bounds_chained_sum_divisor_updates");
     let updates = "        x -= x * y / (uint256(y) + z);\n".repeat(24);
+    let rounded_up_updates = "        x -= (x * bps + 9_999) / 10_000;\n".repeat(24);
     prj.add_test(
         "SymbolicChainedUpdates.t.sol",
         &r#"
@@ -8414,8 +8416,14 @@ contract SymbolicChainedUpdates {
         uint256 x = x0;
 UPDATES        assert(x < 2 ** 128);
     }
+
+    function checkChainedRoundedUpUpdates(uint128 x0, uint16 bps) public pure {
+        uint256 x = x0;
+ROUNDED_UP_UPDATES        assert(x < 2 ** 128);
+    }
 }
 "#
+        .replace("ROUNDED_UP_UPDATES", &rounded_up_updates)
         .replace("UPDATES", &updates),
     );
     let output = cmd
@@ -8424,13 +8432,18 @@ UPDATES        assert(x < 2 ** 128);
         .get_output()
         .stdout
         .clone();
-    let result = json_test_result(&output, "checkChainedUpdates(uint128,uint112,uint112)");
     // The property holds, so a stronger engine may prove it; a regression hangs instead.
-    assert!(
-        result["symbolic"]["status"] == "pass"
-            || result["symbolic"]["incomplete"]["kind"] == "timeout",
-        "{result}"
-    );
+    for signature in [
+        "checkChainedUpdates(uint128,uint112,uint112)",
+        "checkChainedRoundedUpUpdates(uint128,uint16)",
+    ] {
+        let result = json_test_result(&output, signature);
+        assert!(
+            result["symbolic"]["status"] == "pass"
+                || result["symbolic"]["incomplete"]["kind"] == "timeout",
+            "{result}"
+        );
+    }
 }
 
 // A fee rounded up adds less than one divisor, so it stays at most the amount once the rate is at
