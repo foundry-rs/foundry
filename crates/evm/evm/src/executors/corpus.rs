@@ -77,7 +77,7 @@ use parking_lot::{Condvar, Mutex};
 use proptest::test_runner::TestRunner;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     fmt,
     path::{Path, PathBuf},
     sync::{
@@ -539,9 +539,11 @@ impl WorkerCorpusSeed {
             }
         }
 
-        // An entry dropped by replay shifts the slots after it, so some patches then land on a
-        // worker that discards them.
+        // Patches are solved for the slots worker 0 gets before replay drops any entry, so each
+        // kept entry is queued for the worker its slot was solved for.
         let first_slot = seed.in_memory_corpus.len();
+        let workers = patch_workers.unwrap_or(1);
+        let mut shards = vec![VecDeque::new(); workers];
         let coverage = ReplayCoverage {
             history_map: &mut seed.history_map,
             edge_indices: &mut seed.edge_indices,
@@ -552,7 +554,7 @@ impl WorkerCorpusSeed {
         let outcomes = replay_corpus_sequences(&sequences, executor, target, coverage, |index| {
             solves(first_slot + index)
         })?;
-        for ((entry, tx_seq), outcome) in entries.into_iter().zip(outcomes) {
+        for (index, ((entry, tx_seq), outcome)) in entries.into_iter().zip(outcomes).enumerate() {
             let ReplayOutcome { keep_entry, new_edge, cmp_seq, failed_replays, .. } = outcome;
             seed.failed_replays += failed_replays;
             // Start the timer at the baseline load if replay hit a first-time edge.
@@ -570,7 +572,19 @@ impl WorkerCorpusSeed {
                 tx_seq.len(),
                 entry.path.display()
             );
-            seed.in_memory_corpus.push(CorpusEntry::new_with_cmp(tx_seq, cmp_seq, entry.uuid));
+            shards[(first_slot + index) % workers]
+                .push_back(CorpusEntry::new_with_cmp(tx_seq, cmp_seq, entry.uuid));
+        }
+        // Deal the queues back in slot order. Only entries dealt after a queue runs short, near
+        // the end, land on another worker, and worker 0's queue is used last.
+        for slot in first_slot.. {
+            let Some(entry) = shards[slot % workers]
+                .pop_front()
+                .or_else(|| shards.iter_mut().rev().find_map(VecDeque::pop_front))
+            else {
+                break;
+            };
+            seed.in_memory_corpus.push(entry);
         }
 
         Ok(seed)
@@ -3906,10 +3920,14 @@ mod tests {
         let corpus_root = temp_corpus_dir();
         let target = Address::repeat_byte(0x11);
         let function = Function::parse("test(uint256)").unwrap();
-        // One call below the branch and two above it, which cover the same edges.
-        for arg in [1, 200, 300] {
-            let tx = tx_for_function(target, &function, &[DynSolValue::Uint(U256::from(arg), 256)]);
-            CorpusEntry::new(vec![tx]).write_to_disk_in(&corpus_root, false).unwrap();
+        let removed = Function::parse("removed(uint256)").unwrap();
+        // Worker directories load in name order: an entry whose function is no longer targeted,
+        // then one call on each side of the branch, so both add coverage.
+        for (worker, function, arg) in [(0, &removed, 1), (1, &function, 1), (2, &function, 200)] {
+            let tx = tx_for_function(target, function, &[DynSolValue::Uint(U256::from(arg), 256)]);
+            let dir = corpus_root.join(format!("{WORKER}{worker}")).join(CORPUS_DIR);
+            fs::create_dir_all(&dir).unwrap();
+            CorpusEntry::new(vec![tx]).write_to_disk_in(&dir, false).unwrap();
         }
         let (executor, contracts) = patch_load_fixture(corpus_root.clone(), target, &function);
 
@@ -3927,20 +3945,17 @@ mod tests {
         )
         .unwrap();
 
-        // Worker 0 gets slots 0 and 2. The files load in directory order, and a call is solved
-        // only when it adds coverage, so slot 2 is solved when no earlier slot took its branch.
-        let below = |entry: &CorpusEntry| {
-            U256::from_be_slice(&entry.tx_seq[0].call_details.calldata[4..]) < U256::from(100)
-        };
-        let [first, second, third] = seed.in_memory_corpus.as_slice() else {
-            panic!("loaded {} entries", seed.in_memory_corpus.len());
-        };
-        assert!(!first.cmp_seq[0].patches.is_empty());
-        assert!(second.cmp_seq[0].patches.is_empty());
-        assert_eq!(
-            third.cmp_seq[0].patches.is_empty(),
-            below(first) == below(third) || below(second) == below(third)
-        );
+        // The dropped entry took worker 0's first slot, so worker 0 gets the entry solved for its
+        // next slot.
+        let loaded = seed
+            .in_memory_corpus
+            .iter()
+            .map(|entry| {
+                let arg = U256::from_be_slice(&entry.tx_seq[0].call_details.calldata[4..]);
+                (arg.to::<u64>(), !entry.cmp_seq[0].patches.is_empty())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(loaded, [(200, true), (1, false)]);
     }
 
     #[test]
