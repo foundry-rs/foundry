@@ -1219,6 +1219,27 @@ mod tests {
         }
 
         #[test]
+        fn test_base_hardfork_activates_cobalt_on_known_chains() {
+            // Base mainnet: 2026-09-30 18:00 UTC. Base Sepolia: 2026-09-23 18:00 UTC.
+            for (chain_id, activation) in [(8453, 1_790_791_200), (84532, 1_790_186_400)] {
+                assert_eq!(
+                    FoundryHardfork::from_chain_and_timestamp(chain_id, activation - 1),
+                    Some(FoundryHardfork::Base(BaseUpgrade::Beryl)),
+                    "chain {chain_id} immediately before Cobalt"
+                );
+                assert_eq!(
+                    FoundryHardfork::from_chain_and_timestamp(chain_id, activation),
+                    Some(FoundryHardfork::Base(BaseUpgrade::Cobalt)),
+                    "chain {chain_id} at Cobalt activation"
+                );
+                assert_eq!(
+                    BaseSpecId::historical_hardfork(chain_id, activation),
+                    Some(FoundryHardfork::Base(BaseUpgrade::Cobalt))
+                );
+            }
+        }
+
+        #[test]
         fn test_evm_spec_id_from_str_parses_base_upgrades() {
             assert_eq!(
                 evm_spec_id_from_str::<BaseSpecId>("Azul"),
