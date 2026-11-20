@@ -11,13 +11,20 @@
 //! the literals and immediates, so it is searched only when the run accesses a large constant slot
 //! that the contract's code pushes, and only the match is recorded. A registered preimage is a
 //! real one, so this adds no unsoundness; constants that no candidate produces, such as ERC-1967
-//! and ERC-7201 roots, stay fixed slots.
+//! and ERC-7201 roots, stay fixed slots. A slot the layout itself declares, such as an ERC-7201
+//! namespace member, is not searched: it is the fixed slot of a variable, and a folded entry within
+//! `2^64` above a hash would need a near-preimage of that slot, which the preimage-resistance
+//! assumption excludes.
 
 use super::*;
 use foundry_common::slot_identifier::{ENCODING_INPLACE, ENCODING_MAPPING};
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 
 const MAX_NESTED_MAPPING_HASHES: usize = 1 << 18;
+
+/// Most slots of one in-place variable recorded as declared slots; a larger variable, such as a
+/// big fixed-size array, only records its first slots and its other slots are searched as before.
+const MAX_DECLARED_SLOTS_PER_VARIABLE: u64 = 1 << 10;
 
 /// Candidate keys and storage layouts of the deployed contracts, kept to resolve the nested level
 /// of a folded mapping slot on demand.
@@ -33,6 +40,8 @@ struct FoldedContract {
     layout: Arc<StorageLayout>,
     keys: Vec<U256>,
     constants: HashSet<U256>,
+    /// Slots of the variables the layout declares, including ERC-7201 namespace members.
+    declared: HashSet<U256>,
 }
 
 impl FoldedSlots {
@@ -96,7 +105,13 @@ impl FoldedSlots {
                         return folded;
                     }
                 }
-                folded.contracts.push(FoldedContract { layout: layout.clone(), keys, constants });
+                let declared = declared_slots(layout);
+                folded.contracts.push(FoldedContract {
+                    layout: layout.clone(),
+                    keys,
+                    constants,
+                    declared,
+                });
             }
         }
         folded
@@ -118,6 +133,11 @@ impl FoldedSlots {
             || self.searched.contains(&slot)
             || cx.concrete_keccak_base(slot, STORAGE_LAYOUT_OFFSET_BITS).is_some()
         {
+            return true;
+        }
+        if self.contracts.iter().any(|c| c.constants.contains(&slot) && c.declared.contains(&slot))
+        {
+            self.searched.insert(slot);
             return true;
         }
         let nested_hashes = &mut self.nested_hashes;
@@ -157,6 +177,26 @@ impl FoldedSlots {
         self.searched.insert(slot);
         true
     }
+}
+
+/// Returns the slots the layout's variables occupy: every slot of an in-place variable, up to
+/// [`MAX_DECLARED_SLOTS_PER_VARIABLE`], and the head slot of a mapping, dynamic array, `bytes` or
+/// `string`. Entries hashed off a head slot are not declared slots.
+fn declared_slots(layout: &StorageLayout) -> HashSet<U256> {
+    let mut declared = HashSet::default();
+    for entry in &layout.storage {
+        let Ok(slot) = entry.slot.parse::<U256>() else { continue };
+        let words = layout
+            .types
+            .get(&entry.storage_type)
+            .filter(|ty| ty.encoding == ENCODING_INPLACE)
+            .and_then(|ty| ty.number_of_bytes.parse::<u64>().ok())
+            .map_or(1, |bytes| bytes.div_ceil(32).clamp(1, MAX_DECLARED_SLOTS_PER_VARIABLE));
+        for word in 0..words {
+            declared.insert(slot.wrapping_add(U256::from(word)));
+        }
+    }
+    declared
 }
 
 fn past_deadline(deadline: Option<Instant>) -> bool {
