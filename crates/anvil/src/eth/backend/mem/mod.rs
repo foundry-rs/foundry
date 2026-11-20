@@ -9915,9 +9915,10 @@ impl Backend<FoundryNetwork> {
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
                     let canonical_logs = result.logs.clone();
-                    let (response_logs, attempted_log_count) = inspector
+                    let response_logs = inspector
                         .take_simulation_logs(&canonical_logs, result.status)
                         .expect("simulation log collector is installed");
+                    let response_log_count = response_logs.len() as u64;
                     inspector.print_logs();
                     if self.print_traces {
                         inspector.into_print_traces(self.call_trace_decoder());
@@ -10054,14 +10055,16 @@ impl Backend<FoundryNetwork> {
                                 data: None,
                             })
                         },
+                        // Logs of reverted frames were dropped, so indices have no gaps.
                         logs: response_logs
                             .into_iter()
+                            .enumerate()
                             .map(|(idx, log)| Log {
                                 inner: log,
                                 block_number: Some(rpc_block_number),
                                 block_timestamp: Some(block_env.timestamp.saturating_to()),
                                 transaction_index: Some(req_idx as u64),
-                                log_index: Some(idx + log_index),
+                                log_index: Some(idx as u64 + log_index),
                                 removed: false,
 
                                 block_hash: None,
@@ -10069,7 +10072,7 @@ impl Backend<FoundryNetwork> {
                             })
                             .collect(),
                     };
-                    log_index += attempted_log_count;
+                    log_index += response_log_count;
                     call_res.push(sim_res);
                 }
 
