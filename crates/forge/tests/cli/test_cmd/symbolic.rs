@@ -7558,8 +7558,10 @@ contract FixedPointRoundTripTest {
         ("checkFullWidthOptIn", "checkFullWidthOptIn(address)"),
         ("checkFullWidthOptOut", "checkFullWidthOptOut(address)"),
     ] {
-        // The prank forks the sender over every known account, so the full-width checks take
-        // over 1024 paths.
+        // Under isolation the pranked call bumps its sender's nonce, so the prank forks the
+        // sender over every known account and the full-width checks take over 1024 paths. A
+        // nonce bump deferred until a candidate's nonce is read would drop this budget and the
+        // test's timeout override in `.config/nextest.toml`.
         let output = cmd
             .forge_fuse()
             .args([
