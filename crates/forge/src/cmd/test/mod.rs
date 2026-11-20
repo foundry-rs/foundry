@@ -1260,6 +1260,7 @@ impl TestArgs {
                     "the debugger may show source files that differ from the compiled ones: {error:#}"
                 );
             }
+            config.request_ethdebug();
         }
     }
 

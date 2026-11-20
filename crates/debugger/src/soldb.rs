@@ -563,8 +563,10 @@ struct ExecutedProgram<'a> {
     artifact: &'a ArtifactData,
     /// Solc indexes source maps by instruction counter, but Vyper indexes by program counter.
     solc: bool,
-    source_map: &'a SourceMap,
+    source_map: Option<&'a SourceMap>,
     pc_ic_map: Option<&'a PcIcMap>,
+    /// The compiler's ETHDebug program, when the build has one.
+    ethdebug: Option<&'a Value>,
     /// The sources of the build that compiled the program, by source id.
     build_sources: &'a HashMap<u32, Arc<SourceData>>,
     /// The contract's storage layout, as solc writes it.
@@ -592,19 +594,26 @@ fn executed_programs<'a>(
             && let Some(sources_for_name) = sources.get_sources(name)
             && let Some((artifact, source)) = sources_for_name.into_iter().find(|(artifact, _)| {
                 if init {
-                    artifact.source_map.is_some()
+                    artifact.source_map.is_some() || artifact.ethdebug.is_some()
                 } else {
-                    artifact.source_map_runtime.is_some()
+                    artifact.source_map_runtime.is_some() || artifact.ethdebug_runtime.is_some()
                 }
             })
             && let Some(build_sources) = sources.sources_by_id.get(&artifact.build_id)
         {
-            let (source_map, pc_ic_map) = if init {
-                (artifact.source_map.as_ref(), artifact.pc_ic_map.as_ref())
+            let (source_map, pc_ic_map, ethdebug) = if init {
+                (
+                    artifact.source_map.as_ref(),
+                    artifact.pc_ic_map.as_ref(),
+                    artifact.ethdebug.as_ref(),
+                )
             } else {
-                (artifact.source_map_runtime.as_ref(), artifact.pc_ic_map_runtime.as_ref())
+                (
+                    artifact.source_map_runtime.as_ref(),
+                    artifact.pc_ic_map_runtime.as_ref(),
+                    artifact.ethdebug_runtime.as_ref(),
+                )
             };
-            let Some(source_map) = source_map else { continue };
             let storage_layout = known_contracts
                 .find_by_name_or_identifier(name)
                 .ok()
@@ -622,6 +631,7 @@ fn executed_programs<'a>(
                 solc: matches!(source.language, MultiCompilerLanguage::Solc(_)),
                 source_map,
                 pc_ic_map,
+                ethdebug,
                 build_sources,
                 storage_layout,
             });
@@ -630,54 +640,32 @@ fn executed_programs<'a>(
     programs
 }
 
-/// Adapts the source map of `program` to its instructions, in the ETHDebug shape soldb reads.
+/// The soldb debug info of `program`, from its ETHDebug program when the build has one and from its
+/// source map otherwise.
 fn contract_debug_info(
     program: &ExecutedProgram<'_>,
     source_cache: &mut SourceCache,
 ) -> Option<ContractDebugInfo> {
-    let mut instructions = Vec::new();
-    let mut used_sources = BTreeSet::new();
-    let mut pc = 0;
-    while let Some(&byte) = program.code.get(pc) {
-        let op = OpCode::new(byte);
-        let index = if program.solc {
-            program.pc_ic_map.and_then(|map| map.get(pc as u32))
-        } else {
-            Some(pc as u32)
-        };
-        if let Some(element) = index.and_then(|index| program.source_map.get(index as usize)) {
-            let context = instruction_context(element, program.build_sources, &mut used_sources);
-            instructions.extend(Instruction::from_bytecode(program.code, pc, context));
+    let (info, code_generator) = match program.ethdebug {
+        // ETHDebug comes from the IR pipeline, whose stack layout soldb does not infer.
+        Some(ethdebug) => (ethdebug_info(program, ethdebug)?, Some(CodeGenerator::ViaIr)),
+        None => {
+            // The code generator decides whether soldb can infer local variables from the stack.
+            let code_generator =
+                program.artifact.via_ir.filter(|_| program.solc).map(|via_ir| {
+                    if via_ir { CodeGenerator::ViaIr } else { CodeGenerator::Legacy }
+                });
+            (source_map_info(program)?, code_generator)
         }
-        pc += 1 + op.map_or(0, |op| op.info().immediate_size() as usize);
-    }
-    if instructions.is_empty() {
-        return None;
-    }
-
-    let used_sources = used_sources
-        .into_iter()
-        .filter_map(|id| program.build_sources.get(&id).map(|source| (u64::from(id), source)))
-        .collect::<Vec<_>>();
-    let info = EthdebugInfo {
-        compilation: Value::Null,
-        contract_name: program.name.to_string(),
-        environment: if program.init { "create" } else { "call" }.to_string(),
-        instructions,
-        sources: used_sources
-            .iter()
-            .map(|(id, source)| (*id, source.path.to_string_lossy().into_owned()))
-            .collect(),
-        variable_locations: BTreeMap::new(),
     };
-    let source_contents =
-        used_sources.iter().map(|(id, source)| (*id, source.source.to_string())).collect();
-    // The code generator decides whether soldb can infer local variables from the stack.
-    let code_generator = program
-        .artifact
-        .via_ir
-        .filter(|_| program.solc)
-        .map(|via_ir| if via_ir { CodeGenerator::ViaIr } else { CodeGenerator::Legacy });
+    let source_contents = info
+        .sources
+        .keys()
+        .filter_map(|id| {
+            let source = program.build_sources.get(&u32::try_from(*id).ok()?)?;
+            Some((*id, source.source.to_string()))
+        })
+        .collect();
     let storage_layout =
         program.storage_layout.as_ref().and_then(|layout| StorageLayout::parse(layout).ok());
     Some(
@@ -692,6 +680,73 @@ fn contract_debug_info(
         .with_code_hash(Some(&program.code_hash.to_string()))
         .with_storage_layout(storage_layout),
     )
+}
+
+/// Reads the compiler's ETHDebug `program`. Its source ids are the build's.
+fn ethdebug_info(program: &ExecutedProgram<'_>, ethdebug: &Value) -> Option<EthdebugInfo> {
+    let mut info = EthdebugInfo::from_artifacts(
+        program.name,
+        if program.init { "create" } else { "call" },
+        &compilation(program.build_sources),
+        ethdebug,
+    )
+    .ok()?;
+    let used_sources = info
+        .instructions
+        .iter()
+        .filter_map(|instruction| instruction.source_location())
+        .map(|location| location.source_id)
+        .collect::<BTreeSet<_>>();
+    info.sources.retain(|id, _| used_sources.contains(id));
+    (!info.instructions.is_empty()).then_some(info)
+}
+
+/// Adapts the source map of `program` to its instructions, in the ETHDebug shape soldb reads.
+fn source_map_info(program: &ExecutedProgram<'_>) -> Option<EthdebugInfo> {
+    let source_map = program.source_map?;
+    let mut instructions = Vec::new();
+    let mut used_sources = BTreeSet::new();
+    let mut pc = 0;
+    while let Some(&byte) = program.code.get(pc) {
+        let op = OpCode::new(byte);
+        let index = if program.solc {
+            program.pc_ic_map.and_then(|map| map.get(pc as u32))
+        } else {
+            Some(pc as u32)
+        };
+        if let Some(element) = index.and_then(|index| source_map.get(index as usize)) {
+            let context = instruction_context(element, program.build_sources, &mut used_sources);
+            instructions.extend(Instruction::from_bytecode(program.code, pc, context));
+        }
+        pc += 1 + op.map_or(0, |op| op.info().immediate_size() as usize);
+    }
+    if instructions.is_empty() {
+        return None;
+    }
+
+    Some(EthdebugInfo {
+        compilation: Value::Null,
+        contract_name: program.name.to_string(),
+        environment: if program.init { "create" } else { "call" }.to_string(),
+        instructions,
+        sources: used_sources
+            .into_iter()
+            .filter_map(|id| {
+                let source = program.build_sources.get(&id)?;
+                Some((u64::from(id), source.path.to_string_lossy().into_owned()))
+            })
+            .collect(),
+        variable_locations: BTreeMap::new(),
+    })
+}
+
+/// The ETHDebug `compilation` record of a build: its sources by id and path.
+fn compilation(build_sources: &HashMap<u32, Arc<SourceData>>) -> Value {
+    let sources = build_sources
+        .iter()
+        .map(|(id, source)| json!({ "id": id, "path": source.path.to_string_lossy() }))
+        .collect::<Vec<_>>();
+    json!({ "compilation": { "sources": sources } })
 }
 
 /// Checks that a SolDB bundle can be written to `dir`, before the run that records it.
@@ -719,9 +774,10 @@ pub fn ensure_dump_dir(dir: &Path) -> Result<()> {
 /// Writes a bundle that soldb's own tools read, for example
 /// `soldb profile --trace-file <dir>/trace.json --contracts <dir>/contracts.json`.
 ///
-/// The bundle holds the transaction trace, a contracts mapping, one `combined.json` per contract
-/// address with the legacy source maps and bytecode `solc --combined-json` writes, and the sources
-/// under their project paths, where soldb looks for them.
+/// The bundle holds the transaction trace, a contracts mapping, and one directory per contract
+/// address with the legacy source maps and bytecode `solc --combined-json` writes, plus the
+/// ETHDebug programs when the build has them, which soldb prefers. The sources are under their
+/// project paths, where soldb looks for them.
 pub(crate) fn write_bundle(
     dir: &Path,
     mut arenas: Vec<CallTraceArena>,
@@ -757,27 +813,36 @@ pub(crate) fn write_bundle(
                         .map(|id| path(&id).map_or_else(|| format!("<missing-{id}>"), Into::into))
                         .collect(),
                     fields: Map::new(),
+                    ethdebug: Vec::new(),
+                    compilation: compilation(program.build_sources),
                 }
             });
-        let (source_map_key, bytecode_key) =
-            if program.init { ("srcmap", "bin") } else { ("srcmap-runtime", "bin-runtime") };
-        let source_map = program
-            .source_map
-            .iter()
-            .map(|element| {
-                format!(
-                    "{}:{}:{}:{}:{}",
-                    element.offset(),
-                    element.length(),
-                    element.index_i32(),
-                    element.jump().to_str(),
-                    element.modifier_depth()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(";");
-        contract.fields.insert(source_map_key.to_string(), source_map.into());
+        let (source_map_key, bytecode_key, program_suffix) = if program.init {
+            ("srcmap", "bin", "_ethdebug.json")
+        } else {
+            ("srcmap-runtime", "bin-runtime", "_ethdebug-runtime.json")
+        };
+        if let Some(source_map) = program.source_map {
+            let source_map = source_map
+                .iter()
+                .map(|element| {
+                    format!(
+                        "{}:{}:{}:{}:{}",
+                        element.offset(),
+                        element.length(),
+                        element.index_i32(),
+                        element.jump().to_str(),
+                        element.modifier_depth()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(";");
+            contract.fields.insert(source_map_key.to_string(), source_map.into());
+        }
         contract.fields.insert(bytecode_key.to_string(), hex::encode(program.code).into());
+        if let Some(ethdebug) = program.ethdebug {
+            contract.ethdebug.push((format!("{}{program_suffix}", program.name), ethdebug.clone()));
+        }
         if let Some(layout) = &program.storage_layout {
             contract.fields.insert("storage-layout".to_string(), layout.clone());
         }
@@ -810,14 +875,21 @@ pub(crate) fn write_bundle(
         } else {
             hex::encode_prefixed(address)
         };
-        fs::create_dir_all(dir.join(&debug_dir))?;
+        let contract_dir = dir.join(&debug_dir);
+        fs::create_dir_all(&contract_dir)?;
         write_json_file(
-            &dir.join(&debug_dir).join("combined.json"),
+            &contract_dir.join("combined.json"),
             &json!({
                 "sourceList": contract.source_list,
                 "contracts": { contract.key: contract.fields },
             }),
         )?;
+        if !contract.ethdebug.is_empty() {
+            write_json_file(&contract_dir.join("ethdebug.json"), &contract.compilation)?;
+            for (file_name, program) in contract.ethdebug {
+                write_json_file(&contract_dir.join(file_name), &program)?;
+            }
+        }
         mapping.push(json!({
             "address": hex::encode_prefixed(address),
             "name": contract.name,
@@ -839,6 +911,10 @@ struct CombinedJson {
     source_list: Vec<String>,
     /// The source maps, bytecode, and storage layout, under solc's field names.
     fields: Map<String, Value>,
+    /// The ETHDebug programs, by the file names soldb looks for.
+    ethdebug: Vec<(String, Value)>,
+    /// The ETHDebug `compilation` record the programs' source ids refer to.
+    compilation: Value,
 }
 
 /// The ETHDebug context of one source map element: its source range, if the build has the
@@ -1038,6 +1114,8 @@ mod tests {
                 build_id: "build".to_string(),
                 file_id: 0,
                 via_ir: Some(false),
+                ethdebug: None,
+                ethdebug_runtime: None,
             }],
         );
         let mut arena = CallTraceArena::default();
@@ -1215,5 +1293,45 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().ends_with("the directory is not empty"));
+    }
+
+    #[test]
+    fn prefers_ethdebug_programs() {
+        let (mut sources, arena, names) = executed_c();
+        // The program maps only the `JUMPDEST`, which the source map maps differently.
+        let program = json!({
+            "environment": "call",
+            "instructions": [{
+                "offset": 2,
+                "operation": { "mnemonic": "JUMPDEST" },
+                "context": { "code": { "source": { "id": 0 }, "range": { "offset": 0, "length": 13 } } },
+            }],
+        });
+        sources.artifacts_by_name.get_mut("C").unwrap()[0].ethdebug_runtime = Some(program);
+
+        let (arenas, names) = (vec![arena], vec![names]);
+        let programs = executed_programs(&arenas, &names, &sources, &Default::default());
+        let contract = contract_debug_info(&programs[0], &mut SourceCache::default()).unwrap();
+        assert_eq!(contract.code_generator, Some(CodeGenerator::ViaIr));
+        let offsets = contract.info.instructions.iter().map(|i| i.offset).collect::<Vec<_>>();
+        assert_eq!(offsets, [2]);
+        assert_eq!(contract.info.sources, BTreeMap::from([(0, "src/C.sol".to_string())]));
+
+        let dir = tempfile::tempdir().unwrap();
+        write_bundle(dir.path(), arenas, Vec::new(), &names, &sources, &Default::default())
+            .unwrap();
+        let address = hex::encode_prefixed(Address::repeat_byte(0xc));
+        let program = soldb_ethdebug::load_debug_program_with_sources(
+            &dir.path().join(&address),
+            "C",
+            SourceMapEnvironment::Runtime,
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!program.legacy);
+        assert!(program.missing_sources.is_empty());
+        let offsets = program.info.instructions.iter().map(|i| i.offset).collect::<Vec<_>>();
+        assert_eq!(offsets, [2]);
     }
 }
