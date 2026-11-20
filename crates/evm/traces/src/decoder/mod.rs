@@ -1562,7 +1562,9 @@ impl CallTraceDecoder {
         {
             trace.data.truncate(SELECTOR_LEN);
         }
-        if funcs.iter().any(|func| redact_cheatcode_secret_output(func).is_some()) {
+        // Like the decoded view, keep revert data so failed calls keep their diagnostics.
+        if trace.success && funcs.iter().any(|func| redact_cheatcode_secret_output(func).is_some())
+        {
             trace.output.clear();
         }
     }
@@ -3365,6 +3367,19 @@ mod tests {
         let mut trace = cheatcode_trace(data.clone());
         decoder.redact_raw_cheatcode_secrets(&mut trace);
         assert_eq!(trace.data[..], data[..]);
+
+        // Return data of secret-returning cheatcodes is cleared on success, while revert data
+        // keeps the failure diagnostic.
+        let env_call = Vm::envUint_0Call { name: "PRIVATE_KEY".to_string() }.abi_encode();
+        let mut trace = cheatcode_trace(env_call.clone());
+        trace.output = U256::from_be_bytes(pk).abi_encode().into();
+        decoder.redact_raw_cheatcode_secrets(&mut trace);
+        assert!(trace.output.is_empty());
+        let revert = b"environment variable \"PRIVATE_KEY\" not found".abi_encode();
+        let mut trace = CallTrace { success: false, ..cheatcode_trace(env_call) };
+        trace.output = revert.clone().into();
+        decoder.redact_raw_cheatcode_secrets(&mut trace);
+        assert_eq!(trace.output[..], revert[..]);
 
         // signEd25519 redacts the trailing private key argument.
         let call = Vm::signEd25519Call {
