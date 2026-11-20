@@ -9131,6 +9131,85 @@ contract SymbolicPriceRoundTrip {
     }
 }
 
+// Solidity guards a checked `(a - b) * c` with the zero check `a - b == 0`, which normalizes to
+// `a == b`. Recognizing that form keeps a fee on a difference bounded, such as a fee on the amount
+// left after an earlier fee or on a profit.
+#[forgetest_init]
+fn symbolic_bounds_fee_on_remainder(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_bounds_fee_on_remainder");
+    prj.add_test(
+        "SymbolicFeeOnRemainder.t.sol",
+        r#"
+contract SymbolicFeeOnRemainder {
+    function feeOnRemainder(uint256 amount, uint256 f1, uint256 f2)
+        external
+        pure
+        returns (uint256)
+    {
+        uint256 remainder = amount - amount * f1 / 10_000;
+        return remainder * f2 / 10_000;
+    }
+
+    function checkSecondFee(uint128 amount, uint16 f1, uint16 f2) public pure {
+        require(f1 <= 10_000 && f2 <= 10_000);
+        uint256 remainder = uint256(amount) - uint256(amount) * f1 / 10_000;
+        assert(remainder * f2 / 10_000 <= remainder);
+    }
+
+    function checkProfitFee(uint128 price, uint128 cost, uint16 bps) public pure {
+        require(cost <= price && bps <= 10_000);
+        uint256 profit = uint256(price) - cost;
+        assert(profit * bps / 10_000 <= profit);
+    }
+
+    function checkRateTooLarge(uint128 amount, uint16 f1, uint16 f2) public pure {
+        require(f1 <= 10_000 && f2 <= 10_001);
+        uint256 remainder = uint256(amount) - uint256(amount) * f1 / 10_000;
+        assert(remainder * f2 / 10_000 <= remainder);
+    }
+
+    function checkOverflowStillReverts(uint128 amount, uint16 f1, uint256 f2) public view {
+        require(f1 <= 10_000);
+        try this.feeOnRemainder(amount, f1, f2) returns (uint256) {}
+        catch {
+            assert(false);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicFeeOnRemainder"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in
+            ["checkSecondFee(uint128,uint16,uint16)", "checkProfitFee(uint128,uint128,uint16)"]
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "{signature} optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature} optimized={optimized}"
+            );
+        }
+
+        for signature in [
+            "checkRateTooLarge(uint128,uint16,uint16)",
+            "checkOverflowStillReverts(uint128,uint16,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A

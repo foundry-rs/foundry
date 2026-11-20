@@ -2186,6 +2186,13 @@ impl ConstraintContext {
         if self.bounded_zero_check_operand(condition) == Some(operand) {
             return true;
         }
+        // The zero check `a - b == 0` canonicalizes to `a == b`.
+        if let SymExprKind::BinOp(SymBinOp::Sub, a, b) = operand.kind()
+            && let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = condition.kind()
+            && ((left == a && right == b) || (left == b && right == a))
+        {
+            return true;
+        }
         // For a positive constant d, n / d == 0 iff n < d. Normalization
         // exposes this comparison before the Solidity multiplication guard.
         if let Some((numerator, denominator)) = operand.udiv_operands()
