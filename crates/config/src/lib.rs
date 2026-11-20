@@ -3391,6 +3391,8 @@ impl Default for Config {
                 SolidityErrorCode::TransientStorageUsed,
                 SolidityErrorCode::TransferDeprecated,
                 SolidityErrorCode::NatspecMemorySafeAssemblyDeprecated,
+                SolidityErrorCode::ContractExceeds65536Bytes,
+                SolidityErrorCode::ContractInitCodeSizeExceeds131072Bytes,
             ],
             ignored_error_codes_from: vec![],
             ignored_file_paths: vec![],
