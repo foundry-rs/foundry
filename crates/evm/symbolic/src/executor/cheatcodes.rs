@@ -644,11 +644,12 @@ impl SymbolicExecutor {
     ///
     /// `vm.etch` and the nonce cheatcodes through a free address fork over every known account,
     /// since they need concrete code and nonces, and `vm.store` over the known precompiles,
-    /// where it reverts. `vm.prank` and `vm.startPrank` fork a free sender and origin over every
-    /// known account. `vm.deal` and the rest of a `vm.store` write each account under a
-    /// guard instead. A word written that way is decided only once a call targets it, a pranked
-    /// call takes it as caller or origin, or a cheatcode other than these writes and their
-    /// reads takes it.
+    /// where it reverts. `vm.resetNonce`, `vm.makePersistent`, and `vm.revokePersistent` fork the
+    /// same way, and `vm.prank` and `vm.startPrank` fork a free sender and origin, since they
+    /// would otherwise write or alias an empty representative account. `vm.deal` and the rest of
+    /// a `vm.store` write each account under a guard instead. A word written that way is decided
+    /// only once a call targets it, a pranked call takes it as caller or origin, or a cheatcode
+    /// other than these writes and their reads takes it.
     pub(super) fn free_address_write_targets(
         &mut self,
         executor: &ExecutorView<'_>,
@@ -725,26 +726,28 @@ impl SymbolicExecutor {
         let mut first_scanned = 0;
         if to == Some(CHEATCODE_ADDRESS) {
             let store = selector == storeCall::SELECTOR;
-            if store
-                || [etchCall::SELECTOR, setNonceCall::SELECTOR, setNonceUnsafeCall::SELECTOR]
-                    .contains(&selector)
-            {
-                // The target forks here, or `vm.store` writes it under guards; the other
-                // arguments may still be guarded words.
+            if store {
+                // `vm.store` writes the target under guards, except on the precompiles, where it
+                // reverts; the other arguments may still be guarded words.
                 first_scanned = 1;
                 let word = read_abi_word_arg(&mut self.cx, memory, args_offset, 0)?;
                 if state.constrained_word(&mut self.cx, &word).is_none() {
                     let mut candidates = state.world.concrete_alias_candidates(executor);
-                    if store {
-                        candidates
-                            .retain(|address| is_precompile_for_spec(*address, executor.spec_id));
-                    }
+                    candidates.retain(|address| is_precompile_for_spec(*address, executor.spec_id));
                     if !candidates.is_empty() {
                         words.push((word, candidates));
                     }
                 }
             }
             if [
+                etchCall::SELECTOR,
+                setNonceCall::SELECTOR,
+                setNonceUnsafeCall::SELECTOR,
+                resetNonceCall::SELECTOR,
+                makePersistent_0Call::SELECTOR,
+                makePersistent_1Call::SELECTOR,
+                makePersistent_2Call::SELECTOR,
+                revokePersistent_0Call::SELECTOR,
                 prank_0Call::SELECTOR,
                 prank_1Call::SELECTOR,
                 prank_2Call::SELECTOR,
@@ -756,16 +759,19 @@ impl SymbolicExecutor {
             ]
             .contains(&selector)
             {
-                // A prank aliases a free sender or origin to an empty representative account, so
-                // the sender and origin first fork over the known accounts they may name, even
-                // when another cheatcode already aliased them.
+                // These need concrete code and nonces, or write or alias the account a free
+                // address names on an empty representative account, whose state a later branch
+                // that fixes the address would not see. So their leading addresses first fork
+                // over the known accounts they may name, even when another cheatcode already
+                // aliased them. Only the low 160 bits name the account.
                 first_scanned = vm_params(selector)
                     .iter()
                     .take_while(|param| **param == DynSolType::Address)
                     .count();
                 for index in 0..first_scanned {
                     let word = read_abi_word_arg(&mut self.cx, memory, args_offset, index)?;
-                    if state.constrained_word(&mut self.cx, &word).is_none() {
+                    let address = word.clone().address_operand(&mut self.cx);
+                    if state.constrained_word(&mut self.cx, &address).is_none() {
                         words.push((word, state.world.concrete_alias_candidates(executor)));
                     }
                 }

@@ -2552,6 +2552,34 @@ impl SymbolicWorld {
             .extend(candidates);
     }
 
+    /// Returns the accounts in `candidates` that the alias of the address word `expr` is not
+    /// guarded against, when its representative account holds state, such as one of
+    /// `persistent_accounts`. A branch that fixes the word to one of them would not see that
+    /// state.
+    pub(crate) fn unguarded_alias_candidates(
+        &self,
+        expr: &SymExpr,
+        candidates: &[Address],
+        persistent_accounts: &HashSet<Address>,
+    ) -> Vec<Address> {
+        let Some((alias, representative)) = self.alias_entry(expr) else { return Vec::new() };
+        let holds_state = self.balances.contains_key(&representative)
+            || self.nonces.contains_key(&representative)
+            || self.written_code.contains(&representative)
+            || self.storage.iter().any(|write| write.address == representative)
+            || self.arbitrary_storage_accounts.contains_key(&representative)
+            || persistent_accounts.contains(&representative);
+        if !holds_state {
+            return Vec::new();
+        }
+        let guarded = self.guarded_symbolic_addresses.get(alias);
+        candidates
+            .iter()
+            .copied()
+            .filter(|candidate| guarded.is_none_or(|guarded| !guarded.contains(candidate)))
+            .collect()
+    }
+
     /// Returns whether a guarded cheatcode write went through any address word.
     pub(crate) fn has_guarded_addresses(&self) -> bool {
         !self.guarded_symbolic_addresses.is_empty()

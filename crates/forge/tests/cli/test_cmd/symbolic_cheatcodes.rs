@@ -3332,6 +3332,30 @@ contract SymbolicPrankedAddress is Test {
         checkWithdrawToPrankedSender(who);
     }
 
+    // The persistence `vm.makePersistent` wrote through the address stays once the prank forks it.
+    function checkPersistentOncePranked(address who) public {
+        vm.makePersistent(who);
+        vm.prank(who);
+        assert(!vm.isPersistent(who) || who != address(weth));
+    }
+
+    // The address may name the contract deployed after `vm.makePersistent`, which the earlier
+    // fork did not cover, so the prank reports incomplete instead of dropping its persistence.
+    function checkPersistentBeforeDeployment(address who) public {
+        vm.makePersistent(who);
+        WETH later = new WETH();
+        vm.prank(who);
+        assert(!vm.isPersistent(who) || who != address(later));
+    }
+
+    function checkDealtBalanceBeforeDeployment(address who) public {
+        vm.deal(who, 5);
+        WETH later = new WETH();
+        vm.prank(who);
+        later.deposit();
+        assert(who.balance != 5 || who != address(later));
+    }
+
     function checkPrankedSenderCodeAfterResetNonce(address who) public {
         vm.resetNonce(who);
         vm.prank(who);
@@ -3352,15 +3376,18 @@ contract SymbolicPrankedAddress is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 7 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+Ran 10 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtBalanceBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceOnceFixed(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkPersistentBeforeDeployment(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOncePranked(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedOriginCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterResetNonce(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawAfterMakePersistent(address) ([METRICS])
 [PASS] checkWithdrawToOtherSender(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawToPrankedSender(address) ([METRICS])
-Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

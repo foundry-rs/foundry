@@ -7456,7 +7456,6 @@ contract FixedPointRoundTripTest {
     }
 
     function checkFullWidthOptIn(address account) external {
-        vm.assume(account == address(0xB0B));
         vm.assume(target.cpt() >= 1e18);
         uint256 fixedCpt = target.fixedCpt(account);
         vm.assume(fixedCpt == 0 || fixedCpt == 1e18);
@@ -7469,7 +7468,6 @@ contract FixedPointRoundTripTest {
     }
 
     function checkFullWidthOptOut(address account) external {
-        vm.assume(account == address(0xB0B));
         vm.assume(target.cpt() >= 1e18);
         uint256 balance = target.balanceOf(account);
         vm.prank(account);
@@ -7560,6 +7558,8 @@ contract FixedPointRoundTripTest {
         ("checkFullWidthOptIn", "checkFullWidthOptIn(address)"),
         ("checkFullWidthOptOut", "checkFullWidthOptOut(address)"),
     ] {
+        // The prank forks the sender over every known account, so the full-width checks take
+        // over 1024 paths.
         let output = cmd
             .forge_fuse()
             .args([
@@ -7569,6 +7569,8 @@ contract FixedPointRoundTripTest {
                 "--optimize",
                 "--symbolic-timeout",
                 "30",
+                "--symbolic-max-paths",
+                "2048",
                 "--match-test",
                 test,
             ])
