@@ -1527,8 +1527,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         child.ext_mut().set_preserve_transaction_state(true);
         // Accounts the running transaction created and holds created on this fork, not ones it
         // created on another fork, stay created in the nested one, so that EIP-6780 SELFDESTRUCT
-        // still deletes them, and keep the storage it holds for them. Only accounts the running
-        // transaction loaded are checked, so checking loads no others.
+        // still deletes them, and keep the storage it holds for them. A revert past a fork switch
+        // can drop the mark the switch restored, so an account created on this fork stays created
+        // too, unless it is persistent, whose state can come from another fork. Only accounts the
+        // running transaction loaded are checked, so checking loads no others.
         let state = evm.state_mut();
         let loaded = state
             .loaded_accounts()
@@ -1537,7 +1539,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .collect::<Vec<_>>();
         let held = loaded
             .into_iter()
-            .filter(|address| state.account(address).is_ok_and(|account| account.is_created()))
+            .filter(|address| {
+                state.account(address).is_ok_and(|account| account.is_created())
+                    || (self.inner.tx_created[address].contains(&source_fork)
+                        && !backend.backend().is_persistent(address))
+            })
             .collect::<AddressSet>();
         for address in &held {
             match child.state_mut().account(address) {

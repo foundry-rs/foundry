@@ -9196,3 +9196,55 @@ contract OtherForkCreationForkTest {
     cmd.args(["test"]).assert_success().stdout_eq(output.clone());
     cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
 }
+
+// An account the running transaction created on a fork stays created after a frame that selected
+// that fork reverts, so that EIP-6780 SELFDESTRUCT in a later isolated call still deletes it.
+// Without isolation the running state itself loses the mark with the revert, so only isolated
+// calls are checked.
+#[forgetest]
+async fn fork_created_account_reverted_switch(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    prj.add_test(
+        "RevertedSwitch.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function deal(address account, uint256 balance) external;
+}
+
+contract Bomb {
+    function boom() external {
+        selfdestruct(payable(address(this)));
+    }
+}
+
+contract RevertedSwitchForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function selectAndRevert(uint256 forkId) external {
+        vm.selectFork(forkId);
+        revert();
+    }
+
+    function testForkCreatedAccountSelfDestructsAfterRevertedSwitch() public {
+        uint256 first = vm.createSelectFork("<url>");
+        Bomb bomb = new Bomb();
+        vm.deal(address(bomb), 42);
+        vm.createSelectFork("<url>");
+        (bool ok,) = address(this).delegatecall(abi.encodeCall(this.selectAndRevert, (first)));
+        require(!ok, "reverted");
+        bomb.boom();
+        require(address(bomb).balance == 0, "destroyed");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint()),
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testForkCreatedAccountSelfDestructsAfterRevertedSwitch() ([GAS])
+...
+"#]]);
+}
