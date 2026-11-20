@@ -12,7 +12,7 @@ use alloy_network::{
     BlockResponse, Network, ReceiptResponse, primitives::HeaderResponse,
 };
 use alloy_primitives::{
-    Address, Bloom, Bytes, FixedBytes, I256, Signature, U8, U64, U256, Uint, hex,
+    Address, B256, Bloom, Bytes, FixedBytes, I256, Signature, U8, U64, U256, Uint, hex,
 };
 use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
@@ -864,11 +864,13 @@ impl<T: UIfmt> UIfmt for WithOtherFields<T> {
     }
 }
 
-/// Various numerical ethereum types used for pretty printing
+/// Various ethereum value types used for pretty printing.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 #[expect(missing_docs)]
 pub enum EthValue {
+    // Must stay first: `U64` and `U256` also accept 64-digit hex strings.
+    B256(B256),
     U64(U64),
     Address(Address),
     U256(U256),
@@ -889,6 +891,7 @@ impl UIfmt for EthValue {
             Self::U64(num) => num.pretty(),
             Self::U256(num) => num.pretty(),
             Self::Address(addr) => addr.pretty(),
+            Self::B256(hash) => hash.pretty(),
             Self::U64Array(arr) => arr.pretty(),
             Self::U256Array(arr) => arr.pretty(),
             Self::Other(val) => val.to_string().trim_matches('"').to_string(),
@@ -1305,7 +1308,7 @@ mod tests {
 
     use super::*;
     use alloy_network::Ethereum;
-    use alloy_primitives::{B256, address, bytes};
+    use alloy_primitives::{address, bytes};
     use alloy_rpc_types::Authorization;
     use similar_asserts::assert_eq;
 
@@ -1842,6 +1845,38 @@ yParity              0"
         );
         assert_eq!(Some("27".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "v"));
         assert_eq!(Some("0".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "value"));
+    }
+
+    #[test]
+    fn test_pretty_other_fields_hash() {
+        // Arbitrum One block 0x1f522371 and OP Mainnet deposit
+        // 0xda2d64c8acafb7f8f8d21da48d2791bce2191279525563d7e6808d335790c6be.
+        let fields: OtherFields = serde_json::from_value(serde_json::json!({
+            "sendCount": "0x29027",
+            "sendRoot": "0x01792d292f41d0057682f0b7179026f90a3a43639781e466e63158c6264e94a7",
+            "sourceHash": "0x81eb2a6760bd5a843c3a3e8c02bc5643c95b778d6923e05acb504ae8ed426816",
+        }))
+        .unwrap();
+        assert_eq!(
+            fields.pretty(),
+            "
+sendCount            167975
+sendRoot             0x01792d292f41d0057682f0b7179026f90a3a43639781e466e63158c6264e94a7
+sourceHash           0x81eb2a6760bd5a843c3a3e8c02bc5643c95b778d6923e05acb504ae8ed426816
+"
+        );
+
+        // Arbitrum Sepolia block 0x1, before the first L2 to L1 send.
+        let fields: OtherFields = serde_json::from_value(serde_json::json!({
+            "sendRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        }))
+        .unwrap();
+        assert_eq!(
+            fields.pretty(),
+            "
+sendRoot             0x0000000000000000000000000000000000000000000000000000000000000000
+"
+        );
     }
 
     #[test]
