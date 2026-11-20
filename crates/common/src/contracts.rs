@@ -279,10 +279,14 @@ impl ContractsByArtifact {
         })
     }
 
-    /// Finds the artifact whose creation code `code` starts with.
+    /// Finds the artifact whose creation code starts the init code `code`, which may be followed
+    /// by constructor arguments.
     /// Library addresses are skipped, so unlinked artifacts match.
     /// If nothing matches, metadata hashes are skipped too, and only one artifact may match.
-    pub fn find_by_creation_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
+    pub fn find_by_creation_code_prefix_unlinked(
+        &self,
+        code: &[u8],
+    ) -> Option<ArtifactWithContractRef<'_>> {
         // Artifacts that fit in `code`, with their library address ranges.
         let candidates = || {
             self.iter().filter_map(move |(id, contract)| {
@@ -1072,7 +1076,7 @@ mod tests {
     }
 
     #[test]
-    fn find_by_creation_code_exact_ignores_link_references() {
+    fn find_by_creation_code_prefix_unlinked_ignores_link_references() {
         let placeholder = "__$cd0f7ab2619b21d3f308b141f54cff3989$__";
         let object = BytecodeObject::Unlinked(format!("600073{placeholder}6001"));
         let link_references = BTreeMap::from([(
@@ -1089,19 +1093,24 @@ mod tests {
         ]);
 
         let linked = [&[0x60, 0x00, 0x73][..], &[0xab; 20], &[0x60, 0x01]].concat();
-        assert_eq!(contracts.find_by_creation_code_exact(&linked).unwrap().0.name, "A");
+        assert_eq!(contracts.find_by_creation_code_prefix_unlinked(&linked).unwrap().0.name, "A");
         // Constructor arguments follow the creation code.
         let with_args = [&linked[..], &[0xff; 32]].concat();
-        assert_eq!(contracts.find_by_creation_code_exact(&with_args).unwrap().0.name, "A");
+        assert_eq!(
+            contracts.find_by_creation_code_prefix_unlinked(&with_args).unwrap().0.name,
+            "A"
+        );
         // Only the linked address may differ.
         let mut changed = linked.clone();
         changed[24] = 0x02;
-        assert!(contracts.find_by_creation_code_exact(&changed).is_none());
-        assert!(contracts.find_by_creation_code_exact(&linked[..linked.len() - 1]).is_none());
+        assert!(contracts.find_by_creation_code_prefix_unlinked(&changed).is_none());
+        assert!(
+            contracts.find_by_creation_code_prefix_unlinked(&linked[..linked.len() - 1]).is_none()
+        );
     }
 
     #[test]
-    fn find_by_creation_code_exact_accepts_only_unique_metadata_mismatch() {
+    fn find_by_creation_code_prefix_unlinked_accepts_only_unique_metadata_mismatch() {
         let artifact = |name, hash| {
             creation_artifact(
                 name,
@@ -1112,16 +1121,16 @@ mod tests {
         let code = creation_with_metadata(0x22);
 
         let contracts = ContractsByArtifact::new([artifact("A", 0x11)]);
-        assert_eq!(contracts.find_by_creation_code_exact(&code).unwrap().0.name, "A");
+        assert_eq!(contracts.find_by_creation_code_prefix_unlinked(&code).unwrap().0.name, "A");
 
         let contracts = ContractsByArtifact::new([artifact("A", 0x11), artifact("B", 0x33)]);
-        assert!(contracts.find_by_creation_code_exact(&code).is_none());
+        assert!(contracts.find_by_creation_code_prefix_unlinked(&code).is_none());
 
         let contracts = ContractsByArtifact::new([
             artifact("A", 0x11),
             artifact("B", 0x33),
             artifact("C", 0x22),
         ]);
-        assert_eq!(contracts.find_by_creation_code_exact(&code).unwrap().0.name, "C");
+        assert_eq!(contracts.find_by_creation_code_prefix_unlinked(&code).unwrap().0.name, "C");
     }
 }

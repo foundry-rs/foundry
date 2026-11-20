@@ -239,7 +239,7 @@ fn identify_creation<'a>(
     address_name: Option<&String>,
     trace: &CallTrace,
 ) -> Option<ContractIdentity<'a>> {
-    if let Some((id, _)) = known_contracts.find_by_creation_code_exact(&trace.data) {
+    if let Some((id, _)) = known_contracts.find_by_creation_code_prefix_unlinked(&trace.data) {
         return Some(ContractIdentity::Local(id));
     }
     // The address of a failed creation holds no code, so its identity can't be trusted.
