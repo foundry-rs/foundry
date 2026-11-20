@@ -1093,30 +1093,12 @@ Exiting debugger.
 async fn cast_run_debug_soldb_same_name_metadata_only_runtime(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
-    let token = |value: u32| {
-        format!(
-            r#"
-contract Token {{
-    uint256 public value;
-
-    constructor() {{
-        value = {value};
-    }}
-
-    function set(uint256 newValue) external {{
-        value = newValue;
-    }}
-}}
-"#
-        )
-    };
-    prj.add_source("a/Token.sol", &token(1));
-    prj.add_source("b/Token.sol", &token(2));
+    add_metadata_only_tokens(&prj);
 
     let b = forge_create(&mut cmd, &endpoint, &["src/b/Token.sol:Token"]);
     let set =
         cast_send(&mut cmd, &endpoint, &[b["deployedTo"].as_str().unwrap(), "set(uint256)", "7"]);
-    prj.add_source("b/Token.sol", &format!("{}// A comment.\n", token(2)));
+    prj.add_source("b/Token.sol", &format!("{}// A comment.\n", metadata_only_token(2)));
 
     cast_run_debug(&mut cmd, &prj, &endpoint, &b, "break src/b/Token.sol:8\ncontinue\nquit\n")
         .assert_success()
@@ -1138,6 +1120,91 @@ Exiting debugger.
 No sources matched the executed contracts; stepping is by instruction.
 ...
 "#]]);
+}
+
+// A transaction creates `src/b` Token and calls it after the source was edited. The runtime
+// matches both `Token` contracts except for metadata, so the creator decides which one ran.
+#[forgetest]
+async fn cast_run_debug_soldb_same_name_metadata_only_runtime_created_in_tx(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    add_metadata_only_tokens(&prj);
+    prj.add_source(
+        "Deployer.sol",
+        r#"
+interface ISettable {
+    function set(uint256 newValue) external;
+}
+
+contract Deployer {
+    function deploy(bytes memory initCode) external returns (address token) {
+        assembly {
+            token := create(0, add(initCode, 32), mload(initCode))
+        }
+        ISettable(token).set(7);
+    }
+}
+"#,
+    );
+
+    let init_code = cmd
+        .forge_fuse()
+        .args(["inspect", "src/b/Token.sol:Token", "bytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let deployer = forge_create(&mut cmd, &endpoint, &["src/Deployer.sol:Deployer"]);
+    let deploy = cast_send(
+        &mut cmd,
+        &endpoint,
+        &[deployer["deployedTo"].as_str().unwrap(), "deploy(bytes)", init_code.trim()],
+    );
+    prj.add_source("b/Token.sol", &format!("{}// A comment.\n", metadata_only_token(2)));
+
+    cast_run_debug(
+        &mut cmd,
+        &prj,
+        &endpoint,
+        &deploy,
+        "break src/b/Token.sol:12\ncontinue\nquit\n",
+    )
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/b/Token.sol:12
+Breakpoint #1 hit at step [..], src/b/Token.sol:12
+src/b/Token.sol:12 in set  (step [..])
+   12 |         value = newValue;
+Exiting debugger.
+
+"#]]);
+}
+
+// Returns a `Token` whose constructor stores `value`. Tokens with different values share their
+// runtime except for metadata.
+fn metadata_only_token(value: u32) -> String {
+    format!(
+        r#"
+contract Token {{
+    uint256 public value;
+
+    constructor() {{
+        value = {value};
+    }}
+
+    function set(uint256 newValue) external {{
+        value = newValue;
+    }}
+}}
+"#
+    )
+}
+
+// Adds `src/a/Token.sol` and `src/b/Token.sol`, two `Token` contracts that differ only in their
+// constructors.
+fn add_metadata_only_tokens(prj: &foundry_test_utils::TestProject) {
+    prj.add_source("a/Token.sol", &metadata_only_token(1));
+    prj.add_source("b/Token.sol", &metadata_only_token(2));
 }
 
 // A forked Anvil replays upstream transactions with the hardfork of the upstream chain: Cancun
