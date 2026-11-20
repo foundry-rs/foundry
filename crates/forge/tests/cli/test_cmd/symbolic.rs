@@ -8883,6 +8883,321 @@ contract SymbolicVestingSchedule {
     }
 }
 
+// Fee splits and payment splitters floor each share `w * a / k`, and two shares with
+// `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
+// `a + b <= k` does not bound the shares.
+#[forgetest_init]
+fn symbolic_proves_shares_within_whole(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_shares_within_whole");
+    prj.add_test(
+        "SymbolicShares.t.sol",
+        r#"
+contract SymbolicShares {
+    function checkFeeSplitWithinAmount(uint128 amount, uint16 protocolBps, uint16 lpBps)
+        public
+        pure
+    {
+        require(uint256(protocolBps) + lpBps <= 10_000);
+        uint256 protocolFee = uint256(amount) * protocolBps / 10_000;
+        uint256 lpFee = uint256(amount) * lpBps / 10_000;
+        assert(protocolFee + lpFee <= amount);
+    }
+
+    function checkPayeesWithinReceived(uint128 received, uint128 sharesA, uint128 sharesB)
+        public
+        pure
+    {
+        uint256 totalShares = uint256(sharesA) + sharesB;
+        require(totalShares != 0);
+        uint256 paidA = uint256(received) * sharesA / totalShares;
+        uint256 paidB = uint256(received) * sharesB / totalShares;
+        assert(paidA + paidB <= received);
+    }
+
+    function checkUint256FeeSplitWithinAmount(uint256 amount, uint256 protocolBps, uint256 lpBps)
+        public
+        pure
+    {
+        require(protocolBps + lpBps <= 10_000);
+        uint256 protocolFee = amount * protocolBps / 10_000;
+        uint256 lpFee = amount * lpBps / 10_000;
+        assert(protocolFee + lpFee <= amount);
+    }
+
+    function checkFeeSplitOverBudget(uint128 amount, uint16 protocolBps, uint16 lpBps)
+        public
+        pure
+    {
+        require(uint256(protocolBps) + lpBps <= 10_001);
+        uint256 protocolFee = uint256(amount) * protocolBps / 10_000;
+        uint256 lpFee = uint256(amount) * lpBps / 10_000;
+        assert(protocolFee + lpFee <= amount);
+    }
+
+    function checkFeeSplitOtherDivisor(uint128 amount, uint16 protocolBps, uint16 lpBps)
+        public
+        pure
+    {
+        require(uint256(protocolBps) + lpBps <= 10_000);
+        uint256 protocolFee = uint256(amount) * protocolBps / 10_000;
+        uint256 lpFee = uint256(amount) * lpBps / 9_999;
+        assert(protocolFee + lpFee <= amount);
+    }
+
+    function checkFeeSplitWrappedBudget(uint128 amount, uint256 protocolBps, uint256 lpBps)
+        public
+        pure
+    {
+        require(protocolBps <= 1 << 255 && lpBps <= 1 << 255);
+        uint256 protocolFee;
+        uint256 lpFee;
+        unchecked {
+            require(protocolBps + lpBps <= 10_000);
+            protocolFee = uint256(amount) * protocolBps / 10_000;
+            lpFee = uint256(amount) * lpBps / 10_000;
+        }
+        assert(protocolFee + lpFee <= amount);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicShares"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkFeeSplitWithinAmount(uint128,uint16,uint16)",
+            "checkPayeesWithinReceived(uint128,uint128,uint128)",
+            "checkUint256FeeSplitWithinAmount(uint256,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {signature}"
+            );
+        }
+
+        for signature in [
+            "checkFeeSplitOverBudget(uint128,uint16,uint16)",
+            "checkFeeSplitOtherDivisor(uint128,uint16,uint16)",
+            "checkFeeSplitWrappedBudget(uint128,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
+// A quotient shrinks as its divisor grows, so a constant-product output stays below the spot
+// quote: `x * y / (r + x) <= x * y / r`.
+#[forgetest_init]
+fn symbolic_orders_quotients_by_divisor(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_orders_quotients_by_divisor");
+    prj.add_test(
+        "SymbolicDivisorOrder.t.sol",
+        r#"
+contract SymbolicDivisorOrder {
+    function checkOutBelowQuote(uint112 amountIn, uint112 rIn, uint112 rOut) public pure {
+        require(amountIn != 0 && rIn != 0);
+        uint256 out = uint256(amountIn) * rOut / (uint256(rIn) + amountIn);
+        assert(out <= uint256(amountIn) * rOut / rIn);
+    }
+
+    function checkOrderedDivisors(uint128 n, uint128 d1, uint128 d2) public pure {
+        require(d1 != 0 && d1 <= d2);
+        assert(uint256(n) / d2 <= uint256(n) / d1);
+    }
+
+    function checkReversedDivisors(uint128 n, uint128 d1, uint128 d2) public pure {
+        require(d1 != 0 && d2 <= d1);
+        assert(uint256(n) / d2 <= uint256(n) / d1);
+    }
+
+    function checkZeroDivisor(uint128 n, uint128 d1, uint128 d2) public pure {
+        require(d1 <= d2);
+        uint256 small;
+        uint256 large;
+        assembly {
+            small := div(n, d2)
+            large := div(n, d1)
+        }
+        assert(small <= large);
+    }
+
+    function checkWrappingDivisor(uint256 n, uint256 d, uint256 e) public pure {
+        require(d != 0);
+        uint256 sum;
+        unchecked {
+            sum = d + e;
+        }
+        assert(n / sum <= n / d);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicDivisorOrder"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkOutBelowQuote(uint112,uint112,uint112)",
+            "checkOrderedDivisors(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0, "{signature}");
+        }
+
+        for signature in [
+            "checkReversedDivisors(uint128,uint128,uint128)",
+            "checkZeroDivisor(uint128,uint128,uint128)",
+            "checkWrappingDivisor(uint256,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
+// A balance scaled by an index that only grows stays at least the balance:
+// `principal * newIndex / oldIndex >= principal`.
+#[forgetest_init]
+fn symbolic_proves_indexed_balance_growth(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_indexed_balance_growth");
+    prj.add_test(
+        "SymbolicIndexedBalance.t.sol",
+        r#"
+contract SymbolicIndexedBalance {
+    function checkBalanceGrows(uint128 principal, uint128 oldIndex, uint128 newIndex) public pure {
+        require(oldIndex != 0 && oldIndex <= newIndex);
+        assert(uint256(principal) * newIndex / oldIndex >= principal);
+    }
+
+    function checkIndexShrank(uint128 principal, uint128 oldIndex, uint128 newIndex) public pure {
+        require(newIndex != 0 && newIndex < oldIndex);
+        assert(uint256(principal) * newIndex / oldIndex >= principal);
+    }
+
+    function checkWrappingProduct(uint256 principal, uint256 oldIndex, uint256 newIndex)
+        public
+        pure
+    {
+        require(oldIndex != 0 && oldIndex <= newIndex);
+        uint256 product;
+        unchecked {
+            product = principal * newIndex;
+        }
+        assert(product / oldIndex >= principal);
+    }
+
+    function checkOtherPrincipal(
+        uint128 principal,
+        uint128 other,
+        uint128 oldIndex,
+        uint128 newIndex
+    ) public pure {
+        require(oldIndex != 0 && oldIndex <= newIndex);
+        assert(uint256(other) * newIndex / oldIndex >= principal);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicIndexedBalance"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkBalanceGrows(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        for signature in [
+            "checkIndexShrank(uint128,uint128,uint128)",
+            "checkWrappingProduct(uint256,uint256,uint256)",
+            "checkOtherPrincipal(uint128,uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
+// Converting through a price and back never gains: `x * 1e18 / p * p / 1e18 <= x`. The rounded
+// product keeps the EVM `DIV` zero-divisor guard until the path facts resolve it.
+#[forgetest_init]
+fn symbolic_proves_price_round_trip(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_price_round_trip");
+    prj.add_test(
+        "SymbolicPriceRoundTrip.t.sol",
+        r#"
+contract SymbolicPriceRoundTrip {
+    function checkRoundTrip(uint128 x, uint128 price) public pure {
+        require(price != 0);
+        uint256 units = uint256(x) * 1e18 / price;
+        assert(units * price / 1e18 <= x);
+    }
+
+    function checkOtherPrice(uint128 x, uint128 price, uint128 other) public pure {
+        require(price != 0 && other != 0);
+        uint256 units = uint256(x) * 1e18 / price;
+        assert(units * other / 1e18 <= x);
+    }
+
+    function checkScaleMismatch(uint128 x, uint128 price) public pure {
+        require(price != 0);
+        uint256 units = uint256(x) * 1e18 / price;
+        assert(units * price / 1e17 <= x);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicPriceRoundTrip"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkRoundTrip(uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+
+        for signature in
+            ["checkOtherPrice(uint128,uint128,uint128)", "checkScaleMismatch(uint128,uint128)"]
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A
