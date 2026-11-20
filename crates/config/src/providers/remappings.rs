@@ -8,6 +8,7 @@ use figment::{
 };
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping, RemappingDiscovery};
 use rayon::prelude::*;
+use regex::Regex;
 use std::{
     borrow::Cow,
     cmp::Reverse,
@@ -16,6 +17,7 @@ use std::{
     },
     fs,
     path::{Component, MAIN_SEPARATOR, Path, PathBuf},
+    sync::LazyLock,
 };
 
 #[cfg(windows)]
@@ -485,9 +487,20 @@ impl RemappingsProvider<'_> {
                     PathBuf::from(&r.path),
                 );
             }
+            // The compiler names an owner's files imported from its own root after that root,
+            // outside the owner's context, so it would not apply the owner's scoped aliases to
+            // them.
+            let mut root_importing_owners = HashMap::new();
             for remapping in contextual
                 .into_iter()
-                .filter(|remapping| ambiguous_aliases.contains(&remapping.name))
+                .filter(|remapping| {
+                    ambiguous_aliases.contains(&remapping.name)
+                        && !remapping.context.as_ref().is_some_and(|owner| {
+                            *root_importing_owners
+                                .entry(owner.clone())
+                                .or_insert_with(|| imports_from_own_root(Path::new(owner)))
+                        })
+                })
                 .flat_map(expand_scoped_contextual_remapping)
             {
                 if let Some(overlays) = contextual_overlays(&authoritative_remappings, &remapping) {
@@ -929,6 +942,43 @@ fn normalize_remapping_context(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+/// Returns whether a dependency imports its own files by paths relative to one of its directories,
+/// such as `import "src/X.sol"`, outside its tests and nested dependencies.
+///
+/// The compiler reaches those files through an include path, as foundry-compilers resolves them.
+fn imports_from_own_root(owner: &Path) -> bool {
+    static IMPORT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"\bimport\s+(?:[^;"']*\bfrom\s+)?["']([^"']+)["']"#).unwrap()
+    });
+    walkdir::WalkDir::new(owner)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() == 0
+                || !(entry.file_type().is_dir()
+                    && matches!(
+                        entry.file_name().to_str(),
+                        Some("lib" | "node_modules" | "test" | "tests")
+                    )
+                    || entry.file_name().to_str().is_some_and(|name| name.starts_with('.')))
+        })
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "sol"))
+        .any(|entry| {
+            let Ok(source) = fs::read_to_string(entry.path()) else { return false };
+            IMPORT.captures_iter(&source).any(|import| {
+                let import = Path::new(&import[1]);
+                !import.starts_with(".")
+                    && !import.starts_with("..")
+                    && entry
+                        .path()
+                        .ancestors()
+                        .skip(2)
+                        .take_while(|dir| dir.starts_with(owner))
+                        .any(|dir| dir.join(import).is_file())
+            })
+        })
 }
 
 /// Sorts by descending context depth, then by context, preserving order within each context.
