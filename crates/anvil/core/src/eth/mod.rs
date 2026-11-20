@@ -21,7 +21,7 @@ use alloy_rpc_types::{
     },
 };
 use alloy_rpc_types_mev::EthCallBundle;
-use alloy_serde::WithOtherFields;
+use alloy_serde::{JsonStorageKey, WithOtherFields};
 use foundry_common::serde_helpers::{
     deserialize_number, deserialize_number_opt, deserialize_number_seq, deserialize_u64_seq,
     deserialize_u64_seq_opt,
@@ -131,7 +131,7 @@ pub enum EthRequest {
 
     /// Returns storage values for multiple accounts and slots in a single call.
     #[serde(rename = "eth_getStorageValues")]
-    EthGetStorageValues(HashMap<Address, Vec<B256>>, #[serde(default)] Option<BlockId>),
+    EthGetStorageValues(HashMap<Address, Vec<JsonStorageKey>>, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_getBlockByHash")]
     EthGetBlockByHash(B256, bool),
@@ -193,7 +193,7 @@ pub enum EthRequest {
     /// Returns the account and storage values of the specified account including the Merkle-proof.
     /// This call can be used to verify that the data you are pulling from is not tampered with.
     #[serde(rename = "eth_getProof")]
-    EthGetProof(Address, Vec<B256>, #[serde(default)] Option<BlockId>),
+    EthGetProof(Address, Vec<JsonStorageKey>, #[serde(default)] Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
     #[serde(rename = "eth_sign")]
