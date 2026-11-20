@@ -1564,9 +1564,7 @@ impl Config {
         // already chose that, so the notice is not a project warning, including under `deny`. A
         // Solar pin counts before its first install, since the compiler is resolved after
         // this.
-        let solar_codes = (matches!(self.solc, Some(SolcReq::Solar(_)))
-            || self.solc_version().is_some_and(|version| version.build.as_str().contains("solar")))
-        .then_some(2264);
+        let solar_codes = self.is_solar().then_some(2264);
 
         let mut builder = ProjectBuilder::<C>::default()
             .artifacts(self.configured_artifacts_handler())
@@ -1894,6 +1892,13 @@ impl Config {
             return;
         }
         solc.extra_args.push(format!("--threads={}", rayon::current_num_threads()));
+    }
+
+    /// Returns whether the configured compiler is Solar, either a Solar pin or an executable that
+    /// reports a Solar version.
+    pub fn is_solar(&self) -> bool {
+        matches!(self.solc, Some(SolcReq::Solar(_)))
+            || self.solc_version().is_some_and(|version| version.build.as_str().contains("solar"))
     }
 
     /// Returns the solc version, if any.
