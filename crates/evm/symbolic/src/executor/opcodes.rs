@@ -1665,6 +1665,7 @@ impl SymbolicExecutor {
         // Like Forge, a test that reverts after a failed assertion fails, even when the assertion
         // was caught or only set the fail slot.
         if state.root_calldata.is_some() && state.assertion_failed {
+            state.failed_at_end = true;
             return Ok(StepOutcome::Failure);
         }
         // Like Forge's `call_end` for the test call, a pending `vm.expectRevert` that a frame
@@ -1692,11 +1693,13 @@ impl SymbolicExecutor {
             && let Some(constraints) = self.constraints_for_condition(state, condition)?
         {
             state.constraints = constraints;
+            state.failed_at_end = true;
             return Ok(StepOutcome::Failure);
         }
         match data {
             Ok(data) => {
                 if is_assertion_revert(&data) {
+                    state.failed_at_end = true;
                     return Ok(StepOutcome::Failure);
                 }
             }
@@ -1707,6 +1710,7 @@ impl SymbolicExecutor {
                     && let Some(constraints) = self.constraints_for_condition(state, condition)?
                 {
                     state.constraints = constraints;
+                    state.failed_at_end = true;
                     return Ok(StepOutcome::Failure);
                 }
             }

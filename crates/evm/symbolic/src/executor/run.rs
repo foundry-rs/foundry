@@ -506,6 +506,7 @@ impl SymbolicExecutor {
                     StepOutcome::Halt
                         if self.global_fail_slot_set(&input.executor, &mut state)? =>
                     {
+                        state.failed_at_end = true;
                         StepOutcome::Failure
                     }
                     outcome => outcome,
@@ -594,6 +595,12 @@ impl SymbolicExecutor {
                             svm_returns,
                             memory_halt_pc: state.memory_halt_pc,
                             storage,
+                            // A path that failed at a cheatcode expectation or failed a
+                            // `vm.expectEmit` would also fail if the test caught that failure
+                            // and then reverted, whatever the revert data.
+                            prunes_other_reverts: (state.failed_at_end
+                                || !matches!(outcome, StepOutcome::Failure))
+                                && !state.expected_emit.as_ref().is_some_and(ExpectedEmit::failed),
                             stats: self.stats_with_paths(*completed_paths + 1),
                         });
                     }

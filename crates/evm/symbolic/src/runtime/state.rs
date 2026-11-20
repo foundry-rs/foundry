@@ -64,6 +64,9 @@ pub(crate) struct PathState {
     pub(crate) assertion_failed: bool,
     /// Pc of the memory access beyond `memory_limit` or the host word that halted this path.
     pub(crate) memory_halt_pc: Option<usize>,
+    /// Set when a top-level revert fails the path through its data or a failed `vm.assert*`, or
+    /// when the path ends with the global fail slot set.
+    pub(crate) failed_at_end: bool,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -151,6 +154,7 @@ impl PathState {
             first_reverted_callee: None,
             assertion_failed: false,
             memory_halt_pc: None,
+            failed_at_end: false,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
