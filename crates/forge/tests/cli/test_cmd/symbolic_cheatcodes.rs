@@ -3356,6 +3356,14 @@ contract SymbolicPrankedAddress is Test {
         assert(who.balance != 5 || who != address(later));
     }
 
+    // An alias a read-only cheatcode gave the address does not hide the account it is fixed to.
+    function checkPrankedSenderCodeAfterIsPersistent(address who) public {
+        vm.isPersistent(who);
+        vm.assume(who == address(weth));
+        vm.prank(who);
+        assert(weth.senderCodeSize() == 0);
+    }
+
     function checkPrankedSenderCodeAfterResetNonce(address who) public {
         vm.resetNonce(who);
         vm.prank(who);
@@ -3369,6 +3377,32 @@ contract SymbolicPrankedAddress is Test {
         assert(who.balance != 5);
     }
 }
+
+contract SymbolicPrankedMany is Test {
+    WETH weth;
+
+    function setUp() public {
+        for (uint256 i = 0; i < 36; i++) {
+            weth = new WETH();
+        }
+    }
+
+    // A prank the cheatcode rejects does not fork the sender, even over more than 32 accounts.
+    function checkRejectedPrankDoesNotFork(address who) public {
+        vm.prank(address(weth));
+        (bool ok,) = address(vm).call(abi.encodeWithSignature("prank(address)", who));
+        assert(!ok);
+    }
+
+    // Only the low 160 bits of the sender count.
+    function checkDirtySenderDoesNotFork(uint96 tag) public {
+        (bool ok,) = address(vm).call(
+            abi.encodeWithSignature("prank(address)", (uint256(tag) << 160) | uint160(address(weth)))
+        );
+        assert(ok);
+        assert(weth.senderCodeSize() > 0);
+    }
+}
 "#,
     );
 
@@ -3376,18 +3410,35 @@ contract SymbolicPrankedAddress is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 10 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+Ran 11 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtBalanceBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceOnceFixed(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkPersistentBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOncePranked(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedOriginCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterIsPersistent(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterResetNonce(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawAfterMakePersistent(address) ([METRICS])
 [PASS] checkWithdrawToOtherSender(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawToPrankedSender(address) ([METRICS])
-Suite result: FAILED. 1 passed; 9 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 10 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrankedMany",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedMany
+[PASS] checkDirtySenderDoesNotFork(uint96) ([METRICS])
+[PASS] checkRejectedPrankDoesNotFork(address) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

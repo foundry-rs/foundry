@@ -982,6 +982,7 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
+        let address_expr = self.fixed_address_word(cx, address_expr);
         self.world.balance_word(cx, executor, address_expr)
     }
 
@@ -991,6 +992,7 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
+        let address_expr = self.fixed_address_word(cx, address_expr);
         self.world.extcode_size_word(cx, executor, address_expr)
     }
 
@@ -1000,6 +1002,7 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
+        let address_expr = self.fixed_address_word(cx, address_expr);
         self.world.extcode_hash_word(cx, executor, address_expr)
     }
 
@@ -1011,7 +1014,27 @@ impl PathState {
         offset: SymExpr,
         size: usize,
     ) -> Result<SymBytes, SymbolicError> {
+        let address_expr = self.fixed_address_word(cx, address_expr);
         self.world.extcode_bytes_word(cx, executor, address_expr, offset, size)
+    }
+
+    /// Returns the account the path constraints fix the address word `expr` to, unless the word
+    /// has an alias whose representative account holds state, which stands for that account. An
+    /// alias without state, such as one a read-only cheatcode gave the word, must not hide the
+    /// account. A cheatcode address still has to be named concretely.
+    pub(crate) fn fixed_address_word(&self, cx: &mut SymCx, expr: SymExpr) -> SymExpr {
+        if expr.as_const().is_some() || self.world.alias_holds_state(&expr) {
+            return expr;
+        }
+        match self.constrained_word(cx, &expr) {
+            Some(value)
+                if ![CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS]
+                    .contains(&word_to_address(value)) =>
+            {
+                SymExpr::constant(cx, value)
+            }
+            _ => expr,
+        }
     }
 
     pub(crate) fn address_or_symbolic_slot(&mut self, cx: &mut SymCx, expr: SymExpr) -> Address {
@@ -1117,6 +1140,16 @@ impl PathState {
                 }
             }
         }
+    }
+
+    /// Returns Forge's error for a `vm.prank` or `vm.startPrank` (`persistent`) that would replace
+    /// an active prank. Like Forge, root frames share one prank slot, so a prank parked for another
+    /// root frame also blocks an overwrite.
+    pub(crate) fn prank_overwrite_error(&self, persistent: bool) -> Option<&'static str> {
+        let parked = self.root_pranks.values().filter(|_| self.call_depth == 0);
+        std::iter::once(&self.prank)
+            .chain(parked)
+            .find_map(|prank| prank.overwrite_error(persistent))
     }
 
     /// Resolves the pranked caller and origin accounts from their words again, so a word the
@@ -2563,13 +2596,9 @@ impl SymbolicWorld {
         persistent_accounts: &HashSet<Address>,
     ) -> Vec<Address> {
         let Some((alias, representative)) = self.alias_entry(expr) else { return Vec::new() };
-        let holds_state = self.balances.contains_key(&representative)
-            || self.nonces.contains_key(&representative)
-            || self.written_code.contains(&representative)
-            || self.storage.iter().any(|write| write.address == representative)
-            || self.arbitrary_storage_accounts.contains_key(&representative)
-            || persistent_accounts.contains(&representative);
-        if !holds_state {
+        if !self.representative_holds_state(representative)
+            && !persistent_accounts.contains(&representative)
+        {
             return Vec::new();
         }
         let guarded = self.guarded_symbolic_addresses.get(alias);
@@ -2578,6 +2607,21 @@ impl SymbolicWorld {
             .copied()
             .filter(|candidate| guarded.is_none_or(|guarded| !guarded.contains(candidate)))
             .collect()
+    }
+
+    /// Returns whether the address word `expr` has an alias whose representative account holds
+    /// state the world wrote, such as a balance, nonce, code, or storage.
+    pub(crate) fn alias_holds_state(&self, expr: &SymExpr) -> bool {
+        self.alias_entry(expr)
+            .is_some_and(|(_, representative)| self.representative_holds_state(representative))
+    }
+
+    fn representative_holds_state(&self, representative: Address) -> bool {
+        self.balances.contains_key(&representative)
+            || self.nonces.contains_key(&representative)
+            || self.written_code.contains(&representative)
+            || self.storage.iter().any(|write| write.address == representative)
+            || self.arbitrary_storage_accounts.contains_key(&representative)
     }
 
     /// Returns whether a guarded cheatcode write went through any address word.

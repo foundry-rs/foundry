@@ -89,6 +89,7 @@ impl SymbolicExecutor {
         let target = state.stack.pop()?;
         self.ensure_gas_modeled(&target)?;
         let target = target.address_operand(&mut self.cx);
+        let target = state.fixed_address_word(&mut self.cx, target);
         // A target the path fixes runs as that account; a cheatcode address still has to be
         // named concretely to reach a cheatcode.
         let target_address = state.world.resolve_address(&target).or_else(|| {

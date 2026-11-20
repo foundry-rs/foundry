@@ -768,7 +768,23 @@ impl SymbolicExecutor {
                     .iter()
                     .take_while(|param| **param == DynSolType::Address)
                     .count();
-                for index in 0..first_scanned {
+                // A prank the cheatcode rejects for overwriting another applies nothing.
+                let start = [
+                    startPrank_0Call::SELECTOR,
+                    startPrank_1Call::SELECTOR,
+                    startPrank_2Call::SELECTOR,
+                    startPrank_3Call::SELECTOR,
+                ]
+                .contains(&selector);
+                let prank = [
+                    prank_0Call::SELECTOR,
+                    prank_1Call::SELECTOR,
+                    prank_2Call::SELECTOR,
+                    prank_3Call::SELECTOR,
+                ]
+                .contains(&selector);
+                let rejected = (prank || start) && state.prank_overwrite_error(start).is_some();
+                for index in (0..first_scanned).filter(|_| !rejected) {
                     let word = read_abi_word_arg(&mut self.cx, memory, args_offset, index)?;
                     let address = word.clone().address_operand(&mut self.cx);
                     if state.constrained_word(&mut self.cx, &address).is_none() {
@@ -1583,13 +1599,7 @@ impl SymbolicExecutor {
                         )
                     })
                     .transpose()?;
-                // Like Forge, root frames share one prank slot, so a prank parked for another root
-                // frame also blocks an overwrite, and a new prank ends it.
-                let parked = state.root_pranks.values().filter(|_| state.call_depth == 0);
-                if let Some(error) = std::iter::once(&state.prank)
-                    .chain(parked)
-                    .find_map(|prank| prank.overwrite_error(persistent))
-                {
+                if let Some(error) = state.prank_overwrite_error(persistent) {
                     let name = if persistent { "startPrank" } else { "prank" };
                     return Ok(CheatcodeOutcome::Revert(error_string_return_data(
                         &mut self.cx,
