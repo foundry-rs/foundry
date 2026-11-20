@@ -9953,6 +9953,11 @@ impl Backend<FoundryNetwork> {
                             request.to = Some(TxKind::Create);
                         }
                         let mut request = self.parse_transaction_request(request)?;
+                        // Typed transactions default to the node's chain id, as in geth; legacy
+                        // ones stay unprotected.
+                        if !request.preferred_type().is_legacy() {
+                            request.as_mut().chain_id.get_or_insert(evm_env.cfg_env.chain_id);
+                        }
                         request.prep_for_submission();
                         let typed_tx = request.build_unsigned().map_err(|e| {
                             BlockchainError::InvalidTransactionRequest(e.to_string())

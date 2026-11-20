@@ -1843,6 +1843,18 @@ async fn test_simulate_finalizes_call_and_transaction_metadata_rpc() {
                         "from": sender,
                         "to": "0xc200000000000000000000000000000000000000",
                         "gasPrice": gas_price
+                    },
+                    {
+                        "from": sender,
+                        "to": "0xc100000000000000000000000000000000000000",
+                        "maxFeePerGas": gas_price,
+                        "maxPriorityFeePerGas": gas_price
+                    },
+                    {
+                        "from": sender,
+                        "to": "0xc100000000000000000000000000000000000000",
+                        "gasPrice": gas_price,
+                        "accessList": []
                     }
                 ]
             }],
@@ -1855,8 +1867,21 @@ async fn test_simulate_finalizes_call_and_transaction_metadata_rpc() {
     let block = &response["result"][0];
     let calls = block["calls"].as_array().unwrap();
     let transactions = block["transactions"].as_array().unwrap();
-    assert_eq!(calls.len(), 2);
-    assert_eq!(transactions.len(), 2);
+    assert_eq!(calls.len(), 4);
+    assert_eq!(transactions.len(), 4);
+    // Typed transactions take the node's chain id; legacy ones stay unprotected.
+    assert_eq!(
+        transactions
+            .iter()
+            .map(|tx| json!({"type": tx["type"], "chainId": tx["chainId"]}))
+            .collect::<Vec<_>>(),
+        [
+            json!({"type": "0x0", "chainId": null}),
+            json!({"type": "0x0", "chainId": null}),
+            json!({"type": "0x2", "chainId": "0x7a69"}),
+            json!({"type": "0x1", "chainId": "0x7a69"}),
+        ]
+    );
     for (index, (call, transaction)) in calls.iter().zip(transactions).enumerate() {
         assert!(quantity(&call["maxUsedGas"]) >= quantity(&call["gasUsed"]));
         assert_eq!(transaction["blockHash"], block["hash"]);
