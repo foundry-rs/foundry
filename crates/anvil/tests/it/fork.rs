@@ -26,7 +26,10 @@ use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
     trace::{
-        geth::{CallConfig, GethDebugTracingOptions, GethTrace, TraceResult},
+        geth::{
+            CallConfig, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
+            TraceResult,
+        },
         parity::{Action, TraceResultsWithTransactionHash, TraceType},
     },
 };
@@ -4085,6 +4088,65 @@ async fn test_arbitrum_forks_accept_nitro_headers_without_blob_fields() {
             Bytes::from(vec![0; 32]),
             "{chain}"
         );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_scroll_forks_accept_l2geth_headers_without_blob_fields() {
+    // Scroll's l2geth omits Ethereum's EIP-4844 header fields and has no known hardfork schedule,
+    // so Anvil executes the fork with its default post-Cancun spec. Hide Anvil metadata so these
+    // deterministic local origins have the same observable shape as public RPCs.
+    for chain in [NamedChain::Scroll, NamedChain::ScrollSepolia] {
+        let target = Address::random();
+        let (origin_api, origin) = spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(chain as u64))
+                .with_hardfork(Some(EthereumHardfork::Prague.into())),
+        )
+        .await;
+        origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+        let fork_url =
+            spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), None, None).await;
+        let fork_url = spawn_rpc_proxy_rejecting_method_after(fork_url, "anvil_nodeInfo", 0).await;
+
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(fork_url))
+                .with_fork_block_number(Some(0u64)),
+        )
+        .await;
+        let provider = handle.http_provider();
+
+        assert!(api.backend.spec_id() >= SpecId::CANCUN);
+        assert_eq!(
+            api.backend
+                .evm_env()
+                .read()
+                .block_env
+                .blob_excess_gas_and_price
+                .as_ref()
+                .map(|blob| blob.excess_blob_gas),
+            Some(0),
+            "{chain}"
+        );
+        let request = TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() };
+        assert_eq!(
+            provider.call(request.clone().into()).block(BlockId::latest()).await.unwrap(),
+            Bytes::from(vec![0; 32]),
+            "{chain}"
+        );
+        let trace = provider
+            .debug_trace_call(
+                request.into(),
+                BlockId::latest(),
+                GethDebugTracingCallOptions::default(),
+            )
+            .await
+            .unwrap();
+        let GethTrace::Default(frame) = trace else { panic!("expected default trace") };
+        assert!(!frame.failed, "{chain}");
+        assert_eq!(frame.return_value, Bytes::from(vec![0; 32]), "{chain}");
     }
 }
 
