@@ -8433,6 +8433,74 @@ UPDATES        assert(x < 2 ** 128);
     );
 }
 
+// Choosing the smaller of two pool ratios, as in a constant-product mint, branches on a comparison
+// of two quotients over five inputs. The local witness search must cover five variables so both
+// branches are found reachable instead of falling to the solver, which returns unknown.
+#[forgetest_init]
+fn symbolic_finds_both_branches_of_min_ratio(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_finds_both_branches_of_min_ratio");
+    prj.add_test(
+        "SymbolicMinRatio.t.sol",
+        r#"
+contract SymbolicMinRatio {
+    function liquidity(uint112 a0, uint112 a1, uint112 r0, uint112 r1, uint128 supply)
+        internal
+        pure
+        returns (uint256 l0, uint256 l)
+    {
+        l0 = uint256(a0) * supply / r0;
+        uint256 l1 = uint256(a1) * supply / r1;
+        l = l0 < l1 ? l0 : l1;
+    }
+
+    function checkMinBelowFirstRatio(uint112 a0, uint112 a1, uint112 r0, uint112 r1, uint128 supply)
+        public
+        pure
+    {
+        require(r0 != 0 && r1 != 0);
+        (uint256 l0, uint256 l) = liquidity(a0, a1, r0, r1, supply);
+        assert(l <= l0);
+    }
+
+    function checkMinIsFirstRatio(uint112 a0, uint112 a1, uint112 r0, uint112 r1, uint128 supply)
+        public
+        pure
+    {
+        require(r0 != 0 && r1 != 0);
+        (uint256 l0, uint256 l) = liquidity(a0, a1, r0, r1, supply);
+        assert(l == l0);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicMinRatio"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(
+            &output,
+            "checkMinBelowFirstRatio(uint112,uint112,uint112,uint112,uint128)",
+        );
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+
+        let result = json_test_result(
+            &output,
+            "checkMinIsFirstRatio(uint112,uint112,uint112,uint112,uint128)",
+        );
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+    }
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A
