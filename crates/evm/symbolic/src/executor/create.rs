@@ -102,7 +102,8 @@ impl SymbolicExecutor {
         // nonce derives the address and increments, and the account that pays the value. The
         // CREATE consumes the pending prank, so a later prank can replace it.
         let inherited_prank = state.callers();
-        let (creator, creator_word, pranked_origin) = state.prank_for_next_call(&mut self.cx);
+        let (creator, creator_word, pranked_origin) =
+            state.prank_for_next_call(&mut self.cx, executor);
         // The nonce and balance of a symbolic pranked creator would ignore the accounts it can
         // alias.
         if creator != state.address

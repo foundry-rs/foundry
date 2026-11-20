@@ -396,7 +396,8 @@ impl SymbolicExecutor {
 
         // Like Forge, the CREATE applies and consumes a pending prank.
         let inherited_prank = state.callers();
-        let (creator, creator_word, pranked_origin) = state.prank_for_next_call(&mut self.cx);
+        let (creator, creator_word, pranked_origin) =
+            state.prank_for_next_call(&mut self.cx, executor);
         if creator != state.address
             && state.constrained_word(&mut self.cx, &creator_word).map(word_to_address)
                 != Some(creator)
@@ -670,8 +671,21 @@ impl SymbolicExecutor {
                 if to.is_none() {
                     words = self.guarded_words(state, target, words);
                 }
+                // An untouched precompile as the caller acts like an empty account, so the
+                // pranked words are decided only over the accounts the run knows.
+                let mut pranked = Vec::new();
                 for word in state.prank.words() {
-                    words = self.guarded_words(state, word, words);
+                    pranked = self.guarded_words(state, word, pranked);
+                }
+                let known = state.world.concrete_alias_candidates(executor);
+                for (word, mut candidates) in pranked {
+                    candidates.retain(|address| {
+                        !is_precompile_for_spec(*address, executor.spec_id)
+                            || known.contains(address)
+                    });
+                    if !candidates.is_empty() && !words.iter().any(|(other, _)| *other == word) {
+                        words.push((word, candidates));
+                    }
                 }
                 // An alias without code stands for an empty account, which a precompile nothing
                 // touched yet differs from only once a call runs it. An equivalence check
@@ -683,8 +697,7 @@ impl SymbolicExecutor {
                 {
                     let address = target.clone().address_operand(&mut self.cx);
                     if state.constrained_word(&mut self.cx, &address).is_none() {
-                        let precompiles = active_precompiles(executor.spec_id);
-                        words.push((target.clone(), precompiles.as_map().addresses().collect()));
+                        words.push((target.clone(), active_precompile_addresses(executor.spec_id)));
                     }
                 }
                 return Ok(self.pranked_words(executor, state, words));
@@ -753,8 +766,7 @@ impl SymbolicExecutor {
                 first_scanned = 1;
                 let word = read_abi_word_arg(&mut self.cx, memory, args_offset, 0)?;
                 if state.constrained_word(&mut self.cx, &word).is_none() {
-                    let precompiles = active_precompiles(executor.spec_id);
-                    words.push((word, precompiles.as_map().addresses().collect()));
+                    words.push((word, active_precompile_addresses(executor.spec_id)));
                 }
             }
             if [

@@ -1099,8 +1099,9 @@ impl PathState {
     pub(crate) fn prank_for_next_call(
         &mut self,
         cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
     ) -> (Address, SymExpr, Option<(Address, SymExpr)>) {
-        self.resolve_prank_addresses(cx);
+        self.resolve_prank_addresses(cx, executor);
         // Any root call ends an unused single-call prank at this depth, even when it was set by
         // another handler in the same invariant sequence.
         if self.call_depth == 0 {
@@ -1137,7 +1138,14 @@ impl PathState {
 
     /// Resolves the pranked caller and origin accounts from their words again, so a word the
     /// path fixed after the prank, such as one the pranked call forked, names its account.
-    fn resolve_prank_addresses(&mut self, cx: &mut SymCx) {
+    ///
+    /// A word the path leaves free names no known account, but it may still name a precompile
+    /// nothing touched yet, which a call to it decides. Its alias is guarded for those, so the
+    /// state the pranked call writes to its representative account, such as the nonce an
+    /// isolated call bumps, does not make that call report incomplete. On a branch where the
+    /// word names a precompile, reads through the word still see that state; reads through the
+    /// precompile's own address do not.
+    fn resolve_prank_addresses(&mut self, cx: &mut SymCx, executor: &ExecutorView<'_>) {
         let mut prank = std::mem::take(&mut self.prank);
         for (address, word) in [
             &mut prank.next_caller,
@@ -1149,6 +1157,18 @@ impl PathState {
         .flatten()
         {
             *address = self.address_or_symbolic_slot(cx, word.clone());
+            if self.constrained_word(cx, word).is_none() {
+                let precompiles = active_precompile_addresses(executor.spec_id)
+                    .into_iter()
+                    .filter(|precompile| {
+                        let eq = SymBoolExpr::eq_word_const(cx, word, address_word(*precompile));
+                        !self.constraints.contains(&eq.not(cx))
+                    })
+                    .collect::<Vec<_>>();
+                if !precompiles.is_empty() {
+                    self.world.guard_symbolic_address(word, &precompiles);
+                }
+            }
         }
         self.prank = prank;
     }
@@ -3370,7 +3390,7 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
     ) -> Vec<Address> {
         let mut addresses = self.concrete_alias_candidates(executor);
-        addresses.extend(active_precompiles(executor.spec_id).as_map().addresses());
+        addresses.extend(active_precompile_addresses(executor.spec_id));
         addresses.sort_unstable();
         addresses.dedup();
         addresses
