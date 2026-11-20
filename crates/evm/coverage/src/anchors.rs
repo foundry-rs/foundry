@@ -751,11 +751,13 @@ impl<'a> AnchorIndex<'a> {
                 })
             })
             .collect::<Vec<_>>();
-        // A jump to a failure, such as an overflow check in the condition, cannot enter an arm,
-        // unless it is the only jump, as when the arm is a shared `revert`.
+        // A check in the condition, such as an overflow, array bounds, or enum check, cannot enter
+        // an arm, unless it is the only jump, as when the arm is a shared `revert`. A check either
+        // jumps to the failure or, as solc's legacy pipeline emits it, jumps around it.
         if jumps.len() > 1 {
-            jumps.retain(|&&(_, _, immediate)| {
-                jump_destination(immediate).is_ok_and(|target| !self.fails(target))
+            jumps.retain(|&&(_, jump, immediate)| {
+                !self.fails(jump as u32 + 1)
+                    && jump_destination(immediate).is_ok_and(|target| !self.fails(target))
             });
         }
         let &[&(_, jump, immediate)] = jumps.as_slice() else { return None };
@@ -2754,6 +2756,35 @@ mod tests {
         assert_eq!(
             if_anchors(&checked, "12:3:0;;12:3:0;;;10:60:0;80:5:0;;;0:100:0;;;0:100:0;;;", false),
             [(13, Some(9))]
+        );
+
+        // A check that jumps around its failure, as solc's legacy pipeline emits an array bounds
+        // check, cannot enter the arm either.
+        let jumps_around_check = [
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            8,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            0,
+            opcode::PUSH1,
+            17,
+            opcode::JUMPI,
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH0,
+            opcode::RETURN,
+        ];
+        assert_eq!(
+            if_anchors(&jumps_around_check, "12:3:0;;;;;;;;;10:60:0;80:5:0;;;0:100:0;;", false),
+            [(17, Some(13))]
         );
     }
 }

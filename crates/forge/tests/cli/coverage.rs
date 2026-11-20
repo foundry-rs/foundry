@@ -1672,6 +1672,101 @@ contract AContractTest is DSTest {
 "#]]);
 }
 
+// https://github.com/foundry-rs/foundry/issues/18629
+#[forgetest]
+fn codeless_if_arm_with_checked_condition_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Checks.sol",
+        r#"
+contract Checks {
+    enum Status { NONE, OPEN }
+
+    uint256 public r;
+
+    function round() external view returns (uint256) {
+        return r;
+    }
+
+    function index(uint256[] memory a) external pure returns (uint256 sum) {
+        for (uint256 i = 0; i < a.length; i++) {
+            if (a[i] == 0) continue;
+            sum += a[i];
+        }
+    }
+
+    function enumCheck(Status[] memory s) external pure returns (uint256 open) {
+        if (s[0] != Status.OPEN) return open;
+        open = 1;
+    }
+
+    function externalCall() external {
+        if (Checks(address(this)).round() == 0) return;
+        r = 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Checks.t.sol",
+        r#"
+import "../src/Checks.sol";
+contract ChecksTest {
+    function testArms() public {
+        Checks checks = new Checks();
+        uint256[] memory a = new uint256[](3);
+        a[1] = 1;
+        checks.index(a);
+        Checks.Status[] memory s = new Checks.Status[](1);
+        checks.enumCheck(s);
+        s[0] = Checks.Status.OPEN;
+        checks.enumCheck(s);
+        checks.externalCall();
+    }
+}
+"#,
+    );
+    // The bounds, enum, and call checks in each condition jump around their failure, so the
+    // codeless arms count from the edge of the `if`'s own jump.
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Checks.sol
+DA:9,1
+FN:9,Checks.round
+FNDA:1,Checks.round
+DA:10,1
+DA:13,1
+FN:13,Checks.index
+FNDA:1,Checks.index
+DA:14,4
+DA:15,3
+BRDA:15,0,0,2
+DA:16,1
+DA:20,2
+FN:20,Checks.enumCheck
+FNDA:2,Checks.enumCheck
+DA:21,2
+BRDA:21,1,0,1
+DA:22,1
+DA:25,1
+FN:25,Checks.externalCall
+FNDA:1,Checks.externalCall
+DA:26,1
+BRDA:26,2,0,1
+DA:27,0
+FNF:4
+FNH:4
+LF:12
+LH:11
+BRF:3
+BRH:3
+end_of_record
+
+"#]],
+    );
+}
+
 // https://github.com/foundry-rs/foundry/issues/8604
 #[forgetest]
 fn branch_with_calldata_reads(prj: _, cmd: _) {
