@@ -9100,7 +9100,7 @@ contract TransactCreationForkTest {
 
 // An account created on one fork does not make the account at its address on another fork a
 // created one, whose storage a later call or a roll of that fork would discard, even once it is
-// persistent.
+// persistent or carried back to the first fork.
 #[forgetest]
 async fn fork_created_account_other_fork(prj: _, cmd: _) {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -9122,6 +9122,7 @@ interface Vm {
     function prank(address sender) external;
     function rollFork(uint256 blockNumber) external;
     function makePersistent(address account) external;
+    function selectFork(uint256 forkId) external;
     function load(address target, bytes32 slot) external view returns (bytes32);
 }
 
@@ -9132,8 +9133,8 @@ contract OtherForkCreationForkTest {
     address constant DEPLOYER = <deployer>;
     address constant CREATED = <created>;
 
-    function createOnFirstBlock() internal {
-        vm.createSelectFork("<url>", 1);
+    function createOnFirstBlock() internal returns (uint256 forkId) {
+        forkId = vm.createSelectFork("<url>", 1);
         vm.prank(DEPLOYER);
         require(address(new Empty()) == CREATED, "created address");
     }
@@ -9166,6 +9167,17 @@ contract OtherForkCreationForkTest {
         this.poke();
         require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
     }
+
+    function testForkCreatedOnOtherForkKeepsStorageWhenCarriedBack() public {
+        uint256 first = createOnFirstBlock();
+        vm.createSelectFork("<url>");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "before carry");
+        vm.makePersistent(CREATED);
+        vm.selectFork(first);
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "carried back");
+        this.poke();
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
+    }
 }
 "#
         .replace("<url>", &handle.http_endpoint())
@@ -9177,6 +9189,7 @@ contract OtherForkCreationForkTest {
 ...
 [PASS] testForkCreatedOnOtherForkKeepsStorage() ([GAS])
 [PASS] testForkCreatedOnOtherForkKeepsStorageAcrossRoll() ([GAS])
+[PASS] testForkCreatedOnOtherForkKeepsStorageWhenCarriedBack() ([GAS])
 [PASS] testForkCreatedOnOtherForkKeepsStorageWhenPersistent() ([GAS])
 ...
 "#]];

@@ -1525,10 +1525,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // Monad's reserve balance context and tracker.
         *child.ext_mut() = evm.ext().clone();
         child.ext_mut().set_preserve_transaction_state(true);
-        // Accounts the running transaction created on this fork, or holds created here, such as
-        // persistent accounts it carried here, stay created in the nested one, so that EIP-6780
-        // SELFDESTRUCT still deletes them, and keep the storage it holds for them. Only accounts
-        // the running transaction loaded are checked, so checking loads no others.
+        // Accounts the running transaction created and holds created on this fork, not ones it
+        // created on another fork, stay created in the nested one, so that EIP-6780 SELFDESTRUCT
+        // still deletes them, and keep the storage it holds for them. Only accounts the running
+        // transaction loaded are checked, so checking loads no others.
         let state = evm.state_mut();
         let loaded = state
             .loaded_accounts()
@@ -1539,16 +1539,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .into_iter()
             .filter(|address| state.account(address).is_ok_and(|account| account.is_created()))
             .collect::<AddressSet>();
-        for (address, forks) in &self.inner.tx_created {
-            if forks.contains(&source_fork) || held.contains(address) {
-                match child.state_mut().account(address) {
-                    Ok(mut account) => {
-                        if account.exists() {
-                            account.mark_created();
-                        }
+        for address in &held {
+            match child.state_mut().account(address) {
+                Ok(mut account) => {
+                    if account.exists() {
+                        account.mark_created();
                     }
-                    Err(_) => return not_executed(Bytes::new()),
                 }
+                Err(_) => return not_executed(Bytes::new()),
             }
         }
 
@@ -1649,14 +1647,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if skip_floor {
             result.floor_gas = floor;
         }
-        // The call's state is that of the fork it ended on.
+        // The accounts the call's state holds created, on the fork it ended on. A created account
+        // the call self-destructed is kept until the running transaction ends.
         let fork = backend.backend().active_fork_id();
-        for change in executed.pending_state.account_changes() {
-            // A created account the call self-destructed is kept until the running transaction
-            // ends.
-            if change.created && (change.current.is_some() || change.selfdestructed) {
-                self.inner.tx_created.entry(change.address).or_default().insert(fork);
-            }
+        let created = executed
+            .pending_state
+            .account_changes()
+            .filter(|change| change.created && (change.current.is_some() || change.selfdestructed))
+            .map(|change| change.address)
+            .collect::<AddressSet>();
+        for address in &created {
+            self.inner.tx_created.entry(*address).or_default().insert(fork);
         }
 
         let fork_changed = fork != source_fork;
@@ -1712,11 +1713,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
             // The new transaction overlay does not know which accounts the running transaction
-            // created on the fork the call ended on, or held created before a call that kept the
-            // fork, so a later isolated call that loads them would merge them as new and wipe
-            // their storage. Its database already holds their storage.
+            // holds created: the ones the call's state held created, the ones held created before
+            // a call that kept the fork, and the ones it created on the fork the call ended on,
+            // other than persistent accounts, whose state can come from another fork. Without the
+            // mark, a later isolated call that loads them would merge them as new and wipe their
+            // storage. Its database already holds their storage.
             for (address, forks) in &self.inner.tx_created {
-                if (forks.contains(&fork) || (!fork_changed && held.contains(address)))
+                if (created.contains(address)
+                    || (!fork_changed && held.contains(address))
+                    || (forks.contains(&fork) && !backend.backend().is_persistent(address)))
                     && let Ok(mut account) = evm.state_mut().account(address)
                     && account.exists()
                 {
