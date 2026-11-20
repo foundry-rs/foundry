@@ -286,6 +286,27 @@ fn expr_less_or_equal<'a>(
             SymExprKind::BinOp(SymBinOp::UDiv, left_num, left_den),
             SymExprKind::BinOp(SymBinOp::UDiv, right_num, right_den),
         ) if left_den == right_den => expr_less_or_equal(left_num, right_num, facts, bounds),
+        // `n / d2 <= n / d1` for `0 < d1 <= d2`; a zero `d1` would make `n / d1` zero.
+        (
+            SymExprKind::BinOp(SymBinOp::UDiv, left_num, left_den),
+            SymExprKind::BinOp(SymBinOp::UDiv, right_num, right_den),
+        ) if left_num == right_num
+            && (facts.positive.contains(right_den)
+                || bounds.word_range(right_den).is_some_and(|(min, _)| !min.is_zero()))
+            && expr_less_or_equal(right_den, left_den, facts, bounds) =>
+        {
+            true
+        }
+        // `a <= a + b` when the sum does not wrap.
+        (_, SymExprKind::BinOp(SymBinOp::Add, a, b))
+            if (a == left || b == left)
+                && bounds
+                    .word_range(a)
+                    .zip(bounds.word_range(b))
+                    .is_some_and(|((_, a), (_, b))| a.checked_add(b).is_some()) =>
+        {
+            true
+        }
         // A failed bounded proof falls through: later arms can still order non-wrapping products.
         (
             SymExprKind::BinOp(SymBinOp::Mul, left_a, left_b),
@@ -321,6 +342,22 @@ fn expr_less_or_equal<'a>(
             SymExprKind::BinOp(SymBinOp::MulHigh, left_a, left_b),
             SymExprKind::BinOp(SymBinOp::MulHigh, right_a, right_b),
         ) => wide_product_less_or_equal(left_a, left_b, right_a, right_b, facts, bounds),
+        // `x <= x * a / d` for `0 < d <= a` when `x * a` does not wrap, as for a balance scaled by
+        // a grown index.
+        (_, SymExprKind::BinOp(SymBinOp::UDiv, product, divisor))
+            if let Some((a, b)) = mul_operands(product)
+                && let Some(scale) = (a == left).then_some(b).or((b == left).then_some(a))
+                && (facts.positive.contains(divisor)
+                    || bounds.word_range(divisor).is_some_and(|(min, _)| !min.is_zero()))
+                && bounds.mul_cannot_overflow_256(a, b)
+                && (expr_less_or_equal(divisor, scale, facts, bounds)
+                    || bounds
+                        .word_range(divisor)
+                        .zip(bounds.word_range(scale))
+                        .is_some_and(|((_, divisor), (scale, _))| divisor <= scale)) =>
+        {
+            true
+        }
         // `left <= round(a * b / d) <= round'(a' * b' / d) <= right`.
         _ if let Some(upper) = quotient_upper_bound(left, facts, bounds)
             && let Some(lower) = quotient_lower_bound(right, facts, bounds) =>

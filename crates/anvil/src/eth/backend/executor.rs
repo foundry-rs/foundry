@@ -74,6 +74,9 @@ pub(crate) struct EthereumBlockTransitions {
     pub(crate) hardfork: EthereumHardfork,
     pub(crate) deposit_contract_address: Address,
     pub(crate) parent_beacon_block_root: Option<B256>,
+    /// Whether Cancun and later blocks call the EIP-4788 beacon roots contract. Chains without a
+    /// beacon chain, such as Scroll, never do.
+    pub(crate) eip4788: bool,
     pub(crate) execution_kind: BlockExecutionKind,
 }
 
@@ -343,7 +346,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             let _ =
                 self.unchecked_system_call(HISTORY_STORAGE_ADDRESS, Bytes::from(self.parent_hash))?;
         }
-        if transitions.hardfork >= EthereumHardfork::Cancun {
+        if transitions.eip4788 && transitions.hardfork >= EthereumHardfork::Cancun {
             let root = transitions.parent_beacon_block_root.ok_or_else(|| {
                 BlockchainError::Message("missing parent beacon block root".to_string())
             })?;
