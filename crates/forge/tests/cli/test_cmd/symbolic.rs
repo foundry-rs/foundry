@@ -9141,6 +9141,63 @@ contract SymbolicDowncastShare {
     }
 }
 
+// Utilization and remaining-share ratios scale `(total - used) * WAD / total`, which stays at
+// most `WAD` once `used <= total`. A remainder of an unrelated amount is not bounded by the
+// total.
+#[forgetest_init]
+fn symbolic_proves_remaining_ratio_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_remaining_ratio_bounded");
+    prj.add_test(
+        "SymbolicRemainingRatio.t.sol",
+        r#"
+contract SymbolicRemainingRatio {
+    uint256 internal constant WAD = 1e18;
+
+    // Solmate's `FixedPointMathLib.mulDivDown` (MIT).
+    function mulDivDown(uint256 x, uint256 y, uint256 denominator) internal pure returns (uint256 z) {
+        assembly {
+            if iszero(mul(denominator, iszero(mul(y, gt(x, div(not(0), y)))))) { revert(0, 0) }
+            z := div(mul(x, y), denominator)
+        }
+    }
+
+    function checkRemainingRatio(uint256 total, uint256 used) public pure {
+        require(used <= total);
+        assert(mulDivDown(total - used, WAD, total) <= WAD);
+    }
+
+    function checkUnrelatedRemainder(uint256 total, uint256 cap, uint256 used) public pure {
+        require(used <= cap);
+        assert(mulDivDown(cap - used, WAD, total) <= WAD);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicRemainingRatio"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkRemainingRatio(uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in ["checkUnrelatedRemainder(uint256,uint256,uint256)"] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.

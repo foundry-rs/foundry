@@ -475,12 +475,16 @@ impl ConstraintContext {
 
     /// Returns whether other conjuncts assert `small <= large`, including strict `<`. An elapsed
     /// `t - s` is at most `d` once `s <= t` and `t <= d + s`. A wrapped `d + s` would be below
-    /// `s <= t`, so the two facts cannot both hold.
+    /// `s <= t`, so the two facts cannot both hold. A difference `x - e` is at most `x` once
+    /// `e <= x`.
     fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
         if self.asserted_upper_bounds(small).contains(large) {
             return true;
         }
         let SymExprKind::BinOp(SymBinOp::Sub, end, start) = small.kind() else { return false };
+        if end == large && self.asserted_upper_bounds(start).contains(end) {
+            return true;
+        }
         self.asserted_upper_bounds(start).contains(end)
             && self.asserted_upper_bounds(end).iter().any(|sum| {
                 matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
