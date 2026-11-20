@@ -3,11 +3,15 @@
 pub mod curl_transport;
 pub mod fee;
 pub mod mpp;
+pub mod rate_limit;
 pub mod runtime_transport;
 
 use crate::{
     ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
-    provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
+    provider::{
+        curl_transport::CurlTransport, rate_limit::CupsRateLimitLayer,
+        runtime_transport::RuntimeTransportBuilder,
+    },
 };
 use alloy_chains::NamedChain;
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
@@ -119,6 +123,10 @@ pub struct ProviderBuilder<N: Network = AnyNetwork> {
     timeout: Duration,
     /// available CUPS
     compute_units_per_second: u64,
+    /// Optional client-side pacing budget (CUPS). `Some` enables a
+    /// [`CupsRateLimitLayer`] in front of the retry layer; `None` keeps the
+    /// retry-only behaviour.
+    rate_limit: Option<u64>,
     /// JWT Secret
     jwt: Option<String>,
     headers: Vec<String>,
@@ -182,6 +190,7 @@ impl<N: Network> ProviderBuilder<N> {
             timeout: REQUEST_TIMEOUT,
             // alchemy max cpus <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
+            rate_limit: None,
             jwt: None,
             headers: vec![],
             is_local,
@@ -292,6 +301,18 @@ impl<N: Network> ProviderBuilder<N> {
         self
     }
 
+    /// Sets an optional client-side request-pacing budget in compute units per
+    /// second.
+    ///
+    /// When `Some(cups)`, a [`CupsRateLimitLayer`] is installed in front of the
+    /// retry layer so request dispatch is proactively spaced to stay under the
+    /// budget, instead of only backing off after the endpoint returns a
+    /// rate-limit error. `None` (the default) preserves the retry-only behaviour.
+    pub const fn rate_limit(mut self, rate_limit: Option<u64>) -> Self {
+        self.rate_limit = rate_limit;
+        self
+    }
+
     /// Sets the provider to be local.
     ///
     /// This is useful for local dev nodes.
@@ -375,6 +396,7 @@ impl<N: Network> ProviderBuilder<N> {
             initial_backoff,
             timeout,
             compute_units_per_second,
+            rate_limit,
             jwt,
             headers,
             is_local,
@@ -406,7 +428,16 @@ impl<N: Network> ProviderBuilder<N> {
             .no_proxy(no_proxy)
             .no_mpp(no_mpp)
             .build();
-        let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
+        // Proactively pace requests when an explicit CUPS budget is set, so the
+        // first attempt is spaced instead of only backing off after a 429.
+        let client = if let Some(cups) = rate_limit.filter(|&cups| cups != u64::MAX) {
+            ClientBuilder::default()
+                .layer(CupsRateLimitLayer::new(cups))
+                .layer(retry_layer)
+                .transport(transport, is_local)
+        } else {
+            ClientBuilder::default().layer(retry_layer).transport(transport, is_local)
+        };
 
         if !is_local {
             client.set_poll_interval(
@@ -438,6 +469,7 @@ impl<N: Network> ProviderBuilder<N> {
             initial_backoff,
             timeout,
             compute_units_per_second,
+            rate_limit,
             jwt,
             headers,
             accept_invalid_certs,
@@ -477,7 +509,15 @@ impl<N: Network> ProviderBuilder<N> {
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
         // Use normalized/parsed URLs for local detection, consistent with build()
         let is_local = parsed_urls.iter().all(|url| guess_local_url(url.as_str()));
-        let client = ClientBuilder::default().layer(retry_layer).transport(round_robin, is_local);
+        // Proactively pace requests when an explicit CUPS budget is set.
+        let client = if let Some(cups) = rate_limit.filter(|&cups| cups != u64::MAX) {
+            ClientBuilder::default()
+                .layer(CupsRateLimitLayer::new(cups))
+                .layer(retry_layer)
+                .transport(round_robin, is_local)
+        } else {
+            ClientBuilder::default().layer(retry_layer).transport(round_robin, is_local)
+        };
 
         if !is_local {
             client.set_poll_interval(
