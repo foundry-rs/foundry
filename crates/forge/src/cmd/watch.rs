@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 use std::{
     ffi::{OsStr, OsString},
     io::IsTerminal,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, OnceLock, Weak,
         atomic::{AtomicU8, Ordering},
@@ -398,7 +398,7 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
         || args.watch.run_all;
 
     let last_test_files = Mutex::new(HashSet::<String>::default());
-    let project_root = config.root.to_string_lossy().into_owned();
+    let project_root = config.root.clone();
     let test_failures_file = config.test_failures_file.clone();
     let rerun_failed = args.watch.rerun_failed;
     let watch_keyboard = std::io::stdin().is_terminal();
@@ -467,7 +467,7 @@ impl TestRerun {
 fn changed_test_rerun(
     events: &[Event],
     last_test_files: &mut HashSet<String>,
-    project_root: &str,
+    project_root: &Path,
     no_reconfigure: bool,
 ) -> TestRerun {
     let mut changed_sol_test_files: HashSet<_> = events
@@ -497,9 +497,9 @@ fn changed_test_rerun(
 
     let mut file = changed_sol_test_files.iter().next().expect("test file present").clone();
 
-    // remove the project root dir from the detected file
-    if let Some(f) = file.strip_prefix(project_root) {
-        file = f.trim_start_matches('/').to_string();
+    // Remove the project root without matching unrelated directory names.
+    if let Ok(relative) = Path::new(&file).strip_prefix(project_root) {
+        file = relative.to_string_lossy().into_owned();
     }
 
     trace!(?file, "reconfigure test command");
@@ -858,7 +858,12 @@ mod tests {
     #[test]
     fn narrows_test_reruns_to_changed_test_file() {
         let rerun = |events: &[Event], no_reconfigure| {
-            changed_test_rerun(events, &mut HashSet::default(), "/project", no_reconfigure)
+            changed_test_rerun(
+                events,
+                &mut HashSet::default(),
+                Path::new("/project"),
+                no_reconfigure,
+            )
         };
 
         assert_eq!(
@@ -877,9 +882,46 @@ mod tests {
 
         let mut last = HashSet::from_iter(["/project/test/B.t.sol".to_string()]);
         assert_eq!(
-            changed_test_rerun(&[path_event("/project/src/A.sol")], &mut last, "/project", false),
+            changed_test_rerun(
+                &[path_event("/project/src/A.sol")],
+                &mut last,
+                Path::new("/project"),
+                false,
+            ),
             TestRerun::MatchPath("test/B.t.sol".to_string())
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn does_not_strip_sibling_directory_from_changed_test_file() {
+        assert_eq!(
+            changed_test_rerun(
+                &[path_event("/project-extra/test/Foo.t.sol")],
+                &mut HashSet::default(),
+                Path::new("/project"),
+                false,
+            ),
+            TestRerun::MatchPath("/project-extra/test/Foo.t.sol".to_string())
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn strips_windows_root_before_matching_changed_test_file() {
+        let rerun = changed_test_rerun(
+            &[path_event(r"C:\work\app\test\Foo.t.sol")],
+            &mut HashSet::default(),
+            Path::new(r"C:\work\app"),
+            false,
+        );
+        let TestRerun::MatchPath(pattern) = rerun else { panic!("expected a path filter") };
+        assert_eq!(pattern, r"test\Foo.t.sol");
+        let matcher = pattern.parse::<foundry_config::filter::GlobMatcher>().unwrap();
+        assert!(matcher.is_match(Path::new(r"test\Foo.t.sol")));
+        let old_pattern =
+            r"\test\Foo.t.sol".parse::<foundry_config::filter::GlobMatcher>().unwrap();
+        assert!(!old_pattern.is_match(Path::new(r"test\Foo.t.sol")));
     }
 
     #[test]
@@ -889,14 +931,19 @@ mod tests {
             changed_test_rerun(
                 &[path_event("/project/test/A.t.sol")],
                 &mut last,
-                "/project",
+                Path::new("/project"),
                 false
             ),
             TestRerun::MatchPath("test/A.t.sol".to_string())
         );
         // A later change to a non-test file reruns the tests of the last changed test file.
         assert_eq!(
-            changed_test_rerun(&[path_event("/project/src/A.sol")], &mut last, "/project", false),
+            changed_test_rerun(
+                &[path_event("/project/src/A.sol")],
+                &mut last,
+                Path::new("/project"),
+                false,
+            ),
             TestRerun::MatchPath("test/A.t.sol".to_string())
         );
         // Multiple changed test files reset the selection for subsequent source changes.
@@ -904,13 +951,18 @@ mod tests {
             changed_test_rerun(
                 &[path_event("/project/test/B.t.sol"), path_event("/project/test/C.t.sol")],
                 &mut last,
-                "/project",
+                Path::new("/project"),
                 false
             ),
             TestRerun::Unchanged
         );
         assert_eq!(
-            changed_test_rerun(&[path_event("/project/src/C.sol")], &mut last, "/project", false),
+            changed_test_rerun(
+                &[path_event("/project/src/C.sol")],
+                &mut last,
+                Path::new("/project"),
+                false,
+            ),
             TestRerun::Unchanged
         );
     }
