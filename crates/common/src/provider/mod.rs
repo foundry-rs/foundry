@@ -19,7 +19,9 @@ use alloy_provider::{
 };
 use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_transport::{
-    TransportError, TransportFut, layers::RetryBackoffLayer, utils::guess_local_url,
+    TransportError, TransportErrorKind, TransportFut,
+    layers::{OrRetryPolicyFn, RateLimitRetryPolicy, RetryBackoffLayer},
+    utils::guess_local_url,
 };
 use eyre::{Result, WrapErr};
 use foundry_config::Config;
@@ -387,8 +389,7 @@ impl<N: Network> ProviderBuilder<N> {
         let url = url?;
         let no_proxy = no_proxy || is_local;
 
-        let retry_layer =
-            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+        let retry_layer = retry_layer(max_retry, initial_backoff, compute_units_per_second);
 
         // If curl_mode is enabled, use CurlTransport instead of RuntimeTransport
         if curl_mode {
@@ -473,8 +474,7 @@ impl<N: Network> ProviderBuilder<N> {
 
         let round_robin = RoundRobinService::new(transports);
 
-        let retry_layer =
-            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+        let retry_layer = retry_layer(max_retry, initial_backoff, compute_units_per_second);
         // Use normalized/parsed URLs for local detection, consistent with build()
         let is_local = parsed_urls.iter().all(|url| guess_local_url(url.as_str()));
         let client = ClientBuilder::default().layer(retry_layer).transport(round_robin, is_local);
@@ -602,11 +602,81 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
     }
 }
 
+/// Builds the retry layer: retries rate limits and connections dropped mid-request.
+fn retry_layer(
+    max_retry: u32,
+    initial_backoff: u64,
+    compute_units_per_second: u64,
+) -> RetryBackoffLayer<OrRetryPolicyFn> {
+    RetryBackoffLayer::new_with_policy(
+        max_retry,
+        initial_backoff,
+        compute_units_per_second,
+        OrRetryPolicyFn::new(RateLimitRetryPolicy::default(), is_dropped_connection),
+    )
+}
+
+/// Returns `true` if the request failed because the connection was reset or closed mid-request.
+///
+/// Connection refused and DNS failures are not retried, so a missing node or a mistyped URL
+/// still fails fast.
+fn is_dropped_connection(error: &TransportError) -> bool {
+    let TransportError::Transport(TransportErrorKind::Custom(error)) = error else {
+        return false;
+    };
+    has_dropped_connection(&**error)
+}
+
+/// Returns `true` if `error` or one of its sources is a reset or closed connection.
+fn has_dropped_connection(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut source = Some(error);
+    while let Some(error) = source {
+        if error
+            .downcast_ref::<runtime_transport::RedactedHttpError>()
+            .is_some_and(|error| error.dropped_connection)
+        {
+            return true;
+        }
+        // h2 errors expose their I/O cause through get_io, not source.
+        let io = error
+            .downcast_ref::<std::io::Error>()
+            .or_else(|| error.downcast_ref::<h2::Error>().and_then(h2::Error::get_io));
+        if let Some(error) = io
+            && matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof
+            )
+        {
+            return true;
+        }
+        source = error.source();
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_json_rpc::ErrorPayload;
 
     use super::*;
+
+    #[test]
+    fn retries_dropped_connections() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("request failed")]
+        struct Wrapped(#[source] std::io::Error);
+
+        let dropped = |kind| {
+            TransportErrorKind::custom(Wrapped(std::io::Error::new(kind, "connection error")))
+        };
+        assert!(is_dropped_connection(&dropped(std::io::ErrorKind::ConnectionReset)));
+        assert!(is_dropped_connection(&dropped(std::io::ErrorKind::UnexpectedEof)));
+        assert!(!is_dropped_connection(&dropped(std::io::ErrorKind::ConnectionRefused)));
+        assert!(!is_dropped_connection(&TransportErrorKind::custom_str("connection reset")));
+    }
 
     #[test]
     fn redacts_url_credentials_and_resource() {
