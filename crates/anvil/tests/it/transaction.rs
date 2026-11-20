@@ -26,7 +26,7 @@ use anvil::{NodeConfig, spawn};
 use anvil_core::eth::block::Block;
 use eyre::Ok;
 use foundry_evm_hardforks::EthereumHardfork;
-use foundry_primitives::FoundryReceiptEnvelope;
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxReceipt};
 use futures::{FutureExt, StreamExt, future::join_all};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
@@ -1346,6 +1346,31 @@ async fn test_tx_receipt() {
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     assert!(tx.to.is_some());
+
+    let block_number = U64::from(tx.block_number.unwrap());
+
+    let block = provider
+        .raw_request::<_, serde_json::Value>("eth_getBlockByNumber".into(), (block_number, false))
+        .await
+        .unwrap();
+    let receipt = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_getTransactionReceipt".into(),
+            (tx.transaction_hash,),
+        )
+        .await
+        .unwrap();
+    let block_receipts = provider
+        .raw_request::<_, serde_json::Value>("eth_getBlockReceipts".into(), (block_number,))
+        .await
+        .unwrap();
+
+    assert_eq!(receipt["blockTimestamp"], block["timestamp"]);
+    assert_eq!(block_receipts[0]["blockTimestamp"], block["timestamp"]);
+
+    let timestamp = serde_json::from_value::<U64>(block["timestamp"].clone()).unwrap();
+    let receipt = serde_json::from_value::<FoundryTxReceipt>(receipt).unwrap();
+    assert_eq!(receipt.block_timestamp(), Some(timestamp.to()));
 
     let greeter_deploy = Greeter::deploy_builder(provider.clone(), "Hello World!".to_string());
     let greeter_calldata = greeter_deploy.calldata();
