@@ -41,6 +41,10 @@ impl FindBlockArgs {
         let provider = rpc_provider(&rpc)?;
 
         let last_block_num = provider.get_block_number().await?;
+        if last_block_num == 0 {
+            return print_scalar(last_block_num);
+        }
+
         let (ts_block_latest, ts_block_1) =
             join!(timestamp(&provider, last_block_num), timestamp(&provider, 1));
         let ts_block_latest = ts_block_latest?;
