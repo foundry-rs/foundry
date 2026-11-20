@@ -177,6 +177,49 @@ Removing 'forge-std' in [..], (url: https://github.com/foundry-rs/forge-std, tag
     remove(&mut cmd, "lib/forge-std");
 }
 
+#[forgetest]
+fn can_remove_submodule_from_worktree(prj: _, cmd: _) {
+    cmd.git_init();
+    fs::write(prj.root().join("README.md"), "worktree fixture\n").unwrap();
+    cmd.git_add();
+    cmd.git_commit("initial");
+
+    let worktrees = tempfile::tempdir().unwrap();
+    let worktree = worktrees.path().join("branch");
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["worktree", "add", "--detach"])
+        .arg(&worktree)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let output = Command::new("git")
+        .current_dir(&worktree)
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(source.path())
+        .arg("lib/dep")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    let metadata = Git::new(&worktree).git_path(Path::new("modules/lib/dep")).unwrap();
+    assert!(worktree.join(".git").is_file());
+    assert!(metadata.is_dir());
+
+    cmd.forge_fuse()
+        .current_dir(&worktree)
+        .args(["remove", "--force", "lib/dep"])
+        .assert_success()
+        .stdout_eq(str![""]);
+
+    assert!(!worktree.join("lib/dep").exists());
+    assert!(!metadata.exists());
+    assert!(!read_string(worktree.join(".gitmodules")).contains("lib/dep"));
+}
+
 // https://github.com/foundry-rs/foundry/issues/6790
 #[forgetest]
 fn failed_install_leaves_repository_clean(prj: _, cmd: _) {
