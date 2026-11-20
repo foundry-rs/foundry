@@ -8399,13 +8399,15 @@ contract SymbolicUniswapV2 {
     }
 }
 
-// Each checked `x -= x * y / (y + z)` asks whether the quotient stays below the previous `x`,
-// whose interval nests every earlier update. That analysis must share one node budget; with a
-// fresh budget per level, its work doubles per update and outlives the symbolic timeout.
+// Each checked `x -= x * y / (y + z)` or rounded-up `x -= (x * bps + 9_999) / 10_000` asks
+// whether the quotient stays below the previous `x`, whose interval nests every earlier update.
+// That analysis must share one node budget; with a fresh budget per level, its work doubles per
+// update and outlives the symbolic timeout.
 #[forgetest_init]
 fn symbolic_bounds_chained_sum_divisor_updates(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_bounds_chained_sum_divisor_updates");
     let updates = "        x -= x * y / (uint256(y) + z);\n".repeat(24);
+    let rounded_up_updates = "        x -= (x * bps + 9_999) / 10_000;\n".repeat(24);
     prj.add_test(
         "SymbolicChainedUpdates.t.sol",
         &r#"
@@ -8414,8 +8416,14 @@ contract SymbolicChainedUpdates {
         uint256 x = x0;
 UPDATES        assert(x < 2 ** 128);
     }
+
+    function checkChainedRoundedUpUpdates(uint128 x0, uint16 bps) public pure {
+        uint256 x = x0;
+ROUNDED_UP_UPDATES        assert(x < 2 ** 128);
+    }
 }
 "#
+        .replace("ROUNDED_UP_UPDATES", &rounded_up_updates)
         .replace("UPDATES", &updates),
     );
     let output = cmd
@@ -8424,13 +8432,280 @@ UPDATES        assert(x < 2 ** 128);
         .get_output()
         .stdout
         .clone();
-    let result = json_test_result(&output, "checkChainedUpdates(uint128,uint112,uint112)");
     // The property holds, so a stronger engine may prove it; a regression hangs instead.
-    assert!(
-        result["symbolic"]["status"] == "pass"
-            || result["symbolic"]["incomplete"]["kind"] == "timeout",
-        "{result}"
+    for signature in [
+        "checkChainedUpdates(uint128,uint112,uint112)",
+        "checkChainedRoundedUpUpdates(uint128,uint16)",
+    ] {
+        let result = json_test_result(&output, signature);
+        assert!(
+            result["symbolic"]["status"] == "pass"
+                || result["symbolic"]["incomplete"]["kind"] == "timeout",
+            "{result}"
+        );
+    }
+}
+
+// A fee rounded up adds less than one divisor, so it stays at most the amount once the rate is at
+// most the divisor: `(x * y + d - 1) / d <= x`.
+#[forgetest_init]
+fn symbolic_proves_rounded_up_fee_bound(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_rounded_up_fee_bound");
+    prj.add_test(
+        "SymbolicRoundedUpFee.t.sol",
+        r#"
+contract SymbolicRoundedUpFee {
+    function checkFeeBelowAmount(uint128 amount, uint16 bps) public pure {
+        require(bps <= 10_000);
+        assert((uint256(amount) * bps + 9_999) / 10_000 <= amount);
+    }
+
+    function checkMulDivUpBelowAmount(uint128 x, uint128 y, uint128 d) public pure {
+        require(d != 0 && y <= d);
+        assert((uint256(x) * y + d - 1) / d <= x);
+    }
+
+    function checkParenthesizedAddend(uint128 x, uint128 y, uint128 d) public pure {
+        require(d != 0 && y <= d);
+        assert((uint256(x) * y + (uint256(d) - 1)) / d <= x);
+    }
+
+    function checkAddendTooLarge(uint128 amount, uint16 bps) public pure {
+        require(bps <= 10_000);
+        assert((uint256(amount) * bps + 10_000) / 10_000 <= amount);
+    }
+
+    function checkRateTooLarge(uint128 amount, uint16 bps) public pure {
+        require(bps <= 10_001);
+        assert((uint256(amount) * bps + 9_999) / 10_000 <= amount);
+    }
+
+    function checkOtherAddend(uint128 x, uint128 y, uint128 d, uint128 e) public pure {
+        require(d != 0 && y <= d && e != 0);
+        assert((uint256(x) * y + e - 1) / d <= x);
+    }
+
+    function checkUnderflowingSubtrahend(uint128 x, uint128 y, uint128 d, uint256 c)
+        public
+        pure
+    {
+        require(d != 0 && y <= d);
+        uint256 rounded;
+        unchecked {
+            rounded = (uint256(x) * y + d - c) / d;
+        }
+        assert(rounded <= x);
+    }
+}
+"#,
     );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicRoundedUpFee"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkFeeBelowAmount(uint128,uint16)",
+            "checkMulDivUpBelowAmount(uint128,uint128,uint128)",
+            "checkParenthesizedAddend(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0, "{signature}");
+        }
+
+        for signature in [
+            "checkAddendTooLarge(uint128,uint16)",
+            "checkRateTooLarge(uint128,uint16)",
+            "checkOtherAddend(uint128,uint128,uint128,uint128)",
+            "checkUnderflowingSubtrahend(uint128,uint128,uint128,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
+// Choosing the smaller of two pool ratios, as in a constant-product mint, branches on a comparison
+// of two quotients over five inputs. The local witness search must cover five variables so both
+// branches are found reachable instead of falling to the solver, which returns unknown. A
+// five-variable branch without a witness must still reach the solver: a nested call cannot defer it
+// once `vm.projectRoot` rules out the stateless retry. Five-input queries whose hard arithmetic
+// fits in four search slots keep the narrower search, which completes a bound-defined fifth input
+// and defers a miss behind paths that already have witnesses.
+#[forgetest_init]
+fn symbolic_finds_both_branches_of_min_ratio(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_finds_both_branches_of_min_ratio");
+    prj.add_test(
+        "SymbolicMinRatio.t.sol",
+        r#"
+contract SymbolicMinRatio {
+    function liquidity(uint112 a0, uint112 a1, uint112 r0, uint112 r1, uint128 supply)
+        internal
+        pure
+        returns (uint256 l0, uint256 l)
+    {
+        l0 = uint256(a0) * supply / r0;
+        uint256 l1 = uint256(a1) * supply / r1;
+        l = l0 < l1 ? l0 : l1;
+    }
+
+    function checkMinBelowFirstRatio(uint112 a0, uint112 a1, uint112 r0, uint112 r1, uint128 supply)
+        public
+        pure
+    {
+        require(r0 != 0 && r1 != 0);
+        (uint256 l0, uint256 l) = liquidity(a0, a1, r0, r1, supply);
+        assert(l <= l0);
+    }
+
+    function checkMinIsFirstRatio(uint112 a0, uint112 a1, uint112 r0, uint112 r1, uint128 supply)
+        public
+        pure
+    {
+        require(r0 != 0 && r1 != 0);
+        (uint256 l0, uint256 l) = liquidity(a0, a1, r0, r1, supply);
+        assert(l == l0);
+    }
+
+    function checkQuoteCompletedFromAssertion(
+        uint112 amount,
+        uint112 supply,
+        uint112 r0,
+        uint112 r1,
+        uint256 quote
+    ) public pure {
+        require(amount != 0 && r0 != 0 && r1 != 0);
+        require(uint256(amount) * supply / r0 < uint256(10) * supply / r1);
+        assert(quote != (uint256(amount) << 128) + 12345);
+    }
+}
+
+interface Vm {
+    function assume(bool condition) external pure;
+    function projectRoot() external view returns (string memory);
+}
+
+contract Rounded {
+    function value(uint256 x, uint256 y) external pure returns (uint256) {
+        unchecked {
+            uint256 v = (x * y + 9) / 10;
+            if (v == 37) return 1;
+            if (v == 38) return 2;
+        }
+        return 0;
+    }
+}
+
+contract PathBudget {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Rounded rounded = new Rounded();
+
+    function checkDeferredProductBranches(uint256 x, uint256 y, uint256 a, uint256 b, uint256 c)
+        public
+        view
+    {
+        vm.assume(a > 2);
+        vm.assume(b > 4);
+        vm.assume(c > 6);
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        assert(rounded.value(x, y) != 0);
+    }
+}
+
+contract Parity {
+    function check(uint8 a, uint8 b, uint8 c, uint8 d, uint8 e) external pure {
+        uint256 p = uint256(a) * b * c;
+        uint256 q = uint256(d) * e;
+        if (a % 2 == 0 && (p + 2 * q) % 2 == 1) revert();
+    }
+}
+
+contract SymbolicMinRatioNested {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Parity parity = new Parity();
+
+    function checkNestedBranchWithoutRetry(uint8 a, uint8 b, uint8 c, uint8 d, uint8 e) public view {
+        vm.projectRoot();
+        parity.check(a, b, c, d, e);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicMinRatio"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(
+            &output,
+            "checkMinBelowFirstRatio(uint112,uint112,uint112,uint112,uint128)",
+        );
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+
+        let result = json_test_result(
+            &output,
+            "checkMinIsFirstRatio(uint112,uint112,uint112,uint112,uint128)",
+        );
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let result = json_test_result(
+            &output,
+            "checkNestedBranchWithoutRetry(uint8,uint8,uint8,uint8,uint8)",
+        );
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+
+        let result = json_test_result(
+            &output,
+            "checkQuoteCompletedFromAssertion(uint112,uint112,uint112,uint112,uint256)",
+        );
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--symbolic-width",
+                "4",
+                "--match-contract",
+                "PathBudget",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(
+            &output,
+            "checkDeferredProductBranches(uint256,uint256,uint256,uint256,uint256)",
+        );
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+    }
 }
 
 // Lending checks cross-multiply `debt * BPS <= collateral * ltv`, and an `ltv` of at most `BPS`

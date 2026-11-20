@@ -24,7 +24,7 @@ jobs:
       - name: Fetch and update forge-std tag
         run: curl 'https://api.github.com/repos/foundry-rs/forge-std/tags' | jq '.[0].commit.sha' -jr > testdata/forge-std-rev
       - name: Create pull request
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           commit-message: "chore: bump forge-std version used for tests"
           title: "chore(tests): bump forge-std version"
