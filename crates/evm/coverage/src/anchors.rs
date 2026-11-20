@@ -750,17 +750,23 @@ impl<'a> AnchorIndex<'a> {
             .iter()
             .filter(|&&(ic, ..)| self.source_map.get(ic + 1).is_some_and(in_condition))
             .collect::<Vec<_>>();
-        // A check in the condition, such as an overflow, array bounds, or enum check, cannot enter
-        // an arm, unless it is the only jump, as when the arm is a shared `revert`. A check either
-        // jumps to the failure or, as solc's legacy pipeline emits it, jumps around a failure that
-        // is mapped to the condition. The `if`'s own jump can fall through into a failure too,
-        // when the statement after the `if` reverts, but that failure is mapped outside it.
+        // A check in the condition, such as an array bounds, enum, or call check, cannot enter an
+        // arm, unless it is the only jump, as when the arm is a shared `revert`. One side of a
+        // check leads to a failure whose code starts in the condition, whether the check jumps to
+        // it or, as solc's legacy pipeline emits it, around it. A side of the `if`'s own jump can
+        // fail too, when the code after the `if` or its loop reverts, but that code is mapped
+        // outside the `if`.
+        let fails_in_condition = |pc: u32| {
+            let Ok(mut ic) = self.pcs.binary_search(&pc) else { return false };
+            while self.pcs.get(ic).is_some_and(|&p| self.bytecode[p as usize] == opcode::JUMPDEST) {
+                ic += 1;
+            }
+            self.source_map.get(ic).is_some_and(in_condition) && self.fails(pc)
+        };
         if jumps.len() > 1 {
-            jumps.retain(|&&(ic, _, immediate)| {
-                let fails_in_condition = self.pcs.get(ic + 2).is_some_and(|&pc| self.fails(pc))
-                    && self.source_map.get(ic + 2).is_some_and(in_condition);
-                !fails_in_condition
-                    && jump_destination(immediate).is_ok_and(|target| !self.fails(target))
+            jumps.retain(|&&(_, jump, immediate)| {
+                !fails_in_condition(jump as u32 + 1)
+                    && jump_destination(immediate).is_ok_and(|target| !fails_in_condition(target))
             });
         }
         let &[&(_, jump, immediate)] = jumps.as_slice() else { return None };
@@ -2757,13 +2763,14 @@ mod tests {
             opcode::REVERT,
         ];
         assert_eq!(
-            if_anchors(&checked, "12:3:0;;12:3:0;;;10:60:0;80:5:0;;;0:100:0;;;0:100:0;;;", false),
+            if_anchors(&checked, "12:3:0;;12:3:0;;;10:60:0;80:5:0;;;0:100:0;;;12:3:0;;;", false),
             [(13, Some(9))]
         );
 
         // A check that jumps around its failure, as solc's legacy pipeline emits an array bounds
-        // check, cannot enter the arm either, even when the statement after the `if` reverts.
-        let jumps_around_check = |next: [u8; 3]| {
+        // check, cannot enter the arm either, even when the statement after the `if` reverts, or
+        // the arm's side does, as when a `break` leaves a loop that is followed by a revert.
+        let jumps_around_check = |next: [u8; 3], arm_end: u8| {
             let mut bytecode = vec![
                 opcode::PUSH1,
                 0,
@@ -2781,16 +2788,13 @@ mod tests {
                 opcode::JUMPI,
             ];
             bytecode.extend_from_slice(&next);
-            bytecode.extend_from_slice(&[opcode::JUMPDEST, opcode::PUSH0, opcode::RETURN]);
+            bytecode.extend_from_slice(&[opcode::JUMPDEST, opcode::PUSH0, arm_end]);
             if_anchors(&bytecode, "12:3:0;;;;;;;;;10:60:0;80:5:0;;;0:100:0;;", false)
         };
-        assert_eq!(
-            jumps_around_check([opcode::PUSH0, opcode::POP, opcode::STOP]),
-            [(17, Some(13))]
-        );
-        assert_eq!(
-            jumps_around_check([opcode::PUSH0, opcode::PUSH0, opcode::REVERT]),
-            [(17, Some(13))]
-        );
+        let next = [opcode::PUSH0, opcode::POP, opcode::STOP];
+        let next_reverts = [opcode::PUSH0, opcode::PUSH0, opcode::REVERT];
+        assert_eq!(jumps_around_check(next, opcode::RETURN), [(17, Some(13))]);
+        assert_eq!(jumps_around_check(next_reverts, opcode::RETURN), [(17, Some(13))]);
+        assert_eq!(jumps_around_check(next, opcode::REVERT), [(17, Some(13))]);
     }
 }

@@ -1708,6 +1708,14 @@ contract Checks {
         if (a[0] == 0) return;
         revert();
     }
+
+    function breakThenRevert(uint256[] memory a, uint256 key) external pure returns (uint256) {
+        for (uint256 i; i < a.length; ++i) {
+            if (a[i] == 0) break;
+            if (a[i] == key) return i;
+        }
+        revert();
+    }
 }
 "#,
     );
@@ -1727,6 +1735,7 @@ contract ChecksTest {
         checks.enumCheck(s);
         checks.externalCall();
         checks.indexThenRevert(a);
+        try checks.breakThenRevert(a, 1) {} catch {}
     }
 }
 "#,
@@ -1767,12 +1776,21 @@ FNDA:1,Checks.indexThenRevert
 DA:31,1
 BRDA:31,3,0,1
 DA:32,0
-FNF:5
-FNH:5
-LF:15
-LH:13
-BRF:4
-BRH:4
+DA:35,1
+FN:35,Checks.breakThenRevert
+FNDA:1,Checks.breakThenRevert
+DA:36,1
+DA:37,1
+BRDA:37,4,0,1
+DA:38,0
+BRDA:38,5,0,-
+DA:40,1
+FNF:6
+FNH:6
+LF:20
+LH:17
+BRF:6
+BRH:5
 end_of_record
 
 "#]],
