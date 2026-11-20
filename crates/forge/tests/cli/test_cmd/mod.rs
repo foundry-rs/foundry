@@ -1121,7 +1121,7 @@ contract LibraryWriter {
     function set() external { WriterLib.set(stats); }
 
     function switchContextAndSet() external returns (string memory) {
-        vm.chainId(2);
+        vm.chainId(vm.envUint("STATE_DIFF_CHAIN_ID") + 1);
         vm.etch(address(0x2000), type(Caller).runtimeCode);
         WriterLib.set(stats);
         return vm.getStateDiffJson();
@@ -1193,7 +1193,7 @@ contract LibraryWriterTest is Test {
     function test_parentContextChanged() public {
         vm.etch(address(0x1000), type(Proxy).runtimeCode);
         vm.etch(address(0x2000), type(LibraryWriter).runtimeCode);
-        vm.chainId(1);
+        vm.chainId(vm.envUint("STATE_DIFF_CHAIN_ID"));
         vm.startStateDiffRecording();
         vm.startStateDiffRecording();
         assertRaw(LibraryWriter(address(0x1000)).switchContextAndSet());
@@ -1202,11 +1202,11 @@ contract LibraryWriterTest is Test {
     function checkPriorContext(bool replaceCode) internal {
         vm.etch(address(0x1000), type(Proxy).runtimeCode);
         vm.etch(address(0x2000), type(Caller).runtimeCode);
-        vm.chainId(1);
+        vm.chainId(vm.envUint("STATE_DIFF_CHAIN_ID"));
         vm.startStateDiffRecording();
         vm.startStateDiffRecording();
         Caller(address(0x1000)).set();
-        vm.chainId(2);
+        vm.chainId(vm.envUint("STATE_DIFF_CHAIN_ID") + 1);
         if (replaceCode) vm.etch(address(0x2000), type(WriterLib).runtimeCode);
         string memory diff = vm.getStateDiffJson();
         assertEq(vm.parseJsonString(diff, string.concat(SLOT, ".label")), "actual");
@@ -1219,17 +1219,19 @@ contract LibraryWriterTest is Test {
 "#,
     );
 
-    let solc = foundry_compilers::compilers::solc::Solc::find_svm_installed_version(
-        &SOLC_VERSION.parse().unwrap(),
-    )
-    .unwrap()
-    .unwrap();
-    prj.update_config(|config| config.solc = Some(foundry_config::SolcReq::Local(solc.solc)));
     cmd.args(["build", "--extra-output", "storageLayout"]).assert_success();
 
-    // Resolve external layouts without network access or modifying the user's cache.
-    let home = tempfile::tempdir().unwrap();
-    let cache = home.path().join(".foundry/cache/etherscan/mainnet/storage_layouts");
+    // Windows resolves the home directory through the known-folder API, not HOME or USERPROFILE.
+    // Seed a disposable, unique chain cache at the canonical location on every platform.
+    let chain_id = (1u64 << 32) + u64::from(rand::random::<u32>());
+    let chain_cache = foundry_config::Config::foundry_etherscan_chain_cache_dir(chain_id).unwrap();
+    std::fs::create_dir_all(chain_cache.parent().unwrap()).unwrap();
+    let chain_cache = tempfile::Builder::new()
+        .prefix(chain_cache.file_name().unwrap().to_str().unwrap())
+        .rand_bytes(0)
+        .tempdir_in(chain_cache.parent().unwrap())
+        .unwrap();
+    let cache = chain_cache.path().join("storage_layouts");
     std::fs::create_dir_all(&cache).unwrap();
     for (address, contract) in [(0x1000, "Proxy"), (0x2000, "Caller")] {
         let artifact = foundry_common::fs::read_json_file::<ConfigurableContractArtifact>(
@@ -1247,13 +1249,13 @@ contract LibraryWriterTest is Test {
 
     for via_ir in [false, true] {
         cmd.forge_fuse();
-        cmd.env("HOME", home.path());
-        cmd.env("USERPROFILE", home.path());
+        cmd.env("STATE_DIFF_CHAIN_ID", chain_id.to_string());
         cmd.args([
             "test",
             "--mc",
             "LibraryWriterTest|PrefixWriterTest",
             "--decode-external-storage",
+            "--offline",
             "--extra-output",
             "storageLayout",
         ]);

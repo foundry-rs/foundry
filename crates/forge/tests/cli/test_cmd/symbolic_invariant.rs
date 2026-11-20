@@ -2781,6 +2781,52 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     }
 }
 
+// Arbitrary storage keeps slots that setUp wrote with `vm.store`, so replay must not give them the
+// modeled values, which would confirm a handler failure concrete execution cannot reach.
+#[forgetest_init]
+fn symbolic_invariant_replay_keeps_stored_arbitrary_slots(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_replay_keeps_stored_arbitrary_slots");
+    prj.update_config(|config| config.invariant.runs = 0);
+    prj.add_test(
+        "SymbolicStoredSlotReplay.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract StoredSlotTarget {
+    mapping(uint256 => uint256) values;
+    uint256 pokes;
+
+    function poke(uint256 key) external {
+        pokes = 1;
+        assert(!(key < 2 && values[key] == 777));
+    }
+}
+
+contract SymbolicStoredSlotReplay is Test {
+    function setUp() public {
+        StoredSlotTarget target = new StoredSlotTarget();
+        vm.setArbitraryStorage(address(target), true);
+        vm.store(address(target), keccak256(abi.encode(uint256(0), uint256(0))), bytes32(uint256(5)));
+        vm.store(address(target), keccak256(abi.encode(uint256(1), uint256(0))), bytes32(uint256(5)));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicStoredSlotReplay"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_ok()");
+    assert_eq!(result["symbolic"]["replay"]["status"], "mismatch");
+}
+
 // Concrete invariant checks do not commit predicate writes, so `afterInvariant` must see the
 // post-handler state rather than the predicate's.
 #[forgetest_init]

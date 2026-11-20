@@ -23,7 +23,7 @@ use alloy_consensus::Sealed;
 
 #[cfg(feature = "base")]
 use base_common_consensus::{
-    BaseTxEnvelope, EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE, Eip8130Signed, TxEip8130,
+    BASE_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE, BaseTxEnvelope, TxBase, TxBaseSigned,
 };
 #[cfg(feature = "base")]
 use base_common_rpc_types::Transaction;
@@ -78,8 +78,8 @@ pub enum FoundryTxEnvelope {
     PostExec(Sealed<TxPostExec>),
     /// Base EIP-8130 account-abstraction transaction.
     #[cfg(feature = "base")]
-    #[envelope(ty = 0x79, typed = TxEip8130)]
-    Eip8130(Eip8130Signed),
+    #[envelope(ty = 0x79, typed = TxBase)]
+    Eip8130(TxBaseSigned),
     /// Tempo transaction type.
     ///
     /// See <https://docs.tempo.xyz/protocol/transactions>.
@@ -422,7 +422,7 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
             )
             .map_err(|err| ConversionError::Custom(err.to_string()))?;
             return match rpc.inner.into_inner() {
-                BaseTxEnvelope::Eip8130(tx) => Ok(Self::Eip8130(tx)),
+                BaseTxEnvelope::Base(tx) => Ok(Self::Eip8130(tx)),
                 _ => Err(ConversionError::Custom("expected Base EIP-8130 transaction".to_string())),
             };
         }
@@ -706,7 +706,7 @@ mod tests {
         #[cfg(any(feature = "base", feature = "optimism"))]
         assert!(FoundryTypedTx::Deposit(TxDeposit::default()).is_deposit());
         #[cfg(feature = "base")]
-        assert!(FoundryTypedTx::Eip8130(TxEip8130::default()).is_eip8130());
+        assert!(FoundryTypedTx::Eip8130(TxBase::default()).is_eip8130());
         #[cfg(feature = "optimism")]
         {
             assert!(FoundryTypedTx::PostExec(TxPostExec::default()).is_post_exec());
@@ -728,8 +728,8 @@ mod tests {
         assert!(FoundryTxEnvelope::Deposit(Sealed::new(TxDeposit::default())).is_deposit());
         #[cfg(feature = "base")]
         assert!(
-            FoundryTxEnvelope::Eip8130(Eip8130Signed::new(
-                TxEip8130::default(),
+            FoundryTxEnvelope::Eip8130(TxBaseSigned::new(
+                TxBase::default(),
                 Default::default(),
                 Default::default()
             ))

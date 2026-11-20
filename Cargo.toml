@@ -38,7 +38,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.10.0"
+version = "1.10.1"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Foundry Contributors"]
@@ -341,7 +341,7 @@ foundry-primitives = { path = "crates/primitives", default-features = false }
 foundry-tui = { path = "crates/tui", default-features = false }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.25.0", default-features = false }
+foundry-block-explorers = { version = "0.26.0", default-features = false }
 foundry-compilers = { version = "0.21.0", default-features = false, features = [
     "rustls",
     "svm-solc",
@@ -377,9 +377,9 @@ tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "9634fed2
 reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "f551b680945f55698833666e8d48034b3034bfc9", features = [
     "account-ext",
 ] }
-# Op and Base evm2 type families, on foundry-rs/evm2-networks at `65cb40b`.
-op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "65cb40bbccbc334fc4777b84d680fdcccf97ea15", default-features = false }
-base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "65cb40bbccbc334fc4777b84d680fdcccf97ea15", default-features = false }
+# Op and Base evm2 type families, on foundry-rs/evm2-networks at `b90cf83`.
+op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b90cf83a877af2d9141a282ae493ec54ca50f0c9", default-features = false }
+base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b90cf83a877af2d9141a282ae493ec54ca50f0c9", default-features = false }
 # Monad's maintained evm2 type family.
 monad-evm2 = { git = "https://github.com/category-labs/monad-alloy-evm2", rev = "95db06bd60922cfc01f712ec66be9327df3d7f33", default-features = false }
 
@@ -564,15 +564,16 @@ blst = "0.3.17"
 rand_chacha = { version = "=0.10.0", default-features = false }
 
 # Base
-base-common-chains = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-consensus = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-eip8130 = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-genesis = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-network = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-precompiles = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-common-rpc-types = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-consensus-upgrades = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
-base-protocol = { git = "https://github.com/foundry-rs/base", rev = "dc2c07d5438344ffe7159a50afc7a51448b8cde9", default-features = false }
+base-common-chains = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-consensus = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-base-tx = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-genesis = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-network = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-precompiles = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-common-rpc-types = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-consensus-upgrades = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-execution-base-tx = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
+base-protocol = { git = "https://github.com/foundry-rs/base", rev = "8d20ec38f386e91a56a13ff21020c6b61c3f8823", default-features = false }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -592,10 +593,10 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "eacd5a043182144da9a8f259a0432bed5e1947ed" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "eacd5a043182144da9a8f259a0432bed5e1947ed" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "eacd5a043182144da9a8f259a0432bed5e1947ed" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "eacd5a043182144da9a8f259a0432bed5e1947ed" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "ee80ac1661c3e3b4a4495d5ef0e156e9206a3611" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "ee80ac1661c3e3b4a4495d5ef0e156e9206a3611" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "ee80ac1661c3e3b4a4495d5ef0e156e9206a3611" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "ee80ac1661c3e3b4a4495d5ef0e156e9206a3611" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
@@ -643,10 +644,10 @@ syn-solidity = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d08
 # alloy = { git = "https://github.com/alloy-rs/alloy", rev = "395521c" }
 
 ## op-alloy
-op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", rev = "eed6e5788898612087498034dd90e58b5e8097a7" }
-op-alloy-network = { git = "https://github.com/foundry-rs/optimism", rev = "eed6e5788898612087498034dd90e58b5e8097a7" }
-op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "eed6e5788898612087498034dd90e58b5e8097a7" }
-alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "eed6e5788898612087498034dd90e58b5e8097a7" }
+op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", rev = "502f4baaaf7eb90d1e57919c4f0d3e1a6226df6c" }
+op-alloy-network = { git = "https://github.com/foundry-rs/optimism", rev = "502f4baaaf7eb90d1e57919c4f0d3e1a6226df6c" }
+op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "502f4baaaf7eb90d1e57919c4f0d3e1a6226df6c" }
+alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "502f4baaaf7eb90d1e57919c4f0d3e1a6226df6c" }
 
 ## reth-core — as patched by tempoxyz/tempo and reth, whose root patches do not propagate
 reth-codecs = { git = "https://github.com/paradigmxyz/reth-core", rev = "275ce4cf5befeb9f1e8acd935ff2882d2d25fc61" }

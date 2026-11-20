@@ -218,6 +218,8 @@ pub enum SymbolicRunResult {
         /// that halted the failing path. Concrete execution may charge gas for that access first
         /// and run out of gas there.
         memory_halt_pc: Option<usize>,
+        /// Concrete setup-storage values needed for replay.
+        storage: Vec<SymbolicStorageAssignment>,
         /// Execution counters collected before the counterexample was returned.
         stats: SymbolicStats,
     },

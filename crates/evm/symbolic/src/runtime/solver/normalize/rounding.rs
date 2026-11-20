@@ -5,7 +5,8 @@
 
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
-    SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, rounded_product_operands,
+    SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
+    rounded_product_operands,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -141,13 +142,19 @@ impl ConstraintContext {
     /// Decides a comparison between a division result and one of its operands.
     ///
     /// With a nonzero divisor, `a % d < d` and `a / d <= a`. For every divisor, `a % d <= a` and
-    /// `(a / d) * d <= a`, and `x * y / k <= x` once `y <= k` and `x * y` cannot wrap.
+    /// `(a / d) * k <= a` once `k <= d`, and `x * y / k <= x` once `y <= k` and `x * y` cannot
+    /// wrap. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly for nonzero
+    /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
+    /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
+    /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
         }
         let SymBoolExprKind::Cmp(op, left, right) = expr.kind() else { return None };
-        if let Some(strict) = self.division_order(left, right) {
+        let mut intervals = HashMap::default();
+        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
+        if let Some(strict) = self.division_order(left, right, &mut intervals, &mut remaining) {
             return match op {
                 SymCmpOp::Ule => Some(true),
                 SymCmpOp::Ugt => Some(false),
@@ -156,7 +163,7 @@ impl ConstraintContext {
                 _ => None,
             };
         }
-        if let Some(strict) = self.division_order(right, left) {
+        if let Some(strict) = self.division_order(right, left, &mut intervals, &mut remaining) {
             return match op {
                 SymCmpOp::Uge => Some(true),
                 SymCmpOp::Ult => Some(false),
@@ -169,41 +176,162 @@ impl ConstraintContext {
     }
 
     /// Returns whether a division shape proves `small <= large`, and whether the order is strict.
-    fn division_order(&self, small: &SymExpr, large: &SymExpr) -> Option<bool> {
-        let nonzero =
-            |expr: &SymExpr| self.interval(expr).is_some_and(|range| !range.min.is_zero());
+    ///
+    /// Intervals share the caller's cache and node budget, so a chain of nested subtractions is
+    /// analyzed once instead of once per level.
+    fn division_order(
+        &self,
+        small: &SymExpr,
+        large: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> Option<bool> {
+        // The overflow rewrite turns a checked `a + b` into `~a < b` before `d != 0` resolves the
+        // division guards, so a symbolic divisor's Euclidean sum is not folded to `x`. That sum is
+        // `x` and cannot wrap, so `b <= ~a`.
+        if let SymExprKind::Not(base) = large.kind()
+            && euclidean_sum_dividend(base, small).is_some()
+        {
+            return Some(false);
+        }
+        let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
+        let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
         match small.kind() {
             SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) => {
                 if dividend == large {
                     return Some(false);
                 }
-                (divisor == large && nonzero(divisor)).then_some(true)
+                (divisor == large && nonzero(interval(divisor))).then_some(true)
             }
             SymExprKind::BinOp(SymBinOp::UDiv, dividend, divisor) => {
                 if dividend == large {
-                    return nonzero(divisor).then_some(false);
+                    return nonzero(interval(divisor)).then_some(false);
                 }
-                let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
-                    return None;
+                // `x / d <= (x - 1) / d + 1` for `d >= 1`, as in OpenZeppelin's `ceilDiv`: for
+                // `x >= 1` the quotients differ by at most one and the sum cannot wrap, and
+                // `0 / d` is zero. SMT's `x / 0` is all ones, so `d` must be nonzero.
+                let ceiling = match large.kind() {
+                    // OpenZeppelin v5 selects zero for `x == 0`, where `x / d` is zero too.
+                    SymExprKind::Ite(condition, value, zero)
+                        if zero.as_const() == Some(U256::ZERO)
+                            && let SymBoolExprKind::Not(inner) = condition.kind()
+                            && inner.zero_check_operand() == Some(dividend) =>
+                    {
+                        value
+                    }
+                    _ => large,
                 };
-                let other = if left == large {
-                    right
-                } else if right == large {
-                    left
-                } else {
-                    return None;
+                if let SymExprKind::BinOp(SymBinOp::Add, quotient, increment) = ceiling.kind()
+                    && increment.as_const() == Some(U256::ONE)
+                    && let Some((predecessor, other)) = quotient.udiv_operands()
+                    && other == divisor
+                    && let SymExprKind::BinOp(SymBinOp::Sub, value, decrement) = predecessor.kind()
+                    && decrement.as_const() == Some(U256::ONE)
+                    && value == dividend
+                {
+                    return nonzero(interval(divisor)).then_some(false);
+                }
+                // When `y + z` is nonzero and does not wrap, `x * y / (y + z) <= x`, strictly once
+                // `x` and `z` are nonzero, since `x * y < x * (y + z)`. A wrapped product only
+                // shrinks the dividend. `UDiv` by zero is all ones, so the divisor must be nonzero.
+                if let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind()
+                    && let SymExprKind::BinOp(SymBinOp::Add, a, b) = divisor.kind()
+                    && let Some(other) = [(left, right), (right, left)]
+                        .into_iter()
+                        .find_map(|(x, y)| (x == large).then_some(y))
+                    && let Some(rest) =
+                        [(a, b), (b, a)].into_iter().find_map(|(y, z)| (y == other).then_some(z))
+                    && let Some(other) = interval(other)
+                    && let Some(rest) = interval(rest)
+                    && other.max.checked_add(rest.max).is_some()
+                    && nonzero(interval(divisor))
+                {
+                    return Some(nonzero(interval(large)) && !rest.min.is_zero());
+                }
+                // Rounding up adds at most `d - 1`, so `(x * y + c) / d <= x` still holds once
+                // `c <= d - 1`; a wrapped sum only shrinks the dividend.
+                let mut bounded = |dividend: &SymExpr, addend: Option<&SymExpr>| {
+                    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
+                        return false;
+                    };
+                    let other = if left == large {
+                        right
+                    } else if right == large {
+                        left
+                    } else {
+                        return false;
+                    };
+                    let Some(range) = interval(divisor).filter(|range| !range.min.is_zero()) else {
+                        return false;
+                    };
+                    addend.is_none_or(|addend| {
+                        matches!(addend.kind(), SymExprKind::BinOp(SymBinOp::Sub, value, one)
+                            if value == divisor && one.as_const() == Some(U256::ONE))
+                            || interval(addend).is_some_and(|addend| addend.max < range.min)
+                    }) && (other == divisor
+                        || interval(other).is_some_and(|other| other.max <= range.min)
+                        || self.asserts_less_or_equal(other, divisor))
+                        && self.mul_cannot_overflow_256(left, right)
                 };
-                let divisor = self.interval(divisor)?;
-                (!divisor.min.is_zero()
-                    && self.interval(other)?.max <= divisor.min
-                    && self.mul_cannot_overflow_256(left, right))
+                // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
+                // is bounded by `n / d`.
+                let peeled = match dividend.kind() {
+                    SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                        rounded_product_operands(left, right).map(|(n, _)| n)
+                    }
+                    _ => None,
+                };
+                let rounded_up = match dividend.kind() {
+                    SymExprKind::BinOp(SymBinOp::Add, a, b) => [(a, b), (b, a)]
+                        .into_iter()
+                        .any(|(product, addend)| bounded(product, Some(addend))),
+                    // `(x * y + d) - 1`. A wrapped sum is smaller, and a sum that wraps to zero
+                    // gives `MAX == x * y + d - 1` exactly.
+                    SymExprKind::BinOp(SymBinOp::Sub, sum, one)
+                        if one.as_const() == Some(U256::ONE)
+                            && let SymExprKind::BinOp(SymBinOp::Add, a, b) = sum.kind()
+                            && let Some(product) =
+                                (a == divisor).then_some(b).or((b == divisor).then_some(a)) =>
+                    {
+                        bounded(product, None)
+                    }
+                    _ => false,
+                };
+                (rounded_up
+                    || peeled.is_some_and(|peeled| bounded(peeled, None))
+                    || bounded(dividend, None))
                 .then_some(false)
             }
-            SymExprKind::BinOp(SymBinOp::Mul, left, right) => rounded_product_operands(left, right)
-                .is_some_and(|(dividend, _)| dividend == large)
+            // `(x / d) * k <= (x / d) * d <= x` once `k <= d`, so the product cannot wrap; a zero
+            // `d` forces a zero product.
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => [(left, right), (right, left)]
+                .into_iter()
+                .any(|(quotient, factor)| {
+                    quotient.udiv_operands().is_some_and(|(dividend, divisor)| {
+                        dividend == large
+                            && (factor == divisor
+                                || interval(factor)
+                                    .zip(interval(divisor))
+                                    .is_some_and(|(factor, divisor)| factor.max <= divisor.min))
+                    })
+                })
                 .then_some(false),
             _ => None,
         }
+    }
+
+    /// Returns whether another conjunct asserts `small <= large`, including strict `<`.
+    fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
+        self.facts.iter().any(|fact| match fact.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => {
+                left == small && right == large
+            }
+            SymBoolExprKind::Not(inner) => matches!(
+                inner.kind(),
+                SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) if left == large && right == small
+            ),
+            _ => false,
+        })
     }
 
     /// Bounds a subtraction only when the relation proves it cannot underflow.
@@ -227,7 +355,7 @@ impl ConstraintContext {
             return Some(WordInterval { min: U256::ZERO, max: bounds.below });
         }
         // A division shape such as `d - x % d` proves `right <= left`.
-        if self.division_order(right, left).is_some()
+        if self.division_order(right, left, intervals, remaining).is_some()
             && let Some(left) = self.interval_cached(left, intervals, remaining)
         {
             return Some(WordInterval { min: U256::ZERO, max: left.max });

@@ -425,11 +425,60 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
             if *op == SymCmpOp::Eq && polynomial_identity(&left, &right) {
                 return SymBoolExpr::constant(cx, true);
             }
+            if let Some(normalized) = normalize_ite_branch_cmp(cx, *op, &left, &right) {
+                return normalized;
+            }
             let normalized = normalize_cmp_for_solver(cx, *op, left, right);
             normalized.normalize_udiv_for_solver(cx).unwrap_or(normalized)
         }
         _ => expr,
     }
+}
+
+/// Compares an `ite` against one of its own branches, as in `ite(c, a, b) < b => c && a < b`.
+/// Fires only when one branch comparison folds to `false`, so the expression never grows; for a
+/// strict comparison the branch equal to the other operand always does. Equality is left to
+/// `SymBoolExpr::ite_eq_arm`.
+fn normalize_ite_branch_cmp(
+    cx: &mut SymCx,
+    op: SymCmpOp,
+    left: &SymExpr,
+    right: &SymExpr,
+) -> Option<SymBoolExpr> {
+    if op == SymCmpOp::Eq {
+        return None;
+    }
+    let (condition, then_value, else_value, ite_on_left) = match (left.kind(), right.kind()) {
+        (SymExprKind::Ite(condition, then_value, else_value), _)
+            if then_value == right || else_value == right =>
+        {
+            (condition, then_value, else_value, true)
+        }
+        (_, SymExprKind::Ite(condition, then_value, else_value))
+            if then_value == left || else_value == left =>
+        {
+            (condition, then_value, else_value, false)
+        }
+        _ => return None,
+    };
+    let mut branch_cmp = |value: &SymExpr| {
+        if ite_on_left {
+            SymBoolExpr::cmp(cx, op, value.clone(), right.clone())
+        } else {
+            SymBoolExpr::cmp(cx, op, left.clone(), value.clone())
+        }
+    };
+    let then_cmp = branch_cmp(then_value);
+    let else_cmp = branch_cmp(else_value);
+    let selected = if then_cmp.as_const() == Some(false) {
+        let not_condition = condition.clone().not(cx);
+        SymBoolExpr::and(cx, vec![not_condition, else_cmp])
+    } else if else_cmp.as_const() == Some(false) {
+        SymBoolExpr::and(cx, vec![condition.clone(), then_cmp])
+    } else {
+        return None;
+    };
+    Some(normalize_bool_for_solver(cx, selected))
 }
 
 fn normalize_cmp_for_solver(
@@ -445,6 +494,13 @@ fn normalize_cmp_for_solver(
         && let Some(normalized) = normalize_quotient_offset_eq(cx, &left, &right)
     {
         return normalized;
+    }
+    if op == SymCmpOp::Eq
+        && let Some((a, b)) =
+            mul_high_operands(&left, &right).or_else(|| mul_high_operands(&right, &left))
+    {
+        let high = SymExpr::binop(cx, SymBinOp::MulHigh, a.clone(), b.clone());
+        return SymBoolExpr::eq_word_const(cx, &high, U256::ZERO);
     }
     if op == SymCmpOp::Eq {
         for (quotient, expected) in [(&left, &right), (&right, &left)] {
@@ -1624,12 +1680,14 @@ fn normalize_expr_node_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
         SymExprKind::Ite(cond, left, right) => {
             normalize_ite_expr_for_solver(cx, cond.clone(), left.clone(), right.clone())
         }
-        SymExprKind::BinOp(SymBinOp::Sub, _, _) => match mul_high_operands(&expr) {
-            Some((left, right)) => {
-                SymExpr::binop(cx, SymBinOp::MulHigh, left.clone(), right.clone())
+        SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) => {
+            match mul_high_operands(minuend, subtrahend) {
+                Some((left, right)) => {
+                    SymExpr::binop(cx, SymBinOp::MulHigh, left.clone(), right.clone())
+                }
+                None => expr,
             }
-            None => expr,
-        },
+        }
         _ => expr,
     }
 }
@@ -2202,10 +2260,12 @@ impl ConstraintContext {
         .then_some((divisor, other))
     }
 
-    /// Learns multiplication safety from a retained successful Solidity overflow check.
+    /// Learns multiplication safety from a retained successful overflow guard.
     fn record_non_wrapping_product(&mut self, cx: &mut SymCx, constraint: &SymBoolExpr) -> bool {
         let fact = bitwise_bool_word_fact(cx, constraint).unwrap_or_else(|| constraint.clone());
         let factors = if let Some(factors) = self.checked_product_factors(&fact, None) {
+            Some(factors)
+        } else if let Some(factors) = Self::division_guard_factors(&fact) {
             Some(factors)
         } else if let SymBoolExprKind::Not(inner) = fact.kind()
             && let SymBoolExprKind::And(terms) = inner.kind()
@@ -2217,6 +2277,14 @@ impl ConstraintContext {
             let second = terms[1].clone().not(cx);
             self.checked_product_factors(&second, Some(&first))
                 .or_else(|| self.checked_product_factors(&first, Some(&second)))
+                .or_else(|| {
+                    // `y == 0 || x <= MAX / y`, as in Solmate's `mulDivDown`.
+                    [(&first, &second), (&second, &first)].into_iter().find_map(|(guard, zero)| {
+                        let (value, factor) = Self::division_guard_factors(guard)?;
+                        (self.bounded_zero_check_operand(zero) == Some(&factor))
+                            .then_some((value, factor))
+                    })
+                })
         } else {
             None
         };
@@ -2236,6 +2304,16 @@ impl ConstraintContext {
         } else {
             false
         }
+    }
+
+    /// Returns `(x, y)` for `x <= n / y` with any numerator, as in `x <= MAX / y`, since then
+    /// `x * y <= (n / y) * y <= n`. The product is zero when `y == 0`, and an EVM division that
+    /// yields zero only forces `x == 0`.
+    fn division_guard_factors(predicate: &SymBoolExpr) -> Option<(SymExpr, SymExpr)> {
+        let SymBoolExprKind::Not(inner) = predicate.kind() else { return None };
+        let SymBoolExprKind::Cmp(SymCmpOp::Ult, bound, value) = inner.kind() else { return None };
+        let (_, factor) = word_division_operands(bound)?;
+        Some((value.clone(), factor.clone()))
     }
 
     fn checked_product_factors(

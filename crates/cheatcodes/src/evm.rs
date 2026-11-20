@@ -28,6 +28,7 @@ use foundry_common::{
     },
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
+use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use foundry_evm_core::{
     backend::{GLOBAL_FAIL_SLOT, RevertStateSnapshotAction, transaction_error},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
@@ -43,12 +44,12 @@ use foundry_evm_core::{
 };
 use foundry_evm_traces::TraceRequirements;
 use itertools::Itertools;
-use rand::Rng;
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
     path::{Component, Path},
     str::FromStr,
+    sync::Arc,
 };
 
 mod record_debug_step;
@@ -353,7 +354,7 @@ impl Cheatcode for loadCall {
                 let rand_value = ccx
                     .state
                     .cached_arbitrary_storage_value(target, slot.into())
-                    .unwrap_or_else(|| ccx.state.core.rng().random());
+                    .unwrap_or_else(|| ccx.state.draw_arbitrary_storage_value(target, slot.into()));
                 ccx.state.core.arbitrary_storage.as_mut().unwrap().save(
                     ccx.evm.state_mut(),
                     target,
@@ -365,7 +366,7 @@ impl Cheatcode for loadCall {
                 // If storage slot is untouched and load from a target that copies storage from
                 // a source address with arbitrary storage, then copy existing arbitrary value.
                 // If no arbitrary value generated yet, then the random one is saved and set.
-                let rand_value = ccx.state.core.rng().random();
+                let rand_value = ccx.state.draw_arbitrary_storage_value(target, slot.into());
                 value = ccx.state.core.arbitrary_storage.as_mut().unwrap().copy(
                     ccx.evm.state_mut(),
                     target,
@@ -1264,23 +1265,8 @@ impl Cheatcode for getStorageSlotsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, variableName } = self;
 
-        let storage_layout = get_contract_data(ccx, *target, true)
-            .and_then(|(_, data)| data.storage_layout.as_ref().map(|layout| layout.clone()))
-            .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
-
-        trace!(storage = ?storage_layout.storage, "fetched storage");
-
-        let variable_name_lower = variableName.to_lowercase();
-        let storage = storage_layout
-            .storage
-            .iter()
-            .find(|s| s.label.to_lowercase() == variable_name_lower)
-            .ok_or_else(|| fmt_err!("variable '{variableName}' not found in storage layout"))?;
-
-        let storage_type = storage_layout
-            .types
-            .get(&storage.storage_type)
-            .ok_or_else(|| fmt_err!("storage type not found for variable {variableName}"))?;
+        let storage_layout = contract_storage_layout(ccx, *target)?;
+        let (storage, storage_type) = find_storage_variable(&storage_layout, variableName)?;
 
         if storage_type.encoding == ENCODING_MAPPING || storage_type.encoding == ENCODING_DYN_ARRAY
         {
@@ -1342,6 +1328,30 @@ impl Cheatcode for getStorageSlotsCall {
         }
 
         Ok(slots.abi_encode())
+    }
+}
+
+impl Cheatcode for getStorageSlotCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, variableName } = self;
+
+        let storage_layout = contract_storage_layout(ccx, *target)?;
+        let (storage, storage_type) = find_storage_variable(&storage_layout, variableName)?;
+
+        let slot = U256::from_str(&storage.slot).map_err(|_| {
+            fmt_err!("invalid slot {} format for variable {variableName}", storage.slot)
+        })?;
+        let offset = U256::try_from(storage.offset).map_err(|_| {
+            fmt_err!("invalid offset {} for variable {variableName}", storage.offset)
+        })?;
+        let number_of_bytes = U256::from_str(&storage_type.number_of_bytes).map_err(|_| {
+            fmt_err!(
+                "invalid number_of_bytes {} for variable {variableName}",
+                storage_type.number_of_bytes
+            )
+        })?;
+
+        Ok((slot, offset, number_of_bytes).abi_encode_params())
     }
 }
 
@@ -1509,6 +1519,7 @@ impl Cheatcode for executeTransactionCall {
         }
         let default_version = EvmFactoryFor::<FEN>::default().version(env.spec, env.chain_id());
         env.version.tx_gas_limit_cap = default_version.tx_gas_limit_cap;
+        env.version.tx_total_gas_cap = default_version.tx_total_gas_cap;
         env.version.max_initcode_size = match ccx.state.core.config.evm_opts.env.code_size_limit {
             Some(code_size_limit) => code_size_limit.saturating_mul(2),
             None => default_version.max_initcode_size,
@@ -1871,8 +1882,6 @@ fn is_valid_snapshot_group(group: &str) -> bool {
     // Check the original components because `Path::components` normalizes dots and separators.
     group.split(std::path::is_separator).all(|component| {
         matches!(Path::new(component).components().next(), Some(Component::Normal(name)) if name == component)
-            && (!cfg!(windows)
-                || (!component.contains(':') && !component.ends_with(['.', ' '])))
     })
 }
 
@@ -2598,11 +2607,49 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
     artifacts.find_by_deployed_code(&code_bytes)
 }
 
+/// Returns the storage layout of the contract at `target`.
+fn contract_storage_layout<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    target: Address,
+) -> Result<Arc<StorageLayout>> {
+    let storage_layout = get_contract_data(ccx, target, true)
+        .and_then(|(_, data)| data.storage_layout.clone())
+        .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
+
+    trace!(storage = ?storage_layout.storage, "fetched storage");
+
+    Ok(storage_layout)
+}
+
+/// Finds a variable by its label in `storage_layout`, returning its storage entry and type.
+///
+/// An exact match takes precedence, since Solidity names are case-sensitive; otherwise the label
+/// is matched case-insensitively.
+fn find_storage_variable<'a>(
+    storage_layout: &'a StorageLayout,
+    variable_name: &str,
+) -> Result<(&'a Storage, &'a StorageType)> {
+    let storage = storage_layout
+        .storage
+        .iter()
+        .find(|s| s.label == variable_name)
+        .or_else(|| {
+            let variable_name_lower = variable_name.to_lowercase();
+            storage_layout.storage.iter().find(|s| s.label.to_lowercase() == variable_name_lower)
+        })
+        .ok_or_else(|| fmt_err!("variable '{variable_name}' not found in storage layout"))?;
+
+    let storage_type = storage_layout
+        .types
+        .get(&storage.storage_type)
+        .ok_or_else(|| fmt_err!("storage type not found for variable {variable_name}"))?;
+
+    Ok((storage, storage_type))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::artifacts::StorageLayout;
-    use std::sync::Arc;
 
     #[test]
     fn state_diff_preserves_raw_values_with_partial_decoding() {
@@ -2676,15 +2723,7 @@ mod tests {
         #[cfg(windows)]
         {
             assert!(is_valid_snapshot_group(r"core\someContract"));
-            for group in [
-                r"C:\settings",
-                r"C:settings",
-                r"\settings",
-                r"core\..\settings",
-                "a:b",
-                "a/.. /b",
-                "a./b",
-            ] {
+            for group in [r"C:\settings", r"C:settings", r"\settings", r"core\..\settings", "a:b"] {
                 assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
             }
         }

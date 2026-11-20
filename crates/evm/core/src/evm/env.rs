@@ -111,7 +111,14 @@ pub fn carry_execution_policy(
             }
         )*};
     }
-    carry_overridden!(tx_gas_limit_cap, memory_limit, max_code_size, max_initcode_size);
+    carry_overridden!(
+        tx_gas_limit_cap,
+        tx_total_gas_cap,
+        memory_limit,
+        max_code_size,
+        max_initcode_size
+    );
+    // Every spec defaults the EIP-8037 total cap to `2^32 - 1`, so a disabled one always differs.
     // Foundry disables the EIP-7825 cap with `u64::MAX`, which is also the default of specs
     // before the cap, so a disabled cap survives moving to a spec that has one.
     if current.tx_gas_limit_cap == u64::MAX {
@@ -290,11 +297,11 @@ pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
         false
     }
 
-    /// Returns the per-phase statuses of an included signed Base EIP-8130 transaction.
+    /// Returns the number of leading call phases that committed in an included signed Base
+    /// EIP-8130 transaction.
     ///
-    /// Each entry is `0x01` if the phase committed and `0x00` if it reverted. Other transactions,
-    /// including EIP-8130 simulations, return `None`.
-    fn eip8130_phase_statuses(&self) -> Option<&[u8]> {
+    /// Other transactions, including EIP-8130 simulations, return `None`.
+    fn eip8130_committed_phases(&self) -> Option<u64> {
         None
     }
 }

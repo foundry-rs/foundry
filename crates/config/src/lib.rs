@@ -610,7 +610,8 @@ pub struct Config {
     /// Whether to disable the block gas limit checks.
     pub disable_block_gas_limit: bool,
 
-    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825) and
+    /// Amsterdam (EIP-8037).
     pub enable_tx_gas_limit: bool,
 
     /// Deprecated address-label alias; use [`TracingConfig::labels`].
@@ -1213,6 +1214,9 @@ impl Config {
                         figment.extract_inner::<PathBuf>(key).unwrap_or_else(|_| default.clone())
                     })
                     .collect(),
+                include_paths: figment
+                    .extract_inner::<Vec<PathBuf>>("include_paths")
+                    .unwrap_or_else(|_| self.include_paths.clone()),
                 warnings: match figment.extract_inner::<Vec<Warning>>("__warnings") {
                     Err(error) if error.missing() => Ok(Vec::new()),
                     warnings => warnings,
@@ -2455,6 +2459,17 @@ impl Config {
         Self::with_root(root.as_ref()).into()
     }
 
+    /// Returns the figment of the project that contains the current directory, with `providers`.
+    ///
+    /// If the project root cannot be determined, for example because the current directory cannot
+    /// be read, extracting from the returned figment fails with that error.
+    pub fn current_project_figment(providers: FigmentProviders) -> Figment {
+        match find_project_root(None) {
+            Ok(root) => Self::with_root(&root).to_figment(providers),
+            Err(err) => Figment::from(ProjectRootErrorProvider(err)),
+        }
+    }
+
     #[doc(hidden)]
     #[track_caller]
     pub fn figment_with_root_opt(root: Option<&Path>) -> Figment {
@@ -3394,6 +3409,8 @@ impl Default for Config {
                 SolidityErrorCode::TransientStorageUsed,
                 SolidityErrorCode::TransferDeprecated,
                 SolidityErrorCode::NatspecMemorySafeAssemblyDeprecated,
+                SolidityErrorCode::ContractExceeds65536Bytes,
+                SolidityErrorCode::ContractInitCodeSizeExceeds131072Bytes,
             ],
             ignored_error_codes_from: vec![],
             ignored_file_paths: vec![],
@@ -10240,5 +10257,18 @@ mod tests {
             assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
             Ok(())
         });
+    }
+
+    #[test]
+    fn project_root_error_fails_extraction_after_merges() {
+        let figment = Figment::from(ProjectRootErrorProvider(io::Error::from(
+            io::ErrorKind::PermissionDenied,
+        )))
+        .merge(("eth_rpc_url", "http://localhost:8545"));
+        let err = Config::from_provider(figment).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "failed to extract foundry config:\nfoundry config error: could not determine project root: permission denied\n"
+        );
     }
 }

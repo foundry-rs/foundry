@@ -406,7 +406,7 @@ Error: signature 2 does not verify against the owner digest [..]; owners sign it
 error: the following required arguments were not provided:
   --no-hash
 
-Usage: cast wallet sign --no-hash --p256 [..]<MESSAGE>
+Usage: cast[..] wallet sign --no-hash --p256 [..]<MESSAGE>
 
 For more information, try '--help'.
 
@@ -417,7 +417,7 @@ For more information, try '--help'.
             str![[r#"
 error: the argument '--p256' cannot be used with '--ledger'
 
-Usage: cast wallet sign --no-hash --p256 [..]<MESSAGE>
+Usage: cast[..] wallet sign --no-hash --p256 [..]<MESSAGE>
 
 For more information, try '--help'.
 
