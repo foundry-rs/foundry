@@ -3650,11 +3650,30 @@ contract Target {
     function ping() external payable {}
 }
 
+contract Salted {
+    constructor(Target target) {
+        target.ping();
+    }
+
+    function boom() external pure {
+        revert();
+    }
+}
+
+contract Fixer {
+    function callFixed(address who) external returns (bool ok) {
+        require(who == address(0xB0B));
+        (ok,) = address(0xB0B).call("");
+    }
+}
+
 contract SymbolicFixedAddress is Test {
     Target target;
+    Fixer fixer;
 
     function setUp() public {
         target = new Target();
+        fixer = new Fixer();
     }
 
     // Fails: the pranked sender holds the 5 wei `vm.deal` gave it, so the call succeeds.
@@ -3685,6 +3704,32 @@ contract SymbolicFixedAddress is Test {
         vm.assume(who == address(0xB0B));
         assert(!vm.isPersistent(address(0xB0B)));
     }
+
+    // Fails: a contract created at a symbolic CREATE2 address keeps its code when the salt is
+    // fixed, so `boom` reverts.
+    function checkSaltedCreate(uint8 salt) public {
+        vm.assume(salt == 1);
+        Salted salted = new Salted{salt: bytes32(uint256(salt))}(target);
+        (bool ok,) = address(salted).call(abi.encodeCall(Salted.boom, ()));
+        assert(ok);
+    }
+
+    // Code written through the address may run in a caller frame of the call that fixes it.
+    function checkEtchedFixedInCall(address who) public {
+        vm.assume(uint160(who) > 0x200);
+        vm.etch(who, hex"fe");
+        assert(fixer.callFixed(who));
+    }
+
+    // `vm.deal` reaches 0xB0B, but the earlier `vm.store` through the address did not.
+    function checkStoreBeforeAccountKnown(address who) public {
+        vm.assume(uint160(who) > 0x200);
+        vm.store(who, 0, bytes32(uint256(42)));
+        vm.deal(address(0xB0B), 1);
+        vm.deal(who, 5);
+        vm.assume(who == address(0xB0B));
+        assert(uint256(vm.load(address(0xB0B), 0)) != 42);
+    }
 }
 "#,
     );
@@ -3693,12 +3738,15 @@ contract SymbolicFixedAddress is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
+Ran 7 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
 [PASS] checkDealtSenderCannotOverpay(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtSenderPays(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address with code fixed below the root frame] checkEtchedFixedInCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkNonceOnceFixed(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOnceFixed(address) ([METRICS])
-Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSaltedCreate(uint8) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkStoreBeforeAccountKnown(address) ([METRICS])
+Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
