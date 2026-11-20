@@ -458,7 +458,7 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, false);
             return Ok(BranchFeasibility::Unsat);
         }
-        if product_monotonic_unsat_normalized(&smt_constraints) {
+        if product_monotonic_unsat_normalized(cx, &smt_constraints) {
             trace!("is_sat: monotonic product contradiction");
             self.cache_sat_result(cache_key, false);
             return Ok(BranchFeasibility::Unsat);
@@ -683,9 +683,8 @@ fn normalize_sat_constraints(
     constraints: &[SymBoolExpr],
     normalization_cache: &mut NormalizationCache,
 ) -> Vec<SymBoolExpr> {
-    let constraints = remove_implied_monotonic_constraints(
-        normalize_constraints_for_solver_cached(cx, constraints, normalization_cache),
-    );
+    let constraints = normalize_constraints_for_solver_cached(cx, constraints, normalization_cache);
+    let constraints = remove_implied_monotonic_constraints(cx, constraints);
     remove_witnessed_isolated_hash_constraints(cx, constraints)
 }
 

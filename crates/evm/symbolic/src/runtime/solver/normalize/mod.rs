@@ -8,9 +8,12 @@ mod rounding;
 
 use mul_div::{
     checked_product_guard_operands, full_mul_div_operands, mul_high_operands,
-    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq, word_division_operands,
+    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq, shifted_identity_factor,
+    shifted_product_operands, wide_shift_quotient_operands, word_division_operands,
 };
 use polynomial::polynomial_identity;
+
+pub(super) use mul_div::{is_product_of, shift_power, shifted_operands};
 
 /// Per-expression normalization facts reused across solver queries.
 ///
@@ -128,10 +131,10 @@ fn normalize_bounded_comparisons(
             }
             match context.bounded_bool_value(&constraints[index]) {
                 Some(false) => return vec![SymBoolExpr::constant(cx, false)],
-                Some(true) => {
+                Some(true) if !bounds_mul_high(&constraints[index]) => {
                     constraints.remove(index);
                 }
-                None => index += 1,
+                _ => index += 1,
             }
         }
         // Contextual rewrites may change sort order or expose a conjunction.
@@ -142,6 +145,31 @@ fn normalize_bounded_comparisons(
         }
     }
     constraints
+}
+
+/// Returns whether a conjunct bounds a `mul_high` from above: by `mul_high(a, b) == 0`, or as
+/// below or at most another word.
+fn bounds_mul_high(expr: &SymBoolExpr) -> bool {
+    mul_high_upper_bound(expr).is_some()
+        || expr
+            .zero_check_operand()
+            .is_some_and(|word| matches!(word.kind(), SymExprKind::BinOp(SymBinOp::MulHigh, ..)))
+}
+
+/// Returns `(bound, strict)` for a conjunct that states `mul_high(a, b) < bound`, or `<=` unless
+/// `strict`.
+fn mul_high_upper_bound(expr: &SymBoolExpr) -> Option<(&SymExpr, bool)> {
+    let (high, bound, strict) = match expr.kind() {
+        SymBoolExprKind::Cmp(SymCmpOp::Ult, high, bound) => (high, bound, true),
+        SymBoolExprKind::Cmp(SymCmpOp::Ule, high, bound) => (high, bound, false),
+        SymBoolExprKind::Not(value) => match value.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Ule, bound, high) => (high, bound, true),
+            SymBoolExprKind::Cmp(SymCmpOp::Ult, bound, high) => (high, bound, false),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    matches!(high.kind(), SymExprKind::BinOp(SymBinOp::MulHigh, ..)).then_some((bound, strict))
 }
 
 fn mark_conjuncts(expr: &SymBoolExpr, out: &mut HashSet<SymBoolExpr>) {
@@ -417,6 +445,13 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
             {
                 normalize_cmp_for_solver(cx, SymCmpOp::Ult, right.clone(), left.clone())
             }
+            // `!(q < MAX)` is `q == MAX`.
+            SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right)
+                if right.as_const() == Some(U256::MAX)
+                    && let Some(normalized) = normalize_quotient_offset_eq(cx, left, right) =>
+            {
+                normalized
+            }
             _ => expr,
         },
         SymBoolExprKind::Cmp(op, left, right) => {
@@ -515,6 +550,15 @@ fn normalize_cmp_for_solver(
                 // defensive guard against `MAX / 0` should that folding ever change.
                 return SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, value, U256::MAX / factor);
             }
+            // `(x << n) >> n == x` exactly for `x <= MAX >> n`.
+            if let Some(factor) = shifted_identity_factor(quotient, expected) {
+                return SymBoolExpr::cmp_word_const(
+                    cx,
+                    SymCmpOp::Ule,
+                    expected,
+                    U256::MAX / factor,
+                );
+            }
         }
         for (quotient, expected) in [(&left, &right), (&right, &left)] {
             // solc's checked `x * c` guard, `(x * c) / x == c` under `x != 0`, holds exactly when
@@ -539,6 +583,42 @@ fn normalize_cmp_for_solver(
                 let fits =
                     SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, denominator, U256::MAX / factor);
                 return SymBoolExpr::and(cx, vec![nonzero, fits]);
+            }
+        }
+        for (word, zero) in [(&left, &right), (&right, &left)] {
+            if !zero.as_const().is_some_and(|value| value.is_zero()) {
+                continue;
+            }
+            // `bool(a) | (w >> n) == 0 => !a && w >> n == 0`.
+            if let SymExprKind::BinOp(SymBinOp::Or, first, second) = word.kind() {
+                for (flag, other) in [(first, second), (second, first)] {
+                    if let Some(condition) = flag.bool_word_condition()
+                        && matches!(other.kind(), SymExprKind::BinOp(SymBinOp::Shr, ..))
+                    {
+                        let zero = SymBoolExpr::eq_word_const(cx, other, U256::ZERO);
+                        let unset = condition.not(cx);
+                        return SymBoolExpr::and(cx, vec![unset, zero]);
+                    }
+                }
+            }
+            // `mul_high(a, b) >> n == 0 => mul_high(a, b) < 2**n`, the guard of a shift quotient.
+            if let SymExprKind::BinOp(SymBinOp::Shr, high, shift) = word.kind()
+                && matches!(high.kind(), SymExprKind::BinOp(SymBinOp::MulHigh, _, _))
+                && let Some(shift) = shift.as_const()
+            {
+                return SymBoolExpr::cmp_word_const(
+                    cx,
+                    SymCmpOp::Ult,
+                    high,
+                    U256::ONE << shift.to::<usize>(),
+                );
+            }
+            // A one-bit word shifted by a constant is zero exactly when the word is.
+            if let SymExprKind::BinOp(SymBinOp::Shl, bit, shift) = word.kind()
+                && shift.as_const().is_some()
+                && bit.bitwise_bool_word_condition(cx).is_some()
+            {
+                return SymBoolExpr::eq_word_const(cx, bit, U256::ZERO);
             }
         }
         if right.as_const().is_some_and(|value| value.is_zero())
@@ -639,6 +719,15 @@ impl ConstraintContext {
         constraint_count: usize,
     ) -> Self {
         Self::from_constraints_with_lower_bounds(constraints, constraint_count, true)
+    }
+
+    /// Builds the context of a whole conjunction, with the products its guards keep from wrapping.
+    pub(super) fn with_non_wrapping_products(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> Self {
+        let mut context = Self::new(constraints);
+        for constraint in constraints {
+            context.record_non_wrapping_product(cx, constraint);
+        }
+        context
     }
 
     /// Builds a rewrite context from the other retained conjuncts, never the predicate itself.
@@ -757,11 +846,10 @@ impl ConstraintContext {
         };
         root_candidate
             || expr.contains_udiv()
-            || expr.visit_bool(|word| {
-                matches!(
-                    word.kind(),
-                    SymExprKind::Ite(_, _, _) | SymExprKind::BinOp(SymBinOp::URem, _, _)
-                )
+            || expr.visit_bool(|word| match word.kind() {
+                SymExprKind::Ite(_, _, _) | SymExprKind::BinOp(SymBinOp::URem, _, _) => true,
+                _ => wide_shift_quotient_operands(word)
+                    .is_some_and(|(_, _, shift)| shift.as_const().is_none()),
             })
     }
 
@@ -785,6 +873,13 @@ impl ConstraintContext {
         };
         if let Some(normalized) = self.normalize_signed_add_comparison(cx, &expr) {
             return normalized;
+        }
+        // A product cannot wrap while a product that is at least as large fits a word.
+        if let Some(word) = expr.zero_check_operand()
+            && let Some((factor, other)) = checked_product_guard_operands(word)
+            && self.fits_below_non_wrapping_product(cx, factor, other)
+        {
+            return SymBoolExpr::constant(cx, false);
         }
         if let Some(value) = self.rounding_comparison_value(&expr) {
             return SymBoolExpr::constant(cx, value);
@@ -885,14 +980,22 @@ impl ConstraintContext {
         {
             return true;
         }
+        if matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::MulHigh, _, _))
+            && !self.non_wrapping_products.is_empty()
+        {
+            return true;
+        }
         match expr.kind() {
             SymExprKind::Ite(_, _, _) => true,
             SymExprKind::BinOp(SymBinOp::And, _, mask) => {
                 mask.as_const().and_then(mask_low_bits).is_some()
             }
             SymExprKind::BinOp(SymBinOp::Or, left, right) => {
-                left.as_const() == Some(U256::ONE) || right.as_const() == Some(U256::ONE)
+                left.as_const() == Some(U256::ONE)
+                    || right.as_const() == Some(U256::ONE)
+                    || wide_shift_quotient_operands(expr).is_some()
             }
+            SymExprKind::BinOp(SymBinOp::Add, _, _) => wide_shift_quotient_operands(expr).is_some(),
             SymExprKind::BinOp(SymBinOp::Mul, _, _) => Self::constant_mul_operands(expr)
                 .is_some_and(|(value, _)| Self::constant_mul_operands(value).is_some()),
             SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
@@ -927,6 +1030,27 @@ impl ConstraintContext {
         }
         if let Some(quotient) = self.full_mul_div(cx, &expr) {
             return quotient;
+        }
+        // The wide shift is `a * b / 2**n` only for `n < 256`.
+        if let Some((left, right, shift)) = wide_shift_quotient_operands(&expr)
+            && (shift.as_const().is_some()
+                || self.interval(shift).is_some_and(|range| range.max < U256::from(256)))
+        {
+            let denominator = shift_power(cx, shift);
+            return SymExpr::ternop(
+                cx,
+                SymTernOp::MulDiv,
+                left.clone(),
+                right.clone(),
+                denominator,
+            );
+        }
+        // A product the context guards against wrapping has no high word.
+        if let SymExprKind::BinOp(SymBinOp::MulHigh, left, right) = expr.kind()
+            && self.has_non_wrapping_product(left, right)
+            && !self.facts.contains(&SymBoolExpr::eq_word_const(cx, &expr, U256::ZERO))
+        {
+            return SymExpr::zero(cx);
         }
         if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
             && let Some(bits) = mask.as_const().and_then(mask_low_bits)
@@ -975,7 +1099,7 @@ impl ConstraintContext {
         expr
     }
 
-    fn bounded_bool_value(&self, expr: &SymBoolExpr) -> Option<bool> {
+    pub(super) fn bounded_bool_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         match expr.kind() {
             SymBoolExprKind::Const(value) => Some(*value),
             SymBoolExprKind::Not(value) => self.bounded_bool_value(value).map(|value| !value),
@@ -1163,6 +1287,16 @@ impl ConstraintContext {
         if let Some((expr, bound)) = self.upper_bound_constraint(constraint) {
             self.record_upper_bound(expr.clone(), bound);
         }
+        // `x & (2**k - 1) == x` holds exactly for `x < 2**k`.
+        if let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = constraint.kind() {
+            for (masked, value) in [(left, right), (right, left)] {
+                if let Some(bits) = Self::masked_word_side_eq_self_shape(masked, value)
+                    && bits < 256
+                {
+                    self.record_upper_bound(value.clone(), (U256::ONE << bits) - U256::ONE);
+                }
+            }
+        }
     }
 
     fn record_upper_bound(&mut self, expr: SymExpr, bound: U256) -> bool {
@@ -1182,6 +1316,12 @@ impl ConstraintContext {
     fn record_lower_bound_constraint(&mut self, constraint: &SymBoolExpr) {
         if let Some((expr, bound)) = self.lower_bound_constraint(constraint) {
             self.record_lower_bound(expr.clone(), bound);
+        }
+        // `mul_high(a, b) < d` leaves `d` at least one.
+        if let Some((bound, true)) = mul_high_upper_bound(constraint)
+            && bound.as_const().is_none()
+        {
+            self.record_lower_bound(bound.clone(), U256::ONE);
         }
     }
 
@@ -1429,11 +1569,9 @@ impl ConstraintContext {
                 Some((denominator, MulDivFactor::Expr(other)))
             }
             // Construction rewrites `x * 2**n` to `x << n`, as in solc's checked `x * 2` guard.
-            SymExprKind::BinOp(SymBinOp::Shl, left, shift) if left == denominator => {
-                let shift = shift.as_const().filter(|shift| *shift < U256::from(256))?;
-                Some((denominator, MulDivFactor::Const(U256::ONE << shift.to::<usize>())))
-            }
-            _ => None,
+            _ => shifted_product_operands(numerator)
+                .filter(|(value, _)| *value == denominator)
+                .map(|(_, power)| (denominator, MulDivFactor::Const(power))),
         }
     }
 
@@ -1568,6 +1706,16 @@ impl ConstraintContext {
                 Some(WordInterval {
                     min: left.min.checked_add(right.min)?,
                     max: left.max.checked_add(right.max)?,
+                })
+            }
+            // The high word of a product rises with both factors.
+            SymExprKind::BinOp(SymBinOp::MulHigh, left, right) => {
+                let any = WordInterval { min: U256::ZERO, max: U256::MAX };
+                let left = self.interval_cached(left, intervals, remaining).unwrap_or(any);
+                let right = self.interval_cached(right, intervals, remaining).unwrap_or(any);
+                Some(WordInterval {
+                    min: SymBinOp::MulHigh.eval(left.min, right.min),
+                    max: SymBinOp::MulHigh.eval(left.max, right.max),
                 })
             }
             SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) => {
@@ -2357,6 +2505,40 @@ impl ConstraintContext {
             }
         }
         None
+    }
+
+    /// Returns whether `left * right` shares a factor with a product recorded as not wrapping
+    /// and its other factor is at most that product's.
+    fn fits_below_non_wrapping_product(
+        &self,
+        cx: &mut SymCx,
+        left: &SymExpr,
+        right: &SymExpr,
+    ) -> bool {
+        let mut pairs = Vec::new();
+        for (a, b) in &self.non_wrapping_products {
+            for (large, shared) in [(a, b), (b, a)] {
+                for (small, other) in [(left, right), (right, left)] {
+                    if other == shared {
+                        pairs.push((small.clone(), large.clone()));
+                    }
+                }
+            }
+        }
+        pairs.into_iter().any(|(small, large)| {
+            if small == large {
+                return true;
+            }
+            let at_most = SymBoolExpr::cmp(cx, SymCmpOp::Ule, small.clone(), large.clone());
+            let not_above =
+                SymBoolExpr::cmp(cx, SymCmpOp::Ult, large.clone(), small.clone()).not(cx);
+            self.facts.contains(&at_most)
+                || self.facts.contains(&not_above)
+                || self
+                    .interval(&small)
+                    .zip(self.interval(&large))
+                    .is_some_and(|(small, large)| small.max <= large.min)
+        })
     }
 
     fn has_non_wrapping_product(&self, left: &SymExpr, right: &SymExpr) -> bool {

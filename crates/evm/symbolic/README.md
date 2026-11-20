@@ -341,21 +341,25 @@ the meaning of `PASS`.
 
 The 512-bit `mulDiv` of Uniswap `FullMath`, OpenZeppelin `Math`, and solady
 `FixedPointMathLib` divides through a Newton inverse that SMT solvers cannot
-decide. Before querying the solver, the normalizer recognizes two exact shapes:
+decide. Before querying the solver, the normalizer recognizes three exact shapes:
 
 - the high word `mulmod(a, b, not(0)) - a * b - lt(mulmod(..), a * b)`, in both
   the v4/OpenZeppelin and solady arrangements, becomes the high word of the
   512-bit product `a * b`;
 - the full quotient, built from `mulmod(a, b, d)`, the lowest set bit of `d`,
   and at least six Newton steps over the `(3 * d) ^ 2` seed, becomes
-  `floor(a * b / d)` computed over 512 bits, but only when the other path
-  constraints contain the library's `d > high(a * b)` check, under which the
-  algorithm computes exactly that value.
+  `floor(a * b / d)` computed over 512 bits and truncated to a word, once the
+  library's `d > high(a * b)` check or the range of `d` shows `d != 0`. For a
+  constant `d` the same value is recognized in the form the Newton steps fold
+  to;
+- the shift quotient `(high(a * b) << (256 - n)) | ((a * b) >> n)` of solady
+  `fullMulDivN` and OpenZeppelin `mulShr` becomes `floor(a * b / 2**n)` for
+  `n < 256`.
 
-Recognition is structural: every operand must bind the same `a`, `b`, and `d`,
+Recognition is structural: every operand must bind the same `a`, `b`, and `d` or `n`,
 and any other shape, such as fewer Newton steps, is left unchanged. For any
-nonzero `d` the algorithm computes `floor(a * b / d)` modulo `2**256`; requiring
-the library's check keeps the rewrite to inputs where that quotient fits a word.
+nonzero `d` the algorithm computes `floor(a * b / d)` modulo `2**256`, and the
+library's check states that the quotient fits a word.
 The rounding-up variants, such as `mulDivRoundingUp` and `fullMulDivUp`, add one
 on a nonzero `mulmod(a, b, d)`, which construction folds to zero when `d` is
 `a` or `b`. Two guards around these libraries are also rewritten exactly:

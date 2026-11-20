@@ -92,17 +92,38 @@ pub(crate) fn hard_arith_fallback_model(
             vars
         })
         .collect::<Vec<_>>();
-    let mut model = SymbolicModel::default();
-    let mut assignments = 0usize;
-    let search = FallbackSearch {
-        constraints,
-        constraint_vars: &constraint_vars,
-        searched_vars: &searched_vars,
-        vars: &vars,
-        candidates: &candidates,
-        max_assignments: HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS,
+    let search = |candidates: &[Vec<U256>]| {
+        let search = FallbackSearch {
+            constraints,
+            constraint_vars: &constraint_vars,
+            searched_vars: &searched_vars,
+            vars: &vars,
+            candidates,
+            max_assignments: HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS,
+        };
+        search.model(0, &mut SymbolicModel::default(), &mut 0).ok()
     };
-    search.model(0, &mut model, &mut assignments).ok()
+    search(&candidates).or_else(|| {
+        let wide = wide_quotient_candidates(constraints);
+        if wide.is_empty() {
+            return None;
+        }
+        let extended = vars
+            .iter()
+            .zip(&candidates)
+            .map(|(var, candidates)| {
+                let hints = MaskHints::for_var(var, constraints);
+                let mut extended = candidates.iter().copied().collect::<HashSet<_>>();
+                for candidate in wide.iter().copied() {
+                    push_fallback_candidate(&mut extended, candidate, hints);
+                }
+                let mut extended = extended.into_iter().collect::<Vec<_>>();
+                extended.sort_unstable();
+                extended
+            })
+            .collect::<Vec<_>>();
+        search(&extended)
+    })
 }
 
 // Constructive checked-multiply modeling is optional. Bound repeated support scans to keep a miss
@@ -504,6 +525,82 @@ fn fallback_candidates_for_var(
     candidates.sort_unstable();
     candidates.truncate(FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR);
     Some(candidates)
+}
+
+/// Offsets `j` of the candidate pair `k + j`, `floor((k * 2**256 - 1) / (k + j))`.
+const WIDE_PAIR_OFFSETS: std::ops::RangeInclusive<u64> = 1..=2;
+/// Largest constant `k` whose products `MAX * k + r`, `0 < r < k`, are factored.
+const WIDE_WINDOW_MAX_DENOMINATOR: u64 = 16;
+/// Exclusive bound of the trial factors of those products.
+const WIDE_WINDOW_MAX_FACTOR: u64 = 1024;
+
+/// Returns witness candidates at the edges of a query's wide terms: `2**255`, and for each constant
+/// operand `k` the cofactors whose products with `k` leave the word or have the quotient `MAX`.
+fn wide_quotient_candidates(constraints: &[SymBoolExpr]) -> Vec<U256> {
+    let mut candidates = Vec::new();
+    let mut constants = Vec::new();
+    for constraint in constraints {
+        let _ = constraint.visit_exprs::<()>(&mut |expr| {
+            match expr.kind() {
+                SymExprKind::TernOp(
+                    SymTernOp::MulDiv | SymTernOp::MulMod,
+                    left,
+                    right,
+                    modulus,
+                ) => {
+                    constants
+                        .extend([left, right, modulus].into_iter().filter_map(SymExpr::as_const));
+                }
+                SymExprKind::BinOp(SymBinOp::MulHigh, _, _) => {}
+                _ => return ControlFlow::Continue(()),
+            }
+            if candidates.is_empty() {
+                candidates.extend([U256::ONE << 255, (U256::ONE << 255) + U256::ONE]);
+            }
+            ControlFlow::Continue(())
+        });
+    }
+    constants.sort_unstable();
+    constants.dedup();
+    for constant in constants.into_iter().filter(|constant| !constant.is_zero()) {
+        candidates.extend(constant.checked_mul(U256::from(2)));
+        candidates.push(U256::MAX / constant);
+        let below = (U512::from(constant) << 256) - U512::from(1);
+        for offset in WIDE_PAIR_OFFSETS {
+            let Some(factor) = constant.checked_add(U256::from(offset)) else { break };
+            let other = below / U512::from(factor);
+            if other <= U512::from(U256::MAX) {
+                candidates.extend([factor, low_word(other)]);
+            }
+        }
+        let max = U512::from(U256::MAX);
+        let below = constant - U256::ONE;
+        if !below.is_zero() {
+            candidates.push(below);
+            candidates.extend(below.checked_mul(U256::MAX / constant));
+            candidates.push(low_word(
+                (max * U512::from(below) + U512::from(U256::MAX % constant)) / U512::from(constant),
+            ));
+        }
+        if constant <= U256::from(WIDE_WINDOW_MAX_DENOMINATOR) {
+            let small = constant.to::<u64>();
+            for remainder in 1..small {
+                let product = max * U512::from(constant) + U512::from(remainder);
+                for factor in small + 1..WIDE_WINDOW_MAX_FACTOR {
+                    if (product % U512::from(factor)).is_zero() {
+                        let cofactor = low_word(product / U512::from(factor));
+                        candidates.extend([U256::from(factor), cofactor, cofactor - U256::ONE]);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    candidates
+}
+
+fn low_word(value: U512) -> U256 {
+    U256::from_limbs_slice(&value.as_limbs()[..4])
 }
 
 struct FallbackSearch<'a> {

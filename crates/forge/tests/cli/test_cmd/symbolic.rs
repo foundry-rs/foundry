@@ -9207,7 +9207,8 @@ contract SymbolicPriceRoundTrip {
 // of a larger product, at least the floor plus one, strictly above the product, or above it in
 // low words alone must still reach counterexamples. An optimizer may lower `iszero(sub(x, y))` to
 // `eq(x, y)`, so the high word's zero check can reach the solver as `mm - lo == lt(mm, lo)` or
-// `mm == lo + lt(mm, lo)`; both must prove like the high word compared with zero.
+// `mm == lo + lt(mm, lo)`; both must prove like the high word compared with zero. Constant,
+// power-of-two and shift denominators and factors prove too, also rounded up.
 #[forgetest_init]
 fn symbolic_proves_full_precision_mul_div(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_full_precision_mul_div");
@@ -9345,6 +9346,24 @@ library Math {
             return result;
         }
     }
+
+    function mulDivUp(uint256 x, uint256 y, uint256 denominator) internal pure returns (uint256) {
+        return mulDiv(x, y, denominator) + toUint(mulmod(x, y, denominator) > 0);
+    }
+
+    function mulShr(uint256 x, uint256 y, uint8 n) internal pure returns (uint256 result) {
+        unchecked {
+            (uint256 high, uint256 low) = mul512(x, y);
+            if (high >= 1 << n) {
+                panic(0x11);
+            }
+            return (high << (256 - n)) | (low >> n);
+        }
+    }
+
+    function mulShrUp(uint256 x, uint256 y, uint8 n) internal pure returns (uint256) {
+        return mulShr(x, y, n) + toUint(mulmod(x, y, 1 << n) > 0);
+    }
 }
 "#,
     );
@@ -9396,6 +9415,70 @@ library FixedPointMathLib {
             }
         }
     }
+
+    function fullMulDivUnchecked(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            z := mul(x, y)
+            let mm := mulmod(x, y, not(0))
+            let p1 := sub(mm, add(z, lt(mm, z)))
+            let t := and(d, sub(0, d))
+            let r := mulmod(x, y, d)
+            d := div(d, t)
+            let inv := xor(2, mul(3, d))
+            inv := mul(inv, sub(2, mul(d, inv)))
+            inv := mul(inv, sub(2, mul(d, inv)))
+            inv := mul(inv, sub(2, mul(d, inv)))
+            inv := mul(inv, sub(2, mul(d, inv)))
+            inv := mul(inv, sub(2, mul(d, inv)))
+            z := mul(
+                or(mul(sub(p1, gt(r, z)), add(div(sub(0, t), t), 1)), div(sub(z, r), t)),
+                mul(sub(2, mul(d, inv)), inv)
+            )
+        }
+    }
+
+    function fullMulDivN(uint256 x, uint256 y, uint8 n) internal pure returns (uint256 z) {
+        assembly {
+            z := mul(x, y)
+            for {} 1 {} {
+                if iszero(or(iszero(x), eq(div(z, x), y))) {
+                    let k := and(n, 0xff)
+                    let mm := mulmod(x, y, not(0))
+                    let p1 := sub(mm, add(z, lt(mm, z)))
+                    if iszero(shr(k, p1)) {
+                        z := add(shl(sub(256, k), p1), shr(k, z))
+                        break
+                    }
+                    mstore(0x00, 0xae47f702)
+                    revert(0x1c, 0x04)
+                }
+                z := shr(and(n, 0xff), z)
+                break
+            }
+        }
+    }
+
+    function mulDiv(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            z := mul(x, y)
+            if iszero(mul(or(iszero(x), eq(div(z, x), y)), d)) {
+                mstore(0x00, 0xad251c27)
+                revert(0x1c, 0x04)
+            }
+            z := div(z, d)
+        }
+    }
+
+    function mulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            z := mul(x, y)
+            if iszero(mul(or(iszero(x), eq(div(z, x), y)), d)) {
+                mstore(0x00, 0xad251c27)
+                revert(0x1c, 0x04)
+            }
+            z := add(iszero(iszero(mod(z, d))), div(z, d))
+        }
+    }
 }
 "#,
     );
@@ -9406,7 +9489,21 @@ import {FiveStepMath, FullMath, UnguardedMath} from "../src/FullMath.sol";
 import {Math} from "../src/Math.sol";
 import {FixedPointMathLib} from "../src/FixedPointMathLib.sol";
 
+contract V3Math {
+    function mulDivRoundingUp(uint256 a, uint256 b, uint256 d) external pure returns (uint256 result) {
+        result = FullMath.mulDiv(a, b, d);
+        if (mulmod(a, b, d) > 0) {
+            require(result < type(uint256).max);
+            unchecked {
+                result++;
+            }
+        }
+    }
+}
+
 contract FullPrecisionMulDivTest {
+    V3Math v3 = new V3Math();
+
     function proveV4Identity(uint256 x, uint256 d) external pure {
         if (d == 0) return;
         assert(FullMath.mulDiv(x, d, d) == x);
@@ -9601,16 +9698,462 @@ contract FullPrecisionMulDivTest {
         assert(zero == (high(a, b) == 0));
     }
 
+    function proveSoladyMulDivN96Floor(uint256 x, uint256 y) external pure {
+        assertFloor(FixedPointMathLib.fullMulDivN(x, y, 96), x, y, 2 ** 96);
+    }
+
+    function proveSoladyMulDivN96StrictFloor(uint256 x, uint256 y) external pure {
+        assertBelow(FixedPointMathLib.fullMulDivN(x, y, 96), x, y, 2 ** 96);
+    }
+
+    function proveOzMulShrFloor(uint256 x, uint256 y, uint8 n) external pure {
+        assertFloor(Math.mulShr(x, y, n), x, y, uint256(1) << n);
+    }
+
+    function proveOzMulShrStrictFloor(uint256 x, uint256 y, uint8 n) external pure {
+        assertBelow(Math.mulShr(x, y, n), x, y, uint256(1) << n);
+    }
+
+    function proveSoladyMulDivN96Monotone(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        assert(FixedPointMathLib.fullMulDivN(x1, y, 96) <= FixedPointMathLib.fullMulDivN(x2, y, 96));
+    }
+
+    function proveSoladyMulDivN96AntitoneOnLongPath(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2 || high(x1, y) == 0) return;
+        assert(FixedPointMathLib.fullMulDivN(x1, y, 96) >= FixedPointMathLib.fullMulDivN(x2, y, 96));
+    }
+
+    function proveSoladyMulDivPow2DenominatorMonotone(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        assert(FixedPointMathLib.mulDiv(x1, y, 2 ** 96) <= FixedPointMathLib.mulDiv(x2, y, 2 ** 96));
+    }
+
+    function proveSoladyMulDivPow2DenominatorAntitone(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        assert(FixedPointMathLib.mulDiv(x1, y, 2 ** 96) >= FixedPointMathLib.mulDiv(x2, y, 2 ** 96));
+    }
+
+    function proveSoladyMulDivPow2DenominatorFits(uint256 x, uint256 y) external pure {
+        FixedPointMathLib.mulDiv(x, y, 2 ** 96);
+        assert(high(x, y) < 2 ** 96);
+    }
+
+    function proveSoladyMulDivPow2DenominatorFitsAsZero(uint256 x, uint256 y) external pure {
+        uint256 q = FixedPointMathLib.mulDiv(x, y, 2 ** 96);
+        assert(high(x, y) < 2 ** 96 && q == 0);
+    }
+
+    function proveSoladyPow2FirstFloor(uint256 x, uint256 d) external pure {
+        assertFloor(FixedPointMathLib.fullMulDiv(2 ** 96, x, d), 2 ** 96, x, d);
+    }
+
+    function proveSoladyPow2FirstStrictFloor(uint256 x, uint256 d) external pure {
+        assertBelow(FixedPointMathLib.fullMulDiv(2 ** 96, x, d), 2 ** 96, x, d);
+    }
+
+    function proveSoladyRoundingUpUnboundedCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        assertCeiling(FixedPointMathLib.fullMulDivUp(x, y, d), x, y, d);
+    }
+
+    function proveSoladyRoundingUpUnboundedStrictCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        assertAbove(FixedPointMathLib.fullMulDivUp(x, y, d), x, y, d);
+    }
+
+    function proveSoladyMulDivN192NarrowFactorFits(uint160 x, uint256 y) external pure {
+        FixedPointMathLib.fullMulDivN(x, y, 192);
+        assert(high(x, y) < 2 ** 160);
+    }
+
+    function proveSoladyMulDivN192NarrowFactorFitsLower(uint160 x, uint256 y) external pure {
+        FixedPointMathLib.fullMulDivN(x, y, 192);
+        assert(high(x, y) < 2 ** 159);
+    }
+
+    function proveOzConstantIdentityFloor(uint256 x) external pure {
+        assertFloor(Math.mulDiv(x, 1e18, 1e18), x, 1e18, 1e18);
+    }
+
+    function proveOzConstantIdentityStrictFloor(uint256 x) external pure {
+        assertBelow(Math.mulDiv(x, 1e18, 1e18), x, 1e18, 1e18);
+    }
+
+    function proveSoladyUncheckedBpsFloor(uint256 x, uint256 y) external pure {
+        assertFloor(FixedPointMathLib.fullMulDivUnchecked(x, y, 10_000), x, y, 10_000);
+    }
+
+    function proveSoladyUncheckedBpsStrictFloor(uint256 x, uint256 y) external pure {
+        assertBelow(FixedPointMathLib.fullMulDivUnchecked(x, y, 10_000), x, y, 10_000);
+    }
+
+    function proveOzMulShrUpFits(uint256 x, uint256 y, uint8 n) external pure {
+        Math.mulShrUp(x, y, n);
+        assert(high(x, y) < uint256(1) << n);
+    }
+
+    function proveOzMulShrUpFitsAsZero(uint256 x, uint256 y, uint8 n) external pure {
+        uint256 q = Math.mulShrUp(x, y, n);
+        assert(high(x, y) < uint256(1) << n && q == 0);
+    }
+
+    function proveOzRoundingUpConstantFactorCeiling(uint256 x, uint256 d) external pure {
+        assertCeiling(Math.mulDivUp(x, 1e18, d), x, 1e18, d);
+    }
+
+    function proveOzRoundingUpConstantFactorStrictCeiling(uint256 x, uint256 d) external pure {
+        assertAbove(Math.mulDivUp(x, 1e18, d), x, 1e18, d);
+    }
+
+    function proveSoladyBpsRoundsUpRemainder(uint256 x, uint256 y) external pure {
+        assert(
+            FixedPointMathLib.fullMulDivUp(x, y, 10_000)
+                == FixedPointMathLib.fullMulDiv(x, y, 10_000) + (mulmod(x, y, 10_000) == 0 ? 0 : 1)
+        );
+    }
+
+    function proveSoladyBpsRoundingUpAddsOne(uint256 x, uint256 y) external pure {
+        assert(FixedPointMathLib.fullMulDivUp(x, y, 10_000) == FixedPointMathLib.fullMulDiv(x, y, 10_000) + 1);
+    }
+
+    function proveOzRoundingUpBpsFits(uint256 x, uint256 y) external pure {
+        Math.mulDivUp(x, y, 10_000);
+        assert(high(x, y) < 10_000);
+    }
+
+    function proveOzRoundingUpBpsFitsAsZero(uint256 x, uint256 y) external pure {
+        uint256 q = Math.mulDivUp(x, y, 10_000);
+        assert(high(x, y) < 10_000 && q == 0);
+    }
+
+    function proveOzMulShrUp128Fits(uint256 x, uint256 y) external pure {
+        Math.mulShrUp(x, y, 128);
+        assert(high(x, y) < 2 ** 128);
+    }
+
+    function proveOzMulShrUp128FitsAsZero(uint256 x, uint256 y) external pure {
+        uint256 q = Math.mulShrUp(x, y, 128);
+        assert(high(x, y) < 2 ** 128 && q == 0);
+    }
+
+    function proveOzRoundingUpConstantFactorFits(uint256 x, uint256 d) external pure {
+        Math.mulDivUp(x, 1e18, d);
+        assert(high(x, 1e18) < d);
+    }
+
+    function proveOzRoundingUpConstantFactorFitsAsZero(uint256 x, uint256 d) external pure {
+        uint256 q = Math.mulDivUp(x, 1e18, d);
+        assert(high(x, 1e18) < d && q == 0);
+    }
+
+    function proveV4RoundingUpConstantFactorMonotoneInOrder(uint256 x1, uint256 x2, uint256 d) external pure {
+        if (x1 > x2) return;
+        uint256 first = FullMath.mulDivRoundingUp(x1, 1e18, d);
+        uint256 second = FullMath.mulDivRoundingUp(x2, 1e18, d);
+        assert(first <= second);
+    }
+
+    function proveV4RoundingUpConstantFactorAntitoneInOrder(uint256 x1, uint256 x2, uint256 d) external pure {
+        if (x1 > x2) return;
+        uint256 first = FullMath.mulDivRoundingUp(x1, 1e18, d);
+        uint256 second = FullMath.mulDivRoundingUp(x2, 1e18, d);
+        assert(first >= second);
+    }
+
+    function proveOzRoundingUpOddFits(uint256 x, uint256 y) external pure {
+        Math.mulDivUp(x, y, 3);
+        assert(high(x, y) < 3);
+    }
+
+    function proveOzRoundingUpOddFitsAsZero(uint256 x, uint256 y) external pure {
+        uint256 q = Math.mulDivUp(x, y, 3);
+        assert(high(x, y) < 3 && q == 0);
+    }
+
+    function proveV4RoundingUpOddMonotoneInOrder(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        uint256 first = FullMath.mulDivRoundingUp(x1, y, 3);
+        uint256 second = FullMath.mulDivRoundingUp(x2, y, 3);
+        assert(first <= second);
+    }
+
+    function proveV4RoundingUpOddAntitoneInOrder(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        uint256 first = FullMath.mulDivRoundingUp(x1, y, 3);
+        uint256 second = FullMath.mulDivRoundingUp(x2, y, 3);
+        assert(first >= second);
+    }
+
+    function proveSoladyMulDivPow2FactorMonotone(uint256 x1, uint256 x2, uint256 d) external pure {
+        if (x1 > x2) return;
+        assert(FixedPointMathLib.mulDiv(x1, 2 ** 96, d) <= FixedPointMathLib.mulDiv(x2, 2 ** 96, d));
+    }
+
+    function proveSoladyMulDivPow2FactorAntitone(uint256 x1, uint256 x2, uint256 d) external pure {
+        if (x1 > x2) return;
+        assert(FixedPointMathLib.mulDiv(x1, 2 ** 96, d) >= FixedPointMathLib.mulDiv(x2, 2 ** 96, d));
+    }
+
+    function proveSoladyMulDivUpPow2DenominatorMonotone(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        assert(FixedPointMathLib.mulDivUp(x1, y, 2 ** 96) <= FixedPointMathLib.mulDivUp(x2, y, 2 ** 96));
+    }
+
+    function proveSoladyMulDivUpPow2DenominatorAntitone(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        assert(FixedPointMathLib.mulDivUp(x1, y, 2 ** 96) >= FixedPointMathLib.mulDivUp(x2, y, 2 ** 96));
+    }
+
+    function proveSoladyConstantFirstFloor(uint256 x, uint256 d) external pure {
+        assertFloor(FixedPointMathLib.fullMulDiv(1e18, x, d), 1e18, x, d);
+    }
+
+    function proveSoladyConstantFirstStrictFloor(uint256 x, uint256 d) external pure {
+        assertBelow(FixedPointMathLib.fullMulDiv(1e18, x, d), 1e18, x, d);
+    }
+
+    function proveSoladyMulDivNFloor(uint256 x, uint256 y, uint8 n) external pure {
+        assertFloor(FixedPointMathLib.fullMulDivN(x, y, n), x, y, uint256(1) << n);
+    }
+
+    function proveSoladyMulDivNStrictFloor(uint256 x, uint256 y, uint8 n) external pure {
+        assertBelow(FixedPointMathLib.fullMulDivN(x, y, n), x, y, uint256(1) << n);
+    }
+
+    function proveV4RoundingUpPow2DenominatorMonotone(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        assert(FullMath.mulDivRoundingUp(x1, y, 2 ** 96) <= FullMath.mulDivRoundingUp(x2, y, 2 ** 96));
+    }
+
+    function proveV4RoundingUpPow2DenominatorAntitone(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        assert(FullMath.mulDivRoundingUp(x1, y, 2 ** 96) >= FullMath.mulDivRoundingUp(x2, y, 2 ** 96));
+    }
+
+    function proveSoladyMulDivUpConstantFirstRoundsUpRemainder(uint256 x, uint256 d) external pure {
+        assert(
+            FixedPointMathLib.mulDivUp(1e18, x, d)
+                == FixedPointMathLib.mulDiv(1e18, x, d) + (mulmod(1e18, x, d) == 0 ? 0 : 1)
+        );
+    }
+
+    function proveSoladyMulDivUpConstantFirstRoundsUpOnlyAtZero(uint256 x, uint256 d) external pure {
+        assert(
+            FixedPointMathLib.mulDivUp(1e18, x, d)
+                == FixedPointMathLib.mulDiv(1e18, x, d) + (mulmod(1e18, x, d) == 0 ? 0 : 1) && x == 0
+        );
+    }
+
+    function proveOzRoundingUpPow2DenominatorMonotone(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        assert(Math.mulDivUp(x1, y, 2 ** 96) <= Math.mulDivUp(x2, y, 2 ** 96));
+    }
+
+    function proveOzRoundingUpPow2DenominatorAntitone(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        assert(Math.mulDivUp(x1, y, 2 ** 96) >= Math.mulDivUp(x2, y, 2 ** 96));
+    }
+
+    function proveSoladyMulDivUpMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2) return;
+        assert(FixedPointMathLib.mulDivUp(x1, y, d) <= FixedPointMathLib.mulDivUp(x2, y, d));
+    }
+
+    function proveSoladyMulDivUpMonotoneOnlyAtEqualInputs(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2) return;
+        assert(FixedPointMathLib.mulDivUp(x1, y, d) <= FixedPointMathLib.mulDivUp(x2, y, d) && x1 == x2);
+    }
+
+    function proveOzRoundingUpPow2FactorFits(uint256 x, uint256 d) external pure {
+        Math.mulDivUp(x, 2 ** 96, d);
+        assert(high(x, 2 ** 96) < d);
+    }
+
+    function proveOzRoundingUpPow2FactorFitsAsZero(uint256 x, uint256 d) external pure {
+        uint256 q = Math.mulDivUp(x, 2 ** 96, d);
+        assert(high(x, 2 ** 96) < d && q == 0);
+    }
+
+    function proveOzRoundingUpCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        assertCeiling(Math.mulDivUp(x, y, d), x, y, d);
+    }
+
+    function proveOzRoundingUpStrictCeiling(uint256 x, uint256 y, uint256 d) external pure {
+        assertAbove(Math.mulDivUp(x, y, d), x, y, d);
+    }
+
+    function proveV4MonotoneUnbounded(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2) return;
+        assert(FullMath.mulDiv(x1, y, d) <= FullMath.mulDiv(x2, y, d));
+    }
+
+    function proveV4MonotoneUnboundedOnlyAtEqualInputs(uint256 x1, uint256 x2, uint256 y, uint256 d) external pure {
+        if (x1 > x2) return;
+        assert(FullMath.mulDiv(x1, y, d) <= FullMath.mulDiv(x2, y, d) && x1 == x2);
+    }
+
+    function proveOzMulShrUp128Ceiling(uint256 x, uint256 y) external pure {
+        assertCeiling(Math.mulShrUp(x, y, 128), x, y, 2 ** 128);
+    }
+
+    function proveOzMulShrUp128StrictCeiling(uint256 x, uint256 y) external pure {
+        assertAbove(Math.mulShrUp(x, y, 128), x, y, 2 ** 128);
+    }
+
+    function proveOzClearedPow2Floor(uint256 x, uint256 y) external pure {
+        assertFloor(clearedMulDivPow2(x, y), x, y, 2 ** 96);
+    }
+
+    function proveOzClearedPow2StrictFloor(uint256 x, uint256 y) external pure {
+        assertBelow(clearedMulDivPow2(x, y), x, y, 2 ** 96);
+    }
+
+    function proveSoladyMaskedPow2FirstMonotone(uint256 x1, uint256 x2, uint256 d) external pure {
+        if (x1 > x2) return;
+        assert(maskedMulDivPow2First(x1, d) <= maskedMulDivPow2First(x2, d));
+    }
+
+    function proveSoladyMaskedPow2FirstAntitone(uint256 x1, uint256 x2, uint256 d) external pure {
+        if (x1 > x2) return;
+        assert(maskedMulDivPow2First(x1, d) >= maskedMulDivPow2First(x2, d));
+    }
+
+    function proveOzMulShrFloorShiftedProduct(uint256 x, uint256 y, uint8 n) external pure {
+        (uint256 zdHi, uint256 zdLo) = mulPow2(Math.mulShr(x, y, n), n);
+        (uint256 xyHi, uint256 xyLo) = mul512(x, y);
+        assert(zdHi < xyHi || (zdHi == xyHi && zdLo <= xyLo));
+    }
+
+    function proveOzMulShrStrictFloorShiftedProduct(uint256 x, uint256 y, uint8 n) external pure {
+        (uint256 zdHi, uint256 zdLo) = mulPow2(Math.mulShr(x, y, n), n);
+        (uint256 xyHi, uint256 xyLo) = mul512(x, y);
+        assert(zdHi < xyHi || (zdHi == xyHi && zdLo < xyLo));
+    }
+
+    function proveOzMulShrMonotoneJoinedGuard(uint256 x1, uint256 x2, uint256 y, uint256 n) external pure {
+        assembly {
+            if or(lt(x2, x1), shr(8, n)) { revert(0, 0) }
+        }
+        assert(Math.mulShr(x1, y, uint8(n)) <= Math.mulShr(x2, y, uint8(n)));
+    }
+
+    function proveOzMulShrMonotoneOnlyAtEqualInputsJoinedGuard(uint256 x1, uint256 x2, uint256 y, uint256 n)
+        external
+        pure
+    {
+        assembly {
+            if or(lt(x2, x1), shr(8, n)) { revert(0, 0) }
+        }
+        assert(Math.mulShr(x1, y, uint8(n)) <= Math.mulShr(x2, y, uint8(n)) && x1 == x2);
+    }
+
+    function proveSoladyUncheckedBpsMonotoneNegatedBound(uint256 x1, uint256 x2, uint256 y) external pure {
+        if (x1 > x2) return;
+        uint256 hi1 = high(x1, y);
+        uint256 hi2 = high(x2, y);
+        assembly {
+            if gt(hi1, 9999) { revert(0, 0) }
+            if gt(hi2, 9999) { revert(0, 0) }
+        }
+        assert(
+            FixedPointMathLib.fullMulDivUnchecked(x1, y, 10_000) <= FixedPointMathLib.fullMulDivUnchecked(x2, y, 10_000)
+        );
+    }
+
+    function proveSoladyUncheckedBpsMonotoneOnlyAtEqualInputsNegatedBound(uint256 x1, uint256 x2, uint256 y)
+        external
+        pure
+    {
+        if (x1 > x2) return;
+        uint256 hi1 = high(x1, y);
+        uint256 hi2 = high(x2, y);
+        assembly {
+            if gt(hi1, 9999) { revert(0, 0) }
+            if gt(hi2, 9999) { revert(0, 0) }
+        }
+        assert(
+            FixedPointMathLib.fullMulDivUnchecked(x1, y, 10_000) <= FixedPointMathLib.fullMulDivUnchecked(x2, y, 10_000)
+                && x1 == x2
+        );
+    }
+
+    function proveV4RoundingUpStrictWrapCheckFits(uint256 x, uint256 d) external pure {
+        strictMulDivRoundingUpPow2Factor(x, d);
+        assert(high(x, 2 ** 96) < d);
+    }
+
+    function proveV4RoundingUpStrictWrapCheckFitsAsZero(uint256 x, uint256 d) external pure {
+        uint256 q = strictMulDivRoundingUpPow2Factor(x, d);
+        assert(high(x, 2 ** 96) < d && q == 0);
+    }
+
+    function proveV3RoundingUpMonotone(uint256 x1, uint256 x2, uint256 y, uint256 d) external view {
+        if (x1 > x2) return;
+        assert(v3.mulDivRoundingUp(x1, y, d) <= v3.mulDivRoundingUp(x2, y, d));
+    }
+
+    function proveV3RoundingUpAntitone(uint256 x1, uint256 x2, uint256 y, uint256 d) external view {
+        if (x1 > x2) return;
+        assert(v3.mulDivRoundingUp(x1, y, d) >= v3.mulDivRoundingUp(x2, y, d));
+    }
+
     function assertFloor(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
         (uint256 zdHi, uint256 zdLo) = mul512(z, d);
         (uint256 xyHi, uint256 xyLo) = mul512(x, y);
         assert(zdHi < xyHi || (zdHi == xyHi && zdLo <= xyLo));
     }
 
+    function assertBelow(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
+        (uint256 zdHi, uint256 zdLo) = mul512(z, d);
+        (uint256 xyHi, uint256 xyLo) = mul512(x, y);
+        assert(zdHi < xyHi || (zdHi == xyHi && zdLo < xyLo));
+    }
+
     function assertCeiling(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
         (uint256 zdHi, uint256 zdLo) = mul512(z, d);
         (uint256 xyHi, uint256 xyLo) = mul512(x, y);
         assert(zdHi > xyHi || (zdHi == xyHi && zdLo >= xyLo));
+    }
+
+    function assertAbove(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
+        (uint256 zdHi, uint256 zdLo) = mul512(z, d);
+        (uint256 xyHi, uint256 xyLo) = mul512(x, y);
+        assert(zdHi > xyHi || (zdHi == xyHi && zdLo > xyLo));
+    }
+
+    function clearedMulDivPow2(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            let mm := mulmod(x, y, not(0))
+            let lo := mul(x, y)
+            let hi := sub(sub(mm, lo), lt(mm, lo))
+            if iszero(lt(hi, shl(96, 1))) { revert(0, 0) }
+            z := or(shl(160, hi), shr(96, sub(lo, and(lo, sub(shl(96, 1), 1)))))
+        }
+    }
+
+    function maskedMulDivPow2First(uint256 x, uint256 d) internal pure returns (uint256 z) {
+        assembly {
+            if iszero(eq(x, and(x, sub(shl(160, 1), 1)))) { revert(0, 0) }
+            if iszero(d) { revert(0, 0) }
+            z := div(shl(96, x), d)
+        }
+    }
+
+    function mulPow2(uint256 z, uint8 n) internal pure returns (uint256 hi, uint256 lo) {
+        assembly {
+            let mm := mulmod(z, shl(n, 1), not(0))
+            lo := shl(n, z)
+            hi := sub(sub(mm, lo), lt(mm, lo))
+        }
+    }
+
+    function strictMulDivRoundingUpPow2Factor(uint256 x, uint256 d) internal pure returns (uint256 q) {
+        q = FullMath.mulDiv(x, 2 ** 96, d);
+        assembly {
+            if mulmod(x, shl(96, 1), d) {
+                if gt(q, sub(not(0), 1)) { revert(0, 0) }
+                q := add(q, 1)
+            }
+        }
     }
 
     function high(uint256 a, uint256 b) internal pure returns (uint256 hi) {
@@ -9676,10 +10219,54 @@ contract FullPrecisionMulDivTest {
             ("proveLoweredSubZeroCheck", "uint256,uint256"),
             ("proveLoweredAddZeroCheck", "uint256,uint256"),
             ("proveV4FloorUnderLoweredZeroCheck", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivN96Floor", "uint256,uint256"),
+            ("proveOzMulShrFloor", "uint256,uint256,uint8"),
+            ("proveSoladyMulDivN96Monotone", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivPow2DenominatorMonotone", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivPow2DenominatorFits", "uint256,uint256"),
+            ("proveSoladyPow2FirstFloor", "uint256,uint256"),
+            ("proveSoladyRoundingUpUnboundedCeiling", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivN192NarrowFactorFits", "uint160,uint256"),
+            ("proveOzConstantIdentityFloor", "uint256"),
+            ("proveSoladyUncheckedBpsFloor", "uint256,uint256"),
+            ("proveOzMulShrUpFits", "uint256,uint256,uint8"),
+            ("proveOzRoundingUpConstantFactorCeiling", "uint256,uint256"),
+            ("proveSoladyBpsRoundsUpRemainder", "uint256,uint256"),
+            ("proveOzRoundingUpBpsFits", "uint256,uint256"),
+            ("proveOzMulShrUp128Fits", "uint256,uint256"),
+            ("proveOzRoundingUpConstantFactorFits", "uint256,uint256"),
+            ("proveV4RoundingUpConstantFactorMonotoneInOrder", "uint256,uint256,uint256"),
+            ("proveOzRoundingUpOddFits", "uint256,uint256"),
+            ("proveV4RoundingUpOddMonotoneInOrder", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivPow2FactorMonotone", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivUpPow2DenominatorMonotone", "uint256,uint256,uint256"),
+            ("proveSoladyConstantFirstFloor", "uint256,uint256"),
+            ("proveSoladyMulDivNFloor", "uint256,uint256,uint8"),
+            ("proveV4RoundingUpPow2DenominatorMonotone", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivUpConstantFirstRoundsUpRemainder", "uint256,uint256"),
+            ("proveOzRoundingUpPow2DenominatorMonotone", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivUpMonotone", "uint256,uint256,uint256,uint256"),
+            ("proveOzRoundingUpPow2FactorFits", "uint256,uint256"),
+            ("proveOzRoundingUpCeiling", "uint256,uint256,uint256"),
+            ("proveV4MonotoneUnbounded", "uint256,uint256,uint256,uint256"),
+            ("proveOzMulShrUp128Ceiling", "uint256,uint256"),
+            ("proveOzClearedPow2Floor", "uint256,uint256"),
+            ("proveSoladyMaskedPow2FirstMonotone", "uint256,uint256,uint256"),
+            ("proveOzMulShrFloorShiftedProduct", "uint256,uint256,uint8"),
+            ("proveOzMulShrMonotoneJoinedGuard", "uint256,uint256,uint256,uint256"),
+            ("proveSoladyUncheckedBpsMonotoneNegatedBound", "uint256,uint256,uint256"),
+            ("proveV4RoundingUpStrictWrapCheckFits", "uint256,uint256"),
+            ("proveV3RoundingUpMonotone", "uint256,uint256,uint256,uint256"),
         ] {
             let result = json_test_result(&output, &format!("{name}({args})"));
             assert_eq!(result["symbolic"]["status"], "pass", "{name}, optimized={optimized}");
         }
+        let result =
+            json_test_result(&output, "proveV3RoundingUpMonotone(uint256,uint256,uint256,uint256)");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
         for (name, args) in [
             ("proveV4RoundingUpIsFloor", "uint256,uint256,uint256"),
             ("proveSoladyRoundingUpIsFloor", "uint256,uint256,uint256"),
@@ -9693,6 +10280,50 @@ contract FullPrecisionMulDivTest {
             ("proveLoweredZeroCheckWithWrongOperand", "uint256,uint256"),
             ("proveLoweredZeroCheckWithWrongModulus", "uint256,uint256"),
             ("proveLoweredZeroCheckWithSwappedBorrow", "uint256,uint256"),
+            ("proveSoladyMulDivN96StrictFloor", "uint256,uint256"),
+            ("proveOzMulShrStrictFloor", "uint256,uint256,uint8"),
+            ("proveSoladyMulDivN96AntitoneOnLongPath", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivPow2DenominatorAntitone", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivPow2DenominatorFitsAsZero", "uint256,uint256"),
+            ("proveSoladyPow2FirstStrictFloor", "uint256,uint256"),
+            ("proveSoladyRoundingUpUnboundedStrictCeiling", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivN192NarrowFactorFitsLower", "uint160,uint256"),
+            ("proveOzConstantIdentityStrictFloor", "uint256"),
+            ("proveSoladyUncheckedBpsStrictFloor", "uint256,uint256"),
+            ("proveOzMulShrUpFitsAsZero", "uint256,uint256,uint8"),
+            ("proveOzRoundingUpConstantFactorStrictCeiling", "uint256,uint256"),
+            ("proveSoladyBpsRoundingUpAddsOne", "uint256,uint256"),
+            ("proveOzRoundingUpBpsFitsAsZero", "uint256,uint256"),
+            ("proveOzMulShrUp128FitsAsZero", "uint256,uint256"),
+            ("proveOzRoundingUpConstantFactorFitsAsZero", "uint256,uint256"),
+            ("proveV4RoundingUpConstantFactorAntitoneInOrder", "uint256,uint256,uint256"),
+            ("proveOzRoundingUpOddFitsAsZero", "uint256,uint256"),
+            ("proveV4RoundingUpOddAntitoneInOrder", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivPow2FactorAntitone", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivUpPow2DenominatorAntitone", "uint256,uint256,uint256"),
+            ("proveSoladyConstantFirstStrictFloor", "uint256,uint256"),
+            ("proveSoladyMulDivNStrictFloor", "uint256,uint256,uint8"),
+            ("proveV4RoundingUpPow2DenominatorAntitone", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivUpConstantFirstRoundsUpOnlyAtZero", "uint256,uint256"),
+            ("proveOzRoundingUpPow2DenominatorAntitone", "uint256,uint256,uint256"),
+            ("proveSoladyMulDivUpMonotoneOnlyAtEqualInputs", "uint256,uint256,uint256,uint256"),
+            ("proveOzRoundingUpPow2FactorFitsAsZero", "uint256,uint256"),
+            ("proveOzRoundingUpStrictCeiling", "uint256,uint256,uint256"),
+            ("proveV4MonotoneUnboundedOnlyAtEqualInputs", "uint256,uint256,uint256,uint256"),
+            ("proveOzMulShrUp128StrictCeiling", "uint256,uint256"),
+            ("proveOzClearedPow2StrictFloor", "uint256,uint256"),
+            ("proveSoladyMaskedPow2FirstAntitone", "uint256,uint256,uint256"),
+            ("proveOzMulShrStrictFloorShiftedProduct", "uint256,uint256,uint8"),
+            (
+                "proveOzMulShrMonotoneOnlyAtEqualInputsJoinedGuard",
+                "uint256,uint256,uint256,uint256",
+            ),
+            (
+                "proveSoladyUncheckedBpsMonotoneOnlyAtEqualInputsNegatedBound",
+                "uint256,uint256,uint256",
+            ),
+            ("proveV4RoundingUpStrictWrapCheckFitsAsZero", "uint256,uint256"),
+            ("proveV3RoundingUpAntitone", "uint256,uint256,uint256,uint256"),
         ] {
             let result = json_test_result(&output, &format!("{name}({args})"));
             assert_eq!(

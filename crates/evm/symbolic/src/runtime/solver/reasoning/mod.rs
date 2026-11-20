@@ -1,6 +1,9 @@
 //! Lightweight reasoning passes over normalized solver constraints.
 
-use super::{normalize::ConstraintContext, *};
+use super::{
+    normalize::{ConstraintContext, is_product_of, shift_power, shifted_operands},
+    *,
+};
 
 mod monotonic_product;
 mod xor;
