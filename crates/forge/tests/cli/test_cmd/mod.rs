@@ -9391,7 +9391,8 @@ contract CreatedLifecycleForkTest {
 }
 
 // An account the previous transaction created on a fork is not created in the next one, even when
-// the next one creates an account at its address on another fork.
+// the next one creates an account at its address on another fork or restores a snapshot the
+// previous one took.
 #[forgetest]
 async fn fork_created_account_previous_transaction(prj: _, cmd: _) {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -9405,6 +9406,8 @@ interface Vm {
     function selectFork(uint256 forkId) external;
     function prank(address sender) external;
     function deal(address account, uint256 balance) external;
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256 snapshotId) external returns (bool);
 }
 
 contract Bomb {
@@ -9418,6 +9421,8 @@ contract PreviousCreationForkTest {
     address constant DEPLOYER = <deployer>;
     address constant CREATED = <created>;
     uint256 first;
+    uint256 onFirst;
+    uint256 onSecond;
 
     function deploy() internal {
         vm.prank(DEPLOYER);
@@ -9428,15 +9433,32 @@ contract PreviousCreationForkTest {
         first = vm.createSelectFork("<url>", 1);
         deploy();
         vm.deal(CREATED, 42);
+        onFirst = vm.snapshotState();
         vm.createSelectFork("<url>", 1);
+        onSecond = vm.snapshotState();
+    }
+
+    function boom() internal {
+        (bool ok,) = CREATED.call("");
+        require(ok, "boom");
+        require(CREATED.balance == 42, "kept balance");
     }
 
     function testForkCreatedInSetUpIsNotCreated() public {
         deploy();
         vm.selectFork(first);
-        (bool ok,) = CREATED.call("");
-        require(ok, "boom");
-        require(CREATED.balance == 42, "kept balance");
+        boom();
+    }
+
+    function testForkCreatedInSetUpIsNotCreatedAfterRevert() public {
+        require(vm.revertToState(onFirst), "reverted");
+        boom();
+    }
+
+    function testForkCreatedInSetUpIsNotCreatedAfterRevertAndSwitch() public {
+        require(vm.revertToState(onSecond), "reverted");
+        vm.selectFork(first);
+        boom();
     }
 }
 "#
@@ -9448,6 +9470,8 @@ contract PreviousCreationForkTest {
     let output = str![[r#"
 ...
 [PASS] testForkCreatedInSetUpIsNotCreated() ([GAS])
+[PASS] testForkCreatedInSetUpIsNotCreatedAfterRevert() ([GAS])
+[PASS] testForkCreatedInSetUpIsNotCreatedAfterRevertAndSwitch() ([GAS])
 ...
 "#]];
     cmd.args(["test"]).assert_success().stdout_eq(output.clone());

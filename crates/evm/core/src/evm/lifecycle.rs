@@ -462,6 +462,9 @@ pub struct ExecutionLifecycle<F: FoundryEvmFactory> {
     tx_original: AddressMap<Option<AccountInfo>>,
     /// Warm slots of persistent accounts the last fork switch carried into the next context.
     switch_slots: AddressMap<HashSet<U256>>,
+    /// Number of transactions begun, which tells whether a snapshot was taken in the running
+    /// transaction.
+    transactions: u64,
 }
 
 impl<F: FoundryEvmFactory> Clone for ExecutionLifecycle<F> {
@@ -474,6 +477,7 @@ impl<F: FoundryEvmFactory> Clone for ExecutionLifecycle<F> {
             tx_prewarm: self.tx_prewarm.clone(),
             tx_original: self.tx_original.clone(),
             switch_slots: self.switch_slots.clone(),
+            transactions: self.transactions,
         }
     }
 }
@@ -496,6 +500,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             tx_prewarm: None,
             tx_original: AddressMap::default(),
             switch_slots: AddressMap::default(),
+            transactions: 0,
         }
     }
 
@@ -867,6 +872,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// contexts kept from the previous transaction, whose creations they only carry from then on.
     /// Call before every transaction.
     pub fn begin_transaction(&mut self, evm: &mut Evm<'_, F::Types>) {
+        self.transactions += 1;
         self.tx_prewarm = None;
         self.tx_original.clear();
         self.forks.local.warm.clear();
@@ -918,6 +924,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             forks: self.forks.clone(),
             env,
             ext: StoredExt::new(evm.ext()),
+            transaction: self.transactions,
         })
     }
 
@@ -942,7 +949,18 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             self.snapshots.remove_at(id)
         }?;
         self.materialize(evm);
-        let LifecycleSnapshot { state, mut forks, env, ext } = snapshot;
+        let LifecycleSnapshot { state, mut forks, env, ext, transaction } = snapshot;
+        // A snapshot an earlier transaction took holds that transaction in flight, which ended
+        // since. Its changes are accepted, and the accounts it created are no longer created ones,
+        // which EIP-6780 SELFDESTRUCT would delete, here or when the running transaction resumes
+        // their fork. Its warmth stays.
+        let earlier = transaction != self.transactions;
+        if earlier {
+            for entry in forks.forks.values_mut() {
+                entry.context.created.values_mut().for_each(|in_tx| *in_tx = false);
+            }
+            forks.local.created.values_mut().for_each(|in_tx| *in_tx = false);
+        }
         let (replaced, logs) = if forks.active == self.forks.active {
             (None, evm.state().logs().to_vec())
         } else {
@@ -971,6 +989,12 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         self.forks.active = forks.active;
         let db = self.forks.active_db();
         let mut state = state.into_state(db.clone_backing());
+        if earlier {
+            let warmth = warm_set(&mut state);
+            state.commit_transaction();
+            state.clear_transaction_state();
+            *state.prewarm_set_mut() = warmth;
+        }
         *state.logs_mut() = logs;
         let running = mem::replace(evm.state_mut(), state);
         let replaced = replaced.unwrap_or_else(|| running.snapshot());
