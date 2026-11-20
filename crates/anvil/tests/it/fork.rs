@@ -1013,10 +1013,22 @@ async fn test_scroll_fork_transaction_hash_replay_skips_beacon_root() {
         origin_api.anvil_set_auto_mine(false).await.unwrap();
         origin_api.evm_set_next_block_timestamp(timestamp).unwrap();
         let sender = origin.dev_wallets().next().unwrap().address();
-        let target = origin
-            .http_provider()
+        let provider = origin.http_provider();
+        // Stores whether `BEACON_ROOTS.get(block.timestamp)` succeeds in slot 0.
+        let reader = sender.create(0);
+        let deploy = provider
             .send_transaction(WithOtherFields::new(
-                TransactionRequest::default().from(sender).to(Address::random()).value(U256::ONE),
+                TransactionRequest::default().from(sender).with_deploy_code(bytes!(
+                    "602780600b6000396000f34260005260206000602060007300\
+                     0f3df6d732807ef1319fb7b8bb8522d0beac025afa60005500"
+                )),
+            ))
+            .await
+            .unwrap();
+        let deploy_hash = *deploy.tx_hash();
+        let target = provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(sender).to(reader).gas_limit(100_000),
             ))
             .await
             .unwrap();
@@ -1055,7 +1067,7 @@ async fn test_scroll_fork_transaction_hash_replay_skips_beacon_root() {
             continue;
         }
 
-        let (fork_api, _fork) = spawn(config).await;
+        let (fork_api, fork) = spawn(config).await;
         let replayed =
             fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
         assert_eq!(
@@ -1066,8 +1078,21 @@ async fn test_scroll_fork_transaction_hash_replay_skips_beacon_root() {
                 .iter()
                 .map(|tx| tx.tx_hash())
                 .collect::<Vec<_>>(),
-            [target_hash]
+            [deploy_hash, target_hash]
         );
+        // Neither the replay nor a later trace of it may call EIP-4788, so the lookup reverts.
+        assert_eq!(fork_api.storage_at(reader, U256::ZERO, None).await.unwrap(), B256::ZERO);
+        let trace = fork
+            .http_provider()
+            .debug_trace_transaction(
+                target_hash,
+                GethDebugTracingOptions::call_tracer(CallConfig::default()),
+            )
+            .await
+            .unwrap()
+            .try_into_call_frame()
+            .unwrap();
+        assert_eq!(trace.calls[0].error.as_deref(), Some("execution reverted"));
         // The origin has the EIP-4788 contract, so a beacon-root call would store the timestamp.
         let beacon_slot = U256::from(timestamp % HISTORY_BUFFER_LENGTH);
         let stored_timestamp = fork_api

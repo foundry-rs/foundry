@@ -1697,7 +1697,12 @@ impl<N: Network> Backend<N> {
             hardfork,
             deposit_contract_address: self.ethereum_deposit_contract_address(),
             parent_beacon_block_root,
-            eip4788: true,
+            // Scroll's l2geth applies EIP-2935 but has no beacon chain: its headers carry no
+            // beacon root and it never calls the EIP-4788 contract.
+            eip4788: !matches!(
+                NamedChain::try_from(self.protocol_chain_id()),
+                Ok(NamedChain::Scroll | NamedChain::ScrollSepolia)
+            ),
             execution_kind,
         })
     }
@@ -6501,21 +6506,11 @@ where
         } else {
             None
         };
-        let transitions = self
-            .ethereum_block_transitions(
-                hardfork,
-                parent_beacon_block_root,
-                BlockExecutionKind::TransactionPrefix,
-            )
-            .map(|mut transitions| {
-                // Scroll's l2geth applies EIP-2935 but has no beacon chain: its headers carry no
-                // beacon root and it never calls the EIP-4788 contract.
-                transitions.eip4788 = !matches!(
-                    NamedChain::try_from(self.protocol_chain_id()),
-                    Ok(NamedChain::Scroll | NamedChain::ScrollSepolia)
-                );
-                transitions
-            });
+        let transitions = self.ethereum_block_transitions(
+            hardfork,
+            parent_beacon_block_root,
+            BlockExecutionKind::TransactionPrefix,
+        );
         let mut opts = self.evm_options_at(evm_env, hardfork);
         if let Some(block_number) = arbitrum_rpc_block_number {
             opts.arbitrum_block_number = Some(block_number);
