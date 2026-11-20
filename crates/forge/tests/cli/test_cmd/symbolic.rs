@@ -9007,6 +9007,78 @@ contract SymbolicDivisorOrder {
     }
 }
 
+// A balance scaled by an index that only grows stays at least the balance:
+// `principal * newIndex / oldIndex >= principal`.
+#[forgetest_init]
+fn symbolic_proves_indexed_balance_growth(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_indexed_balance_growth");
+    prj.add_test(
+        "SymbolicIndexedBalance.t.sol",
+        r#"
+contract SymbolicIndexedBalance {
+    function checkBalanceGrows(uint128 principal, uint128 oldIndex, uint128 newIndex) public pure {
+        require(oldIndex != 0 && oldIndex <= newIndex);
+        assert(uint256(principal) * newIndex / oldIndex >= principal);
+    }
+
+    function checkIndexShrank(uint128 principal, uint128 oldIndex, uint128 newIndex) public pure {
+        require(newIndex != 0 && newIndex < oldIndex);
+        assert(uint256(principal) * newIndex / oldIndex >= principal);
+    }
+
+    function checkWrappingProduct(uint256 principal, uint256 oldIndex, uint256 newIndex)
+        public
+        pure
+    {
+        require(oldIndex != 0 && oldIndex <= newIndex);
+        uint256 product;
+        unchecked {
+            product = principal * newIndex;
+        }
+        assert(product / oldIndex >= principal);
+    }
+
+    function checkOtherPrincipal(
+        uint128 principal,
+        uint128 other,
+        uint128 oldIndex,
+        uint128 newIndex
+    ) public pure {
+        require(oldIndex != 0 && oldIndex <= newIndex);
+        assert(uint256(other) * newIndex / oldIndex >= principal);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicIndexedBalance"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(&output, "checkBalanceGrows(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        for signature in [
+            "checkIndexShrank(uint128,uint128,uint128)",
+            "checkWrappingProduct(uint256,uint256,uint256)",
+            "checkOtherPrincipal(uint128,uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A

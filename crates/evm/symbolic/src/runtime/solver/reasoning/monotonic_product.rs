@@ -342,6 +342,22 @@ fn expr_less_or_equal<'a>(
             SymExprKind::BinOp(SymBinOp::MulHigh, left_a, left_b),
             SymExprKind::BinOp(SymBinOp::MulHigh, right_a, right_b),
         ) => wide_product_less_or_equal(left_a, left_b, right_a, right_b, facts, bounds),
+        // `x <= x * a / d` for `0 < d <= a` when `x * a` does not wrap, as for a balance scaled by
+        // a grown index.
+        (_, SymExprKind::BinOp(SymBinOp::UDiv, product, divisor))
+            if let Some((a, b)) = mul_operands(product)
+                && let Some(scale) = (a == left).then_some(b).or((b == left).then_some(a))
+                && (facts.positive.contains(divisor)
+                    || bounds.word_range(divisor).is_some_and(|(min, _)| !min.is_zero()))
+                && bounds.mul_cannot_overflow_256(a, b)
+                && (expr_less_or_equal(divisor, scale, facts, bounds)
+                    || bounds
+                        .word_range(divisor)
+                        .zip(bounds.word_range(scale))
+                        .is_some_and(|((_, divisor), (scale, _))| divisor <= scale)) =>
+        {
+            true
+        }
         // `left <= round(a * b / d) <= round'(a' * b' / d) <= right`.
         _ if let Some(upper) = quotient_upper_bound(left, facts, bounds)
             && let Some(lower) = quotient_lower_bound(right, facts, bounds) =>
