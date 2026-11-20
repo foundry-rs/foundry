@@ -740,23 +740,26 @@ impl<'a> AnchorIndex<'a> {
         arms: &IfArms,
     ) -> Option<EdgeAnchor> {
         // The statement's span ends before the `;` that a jump's source element can include.
+        let in_condition = |element: &SourceElement| {
+            is_in_source_range(element, loc)
+                && !is_in_source_range(element, &arms.then_arm)
+                && arms.else_arm.as_ref().is_none_or(|arm| !is_in_source_range(element, arm))
+        };
         let mut jumps = self
             .branches
             .iter()
-            .filter(|&&(ic, ..)| {
-                self.source_map.get(ic + 1).is_some_and(|jump| {
-                    is_in_source_range(jump, loc)
-                        && !is_in_source_range(jump, &arms.then_arm)
-                        && arms.else_arm.as_ref().is_none_or(|arm| !is_in_source_range(jump, arm))
-                })
-            })
+            .filter(|&&(ic, ..)| self.source_map.get(ic + 1).is_some_and(in_condition))
             .collect::<Vec<_>>();
         // A check in the condition, such as an overflow, array bounds, or enum check, cannot enter
         // an arm, unless it is the only jump, as when the arm is a shared `revert`. A check either
-        // jumps to the failure or, as solc's legacy pipeline emits it, jumps around it.
+        // jumps to the failure or, as solc's legacy pipeline emits it, jumps around a failure that
+        // is mapped to the condition. The `if`'s own jump can fall through into a failure too,
+        // when the statement after the `if` reverts, but that failure is mapped outside it.
         if jumps.len() > 1 {
-            jumps.retain(|&&(_, jump, immediate)| {
-                !self.fails(jump as u32 + 1)
+            jumps.retain(|&&(ic, _, immediate)| {
+                let fails_in_condition = self.pcs.get(ic + 2).is_some_and(|&pc| self.fails(pc))
+                    && self.source_map.get(ic + 2).is_some_and(in_condition);
+                !fails_in_condition
                     && jump_destination(immediate).is_ok_and(|target| !self.fails(target))
             });
         }
@@ -2759,31 +2762,34 @@ mod tests {
         );
 
         // A check that jumps around its failure, as solc's legacy pipeline emits an array bounds
-        // check, cannot enter the arm either.
-        let jumps_around_check = [
-            opcode::PUSH1,
-            0,
-            opcode::PUSH1,
-            8,
-            opcode::JUMPI,
-            opcode::PUSH0,
-            opcode::PUSH0,
-            opcode::REVERT,
-            opcode::JUMPDEST,
-            opcode::PUSH1,
-            0,
-            opcode::PUSH1,
-            17,
-            opcode::JUMPI,
-            opcode::PUSH0,
-            opcode::POP,
-            opcode::STOP,
-            opcode::JUMPDEST,
-            opcode::PUSH0,
-            opcode::RETURN,
-        ];
+        // check, cannot enter the arm either, even when the statement after the `if` reverts.
+        let jumps_around_check = |next: [u8; 3]| {
+            let mut bytecode = vec![
+                opcode::PUSH1,
+                0,
+                opcode::PUSH1,
+                8,
+                opcode::JUMPI,
+                opcode::PUSH0,
+                opcode::PUSH0,
+                opcode::REVERT,
+                opcode::JUMPDEST,
+                opcode::PUSH1,
+                0,
+                opcode::PUSH1,
+                17,
+                opcode::JUMPI,
+            ];
+            bytecode.extend_from_slice(&next);
+            bytecode.extend_from_slice(&[opcode::JUMPDEST, opcode::PUSH0, opcode::RETURN]);
+            if_anchors(&bytecode, "12:3:0;;;;;;;;;10:60:0;80:5:0;;;0:100:0;;", false)
+        };
         assert_eq!(
-            if_anchors(&jumps_around_check, "12:3:0;;;;;;;;;10:60:0;80:5:0;;;0:100:0;;", false),
+            jumps_around_check([opcode::PUSH0, opcode::POP, opcode::STOP]),
+            [(17, Some(13))]
+        );
+        assert_eq!(
+            jumps_around_check([opcode::PUSH0, opcode::PUSH0, opcode::REVERT]),
             [(17, Some(13))]
         );
     }

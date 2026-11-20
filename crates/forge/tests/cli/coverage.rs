@@ -1703,6 +1703,11 @@ contract Checks {
         if (Checks(address(this)).round() == 0) return;
         r = 1;
     }
+
+    function indexThenRevert(uint256[] memory a) external pure {
+        if (a[0] == 0) return;
+        revert();
+    }
 }
 "#,
     );
@@ -1721,6 +1726,7 @@ contract ChecksTest {
         s[0] = Checks.Status.OPEN;
         checks.enumCheck(s);
         checks.externalCall();
+        checks.indexThenRevert(a);
     }
 }
 "#,
@@ -1755,12 +1761,18 @@ FNDA:1,Checks.externalCall
 DA:26,1
 BRDA:26,2,0,1
 DA:27,0
-FNF:4
-FNH:4
-LF:12
-LH:11
-BRF:3
-BRH:3
+DA:30,1
+FN:30,Checks.indexThenRevert
+FNDA:1,Checks.indexThenRevert
+DA:31,1
+BRDA:31,3,0,1
+DA:32,0
+FNF:5
+FNH:5
+LF:15
+LH:13
+BRF:4
+BRH:4
 end_of_record
 
 "#]],
