@@ -1281,7 +1281,7 @@ impl SymbolicExecutor {
         }
         let inherited_prank = state.callers();
         let call_context = (!matches!(kind, CallKind::DelegateCall))
-            .then(|| state.prank_for_next_call(&mut self.cx));
+            .then(|| state.prank_for_next_call(&mut self.cx, executor));
         // An isolated CALL is its own transaction, so it bumps the caller's nonce even when the
         // call fails. Concrete Forge answers a mocked call before isolating it.
         let isolated =
@@ -1336,7 +1336,7 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
         }
         let (call_caller, call_caller_word, pranked_origin) =
-            call_context.unwrap_or_else(|| state.prank_for_next_call(&mut self.cx));
+            call_context.unwrap_or_else(|| state.prank_for_next_call(&mut self.cx, executor));
 
         // A call beyond the call depth limit fails before it transfers value or runs
         // any code, including a precompile.
@@ -2016,7 +2016,7 @@ impl SymbolicExecutor {
             if matches!(kind, CallKind::DelegateCall) && branch.prank.has_active() {
                 return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
             }
-            let (call_caller, _, _) = branch.prank_for_next_call(&mut self.cx);
+            let (call_caller, _, _) = branch.prank_for_next_call(&mut self.cx, executor);
             if matches!(kind, CallKind::Call) && branch.starts_isolated_transaction(executor) {
                 branch.world.increment_nonce(executor, call_caller)?;
             }

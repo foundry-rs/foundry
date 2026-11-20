@@ -3321,9 +3321,6 @@ contract SymbolicPrankedAddress is Test {
         assert(weth.balanceOf(who) == balanceBefore - 1);
     }
 
-    // The isolated pranked call bumps the nonce of the account standing for the sender before
-    // `withdraw` calls the sender, which may still be an untouched precompile, so this reports
-    // incomplete.
     function checkWithdrawToOtherSender(address who) public {
         vm.assume(who != address(weth));
         checkWithdrawToPrankedSender(who);
@@ -3460,9 +3457,9 @@ Ran 12 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterIsPersistent(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterResetNonce(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawAfterMakePersistent(address) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkWithdrawToOtherSender(address) ([METRICS])
+[PASS] checkWithdrawToOtherSender(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawToPrankedSender(address) ([METRICS])
-Suite result: FAILED. 0 passed; 12 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
@@ -3496,8 +3493,15 @@ fn symbolic_free_address_may_name_precompile_or_later_account(prj: _, cmd: _) {
 import "forge-std/Test.sol";
 
 contract Callee {
+    uint256 calls;
+
     function callSender() external view returns (bytes memory out) {
         (, out) = msg.sender.staticcall(hex"0102");
+    }
+
+    function callSenderAndCount() external returns (bytes memory out) {
+        calls++;
+        (, out) = msg.sender.call(hex"0102");
     }
 
     function senderCodeSize() external view returns (uint256) {
@@ -3516,6 +3520,12 @@ contract SymbolicLaterCandidates is Test {
     function checkPrankedPrecompileSender(address who) public {
         vm.prank(who);
         assert(keccak256(callee.callSender()) != keccak256(hex"0102"));
+    }
+
+    // The isolated pranked call bumps the sender's nonce before the callee calls the sender.
+    function checkPrankedPrecompileSenderCall(address who) public {
+        vm.prank(who);
+        assert(keccak256(callee.callSenderAndCount()) != keccak256(hex"0102"));
     }
 
     // Fails for `who == address(0xB0B)`, which has code once the pranked call runs.
@@ -3543,13 +3553,14 @@ contract SymbolicLaterCandidates is Test {
 
     assert_symbolic(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicLaterCandidates.t.sol:SymbolicLaterCandidates
+Ran 6 tests for test/SymbolicLaterCandidates.t.sol:SymbolicLaterCandidates
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealFreeAddress(address) ([METRICS])
 [FAIL: vm.etch: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchFreeAddress(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSender(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSenderCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderEtchedAfterPrank(address) ([METRICS])
 [FAIL: vm.store: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreFreeAddress(address) ([METRICS])
-Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
