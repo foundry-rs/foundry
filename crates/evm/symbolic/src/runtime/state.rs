@@ -1052,10 +1052,17 @@ impl PathState {
         for (word, representative) in self.world.symbolic_address_aliases() {
             let address = word.clone().address_operand(cx);
             let Some(value) = self.constrained_word(cx, &address) else { continue };
-            // Code on the representative account may run in a caller frame, which keeps its
-            // address, so it moves only once no frame runs below the root.
-            if self.call_depth > 0 && self.world.has_written_code(representative) {
+            // A contract created at the representative account, as with a symbolic CREATE2
+            // salt, stays there, since its constructor may still run at that address.
+            if self.world.created_accounts.contains(&representative) {
                 continue;
+            }
+            // Code on the representative account may run in a caller frame, which keeps its
+            // address.
+            if self.call_depth > 0 && self.world.has_written_code(representative) {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic address with code fixed below the root frame",
+                ));
             }
             let account = word_to_address(value);
             let persistent = self.persistent_accounts.contains(&representative);
@@ -2320,6 +2327,9 @@ pub(crate) struct SymbolicWorldState {
     /// each may still denote. Such a word does not resolve to its representative account,
     /// which only stands for it where it names none of these accounts.
     guarded_symbolic_addresses: HashMap<SymExpr, BTreeSet<Address>>,
+    /// Accounts a guarded write reached only after state was written through the word, which
+    /// therefore missed the earlier writes.
+    late_guarded_symbolic_addresses: HashMap<SymExpr, BTreeSet<Address>>,
     replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
     replay_symbolic_storage_keys: HashMap<Symbol, Vec<(Address, SymExpr)>>,
 }
@@ -2637,13 +2647,20 @@ impl SymbolicWorld {
     /// Marks the aliased word `expr` as written under guards, so it may still denote any of
     /// `candidates`.
     pub(crate) fn guard_symbolic_address(&mut self, expr: &SymExpr, candidates: &[Address]) {
-        let Some((alias, _)) = self.alias_entry(expr) else { return };
+        let Some((alias, representative)) = self.alias_entry(expr) else { return };
         let alias = alias.clone();
-        Arc::make_mut(&mut self.state)
-            .guarded_symbolic_addresses
-            .entry(alias)
-            .or_default()
-            .extend(candidates);
+        let holds_state = self.representative_holds_state(representative);
+        let state = Arc::make_mut(&mut self.state);
+        let guarded = state.guarded_symbolic_addresses.entry(alias.clone()).or_default();
+        let late = candidates
+            .iter()
+            .copied()
+            .filter(|candidate| holds_state && !guarded.contains(candidate))
+            .collect::<Vec<_>>();
+        guarded.extend(candidates);
+        if !late.is_empty() {
+            state.late_guarded_symbolic_addresses.entry(alias).or_default().extend(late);
+        }
     }
 
     /// Returns whether the address word `expr` has an alias whose representative account holds
@@ -2681,10 +2698,14 @@ impl SymbolicWorld {
             .collect()
     }
 
-    /// Returns whether a guarded cheatcode write through the aliased word `expr` also wrote
-    /// `address`.
+    /// Returns whether the guarded cheatcode writes through the aliased word `expr` wrote
+    /// `address` from the first write on.
     pub(crate) fn is_guarded_against(&self, expr: &SymExpr, address: Address) -> bool {
         self.guarded_symbolic_addresses.get(expr).is_some_and(|guarded| guarded.contains(&address))
+            && !self
+                .late_guarded_symbolic_addresses
+                .get(expr)
+                .is_some_and(|late| late.contains(&address))
     }
 
     /// Returns whether the run knows `address` or wrote state to it.
@@ -2704,6 +2725,7 @@ impl SymbolicWorld {
         let state = Arc::make_mut(&mut self.state);
         state.symbolic_address_aliases.remove(expr);
         state.guarded_symbolic_addresses.remove(expr);
+        state.late_guarded_symbolic_addresses.remove(expr);
         if !state.written_code.contains(&representative) {
             // A backend read of the representative account caches its empty code.
             state.code_cache.remove(&representative);
@@ -3046,6 +3068,9 @@ impl SymbolicWorld {
         }
         for (expr, candidates) in &other.guarded_symbolic_addresses {
             state.guarded_symbolic_addresses.entry(expr.clone()).or_default().extend(candidates);
+        }
+        for (expr, late) in &other.late_guarded_symbolic_addresses {
+            state.late_guarded_symbolic_addresses.entry(expr.clone()).or_default().extend(late);
         }
     }
 
