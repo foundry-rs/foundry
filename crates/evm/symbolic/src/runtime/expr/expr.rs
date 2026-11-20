@@ -96,6 +96,20 @@ impl SymExpr {
         let (Some(read), Some(write)) =
             (self.storage_mapping_key(cx), other.storage_mapping_key(cx))
         else {
+            // Nested slots such as struct members `keccak(..) + i` or fixed mapping roots compare
+            // as storage keys. Two bare hash bases, or an unsearched constant against a hash chain
+            // not rooted at it, stay a word equality.
+            let read_key = self.storage_layout_key(cx);
+            let write_key = other.storage_layout_key(cx);
+            let is_base = |key: &Option<(Self, Self)>| {
+                key.as_ref().is_some_and(|(_, offset)| offset.as_const() == Some(U256::ZERO))
+            };
+            if !(is_base(&read_key) && is_base(&write_key))
+                && !unsearched_slot_may_alias(cx, self, &read_key, &write_key)
+                && !unsearched_slot_may_alias(cx, other, &write_key, &read_key)
+            {
+                return self.storage_key_eq(cx, other);
+            }
             return SymBoolExpr::eq(cx, self.clone(), other.clone());
         };
 
@@ -146,15 +160,20 @@ impl SymExpr {
         }
     }
 
+    /// An unsearched constant may be a folded slot, so it is not a known root.
     fn storage_mapping_root_slot(&self, cx: &mut SymCx) -> Option<U256> {
+        self.storage_mapping_bottom_slot(cx).filter(|slot| !cx.is_unsearched_slot(*slot))
+    }
+
+    fn storage_mapping_bottom_slot(&self, cx: &mut SymCx) -> Option<U256> {
         let bytes = self.keccak_preimage(cx, 64)?;
         let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
         match slot.kind() {
             SymExprKind::Const(_) if slot.keccak_preimage(cx, 64).is_some() => {
-                slot.storage_mapping_root_slot(cx)
+                slot.storage_mapping_bottom_slot(cx)
             }
             SymExprKind::Const(slot) => Some(*slot),
-            SymExprKind::Keccak { .. } => slot.storage_mapping_root_slot(cx),
+            SymExprKind::Keccak { .. } => slot.storage_mapping_bottom_slot(cx),
             _ => None,
         }
     }
@@ -246,6 +265,22 @@ fn storage_mapping_key_eq(
     } else {
         SymBoolExpr::eq(cx, read.key.clone(), write.key.clone())
     }
+}
+
+/// Returns whether `slot` is a constant whose folded slot search stopped early, compared with a
+/// hash chain that is not rooted at it and so may reach it.
+fn unsearched_slot_may_alias(
+    cx: &mut SymCx,
+    slot: &SymExpr,
+    key: &Option<(SymExpr, SymExpr)>,
+    other_key: &Option<(SymExpr, SymExpr)>,
+) -> bool {
+    let Some(value) = slot.as_const() else { return false };
+    key.is_none()
+        && cx.is_unsearched_slot(value)
+        && !other_key
+            .as_ref()
+            .is_some_and(|(base, _)| base.storage_mapping_bottom_slot(cx) == Some(value))
 }
 
 /// Returns the condition under which a storage layout offset is too large to assume no aliasing.

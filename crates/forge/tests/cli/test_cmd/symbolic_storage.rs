@@ -977,6 +977,370 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// Two members of a struct in a mapping, `keccak(key, slot)` and `keccak(key', slot) + 1`, do not
+// alias when `key'` is the same value as `key` in another expression, here a masked copy.
+#[forgetest_init]
+fn symbolic_struct_member_mapping_roots_do_not_alias(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_struct_member_mapping_roots_do_not_alias");
+
+    prj.add_test(
+        "SymbolicStructMemberRoots.t.sol",
+        r#"
+struct Pair {
+    mapping(uint256 => uint256) first;
+    mapping(uint256 => uint256) second;
+}
+
+contract Store {
+    mapping(uint256 => Pair) pairs;
+
+    function setSecond(uint256 key, uint256 id, uint256 amount) external {
+        pairs[key].second[id] = amount;
+    }
+
+    function getSecond(uint256 key, uint256 id) external view returns (uint256) {
+        return pairs[key].second[id];
+    }
+
+    function setMaskedFirst(uint256 key, uint256 id, uint256 amount) external {
+        pairs[uint160(key)].first[id] = amount;
+    }
+
+    function setMaskedSecond(uint256 key, uint256 id, uint256 amount) external {
+        pairs[uint160(key)].second[id] = amount;
+    }
+}
+
+contract SymbolicStructMemberRoots {
+    Store store = new Store();
+
+    function checkOtherMemberKeepsValue(uint256 key, uint256 id, uint256 a, uint256 b) public {
+        require(key <= type(uint160).max);
+        store.setSecond(key, id, a);
+        store.setMaskedFirst(key, id, b);
+        assert(store.getSecond(key, id) == a);
+    }
+
+    function checkSameMemberOverwritesValue(uint256 key, uint256 id, uint256 a, uint256 b) public {
+        require(key <= type(uint160).max);
+        store.setSecond(key, id, a);
+        store.setMaskedSecond(key, id, b);
+        assert(store.getSecond(key, id) == a);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicStructMemberRoots"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicStructMemberRoots.t.sol:SymbolicStructMemberRoots
+[PASS] checkOtherMemberKeepsValue(uint256,uint256,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkSameMemberOverwritesValue(uint256,uint256,uint256,uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A nested entry `keccak(id, keccak(key, root) + 1)` does not alias a top-level entry
+// `keccak(other, root)` when `id == other`, for a root at slot 0 and at a fixed namespaced slot.
+// Enough source literals to exhaust the folded slot search leave the namespaced root unsearched.
+#[forgetest_init]
+fn symbolic_nested_mapping_entry_does_not_alias_fixed_root_entry(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_nested_mapping_entry_does_not_alias_fixed_root_entry");
+
+    let branches: String =
+        (0..256).map(|i| format!("        if (x == {}) return {i};\n", 1000 + i)).collect();
+    prj.add_source(
+        "Index.sol",
+        &format!(
+            "contract Index {{\n    function index(uint256 x) external pure returns (uint256) {{\n{branches}        return type(uint256).max;\n    }}\n}}\n"
+        ),
+    );
+
+    prj.add_test(
+        "SymbolicNestedFixedRoot.t.sol",
+        r#"
+struct Node {
+    uint32 tag;
+    mapping(uint256 => uint256) inner;
+}
+
+contract SlotZeroStore {
+    mapping(uint256 => Node) outer;
+
+    function setTag(uint256 key, uint32 tag) external {
+        outer[key].tag = tag;
+    }
+
+    function setInner(uint256 key, uint256 id, uint256 value) external {
+        outer[key].inner[id] = value;
+    }
+
+    function getInner(uint256 key, uint256 id) external view returns (uint256) {
+        return outer[key].inner[id];
+    }
+}
+
+contract NamespacedStore {
+    struct Layout {
+        mapping(uint256 => Node) outer;
+    }
+
+    struct Buckets {
+        mapping(uint256 => uint256) a;
+        mapping(uint256 => uint256) b;
+        mapping(uint256 => uint256) c;
+        mapping(uint256 => uint256) d;
+    }
+
+    mapping(uint256 => Buckets) buckets;
+
+    function layout() internal pure returns (Layout storage l) {
+        assembly {
+            l.slot := 0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab514
+        }
+    }
+
+    function setTag(uint256 key, uint32 tag) external {
+        layout().outer[key].tag = tag;
+    }
+
+    function setInner(uint256 key, uint256 id, uint256 value) external {
+        layout().outer[key].inner[id] = value;
+    }
+
+    function getInner(uint256 key, uint256 id) external view returns (uint256) {
+        return layout().outer[key].inner[id];
+    }
+}
+
+contract SymbolicNestedFixedRoot {
+    SlotZeroStore slotZero = new SlotZeroStore();
+    NamespacedStore namespaced = new NamespacedStore();
+
+    function checkSlotZeroTagKeepsInner(uint256 key, uint256 id, uint256 other, uint256 value, uint32 tag) public {
+        slotZero.setInner(key, id, value);
+        slotZero.setTag(other, tag);
+        assert(slotZero.getInner(key, id) == value);
+    }
+
+    function checkNamespacedTagKeepsInner(uint256 key, uint256 id, uint256 other, uint256 value, uint32 tag) public {
+        namespaced.setInner(key, id, value);
+        namespaced.setTag(other, tag);
+        assert(namespaced.getInner(key, id) == value);
+    }
+
+    function checkNamespacedInnerOverwritesInner(uint256 key, uint256 id, uint256 value, uint256 next) public {
+        namespaced.setInner(key, id, value);
+        namespaced.setInner(key, id, next);
+        assert(namespaced.getInner(key, id) == value);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicNestedFixedRoot"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicNestedFixedRoot.t.sol:SymbolicNestedFixedRoot
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkNamespacedInnerOverwritesInner(uint256,uint256,uint256,uint256) ([METRICS])
+[PASS] checkNamespacedTagKeepsInner(uint256,uint256,uint256,uint256,uint32) ([METRICS])
+[PASS] checkSlotZeroTagKeepsInner(uint256,uint256,uint256,uint256,uint32) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// The optimizer folds the inner mapping roots of `cells[7][9]`, `values[7][9]`,
+// `deepCells[7][8][9]` and `mids[7][8].cells[9]`, and the entry of `deepValues[7][8][9]`, into
+// constants. Their preimages are
+// found at every mapping depth, so an entry written through symbolic keys still aliases them. A
+// recursive layout has no last depth, so its search is incomplete.
+#[forgetest_init]
+fn symbolic_folded_nested_mapping_root_aliases_symbolic_entry(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_folded_nested_mapping_root_aliases_symbolic_entry");
+
+    prj.update_config(|config| config.optimizer = Some(true));
+    prj.add_test(
+        "SymbolicFoldedNestedRoot.t.sol",
+        r#"
+struct Cell {
+    uint32 tag;
+    mapping(uint256 => uint256) inner;
+}
+
+contract Store {
+    mapping(uint256 => mapping(uint256 => Cell)) cells;
+    mapping(uint256 => mapping(uint256 => mapping(uint256 => uint256))) values;
+
+    function setConstCell(uint256 id, uint256 value) external {
+        cells[7][9].inner[id] = value;
+    }
+
+    function getConstCell(uint256 id) external view returns (uint256) {
+        return cells[7][9].inner[id];
+    }
+
+    function setCell(uint256 k1, uint256 k2, uint256 id, uint256 value) external {
+        cells[k1][k2].inner[id] = value;
+    }
+
+    function setConstValue(uint256 id, uint256 value) external {
+        values[7][9][id] = value;
+    }
+
+    function getConstValue(uint256 id) external view returns (uint256) {
+        return values[7][9][id];
+    }
+
+    function setValue(uint256 k1, uint256 k2, uint256 id, uint256 value) external {
+        values[k1][k2][id] = value;
+    }
+}
+
+contract DeepCellStore {
+    mapping(uint256 => mapping(uint256 => mapping(uint256 => Cell))) deepCells;
+
+    function setConstDeepCell(uint256 id, uint256 value) external {
+        deepCells[7][8][9].inner[id] = value;
+    }
+
+    function getConstDeepCell(uint256 id) external view returns (uint256) {
+        return deepCells[7][8][9].inner[id];
+    }
+
+    function setDeepCell(uint256 k1, uint256 k2, uint256 k3, uint256 id, uint256 value) external {
+        deepCells[k1][k2][k3].inner[id] = value;
+    }
+}
+
+contract DeepValueStore {
+    mapping(uint256 => mapping(uint256 => mapping(uint256 => uint256))) deepValues;
+
+    function setConstDeepValue(uint256 value) external {
+        deepValues[7][8][9] = value;
+    }
+
+    function getConstDeepValue() external view returns (uint256) {
+        return deepValues[7][8][9];
+    }
+
+    function setDeepValue(uint256 k1, uint256 k2, uint256 k3, uint256 value) external {
+        deepValues[k1][k2][k3] = value;
+    }
+}
+
+struct Node {
+    uint256 value;
+    mapping(uint256 => Node) children;
+}
+
+struct Mid {
+    uint32 tag;
+    mapping(uint256 => Cell) cells;
+}
+
+contract MidStore {
+    mapping(uint256 => mapping(uint256 => Mid)) mids;
+
+    function setConst(uint256 id, uint256 value) external {
+        mids[7][8].cells[9].inner[id] = value;
+    }
+
+    function getConst(uint256 id) external view returns (uint256) {
+        return mids[7][8].cells[9].inner[id];
+    }
+
+    function set(uint256 k1, uint256 k2, uint256 k3, uint256 id, uint256 value) external {
+        mids[k1][k2].cells[k3].inner[id] = value;
+    }
+}
+
+contract TreeStore {
+    Node root;
+
+    function setConst(uint256 value) external {
+        root.children[7].children[8].children[9].value = value;
+    }
+
+    function getConst() external view returns (uint256) {
+        return root.children[7].children[8].children[9].value;
+    }
+
+    function set(uint256 k1, uint256 k2, uint256 k3, uint256 value) external {
+        root.children[k1].children[k2].children[k3].value = value;
+    }
+}
+
+contract SymbolicFoldedNestedRoot {
+    Store store = new Store();
+    DeepCellStore deepCellStore = new DeepCellStore();
+    DeepValueStore deepValueStore = new DeepValueStore();
+    MidStore midStore = new MidStore();
+    TreeStore treeStore = new TreeStore();
+
+    function checkStructMemberEntryAliases(uint256 k1, uint256 k2, uint256 id, uint256 a, uint256 b) public {
+        store.setConstCell(id, a);
+        store.setCell(k1, k2, id, b);
+        assert(store.getConstCell(id) == a);
+    }
+
+    function checkNestedEntryAliases(uint256 k1, uint256 k2, uint256 id, uint256 a, uint256 b) public {
+        store.setConstValue(id, a);
+        store.setValue(k1, k2, id, b);
+        assert(store.getConstValue(id) == a);
+    }
+
+    function checkDeepStructMemberEntryAliases(uint256 k1, uint256 k2, uint256 k3, uint256 id, uint256 a, uint256 b)
+        public
+    {
+        deepCellStore.setConstDeepCell(id, a);
+        deepCellStore.setDeepCell(k1, k2, k3, id, b);
+        assert(deepCellStore.getConstDeepCell(id) == a);
+    }
+
+    function checkDeepEntryAliases(uint256 k1, uint256 k2, uint256 k3, uint256 a, uint256 b) public {
+        deepValueStore.setConstDeepValue(a);
+        deepValueStore.setDeepValue(k1, k2, k3, b);
+        assert(deepValueStore.getConstDeepValue() == a);
+    }
+
+    function checkMidStructEntryAliases(uint256 k1, uint256 k2, uint256 k3, uint256 id, uint256 a, uint256 b)
+        public
+    {
+        midStore.setConst(id, a);
+        midStore.set(k1, k2, k3, id, b);
+        assert(midStore.getConst(id) == a);
+    }
+
+    function checkRecursiveEntryAliases(uint256 k1, uint256 k2, uint256 k3, uint256 a, uint256 b) public {
+        treeStore.setConst(a);
+        treeStore.set(k1, k2, k3, b);
+        assert(treeStore.getConst() == a);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicFoldedNestedRoot"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicFoldedNestedRoot.t.sol:SymbolicFoldedNestedRoot
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkDeepEntryAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkDeepStructMemberEntryAliases(uint256,uint256,uint256,uint256,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkMidStructEntryAliases(uint256,uint256,uint256,uint256,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkNestedEntryAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: folded mapping slot search incomplete] checkRecursiveEntryAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkStructMemberEntryAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 // A build without storage layouts after an edit keeps the cached symbolic profile, so the next
 // symbolic run must recompile the artifacts it wrote without layouts.
 #[forgetest_init]
