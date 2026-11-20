@@ -19,7 +19,7 @@ use crate::{
         collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
     },
     traces::{
-        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
+        CallTraceDecoder, CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
@@ -3063,6 +3063,7 @@ fn prepare_results_for_json(
     verbosity: u8,
     trace_depth: Option<usize>,
 ) {
+    let decoder = CallTraceDecoder::new();
     for test_result in results.values_mut().flat_map(|suite| suite.test_results.values_mut()) {
         if verbosity >= 2 {
             test_result.decoded_logs = decode_console_logs(&test_result.logs);
@@ -3072,6 +3073,7 @@ fn prepare_results_for_json(
         for (_, arena) in &mut test_result.traces {
             // Discard presentation-only decoding populated by the streaming renderer.
             for node in arena.nodes_mut() {
+                decoder.redact_raw_cheatcode_secrets(&mut node.trace);
                 node.trace.decoded = None;
                 for log in &mut node.logs {
                     log.decoded = None;
