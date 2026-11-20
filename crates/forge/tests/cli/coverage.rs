@@ -1716,6 +1716,17 @@ contract Checks {
         }
         revert();
     }
+
+    function breakInIfThenRevert(uint256[] memory a) external {
+        if (a.length == 3) {
+            for (uint256 i; i < a.length; ++i) {
+                if (a[i] == 0) break;
+                r += a[i];
+            }
+            revert();
+        }
+        r = this.round();
+    }
 }
 "#,
     );
@@ -1736,6 +1747,7 @@ contract ChecksTest {
         checks.externalCall();
         checks.indexThenRevert(a);
         try checks.breakThenRevert(a, 1) {} catch {}
+        try checks.breakInIfThenRevert(a) {} catch {}
     }
 }
 "#,
@@ -1785,12 +1797,23 @@ BRDA:37,4,0,1
 DA:38,0
 BRDA:38,5,0,-
 DA:40,1
-FNF:6
-FNH:6
-LF:20
-LH:17
-BRF:6
-BRH:5
+DA:43,1
+FN:43,Checks.breakInIfThenRevert
+FNDA:1,Checks.breakInIfThenRevert
+DA:44,1
+BRDA:44,6,0,1
+DA:45,1
+DA:46,1
+BRDA:46,7,0,1
+DA:47,0
+DA:49,1
+DA:51,0
+FNF:7
+FNH:7
+LF:27
+LH:22
+BRF:8
+BRH:7
 end_of_record
 
 "#]];
@@ -1838,12 +1861,23 @@ BRDA:37,4,0,1
 DA:38,0
 BRDA:38,5,0,-
 DA:40,1
-FNF:6
-FNH:6
-LF:20
-LH:14
-BRF:6
-BRH:5
+DA:43,1
+FN:43,Checks.breakInIfThenRevert
+FNDA:1,Checks.breakInIfThenRevert
+DA:44,1
+BRDA:44,6,0,1
+DA:45,1
+DA:46,1
+BRDA:46,7,0,1
+DA:47,0
+DA:49,0
+DA:51,0
+FNF:7
+FNH:7
+LF:27
+LH:17
+BRF:8
+BRH:7
 end_of_record
 
 "#]],
