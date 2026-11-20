@@ -48,7 +48,9 @@ use foundry_evm_core::{
     Breakpoints,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{LocalForkId, RevertDiagnostic},
-    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
+    constants::{
+        CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
+    },
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
         MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
@@ -823,12 +825,17 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Depth of a create that a hook ended with a revert without running its frame.
     pub unrun_create_depth: Option<usize>,
 
-    /// Code that issued the CREATE being handed off to a new frame EVM.
+    /// Code that issued the CREATE, or the call into the CREATE2 deployer, being handed off to a
+    /// new frame EVM.
     pub env_handoff_creator: Option<Address>,
 
     /// Automatic CREATE2 redirects: factory call depth, original issuing code, and whether the
     /// original create grants cheatcode access. The grant is resolved after caller overrides.
     pub pending_create2_redirects: Vec<(u16, Option<Address>, bool)>,
+
+    /// Depth of the latest call into the CREATE2 deployer, and whether the code that called it
+    /// grants cheatcode access to the contract the deployer creates.
+    create2_deployer_call: Option<(u16, bool)>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -919,6 +926,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             unrun_create_depth: None,
             env_handoff_creator: None,
             pending_create2_redirects: Vec::new(),
+            create2_deployer_call: None,
         }
     }
 
@@ -1268,6 +1276,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Grants cheatcode access for top-level deployments or authorized callers, provided the
     /// code issuing the CREATE also has access while forked.
     ///
+    /// The CREATE2 deployer creates whatever init code it is called with, so its creates are
+    /// authorized by the code that called it, not by the deployer's own access.
+    ///
     /// Constructors need access before the new contract's runtime code has been deployed.
     fn allow_cheatcodes_on_create(
         &self,
@@ -1277,21 +1288,27 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         created_address: Address,
         creator: Option<Address>,
     ) {
+        let is_factory_create = |factory_depth: u16| usize::from(factory_depth) + 1 == depth;
         let allowed = self
             .pending_create2_redirects
             .last()
-            .filter(|(factory_depth, ..)| usize::from(*factory_depth) + 1 == depth)
-            .map_or_else(
-                || {
-                    Self::can_grant_cheatcodes_on_create(
-                        backend,
-                        depth - self.root_depth,
-                        caller,
-                        creator,
-                    )
-                },
-                |(.., allowed)| *allowed,
-            );
+            .filter(|(factory_depth, ..)| is_factory_create(*factory_depth))
+            .map(|(.., allowed)| *allowed)
+            .or_else(|| {
+                creator.is_some_and(|code| self.is_create2_deployer(code)).then(|| {
+                    self.create2_deployer_call.is_some_and(|(call_depth, allowed)| {
+                        allowed && is_factory_create(call_depth)
+                    })
+                })
+            })
+            .unwrap_or_else(|| {
+                Self::can_grant_cheatcodes_on_create(
+                    backend,
+                    depth - self.root_depth,
+                    caller,
+                    creator,
+                )
+            });
         if allowed && !backend.backend().has_cheatcode_access(&created_address) {
             backend.backend_mut().allow_cheatcode_access(created_address);
         }
@@ -1710,6 +1727,23 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 call.caller,
                 *creator,
             );
+        }
+
+        // Code calling the CREATE2 deployer authorizes its create as if it created directly.
+        if self.is_create2_deployer(call.code_address) {
+            // A delegated deployer creates from the calling account.
+            let caller = match call.kind {
+                MessageKind::DelegateCall | MessageKind::CallCode => call.destination,
+                _ => call.caller,
+            };
+            let creator = self.take_create_creator(interp, call);
+            let allowed = Self::can_grant_cheatcodes_on_create(
+                backend,
+                curr_depth - self.root_depth,
+                caller,
+                creator,
+            );
+            self.create2_deployer_call = Some((call.depth, allowed));
         }
 
         None
@@ -3035,6 +3069,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Returns the CREATE2 deployer address.
     pub fn create2_deployer(&self) -> Address {
         self.core.config.evm_opts.create2_deployer
+    }
+
+    /// Returns whether `address` is the configured CREATE2 deployer, or the default one, which
+    /// Foundry installs locally regardless of the configuration.
+    pub fn is_create2_deployer(&self, address: Address) -> bool {
+        address == self.create2_deployer() || address == DEFAULT_CREATE2_DEPLOYER
     }
 
     /// Preserves the original CREATE authorization before redirecting it to the factory.

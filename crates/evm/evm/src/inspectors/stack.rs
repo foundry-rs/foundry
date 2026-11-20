@@ -1368,8 +1368,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // The frame EVM's hooks see their own interpreter, not the caller's memory the input of
         // a call instruction's message is a range of.
         message.input = message.input.to_bytes(interp.memory()).into();
-        // The new root interpreter describes the CREATE itself, so preserve its issuing code.
-        let creator = (message.kind.is_create() && interp.message().depth < message.depth)
+        // The new root interpreter describes the message itself, so preserve the code issuing a
+        // CREATE or a call into the CREATE2 deployer.
+        let issues_create = message.kind.is_create()
+            || self
+                .cheatcodes
+                .as_deref()
+                .is_some_and(|cheats| cheats.is_create2_deployer(message.code_address));
+        let creator = (issues_create && interp.message().depth < message.depth)
             .then_some(interp.message().code_address);
         let previous_creator = self
             .cheatcodes

@@ -143,6 +143,56 @@ Ran 4 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
     }
 }
 
+#[forgetest]
+async fn fork_create2_deployer_children_require_caller_access(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    prj.add_test("Create2Deployer.t.sol", CREATE2_DEPLOYER_ACCESS);
+    let mut run = |fork_url: bool| {
+        cmd.forge_fuse();
+        cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
+        cmd.args(["test", "--evm-version", "prague", "--match-contract", "Create2DeployerTest"]);
+        // Fork either from the command line or from inside the test.
+        if fork_url {
+            cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_FORK_URL");
+            cmd.args(["--fork-url", &handle.http_endpoint()]);
+        } else {
+            cmd.env("FOUNDRY_ACCESS_REGRESSION_FORK_URL", handle.http_endpoint());
+        }
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Create2Deployer.t.sol:Create2DeployerTest
+[PASS] testForkCreate2DeployerChildrenRequireCallerAccess() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    };
+    for deployer_on_fork in [false, true] {
+        if deployer_on_fork {
+            api.anvil_set_code(
+                foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER,
+                Bytes::from_static(foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE),
+            )
+            .await
+            .unwrap();
+        }
+        // A linked library makes the runner deploy it through the factory.
+        for linked_library in [false, true] {
+            let library = prj.add_source("LinkedReader.sol", LINKED_LIBRARY);
+            if !linked_library {
+                std::fs::remove_file(library).unwrap();
+            }
+            run(true);
+            run(false);
+        }
+    }
+
+    // Foundry installs the default factory even when another one is configured.
+    prj.update_config(|config| config.create2_deployer = Address::with_last_byte(0xde));
+    run(false);
+}
+
 const CHEATCODE_ACCESS_COMPATIBILITY: &str = r#"
 interface Vm {
     function prank(address sender) external;
@@ -547,7 +597,6 @@ contract Create2RedirectImplementation is UsesVm {
     address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     Create2EnvChanger internal changer;
     bool internal issuerAuthorized;
-    bool internal factoryAuthorized;
 
     function testForkCreate2RedirectAuthorization() public {
         for (uint256 mode; mode < 4; mode++) {
@@ -567,12 +616,13 @@ contract Create2RedirectImplementation is UsesVm {
                 require(created == issuerAuthorized, "constructor authorization changed");
             }
 
-            // Explicit factory calls retain their own authorization after successful or failed creates.
+            // Explicit factory calls are authorized by the issuing code, not by the factory, after
+            // successful or failed creates.
             (bool ok, bytes memory output) = CREATE2_FACTORY.call(
                 abi.encodePacked(bytes32(mode + 4), type(EnvReader).creationCode)
             );
             require(ok && output.length == 20, "explicit factory creation failed");
-            checkAccess(EnvReader(address(bytes20(output))), factoryAuthorized);
+            checkAccess(EnvReader(address(bytes20(output))), issuerAuthorized);
         }
     }
 
@@ -585,8 +635,7 @@ contract Create2RedirectImplementation is UsesVm {
 
 abstract contract Create2RedirectFixture is Create2RedirectImplementation {
     function setUpImplementation(bool authorized, bool authorizeFactory) internal {
-        factoryAuthorized = authorizeFactory;
-        if (factoryAuthorized) vm.allowCheatcodes(CREATE2_FACTORY);
+        if (authorizeFactory) vm.allowCheatcodes(CREATE2_FACTORY);
         changer = new Create2EnvChanger();
         issuerAuthorized = authorized;
         address implementation = address(0x1234);
@@ -621,4 +670,97 @@ contract UntrustedIssuerUntrustedFactoryCreate2RedirectTest is Create2RedirectFi
     }
 }
 
+"#;
+
+const CREATE2_DEPLOYER_ACCESS: &str = r#"
+interface Vm {
+    function chainId(uint256 newChainId) external;
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256);
+    function envOr(string calldata name, string calldata defaultValue) external view returns (string memory);
+    function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
+    function etch(address target, bytes calldata code) external;
+}
+
+abstract contract UsesVm {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function readDefault() internal view returns (uint256) {
+        return vm.envOr("FOUNDRY_ACCESS_REGRESSION_UNUSED", uint256(7));
+    }
+}
+
+contract ConstructorReader is UsesVm {
+    uint256 public constructorValue;
+
+    constructor() {
+        constructorValue = readDefault();
+    }
+}
+
+interface EnvChanger {
+    function changeChainId() external;
+}
+
+contract DeployerRelay {
+    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+
+    function deploy(bytes32 salt) public returns (bool ok) {
+        (ok,) = CREATE2_FACTORY.call(abi.encodePacked(salt, type(ConstructorReader).creationCode));
+    }
+
+    function deployAfterEnvChange(bytes32 salt) external returns (bool) {
+        EnvChanger(address(this)).changeChainId();
+        return deploy(salt);
+    }
+}
+
+contract Create2DeployerTest is UsesVm {
+    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+    address constant RELAY = address(0x1234);
+
+    function setUp() public {
+        string memory url = vm.envOr("FOUNDRY_ACCESS_REGRESSION_FORK_URL", string(""));
+        if (bytes(url).length != 0) vm.createSelectFork(url);
+        vm.etch(RELAY, type(DeployerRelay).runtimeCode);
+    }
+
+    function changeChainId() external {
+        vm.chainId(block.chainid + 1);
+    }
+
+    function testForkCreate2DeployerChildrenRequireCallerAccess() public {
+        // Code without cheatcode access must not gain it by deploying through the factory, also
+        // when authorized code delegates to it and after it changes the environment.
+        require(!DeployerRelay(RELAY).deploy(bytes32(0)), "unauthorized factory child read cheatcodes");
+        bytes[2] memory delegated = [
+            abi.encodeCall(DeployerRelay.deploy, (bytes32(uint256(1)))),
+            abi.encodeCall(DeployerRelay.deployAfterEnvChange, (bytes32(uint256(2))))
+        ];
+        for (uint256 i; i < delegated.length; i++) {
+            (bool ok, bytes memory output) = RELAY.delegatecall(delegated[i]);
+            require(ok && !abi.decode(output, (bool)), "delegated factory child read cheatcodes");
+        }
+        (bool created,) = CREATE2_FACTORY.call(abi.encodePacked(bytes32(uint256(3)), type(ConstructorReader).creationCode));
+        require(created, "authorized factory child lost cheatcode access");
+    }
+}
+"#;
+
+const LINKED_LIBRARY: &str = r#"
+interface Vm {
+    function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
+}
+
+library LinkedReader {
+    function read() external view returns (uint256) {
+        return Vm(address(uint160(uint256(keccak256("hevm cheat code")))))
+            .envOr("FOUNDRY_ACCESS_REGRESSION_UNUSED", uint256(7));
+    }
+}
+
+contract LinkedReaderUser {
+    function read() external view returns (uint256) {
+        return LinkedReader.read();
+    }
+}
 "#;
