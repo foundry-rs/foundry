@@ -1275,7 +1275,9 @@ impl PathState {
         if self.constrained_word(cx, word).is_some() {
             return Vec::new();
         }
-        let candidates = self.world.concrete_alias_candidates_with_precompiles(executor);
+        // A precompile nothing touched yet is left out: guarding a word for every precompile
+        // would make each later cheatcode or pranked call that takes it fork over all of them.
+        let candidates = self.world.concrete_alias_candidates(executor);
         self.world.guard_symbolic_address(word, &candidates);
         candidates
             .into_iter()
