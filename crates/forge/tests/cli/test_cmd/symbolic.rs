@@ -9007,6 +9007,98 @@ contract SymbolicDivisorOrder {
     }
 }
 
+// Rewards earned as `balance * (rewardPerToken - paid) / 1e18 + rewards` only grow with the index,
+// which takes ordering differences with a common subtrahend and sums with a common addend.
+#[forgetest_init]
+fn symbolic_orders_earned_rewards_by_index(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_orders_earned_rewards_by_index");
+    prj.add_test(
+        "SymbolicEarnedOrder.t.sol",
+        r#"
+contract SymbolicEarnedOrder {
+    function earned(uint128 balance, uint128 index, uint128 paid, uint128 rewards)
+        internal
+        pure
+        returns (uint256)
+    {
+        return uint256(balance) * (uint256(index) - paid) / 1e18 + rewards;
+    }
+
+    function checkEarnedGrowsWithIndex(
+        uint128 balance,
+        uint128 index,
+        uint128 later,
+        uint128 paid,
+        uint128 rewards
+    ) public pure {
+        require(paid <= index && index <= later);
+        assert(earned(balance, index, paid, rewards) <= earned(balance, later, paid, rewards));
+    }
+
+    function checkWrappedDifference(uint128 x, uint128 y, uint128 p) public pure {
+        require(x <= y);
+        unchecked {
+            assert(uint256(x) - p <= uint256(y) - p);
+        }
+    }
+
+    function checkOtherSubtrahend(uint128 b, uint128 x, uint128 y, uint128 p, uint128 q)
+        public
+        pure
+    {
+        require(p <= x && q <= y && x <= y);
+        assert(uint256(b) * (uint256(x) - p) <= uint256(b) * (uint256(y) - q));
+    }
+
+    function checkWrappedSum(uint128 b, uint128 x, uint128 y, uint256 c) public pure {
+        require(x <= y);
+        unchecked {
+            assert(c + uint256(b) * x / 1e18 <= c + uint256(b) * y / 1e18);
+        }
+    }
+
+    function checkOtherAddend(uint128 b, uint128 x, uint128 c, uint128 d) public pure {
+        assert(uint256(c) + uint256(b) * x / 1e18 <= uint256(d) + uint256(b) * x / 1e18);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicEarnedOrder"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        let result = json_test_result(
+            &output,
+            "checkEarnedGrowsWithIndex(uint128,uint128,uint128,uint128,uint128)",
+        );
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}"
+        );
+
+        for signature in [
+            "checkWrappedDifference(uint128,uint128,uint128)",
+            "checkOtherSubtrahend(uint128,uint128,uint128,uint128,uint128)",
+            "checkWrappedSum(uint128,uint128,uint128,uint256)",
+            "checkOtherAddend(uint128,uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature} optimized={optimized}"
+            );
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // A balance scaled by an index that only grows stays at least the balance:
 // `principal * newIndex / oldIndex >= principal`.
 #[forgetest_init]
