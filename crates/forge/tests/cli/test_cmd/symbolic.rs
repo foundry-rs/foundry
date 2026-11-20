@@ -8708,6 +8708,114 @@ contract SymbolicMinRatioNested {
     }
 }
 
+// OpenZeppelin's `VestingWallet` (MIT) vests `total * (t - start) / duration` once
+// `start <= t < start + duration`, so the elapsed time stays at most the duration.
+#[forgetest_init]
+fn symbolic_proves_vesting_schedule_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_vesting_schedule_bounded");
+    prj.add_test(
+        "SymbolicVestingSchedule.t.sol",
+        r#"
+contract SymbolicVestingSchedule {
+    uint64 private _start;
+    uint64 private _duration;
+
+    function start() public view returns (uint256) {
+        return _start;
+    }
+
+    function duration() public view returns (uint256) {
+        return _duration;
+    }
+
+    function end() public view returns (uint256) {
+        return start() + duration();
+    }
+
+    function _vestingSchedule(uint256 totalAllocation, uint64 timestamp)
+        internal
+        view
+        returns (uint256)
+    {
+        if (timestamp < start()) {
+            return 0;
+        } else if (timestamp >= end()) {
+            return totalAllocation;
+        } else {
+            return (totalAllocation * (timestamp - start())) / duration();
+        }
+    }
+
+    function checkVestedBelowAllocation(uint64 s, uint64 d, uint128 total, uint64 t) public {
+        _start = s;
+        _duration = d;
+        assert(_vestingSchedule(total, t) <= total);
+    }
+
+    function checkVestedBelowWideAllocation(uint64 s, uint64 d, uint256 total, uint64 t) public {
+        _start = s;
+        _duration = d;
+        assert(_vestingSchedule(total, t) <= total);
+    }
+
+    function checkVestedPastLongerEnd(uint64 s, uint32 d, uint128 total, uint64 t) public pure {
+        require(total > 1 << 100 && d > 1 << 20);
+        require(t >= s && t < uint256(s) + (uint256(d) + 2));
+        assert(uint256(total) * (t - s) / d <= total);
+    }
+
+    function checkElapsedBeforeStart(uint256 s, uint256 d, uint64 t, uint256 total) public pure {
+        unchecked {
+            require(total <= 1 && t < 10 && s >= 10 && d > 0 && t < s + d);
+            assert(total * (t - s) / d <= total);
+        }
+    }
+
+    function checkElapsedAgainstOrder(uint64 s, uint64 t) public pure {
+        require(t <= s);
+        unchecked {
+            assert(uint256(t) - s <= type(uint64).max);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicVestingSchedule"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkVestedBelowAllocation(uint64,uint64,uint128,uint64)",
+            "checkVestedBelowWideAllocation(uint64,uint64,uint256,uint64)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkVestedPastLongerEnd(uint64,uint32,uint128,uint64)",
+            "checkElapsedBeforeStart(uint256,uint256,uint64,uint256)",
+            "checkElapsedAgainstOrder(uint64,uint64)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Uniswap v4 `FullMath`, OpenZeppelin `Math` and solady `FixedPointMathLib` (MIT) compute the
 // 512-bit `mulDiv` with a Newton inverse that SMT cannot decide. The normalizer replaces it with
 // its exact quotient, and a false rounding claim must still reach a replayed counterexample. A
