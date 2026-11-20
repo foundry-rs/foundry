@@ -8458,6 +8458,21 @@ contract SymbolicWeightedAverage {
         assert((uint256(a) * w + uint256(b) * (WAD - w)) / WAD <= b);
     }
 
+    // Parameter order changes symbol ids and so which summand the canonical sum puts first.
+    function checkEmaBelowCapReordered(uint128 cap, uint64 alpha, uint128 price, uint128 ema)
+        public
+        pure
+    {
+        require(alpha <= WAD && price <= cap && ema <= cap);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkWeightedAverageBelowMaxReordered(uint64 w, uint128 b, uint128 a) public pure {
+        require(w <= WAD && a <= b);
+        assert((uint256(a) * w + uint256(b) * (WAD - w)) / WAD <= b);
+    }
+
     function checkEmaWeightsOverBudget(
         uint128 price,
         uint128 ema,
@@ -8518,6 +8533,8 @@ contract SymbolicWeightedAverage {
         for signature in [
             "checkEmaBelowCap(uint128,uint128,uint64,uint128)",
             "checkWeightedAverageBelowMax(uint128,uint128,uint64)",
+            "checkEmaBelowCapReordered(uint128,uint64,uint128,uint128)",
+            "checkWeightedAverageBelowMaxReordered(uint64,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
