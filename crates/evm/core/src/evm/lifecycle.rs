@@ -462,6 +462,9 @@ pub struct ExecutionLifecycle<F: FoundryEvmFactory> {
     tx_original: AddressMap<Option<AccountInfo>>,
     /// Warm slots of persistent accounts the last fork switch carried into the next context.
     switch_slots: AddressMap<HashSet<U256>>,
+    /// Number of transactions begun, which tells whether a snapshot was taken in the running
+    /// transaction.
+    transactions: u64,
 }
 
 impl<F: FoundryEvmFactory> Clone for ExecutionLifecycle<F> {
@@ -474,6 +477,7 @@ impl<F: FoundryEvmFactory> Clone for ExecutionLifecycle<F> {
             tx_prewarm: self.tx_prewarm.clone(),
             tx_original: self.tx_original.clone(),
             switch_slots: self.switch_slots.clone(),
+            transactions: self.transactions,
         }
     }
 }
@@ -496,6 +500,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             tx_prewarm: None,
             tx_original: AddressMap::default(),
             switch_slots: AddressMap::default(),
+            transactions: 0,
         }
     }
 
@@ -728,7 +733,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let ext = self.factory.configure_for(&db, &env).evm_ext(&env);
         let mut suspended = self.suspend(evm);
         for (address, slots) in &mut suspended.loaded {
-            if !suspended.created.contains(address) && !self.forks.is_persistent(address) {
+            if !suspended.created.contains_key(address) && !self.forks.is_persistent(address) {
                 slots.clear();
             }
         }
@@ -772,7 +777,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             let loaded = previous
                 .loaded
                 .iter()
-                .filter(|(address, _)| previous.created.contains(*address))
+                .filter(|(address, _)| previous.created.contains_key(*address))
                 .map(|(address, slots)| (*address, slots.clone()))
                 .collect();
             context.inherit(&loaded, &previous.created, previous_cache);
@@ -864,19 +869,23 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     }
 
     /// Applies an environment change deferred by an in-flight operation and forgets the warmth
-    /// contexts kept from the previous transaction. Call before every transaction.
+    /// contexts kept from the previous transaction, whose creations they only carry from then on.
+    /// Call before every transaction.
     pub fn begin_transaction(&mut self, evm: &mut Evm<'_, F::Types>) {
+        self.transactions += 1;
         self.tx_prewarm = None;
         self.tx_original.clear();
         self.forks.local.warm.clear();
         self.forks.local.originals.clear();
         self.forks.local.switched.clear();
         self.forks.local.transient.clear();
+        self.forks.local.created.values_mut().for_each(|in_tx| *in_tx = false);
         for entry in self.forks.forks.values_mut() {
             entry.context.warm.clear();
             entry.context.originals.clear();
             entry.context.switched.clear();
             entry.context.transient.clear();
+            entry.context.created.values_mut().for_each(|in_tx| *in_tx = false);
         }
         if let Some(mut env) = self.pending_env.take() {
             env.block = *evm.block();
@@ -915,6 +924,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             forks: self.forks.clone(),
             env,
             ext: StoredExt::new(evm.ext()),
+            transaction: self.transactions,
         })
     }
 
@@ -939,7 +949,18 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             self.snapshots.remove_at(id)
         }?;
         self.materialize(evm);
-        let LifecycleSnapshot { state, mut forks, env, ext } = snapshot;
+        let LifecycleSnapshot { state, mut forks, env, ext, transaction } = snapshot;
+        // A snapshot an earlier transaction took holds that transaction in flight, which ended
+        // since. Its changes are accepted, and the accounts it created are no longer created ones,
+        // which EIP-6780 SELFDESTRUCT would delete, here or when the running transaction resumes
+        // their fork. Its warmth stays.
+        let earlier = transaction != self.transactions;
+        if earlier {
+            for entry in forks.forks.values_mut() {
+                entry.context.created.values_mut().for_each(|in_tx| *in_tx = false);
+            }
+            forks.local.created.values_mut().for_each(|in_tx| *in_tx = false);
+        }
         let (replaced, logs) = if forks.active == self.forks.active {
             (None, evm.state().logs().to_vec())
         } else {
@@ -968,6 +989,12 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         self.forks.active = forks.active;
         let db = self.forks.active_db();
         let mut state = state.into_state(db.clone_backing());
+        if earlier {
+            let warmth = warm_set(&mut state);
+            state.commit_transaction();
+            state.clear_transaction_state();
+            *state.prewarm_set_mut() = warmth;
+        }
         *state.logs_mut() = logs;
         let running = mem::replace(evm.state_mut(), state);
         let replaced = replaced.unwrap_or_else(|| running.snapshot());
@@ -1198,7 +1225,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         context.transient = transient;
         for (address, slots) in loaded {
             if state.account(&address).is_ok_and(|account| account.is_created()) {
-                context.created.insert(address);
+                context.created.insert(address, true);
             }
             // Committing the running transaction below makes the slots' current values their
             // originals, so record the transaction-start ones SSTORE gas and refunds depend on.
@@ -1298,12 +1325,12 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         self.forks.merge_persistent_loaded(&source_loaded, &mut loaded);
         let persistent_created = source_created
             .into_iter()
-            .filter(|address| self.forks.is_persistent(address))
+            .filter(|(address, _)| self.forks.is_persistent(address))
             .collect::<Vec<_>>();
         let persistent = self.forks.persistent.clone();
         let context = self.active_mut();
         context.loaded = loaded;
-        context.created.retain(|address| {
+        context.created.retain(|address, _| {
             !persistent.contains(address) || !source.accounts.contains_key(address)
         });
         context.created.extend(persistent_created);
@@ -1335,7 +1362,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let mut originals = mem::take(&mut self.active_mut().originals);
         originals.retain(|address, _| !persistent.contains(address));
         for (address, slots) in source_originals {
-            if persistent.contains(&address) || (carry && created.contains(&address)) {
+            if persistent.contains(&address) || (carry && created.contains_key(&address)) {
                 originals.entry(address).or_default().extend(slots);
             }
         }
@@ -1360,7 +1387,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         self.active_mut().switched = restore_originals(evm.state_mut(), &originals);
         // The new transaction overlay does not know which accounts the transaction created, which
         // EIP-6780 `SELFDESTRUCT` depends on. Its database already holds their storage.
-        for address in &created {
+        for (address, _) in created.iter().filter(|(_, in_tx)| **in_tx) {
             if let Ok(mut account) = evm.state_mut().account(address)
                 && account.exists()
             {
@@ -1441,6 +1468,13 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         &self.switch_slots
     }
 
+    /// Returns the accounts the running transaction created that it held created when it last
+    /// resumed the active context. A revert to a checkpoint taken before that switch drops their
+    /// mark from the running state, although the switch, and the state it resumed, stay.
+    pub fn resumed_created(&self) -> impl Iterator<Item = &Address> {
+        self.active().created.iter().filter(|(_, in_tx)| **in_tx).map(|(address, _)| address)
+    }
+
     /// Returns the accounts loaded in the running transaction, including accounts loaded as
     /// absent and accounts loaded before fork switches, with their loaded slots.
     ///
@@ -1502,8 +1536,9 @@ struct Suspended {
     cache: Arc<Cache>,
     /// Accounts and slots loaded in the suspended context.
     loaded: AddressMap<HashSet<U256>>,
-    /// Accounts created in the suspended context.
-    created: AddressSet,
+    /// Accounts created in the suspended context, and whether the running transaction created
+    /// them.
+    created: AddressMap<bool>,
     /// Transaction-start values of the slots changed in the suspended context.
     originals: AddressMap<HashMap<U256, U256>>,
     /// Logs of the running transaction.

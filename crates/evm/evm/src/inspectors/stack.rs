@@ -498,9 +498,6 @@ pub struct InspectorStackInner {
     /// Whether the frame that just ended ran on a frame EVM with an in-flight environment change,
     /// whose hooks already ran there. See `InspectorStackRefMut::env_handoff`.
     env_handoff_ended: bool,
-    /// Accounts the running top-level transaction created, directly or through isolated calls,
-    /// with the forks it created them on.
-    tx_created: AddressMap<HashSet<Option<U256>>>,
     /// Accounts the running nested transaction, from `executeTransaction` or an isolated call,
     /// self-destructed, including the ones it created. Captured when its root frame ends, before
     /// the transaction destroys them. An isolated call that replaces the running state, such as by
@@ -1276,13 +1273,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         result: &mut MessageResultFor<FEN>,
     ) {
         let stop = result.stop;
-        if !self.inner.in_inner_context
-            && stop.is_success()
-            && let Some(address) = result.created_address
-        {
-            let fork = self.backend.backend().active_fork_id();
-            self.inner.tx_created.entry(address).or_default().insert(fork);
-        }
         let backend = Some(&mut *self.backend);
         let cheats = self.cheatcodes.as_deref_mut();
         'inspectors: {
@@ -1525,24 +1515,20 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // Monad's reserve balance context and tracker.
         *child.ext_mut() = evm.ext().clone();
         child.ext_mut().set_preserve_transaction_state(true);
-        // Accounts the running transaction created and holds created on this fork, not ones it
-        // created on another fork, stay created in the nested one, so that EIP-6780 SELFDESTRUCT
-        // still deletes them, and keep the storage it holds for them. A revert past a fork switch
-        // can drop the mark the switch restored, so an account created on this fork stays created
-        // too, unless it is persistent, whose state can come from another fork. Only accounts the
-        // running transaction loaded are checked, so checking loads no others.
+        // Accounts the running transaction holds created stay created in the nested one, so that
+        // EIP-6780 SELFDESTRUCT still deletes them, and keep the storage it holds for them. A
+        // revert past a fork switch can drop the mark the switch restored, so the accounts the
+        // switch resumed created stay created too. Only accounts the running transaction loaded
+        // are checked, so checking loads no others.
+        let resumed =
+            backend.backend().lifecycle().resumed_created().copied().collect::<AddressSet>();
         let state = evm.state_mut();
-        let loaded = state
-            .loaded_accounts()
-            .map(|(address, _)| *address)
-            .filter(|address| self.inner.tx_created.contains_key(address))
-            .collect::<Vec<_>>();
+        let loaded = state.loaded_accounts().map(|(address, _)| *address).collect::<Vec<_>>();
         let held = loaded
             .into_iter()
             .filter(|address| {
-                state.account(address).is_ok_and(|account| account.is_created())
-                    || (self.inner.tx_created[address].contains(&source_fork)
-                        && !backend.backend().is_persistent(address))
+                resumed.contains(address)
+                    || state.account(address).is_ok_and(|account| account.is_created())
             })
             .collect::<AddressSet>();
         for address in &held {
@@ -1653,20 +1639,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if skip_floor {
             result.floor_gas = floor;
         }
-        // The accounts the call's state holds created, on the fork it ended on. A created account
-        // the call self-destructed is kept until the running transaction ends.
-        let fork = backend.backend().active_fork_id();
-        let created = executed
-            .pending_state
-            .account_changes()
-            .filter(|change| change.created && (change.current.is_some() || change.selfdestructed))
-            .map(|change| change.address)
-            .collect::<AddressSet>();
-        for address in &created {
-            self.inner.tx_created.entry(*address).or_default().insert(fork);
-        }
-
-        let fork_changed = fork != source_fork;
+        let fork_changed = backend.backend().active_fork_id() != source_fork;
         let replaced = restored
             || fork_changed
             || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
@@ -1719,16 +1692,27 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
             // The new transaction overlay does not know which accounts the running transaction
-            // holds created: the ones the call's state held created, the ones held created before
-            // a call that kept the fork, and the ones it created on the fork the call ended on,
-            // other than persistent accounts, whose state can come from another fork. Without the
-            // mark, a later isolated call that loads them would merge them as new and wipe their
-            // storage. Its database already holds their storage.
-            for (address, forks) in &self.inner.tx_created {
-                if (created.contains(address)
-                    || (!fork_changed && held.contains(address))
-                    || (forks.contains(&fork) && !backend.backend().is_persistent(address)))
-                    && let Ok(mut account) = evm.state_mut().account(address)
+            // holds created: the ones the call's state held created, a created account the call
+            // self-destructed being kept until the running transaction ends, and the ones the
+            // last fork switch resumed created. The ones held created before the call stay
+            // created after a failed call that kept the running context, but not after one that
+            // left it or restored a snapshot, whose state replaced them. Without the mark, a later
+            // isolated call that loads them would merge them as new and wipe their storage. Its
+            // database already holds their storage.
+            let kept_context = !restored
+                && fork_epoch == self.cheatcodes.as_deref().map(|cheats| cheats.fork_epoch);
+            let created = executed
+                .pending_state
+                .account_changes()
+                .filter(|change| {
+                    change.created && (change.current.is_some() || change.selfdestructed)
+                })
+                .map(|change| change.address)
+                .chain(backend.backend().lifecycle().resumed_created().copied())
+                .chain(held.into_iter().filter(|_| kept_context))
+                .collect::<AddressSet>();
+            for address in &created {
+                if let Ok(mut account) = evm.state_mut().account(address)
                     && account.exists()
                 {
                     account.mark_created();
@@ -1810,7 +1794,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// Invoked at the beginning of a new top-level frame, at the EVM's initial call depth.
     fn top_level_frame_start(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         warm_arbitrum_system_contract::<FEN>(interp);
-        self.inner.tx_created.clear();
         // A transaction that ended with an error skipped the end hooks that pop the suspended
         // steps; keep only the entry this frame's message just pushed.
         let stale = self.inner.suspended_stepped.len().saturating_sub(1);
