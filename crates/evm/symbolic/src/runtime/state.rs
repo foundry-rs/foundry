@@ -2218,6 +2218,8 @@ pub(crate) struct SymbolicWorldState {
     /// First base read of each symbolic key. Which `setUp` slot a key selects depends on the slot
     /// hashes the run has seen, so later reads reuse it.
     symbolic_key_base_reads: HashMap<(Address, SymExpr), SymExpr>,
+    /// The keys of `symbolic_key_base_reads` in the order they were first read.
+    symbolic_key_base_order: Vec<(Address, SymExpr)>,
     /// Treat accounts that are not created here and have no known code as unknown: their balance,
     /// code size and code hash are symbolic, and calls into them are abstracted.
     symbolic_accounts: bool,
@@ -2493,10 +2495,19 @@ impl SymbolicWorld {
                 assign(slot.address, slot.slot, value, true)?;
             }
         }
+        // A symbolic key reads its base related to the earlier keys, so keys that resolve to one
+        // slot assign it the same value.
         for (symbol, reads) in &self.replay_symbolic_storage_keys {
-            let Some(value) = model.get(symbol).copied() else { continue };
+            let Some(symbol_value) = model.get(symbol).copied() else { continue };
             for (address, key) in reads {
                 if let Some(slot) = key.eval_model_if_complete(model)? {
+                    let value = self
+                        .symbolic_key_base_reads
+                        .get(&(*address, key.clone()))
+                        .map(|base| base.eval_model_if_complete(model))
+                        .transpose()?
+                        .flatten()
+                        .unwrap_or(symbol_value);
                     assign(*address, slot, value, reject_aliases)?;
                 }
             }
@@ -2645,8 +2656,11 @@ impl SymbolicWorld {
     /// Restores the world state of snapshot `id` and returns its block environment and gas price.
     pub(crate) fn restore_snapshot(&mut self, id: U256) -> Option<(SymbolicBlock, SymExpr)> {
         let snapshot = self.snapshots.get(&id)?;
-        self.state = Arc::clone(&snapshot.state);
-        Some((snapshot.block.clone(), snapshot.gas_price.clone()))
+        let current = std::mem::replace(&mut self.state, Arc::clone(&snapshot.state));
+        let restored = (snapshot.block.clone(), snapshot.gas_price.clone());
+        // A revert does not change the storage these bases read, so keep the reads made since.
+        self.keep_symbolic_key_bases_from(&current);
+        Some(restored)
     }
 
     pub(crate) fn delete_snapshot(&mut self, id: U256) -> bool {
@@ -2711,10 +2725,7 @@ impl SymbolicWorld {
                 let slot_value = SymExpr::constant(cx, slot_value);
                 value = key.clone().select_storage_write(cx, slot, slot_value, value);
             }
-            Arc::make_mut(&mut self.state)
-                .symbolic_key_base_reads
-                .insert((address, key.clone()), value.clone());
-            Ok(value)
+            Ok(self.record_symbolic_key_base(cx, address, key, value))
         }
     }
 
@@ -2776,13 +2787,25 @@ impl SymbolicWorld {
                 self.record_replay_storage_slot(symbol, source, slot);
                 self.record_replay_storage_slot(symbol, address, slot);
             }
-        } else if copied_source.is_none()
+            let value = SymExpr::get_var(cx, symbol);
+            if let Some(source) = copied_source {
+                self.sstore(source, key.clone(), value.clone());
+            }
+            return Some(value);
+        }
+        let value = match self.symbolic_key_base_reads.get(&(address, key.clone())) {
+            Some(value) => value.clone(),
+            None => {
+                let value = SymExpr::get_var(cx, symbol);
+                self.record_symbolic_key_base(cx, address, key, value)
+            }
+        };
+        if copied_source.is_none()
             && (self.arbitrary_storage_all || overwrite_arbitrary_storage == Some(true))
         {
             // Storage that ignores setUp values replays reads at symbolic keys too.
             self.record_replay_symbolic_storage_key(symbol, address, key);
         }
-        let value = SymExpr::get_var(cx, symbol);
         if let Some(source) = copied_source {
             self.sstore(source, key.clone(), value.clone());
         }
@@ -2820,6 +2843,32 @@ impl SymbolicWorld {
             .push((address, key.clone()));
     }
 
+    /// Records the base value of the first read at the symbolic `key` of `address`.
+    ///
+    /// Keys that differ as terms can still name the same slot, such as `keccak(a)` and
+    /// `keccak(a & mask)` where `a` is an address, so the base reads the value of each earlier key
+    /// of the account wherever it equals that key.
+    fn record_symbolic_key_base(
+        &mut self,
+        cx: &mut SymCx,
+        address: Address,
+        key: &SymExpr,
+        mut value: SymExpr,
+    ) -> SymExpr {
+        for (earlier_address, earlier_key) in &self.symbolic_key_base_order {
+            if *earlier_address != address {
+                continue;
+            }
+            let earlier_value =
+                self.symbolic_key_base_reads[&(address, earlier_key.clone())].clone();
+            value = key.clone().select_storage_write(cx, earlier_key.clone(), earlier_value, value);
+        }
+        let state = Arc::make_mut(&mut self.state);
+        state.symbolic_key_base_reads.insert((address, key.clone()), value.clone());
+        state.symbolic_key_base_order.push((address, key.clone()));
+        value
+    }
+
     pub(crate) fn merge_replay_metadata_from(&mut self, other: &Self) {
         for (symbol, slots) in &other.replay_storage_slots {
             for slot in slots {
@@ -2831,12 +2880,32 @@ impl SymbolicWorld {
                 self.record_replay_symbolic_storage_key(*symbol, *address, key);
             }
         }
+        // A failed call does not change the storage these bases read, so keep the reads it made.
+        self.keep_symbolic_key_bases_from(&other.state);
         let state = Arc::make_mut(&mut self.state);
         for (expr, address) in &other.symbolic_address_aliases {
             state.symbolic_address_aliases.entry(expr.clone()).or_insert(*address);
         }
         for (expr, candidates) in &other.guarded_symbolic_addresses {
             state.guarded_symbolic_addresses.entry(expr.clone()).or_default().extend(candidates);
+        }
+    }
+
+    /// Adds the symbolic key base reads of `other` that this state lacks, so a key read again
+    /// after a revert gets the same base. Bases only depend on the storage before the run and
+    /// the bases read before them, and a path's reads only grow, so `other`'s reads extend these.
+    fn keep_symbolic_key_bases_from(&mut self, other: &SymbolicWorldState) {
+        if other.symbolic_key_base_order.len() == self.symbolic_key_base_order.len() {
+            return;
+        }
+        let state = Arc::make_mut(&mut self.state);
+        for entry in &other.symbolic_key_base_order {
+            if !state.symbolic_key_base_reads.contains_key(entry) {
+                state
+                    .symbolic_key_base_reads
+                    .insert(entry.clone(), other.symbolic_key_base_reads[entry].clone());
+                state.symbolic_key_base_order.push(entry.clone());
+            }
         }
     }
 

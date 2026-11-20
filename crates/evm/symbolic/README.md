@@ -631,9 +631,9 @@ would draw a random one, so slots fixed in `setUp` by `vm.store` or a read keep
 their values. Slots keyed by symbolic calldata are replayed only when the storage
 ignores its `setUp` values: under the generic storage layout or for
 `vm.setArbitraryStorage(address, true)`. A counterexample whose model needs a
-different value than concrete execution provides, such as different values for
-two keys that resolve to the same slot, replay-filters to `Incomplete` or
-`mismatch` instead of a confirmed counterexample.
+different value than concrete execution provides replay-filters to `Incomplete`
+or `mismatch` instead of a confirmed counterexample. Symbolic keys that resolve
+to the same slot read the same value.
 
 ## Equivalence Checking
 
