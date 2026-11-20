@@ -3552,6 +3552,20 @@ contract SymbolicFixedAddress is Test {
         assert(fixer.callFixed(who));
     }
 
+    function dealThenFail(address who) external {
+        vm.deal(who, 5);
+        require(who == address(0xB0B));
+        address(0xB0B).call("");
+        revert();
+    }
+
+    // Fails: the balance survives the revert on the account a call in the failed frame fixed
+    // the address to.
+    function checkDealtInFailedCall(address who) public {
+        try this.dealThenFail(who) {} catch {}
+        if (who == address(0xB0B)) assert(who.balance != 5);
+    }
+
     // `vm.deal` reaches 0xB0B, but the earlier `vm.store` through the address did not.
     function checkStoreBeforeAccountKnown(address who) public {
         vm.store(who, 0, bytes32(uint256(42)));
@@ -3568,7 +3582,8 @@ contract SymbolicFixedAddress is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 7 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
+Ran 8 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtInFailedCall(address) ([METRICS])
 [PASS] checkDealtSenderCannotOverpay(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtSenderPays(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address with code fixed below the root frame] checkEtchedFixedInCall(address) ([METRICS])
@@ -3576,7 +3591,7 @@ Ran 7 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOnceFixed(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSaltedCreate(uint8) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkStoreBeforeAccountKnown(address) ([METRICS])
-Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
