@@ -114,7 +114,8 @@ impl FoldedSlots {
         deadline: Option<Instant>,
     ) -> bool {
         let max_offset = U256::ONE << STORAGE_LAYOUT_OFFSET_BITS;
-        if slot < max_offset
+        // `keccak(..) + offset` below `2^128` needs a hash with 128 leading zero or one bits.
+        if slot < U256::ONE << 128
             || self.searched.contains(&slot)
             || cx.concrete_keccak_base(slot, STORAGE_LAYOUT_OFFSET_BITS).is_some()
         {
