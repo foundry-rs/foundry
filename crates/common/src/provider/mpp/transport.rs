@@ -194,10 +194,10 @@ impl LazyAccountsProvider {
             MppError::InvalidConfig(format!("failed to open Tempo channel store: {error}"))
         })?;
         provider = provider
-            .with_autoswap(AutoswapConfig::new(
-                crate::tempo::PATH_USD_ADDRESS,
-                DEFAULT_SLIPPAGE_BPS,
-            ))
+            .with_autoswap(
+                AutoswapConfig::new(crate::tempo::PATH_USD_ADDRESS, DEFAULT_SLIPPAGE_BPS)
+                    .with_fallback(false),
+            )
             .with_session_store(Arc::new(store))
             .with_session_default_deposit(DEFAULT_MPP_SESSION_DEPOSIT)
             .with_session_top_up_amount(DEFAULT_MPP_SESSION_DEPOSIT)
@@ -539,6 +539,7 @@ fn redacted_url(raw: &str) -> String {
 mod tests {
     use super::*;
     use mpp::protocol::core::{Base64UrlJson, IntentName, MethodName};
+    use std::fs;
 
     fn challenge(method: &str, intent: &str) -> PaymentChallenge {
         PaymentChallenge {
@@ -684,6 +685,37 @@ mod tests {
         assert_eq!(
             first_context.token.as_deref(),
             Some("0x20c0000000000000000000000000000000000000")
+        );
+    }
+
+    #[tokio::test]
+    async fn rpc_autoswap_only_spends_path_usd() {
+        let _guard = crate::tempo::test_env_mutex().lock().await;
+        let directory = tempfile::tempdir().unwrap();
+        // SAFETY: serialized with every other test that mutates TEMPO_HOME.
+        unsafe { env::set_var(crate::tempo::TEMPO_HOME_ENV, directory.path()) };
+        let path = TempoAccountsStore::default_path().unwrap();
+        fs::create_dir_all(path.path().parent().unwrap()).unwrap();
+        fs::write(
+            path.path(),
+            serde_json::to_vec(&serde_json::json!({
+                "activeAccount": 0,
+                "chainId": 42431,
+                "accounts": [{"address": "0x0000000000000000000000000000000000000042"}],
+                "accessKeys": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let provider = LazyAccountsProvider::new("https://rpc.example".to_owned(), true);
+        let resolved = provider.resolve(Some(42431));
+        // SAFETY: serialized with every other test that mutates TEMPO_HOME.
+        unsafe { env::remove_var(crate::tempo::TEMPO_HOME_ENV) };
+
+        assert_eq!(
+            resolved.unwrap().autoswap().unwrap().candidates(),
+            vec![crate::tempo::PATH_USD_ADDRESS]
         );
     }
 }
