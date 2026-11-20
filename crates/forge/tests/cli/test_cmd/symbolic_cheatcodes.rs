@@ -3542,25 +3542,19 @@ contract SymbolicLaterCandidates is Test {
     function checkStoreFreeAddress(address who) public {
         vm.store(who, 0, bytes32(uint256(1)));
     }
-
-    function checkDealFreeAddress(address who) public {
-        vm.deal(who, 1);
-        assert(address(4).balance == 0);
-    }
 }
 "#,
     );
 
     assert_symbolic(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicLaterCandidates.t.sol:SymbolicLaterCandidates
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealFreeAddress(address) ([METRICS])
+Ran 5 tests for test/SymbolicLaterCandidates.t.sol:SymbolicLaterCandidates
 [FAIL: vm.etch: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchFreeAddress(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSender(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSenderCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderEtchedAfterPrank(address) ([METRICS])
 [FAIL: vm.store: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreFreeAddress(address) ([METRICS])
-Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

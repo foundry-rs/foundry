@@ -671,22 +671,8 @@ impl SymbolicExecutor {
                 if to.is_none() {
                     words = self.guarded_words(state, target, words);
                 }
-                // An untouched precompile as the caller acts like an empty account, so the
-                // pranked words are decided only over the accounts the run knows.
-                let mut pranked = Vec::new();
-                for word in state.prank.words() {
-                    pranked = self.guarded_words(state, word, pranked);
-                }
-                let known = state.world.concrete_alias_candidates(executor);
-                for (word, mut candidates) in pranked {
-                    candidates.retain(|address| {
-                        !is_precompile_for_spec(*address, executor.spec_id)
-                            || known.contains(address)
-                    });
-                    if !candidates.is_empty() && !words.iter().any(|(other, _)| *other == word) {
-                        words.push((word, candidates));
-                    }
-                }
+                let pranked = state.prank.words().cloned().collect::<Vec<_>>();
+                words = self.known_guarded_words(executor, state, &pranked, words);
                 // An alias without code stands for an empty account, which a precompile nothing
                 // touched yet differs from only once a call runs it. An equivalence check
                 // abstracts calls to unknown code, precompiles included.
@@ -816,11 +802,37 @@ impl SymbolicExecutor {
         if !state.world.has_guarded_addresses() {
             return Ok(words);
         }
-        for index in first_scanned..in_size.saturating_sub(4) / 32 {
-            let word = read_abi_word_arg(&mut self.cx, memory, args_offset, index)?;
-            words = self.guarded_words(state, &word, words);
+        let args = (first_scanned..in_size.saturating_sub(4) / 32)
+            .map(|index| read_abi_word_arg(&mut self.cx, memory, args_offset, index))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.known_guarded_words(executor, state, &args, words))
+    }
+
+    /// Adds to `words` the guarded words that `exprs`, the pranked caller and origin or
+    /// cheatcode arguments, mention, with only the candidates the run knows. A precompile
+    /// nothing touched yet acts like an empty account there, and only a call to the word, which
+    /// decides it over the precompiles, tells them apart.
+    fn known_guarded_words(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &PathState,
+        exprs: &[SymExpr],
+        mut words: Vec<(SymExpr, Vec<Address>)>,
+    ) -> Vec<(SymExpr, Vec<Address>)> {
+        let mut guarded = Vec::new();
+        for expr in exprs {
+            guarded = self.guarded_words(state, expr, guarded);
         }
-        Ok(words)
+        let known = state.world.concrete_alias_candidates(executor);
+        for (word, mut candidates) in guarded {
+            candidates.retain(|address| {
+                !is_precompile_for_spec(*address, executor.spec_id) || known.contains(address)
+            });
+            if !candidates.is_empty() && !words.iter().any(|(other, _)| *other == word) {
+                words.push((word, candidates));
+            }
+        }
+        words
     }
 
     /// Adds to `words` the guarded words that `expr`, a call target or cheatcode argument the
