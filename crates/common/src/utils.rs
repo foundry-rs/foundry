@@ -10,8 +10,10 @@ use foundry_compilers::{
 use regex::Regex;
 use std::{path::Path, sync::LazyLock};
 
+/// Library placeholders: `__$<hash>$__`, or before solc 0.5 `__<path>:<library>__` with the name
+/// cut or padded with `_` to 36 characters. Both are 40 characters, and hex has no `_`.
 static BYTECODE_PLACEHOLDER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"__\$.{34}\$__").expect("invalid regex"));
+    LazyLock::new(|| Regex::new(r"__.{36}__").expect("invalid regex"));
 
 /// Block on a future using the current tokio runtime on the current thread.
 pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
@@ -109,7 +111,7 @@ pub fn metadata_hash_offsets(bytecode: &[u8]) -> Vec<Offsets> {
     offsets
 }
 
-/// Strips all __$xxx$__ placeholders from the bytecode if it's an unlinked bytecode.
+/// Strips all library placeholders from the bytecode if it's an unlinked bytecode.
 /// by replacing them with 20 zero bytes.
 /// This is useful for matching bytecodes to a contract source, and for the source map,
 /// in which the actual address of the placeholder isn't important.

@@ -1133,4 +1133,25 @@ mod tests {
         ]);
         assert_eq!(contracts.find_by_creation_code_prefix_unlinked(&code).unwrap().0.name, "C");
     }
+
+    // Before solc 0.5, placeholders hold the library name instead of its hash.
+    #[test]
+    fn find_by_deployed_code_exact_ignores_pre_0_5_link_placeholders() {
+        let (id, mut artifact) = deployed_artifact("A", Bytes::new());
+        artifact.deployed_bytecode = Some(CompactDeployedBytecode {
+            bytecode: Some(CompactBytecode {
+                object: BytecodeObject::Unlinked(format!("600073{:_<38}__6001", "__src/A.sol:Lib")),
+                source_map: None,
+                link_references: BTreeMap::from([(
+                    "src/A.sol".to_string(),
+                    BTreeMap::from([("Lib".to_string(), vec![Offsets { start: 3, length: 20 }])]),
+                )]),
+            }),
+            immutable_references: Default::default(),
+        });
+        let contracts = ContractsByArtifact::new([(id, artifact)]);
+
+        let linked = [&[0x60, 0x00, 0x73][..], &[0xab; 20], &[0x60, 0x01]].concat();
+        assert_eq!(contracts.find_by_deployed_code_exact(&linked).unwrap().0.name, "A");
+    }
 }
