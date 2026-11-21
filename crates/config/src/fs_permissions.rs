@@ -78,13 +78,10 @@ impl FsPermissions {
                 } else if path_len == max_path_len {
                     // Same path length, keep the highest privilege
                     highest_permission = match (highest_permission, perm.access) {
-                        (FsAccessPermission::ReadWrite, _)
-                        | (FsAccessPermission::Read, FsAccessPermission::Write)
-                        | (FsAccessPermission::Write, FsAccessPermission::Read) => {
-                            FsAccessPermission::ReadWrite
-                        }
-                        (FsAccessPermission::None, perm) => perm,
-                        (existing_perm, _) => existing_perm,
+                        (existing, new) if existing == new => existing,
+                        (FsAccessPermission::None, perm) | (perm, FsAccessPermission::None) => perm,
+                        // Any two distinct grants combine into both read and write access.
+                        _ => FsAccessPermission::ReadWrite,
                     }
                 }
             }
@@ -309,6 +306,22 @@ mod tests {
         let permission =
             permissions.find_permission(Path::new("./out/contracts/MyContract.sol")).unwrap();
         assert_eq!(FsAccessPermission::ReadWrite, permission);
+    }
+
+    #[test]
+    fn same_path_permissions_merge_in_any_order() {
+        let path = Path::new("./out/contracts/MyContract.sol");
+        let cases = [
+            (PathPermission::read("./out"), PathPermission::read_write("./out")),
+            (PathPermission::write("./out"), PathPermission::read_write("./out")),
+            (PathPermission::read("./out"), PathPermission::write("./out")),
+        ];
+        for (a, b) in cases {
+            for permissions in [vec![a.clone(), b.clone()], vec![b.clone(), a.clone()]] {
+                let permission = FsPermissions::new(permissions).find_permission(path);
+                assert_eq!(Some(FsAccessPermission::ReadWrite), permission, "{a:?} {b:?}");
+            }
+        }
     }
 
     #[test]
