@@ -4,6 +4,7 @@ use foundry_compilers::{
     CompilerInput, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{Source, Sources},
     multi::{MultiCompilerLanguage, MultiCompilerParser},
+    resolver::ResolvedSources,
     solc::{SOLC_EXTENSIONS, SolcLanguage, SolcVersionedInput},
 };
 use foundry_config::Config;
@@ -98,10 +99,9 @@ fn configure_pcx_with_sources(
 
     // Process Solar-compatible sources and use the latest version for the compiler input.
     let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
-    let Some(versioned_sources) = graph
-        // Resolve graph into mapping language -> version -> sources
-        .into_sources_by_version(project)?
-        .sources
+    // Resolve graph into mapping language -> version -> sources
+    let ResolvedSources { sources, edges, .. } = graph.into_sources_by_version(project)?;
+    let Some(versioned_sources) = sources
         .into_iter()
         // Only interested in Solidity sources
         .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))
@@ -138,12 +138,15 @@ fn configure_pcx_with_sources(
         sh_warn!("no files found. Solar doesn't support Solidity versions prior to 0.8.0")?;
     }
 
-    let solc = SolcVersionedInput::build(
+    let mut solc = SolcVersionedInput::build(
         sources,
         config.solc_settings()?,
         SolcLanguage::Solidity,
         version,
     );
+    // Absolute imports inside libraries, such as `import "src/X.sol"`, resolve through the
+    // library roots the graph adds as include paths.
+    solc.cli_settings.include_paths.extend(edges.include_paths().iter().cloned());
 
     configure_pcx_from_solc(pcx, &project.paths, &solc, true);
 
@@ -220,16 +223,26 @@ pub fn get_solar_sources_from_compile_output(
                 sources.insert(path, source);
             }
         }
+        // Files without artifacts, such as ones that only import, are still graph sources. Loaded
+        // from disk instead, they could match several library copies through the include paths.
+        for path in source_paths {
+            if output.graph().version_requirement(&path).is_none_or(|req| req.matches(&max_version))
+            {
+                let source = Source::read(&path)?;
+                sources.insert(path, source);
+            }
+        }
 
         (max_version, sources)
     };
 
-    let solc = SolcVersionedInput::build(
+    let mut solc = SolcVersionedInput::build(
         sources,
         config.solc_settings()?,
         SolcLanguage::Solidity,
         version,
     );
+    solc.cli_settings.include_paths.extend(output.graph().include_paths().iter().cloned());
 
     Ok(solc)
 }
