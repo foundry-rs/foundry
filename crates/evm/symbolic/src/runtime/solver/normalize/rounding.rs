@@ -321,6 +321,23 @@ impl ConstraintContext {
                     || bounded(dividend, None))
                 .then_some(false)
             }
+            // `(x * y) >> k` is `x * y / 2**k`, as in Q96 and Q128 fixed-point math, so it is at
+            // most `x` once `y <= 2**k`. A wrapped product only shrinks the dividend.
+            SymExprKind::BinOp(SymBinOp::Shr, value, shift) => {
+                let shift = shift.as_const().filter(|shift| *shift < U256::from(256))?;
+                let SymExprKind::BinOp(SymBinOp::Mul, left, right) = value.kind() else {
+                    return None;
+                };
+                let other = if left == large {
+                    right
+                } else if right == large {
+                    left
+                } else {
+                    return None;
+                };
+                let scale = U256::ONE << shift.to::<usize>();
+                interval(other).is_some_and(|other| other.max <= scale).then_some(false)
+            }
             // `(x / d) * k <= (x / d) * d <= x` once `k <= d`, so the product cannot wrap; a zero
             // `d` forces a zero product.
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => [(left, right), (right, left)]
